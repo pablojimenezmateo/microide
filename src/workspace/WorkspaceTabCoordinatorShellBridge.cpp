@@ -358,14 +358,15 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
   return TabDisplayTitle(context_.current_project_state.focused_group_index, index);
 }
 
-std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
+WorkspaceTabTextModel WorkspaceShell::TabTextModel(std::size_t group_index,
+                                                   std::size_t index) const {
   const ProjectWorkspaceState& state = context_.current_project_state;
   if (group_index >= state.editor_groups.size() ||
       index >= state.editor_groups[group_index].open_tabs.size()) {
     return {};
   }
-
   const TabEntry& tab = state.editor_groups[group_index].open_tabs[index];
+  // A compare or merge tab's `path` is not the file the label should name.
   std::filesystem::path path = tab.path;
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
     path = tab.compare->path;
@@ -373,7 +374,11 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t
     path = tab.merge->output_path;
   }
   return BuildWorkspaceTabTextModel(state.root, path, tab.title,
-                                    TabCoordinator::TabStateIsDirty(tab)).display_title;
+                                    TabCoordinator::TabStateIsDirty(tab));
+}
+
+std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
+  return TabTextModel(group_index, index).display_title;
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
@@ -381,21 +386,7 @@ std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t group_index, std::size_t index) const {
-  const ProjectWorkspaceState& state = context_.current_project_state;
-  if (group_index >= state.editor_groups.size() ||
-      index >= state.editor_groups[group_index].open_tabs.size()) {
-    return {};
-  }
-
-  const TabEntry& tab = state.editor_groups[group_index].open_tabs[index];
-  std::filesystem::path path = tab.path;
-  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    path = tab.compare->path;
-  } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-    path = tab.merge->output_path;
-  }
-  return BuildWorkspaceTabTextModel(state.root, path, tab.title,
-                                    TabCoordinator::TabStateIsDirty(tab)).tooltip_label;
+  return TabTextModel(group_index, index).tooltip_label;
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {

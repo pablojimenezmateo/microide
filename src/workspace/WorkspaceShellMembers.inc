@@ -722,6 +722,10 @@
   // trigger (on_focus_change vs after_delay). Safe: never prompts, never clobbers.
   void MaybeAutosaveDirtyTabs(bool on_focus_change);
   bool TabIsDirty(std::size_t index) const;
+  // Title and tooltip for one editor tab come from the same text model; this
+  // resolves the tab (including a compare/merge tab's real path) and builds it
+  // once. Empty model for an out-of-range group or tab index.
+  WorkspaceTabTextModel TabTextModel(std::size_t group_index, std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t group_index, std::size_t index) const;
   std::string TabTooltipLabel(std::size_t index) const;

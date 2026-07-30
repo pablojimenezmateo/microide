@@ -107,6 +107,7 @@
 
 namespace microide::workspace {
 
+struct WorkspaceTabTextModel;
 class WorkspaceActionContext;
 class PromptSurfaceService;
 class ProjectCatalogService;
