@@ -39,20 +39,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   // motion handling, so the user can finish a selection started inside the prompt.
   if (context_.interaction_state.drag_target == DragTarget::SingleLineSelection) {
     if (HandleSingleLineInputDrag(event, layout)) {
-      switch (context_.interaction_state.single_line_drag_surface) {
-        case TextInputSurface::PromptInput:
-          EnsureRedraw([this]() { RequestPromptRedraw(); });
-          break;
-        case TextInputSurface::SidebarSearchQuery:
-        case TextInputSurface::SidebarSearchReplace:
-        case TextInputSurface::SidebarSearchInclude:
-        case TextInputSurface::SidebarSearchExclude:
-          EnsureRedraw([this]() { RequestSidebarRedraw(); });
-          break;
-        default:
-          EnsureRedraw([this]() { RequestOverlayRedraw(); });
-          break;
-      }
+      RequestSingleLineDragSurfaceRedraw(context_.interaction_state.single_line_drag_surface);
       return true;
     }
   }

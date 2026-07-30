@@ -602,20 +602,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     context_.interaction_state.drag_target = DragTarget::None;
     context_.interaction_state.single_line_drag_surface = TextInputSurface::None;
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
-    switch (surface) {
-      case TextInputSurface::PromptInput:
-        EnsureRedraw([this]() { RequestPromptRedraw(); });
-        break;
-      case TextInputSurface::SidebarSearchQuery:
-      case TextInputSurface::SidebarSearchReplace:
-      case TextInputSurface::SidebarSearchInclude:
-      case TextInputSurface::SidebarSearchExclude:
-        EnsureRedraw([this]() { RequestSidebarRedraw(); });
-        break;
-      default:
-        EnsureRedraw([this]() { RequestOverlayRedraw(); });
-        break;
-    }
+    RequestSingleLineDragSurfaceRedraw(surface);
     return true;
   }
   if (context_.interaction_state.drag_target != DragTarget::None) {

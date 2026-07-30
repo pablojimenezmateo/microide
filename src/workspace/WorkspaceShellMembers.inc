@@ -1844,6 +1844,10 @@
   void RequestBottomPanelContentRedraw();
   void RequestOverlayRedraw();
   void RequestPromptRedraw();
+  // Repaint whichever surface owns a single-line drag selection. Used by both the
+  // motion handler (while dragging) and the button-up handler (on release), which
+  // must agree or a released selection repaints somewhere the drag did not.
+  void RequestSingleLineDragSurfaceRedraw(TextInputSurface surface);
   // Invoke a specific Request*Redraw only when nothing else has already queued a
   // redraw this frame. Centralizes the guard shared by every mouse/input handler;
   // a template (not std::function) so the call stays inlined with no heap churn.
