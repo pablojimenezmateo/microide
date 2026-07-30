@@ -437,6 +437,15 @@ std::optional<ScrollbarGeometry> MakeHorizontalScrollbarGeometry(const SDL_FRect
 float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
                             float pointer_coordinate,
                             float grab_offset);
+
+// The grab offset for a scrollbar press: grabbing the thumb keeps the point under
+// the pointer, pressing the bare track centres the thumb on it. Spelled out four
+// times across the compare and merge coordinators (vertical and horizontal each),
+// which is four chances to get "centre the thumb" subtly different.
+float ScrollbarGrabOffset(const ScrollbarGeometry& geometry,
+                          float pointer_coordinate,
+                          bool vertical);
+
 std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model);

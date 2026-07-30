@@ -68,9 +68,8 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
         Contains(panel_layout.scroll.vertical_scrollbar->track, event.button.x, event.button.y)) {
       interaction_state_.drag_target = DragTarget::BottomPanelScrollbar;
       interaction_state_.drag_scrollbar_offset =
-          Contains(panel_layout.scroll.vertical_scrollbar->thumb, event.button.x, event.button.y)
-              ? static_cast<float>(event.button.y) - panel_layout.scroll.vertical_scrollbar->thumb.y
-              : panel_layout.scroll.vertical_scrollbar->thumb.h * 0.5f;
+          ScrollbarGrabOffset(*panel_layout.scroll.vertical_scrollbar,
+                              static_cast<float>(event.button.y), /*vertical=*/true);
       operations_.set_bottom_panel_scroll_row(
           std::clamp(static_cast<int>(std::lround(
                          ScrollUnitsForPointer(*panel_layout.scroll.vertical_scrollbar,
@@ -95,9 +94,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           geometry.has_value() && Contains(geometry->track, event.button.x, event.button.y)) {
         interaction_state_.drag_target = DragTarget::BottomPanelScrollbar;
         interaction_state_.drag_scrollbar_offset =
-            Contains(geometry->thumb, event.button.x, event.button.y)
-                ? static_cast<float>(event.button.y) - geometry->thumb.y
-                : geometry->thumb.h * 0.5f;
+            ScrollbarGrabOffset(*geometry, static_cast<float>(event.button.y), /*vertical=*/true);
         state_.panel.surface_scroll_y = std::clamp(
             static_cast<int>(std::lround(
                 ScrollUnitsForPointer(*geometry, static_cast<float>(event.button.y),

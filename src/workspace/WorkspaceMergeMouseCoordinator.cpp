@@ -181,10 +181,8 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   if (scroll_layout.vertical_scrollbar.has_value() &&
       Contains(scroll_layout.vertical_scrollbar->track, event.button.x, event.button.y)) {
     interaction_state_.drag_target = DragTarget::CompareVerticalScrollbar;
-    interaction_state_.drag_scrollbar_offset =
-        Contains(scroll_layout.vertical_scrollbar->thumb, event.button.x, event.button.y)
-            ? static_cast<float>(event.button.y) - scroll_layout.vertical_scrollbar->thumb.y
-            : scroll_layout.vertical_scrollbar->thumb.h * 0.5f;
+    interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
+        *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
     merge_tab->scroll_row = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *scroll_layout.vertical_scrollbar, static_cast<float>(event.button.y),
@@ -200,9 +198,8 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       Contains(scroll_layout.horizontal_scrollbar->track, event.button.x, event.button.y)) {
     interaction_state_.drag_target = DragTarget::CompareHorizontalScrollbar;
     interaction_state_.drag_scrollbar_offset =
-        Contains(scroll_layout.horizontal_scrollbar->thumb, event.button.x, event.button.y)
-            ? static_cast<float>(event.button.x) - scroll_layout.horizontal_scrollbar->thumb.x
-            : scroll_layout.horizontal_scrollbar->thumb.w * 0.5f;
+        ScrollbarGrabOffset(*scroll_layout.horizontal_scrollbar,
+                            static_cast<float>(event.button.x), /*vertical=*/false);
     merge_tab->horizontal_scroll = static_cast<std::size_t>(std::max(
         0L, std::lround(ScrollUnitsForPointer(*scroll_layout.horizontal_scrollbar,
                                               static_cast<float>(event.button.x),

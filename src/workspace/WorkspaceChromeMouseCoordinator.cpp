@@ -483,10 +483,8 @@ bool ChromeMouseCoordinator::HandleOverlayButtonDown(const SDL_Event& event,
   if (list_layout.scrollbar.has_value() &&
       Contains(list_layout.scrollbar->track, event.button.x, event.button.y)) {
     interaction_state_.drag_target = DragTarget::OverlayScrollbar;
-    interaction_state_.drag_scrollbar_offset =
-        Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
-            ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
-            : list_layout.scrollbar->thumb.h * 0.5f;
+    interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
+        *list_layout.scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
     state_.overlay.scroll_row = std::clamp(
         static_cast<int>(std::lround(ScrollUnitsForPointer(
             *list_layout.scrollbar, static_cast<float>(event.button.y),

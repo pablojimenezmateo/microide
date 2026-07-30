@@ -798,6 +798,19 @@ std::optional<ScrollbarGeometry> MakeHorizontalScrollbarGeometry(const SDL_FRect
   };
 }
 
+float ScrollbarGrabOffset(const ScrollbarGeometry& geometry,
+                          float pointer_coordinate,
+                          bool vertical) {
+  const SDL_FRect& thumb = geometry.thumb;
+  const bool on_thumb = vertical
+                            ? pointer_coordinate >= thumb.y && pointer_coordinate < thumb.y + thumb.h
+                            : pointer_coordinate >= thumb.x && pointer_coordinate < thumb.x + thumb.w;
+  if (on_thumb) {
+    return pointer_coordinate - (vertical ? thumb.y : thumb.x);
+  }
+  return (vertical ? thumb.h : thumb.w) * 0.5f;
+}
+
 float ScrollUnitsForPointer(const ScrollbarGeometry& geometry,
                             float pointer_coordinate,
                             float grab_offset) {

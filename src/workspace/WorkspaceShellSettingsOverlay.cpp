@@ -860,7 +860,7 @@ bool WorkspaceShell::HandleSettingsOverlayButtonDown(const SDL_Event& event,
                                         int max_scroll, auto&& set_scroll) {
     context_.interaction_state.drag_target = target;
     context_.interaction_state.drag_scrollbar_offset =
-        Contains(bar.thumb, mx, my) ? my - bar.thumb.y : bar.thumb.h * 0.5f;
+        ScrollbarGrabOffset(bar, my, /*vertical=*/true);
     set_scroll(std::clamp(static_cast<int>(std::lround(ScrollUnitsForPointer(
                               bar, my, context_.interaction_state.drag_scrollbar_offset))),
                           0, max_scroll));

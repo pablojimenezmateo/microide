@@ -71,10 +71,8 @@ bool SidebarMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
   }
 
   interaction_state_.drag_target = DragTarget::SidebarScrollbar;
-  interaction_state_.drag_scrollbar_offset =
-      Contains(list_layout.scrollbar->thumb, event.button.x, event.button.y)
-          ? static_cast<float>(event.button.y) - list_layout.scrollbar->thumb.y
-          : list_layout.scrollbar->thumb.h * 0.5f;
+  interaction_state_.drag_scrollbar_offset = ScrollbarGrabOffset(
+      *list_layout.scrollbar, static_cast<float>(event.button.y), /*vertical=*/true);
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
   ActiveSidebarScrollRow(state_, sidebar_mode) = std::clamp(
       static_cast<int>(std::lround(ScrollUnitsForPointer(

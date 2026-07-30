@@ -351,10 +351,8 @@ bool DebugPaneMouseCoordinator::BeginScrollbarDrag(const SDL_Event& event,
 
   interaction_state_.drag_target = DragTarget::DebugPaneScrollbar;
   interaction_state_.drag_scrollbar_offset =
-      Contains(panel_layout.scroll.vertical_scrollbar->thumb, static_cast<float>(event.button.x),
-               static_cast<float>(event.button.y))
-          ? static_cast<float>(event.button.y) - panel_layout.scroll.vertical_scrollbar->thumb.y
-          : panel_layout.scroll.vertical_scrollbar->thumb.h * 0.5f;
+      ScrollbarGrabOffset(*panel_layout.scroll.vertical_scrollbar,
+                          static_cast<float>(event.button.y), /*vertical=*/true);
   // Clicking the track jumps the thumb to the pointer, matching every other
   // scrollbar in the shell.
   operations_.set_debug_pane_scroll_row(
