@@ -122,6 +122,38 @@ nobody invokes compiles, wires, reads as part of the contract, and does nothing.
   `SameTooltipRect` and every glyph painter look dead by reference count and are
   not. The `.cpp` reference has to be a *definition*, not a call.
 
+- **[RESOLVED 2026-07-30] Two bool settings were read with a fallback that
+  contradicted their registered default, plus the lint for it.**
+  `editor.inlay_hints.enabled` and `chrome.project_tabs.hide_when_single` are
+  both registered on-by-default; each had a read that omitted the default
+  argument, and `SettingFlagEnabled` defaults to false. `editor.inlay_hints.
+  enabled` disagreed with *itself* — LspService reads it twice, once with an
+  explicit `true` for the feature gate and once bare before issuing the request.
+  Latent, not live: `GetSettingValue` resolves an unset key to its registered
+  default, so the caller fallback only decides what happens when the getter is
+  null or cannot resolve. New hard lint `CheckSettingDefaultsMatchRegistry`
+  (sibling of the two existing settings rules, same loud-if-vacuous guards).
+
+- **[RESOLVED 2026-07-30] The Settings overlay's picker scrollbar released
+  differently from its two siblings.** Mouse-up named `SettingsScrollbar` and
+  `SettingsCategoryScrollbar` only, so the font-picker dropdown's bar fell
+  through to the generic drag-release and repainted the whole window instead of
+  the overlay. The two named bars had the mirror problem — they assigned
+  `drag_target = None` rather than calling `ClearDragState`, leaving the grab
+  offset behind, the only two scrollbars in the shell to do so. Regression test
+  `WorkspaceShell/SettingsScrollbarsReleaseAlike`.
+
+- **Categories swept clean (negative results worth not re-checking).**
+  Dead *data* fields: none — every candidate was either the standard
+  `is_transparent` heterogeneous-lookup marker or genuinely read. Incomplete
+  enum switches: none reachable — the build is `-Werror` with `-Wswitch`, so a
+  default-less switch missing an enumerator cannot compile. List-navigation
+  keys: consistent; the one variant (`WorkspaceKeyInputCoordinatorSurfaces`
+  omitting Home/End) is deliberate and documented, because those move the text
+  caret in a field-backed popup. Divider cursors: all seven `*Divider` drag
+  targets have a cursor rule. Frame prep: already revision-gated with an
+  allocation-free fast path.
+
 - **[OPEN] TD-2026-07-30-001 — the project-search regex / case / hidden-file
   toggles are mouse-only.** Found while removing the dead
   `toggle_project_search_pattern_mode`, `cycle_project_search_case_mode` and
