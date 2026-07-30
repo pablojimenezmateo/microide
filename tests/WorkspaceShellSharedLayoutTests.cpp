@@ -33,7 +33,7 @@ using microide::workspace::ComputeMergeResultActionButtonRects;
 using microide::workspace::ComputeMergeResultViewportRect;
 using microide::workspace::ComputeMergeSourceActionButtonRect;
 using microide::workspace::FindMergeTrackedConflictAtSourceLine;
-using microide::workspace::ComputeOverlaySurfaceRect;
+using microide::workspace::ComputeQuickOpenOverlaySurfaceRect;
 using microide::workspace::ComputePromptSurfaceButtonRects;
 using microide::workspace::ComputePromptSurfaceInputRect;
 using microide::workspace::ComputePromptSurfaceRect;
@@ -966,20 +966,24 @@ void TestWorkspaceSharedMergeSourceButtonUsesSourceScroll() {
 }
 
 void TestWorkspaceSharedOverlayRectHelpers() {
-  const SDL_FRect roomy = ComputeOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f));
-  Expect(roomy.w == 696.0f,
+  const SDL_FRect roomy = ComputeQuickOpenOverlaySurfaceRect(MakeRect(100.0f, 200.0f, 1200.0f, 800.0f));
+  Expect(std::fabs(roomy.w - 792.0f) < 0.01f,
          "overlay rect should use the preferred width ratio when within bounds");
-  Expect(roomy.h == 352.0f,
-         "overlay rect should use the preferred height ratio when within bounds");
-  Expect(roomy.x == 352.0f, "overlay rect should stay horizontally centered in the editor area");
-  Expect(std::fabs(roomy.y - 298.56f) < 0.01f,
+  Expect(std::fabs(roomy.h - 360.0f) < 0.01f,
+         "overlay rect should clamp height to the shared overlay maximum");
+  Expect(std::fabs(roomy.x - 304.0f) < 0.01f,
+         "overlay rect should stay horizontally centered in the editor area");
+  Expect(std::fabs(roomy.y - 279.2f) < 0.01f,
          "overlay rect should bias vertically toward the top of the editor area");
 
-  const SDL_FRect compact = ComputeOverlaySurfaceRect(MakeRect(0.0f, 0.0f, 300.0f, 200.0f));
-  Expect(compact.w == 260.0f, "overlay rect should clamp width to the compact fallback width");
-  Expect(compact.h == 160.0f, "overlay rect should clamp height to the compact fallback height");
-  Expect(compact.x == 20.0f, "overlay rect should remain centered after compact-width clamping");
-  Expect(std::fabs(compact.y - 8.8f) < 0.01f,
+  const SDL_FRect compact = ComputeQuickOpenOverlaySurfaceRect(MakeRect(0.0f, 0.0f, 300.0f, 200.0f));
+  Expect(std::fabs(compact.w - 260.0f) < 0.01f,
+         "overlay rect should clamp width to the compact fallback width");
+  Expect(std::fabs(compact.h - 160.0f) < 0.01f,
+         "overlay rect should clamp height to the compact fallback height");
+  Expect(std::fabs(compact.x - 20.0f) < 0.01f,
+         "overlay rect should remain centered after compact-width clamping");
+  Expect(std::fabs(compact.y - 7.2f) < 0.01f,
          "overlay rect should preserve the vertical bias after compact-height clamping");
 }
 

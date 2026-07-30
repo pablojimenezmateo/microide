@@ -35,6 +35,9 @@ class FileFinder {
   editor::SingleLineEditor& query_state() { return query_; }
   const editor::SingleLineEditor& query_state() const { return query_; }
   const std::vector<FileFinderResult>& results() const { return results_; }
+  // Files the finder can rank over, i.e. the denominator for the overlay's
+  // "<shown> of <indexed>" summary.
+  std::size_t indexed_file_count() const { return cached_entries_.size(); }
   // True when the backing file index was truncated (project too large / too deep),
   // so the finder's results are drawn from only a prefix of the tree and must be
   // surfaced as incomplete rather than authoritative (TD-2026-07-17-008/033).

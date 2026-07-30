@@ -828,21 +828,27 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
   };
 
   constexpr std::string_view kPickerHint = "↑↓ select · Enter choose · Esc cancel";
+  // Shared chrome for every quick-open modal (file finder, project search, command
+  // palette, commit/launch pickers): title, optional context subtitle, query field,
+  // result summary, and the key hint. `*_stable` says a label lives in state that
+  // outlives the frame; anything composed per frame is copied into the blob.
   const auto fill_picker_chrome = [&](std::string_view title, std::string_view context_label,
                                       const editor::SingleLineEditor& query,
                                       TextInputSurface surface, std::string_view summary_line,
-                                      std::string_view empty_label, bool empty_label_stable) {
+                                      bool summary_stable, std::string_view empty_label,
+                                      bool empty_label_stable) {
     title_ref = OverlayLabelRef::Direct(title);
     if (!context_label.empty()) {
       context_ref = AddTruncatedLabel(tr, blob, context_label, title_width, /*stable=*/true);
     }
     out.has_query_field = true;
     out.query_surface = surface;
-    out.query_row_y = overlay_rect.y + 52.0f;
+    out.query_row_y = overlay_rect.y + OverlayQueryRowOffset(overlay.mode);
     query_ref = query_field_text(surface, query, query_available);
-    summary_ref = OverlayLabelRef::Direct(summary_line.empty() ? std::string_view("0 of 0")
-                                                               : summary_line);
-    out.summary_y = overlay_rect.y + 78.0f;
+    summary_ref = summary_line.empty() ? OverlayLabelRef::Direct("0 of 0")
+                  : summary_stable    ? OverlayLabelRef::Direct(summary_line)
+                                      : OverlayLabelRef::Owned(blob, summary_line);
+    out.summary_y = overlay_rect.y + OverlaySummaryRowOffset(overlay.mode);
     out.hint = kPickerHint;
     out.hint_x = right_aligned_x(kPickerHint);
     if (total_rows == 0) {
@@ -854,7 +860,6 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
   switch (overlay.mode) {
     case OverlayMode::ProjectSearch: {
       const ProjectSearchState& search = overlay.workflow.project_search;
-      title_ref = OverlayLabelRef::Direct("Project Search");
       // The candidate set came from the file index; if that index is only a prefix
       // of the tree, some files were never searched — flag it (TD-2026-07-17-008/033).
       if (search.index_incomplete) {
@@ -862,11 +867,6 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
         note_ref = OverlayLabelRef::Direct(kNote);
         out.note_x = right_aligned_x(kNote);
       }
-      out.has_query_field = true;
-      out.query_surface = TextInputSurface::ProjectSearchOverlay;
-      out.query_row_y = overlay_rect.y + 44.0f;
-      query_ref = query_field_text(TextInputSurface::ProjectSearchOverlay, search.query,
-                                   query_available);
       compose_scratch = search.results.empty()
                             ? FormatEmptyState("results")
                         : search.truncated
@@ -877,8 +877,10 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       if (search.running) {
         compose_scratch += BuildSearchProgressSuffix(search.searched_files, search.total_files);
       }
-      summary_ref = OverlayLabelRef::Owned(blob, compose_scratch);
-      out.summary_y = overlay_rect.y + 62.0f;
+      fill_picker_chrome("Project Search", std::string_view{}, search.query,
+                         TextInputSurface::ProjectSearchOverlay, compose_scratch,
+                         /*summary_stable=*/false, "No results",
+                         /*empty_label_stable=*/true);
       for_visible([&](std::size_t item_index) {
         const auto& result = search.results[item_index];
         compose_scratch.clear();
@@ -904,7 +906,8 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       fill_picker_chrome(
           picker.title.empty() ? std::string_view("Compare against") : picker.title,
           picker.context_label, picker.query, TextInputSurface::CommitPicker,
-          picker.summary_line, compose_scratch, /*empty_label_stable=*/false);
+          picker.summary_line, /*summary_stable=*/true, compose_scratch,
+          /*empty_label_stable=*/false);
       emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
         return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
       });
@@ -916,7 +919,8 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       fill_picker_chrome(
           picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
           std::string_view{}, picker.query, TextInputSurface::LaunchConfigPicker,
-          picker.summary_line, compose_scratch, /*empty_label_stable=*/false);
+          picker.summary_line, /*summary_stable=*/true, compose_scratch,
+          /*empty_label_stable=*/false);
       emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
         return {picker.matches[i].primary_label, picker.matches[i].secondary_label};
       });
@@ -927,7 +931,8 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
       compose_scratch = FormatEmptyState("commands");
       fill_picker_chrome(palette.title.empty() ? std::string_view("Commands") : palette.title,
                          std::string_view{}, palette.query, TextInputSurface::CommandPalette,
-                         palette.summary_line, compose_scratch, /*empty_label_stable=*/false);
+                         palette.summary_line, /*summary_stable=*/true, compose_scratch,
+                         /*empty_label_stable=*/false);
       emit_two_column_rows([&](std::size_t i) -> std::pair<std::string_view, std::string_view> {
         const CommandPaletteItem& item = palette.items[palette.matches[i]];
         return {item.primary_label, item.secondary_label};
@@ -982,7 +987,6 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     case OverlayMode::FileFinder:
     default: {
       const auto& finder = context_.current_project_state.file_finder;
-      title_ref = OverlayLabelRef::Direct("Find File");
       // When the file index is only a prefix of a very large/deep/unreadable tree,
       // say so on the title row (right-aligned) with the specific cause so the
       // ranked list is never read as authoritative (TD-2026-07-17-008/033).
@@ -991,22 +995,23 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
         note_ref = OverlayLabelRef::Direct(note);
         out.note_x = right_aligned_x(note);
       }
-      out.has_query_field = true;
-      out.query_surface = TextInputSurface::FileFinder;
-      out.query_row_y = overlay_rect.y + 44.0f;
-      query_ref =
-          query_field_text(TextInputSurface::FileFinder, finder.query_state(), query_available);
       const auto& results = finder.results();
+      // "<shown> of <indexed>", the same denominator shape the command palette and
+      // the git pickers use, so the count means one thing across quick-open.
+      compose_scratch.clear();
+      AppendUnsigned(compose_scratch, results.size());
+      compose_scratch += " of ";
+      AppendUnsigned(compose_scratch, finder.indexed_file_count());
+      fill_picker_chrome("Find File", std::string_view{}, finder.query_state(),
+                         TextInputSurface::FileFinder, compose_scratch,
+                         /*summary_stable=*/false, "No matching files",
+                         /*empty_label_stable=*/true);
       for_visible([&](std::size_t item_index) {
         OverlayRowRef row_ref;
         row_ref.primary = AddTruncatedLabel(tr, blob, results[item_index].path_string,
                                             row_width - 16.0f, /*stable=*/true);
         row_refs.push_back(row_ref);
       });
-      if (results.empty()) {
-        compose_scratch = FormatEmptyState("matching files");
-        empty_ref = OverlayLabelRef::Owned(blob, compose_scratch);
-      }
       break;
     }
   }

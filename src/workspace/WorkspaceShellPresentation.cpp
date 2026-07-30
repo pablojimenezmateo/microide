@@ -189,12 +189,10 @@ SDL_FRect WorkspaceShell::ComputeOverlayRect(const SDL_FRect& editor_area) const
     return ComputeFindWidgetRect(FindWidgetAnchorRect(editor_area),
                                  overlay.mode == OverlayMode::BufferReplace);
   }
-  if (overlay.mode == OverlayMode::CommitPicker ||
-      overlay.mode == OverlayMode::LaunchConfigPicker ||
-      overlay.mode == OverlayMode::CommandPalette) {
-    return ComputePickerOverlaySurfaceRect(editor_area);
-  }
-  return ComputeOverlaySurfaceRect(editor_area);
+  // Every quick-open modal (file finder, project search, command palette, commit
+  // and launch pickers) shares one card so the surface does not resize and shift
+  // as the user flips between them.
+  return ComputeQuickOpenOverlaySurfaceRect(editor_area);
 }
 
 void WorkspaceShell::RefreshStatusBar() {

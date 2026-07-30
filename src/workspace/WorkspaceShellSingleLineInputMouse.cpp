@@ -166,9 +166,12 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
     };
 
     auto& state = context_.current_project_state;
+    // One source for where the query field sits; RenderViewModelBuilder paints it
+    // from the same helper, so the field can never be drawn off its hit target.
+    const float query_row_offset = OverlayQueryRowOffset(state.overlay.mode);
     switch (state.overlay.mode) {
       case OverlayMode::FileFinder: {
-        const SDL_FRect r = overlay_field_rect(overlay.y + 44.0f);
+        const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
         if (Contains(r, x, y)) {
           return FilledHit(TextInputSurface::FileFinder, r, "> ",
                            &state.file_finder.query_state());
@@ -198,7 +201,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::ProjectSearch: {
-        const SDL_FRect r = overlay_field_rect(overlay.y + 44.0f);
+        const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
         if (Contains(r, x, y)) {
           return FilledHit(TextInputSurface::ProjectSearchOverlay, r, "> ",
                            &state.overlay.workflow.project_search.query);
@@ -206,8 +209,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::CommitPicker: {
-        // Keep in sync with the picker query field y in WorkspaceShellRenderOverlay.cpp.
-        const SDL_FRect r = overlay_field_rect(overlay.y + 52.0f);
+        const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
         if (Contains(r, x, y)) {
           return FilledHit(TextInputSurface::CommitPicker, r, "> ",
                            &state.overlay.workflow.compare_picker.query);
@@ -215,8 +217,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::LaunchConfigPicker: {
-        // Same query field geometry as the commit picker (overlay.y + 52).
-        const SDL_FRect r = overlay_field_rect(overlay.y + 52.0f);
+        const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
         if (Contains(r, x, y)) {
           return FilledHit(TextInputSurface::LaunchConfigPicker, r, "> ",
                            &state.overlay.workflow.launch_config_picker.query);
@@ -224,8 +225,7 @@ std::optional<WorkspaceShell::SingleLineInputHit> WorkspaceShell::FindSingleLine
         break;
       }
       case OverlayMode::CommandPalette: {
-        // Same query field geometry as the other pickers (overlay.y + 52).
-        const SDL_FRect r = overlay_field_rect(overlay.y + 52.0f);
+        const SDL_FRect r = overlay_field_rect(overlay.y + query_row_offset);
         if (Contains(r, x, y)) {
           return FilledHit(TextInputSurface::CommandPalette, r, "> ",
                            &state.overlay.workflow.command_palette.query);
@@ -454,10 +454,11 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
                         kOverlayFieldHeight);
       };
       auto& proj = context_.current_project_state;
+      const float query_row_offset = OverlayQueryRowOffset(proj.overlay.mode);
       switch (surface) {
         case TextInputSurface::FileFinder:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, overlay_field_rect(overlay.y + 44.0f), "> ",
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + query_row_offset), "> ",
                             &proj.file_finder.query_state());
           }
           break;
@@ -481,26 +482,25 @@ bool WorkspaceShell::HandleSingleLineInputDrag(const SDL_Event& event,
           break;
         case TextInputSurface::ProjectSearchOverlay:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, overlay_field_rect(overlay.y + 44.0f), "> ",
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + query_row_offset), "> ",
                             &proj.overlay.workflow.project_search.query);
           }
           break;
         case TextInputSurface::CommitPicker:
           if (proj.overlay.visible) {
-            // Keep in sync with the picker query field y in WorkspaceShellRenderOverlay.cpp.
-            hit = FilledHit(surface, overlay_field_rect(overlay.y + 52.0f), "> ",
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + query_row_offset), "> ",
                             &proj.overlay.workflow.compare_picker.query);
           }
           break;
         case TextInputSurface::LaunchConfigPicker:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, overlay_field_rect(overlay.y + 52.0f), "> ",
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + query_row_offset), "> ",
                             &proj.overlay.workflow.launch_config_picker.query);
           }
           break;
         case TextInputSurface::CommandPalette:
           if (proj.overlay.visible) {
-            hit = FilledHit(surface, overlay_field_rect(overlay.y + 52.0f), "> ",
+            hit = FilledHit(surface, overlay_field_rect(overlay.y + query_row_offset), "> ",
                             &proj.overlay.workflow.command_palette.query);
           }
           break;

@@ -60,13 +60,42 @@ enum class OverlayMode {
   CodeActions,
 };
 
+// True for the centered "quick open" modals: a titled card carrying one query
+// field, a result summary, a key hint, and a scrollable result list. They all
+// wear the same chrome — flipping between Ctrl+P, Ctrl+Shift+P and the git
+// pickers used to move the card and shuffle the header rows, which read as three
+// unrelated dialogs.
+inline bool OverlayIsQuickOpen(OverlayMode mode) {
+  switch (mode) {
+    case OverlayMode::FileFinder:
+    case OverlayMode::ProjectSearch:
+    case OverlayMode::CommitPicker:
+    case OverlayMode::LaunchConfigPicker:
+    case OverlayMode::CommandPalette:
+      return true;
+    default:
+      return false;
+  }
+}
+
+// Vertical offset (from the overlay card top) of the query field row. Shared by
+// RenderViewModelBuilder and the click hit-test so a field can never be painted
+// somewhere the click does not land.
+inline float OverlayQueryRowOffset(OverlayMode mode) {
+  return OverlayIsQuickOpen(mode) ? 52.0f : 0.0f;
+}
+
+// Vertical offset (from the overlay card top) of the result-summary row, which
+// sits between the query field and the list.
+inline float OverlaySummaryRowOffset(OverlayMode mode) {
+  return OverlayIsQuickOpen(mode) ? 78.0f : 0.0f;
+}
+
 // Vertical offset (from the overlay card top) where the mode's scrollable list
 // starts. Shared by the shell's list-layout/hit-test helpers and
 // RenderViewModelBuilder so their geometry can never drift apart.
 inline float OverlayListStartOffset(OverlayMode mode) {
   switch (mode) {
-    case OverlayMode::FileFinder:
-      return 74.0f;
     case OverlayMode::BufferReplace:
       return 106.0f;
     case OverlayMode::Completion:
@@ -77,16 +106,12 @@ inline float OverlayListStartOffset(OverlayMode mode) {
       // The centered code-action menu carries a title bar (but no query field), so
       // the list starts just below the title.
       return 40.0f;
-    case OverlayMode::CommitPicker:
-    case OverlayMode::LaunchConfigPicker:
-    case OverlayMode::CommandPalette:
-      // Picker carries a richer header (title + context subtitle + query field +
-      // result/hint line) so the list starts lower than the search overlays.
-      return 108.0f;
     case OverlayMode::BufferSearch:
-    case OverlayMode::ProjectSearch:
-    default:
       return 86.0f;
+    default:
+      // Quick-open header: title + optional context subtitle + query field +
+      // summary/hint line.
+      return 108.0f;
   }
 }
 

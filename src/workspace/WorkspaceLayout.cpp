@@ -903,13 +903,11 @@ SDL_FRect ComputeOverlaySurfaceRectImpl(const SDL_FRect& editor_area,
 }
 }  // namespace
 
-SDL_FRect ComputeOverlaySurfaceRect(const SDL_FRect& editor_area) {
-  return ComputeOverlaySurfaceRectImpl(editor_area, {0.58f, 0.44f, 0.22f, 260.0f, 160.0f});
-}
-
-SDL_FRect ComputePickerOverlaySurfaceRect(const SDL_FRect& editor_area) {
-  // The ref/commit picker is a denser, taller modal than the search overlays: it
-  // carries a header block plus two-column rows, so it gets more width and height.
+SDL_FRect ComputeQuickOpenOverlaySurfaceRect(const SDL_FRect& editor_area) {
+  // One card for every quick-open modal: file finder, project search, command
+  // palette, and the commit/launch pickers. They previously split across two
+  // geometries (0.58/0.44/0.22 vs 0.66/0.60/0.18), so Ctrl+P and Ctrl+Shift+P
+  // painted visibly different dialogs in different places.
   return ComputeOverlaySurfaceRectImpl(editor_area, {0.66f, 0.60f, 0.18f, 260.0f, 160.0f});
 }
 

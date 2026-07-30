@@ -130,13 +130,14 @@ void TestWorkspaceShellSettingsOverlayCursorKind() {
   Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(shell, outside_x, outside_y),
          "settings overlay should force the default cursor over the dimmed editor backdrop");
 
-  const auto overlay_layout = WorkspaceShellTestAccess::CurrentLayout(shell);
-  const SDL_FRect settings_rect =
-      microide::workspace::ComputeOverlaySurfaceRect(overlay_layout.editor_area);
-  // A fixed section-header band (category title + subtitle) now sits between the
-  // filter bar and the value rows, so the first row starts lower than before.
-  const float row_x = settings_rect.x + settings_rect.w * 0.5f;
-  const float row_y = settings_rect.y + 100.0f;
+  // Probe the first real value row rather than a hand-computed offset from the
+  // card: the header/filter/section band above the rows has changed height more
+  // than once, and an offset probe silently drifts onto whatever sits there.
+  const SDL_FRect first_row = WorkspaceShellTestAccess::SettingsOverlayVisibleRowRect(shell, 0);
+  Expect(first_row.w > 0.0f && first_row.h > 0.0f,
+         "the settings overlay should expose at least one visible value row");
+  const float row_x = first_row.x + first_row.w * 0.5f;
+  const float row_y = first_row.y + first_row.h * 0.5f;
   WorkspaceShellTestAccess::UpdateMouseCursor(shell, row_x, row_y);
   Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, row_x, row_y),
          "settings rows should expose a pointer cursor");
