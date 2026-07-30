@@ -379,7 +379,7 @@ return ide.plugin({
         shell, initial_counter->rect.x + initial_counter->rect.w * 0.5f,
         initial_counter->rect.y + initial_counter->rect.h * 0.5f, 0);
   }
-  Expect(WorkspaceShellTestAccess::HoveredStatusTooltipLabel(shell) == "Counter is 0",
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "Counter is 0",
          "hovering a contributed status item should expose its tooltip");
 
   (void)shell.ConsumePendingRenderInvalidation();

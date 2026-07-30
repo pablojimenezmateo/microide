@@ -1364,28 +1364,14 @@ std::optional<SDL_FRect> WorkspaceShell::HoveredStatusBarSegmentRect(
   }
   const StatusBarViewModel vm =
       RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
-  constexpr float kStatusPadding = 12.0f;
-  constexpr float kStatusGap = 14.0f;
-  float left_x = vm.rect.x + kStatusPadding;
-  for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
-    const float width = text_renderer_.MeasureWidth(segment.text);
-    const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
-    if (segment.clickable && Contains(row, x, y)) {
-      return row;
-    }
-    left_x += width + kStatusGap;
-  }
-  float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
-  for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
-    const float width = text_renderer_.MeasureWidth(it->text);
-    right_x -= width;
-    const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
-    if (it->clickable && Contains(row, x, y)) {
-      return row;
-    }
-    right_x -= kStatusGap;
-  }
-  return std::nullopt;
+  std::optional<SDL_FRect> hovered;
+  ForEachStatusBarSegmentRect(
+      vm, text_renderer_, [&](const StatusBarSegmentViewModel& segment, const SDL_FRect& row) {
+        if (!hovered.has_value() && segment.clickable && Contains(row, x, y)) {
+          hovered = row;
+        }
+      });
+  return hovered;
 }
 
 }  // namespace microide::workspace

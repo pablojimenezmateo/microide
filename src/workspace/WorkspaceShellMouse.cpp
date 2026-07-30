@@ -38,17 +38,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
   const WorkspaceLayout layout = *layout_state;
   const auto invalidate_menu_blocked_hover_visuals = [this, &layout]() {
-    if (const auto rect = HoveredProjectTabTooltipRect(layout); rect.has_value()) {
-      RequestRedrawRect(*rect);
-    }
-    if (const auto rect = HoveredTabTooltipRect(layout); rect.has_value()) {
-      RequestRedrawRect(*rect);
-    }
-    if (const auto rect = HoveredStatusTooltipRect(layout); rect.has_value()) {
-      RequestRedrawRect(*rect);
-    }
-    if (const auto rect = HoveredGitSidebarTooltipRect(layout); rect.has_value()) {
-      RequestRedrawRect(*rect);
+    if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
+      RequestRedrawRect(tooltip->rect);
     }
     if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
       RequestRedrawRect(popup->rect);
@@ -186,10 +177,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  const auto blocked_project_tab_tooltip_rect = HoveredProjectTabTooltipRect(layout);
-  const auto blocked_tab_tooltip_rect = HoveredTabTooltipRect(layout);
-  const auto blocked_status_tooltip_rect = HoveredStatusTooltipRect(layout);
-  const auto blocked_git_sidebar_tooltip_rect = HoveredGitSidebarTooltipRect(layout);
+  const auto blocked_tooltip = HoveredTooltip(layout);
   const auto blocked_editor_hover_popup_rect = [&]() -> std::optional<SDL_FRect> {
     if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
       return popup->rect;
@@ -198,17 +186,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }();
   if (MakeChromeMouseCoordinator().HandleButtonDown(event, layout)) {
     if (MenuSurfaceCapturingMouse()) {
-      if (blocked_project_tab_tooltip_rect.has_value()) {
-        RequestRedrawRect(*blocked_project_tab_tooltip_rect);
-      }
-      if (blocked_tab_tooltip_rect.has_value()) {
-        RequestRedrawRect(*blocked_tab_tooltip_rect);
-      }
-      if (blocked_status_tooltip_rect.has_value()) {
-        RequestRedrawRect(*blocked_status_tooltip_rect);
-      }
-      if (blocked_git_sidebar_tooltip_rect.has_value()) {
-        RequestRedrawRect(*blocked_git_sidebar_tooltip_rect);
+      if (blocked_tooltip.has_value()) {
+        RequestRedrawRect(blocked_tooltip->rect);
       }
       if (blocked_editor_hover_popup_rect.has_value()) {
         RequestRedrawRect(*blocked_editor_hover_popup_rect);

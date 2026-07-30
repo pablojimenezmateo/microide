@@ -295,62 +295,6 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
   return layout;
 }
 
-std::string WorkspaceShell::HoveredSidebarModeTooltipLabel(const SDL_FRect& sidebar_rect) const {
-  if (!last_mouse_position_valid_ || !context_.current_project_state.sidebar.visible ||
-      MenuSurfaceCapturingMouse()) {
-    return {};
-  }
-  const SidebarModeRowLayout row = SidebarModeRow(sidebar_rect);
-  if (!row.icon_only) {
-    return {};  // labels are already visible
-  }
-  for (int i = 0; i < row.tab_count; ++i) {
-    if (Contains(row.tabs[static_cast<std::size_t>(i)].rect, last_mouse_x_, last_mouse_y_)) {
-      return std::string(BuiltinSidebarModeLabel(row.tabs[static_cast<std::size_t>(i)].mode));
-    }
-  }
-  if (row.has_overflow && Contains(row.overflow_rect, last_mouse_x_, last_mouse_y_)) {
-    return "More views";
-  }
-  return {};
-}
-
-std::string WorkspaceShell::HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const {
-  if (!last_mouse_position_valid_ || !context_.current_project_state.sidebar.visible ||
-      ActiveSidebarMode() != SidebarMode::Git || MenuSurfaceCapturingMouse() ||
-      !Contains(sidebar_rect, last_mouse_x_, last_mouse_y_)) {
-    return {};
-  }
-
-  if (Contains(git_sidebar_header::RefreshButtonRect(sidebar_rect), last_mouse_x_, last_mouse_y_)) {
-    return context_.current_project_state.sidebar.git.refreshing ? "Refreshing repository snapshot"
-                                                                 : "Refresh";
-  }
-
-  // Per-entry actions live on the right-click context menu, so the only git
-  // sidebar tooltip is the header refresh button above.
-  return {};
-}
-
-std::optional<SDL_FRect> WorkspaceShell::HoveredGitSidebarTooltipRect(const WorkspaceLayout& layout) const {
-  const std::string label = HoveredGitSidebarTooltipLabel(layout.sidebar);
-  if (label.empty()) {
-    return std::nullopt;
-  }
-
-  const auto tooltip = detail::BuildTooltipLayout(
-      text_renderer_, label, std::max(180.0f, layout.full.w - layout.sidebar.w - 24.0f));
-  const float tooltip_x =
-      std::clamp(last_mouse_x_ + 12.0f, layout.full.x + 8.0f,
-                 layout.full.x + layout.full.w - tooltip.rect.w - 8.0f);
-  const float tooltip_y =
-      last_mouse_y_ - tooltip.rect.h - 10.0f >= layout.full.y + 8.0f
-          ? last_mouse_y_ - tooltip.rect.h - 10.0f
-          : std::clamp(last_mouse_y_ + 14.0f, layout.full.y + 8.0f,
-                       layout.full.y + layout.full.h - tooltip.rect.h - 8.0f);
-  return MakeRect(tooltip_x, tooltip_y, tooltip.rect.w, tooltip.rect.h);
-}
-
 const std::vector<WorkspaceShell::GitSidebarLine>& WorkspaceShell::BuildGitSidebarLines() const {
   // Always reads live git state through the shared revision-exact memo (never the
   // possibly-stale per-frame prepare cache), so hit-testing between frames matches

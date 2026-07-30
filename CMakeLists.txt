@@ -471,6 +471,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/ProjectCatalogService.cpp
   src/workspace/GitOperationService.cpp
   src/workspace/GitSidebarHeaderLayout.cpp
+  src/workspace/HoverTooltipSurface.cpp
   src/workspace/ProjectSearchPanelLayout.cpp
   src/workspace/WorkspacePathMutationCoordinatorDirty.cpp
   src/workspace/WorkspacePathMutationCoordinatorTabs.cpp

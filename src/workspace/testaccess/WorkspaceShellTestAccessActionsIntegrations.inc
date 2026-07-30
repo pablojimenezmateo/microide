@@ -554,7 +554,3 @@
   static std::string ProjectTabTooltipLabel(WorkspaceShell& shell, std::size_t index) {
     return shell.ProjectTabTooltipLabel(index);
   }
-  static std::string HoveredProjectTabTooltipLabel(WorkspaceShell& shell) {
-    const WorkspaceLayout layout = CurrentLayout(shell);
-    return shell.HoveredProjectTabTooltipLabel(layout.project_tab_strip);
-  }

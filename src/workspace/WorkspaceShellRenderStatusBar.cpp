@@ -23,8 +23,6 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
   DrawFilledRect(renderer, vm.rect, theme_.chrome_background);
   DrawFilledRect(renderer, MakeRect(vm.rect.x, vm.rect.y, vm.rect.w, 1.0f), theme_.border);
 
-  const float padding = 12.0f;
-  const float gap = 14.0f;
   const auto tone_color = [&](StatusBarSegmentTone tone, SDL_Color fallback) -> SDL_Color {
     switch (tone) {
       case StatusBarSegmentTone::Error:
@@ -41,8 +39,7 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
   const auto segment_color = [&](const StatusBarSegmentViewModel& seg) -> SDL_Color {
     // Diagnostic segments are colored by semantic tone (set in
     // StatusBarModelService) so the count/state -- not the display text -- picks
-    // the color. The status bar has no clickable segments; every segment renders
-    // as plain (non-interactive) text.
+    // the color. Clickable segments then take the accent color on top of that.
     switch (seg.id) {
       case StatusBarSegmentId::Problems:
         return tone_color(seg.tone, theme_.diagnostic_warning);
@@ -78,20 +75,7 @@ void WorkspaceShell::RenderStatusBar(SDL_Renderer* renderer,
                         hovered ? theme_.text_primary : segment_color(seg), text_bg, seg.text);
   };
 
-  float left_x = vm.rect.x + padding;
-  for (const StatusBarSegmentViewModel& seg : vm.left_segments) {
-    const float width = text_renderer_.MeasureWidth(seg.text);
-    draw_segment(seg, MakeRect(left_x, vm.rect.y, width, vm.rect.h));
-    left_x += width + gap;
-  }
-
-  float right_x = vm.rect.x + vm.rect.w - padding;
-  for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
-    const float width = text_renderer_.MeasureWidth(it->text);
-    right_x -= width;
-    draw_segment(*it, MakeRect(right_x, vm.rect.y, width, vm.rect.h));
-    right_x -= gap;
-  }
+  ForEachStatusBarSegmentRect(vm, text_renderer_, draw_segment);
 }
 
 void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,

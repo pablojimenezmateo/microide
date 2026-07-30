@@ -3189,7 +3189,7 @@ void TestWorkspaceShellHoveredTabShowsRelativePathTooltip() {
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
   SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
                                               tab_rect.y + tab_rect.h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "src/deep/main.cpp",
          "hovering a tab should expose the full relative path tooltip");
 }
 
@@ -3207,12 +3207,12 @@ void TestWorkspaceShellWindowMouseLeaveClearsTabTooltip() {
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
   SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f,
                                               tab_rect.y + tab_rect.h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "src/deep/main.cpp",
          "tab tooltip fixture should start with a hovered tab label");
 
   Expect(SendWindowMouseLeave(shell),
          "window mouse leave should be handled");
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell).empty(),
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell).empty(),
          "window mouse leave should clear stale tab tooltip hover state");
 }
 
@@ -3235,14 +3235,14 @@ void TestWorkspaceShellInWindowMouseMoveClearsProjectTabTooltipAndInvalidatesChr
   SendMouseMotion(shell, project_tab_rect.x + project_tab_rect.w * 0.5f,
                   project_tab_rect.y + project_tab_rect.h * 0.5f, 0);
   const std::string hovered_label_before =
-      WorkspaceShellTestAccess::HoveredProjectTabTooltipLabel(shell);
+      WorkspaceShellTestAccess::HoveredTooltipLabel(shell);
   Expect(!hovered_label_before.empty(),
          "project tab tooltip fixture should start with a hovered project tab label");
   (void)shell.ConsumePendingRenderInvalidation();
 
   const SDL_FRect editor_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
   SendMouseMotion(shell, editor_rect.x + 20.0f, editor_rect.y + 20.0f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredProjectTabTooltipLabel(shell).empty(),
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell).empty(),
          "moving inside the window away from project tabs should clear project tab tooltip hover");
 }
 

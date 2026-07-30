@@ -346,7 +346,7 @@ WorkspaceRootView WorkspaceShell::Bootstrapper::BuildRootView() const {
               }),
           .menu = WorkspaceMenuView(
               [shell](SDL_Renderer* renderer, const WorkspaceLayout& layout) {
-                shell->RenderChromeTooltips(renderer, layout);
+                shell->RenderHoverTooltip(renderer, layout);
                 shell->RenderMenuPopups(renderer, layout);
               }),
           .prompt = WorkspacePromptView(

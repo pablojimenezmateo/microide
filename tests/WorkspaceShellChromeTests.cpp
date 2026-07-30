@@ -466,6 +466,11 @@ void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   Expect(SendMouseMotion(shell, mode_rect.x + mode_rect.w * 0.5f,
                          mode_rect.y + mode_rect.h * 0.5f, 0),
          "priming the sidebar mode hover should be handled");
+  // An icon-only mode tab shows a tooltip naming the view; moving off it has to
+  // repaint that card, which the mode-row tooltip used to be missing from.
+  const auto departed_tooltip = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
+  Expect(departed_tooltip.has_value(),
+         "an icon-only sidebar mode tab should name itself on hover");
 
   SDL_Event motion_event{};
   motion_event.type = SDL_EVENT_MOUSE_MOTION;
@@ -475,12 +480,15 @@ void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   Expect(hover_result.handled, "switching tree header hover should be handled");
   Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
          "tree header hover should stay on a partial redraw path");
-  Expect(hover_result.redraw.rects.size() <= 2,
-         "tree header hover should only dirty the affected controls");
+  // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
+  Expect(hover_result.redraw.rects.size() <= 4,
+         "tree header hover should only dirty the affected controls and tooltips");
   Expect(AnyRectIntersects(hover_result.redraw.rects, mode_rect),
          "tree header hover should redraw the previously hovered control");
   Expect(AnyRectIntersects(hover_result.redraw.rects, collapse_rect),
          "tree header hover should redraw the newly hovered control");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, *departed_tooltip),
+         "leaving a mode tab should repaint the tooltip card it was showing");
 }
 
 void TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
@@ -552,12 +560,20 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   Expect(hover_result.handled, "switching git header hover should be handled");
   Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
          "git header hover should stay on a partial redraw path");
-  Expect(hover_result.redraw.rects.size() <= 2,
-         "git header hover should only dirty the affected controls");
+  // Up to 4 rects: previous + new hover-button rects + previous + new tooltip rects.
+  Expect(hover_result.redraw.rects.size() <= 4,
+         "git header hover should only dirty the affected controls and tooltips");
   Expect(AnyRectIntersects(hover_result.redraw.rects, top_action_rects[0]),
          "git header hover should redraw the previously hovered control");
   Expect(AnyRectIntersects(hover_result.redraw.rects, top_action_rects[2]),
          "git header hover should redraw the newly hovered control");
+  // Arriving on Refresh has to paint its tooltip; the git sidebar tooltip used to
+  // be absent from motion change-detection, so the card only appeared if the
+  // sidebar happened to repaint for some other reason.
+  const auto arrived_tooltip = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
+  Expect(arrived_tooltip.has_value(), "hovering git Refresh should resolve a tooltip");
+  Expect(AnyRectIntersects(hover_result.redraw.rects, *arrived_tooltip),
+         "arriving on git Refresh should repaint its tooltip card");
 }
 
 void TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip() {
@@ -574,7 +590,7 @@ void TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip() {
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
   Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
          "hovering the tab should be handled");
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "src/deep/main.cpp",
          "tab tooltip fixture should expose the relative path before opening a menu");
 
   const auto file_rect = WorkspaceShellTestAccess::MenuBarItemRect(shell, "File");
@@ -587,7 +603,7 @@ void TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip() {
 
   Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
          "hover while a menu is open should stay captured by the menu surface");
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell).empty(),
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell).empty(),
          "tab tooltips should stay suppressed while a menu is open");
 }
 
@@ -605,7 +621,7 @@ void TestWorkspaceShellOverflowPopupSuppressesUnderlyingTabTooltip() {
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
   Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
          "overflow suppression fixture should first expose a tab tooltip");
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "src/deep/main.cpp",
          "overflow suppression fixture should expose the relative path before opening the overflow menu");
 
   const auto chevron = WorkspaceShellTestAccess::MenuOverflowChevronRect(shell);
@@ -618,7 +634,7 @@ void TestWorkspaceShellOverflowPopupSuppressesUnderlyingTabTooltip() {
 
   Expect(SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.5f, tab_rect.y + tab_rect.h * 0.5f, 0),
          "hover while the overflow popup is open should be handled");
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell).empty(),
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell).empty(),
          "tab tooltips should stay suppressed while the overflow popup is open");
 }
 
@@ -927,10 +943,10 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
   const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
   (void)SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.25f,
                                                     tab_rect.y + tab_rect.h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredTabTooltipLabel(shell) == "src/deep/main.cpp",
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "src/deep/main.cpp",
          "tooltip layering fixture should produce the hovered tab tooltip");
 
-  const auto tooltip_rect = WorkspaceShellTestAccess::HoveredTabTooltipRect(shell);
+  const auto tooltip_rect = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
   Expect(tooltip_rect.has_value(), "hovered tabs should compute a tooltip rect");
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const float overlap_x = std::max(tooltip_rect->x, layout.sidebar.x);
@@ -964,6 +980,101 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
   SDL_DestroySurface(pixels);
 }
 
+void TestWorkspaceShellStatusBarSegmentsExplainThemselvesOnHover() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+
+  // Every status-bar segment carried a tooltip string that nothing ever drew, so
+  // the one row of chrome naming the language, indent, encoding and cursor
+  // position explained none of it.
+  const auto line_col_rect =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, microide::workspace::StatusBarSegmentId::LineColumn);
+  Expect(line_col_rect.has_value(), "the status bar should place a line/column segment");
+  (void)SendMouseMotion(shell, line_col_rect->x + line_col_rect->w * 0.5f,
+                        line_col_rect->y + line_col_rect->h * 0.5f, 0);
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "Go to line/column",
+         "hovering the line/column segment should show what clicking it does");
+
+  const auto tooltip_rect = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
+  Expect(tooltip_rect.has_value(), "a status bar tooltip should resolve a card rect");
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  // The status bar sits on the window's bottom edge, so the shared placement rule
+  // has to flip the card above its anchor rather than off-screen.
+  Expect(tooltip_rect->y + tooltip_rect->h <= layout.status_bar.y,
+         "a status bar tooltip should flip above the bar instead of off-screen");
+  Expect(tooltip_rect->y >= layout.full.y,
+         "a flipped tooltip should stay inside the window");
+}
+
+void TestWorkspaceShellFindWidgetControlsNameThemselvesOnHover() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbeta\nalpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "search alpha"),
+         "the find widget fixture should open the in-file find surface");
+
+  const microide::workspace::FindWidgetLayout fw = WorkspaceShellTestAccess::FindWidgetControls(shell, false);
+  Expect(fw.toggle_count >= 1, "the in-file find widget should expose its regex toggle");
+
+  // The find widget is five unlabelled or two-glyph buttons; none of them said
+  // what it was.
+  const auto hover = [&](const SDL_FRect& rect) {
+    (void)SendMouseMotion(shell, rect.x + rect.w * 0.5f, rect.y + rect.h * 0.5f, 0);
+    return WorkspaceShellTestAccess::HoveredTooltipLabel(shell);
+  };
+  Expect(hover(fw.toggle_buttons[0]) == "Use Regular Expression (Alt+R)",
+         "the .* toggle should name itself and its chord");
+  Expect(hover(fw.next_button) == "Next Match (Enter)",
+         "the next-match button should name itself and its chord");
+  Expect(hover(fw.prev_button) == "Previous Match (Shift+Enter)",
+         "the previous-match button should name itself and its chord");
+  Expect(hover(fw.close_button) == "Close (Escape)",
+         "the find widget close button should name itself and its chord");
+}
+
+void TestWorkspaceShellTooltipCardIsAnchoredToItsControl() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "deep" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  // One placement rule for every tooltip: centered on the control it describes,
+  // not on the pointer, so the card holds still while the pointer moves within
+  // one button.
+  const SDL_FRect tab_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  (void)SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.25f,
+                        tab_rect.y + tab_rect.h * 0.5f, 0);
+  const auto left_hover = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
+  (void)SendMouseMotion(shell, tab_rect.x + tab_rect.w * 0.75f,
+                        tab_rect.y + tab_rect.h * 0.5f, 0);
+  const auto right_hover = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
+  Expect(left_hover.has_value() && right_hover.has_value(),
+         "both ends of a hovered tab should resolve a tooltip");
+  Expect(left_hover->x == right_hover->x && left_hover->y == right_hover->y,
+         "a tooltip should not follow the pointer inside one control");
+  Expect(left_hover->y >= tab_rect.y + tab_rect.h,
+         "a tab tooltip should sit below the tab it names");
+}
+
 void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
 #if !MICROIDE_HAS_SDL3_TTF
   return;
@@ -994,10 +1105,10 @@ void TestWorkspaceShellGitSidebarTooltipUsesSharedCompactCard() {
   (void)SendMouseMotion(
       shell, top_action_rects[2].x + top_action_rects[2].w * 0.5f,
       top_action_rects[2].y + top_action_rects[2].h * 0.5f, 0);
-  Expect(WorkspaceShellTestAccess::HoveredGitSidebarTooltipLabel(shell) == "Refresh",
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell) == "Refresh",
          "git tooltip fixture should expose the compact action tooltip");
 
-  const auto tooltip_rect = WorkspaceShellTestAccess::HoveredGitSidebarTooltipRect(shell);
+  const auto tooltip_rect = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
   Expect(tooltip_rect.has_value(), "git tooltip fixture should compute a tooltip rect");
 
   SoftwareCanvas canvas(1280, 720);
@@ -1061,7 +1172,7 @@ void TestWorkspaceShellProjectTabTooltipDismissRetainedRedrawMatchesFullRender()
   Expect(hover_result.handled, "hovering a project tab tooltip fixture should be handled");
   RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight,
                              hover_result.redraw);
-  Expect(WorkspaceShellTestAccess::HoveredProjectTabTooltipRect(retained_shell).has_value(),
+  Expect(WorkspaceShellTestAccess::HoveredTooltipRect(retained_shell).has_value(),
          "hovering a project tab should expose a tooltip rect");
 
   const SDL_FRect editor_rect = WorkspaceShellTestAccess::ActiveEditorPaneRect(retained_shell);
@@ -2947,6 +3058,12 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation);
   AddTest(tests, "WorkspaceShell/GitSidebarHeaderHoverReturnsButtonOnlyInvalidation",
           TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/StatusBarSegmentsExplainThemselvesOnHover",
+          TestWorkspaceShellStatusBarSegmentsExplainThemselvesOnHover);
+  AddTest(tests, "WorkspaceShell/FindWidgetControlsNameThemselvesOnHover",
+          TestWorkspaceShellFindWidgetControlsNameThemselvesOnHover);
+  AddTest(tests, "WorkspaceShell/TooltipCardIsAnchoredToItsControl",
+          TestWorkspaceShellTooltipCardIsAnchoredToItsControl);
   AddTest(tests, "WorkspaceShell/OpenMenuSuppressesUnderlyingTabTooltip",
           TestWorkspaceShellOpenMenuSuppressesUnderlyingTabTooltip);
   AddTest(tests, "WorkspaceShell/OverflowPopupSuppressesUnderlyingTabTooltip",

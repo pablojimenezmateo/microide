@@ -105,19 +105,6 @@ std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
   return root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string();
 }
 
-std::string WorkspaceShell::HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const {
-  if (!last_mouse_position_valid_ || context_.current_project_state.root.empty() ||
-      MenuSurfaceCapturingMouse()) {
-    return {};
-  }
-  if (!Contains(tab_strip, last_mouse_x_, last_mouse_y_)) {
-    return {};
-  }
-
-  const auto visible_tabs = tab_strip_chrome_.ComputeVisibleTabs(tab_strip);
-  return HoveredChromeTabTooltipLabel(visible_tabs, last_mouse_x_, last_mouse_y_);
-}
-
 SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,
                                                           const SDL_FRect& caret_anchor) const {
   // Compact list popup placed next to the caret rather than a centered modal. Sized to the

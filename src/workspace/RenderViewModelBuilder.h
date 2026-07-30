@@ -303,6 +303,31 @@ struct StatusBarViewModel {
   std::vector<StatusBarSegmentViewModel> right_segments;
 };
 
+// Status-bar segment geometry, in one place. Left segments pack from the left
+// edge, right segments from the right edge, and the padding/gap constants have to
+// agree across paint, the pointer hit test and the tooltip resolver — they used to
+// be three hand-copied loops. `visit(segment, rect)` is called in paint order.
+template <typename TextRendererT, typename Visit>
+void ForEachStatusBarSegmentRect(const StatusBarViewModel& vm,
+                                 const TextRendererT& text_renderer,
+                                 Visit&& visit) {
+  constexpr float kStatusPadding = 12.0f;
+  constexpr float kStatusGap = 14.0f;
+  float left_x = vm.rect.x + kStatusPadding;
+  for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
+    const float width = text_renderer.MeasureWidth(segment.text);
+    visit(segment, SDL_FRect{left_x, vm.rect.y, width, vm.rect.h});
+    left_x += width + kStatusGap;
+  }
+  float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
+  for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
+    const float width = text_renderer.MeasureWidth(it->text);
+    right_x -= width;
+    visit(*it, SDL_FRect{right_x, vm.rect.y, width, vm.rect.h});
+    right_x -= kStatusGap;
+  }
+}
+
 struct SettingsCategoryViewModel {
   std::string_view label;  // view into service-owned category string
   SDL_FRect rect{};        // clickable row rect in the left pane

@@ -573,7 +573,6 @@
   // currently-selected plugin theme refreshes after a reload.
   void RebuildPresentationRegistries();
   std::vector<VisibleStatusItem> ComputeVisibleStatusItems(const SDL_FRect& breadcrumb) const;
-  std::string HoveredStatusTooltip(const SDL_FRect& breadcrumb) const;
   std::optional<SDL_FRect> ActiveSubmenuRect(const SDL_FRect& menu_bar) const;
   const project::TreeEntry* SelectedTreeEntry() const;
   std::filesystem::path SelectedTreePath() const;
@@ -1053,7 +1052,6 @@
   void CloseDebugPane();
   void OpenDebugPaneOnStop();
   SidebarModeRowLayout SidebarModeRow(const SDL_FRect& sidebar_rect) const;
-  std::string HoveredSidebarModeTooltipLabel(const SDL_FRect& sidebar_rect) const;
   void CloseSidebar();
   void ToggleSidebar();
   void RestorePreviousSidebar();
@@ -1579,7 +1577,7 @@
                                     const FrameSurfaceViewModel& frame_vm,
                                     const OverlaySurfaceViewModel& overlay_vm);
   void RenderWindowChrome(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
-  void RenderChromeTooltips(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
+  void RenderHoverTooltip(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderSidebarSurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   void RenderOverlaySurface(SDL_Renderer* renderer,
                             const WorkspaceLayout& layout,
@@ -1751,17 +1749,13 @@
   void RenderEditorHoverPopup(SDL_Renderer* renderer) const;
   void RenderTextComposition(SDL_Renderer* renderer,
                              const std::optional<TextInputVisual>& visual) const;
-  std::string HoveredProjectTabTooltipLabel(const SDL_FRect& project_tab_strip) const;
-  std::optional<SDL_FRect> HoveredProjectTabTooltipRect(const WorkspaceLayout& layout) const;
-  std::string HoveredTabTooltipLabel(const SDL_FRect& tab_strip) const;
-  std::optional<SDL_FRect> HoveredTabTooltipRect(const WorkspaceLayout& layout) const;
-  std::string HoveredGitSidebarTooltipLabel(const SDL_FRect& sidebar_rect) const;
-  std::optional<SDL_FRect> HoveredGitSidebarTooltipRect(const WorkspaceLayout& layout) const;
-  // Tooltip text for the cryptic project-search option toggles in the sidebar
-  // (pattern mode / case mode / hidden-file toggle). Returns "" when none is hovered.
-  std::string HoveredSidebarSearchTooltipLabel(const SDL_FRect& sidebar_rect) const;
-  std::optional<SDL_FRect> HoveredSidebarSearchTooltipRect(const WorkspaceLayout& layout) const;
-  std::optional<SDL_FRect> HoveredStatusTooltipRect(const WorkspaceLayout& layout) const;
+  // The shell's one hovered-tooltip answer (HoverTooltipSurface.cpp): the tab
+  // strips, breadcrumb status items, sidebar mode row and view headers, the two
+  // find widgets and the status bar all resolve through it, in that order, and it
+  // returns the winner already truncated and already placed. Only one tooltip can
+  // ever show, so paint, redraw invalidation, motion change-detection and the
+  // tests all read this single answer rather than each listing every provider.
+  std::optional<HoverTooltip> HoveredTooltip(const WorkspaceLayout& layout) const;
   // Hovered interactive-element rects used both by the cursor (pointer feedback) and by
   // the motion handler (hover-state redraw invalidation). Centralizing the geometry here
   // keeps render, cursor, and invalidation from each maintaining their own hit-test copy.

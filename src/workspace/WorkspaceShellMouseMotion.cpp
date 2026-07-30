@@ -120,20 +120,14 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   const float previous_mouse_y = last_mouse_y_;
   const auto capture_blocked_hover_visuals = [this, &layout]() {
     struct HoverVisuals {
-      std::optional<SDL_FRect> project_tab_tooltip_rect;
-      std::optional<SDL_FRect> tab_tooltip_rect;
-      std::optional<SDL_FRect> status_tooltip_rect;
-      std::optional<SDL_FRect> git_sidebar_tooltip_rect;
+      std::optional<SDL_FRect> tooltip_rect;
       std::optional<SDL_FRect> editor_hover_popup_rect;
     };
 
-    HoverVisuals visuals{
-        .project_tab_tooltip_rect = HoveredProjectTabTooltipRect(layout),
-        .tab_tooltip_rect = HoveredTabTooltipRect(layout),
-        .status_tooltip_rect = HoveredStatusTooltipRect(layout),
-        .git_sidebar_tooltip_rect = HoveredGitSidebarTooltipRect(layout),
-        .editor_hover_popup_rect = std::nullopt,
-    };
+    HoverVisuals visuals;
+    if (const auto tooltip = HoveredTooltip(layout); tooltip.has_value()) {
+      visuals.tooltip_rect = tooltip->rect;
+    }
     if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
       visuals.editor_hover_popup_rect = popup->rect;
     }
@@ -145,10 +139,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         RequestRedrawRect(*rect);
       }
     };
-    request(visuals.project_tab_tooltip_rect);
-    request(visuals.tab_tooltip_rect);
-    request(visuals.status_tooltip_rect);
-    request(visuals.git_sidebar_tooltip_rect);
+    request(visuals.tooltip_rect);
     request(visuals.editor_hover_popup_rect);
   };
   const auto rects_equal = [](const SDL_FRect& lhs, const SDL_FRect& rhs) {
@@ -425,34 +416,13 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   bool hover_visual_changed = false;
   bool sidebar_hover_button_changed = false;
   bool status_segment_hover_changed = false;
-  std::optional<SDL_FRect> previous_project_tab_tooltip_rect;
-  std::optional<SDL_FRect> previous_tab_tooltip_rect;
-  std::optional<SDL_FRect> previous_status_tooltip_rect;
-  std::optional<SDL_FRect> previous_sidebar_search_tooltip_rect;
-  std::string previous_project_tab_tooltip_label;
-  std::string previous_tab_tooltip_label;
-  std::string previous_status_tooltip_label;
-  std::string previous_sidebar_search_tooltip_label;
+  std::optional<HoverTooltip> previous_tooltip;
   if (CurrentWindowRect().has_value()) {
     // The "before" layout is geometrically identical to `layout` (nothing above
     // mutates a layout input on this fall-through path); the "previous" aspect comes
-    // from the not-yet-updated last_mouse_ position the Hovered* probes read. Reuse
+    // from the not-yet-updated last_mouse_ position HoveredTooltip reads. Reuse
     // the already-computed layout instead of a second full ComputeLayout pass.
-    const std::optional<WorkspaceLayout> layout_before_state = layout;
-    if (layout_before_state.has_value()) {
-      previous_project_tab_tooltip_label =
-          HoveredProjectTabTooltipLabel(layout_before_state->project_tab_strip);
-      previous_project_tab_tooltip_rect =
-          HoveredProjectTabTooltipRect(*layout_before_state);
-      previous_tab_tooltip_label = HoveredTabTooltipLabel(layout_before_state->tab_strip);
-      previous_tab_tooltip_rect = HoveredTabTooltipRect(*layout_before_state);
-      previous_status_tooltip_label = HoveredStatusTooltip(layout_before_state->breadcrumb);
-      previous_status_tooltip_rect = HoveredStatusTooltipRect(*layout_before_state);
-      previous_sidebar_search_tooltip_label =
-          HoveredSidebarSearchTooltipLabel(layout_before_state->sidebar);
-      previous_sidebar_search_tooltip_rect =
-          HoveredSidebarSearchTooltipRect(*layout_before_state);
-    }
+    previous_tooltip = HoveredTooltip(layout);
     const std::optional<EditorHoverTarget> previous_hover_target = active_editor_hover_target_;
     const bool previous_action_hovered =
         last_mouse_position_valid_ && EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
@@ -580,47 +550,32 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
   }
 
-  const auto request_tooltip_redraw_if_changed =
-      [this, &rects_equal](const std::string& previous_label,
-                           const std::optional<SDL_FRect>& previous_rect,
-                           const std::string& current_label,
-                           const std::optional<SDL_FRect>& current_rect) {
-        const auto padded_rect = [](const SDL_FRect& rect) {
-          static constexpr float kTooltipRedrawPaddingPx = 1.0f;
-          return MakeRect(rect.x - kTooltipRedrawPaddingPx, rect.y - kTooltipRedrawPaddingPx,
-                          rect.w + 2.0f * kTooltipRedrawPaddingPx,
-                          rect.h + 2.0f * kTooltipRedrawPaddingPx);
-        };
-        const bool same_rect = previous_rect.has_value() == current_rect.has_value() &&
-                               (!previous_rect.has_value() ||
-                                rects_equal(*previous_rect, *current_rect));
-        if (previous_label == current_label && same_rect) {
-          return false;
-        }
-        if (previous_rect.has_value()) {
-          RequestRedrawRect(padded_rect(*previous_rect));
-        }
-        if (current_rect.has_value()) {
-          RequestRedrawRect(padded_rect(*current_rect));
-        }
-        return true;
-      };
-  const bool chrome_tooltip_visual_changed =
-      request_tooltip_redraw_if_changed(previous_project_tab_tooltip_label,
-                                        previous_project_tab_tooltip_rect,
-                                        HoveredProjectTabTooltipLabel(layout.project_tab_strip),
-                                        HoveredProjectTabTooltipRect(layout)) ||
-      request_tooltip_redraw_if_changed(previous_tab_tooltip_label, previous_tab_tooltip_rect,
-                                        HoveredTabTooltipLabel(layout.tab_strip),
-                                        HoveredTabTooltipRect(layout)) ||
-      request_tooltip_redraw_if_changed(previous_status_tooltip_label,
-                                        previous_status_tooltip_rect,
-                                        HoveredStatusTooltip(layout.breadcrumb),
-                                        HoveredStatusTooltipRect(layout)) ||
-      request_tooltip_redraw_if_changed(previous_sidebar_search_tooltip_label,
-                                        previous_sidebar_search_tooltip_rect,
-                                        HoveredSidebarSearchTooltipLabel(layout.sidebar),
-                                        HoveredSidebarSearchTooltipRect(layout));
+  // One tooltip can show at a time, so one before/after comparison covers every
+  // provider: repaint the card that is leaving and the card that is arriving.
+  const bool chrome_tooltip_visual_changed = [&]() {
+    const std::optional<HoverTooltip> current_tooltip = HoveredTooltip(layout);
+    const bool unchanged =
+        previous_tooltip.has_value() == current_tooltip.has_value() &&
+        (!previous_tooltip.has_value() ||
+         (previous_tooltip->text == current_tooltip->text &&
+          SameTooltipRect(previous_tooltip->rect, current_tooltip->rect)));
+    if (unchanged) {
+      return false;
+    }
+    static constexpr float kTooltipRedrawPaddingPx = 1.0f;
+    const auto request_padded = [this](const SDL_FRect& rect) {
+      RequestRedrawRect(MakeRect(rect.x - kTooltipRedrawPaddingPx, rect.y - kTooltipRedrawPaddingPx,
+                                 rect.w + 2.0f * kTooltipRedrawPaddingPx,
+                                 rect.h + 2.0f * kTooltipRedrawPaddingPx));
+    };
+    if (previous_tooltip.has_value()) {
+      request_padded(previous_tooltip->rect);
+    }
+    if (current_tooltip.has_value()) {
+      request_padded(current_tooltip->rect);
+    }
+    return true;
+  }();
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
     EnsureRedraw([this]() { RequestChromeRedraw(); });
     return true;

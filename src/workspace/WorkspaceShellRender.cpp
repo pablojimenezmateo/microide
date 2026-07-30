@@ -133,7 +133,7 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
         renderer, layout,
         ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : std::size_t{0});
   }
-  RenderChromeTooltips(renderer, layout);
+  RenderHoverTooltip(renderer, layout);
   RenderMenuPopups(renderer, layout);
   RenderStatusBar(renderer, layout);
   RenderSettingsOverlay(renderer, layout);

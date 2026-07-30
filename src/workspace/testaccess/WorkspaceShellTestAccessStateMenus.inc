@@ -383,29 +383,15 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     const StatusBarViewModel vm =
         RenderViewModelBuilder(shell.context_).BuildStatusBar(layout, shell.status_bar_service_);
-    constexpr float kStatusPadding = 12.0f;
-    constexpr float kStatusGap = 14.0f;
-    float left_x = vm.rect.x + kStatusPadding;
-    for (const StatusBarSegmentViewModel& segment : vm.left_segments) {
-      const float width = shell.text_renderer_.MeasureWidth(segment.text);
-      const SDL_FRect row = MakeRect(left_x, vm.rect.y, width, vm.rect.h);
-      if (segment.id == id) {
-        return row;
-      }
-      left_x += width + kStatusGap;
-    }
-
-    float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
-    for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
-      const float width = shell.text_renderer_.MeasureWidth(it->text);
-      right_x -= width;
-      const SDL_FRect row = MakeRect(right_x, vm.rect.y, width, vm.rect.h);
-      if (it->id == id) {
-        return row;
-      }
-      right_x -= kStatusGap;
-    }
-    return std::nullopt;
+    std::optional<SDL_FRect> found;
+    ForEachStatusBarSegmentRect(
+        vm, shell.text_renderer_,
+        [&](const StatusBarSegmentViewModel& segment, const SDL_FRect& row) {
+          if (!found.has_value() && segment.id == id) {
+            found = row;
+          }
+        });
+    return found;
   }
   static void RefreshStatusBar(WorkspaceShell& shell) { shell.RefreshStatusBar(); }
   static void SetStatusBarGitSnapshot(WorkspaceShell& shell,
@@ -550,6 +536,9 @@
   }
   static bool BufferSearchSurfaceFocused(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::BufferSearch;
+  }
+  static FindWidgetLayout FindWidgetControls(WorkspaceShell& shell, bool replace_mode) {
+    return ComputeFindWidgetLayout(CurrentLayout(shell).editor_surface, replace_mode);
   }
   static SDL_FRect FindWidgetRect(WorkspaceShell& shell, bool replace_mode) {
     return ComputeFindWidgetRect(CurrentLayout(shell).editor_surface, replace_mode);
