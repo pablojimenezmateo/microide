@@ -288,19 +288,32 @@ DapThread ParseThread(const JsonValue& value) {
   return thread;
 }
 
-std::vector<DapThread> ParseThreads(const JsonValue& body) {
-  std::vector<DapThread> threads;
-  const auto& array = body["threads"].AsArray();
-  // Cap like ParseStackFrames: a hostile/buggy adapter can pack millions of
-  // entries into a sub-64 MiB frame; each becomes strings materialized on the
-  // main thread (and threads feed a UI picker). 10000 is far beyond any real
-  // process's thread count.
+// Parse a capped DAP array field.
+//
+// Every list an adapter sends is attacker-shaped in the same way: the adapter
+// treats our requested count as a hint at best, and a sub-64 MiB frame can pack
+// millions of tiny objects, each of which becomes several strings materialized
+// on the main thread. So every one of these is read the same way — take the
+// array, clamp to kMaxDapListEntries, reserve, parse item by item.
+//
+// The five call sites each spelled that out; only the field name, the element
+// parser and the reason the cap is safe differed. The reasons are worth keeping
+// and stay at the call sites.
+template <typename ParseItem>
+auto ParseCappedArray(const JsonValue& body, std::string_view key, ParseItem&& parse_item) {
+  const auto& array = body[key].AsArray();
+  std::vector<std::decay_t<decltype(parse_item(array[0]))>> parsed;
   const std::size_t count = std::min(array.size(), kMaxDapListEntries);
-  threads.reserve(count);
+  parsed.reserve(count);
   for (std::size_t i = 0; i < count; ++i) {
-    threads.push_back(ParseThread(array[i]));
+    parsed.push_back(parse_item(array[i]));
   }
-  return threads;
+  return parsed;
+}
+
+std::vector<DapThread> ParseThreads(const JsonValue& body) {
+  // 10000 is far beyond any real process's thread count, and threads feed a UI picker.
+  return ParseCappedArray(body, "threads", ParseThread);
 }
 
 DapStackFrame ParseStackFrame(const JsonValue& value) {
@@ -315,19 +328,10 @@ DapStackFrame ParseStackFrame(const JsonValue& value) {
 }
 
 std::vector<DapStackFrame> ParseStackFrames(const JsonValue& body) {
-  std::vector<DapStackFrame> frames;
-  const auto& array = body["stackFrames"].AsArray();
-  // Cap frame count. A hostile/buggy adapter can ignore our `levels` request cap
-  // and return a 64 MiB array of frames; each frame is materialized into a
-  // filesystem::path + display strings on the main thread (BuildExecutionView),
-  // so an uncapped array is a UI-thread stall + heap spike. 10000 frames is far
-  // beyond any real call stack a human would page through.
-  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
-  frames.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    frames.push_back(ParseStackFrame(array[i]));
-  }
-  return frames;
+  // An adapter can ignore our `levels` cap; each frame becomes a filesystem::path
+  // plus display strings on the main thread in BuildExecutionView. 10000 is far
+  // beyond any call stack a human pages through.
+  return ParseCappedArray(body, "stackFrames", ParseStackFrame);
 }
 
 DapScope ParseScope(const JsonValue& value) {
@@ -343,15 +347,8 @@ DapScope ParseScope(const JsonValue& value) {
 }
 
 std::vector<DapScope> ParseScopes(const JsonValue& body) {
-  std::vector<DapScope> scopes;
-  const auto& array = body["scopes"].AsArray();
-  // Cap like ParseStackFrames; a frame has only a handful of real scopes.
-  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
-  scopes.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    scopes.push_back(ParseScope(array[i]));
-  }
-  return scopes;
+  // A frame has only a handful of real scopes.
+  return ParseCappedArray(body, "scopes", ParseScope);
 }
 
 DapVariable ParseVariable(const JsonValue& value) {
@@ -368,19 +365,10 @@ DapVariable ParseVariable(const JsonValue& value) {
 }
 
 std::vector<DapVariable> ParseVariables(const JsonValue& body) {
-  std::vector<DapVariable> variables;
-  const auto& array = body["variables"].AsArray();
-  // Cap like ParseStackFrames. This is the largest and most frequent DAP array
-  // (container expansion): the adapter only treats our requested `count` as a
-  // hint, so an uncapped reply packs millions of tiny objects into a sub-64 MiB
-  // frame, each becoming four strings on the main thread plus a tree Node
-  // downstream. 10000 is far beyond what a user pages through in one node.
-  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
-  variables.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    variables.push_back(ParseVariable(array[i]));
-  }
-  return variables;
+  // The largest and most frequent DAP array (container expansion): the adapter
+  // treats our requested `count` as a hint, and each item becomes four strings on
+  // the main thread plus a tree Node downstream.
+  return ParseCappedArray(body, "variables", ParseVariable);
 }
 
 DapBreakpoint ParseBreakpoint(const JsonValue& value) {
@@ -399,16 +387,8 @@ DapBreakpoint ParseBreakpoint(const JsonValue& value) {
 }
 
 std::vector<DapBreakpoint> ParseBreakpoints(const JsonValue& body) {
-  std::vector<DapBreakpoint> breakpoints;
-  const auto& array = body["breakpoints"].AsArray();
-  // Cap like ParseStackFrames; a setBreakpoints reply mirrors the breakpoints we
-  // sent, so a flood beyond this is adversarial.
-  const std::size_t count = std::min(array.size(), kMaxDapListEntries);
-  breakpoints.reserve(count);
-  for (std::size_t i = 0; i < count; ++i) {
-    breakpoints.push_back(ParseBreakpoint(array[i]));
-  }
-  return breakpoints;
+  // A setBreakpoints reply mirrors what we sent, so a flood beyond this is adversarial.
+  return ParseCappedArray(body, "breakpoints", ParseBreakpoint);
 }
 
 DapStoppedEvent ParseStoppedEvent(const JsonValue& body) {
