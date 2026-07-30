@@ -564,11 +564,8 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           hover_visual_changed;
     }
 
-    const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
-    if (context_.current_project_state.overlay.visible &&
-        (overlay_mode == OverlayMode::BufferSearch || overlay_mode == OverlayMode::BufferReplace)) {
-      const FindWidgetLayout fw = ComputeBufferFindWidgetLayout(
-          layout.editor_surface, overlay_mode == OverlayMode::BufferReplace);
+    // Both find widgets: same layout, same buttons, so one collector serves them.
+    const auto find_widget_hover_changed = [&](const FindWidgetLayout& fw) {
       std::array<SDL_FRect, kFindWidgetMaxToggles + 5> buttons{};
       std::size_t count = 0;
       for (std::size_t i = 0; i < fw.toggle_count; ++i) {
@@ -581,9 +578,23 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         buttons[count++] = fw.replace_button;
         buttons[count++] = fw.replace_all_button;
       }
+      return floating_widget_hover_changed(fw.widget,
+                                           std::span<const SDL_FRect>(buttons.data(), count));
+    };
+
+    const OverlayMode overlay_mode = context_.current_project_state.overlay.mode;
+    if (context_.current_project_state.overlay.visible &&
+        (overlay_mode == OverlayMode::BufferSearch || overlay_mode == OverlayMode::BufferReplace)) {
       hover_visual_changed =
-          floating_widget_hover_changed(fw.widget,
-                                        std::span<const SDL_FRect>(buttons.data(), count)) ||
+          find_widget_hover_changed(ComputeBufferFindWidgetLayout(
+              layout.editor_surface, overlay_mode == OverlayMode::BufferReplace)) ||
+          hover_visual_changed;
+    }
+    if (BottomPanelVisible() && terminal_find_service_.visible()) {
+      hover_visual_changed =
+          find_widget_hover_changed(ComputeFindWidgetLayout(BottomPanelContentRect(layout),
+                                                            /*replace_mode=*/false,
+                                                            kTerminalFindToggleCount)) ||
           hover_visual_changed;
     }
   }

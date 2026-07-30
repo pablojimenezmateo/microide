@@ -34,6 +34,17 @@ bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& tar
                      [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
 }
 
+// Stronger than AnyRectIntersects: one dirty rect must COVER the target. Hover
+// invalidation already drops a 1x1 rect wherever the pointer is, and adjacent
+// chrome rects overlap generously, so a bare intersection test will happily pass
+// while the thing under test never repainted at all.
+bool AnyRectCovers(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+  return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
+    return rect.x <= target.x && rect.y <= target.y &&
+           rect.x + rect.w >= target.x + target.w && rect.y + rect.h >= target.y + target.h;
+  });
+}
+
 bool WaitForGitSidebarEntryCount(WorkspaceShell& shell, std::size_t expected_count) {
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
   while (std::chrono::steady_clock::now() < deadline) {
@@ -487,7 +498,7 @@ void TestWorkspaceShellTreeSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
          "tree header hover should redraw the previously hovered control");
   Expect(AnyRectIntersects(hover_result.redraw.rects, collapse_rect),
          "tree header hover should redraw the newly hovered control");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, *departed_tooltip),
+  Expect(AnyRectCovers(hover_result.redraw.rects, *departed_tooltip),
          "leaving a mode tab should repaint the tooltip card it was showing");
 }
 
@@ -572,7 +583,7 @@ void TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation() {
   // sidebar happened to repaint for some other reason.
   const auto arrived_tooltip = WorkspaceShellTestAccess::HoveredTooltipRect(shell);
   Expect(arrived_tooltip.has_value(), "hovering git Refresh should resolve a tooltip");
-  Expect(AnyRectIntersects(hover_result.redraw.rects, *arrived_tooltip),
+  Expect(AnyRectCovers(hover_result.redraw.rects, *arrived_tooltip),
          "arriving on git Refresh should repaint its tooltip card");
 }
 
@@ -978,6 +989,42 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
          "hovered tab tooltips should render above the sidebar fill");
 
   SDL_DestroySurface(pixels);
+}
+
+void TestWorkspaceShellFindWidgetHoverRepaintsTheCard() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbeta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "search alpha"),
+         "the hover fixture should open the in-file find surface");
+
+  const microide::workspace::FindWidgetLayout fw =
+      WorkspaceShellTestAccess::FindWidgetControls(shell, false);
+  // Park the pointer inside the card but off every button, so the move below is a
+  // pure enter-a-button transition.
+  Expect(SendMouseMotion(shell, fw.search_field.x + 4.0f,
+                         fw.search_field.y + fw.search_field.h * 0.5f, 0),
+         "priming the find widget hover should be handled");
+
+  SDL_Event motion_event{};
+  motion_event.type = SDL_EVENT_MOUSE_MOTION;
+  motion_event.motion.x = fw.toggle_buttons[0].x + fw.toggle_buttons[0].w * 0.5f;
+  motion_event.motion.y = fw.toggle_buttons[0].y + fw.toggle_buttons[0].h * 0.5f;
+  const auto hover_result = shell.HandleEvent(motion_event);
+  Expect(hover_result.handled, "moving onto a find widget button should be handled");
+  // The buttons only started lifting under the pointer when the rest of the shell
+  // already did; without this invalidation the highlight would wait for an
+  // unrelated repaint.
+  Expect(!hover_result.redraw.full && !hover_result.redraw.rects.empty(),
+         "find widget hover should stay on a partial redraw path");
+  Expect(AnyRectCovers(hover_result.redraw.rects, fw.toggle_buttons[0]),
+         "entering a find widget button should repaint the card it is on");
 }
 
 void TestWorkspaceShellStatusBarSegmentsExplainThemselvesOnHover() {
@@ -3082,6 +3129,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSearchSidebarHeaderHoverReturnsButtonOnlyInvalidation);
   AddTest(tests, "WorkspaceShell/GitSidebarHeaderHoverReturnsButtonOnlyInvalidation",
           TestWorkspaceShellGitSidebarHeaderHoverReturnsButtonOnlyInvalidation);
+  AddTest(tests, "WorkspaceShell/FindWidgetHoverRepaintsTheCard",
+          TestWorkspaceShellFindWidgetHoverRepaintsTheCard);
   AddTest(tests, "WorkspaceShell/StatusBarSegmentsExplainThemselvesOnHover",
           TestWorkspaceShellStatusBarSegmentsExplainThemselvesOnHover);
   AddTest(tests, "WorkspaceShell/FindWidgetControlsNameThemselvesOnHover",
