@@ -596,7 +596,9 @@ void TerminalSession::ResetEmulationStateLocked() {
   reported_working_directory_.clear();
   tab_stops_.clear();
 
-  // Screens, cursor, and the scroll region.
+  // Screens, cursor, and the scroll region. ResetScrollRegionLocked derives the
+  // bottom margin from rows_, so a caller that also reseeds the geometry must do
+  // that FIRST — otherwise the region is computed against the outgoing height.
   primary_screen_ = ScreenState{};
   alternate_screen_ = ScreenState{};
   cursor_row_ = 0;

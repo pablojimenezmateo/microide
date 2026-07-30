@@ -71,10 +71,13 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
             : std::string(command);
     launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
-    ResetEmulationStateLocked();
-    wake_event_pending_ = false;
+    // Geometry BEFORE ResetEmulationStateLocked: it resets the scroll region,
+    // whose bottom margin is derived from rows_. Reset it against the stale
+    // pre-restart height and the region outlives the 24x80 reseed.
     rows_ = 24;
     columns_ = 80;
+    ResetEmulationStateLocked();
+    wake_event_pending_ = false;
     snapshot_generation_ = 1;
   }
 
@@ -154,10 +157,11 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
     launch_label_ = default_launch_label_;
     lines_ = {TerminalLine{}};
     backend_.reset();
-    ResetEmulationStateLocked();
-    wake_event_pending_ = false;
+    // Geometry first — see Start().
     rows_ = 24;
     columns_ = 80;
+    ResetEmulationStateLocked();
+    wake_event_pending_ = false;
     snapshot_generation_ = 1;
     test_sent_bytes_.clear();
   }

@@ -2264,6 +2264,24 @@ void TestTerminalSessionC0ControlExecutesMidCsi() {
 // Regression: a full-window scroll region saved before a grow-resize follows the
 // new height when the screen is restored, instead of staying frozen at the old
 // height (ClampScrollRegionLocked only ever shrinks the bottom margin).
+// Regression: Start() reseeds the 24x80 default geometry, and the scroll region's
+// bottom margin is derived from rows_. Resetting the region before that reseed
+// left it sized to the OUTGOING height, so a restarted terminal that had been
+// resized larger believed it had a custom DECSTBM region on a 24-row screen —
+// which diverts the newline path away from accumulating scrollback.
+void TestTerminalSessionRestartResetsScrollRegionToDefaultHeight() {
+  microide::terminal::TerminalSession session;
+  session.StartPlaceholderForTesting(std::filesystem::path("/tmp"), "");
+  session.Resize(50, 100);
+  Expect(TerminalSessionTestAccess::ScrollRegionBottom(session) == 49,
+         "the resized session's region spans its full 50-row height");
+
+  session.StartPlaceholderForTesting(std::filesystem::path("/tmp"), "");
+  Expect(session.rows() == 24, "restarting reseeds the 24-row default");
+  Expect(TerminalSessionTestAccess::ScrollRegionBottom(session) == 23,
+         "the restarted session's region follows the reseeded height, not the old one");
+}
+
 void TestTerminalSessionResizeReexpandsSavedScrollRegion() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
@@ -2383,6 +2401,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionC0ControlExecutesMidCsi);
   AddTest(tests, "TerminalSession/ResizeReexpandsSavedScrollRegion",
           TestTerminalSessionResizeReexpandsSavedScrollRegion);
+  AddTest(tests, "TerminalSession/RestartResetsScrollRegionToDefaultHeight",
+          TestTerminalSessionRestartResetsScrollRegionToDefaultHeight);
   AddTest(tests, "TerminalSession/CharsetDesignationAbortsOnEmbeddedEscape",
           TestTerminalSessionCharsetDesignationAbortsOnEmbeddedEscape);
   AddTest(tests, "TerminalSession/AltScreenLineFeedBelowRegionDoesNotScroll",
