@@ -114,9 +114,13 @@ void WorkspaceShell::RenderNotifications(SDL_Renderer* renderer,
                         static_cast<int>(std::ceil(toast.text.w)),
                         static_cast<int>(std::ceil(toast.text.h))};
     {
+      // Truncate rather than let the clip rect shear the last glyph: a toast is
+      // transient, so a message that ends mid-word with no "…" reads as a
+      // rendering fault instead of "there was more here".
       const render::ScopedRenderClip clip_scope(renderer, clip);
       DrawVCenteredTextOn(text_renderer_, renderer, toast.text, 0.0f, theme_.text_primary,
-                          theme_.overlay_background, message);
+                          theme_.overlay_background,
+                          text_renderer_.TruncateToWidthEphemeralView(message, toast.text.w));
     }
   }
 }

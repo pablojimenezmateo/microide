@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "workspace/NotificationLayout.h"
 #include "workspace/NotificationService.h"
 
 #include <limits>
@@ -119,6 +120,36 @@ void TestNotificationServiceByteCapsOversizedMessage() {
   Expect(kept % 2 == 0, "truncation kept whole 2-byte codepoints (no split multi-byte sequence)");
 }
 
+// Toast cards were capped at a flat 320px of text regardless of window size, so
+// any message past ~40 characters was sheared off mid-word against the card edge
+// on a 1440px window with hundreds of pixels to spare. The budget now scales with
+// the window between a readable floor and a "do not span the screen" ceiling.
+void TestNotificationToastWidthScalesWithWindow() {
+  using microide::workspace::NotificationToastLayoutAt;
+  using microide::workspace::NotificationToastTextBudget;
+  using microide::workspace::kNotificationToastMargin;
+  using microide::workspace::kNotificationToastMaxTextWidth;
+  using microide::workspace::kNotificationToastMinTextWidth;
+
+  Expect(NotificationToastTextBudget(1440.0f) > 320.0f,
+         "a wide window should give a toast more room than the old flat cap");
+  Expect(NotificationToastTextBudget(320.0f) == kNotificationToastMinTextWidth,
+         "a narrow window should still get the readable floor");
+  Expect(NotificationToastTextBudget(4000.0f) == kNotificationToastMaxTextWidth,
+         "an ultrawide window must not let one message span the screen");
+
+  // Whatever the budget, the card stays inside the window with its margin.
+  for (const float window_width : {320.0f, 1440.0f, 4000.0f}) {
+    const SDL_FRect status_bar{0.0f, 700.0f, window_width, 20.0f};
+    const auto toast = NotificationToastLayoutAt(status_bar, 16.0f, 0, 100000.0f);
+    Expect(toast.rect.x >= 0.0f, "a toast card must not start left of the window");
+    Expect(toast.rect.x + toast.rect.w <= window_width - kNotificationToastMargin + 0.01f,
+           "a toast card must stay inside the window margin");
+    Expect(toast.text.w > 0.0f && toast.text.x + toast.text.w <= toast.rect.x + toast.rect.w,
+           "the toast text box must stay inside its card");
+  }
+}
+
 }  // namespace
 
 void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
@@ -134,6 +165,8 @@ void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
           TestNotificationServiceExpirySaturatesNearMax);
   AddTest(tests, "NotificationService/ToneAndEmptyHandling",
           TestNotificationServiceToneAndEmptyHandling);
+  AddTest(tests, "NotificationService/ToastWidthScalesWithWindow",
+          TestNotificationToastWidthScalesWithWindow);
 }
 
 }  // namespace microide::tests
