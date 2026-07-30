@@ -344,29 +344,14 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Undo:
       return active_editable_viewport != nullptr;
     case ActionId::SelectAll:
-      return active_viewport != nullptr ||
-             text_input_surface == TextInputSurface::PromptInput ||
-             text_input_surface == TextInputSurface::FileFinder ||
-             text_input_surface == TextInputSurface::BufferSearch ||
-             text_input_surface == TextInputSurface::BufferReplaceSearch ||
-             text_input_surface == TextInputSurface::BufferReplaceReplace ||
-             text_input_surface == TextInputSurface::ProjectSearchOverlay ||
-             text_input_surface == TextInputSurface::CommitPicker ||
-             IsSidebarSearchFieldSurface(text_input_surface);
+      return active_viewport != nullptr || IsSingleLineTextInputSurface(text_input_surface);
     case ActionId::InsertText:
       // `type <text>` targets the active editable viewport or a text-input
       // surface, same as a paste.
       [[fallthrough]];
     case ActionId::PasteClipboard:
       return active_editable_viewport != nullptr ||
-             text_input_surface == TextInputSurface::PromptInput ||
-             text_input_surface == TextInputSurface::FileFinder ||
-             text_input_surface == TextInputSurface::BufferSearch ||
-             text_input_surface == TextInputSurface::BufferReplaceSearch ||
-             text_input_surface == TextInputSurface::BufferReplaceReplace ||
-             text_input_surface == TextInputSurface::ProjectSearchOverlay ||
-             text_input_surface == TextInputSurface::CommitPicker ||
-             IsSidebarSearchFieldSurface(text_input_surface) ||
+             IsSingleLineTextInputSurface(text_input_surface) ||
              (context_.current_project_state.surface.focus == FocusTarget::Panel &&
               active_terminal_tab != nullptr);
     case ActionId::Goto:

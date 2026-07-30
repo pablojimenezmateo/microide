@@ -203,17 +203,7 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
   }
 
   const TextInputSurface text_input_surface = operations_.current_text_input_surface();
-  const bool single_line_text_surface =
-      text_input_surface == TextInputSurface::PromptInput ||
-      text_input_surface == TextInputSurface::FileFinder ||
-      text_input_surface == TextInputSurface::BufferSearch ||
-      text_input_surface == TextInputSurface::BufferReplaceSearch ||
-      text_input_surface == TextInputSurface::BufferReplaceReplace ||
-      text_input_surface == TextInputSurface::ProjectSearchOverlay ||
-      text_input_surface == TextInputSurface::CommitPicker ||
-      IsSidebarSearchFieldSurface(text_input_surface) ||
-      text_input_surface == TextInputSurface::CommitSubject ||
-      text_input_surface == TextInputSurface::TerminalFind;
+  const bool single_line_text_surface = IsSingleLineTextInputSurface(text_input_surface);
   if (single_line_text_surface && (modifiers & SDL_KMOD_CTRL) != 0) {
     switch (event.key) {
       case SDLK_A:

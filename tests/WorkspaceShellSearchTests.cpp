@@ -713,6 +713,51 @@ void TestWorkspaceShellBufferRegexToggleViaAltR() {
 }
 
 
+// The set of single-line text fields was hand-written at four sites — the key
+// handler's Ctrl+A/C/X routing, its Ctrl+V routing, and the SelectAll and Paste
+// availability rules — and the lists had diverged: the key handler counted the
+// commit subject and the terminal find bar, the availability rules did not.
+//
+// The divergence is masked today, because both availability rules short-circuit
+// on `active_viewport != nullptr` long before they consult the surface. This pins
+// the shared predicate itself, which is the thing that can rot: every field the
+// key handler routes chords for has to be in it, and the multi-line surfaces have
+// to stay out.
+void TestWorkspaceShellSingleLineTextSurfacePredicateCoversEveryField() {
+  using microide::workspace::IsSingleLineTextInputSurface;
+  using Surface = microide::workspace::TextInputSurface;
+
+  const Surface single_line[] = {
+      Surface::PromptInput,         Surface::FileFinder,
+      Surface::BufferSearch,        Surface::BufferReplaceSearch,
+      Surface::BufferReplaceReplace, Surface::ProjectSearchOverlay,
+      Surface::CommitPicker,        Surface::LaunchConfigPicker,
+      Surface::CommandPalette,      Surface::SidebarSearchQuery,
+      Surface::SidebarSearchReplace, Surface::SidebarSearchInclude,
+      Surface::SidebarSearchExclude, Surface::CommitSubject,
+      Surface::TerminalFind,        Surface::SettingsQuery,
+      Surface::SettingsValueEdit,   Surface::DebugVariableEdit,
+  };
+  for (const Surface surface : single_line) {
+    Expect(IsSingleLineTextInputSurface(surface),
+           "every single-line field must be covered by the shared predicate");
+  }
+
+  // Multi-line surfaces and "no surface" must stay out: they have their own
+  // selection and paste handling.
+  const Surface not_single_line[] = {Surface::None, Surface::Editor, Surface::CommitBody,
+                                     Surface::Terminal};
+  for (const Surface surface : not_single_line) {
+    Expect(!IsSingleLineTextInputSurface(surface),
+           "multi-line surfaces must not be treated as single-line fields");
+  }
+
+  // The two the old lists disagreed about, called out so a revert is obvious.
+  Expect(IsSingleLineTextInputSurface(Surface::CommitSubject) &&
+             IsSingleLineTextInputSurface(Surface::TerminalFind),
+         "the commit subject and the terminal find bar are single-line fields");
+}
+
 // The in-file find widget gained the `Aa` and `ab` toggles the terminal find bar
 // already had. Aa applies in literal AND regex mode: regex used to be smart-case
 // while literal was always insensitive, so flipping `.*` silently changed whether
@@ -1062,6 +1107,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferRegexMultilineNewline);
   AddTest(tests, "WorkspaceShell/BufferRegexToggleViaAltR",
           TestWorkspaceShellBufferRegexToggleViaAltR);
+  AddTest(tests, "WorkspaceShell/SingleLineTextSurfacePredicateCoversEveryField",
+          TestWorkspaceShellSingleLineTextSurfacePredicateCoversEveryField);
   AddTest(tests, "WorkspaceShell/BufferFindMatchCaseAppliesToBothModes",
           TestWorkspaceShellBufferFindMatchCaseAppliesToBothModes);
   AddTest(tests, "WorkspaceShell/BufferFindWholeWordFiltersMatches",

@@ -62,4 +62,46 @@ inline bool IsSidebarSearchFieldSurface(TextInputSurface surface) {
          surface == TextInputSurface::SidebarSearchExclude;
 }
 
+// True for every single-line text field in the shell: the surfaces that own
+// Ctrl+A / Ctrl+C / Ctrl+X / Ctrl+V and that Select All and Paste must report as
+// available while focused.
+//
+// This was spelled out as a hand-written list at four call sites, and the lists
+// had already diverged: the key handler included CommitSubject and TerminalFind,
+// the Select All and Paste availability rules did not. The result was Ctrl+A
+// working in the commit subject and the terminal find bar while Edit > Select All
+// sat greyed out over the same field.
+//
+// `Editor`, `Terminal` and `CommitBody` are deliberately absent: those are
+// multi-line surfaces with their own handling, not single-line fields.
+inline bool IsSingleLineTextInputSurface(TextInputSurface surface) {
+  switch (surface) {
+    case TextInputSurface::PromptInput:
+    case TextInputSurface::FileFinder:
+    case TextInputSurface::BufferSearch:
+    case TextInputSurface::BufferReplaceSearch:
+    case TextInputSurface::BufferReplaceReplace:
+    case TextInputSurface::ProjectSearchOverlay:
+    case TextInputSurface::CommitPicker:
+    case TextInputSurface::LaunchConfigPicker:
+    case TextInputSurface::CommandPalette:
+    case TextInputSurface::SidebarSearchQuery:
+    case TextInputSurface::SidebarSearchReplace:
+    case TextInputSurface::SidebarSearchInclude:
+    case TextInputSurface::SidebarSearchExclude:
+    case TextInputSurface::CommitSubject:
+    case TextInputSurface::TerminalFind:
+    case TextInputSurface::SettingsQuery:
+    case TextInputSurface::SettingsValueEdit:
+    case TextInputSurface::DebugVariableEdit:
+      return true;
+    case TextInputSurface::None:
+    case TextInputSurface::Editor:
+    case TextInputSurface::CommitBody:
+    case TextInputSurface::Terminal:
+      return false;
+  }
+  return false;
+}
+
 }  // namespace microide::workspace
