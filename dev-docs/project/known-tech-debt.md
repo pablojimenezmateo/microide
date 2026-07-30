@@ -72,6 +72,61 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### [OPEN] Modal overlay backdrop stacks until the editor behind it is solid (TD-2026-07-30-100)
+
+**User-visible.** Open the compare/commit picker (`compare <path>`, or Git ▸ Compare
+with Git Revision) over a file. The editor behind the modal should stay dimmed but
+readable. Instead it fades to a flat rectangle in about a second — breadcrumb band
+included — and only comes back when the overlay closes. It was caught by the
+2026-07-30 UI/UX screenshot pass, and it is **pre-existing**, visible in the audit
+stills taken before any change in that pass.
+
+Reproducer (headless, isolated XDG tree, ~40s):
+
+```bash
+tools/repro/overlay-backdrop-repro.sh /tmp/out
+# c1.png .. c6.png sample the editor area every 0.35s.
+# Sample the editor background at (300,300): healthy overlays hold a spread of
+# dimmed values; the compare picker collapses to one flat value by c3.
+REPRO_CMD=command-palette tools/repro/overlay-backdrop-repro.sh /tmp/ok   # healthy control
+```
+
+What is established (each verified by experiment, not inspection):
+
+- **The backdrop is the thing covering it.** Gate out the single
+  `DrawFilledRect(layout.editor_area, theme_.overlay_backdrop)` in
+  `WorkspaceShellRenderOverlay.cpp` and the editor stays fully visible and stable
+  for as long as the picker is open.
+- **It composites repeatedly onto its own output.** Paint that backdrop bright red
+  instead: the editor area converges to *pure* `(255,0,0)`, which an alpha-0xAA fill
+  can only reach by being applied over itself several times.
+- **The surface underneath is not being repainted between applications.** Force the
+  editor's background fill to bright green: no green ever survives, so the editor is
+  not painting into that region on the frames that apply the backdrop.
+- **It is specific to the compare/commit picker.** The command palette and the file
+  finder — same overlay geometry, same backdrop call, same control-channel driving —
+  stay correctly dimmed indefinitely (`(7,10,16)`…`(29,35,44)`, unchanged across all
+  six samples).
+- **It is not the partial-redraw path.** Forcing `full_redraw = true` for every frame
+  in `Application::Render` does not change it. Neither does forcing
+  `skip_editor_surface`/`skip_window_chrome` to false in `WorkspaceShell::RenderClip`
+  whenever a backdrop-drawing overlay is visible. The merged clip rects are disjoint,
+  and the clip is correctly active (verified with `SDL_RenderClipEnabled` +
+  `SDL_GetRenderClipRect` immediately before the backdrop fill), so a
+  double-composite within one frame is ruled out.
+
+What is *not* established: why `RenderActiveWorkspaceSurface` fails to paint the pane
+on those frames when `skip_editor_surface` is false and the per-pane instrumentation
+reports a live, non-placeholder viewport at the right rect. Note that adding `SDL_Log`
+instrumentation to the render path perturbs frame timing enough that the failure often
+stops reproducing — the instrumented runs mostly describe healthy frames, which is
+why the logs and the pixels disagree. Whoever picks this up should reach for a
+non-blocking capture (a ring buffer drained off the render path) rather than `SDL_Log`,
+and should start from what distinguishes the compare picker: it is the only one of the
+three that opens in a `loading` state and completes through
+`compare_picker_mailbox_` → `ApplyComparePickerFileHistory` → `RefreshPicker` on a
+later frame.
+
 ### Consumer-side reachability sweep — coordinator hooks (TD-2026-07-30-*)
 
 The third question in this family, after "is this symbol produced?" (2026-07-26)
