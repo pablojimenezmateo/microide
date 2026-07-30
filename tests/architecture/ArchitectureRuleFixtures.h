@@ -30,6 +30,11 @@ void RunActionIdReachabilityRuleFixtures();
 // overlay shows and persists while nothing reads it.
 void RunRegisteredSettingsAreReadRuleFixtures();
 
+// Negative + positive control for CheckCoordinatorOperationsAreCalled: a wired
+// Operations hook nothing calls, including one whose name is called only on an
+// unrelated struct (reads are scoped by include graph, not by name).
+void RunCoordinatorOperationsAreCalledRuleFixtures();
+
 // Negative + positive control for the two render-TU text rules. Every
 // WorkspaceUiText composer returns a fresh std::string by value, and none of the
 // to_string / std::format / `std::string(...) +` patterns names one — which is how

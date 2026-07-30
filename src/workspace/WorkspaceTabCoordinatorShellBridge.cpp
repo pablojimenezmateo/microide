@@ -88,7 +88,6 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },
-          .activate_tab = [this](std::size_t index) { ActivateTab(index); },
           .request_external_change_banner =
               [this](const std::filesystem::path& path) {
                 SetEditorBanner(context_.current_project_state,

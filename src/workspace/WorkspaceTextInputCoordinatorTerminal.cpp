@@ -363,7 +363,6 @@ TextInputCoordinator WorkspaceShell::MakeTextInputCoordinator() {
           .submit_terminal_pending_input = [this]() { SubmitTerminalPendingInput(); },
           .erase_last_terminal_pending_input_codepoint =
               [this]() { EraseLastTerminalPendingInputCodepoint(); },
-          .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .keycode_to_ascii =
               [](SDL_Keycode key, SDL_Keymod modifiers) {
                 return WorkspaceShell::KeycodeToAscii(key, modifiers);

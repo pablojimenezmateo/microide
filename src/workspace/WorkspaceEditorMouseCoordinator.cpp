@@ -689,7 +689,6 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
               },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
-          .active_editor_tab = [this]() { return ActiveEditorTab(); },
           .clear_drag_state = [this]() { ClearDragState(); },
           .get_setting_value =
               [this](std::string_view id) { return GetSettingValue(id); },

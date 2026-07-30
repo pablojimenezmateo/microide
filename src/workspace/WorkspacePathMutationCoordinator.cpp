@@ -218,9 +218,6 @@ PathMutationCoordinator WorkspaceShell::MakePathMutationCoordinator(EditorTabSer
                 return EditorViewPath(editor_state);
               },
           .sync_active_editor_tab_metadata = [this]() { SyncActiveEditorTabMetadata(); },
-          .reset_caret_blink = [this]() { ResetCaretBlink(); },
-          .invalidate_editor_blame_path =
-              [this](const std::filesystem::path& path) { InvalidateEditorBlamePath(path); },
           .build_compare_tab_entry =
               [this](const std::filesystem::path& path, const CompareTabState& compare_state) {
                 return BuildCompareTabEntry(path, compare_state);

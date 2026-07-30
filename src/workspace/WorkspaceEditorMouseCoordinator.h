@@ -29,7 +29,6 @@ class EditorMouseCoordinator {
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
     std::function<void()> request_tab_strip_redraw;
     std::function<void()> request_focused_editor_redraw;
-    std::function<TabEntry::EditorTabState*()> active_editor_tab;
     std::function<void()> clear_drag_state;
     std::function<std::optional<std::string>(std::string_view id)> get_setting_value;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;

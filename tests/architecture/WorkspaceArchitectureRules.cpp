@@ -50,6 +50,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckOverlayDismissalIsCentralized", CheckOverlayDismissalIsCentralized},
       {"CheckReactivationDoesNotReloadPlugins", CheckReactivationDoesNotReloadPlugins},
       {"CheckNoFallbackEditorViewportSymbols", CheckNoFallbackEditorViewportSymbols},
+      {"CheckCoordinatorOperationsAreCalled", CheckCoordinatorOperationsAreCalled},
       {"CheckRenderTuDoesNotMaterializeStrings", CheckRenderTuDoesNotMaterializeStrings},
       {"CheckRenderTuDoesNotCallToStringOrFormat", CheckRenderTuDoesNotCallToStringOrFormat},
       {"CheckTextViewportNoFullDocCopy", CheckTextViewportNoFullDocCopy},

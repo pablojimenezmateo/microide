@@ -235,6 +235,108 @@ void RunRegisteredSettingsAreReadRuleFixtures() {
          "a registry the scan cannot parse must fail loudly, not pass vacuously");
 }
 
+void RunCoordinatorOperationsAreCalledRuleFixtures() {
+  // The dead-hook rule. A wired-but-never-called Operations field compiles,
+  // reads as part of the contract, and does nothing; 35 had accumulated.
+  TemporaryDirectory ops_dir;
+  const std::filesystem::path& root = ops_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+
+  // Two coordinators. Each declares an Operations struct; the vacuity floor
+  // wants 20 structs and 200 fields, so pad with generated headers.
+  for (int i = 0; i < 60; ++i) {
+    std::string padded = "#pragma once\nclass Pad" + std::to_string(i) +
+                         " {\n public:\n  struct Operations {\n";
+    for (int f = 0; f < 9; ++f) {
+      padded += "    std::function<void()> pad" + std::to_string(i) + "_" + std::to_string(f) +
+                ";\n";
+    }
+    padded += "  };\n};\n";
+    WriteFile(root / ("src/workspace/Pad" + std::to_string(i) + ".h"), padded);
+    std::string padded_use = "#include \"workspace/Pad" + std::to_string(i) + ".h\"\nvoid U" +
+                             std::to_string(i) + "(Pad" + std::to_string(i) +
+                             "::Operations& operations_) {\n";
+    for (int f = 0; f < 9; ++f) {
+      padded_use += "  operations_.pad" + std::to_string(i) + "_" + std::to_string(f) + "();\n";
+    }
+    padded_use += "}\n";
+    WriteFile(root / ("src/workspace/Pad" + std::to_string(i) + ".cpp"), padded_use);
+  }
+
+  WriteFile(root / "src/workspace/Alpha.h",
+            "#pragma once\n"
+            "class Alpha {\n public:\n  struct Operations {\n"
+            "    std::function<void()> called_hook;\n"
+            "    std::function<void()> dead_hook;\n"
+            "    std::function<void()> shared_name;\n"
+            "  };\n};\n");
+  WriteFile(root / "src/workspace/Alpha.cpp",
+            "#include \"workspace/Alpha.h\"\n"
+            "void Alpha::Run() {\n"
+            "  operations_.called_hook();\n"
+            "}\n"
+            "Alpha MakeAlpha() {\n"
+            "  return Alpha(Alpha::Operations{\n"
+            "      .called_hook = []() {},\n"
+            "      .dead_hook = []() {},\n"
+            "      .shared_name = []() {},\n"
+            "  });\n"
+            "}\n");
+
+  // Beta has a field spelled exactly like Alpha's, and Beta *does* call it.
+  // Nothing including Alpha.h can see this call, so Alpha's copy must still be
+  // reported — this is the case a name-only search gets wrong, and six real
+  // dead fields hid behind it.
+  WriteFile(root / "src/workspace/Beta.h",
+            "#pragma once\n"
+            "class Beta {\n public:\n  struct Operations {\n"
+            "    std::function<void()> shared_name;\n"
+            "  };\n};\n");
+  WriteFile(root / "src/workspace/Beta.cpp",
+            "#include \"workspace/Beta.h\"\n"
+            "void Beta::Run() { operations_.shared_name(); }\n");
+
+  const RuleResult flagged = CheckCoordinatorOperationsAreCalled(root);
+  Expect(flagged.violations.size() == 2,
+         "exactly the never-called hooks must be flagged");
+  const bool saw_dead =
+      flagged.violations[0].message.find("dead_hook") != std::string::npos ||
+      flagged.violations[1].message.find("dead_hook") != std::string::npos;
+  const bool saw_shared =
+      flagged.violations[0].message.find("shared_name") != std::string::npos ||
+      flagged.violations[1].message.find("shared_name") != std::string::npos;
+  Expect(saw_dead, "the plainly uncalled hook must be flagged");
+  Expect(saw_shared,
+         "a hook whose name is called only on an unrelated struct must still be flagged; reads "
+         "are scoped by include graph, not by name");
+
+  // Positive control: a caller in a file that includes Alpha.h clears both.
+  WriteFile(root / "src/workspace/AlphaExtra.cpp",
+            "#include \"workspace/Alpha.h\"\n"
+            "void Extra(Alpha::Operations& operations_) {\n"
+            "  operations_.dead_hook();\n"
+            "  operations_.shared_name();\n"
+            "}\n");
+  Expect(CheckCoordinatorOperationsAreCalled(root).violations.empty(),
+         "a hook called from anything that includes its header passes");
+
+  // A null check counts as caring about the hook, not just a direct call.
+  WriteFile(root / "src/workspace/AlphaExtra.cpp",
+            "#include \"workspace/Alpha.h\"\n"
+            "void Extra(Alpha::Operations& operations_) {\n"
+            "  if (operations_.dead_hook) {\n  }\n"
+            "  if (operations_.shared_name != nullptr) {\n  }\n"
+            "}\n");
+  Expect(CheckCoordinatorOperationsAreCalled(root).violations.empty(),
+         "testing a hook for null counts as a read");
+
+  // Vacuity guard: an empty tree must fail loudly rather than report nothing.
+  TemporaryDirectory empty_dir;
+  std::filesystem::create_directories(empty_dir.path() / "src/workspace");
+  Expect(!CheckCoordinatorOperationsAreCalled(empty_dir.path()).violations.empty(),
+         "a tree the scan cannot parse must fail loudly, not pass vacuously");
+}
+
 void RunRenderTuTextCompositionRuleFixtures() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path();
@@ -422,6 +524,7 @@ void RunAllRuleFixtures() {
   RunDirectGitRepositoryRuleFixtures();
   RunActionIdReachabilityRuleFixtures();
   RunRegisteredSettingsAreReadRuleFixtures();
+  RunCoordinatorOperationsAreCalledRuleFixtures();
   RunRenderTuTextCompositionRuleFixtures();
   RunPaintedScrollbarRuleFixtures();
   RunWheelFocusRuleFixtures();

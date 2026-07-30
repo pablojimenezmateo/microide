@@ -36,8 +36,6 @@ class PathMutationCoordinator {
     std::function<void(editor::TextViewport&)> apply_detected_indent_on_open;
     std::function<std::filesystem::path(const TabEntry::EditorTabState&)> editor_view_path;
     std::function<void()> sync_active_editor_tab_metadata;
-    std::function<void()> reset_caret_blink;
-    std::function<void(const std::filesystem::path&)> invalidate_editor_blame_path;
     std::function<std::optional<TabEntry>(const std::filesystem::path&, const CompareTabState&)>
         build_compare_tab_entry;
     std::function<std::optional<TabEntry>(const std::filesystem::path&,

@@ -66,7 +66,6 @@ class TabCoordinator {
     std::function<void()> invalidate_editor_tab_geometry;
     std::function<void()> request_editor_surface_redraw;
     std::function<void()> request_automatic_git_sidebar_refresh;
-    std::function<void(std::size_t)> activate_tab;
     // Raised when a save is refused because the file changed on disk since the
     // buffer was loaded/last saved. The host surfaces the external-change banner
     // so the user can Reload / Overwrite / Keep instead of silently clobbering.

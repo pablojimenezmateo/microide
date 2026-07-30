@@ -4,6 +4,10 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
+#include <map>
+#include <utility>
+#include <vector>
 #include <filesystem>
 #include <fstream>
 #include <regex>
@@ -533,6 +537,205 @@ RuleResult CheckSerializeLinesDoesNotMaterializeSnapshot(
         .path = src_dir, .line = 1,
         .message = "scanned only " + std::to_string(scanned) +
                    " source files; this lint's traversal broke and it has gone vacuous"});
+  }
+  return result;
+}
+
+// Every std::function field of a coordinator's `Operations` struct must have a
+// caller.
+//
+// These structs are how a coordinator declares what it needs the shell to do,
+// and the shell fills every field in with a working lambda. That makes an unused
+// field invisible: it compiles, it is wired, it reads like part of the contract,
+// and it does nothing. One sweep found 35 of them — PanelMouseCoordinator kept
+// ten debug callbacks after the debug pane moved to its own coordinator;
+// KeyInputCoordinator kept nineteen that lost to `dispatch_git_sidebar_action`,
+// to AssistService, or to a live copy on another struct. Two functions existed
+// only to be bound into one (`DestroyLifecycleCursors`, 58 lines of cursor
+// teardown that never ran; `DapManager::HasRegisteredAdapters`).
+//
+// Reads are scoped by include graph, not by name. Six of those 35 were invisible
+// to a name-only search because a *different* struct has a field spelled the
+// same and that one is called — `activate_tab`, `reset_caret_blink`,
+// `read_primary_selection_text` and friends are each live somewhere and dead
+// here. So a field counts as called only if the read appears in a file that
+// transitively includes the header declaring it.
+//
+// A "call" is any `.field` / `->field` that is not the `.field =` of a
+// designated initializer. That is deliberately loose: taking the field's
+// address, testing it for null, or forwarding it all count, because all three
+// mean a human still cares about it.
+RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "every coordinator Operations field has a caller";
+  result.hard_fail = true;
+
+  const std::filesystem::path src_dir = repo_root / "src";
+
+  // Read the tree once, keyed by the "src/"-relative path that #include uses.
+  std::map<std::string, std::filesystem::path> by_include;
+  std::map<std::string, std::string> text_of;
+  std::map<std::string, std::vector<bool>> code_of;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(src_dir)) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::string ext = entry.path().extension().string();
+    if (ext != ".cpp" && ext != ".h" && ext != ".inc") {
+      continue;
+    }
+    const std::string key = std::filesystem::relative(entry.path(), src_dir).generic_string();
+    by_include[key] = entry.path();
+    text_of[key] = ReadText(entry.path());
+    code_of[key] = BuildCodeMask(text_of[key]);
+  }
+  if (text_of.size() < 100) {
+    result.violations.push_back(Violation{
+        .path = src_dir,
+        .line = 1,
+        .message = "scanned only " + std::to_string(text_of.size()) +
+                   " source files; this lint's traversal broke and it has gone vacuous",
+    });
+    return result;
+  }
+
+  // Direct include edges, then a transitive closure of "who can see this header".
+  std::map<std::string, std::set<std::string>> includes;
+  const std::regex include_pattern(R"RX(#\s*include\s+"([^"]+)")RX");
+  for (const auto& [key, text] : text_of) {
+    for (std::sregex_iterator it(text.begin(), text.end(), include_pattern), last; it != last;
+         ++it) {
+      const std::string target = it->str(1);
+      if (by_include.count(target) != 0) {
+        includes[key].insert(target);
+      }
+    }
+  }
+  const auto includers_of = [&](const std::string& header) {
+    std::set<std::string> seen{header};
+    bool grew = true;
+    while (grew) {
+      grew = false;
+      for (const auto& [key, deps] : includes) {
+        if (seen.count(key) != 0) {
+          continue;
+        }
+        for (const std::string& dep : deps) {
+          if (seen.count(dep) != 0) {
+            seen.insert(key);
+            grew = true;
+            break;
+          }
+        }
+      }
+    }
+    return seen;
+  };
+
+  const std::regex field_pattern(R"(std::function\s*<.*>\s+([a-z_][a-z0-9_]*)\s*;)");
+  std::size_t structs_seen = 0;
+  std::size_t fields_seen = 0;
+  for (const auto& [key, text] : text_of) {
+    if (key.rfind("workspace/", 0) != 0 || !key.ends_with(".h") ||
+        text.find("struct Operations") == std::string::npos) {
+      continue;
+    }
+    const std::vector<bool>& is_code = code_of.at(key);
+
+    // Fields declared inside the `struct Operations { ... }` block.
+    std::vector<std::pair<std::string, std::size_t>> fields;
+    {
+      std::size_t offset = 0;
+      std::size_t line = 1;
+      bool inside = false;
+      int depth = 0;
+      std::size_t cursor = 0;
+      while (cursor <= text.size()) {
+        const std::size_t newline = text.find('\n', cursor);
+        const std::string raw = text.substr(
+            cursor, newline == std::string::npos ? std::string::npos : newline - cursor);
+        const bool code_line = offset < is_code.size() && is_code[offset];
+        if (!inside && code_line && raw.find("struct Operations") != std::string::npos) {
+          inside = true;
+          depth = 0;
+          ++structs_seen;
+        }
+        if (inside) {
+          for (const char ch : raw) {
+            if (ch == '{') {
+              ++depth;
+            } else if (ch == '}') {
+              --depth;
+            }
+          }
+          std::smatch match;
+          if (code_line && std::regex_search(raw, match, field_pattern)) {
+            fields.emplace_back(match.str(1), line);
+            ++fields_seen;
+          }
+          if (depth <= 0 && raw.find('}') != std::string::npos) {
+            inside = false;
+          }
+        }
+        offset += raw.size() + 1;
+        ++line;
+        cursor = newline == std::string::npos ? text.size() + 1 : newline + 1;
+      }
+    }
+    if (fields.empty()) {
+      continue;
+    }
+
+    const std::set<std::string> scope = includers_of(key);
+    for (const auto& [name, line] : fields) {
+      const std::regex use_pattern(R"((?:\.|->)\s*)" + name + R"(\b)");
+      bool called = false;
+      for (const std::string& reader : scope) {
+        const std::string& body = text_of.at(reader);
+        const std::vector<bool>& reader_code = code_of.at(reader);
+        for (std::sregex_iterator it(body.begin(), body.end(), use_pattern), last;
+             it != last && !called; ++it) {
+          const std::size_t at = static_cast<std::size_t>(it->position());
+          if (at < reader_code.size() && !reader_code[at]) {
+            continue;
+          }
+          std::size_t after = static_cast<std::size_t>(it->position() + it->length());
+          while (after < body.size() && std::isspace(static_cast<unsigned char>(body[after])) != 0) {
+            ++after;
+          }
+          // `.field =` is the designated initializer that wires it up, not a call.
+          if (after < body.size() && body[after] == '=' &&
+              (after + 1 >= body.size() || body[after + 1] != '=')) {
+            continue;
+          }
+          called = true;
+        }
+        if (called) {
+          break;
+        }
+      }
+      if (called) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = by_include.at(key),
+          .line = line,
+          .message = "Operations field `" + name +
+                     "` is wired up but never called by anything that includes this header. "
+                     "Either call it, or delete the field and its initializer — a hook nobody "
+                     "invokes reads as part of the contract while doing nothing",
+      });
+    }
+  }
+  if (structs_seen < 20 || fields_seen < 200) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "found only " + std::to_string(structs_seen) + " Operations structs and " +
+                   std::to_string(fields_seen) +
+                   " std::function fields; the declaration shape changed and this lint has gone "
+                   "vacuous — fix the scan rather than deleting the rule",
+    });
   }
   return result;
 }
