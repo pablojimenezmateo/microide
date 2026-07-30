@@ -302,6 +302,34 @@ std::optional<ParsedGitConflictOutput> ParseGitConflictOutput(const compare::Mer
   return parsed;
 }
 
+// Re-derive the merge tab's view state after its model or result buffer
+// changed: drop the stale hover, recompute the widest visual column across all
+// three panes, push the tab's saved scroll into the result viewport and read
+// back what it clamped to, then keep the selected hunk in range.
+//
+// Both the derived-state refresh and the restore-from-persisted-output path
+// need exactly this, and each used to spell it out. The read-back matters: the
+// viewport clamps the scroll it is given, so the tab's own scroll_row must be
+// re-read from it rather than assumed.
+void ResyncMergeTabViewState(MergeTabState& merge_tab) {
+  merge_tab.hover_state.reset();
+  merge_tab.max_visual_columns =
+      std::max({MaxVisualColumnsForLines(merge_tab.model.incoming_lines),
+                MaxVisualColumnsForLines(merge_tab.model.current_lines),
+                merge_tab.result_viewport.max_visual_columns()});
+  merge_tab.result_viewport.SetScrollLine(
+      static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)));
+  merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
+  merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
+  merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
+  if (merge_tab.conflicts.empty()) {
+    merge_tab.selected_hunk = 0;
+    merge_tab.scroll_row = 0;
+    return;
+  }
+  merge_tab.selected_hunk = std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1);
+}
+
 }  // namespace
 
 std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrackedConflicts(
@@ -478,21 +506,7 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
           util::SerializeLinesStreaming(editor::LineSpan(merge_tab.result_viewport.lines()),
                                     merge_tab.result_line_ending));
   merge_tab.conflicts = BuildMergeTrackedConflicts(merge_tab.model);
-  merge_tab.hover_state.reset();
-  merge_tab.max_visual_columns =
-      std::max({MaxVisualColumnsForLines(merge_tab.model.incoming_lines),
-                MaxVisualColumnsForLines(merge_tab.model.current_lines),
-                merge_tab.result_viewport.max_visual_columns()});
-  merge_tab.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)));
-  merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
-  merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
-  merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
-  if (merge_tab.conflicts.empty()) {
-    merge_tab.selected_hunk = 0;
-    merge_tab.scroll_row = 0;
-    return;
-  }
-  merge_tab.selected_hunk = std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1);
+  ResyncMergeTabViewState(merge_tab);
 }
 
 void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
@@ -734,21 +748,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
       merge_tab.conflicts =
           BuildMergeTrackedConflictsForResult(merge_tab.model, merge_tab.result_viewport.lines().Snapshot());
     }
-    merge_tab.hover_state.reset();
-    merge_tab.max_visual_columns =
-        std::max({MaxVisualColumnsForLines(merge_tab.model.incoming_lines),
-                  MaxVisualColumnsForLines(merge_tab.model.current_lines),
-                  merge_tab.result_viewport.max_visual_columns()});
-    merge_tab.result_viewport.SetScrollLine(static_cast<std::size_t>(std::max(0, merge_tab.scroll_row)));
-    merge_tab.result_viewport.SetHorizontalScroll(merge_tab.horizontal_scroll);
-    merge_tab.scroll_row = static_cast<int>(merge_tab.result_viewport.scroll_line());
-    merge_tab.horizontal_scroll = merge_tab.result_viewport.horizontal_scroll();
-    if (merge_tab.conflicts.empty()) {
-      merge_tab.selected_hunk = 0;
-      merge_tab.scroll_row = 0;
-    } else {
-      merge_tab.selected_hunk = std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1);
-    }
+    ResyncMergeTabViewState(merge_tab);
   } else {
     RefreshMergeTabDerivedState(merge_tab);
   }
