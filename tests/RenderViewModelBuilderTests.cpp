@@ -8,6 +8,7 @@
 #include "workspace/DebugViewModel.h"
 #include "workspace/RecentsService.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarService.h"
 #include "workspace/WorkspaceCommandRegistry.h"
@@ -339,6 +340,49 @@ void TestProjectSearchSidebarStatusFitsSidebarWidth() {
   search.editing = false;
   search.error = "regex compile failed at offset 12";
   expect_fits("a search-error status must fit the default sidebar width");
+}
+
+// Narrow-rail empty states ("No breakpoints — click the editor gutter to add
+// one.") are written to be actionable, which is about twice what a ~270px
+// sidebar or debug pane fits. They used to be drawn flat -- clipped at the panel
+// edge in the debug pane, single-line-truncated in the sidebar -- so the half
+// that told the user what to do was exactly the half that disappeared.
+void TestWrappedPlaceholderWrapsInsteadOfTruncating() {
+  using microide::workspace::detail::ForEachWrappedLabelLine;
+
+  TextRenderer text_renderer;
+  constexpr std::string_view kHint = "No breakpoints — click the editor gutter to add one.";
+  const float rail_width = 268.0f;  // 288px rail less the 10px inset on each side
+
+  std::vector<std::string> lines;
+  const auto collect = [&](std::size_t, std::string_view line) { lines.emplace_back(line); };
+
+  const std::size_t count =
+      ForEachWrappedLabelLine(text_renderer, kHint, rail_width, 3, collect);
+  Expect(count == lines.size(), "the emit count should match the lines emitted");
+  Expect(lines.size() > 1, "a hint wider than the rail should wrap rather than truncate");
+  for (const std::string& line : lines) {
+    Expect(text_renderer.MeasureWidth(line) <= rail_width,
+           "every wrapped line must fit the rail width");
+  }
+  // The actionable tail survives, which is the whole point.
+  Expect(lines.back().find("add one.") != std::string::npos,
+         "wrapping must keep the tail of the hint that says what to do");
+
+  // Degenerate inputs stay safe.
+  Expect(ForEachWrappedLabelLine(text_renderer, "", rail_width, 3, collect) == 0,
+         "empty text emits no lines");
+  Expect(ForEachWrappedLabelLine(text_renderer, kHint, 0.0f, 3, collect) == 0,
+         "a zero-width rail emits no lines");
+  Expect(ForEachWrappedLabelLine(text_renderer, kHint, rail_width, 0, collect) == 0,
+         "a zero line budget emits no lines");
+
+  // A one-line budget falls back to ellipsized truncation rather than overflowing.
+  lines.clear();
+  Expect(ForEachWrappedLabelLine(text_renderer, kHint, rail_width, 1, collect) == 1,
+         "a one-line budget emits exactly one line");
+  Expect(text_renderer.MeasureWidth(lines.front()) <= rail_width,
+         "the single line must still fit the rail width");
 }
 
 void TestBuilderStatusBarSurfacesTooltipFromService() {
@@ -1135,6 +1179,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage);
   AddTest(tests, "RenderViewModelBuilder/ProjectSearchSidebarStatusFitsSidebarWidth",
           TestProjectSearchSidebarStatusFitsSidebarWidth);
+  AddTest(tests, "RenderViewModelBuilder/WrappedPlaceholderWrapsInsteadOfTruncating",
+          TestWrappedPlaceholderWrapsInsteadOfTruncating);
   AddTest(tests, "RenderViewModelBuilder/StatusBarSurfacesTooltipFromService",
           TestBuilderStatusBarSurfacesTooltipFromService);
   AddTest(tests, "RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile",

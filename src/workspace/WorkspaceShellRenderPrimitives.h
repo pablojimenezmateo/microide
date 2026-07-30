@@ -773,6 +773,74 @@ inline void DrawTextOn(const render::TextRenderer& text_renderer,
   text_renderer.DrawStringOn(renderer, x, y, foreground, background, text);
 }
 
+// Empty-state hint for a narrow rail (sidebar, debug pane). These strings are
+// written to be actionable — "No breakpoints — click the editor gutter to add
+// one." — which is roughly twice what a ~270px rail fits on one line, so drawing
+// them flat either clipped at the panel edge or truncated away the half that
+// told the user what to do. Greedy word-wrap instead, ellipsizing only if the
+// line budget genuinely runs out.
+//
+// Allocation-free: the wrapped lines are views into `text` (which every caller
+// owns for longer than the call), and only the final clipped line goes through
+// the renderer's ephemeral truncation scratch — so `emit` must consume each line
+// before asking for the next. Returns the number of lines emitted.
+template <typename EmitFn>
+inline std::size_t ForEachWrappedLabelLine(const render::TextRenderer& text_renderer,
+                                           std::string_view text,
+                                           float max_width,
+                                           std::size_t max_lines,
+                                           EmitFn&& emit) {
+  if (text.empty() || max_width <= 0.0f || max_lines == 0) {
+    return 0;
+  }
+
+  std::size_t emitted = 0;
+  std::size_t line_start = 0;
+  std::size_t line_end = 0;  // end of the longest prefix known to fit
+  std::size_t word_start = 0;
+  const auto push = [&](std::string_view line) {
+    emit(emitted, line);
+    ++emitted;
+  };
+
+  while (word_start < text.size()) {
+    const std::size_t space = text.find(' ', word_start);
+    const std::size_t word_end = space == std::string_view::npos ? text.size() : space;
+    const std::string_view candidate = text.substr(line_start, word_end - line_start);
+    if (line_start != word_start && text_renderer.MeasureWidth(candidate) > max_width) {
+      if (emitted + 1 == max_lines) {
+        // Last line allowed: spend it on as much of the remainder as fits.
+        push(text_renderer.TruncateToWidthEphemeralView(text.substr(line_start), max_width));
+        return emitted;
+      }
+      push(text.substr(line_start, line_end - line_start));
+      line_start = word_start;
+    }
+    line_end = word_end;
+    word_start = space == std::string_view::npos ? text.size() : space + 1;
+  }
+  push(text_renderer.TruncateToWidthEphemeralView(text.substr(line_start), max_width));
+  return emitted;
+}
+
+inline std::size_t DrawWrappedPlaceholder(const render::TextRenderer& text_renderer,
+                                          SDL_Renderer* renderer,
+                                          float x,
+                                          float y,
+                                          float max_width,
+                                          SDL_Color foreground,
+                                          SDL_Color background,
+                                          std::string_view text,
+                                          std::size_t max_lines = 3) {
+  const float line_height = text_renderer.LineHeight();
+  return ForEachWrappedLabelLine(
+      text_renderer, text, max_width, max_lines,
+      [&](std::size_t index, std::string_view line) {
+        text_renderer.DrawStringOn(renderer, x, y + static_cast<float>(index) * line_height,
+                                   foreground, background, line);
+      });
+}
+
 inline void DrawVCenteredTextOn(const render::TextRenderer& text_renderer,
                                 SDL_Renderer* renderer,
                                 const SDL_FRect& rect,

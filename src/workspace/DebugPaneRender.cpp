@@ -404,21 +404,27 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
     }
   }
 
-  // Empty-state hints (static literals, so no per-frame string materialization).
+  // Empty-state hints. Static literals, so no per-frame string materialization,
+  // and word-wrapped: the pane is a ~270px rail and these sentences are written
+  // to say what would put a row here, which does not fit on one line. Every mode
+  // has one — Variables used to have none, so an idle pane painted as a blank
+  // box with no explanation at all.
+  const auto draw_hint = [&](std::string_view text) {
+    DrawWrappedPlaceholder(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y,
+                           panel_layout.text_width, theme_.text_muted, theme_.surface_background,
+                           text);
+  };
   if (watch_model != nullptr && watch_model->Rows().empty()) {
-    DrawTextOn(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y,
-               theme_.text_muted, theme_.surface_background,
-               "No watch expressions — click or press Insert to add one.");
+    draw_hint("No watch expressions — click or press Insert to add one.");
   }
   if (breakpoints_model != nullptr && breakpoints_model->RowCount() == 0) {
-    DrawTextOn(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y,
-               theme_.text_muted, theme_.surface_background,
-               "No breakpoints — click the editor gutter to add one.");
+    draw_hint("No breakpoints — click the editor gutter to add one.");
+  }
+  if (vars_model != nullptr && line_count == 0) {
+    draw_hint("No variables — start a debug session and pause to inspect scope.");
   }
   if (debug_view != nullptr && line_count == 0) {
-    DrawTextOn(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y,
-               theme_.text_muted, theme_.surface_background,
-               "Not paused — start a debug session and hit a breakpoint.");
+    draw_hint("Not paused — start a debug session and hit a breakpoint.");
   }
 
   // Same geometry the grab path hit-tests (panel_layout.scroll), not a second

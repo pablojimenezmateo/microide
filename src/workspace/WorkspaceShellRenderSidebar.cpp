@@ -374,12 +374,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
     // plugin sidebar's placeholder and this panel's own status line. Composing it
     // here cost two heap allocations on every repaint of a searching panel.
     if (line_map.empty() && !sidebar_vm.project_search_empty_text.empty()) {
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-                 list_layout.row_y + 4.0f,
-                 sidebar_vm.project_search_empty_is_error ? theme_.diff_deleted : theme_.text_muted,
-                 theme_.surface_background,
-                 TruncateLabelView(sidebar_vm.project_search_empty_text,
-                                   layout.sidebar.w - kSidebarInset * 2.0f));
+      DrawWrappedPlaceholder(
+          text_renderer_, renderer, layout.sidebar.x + kSidebarInset, list_layout.row_y + 4.0f,
+          layout.sidebar.w - kSidebarInset * 2.0f,
+          sidebar_vm.project_search_empty_is_error ? theme_.diff_deleted : theme_.text_muted,
+          theme_.surface_background, sidebar_vm.project_search_empty_text);
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(line_map.size()),
@@ -837,11 +836,11 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
       placeholder_is_error = plugin.placeholder_is_error;
     }
     if (!placeholder.empty()) {
-      DrawTextOn(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
-                 list_layout.row_y + 4.0f,
-                 placeholder_is_error ? theme_.diff_deleted : theme_.text_muted,
-                 theme_.surface_background,
-                 TruncateLabelView(placeholder, layout.sidebar.w - kSidebarInset * 2.0f));
+      DrawWrappedPlaceholder(text_renderer_, renderer, layout.sidebar.x + kSidebarInset,
+                             list_layout.row_y + 4.0f,
+                             layout.sidebar.w - kSidebarInset * 2.0f,
+                             placeholder_is_error ? theme_.diff_deleted : theme_.text_muted,
+                             theme_.surface_background, placeholder);
     }
 
     draw_vertical_scrollbar(list_layout.list_rect, static_cast<float>(row_count),
