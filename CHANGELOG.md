@@ -9,8 +9,8 @@ project (see [README](README.md)); versions track meaningful shipped work.
 ## [Unreleased]
 
 A cross-subsystem review sweep, plus a UI/UX consistency pass over how the
-surfaces answer the mouse and the keyboard. No public API or persisted-format
-changes.
+surfaces answer the mouse, the keyboard, and the hovering pointer. No public API
+or persisted-format changes.
 
 ### Added
 
@@ -51,6 +51,23 @@ changes.
 - **`term-close` closes a terminal**, from the command palette, the Terminal menu
   and a terminal tab's context menu. Every other tab kind could be closed without
   the mouse; terminal tabs had the ✕ and a middle click and nothing else.
+- **Match Case and Whole Word in the in-file find widget** (`Aa`, `ab`, Alt+C /
+  Alt+W) — the same two toggles, in the same order, with the same glyphs and the
+  same chords as the terminal find bar. The editor's own find was the weakest of
+  the app's three search surfaces: the project search sidebar has pattern mode, a
+  case cycle, hidden files and globs; the terminal bar has `Aa` and `ab`; the
+  editor had only `.*`. Both new toggles apply in literal *and* regex mode, which
+  also fixes a quieter problem: literal find was always case-insensitive while
+  regex find was smart-case, so flipping `.*` — a toggle about regular
+  expressions — silently changed whether `Alpha` matched `alpha`.
+- **Tooltips on the find widget's buttons**, in both the editor and the terminal.
+  Five unlabelled or two-glyph buttons that never said what they were, now naming
+  themselves and their chords.
+- **Tooltips on the status bar.** Six segments built a tooltip string every frame
+  — "Go to line/column", "Change indent settings", "Language: cpp", "Open
+  Problems", the LSP state — plumbed it through the view model, and nothing ever
+  drew it. The one row of chrome that names the language, indent, encoding and
+  cursor position explained none of it, while the breadcrumb bar above it did.
 - **Call Hierarchy has a feature toggle** (`lsp.call_hierarchy.enabled`) in the
   Settings LSP → Features group, and an entry in the Go menu beside Find
   References. It was the one LSP feature with no switch and no menu entry.
@@ -105,6 +122,22 @@ changes.
 
 ### Fixed
 
+- **Tooltips no longer come and go at random.** Each one was its own pair of shell
+  methods with a private copy of the placement maths, and every caller had to
+  remember to list all six; they had drifted. The project-search option tooltips
+  were missing from both menu-blocked invalidation lists, so a stale card stayed
+  painted under an opening menu. The git sidebar's was missing from motion
+  change-detection, so hovering Refresh only produced a tooltip if the sidebar
+  repainted for some other reason. The sidebar mode row's — the only tooltip on an
+  icon-only control, and so the one that matters most — was in neither. There is
+  now one resolver for the whole window, and one placement rule: centered on the
+  control the tooltip describes, below it when it fits and flipped above when it
+  does not (so the status bar's appear above the bar), clamped to the window.
+  Anchoring to the control rather than to the pointer also keeps the card still
+  while the pointer moves inside one button.
+- **The find widget's five buttons lift under the pointer**, like every other
+  button in the shell. They stayed flat while the cursor over them was already a
+  hand.
 - **Every painted scrollbar can now be grabbed.** Three could not. The debug
   pane's had been painted since the pane shipped but never hit-tested, so it was
   decoration — and because the row hit test covered the whole content rect, a
