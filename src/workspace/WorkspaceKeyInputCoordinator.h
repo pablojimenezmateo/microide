@@ -56,7 +56,6 @@ class KeyInputCoordinator {
     std::function<bool(std::string_view, const std::vector<std::string>&, ActionSource)>
         execute_command_name;
     std::function<const std::vector<ResolvedKeybinding>&()> resolved_keybindings;
-    std::function<bool()> open_untitled_tab;
     std::function<bool()> active_tab_is_compare;
     std::function<bool()> active_tab_is_merge;
     std::function<editor::TextViewport*()> active_navigable_viewport;
@@ -96,7 +95,6 @@ class KeyInputCoordinator {
     std::function<void()> activate_overlay_selection;
     std::function<void()> complete_command_palette_query;
     std::function<void(int)> move_compare_picker_selection;
-    std::function<void()> refresh_compare_picker;
     std::function<std::optional<WorkspaceLayout>()> current_workspace_layout;
     std::function<SDL_FRect(const SDL_FRect&)> compute_overlay_rect;
     std::function<void(const SDL_FRect&)> reveal_overlay_selection;
@@ -110,31 +108,21 @@ class KeyInputCoordinator {
     // path the mouse's single/double click does.
     std::function<void(std::size_t, bool)> activate_debug_breakpoint_row;
     std::function<void(int)> move_buffer_search_selection;
-    std::function<void()> refresh_buffer_search;
     std::function<void(BufferFindToggle)> toggle_buffer_search_option;
     std::function<void(int)> move_project_search_selection;
     std::function<void()> refresh_project_search;
     std::function<void()> replace_all_buffer_search_matches;
     std::function<void()> replace_current_buffer_search_match;
     std::function<void(int)> move_file_finder_selection;
-    std::function<void()> reset_overlay_scroll;
     std::function<void(ProjectSearchEditField)> begin_project_search_edit;
     std::function<void()> commit_project_search_edit;
     std::function<void()> cancel_project_search_edit;
     std::function<void()> replace_all_project_search_matches;
-    std::function<void()> toggle_project_search_pattern_mode;
-    std::function<void()> cycle_project_search_case_mode;
-    std::function<void()> toggle_project_search_hidden_files;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<editor::TextViewport*()> active_editor_viewport;
     std::function<void()> restore_previous_sidebar;
     std::function<void()> seed_buffer_search_from_project_search;
     std::function<void(int)> move_git_sidebar_selection;
-    std::function<void()> reveal_selected_git_sidebar_line;
-    std::function<bool(std::size_t)> open_git_sidebar_entry;
-    std::function<bool(std::size_t)> stage_git_sidebar_entry;
-    std::function<bool(std::size_t)> unstage_git_sidebar_entry;
-    std::function<bool(std::size_t)> discard_git_sidebar_entry;
     std::function<bool(GitSidebarActionId, std::size_t)> dispatch_git_sidebar_action;
     std::function<void()> close_commit_workflow;
     std::function<bool()> request_commit_workflow_commit;
@@ -144,16 +132,13 @@ class KeyInputCoordinator {
     std::function<bool(std::string_view)> commit_body_write_clipboard_text;
     std::function<std::optional<std::string>()> commit_body_read_clipboard_text;
     std::function<void(int)> move_problems_sidebar_selection;
-    std::function<void()> reveal_selected_problems_sidebar_line;
     std::function<bool()> open_selected_problem_sidebar_item;
     std::function<bool()> refresh_problems_sidebar;
     std::function<void(int)> move_tests_sidebar_selection;
-    std::function<void()> reveal_selected_tests_sidebar_line;
     std::function<bool()> open_selected_test_sidebar_item;
     std::function<bool()> run_selected_test_sidebar_item;
     std::function<bool()> refresh_tests_sidebar;
     std::function<void(int)> move_plugin_sidebar_selection;
-    std::function<void()> reveal_selected_plugin_sidebar_line;
     std::function<bool()> open_selected_plugin_sidebar_item;
     std::function<bool()> toggle_plugin_sidebar_item;
     std::function<bool()> refresh_plugin_sidebar;
@@ -182,10 +167,6 @@ class KeyInputCoordinator {
     std::function<void(std::size_t, std::size_t)> request_compare_row_range_redraw;
     std::function<void()> request_close_active_tab;
     std::function<void()> reveal_active_compare_selection;
-    std::function<bool(std::string*)> show_completion_overlay;
-    std::function<bool()> apply_selected_completion;
-    std::function<bool(std::string*)> show_code_actions_overlay;
-    std::function<bool()> execute_selected_code_action;
     std::function<bool()> accept_inline_completion;
     std::function<void()> dismiss_inline_completion;
     std::function<bool(bool)> try_snippet_tab_in_editor;

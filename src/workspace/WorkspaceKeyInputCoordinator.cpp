@@ -694,7 +694,6 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .resolved_keybindings = [this]() -> const std::vector<ResolvedKeybinding>& {
             return ResolvedKeybindings();
           },
-          .open_untitled_tab = [this]() { return OpenUntitledTab(); },
           .active_tab_is_compare = [this]() { return ActiveTabIsCompare(); },
           .active_tab_is_merge = [this]() { return ActiveTabIsMerge(); },
           .active_navigable_viewport = [this]() { return ActiveNavigableViewport(); },
@@ -792,7 +791,6 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               },
           .complete_command_palette_query = [this]() { CompleteCommandPaletteQuery(); },
           .move_compare_picker_selection = [this](int delta) { MoveComparePickerSelection(delta); },
-          .refresh_compare_picker = [this]() { RefreshComparePicker(); },
           .current_workspace_layout = [this]() { return CurrentWorkspaceLayout(); },
           .compute_overlay_rect = [this](const SDL_FRect& rect) { return ComputeOverlayRect(rect); },
           .reveal_overlay_selection = [this](const SDL_FRect& rect) { RevealOverlaySelection(rect); },
@@ -802,7 +800,6 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .activate_debug_breakpoint_row =
               [this](std::size_t row, bool toggle) { ActivateDebugBreakpointRow(row, toggle); },
           .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
-          .refresh_buffer_search = [this]() { RefreshBufferSearch(); },
           .toggle_buffer_search_option =
               [this](BufferFindToggle toggle) { ToggleBufferSearchOption(toggle); },
           .move_project_search_selection = [this](int delta) { MoveProjectSearchSelection(delta); },
@@ -810,30 +807,17 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .replace_all_buffer_search_matches = [this]() { ReplaceAllBufferSearchMatches(); },
           .replace_current_buffer_search_match = [this]() { ReplaceCurrentBufferSearchMatch(); },
           .move_file_finder_selection = [this](int delta) { MoveFileFinderSelection(delta); },
-          .reset_overlay_scroll = [this]() { ResetOverlayScroll(); },
           .begin_project_search_edit =
               [this](ProjectSearchEditField field) { BeginProjectSearchEdit(field); },
           .commit_project_search_edit = [this]() { CommitProjectSearchEdit(); },
           .cancel_project_search_edit = [this]() { CancelProjectSearchEdit(); },
           .replace_all_project_search_matches = [this]() { ReplaceAllProjectSearchMatches(); },
-          .toggle_project_search_pattern_mode = [this]() { ToggleProjectSearchPatternMode(); },
-          .cycle_project_search_case_mode = [this]() { CycleProjectSearchCaseMode(); },
-          .toggle_project_search_hidden_files = [this]() { ToggleProjectSearchHiddenFiles(); },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .restore_previous_sidebar = [this]() { RestorePreviousSidebar(); },
           .seed_buffer_search_from_project_search =
               [this]() { OpenBufferSearchFromProjectSearchResult(); },
           .move_git_sidebar_selection = [this](int delta) { MoveGitSidebarSelection(delta); },
-          .reveal_selected_git_sidebar_line = [this]() { RevealSelectedGitSidebarLine(); },
-          .open_git_sidebar_entry =
-              [this](std::size_t index) { return OpenGitSidebarEntry(index); },
-          .stage_git_sidebar_entry =
-              [this](std::size_t index) { return StageGitSidebarEntry(index); },
-          .unstage_git_sidebar_entry =
-              [this](std::size_t index) { return UnstageGitSidebarEntry(index); },
-          .discard_git_sidebar_entry =
-              [this](std::size_t index) { return DiscardGitSidebarEntry(index); },
           .dispatch_git_sidebar_action =
               [this](GitSidebarActionId action, std::size_t index) {
                 return DispatchGitSidebarAction(action, index);
@@ -861,20 +845,15 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
               [this](std::string_view text) { return WriteClipboardText(text); },
           .commit_body_read_clipboard_text = [this]() { return ReadClipboardText(); },
           .move_problems_sidebar_selection = [this](int delta) { MoveProblemsSidebarSelection(delta); },
-          .reveal_selected_problems_sidebar_line =
-              [this]() { RevealSelectedProblemsSidebarLine(); },
           .open_selected_problem_sidebar_item = [this]() { return OpenSelectedProblemSidebarItem(); },
           .refresh_problems_sidebar = [this]() { return RefreshProblemsSidebar(); },
           .move_tests_sidebar_selection = [this](int delta) { MoveTestsSidebarSelection(delta); },
-          .reveal_selected_tests_sidebar_line =
-              [this]() { RevealSelectedTestsSidebarLine(); },
           .open_selected_test_sidebar_item =
               [this]() { return OpenSelectedTestSidebarItem(); },
           .run_selected_test_sidebar_item =
               [this]() { return RunSelectedTestSidebarItem(); },
           .refresh_tests_sidebar = [this]() { return RefreshTestsSidebar(); },
           .move_plugin_sidebar_selection = [this](int delta) { MovePluginSidebarSelection(delta); },
-          .reveal_selected_plugin_sidebar_line = [this]() { RevealSelectedPluginSidebarLine(); },
           .open_selected_plugin_sidebar_item = [this]() { return OpenSelectedPluginSidebarItem(); },
           .toggle_plugin_sidebar_item = [this]() { return ToggleSelectedPluginSidebarItem(); },
           .refresh_plugin_sidebar = [this]() { return RefreshPluginSidebar(); },
@@ -924,17 +903,6 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
           .request_close_active_tab =
               [this]() { RequestCloseTab(context_.current_project_state.focused_group().active_tab_index); },
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
-          .show_completion_overlay =
-              [this](std::string* error_message) {
-                return assist_service_.ShowCompletionOverlay(error_message);
-              },
-          .apply_selected_completion = [this]() { return assist_service_.ApplySelectedCompletion(); },
-          .show_code_actions_overlay =
-              [this](std::string* error_message) {
-                return assist_service_.ShowCodeActionsOverlay(error_message);
-              },
-          .execute_selected_code_action =
-              [this]() { return assist_service_.ExecuteSelectedCodeAction(); },
           .accept_inline_completion = [this]() { return AcceptGhostText(); },
           .dismiss_inline_completion = [this]() { DismissGhostText(); },
           .try_snippet_tab_in_editor =
