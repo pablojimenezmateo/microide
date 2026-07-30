@@ -3108,6 +3108,14 @@ void TestTextViewportFastLoadDetectsEncoding() {
   Expect(utf8.EncodingLabel() == "UTF-8",
          "fast path classifies non-ASCII UTF-8 as UTF-8");
 
+  // ASCII is UTF-8: the status bar must not flip its encoding readout the moment
+  // the user types a non-ASCII character into an all-ASCII file.
+  TextViewport ascii;
+  Expect(ascii.OpenFile(WriteScratchFile("ascii.txt", "plain\ntext\n")),
+         "ascii file opens via fast path");
+  Expect(ascii.EncodingLabel() == "UTF-8",
+         "an all-ASCII file reports UTF-8, not a separate ASCII encoding");
+
   TextViewport bytes;
   const std::string with_nul("a\0b\nc", 5);
   Expect(bytes.OpenFile(WriteScratchFile("nul.bin", with_nul)),

@@ -304,7 +304,11 @@ std::string TextViewport::LineEndingLabel() const {
 std::string TextViewport::EncodingLabel() const {
   switch (document_->encoding) {
     case TextEncoding::ASCII:
-      return "ASCII";
+      // ASCII is UTF-8, and the file is written as UTF-8 either way, so reporting
+      // "ASCII" told the user nothing they could act on and made the status bar
+      // appear to change the file's encoding the moment they typed an accent.
+      // VSCode says UTF-8 for both; the enum keeps the two apart only because
+      // ascii_only is the detection fast path that skips the UTF-8 validation.
     case TextEncoding::UTF8:
       return "UTF-8";
     case TextEncoding::Bytes:
