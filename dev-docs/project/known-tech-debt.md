@@ -563,7 +563,15 @@ both build `-Werror`-clean. What is left open:
   risk/reward until 002/102 are unblocked.
 
 - **TD-2026-07-25-104 — `TextLayoutCache::VisibleLineLayoutRefCached` hands out a
-  reference into an evictable cache. OPEN (latent; no known trigger).**
+  reference into an evictable cache. [RESOLVED 2026-07-30 — enforcement added.]**
+  Closed with the third of the options listed below: the cache now counts
+  evictions (`Stats::visible_line_evictions`), and
+  `TextLayout/VisibleWorkingSetDoesNotEvict` pins that a generous frame-sized
+  working set (200 rows, three passes) evicts nothing, with a control case that
+  exceeds the limit so the assertion cannot pass vacuously. Verified by lowering
+  `kVisibleLineCacheLimit` to 64 — the exact regression the entry warned about —
+  and watching the test fail. The reference-returning API is unchanged; what was
+  missing was enforcement, not a redesign. Original analysis:
   The returned `const LayoutLine&` points into `visible_line_cache_`, whose FIFO eviction
   `erase`s entries once `kVisibleLineCacheLimit` (256) is reached. A caller that holds the
   reference across a later query for a different line can therefore be left dangling.

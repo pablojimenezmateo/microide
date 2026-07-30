@@ -126,6 +126,49 @@ void TestResolveVisualColumnMatchesTextLayout() {
 // visible_columns, tab_size} and NOT on the content revision, so anything that
 // claims to wipe it has to actually do so — a retained entry serves the layout of
 // a line that no longer exists.
+// TD-2026-07-25-104: VisibleLineLayoutRefCached hands out a reference INTO the
+// LRU, so an eviction is the only thing that can dangle a reference a caller
+// still holds. The safety argument is "a frame's working set is far below
+// kVisibleLineCacheLimit, so a frame never evicts what it is still reading" —
+// which was documented but unmeasured, so nothing failed if someone lowered the
+// limit or a caller started querying many more lines at once.
+//
+// Pin both halves: a realistically-large visible working set evicts nothing, and
+// a set that genuinely exceeds the limit does evict (so this is not passing just
+// because the counter is never incremented).
+void TestTextLayoutCacheVisibleWorkingSetDoesNotEvict() {
+  std::vector<std::string> lines;
+  lines.reserve(512);
+  for (std::size_t i = 0; i < 512; ++i) {
+    lines.push_back("line " + std::to_string(i) + " with some content to lay out");
+  }
+  microide::editor::TextLayoutCache cache;
+
+  // A generous visible row count — far above any real editor pane, and still
+  // comfortably under the cache limit.
+  constexpr std::size_t kGenerousVisibleRows = 200;
+  cache.ResetStats();
+  for (std::size_t pass = 0; pass < 3; ++pass) {
+    for (std::size_t i = 0; i < kGenerousVisibleRows; ++i) {
+      (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize);
+    }
+  }
+  Expect(cache.stats().visible_line_evictions == 0,
+         "a frame-sized visible working set must never evict, or a reference handed to the "
+         "renderer could dangle mid-frame");
+
+  // Control: exceed the limit and confirm the counter does move, so the check
+  // above cannot pass vacuously.
+  cache.InvalidateAll();
+  cache.ResetStats();
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize);
+  }
+  Expect(cache.stats().visible_line_evictions > 0,
+         "querying more distinct lines than the cache holds must evict — otherwise the "
+         "no-eviction assertion above proves nothing");
+}
+
 void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
   const std::vector<std::string> lines = {"alpha alpha", "bravo bravo", "charlie charlie"};
   microide::editor::TextLayoutCache cache;
@@ -167,6 +210,8 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
 void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextLayoutCache/InvalidateAllClearsVisibleLineCache",
           TestTextLayoutCacheInvalidateAllClearsVisibleLineCache);
+  AddTest(tests, "TextLayout/VisibleWorkingSetDoesNotEvict",
+          TestTextLayoutCacheVisibleWorkingSetDoesNotEvict);
   AddTest(tests, "TextLayout/AdvanceVisualColumnTabStops", TestAdvanceVisualColumnTabStops);
   AddTest(tests, "TextLayout/VisualColumnMapMatchesDirectWalk",
           TestVisualColumnMapMatchesDirectWalk);

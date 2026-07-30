@@ -27,6 +27,10 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   LayoutLine layout =
       TextLayout::BuildVisibleLine(lines[line_index], horizontal_scroll, visible_columns, tab_size);
   if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
+    // This is the only point that can invalidate a reference previously handed
+    // out by this function. Counted so the "a frame never evicts what it is
+    // still reading" invariant is measurable rather than merely asserted.
+    ++visible_line_evictions_;
     visible_line_cache_.erase(visible_line_cache_order_.front());
     visible_line_cache_order_.pop_front();
   }

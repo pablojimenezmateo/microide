@@ -44,6 +44,16 @@ class TextLayoutCache {
   struct Stats {
     std::size_t visible_line_queries = 0;
     std::size_t visible_line_hits = 0;
+    // Entries dropped by the FIFO to stay under kVisibleLineCacheLimit.
+    //
+    // VisibleLineLayoutRefCached hands out a reference INTO this cache, so an
+    // eviction is what could invalidate a reference a caller still holds. The
+    // safety argument has always been "a frame's working set is far below the
+    // limit, so a frame never evicts what it is still reading" — true, but until
+    // now unmeasured, so nothing failed if someone lowered the limit or a caller
+    // started querying many more lines (TD-2026-07-25-104). This counter is what
+    // makes that argument testable.
+    std::size_t visible_line_evictions = 0;
   };
 
   // ---- visible-line LayoutLine LRU --------------------------------------
@@ -145,10 +155,13 @@ class TextLayoutCache {
   std::size_t wrapped_row_layouts_size() const { return wrapped_row_layouts_.size(); }
 
   // ---- stats -------------------------------------------------------------
-  Stats stats() const { return Stats{visible_line_queries_, visible_line_hits_}; }
+  Stats stats() const {
+    return Stats{visible_line_queries_, visible_line_hits_, visible_line_evictions_};
+  }
   void ResetStats() const {
     visible_line_queries_ = 0;
     visible_line_hits_ = 0;
+    visible_line_evictions_ = 0;
   }
 
 #ifndef NDEBUG
@@ -211,6 +224,7 @@ class TextLayoutCache {
   mutable std::deque<VisibleLineCacheKey> visible_line_cache_order_;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;
+  mutable std::size_t visible_line_evictions_ = 0;
 
   // Wrapped-row table
   mutable std::vector<WrappedRow> wrapped_row_layouts_;
