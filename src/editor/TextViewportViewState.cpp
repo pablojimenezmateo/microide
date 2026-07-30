@@ -57,6 +57,23 @@ void TextViewport::ApplyRestoredViewState(std::size_t cursor_line,
   SetHorizontalScroll(horizontal_scroll);
 }
 
+void TextViewport::ReloadPreservingViewState(std::string_view text) {
+  const std::size_t visible_lines_before = visible_lines();
+  const std::size_t visible_columns_before = visible_columns();
+  const std::size_t cursor_line_before = cursor_line();
+  const std::size_t cursor_column_before = cursor_column();
+  const std::size_t scroll_line_before = scroll_line();
+  const std::size_t horizontal_scroll_before = horizontal_scroll();
+  const std::optional<SelectionRange> selection_before = selection_range();
+  const std::filesystem::path path_before = path();
+  const std::optional<LineEnding> line_ending_before = line_ending();
+
+  LoadContent(text, path_before, line_ending_before);
+  SetViewportSize(visible_lines_before, visible_columns_before);
+  ApplyRestoredViewState(cursor_line_before, cursor_column_before, scroll_line_before,
+                         horizontal_scroll_before, selection_before);
+}
+
 void TextViewport::SetTabSize(std::size_t tab_size) {
   const std::size_t next_tab_size = std::clamp<std::size_t>(tab_size, 1, 16);
   if (tab_size_ == next_tab_size) {

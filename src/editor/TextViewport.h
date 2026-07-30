@@ -121,6 +121,16 @@ class TextViewport {
                               std::size_t scroll_line,
                               std::size_t horizontal_scroll,
                               const std::optional<SelectionRange>& selection = std::nullopt);
+  // Replaces the buffer with `text` and puts the view back exactly where it was:
+  // same viewport size, path and line ending, same cursor/selection, same scroll.
+  //
+  // The save path (format-on-save, save participants) and the virtual-document
+  // reload path each hand-rolled this, and the two had drifted: one restored the
+  // selection AFTER the scroll, so MoveCursorTo's EnsureCursorVisible overwrote the
+  // scroll it had just restored. Select-all then save-with-formatter jumped the
+  // view to the end of the file. Restoring view state is this class's business, so
+  // it lives here and both callers are one line.
+  void ReloadPreservingViewState(std::string_view text);
   void SetTabSize(std::size_t tab_size);
   void SetIndentWidth(std::size_t indent_width);
   void SetSoftTabs(bool soft_tabs);

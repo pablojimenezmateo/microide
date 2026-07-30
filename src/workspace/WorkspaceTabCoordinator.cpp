@@ -29,23 +29,6 @@ std::string EditorTabLabel(const editor::TextViewport& viewport) {
   return viewport.is_placeholder() ? "Welcome" : "Untitled";
 }
 
-void RestoreViewportText(editor::TextViewport& viewport, std::string_view text) {
-  const std::size_t visible_lines = viewport.visible_lines();
-  const std::size_t visible_columns = viewport.visible_columns();
-  const std::size_t cursor_line = viewport.cursor_line();
-  const std::size_t cursor_column = viewport.cursor_column();
-  const std::size_t scroll_line = viewport.scroll_line();
-  const std::size_t horizontal_scroll = viewport.horizontal_scroll();
-  const auto selection = viewport.selection_range();
-  const std::filesystem::path path = viewport.path();
-  const auto line_ending = viewport.line_ending();
-
-  viewport.LoadContent(text, path, line_ending);
-  viewport.SetViewportSize(visible_lines, visible_columns);
-  viewport.ApplyRestoredViewState(cursor_line, cursor_column, scroll_line, horizontal_scroll,
-                                  selection);
-}
-
 }  // namespace
 
 TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
@@ -716,7 +699,7 @@ bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& vi
         static_cast<std::size_t>(std::distance(state_.focused_group().open_tabs.begin(), existing));
     if (!IsDirty(index) && existing->editor_state.has_value() &&
         operations_.editor_view_path(*existing->editor_state) == virtual_path) {
-      RestoreViewportText(existing->editor_state->viewport, content);
+      existing->editor_state->viewport.ReloadPreservingViewState(content);
     }
     Activate(index);
     return true;
@@ -766,7 +749,7 @@ void TabCoordinator::ReloadVirtualDocumentTabs(const std::filesystem::path& virt
       if (operations_.editor_view_path(*tab.editor_state) != virtual_path) {
         continue;
       }
-      RestoreViewportText(tab.editor_state->viewport, content);
+      tab.editor_state->viewport.ReloadPreservingViewState(content);
       reloaded_any = true;
       if (i == group.active_tab_index) {
         operations_.apply_editor_preferences(tab.editor_state->viewport);

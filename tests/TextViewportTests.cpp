@@ -3433,6 +3433,42 @@ void TestTextViewportDoubleSaveRebaselines() {
 // ResolveSoftWrapCursorColumnForTargetRow used to add horizontal_scroll_ to the
 // (already absolute) preferred column, double-counting the scroll and marching the
 // caret to end-of-line. Invisible whenever horizontal_scroll_ == 0.
+// A reload that preserves view state has to preserve the SCROLL too, including
+// when there is a selection. The save path used to restore the selection after the
+// scroll, and MoveCursorTo runs EnsureCursorVisible — so selecting the whole
+// buffer and saving through a formatter snapped the view to the end of the file.
+void TestTextViewportReloadPreservingViewStateKeepsScrollUnderSelection() {
+  TextViewport viewport;
+  std::string text;
+  for (int i = 0; i < 400; ++i) {
+    text += "line " + std::to_string(i) + "\n";
+  }
+  viewport.LoadContent(text, "/tmp/reload.txt");
+  viewport.SetViewportSize(20, 80);
+
+  // Scroll into the middle, then select the whole buffer (Ctrl+A leaves the
+  // selection end at the last line, far below the visible window).
+  viewport.SetScrollLine(100);
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetScrollLine(100);
+  viewport.MoveCursorTo(399, 0, /*extend_selection=*/true);
+  viewport.SetScrollLine(100);
+  const std::size_t scroll_before = viewport.scroll_line();
+  const auto selection_before = viewport.selection_range();
+  Expect(scroll_before == 100, "the fixture should be scrolled away from the selection end");
+  Expect(selection_before.has_value(), "the fixture should hold a selection");
+
+  viewport.ReloadPreservingViewState(text);
+
+  Expect(viewport.scroll_line() == scroll_before,
+         "reloading must restore the scroll, not snap it onto the selection end");
+  const auto selection_after = viewport.selection_range();
+  Expect(selection_after.has_value() &&
+             selection_after->start.line == selection_before->start.line &&
+             selection_after->end.line == selection_before->end.line,
+         "reloading must restore the selection it captured");
+}
+
 void TestTextViewportVerticalMovePreservesColumnWhenScrolled() {
   TextViewport viewport;
   const std::string long_line(200, 'a');
@@ -3478,6 +3514,8 @@ void TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn() {
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/VerticalMovePreservesColumnWhenScrolled",
           TestTextViewportVerticalMovePreservesColumnWhenScrolled);
+  AddTest(tests, "TextViewport/ReloadPreservingViewStateKeepsScrollUnderSelection",
+          TestTextViewportReloadPreservingViewStateKeepsScrollUnderSelection);
   AddTest(tests, "TextViewport/SoftWrapTabSizeChangePreservesWrappedColumn",
           TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn);
   AddTest(tests, "TextViewport/UndoPastSaveMarksDirty",

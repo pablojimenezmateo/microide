@@ -27,28 +27,6 @@ std::string SerializeViewportText(const editor::TextViewport& viewport) {
   return util::SerializeLinesStreaming(editor::LineSpan(viewport.lines()), viewport.line_ending());
 }
 
-void RestoreViewportText(editor::TextViewport& viewport, std::string_view text) {
-  const std::size_t visible_lines = viewport.visible_lines();
-  const std::size_t visible_columns = viewport.visible_columns();
-  const std::size_t cursor_line = viewport.cursor_line();
-  const std::size_t cursor_column = viewport.cursor_column();
-  const std::size_t scroll_line = viewport.scroll_line();
-  const std::size_t horizontal_scroll = viewport.horizontal_scroll();
-  const auto selection = viewport.selection_range();
-  const std::filesystem::path path = viewport.path();
-  const auto line_ending = viewport.line_ending();
-
-  viewport.LoadContent(text, path, line_ending);
-  viewport.SetViewportSize(visible_lines, visible_columns);
-  viewport.MoveCursorTo(cursor_line, cursor_column);
-  viewport.SetScrollLine(scroll_line);
-  viewport.SetHorizontalScroll(horizontal_scroll);
-  if (selection.has_value()) {
-    viewport.MoveCursorTo(selection->start.line, selection->start.column);
-    viewport.MoveCursorTo(selection->end.line, selection->end.column, true);
-  }
-}
-
 }  // namespace
 
 TabCoordinator WorkspaceShell::MakeTabCoordinator() {
@@ -328,7 +306,7 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
     return true;
   }
 
-  RestoreViewportText(viewport, text);
+  viewport.ReloadPreservingViewState(text);
   viewport.SetDirty(true);
   return true;
 }
