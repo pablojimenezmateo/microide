@@ -118,13 +118,8 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
   text_renderer_.DrawStringOn(renderer, vm.header_rect.x + 14.0f, vm.header_rect.y + 11.0f,
                               theme_.accent, theme_.chrome_background, vm.title);
 
-  if (vm.mode == SettingsOverlayMode::HelpAbout) {
-    RenderHelpAboutRows(renderer, vm, text_renderer_, theme_,
-                        context_.interaction_state.drag_target == DragTarget::SettingsScrollbar);
-    return;
-  }
-
-  // --- Filter bar ---
+  // --- Filter bar (both modes: Settings filters its rows, Help/About filters its
+  // command/shortcut rows through the same query editor) ---
   {
     const bool focused = vm.focused_pane == SettingsPane::Filter;
     DrawFilledRect(renderer, vm.filter_rect, theme_.editor_background);
@@ -144,6 +139,12 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       SDL_RenderLine(renderer, caret_x, vm.filter_rect.y + 4.0f, caret_x,
                      vm.filter_rect.y + vm.filter_rect.h - 4.0f);
     }
+  }
+
+  if (vm.mode == SettingsOverlayMode::HelpAbout) {
+    RenderHelpAboutRows(renderer, vm, text_renderer_, theme_,
+                        context_.interaction_state.drag_target == DragTarget::SettingsScrollbar);
+    return;
   }
 
   // --- Left rail: categories ---

@@ -1750,6 +1750,9 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
 
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
     vm.title = "Help / About";
+    vm.filter_placeholder = "Type to filter commands and shortcuts…";
+    vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
+                              vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
     vm.help_rows = service.HelpRows();
 
     // Two read-only columns with a word-wrapped detail, scrolled a whole entry at
@@ -1767,7 +1770,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     vm.help_detail_width = std::max(40.0f, content_right - vm.help_detail_x);
     vm.help_entry_gap = kSettingsHelpEntryGap;
 
-    const float list_top = vm.rect.y + vm.header_rect.h + kSettingsHelpPadY;
+    const float list_top = vm.filter_rect.y + vm.filter_rect.h + kSettingsHelpPadY;
     const float list_bottom = vm.rect.y + vm.rect.h - kSettingsHelpPadY;
     const float available_height = std::max(0.0f, list_bottom - list_top);
     vm.help_list_rect = MakeRect(vm.rect.x, list_top, vm.rect.w, std::max(1.0f, available_height));

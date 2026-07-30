@@ -79,8 +79,13 @@ WorkspaceShell::TextInputSurface WorkspaceShell::CurrentTextInputSurface() const
   // only claims text input when its filter pane holds focus, mirroring the
   // "focused-only" rule the buffer-search surfaces use below.
   if (settings_overlay_service_.Visible()) {
-    if (settings_overlay_service_.Mode() != SettingsOverlayMode::Settings) {
-      return TextInputSurface::None;
+    // Help/About filters through the same query editor (its rows have always been
+    // filtered by RebuildHelpRows; the input just had nowhere to be typed), so it
+    // claims text input on the same terms. It has no value-edit or category panes.
+    if (settings_overlay_service_.Mode() == SettingsOverlayMode::HelpAbout) {
+      return settings_overlay_service_.FocusedPane() == SettingsPane::Filter
+                 ? TextInputSurface::SettingsQuery
+                 : TextInputSurface::None;
     }
     // An active inline value edit claims text input regardless of focused pane so
     // typing lands in the value editor; otherwise the filter pane owns input.

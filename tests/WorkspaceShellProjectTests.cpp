@@ -2698,6 +2698,54 @@ void TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable() {
          "clicking near the bottom of the track should jump the help/about list down");
 }
 
+// Help/About lists ~190 command rows and had no way to search them: the service
+// filtered HelpRows by the query all along, but the query field was only ever
+// drawn in Settings mode, so the filter was unreachable and the surface was
+// scroll-only. It now opens filter-focused like Settings, and typing narrows it.
+void TestWorkspaceShellHelpAboutFilterNarrowsRows() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
+
+  const std::size_t unfiltered = WorkspaceShellTestAccess::HelpAboutRows(shell).size();
+  Expect(unfiltered > 20, "the help/about fixture should have many rows to filter");
+
+  // Typing must reach the filter editor, not be swallowed as it was before.
+  const std::string text = "split";
+  for (char character : text) {
+    SDL_Event event{};
+    event.type = SDL_EVENT_TEXT_INPUT;
+    const char buffer[2] = {character, '\0'};
+    event.text.text = buffer;
+    Expect(shell.HandleEvent(event).handled,
+           "typing in help/about should be routed to its filter field");
+  }
+
+  const auto rows = WorkspaceShellTestAccess::HelpAboutRows(shell);
+  Expect(!rows.empty(), "a filter that matches should keep its matching rows");
+  Expect(rows.size() < unfiltered, "a filter should narrow the help/about list");
+  Expect(std::all_of(rows.begin(), rows.end(),
+                     [](const auto& row) {
+                       return row.label.find("Split") != std::string::npos ||
+                              row.detail.find("split") != std::string::npos;
+                     }),
+         "every surviving row should match the needle");
+
+  // Backspacing back to empty restores the full list.
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_NONE),
+           "backspace should be routed to the help/about filter field");
+  }
+  Expect(WorkspaceShellTestAccess::HelpAboutRows(shell).size() == unfiltered,
+         "clearing the filter should restore every row");
+
+  // The list keys the surface already answered must still work, not be eaten by
+  // the field: Home/End stay list jumps here.
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_NONE), "End should still be consumed");
+  Expect(WorkspaceShellTestAccess::SettingsOverlayScrollRow(shell) > 0,
+         "End should still jump the help/about list, not move a caret");
+}
+
 void TestWorkspaceShellHelpAboutOmitsAuthCommands() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
@@ -4897,6 +4945,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellDebugPaneKeyboardRevealsAndPages);
   AddTest(tests, "WorkspaceShell/SettingsFontPickerScrollbarIsGrabbable",
           TestWorkspaceShellSettingsFontPickerScrollbarIsGrabbable);
+  AddTest(tests, "WorkspaceShell/HelpAboutFilterNarrowsRows",
+          TestWorkspaceShellHelpAboutFilterNarrowsRows);
   AddTest(tests, "WorkspaceShell/HelpAboutIsKeyboardAndScrollbarNavigable",
           TestWorkspaceShellHelpAboutIsKeyboardAndScrollbarNavigable);
   AddTest(tests, "WorkspaceShell/HelpAboutOmitsAuthCommands",

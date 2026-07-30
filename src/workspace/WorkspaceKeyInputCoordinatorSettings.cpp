@@ -49,15 +49,24 @@ bool KeyInputCoordinator::HandleSettingsOverlayKeyDown(const SDL_KeyboardEvent& 
 
   if (!operations_.settings_overlay_is_settings_mode()) {
     // Help/About has read-only *content*, which is not the same as inert chrome:
-    // it is a scrollable list and answers the shared Up/Down/Page/Home/End
-    // contract. Before this every key but Escape was swallowed, so a Help panel
-    // taller than the window was reachable by mouse wheel only.
+    // it is a scrollable list and answers the shared Up/Down/Page contract.
+    // Before this every key but Escape was swallowed, so a Help panel taller than
+    // the window was reachable by mouse wheel only.
+    //
+    // Everything the list does not claim types into the filter field, which is
+    // what makes ~190 command rows navigable at all. Home/End stay list jumps
+    // here rather than becoming caret movement as they are in the Settings filter
+    // pane: a filter needle is a few characters, so jumping to the top/bottom of
+    // a long list is worth more than caret motion inside it.
     if (const auto delta =
             ListNavigationKeyDelta(event.key, operations_.settings_pane_item_count(kValuePane));
         delta.has_value()) {
       operations_.settings_scroll_rows(*delta);
       overlay_redraw();
+      return true;
     }
+    operations_.text_input_handle_single_line_key_down(event, modifiers);
+    overlay_redraw();
     return true;
   }
 

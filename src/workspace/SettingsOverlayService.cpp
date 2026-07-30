@@ -58,8 +58,10 @@ void SettingsOverlayService::OpenHelpAbout() {
   visible_ = true;
   mode_ = SettingsOverlayMode::HelpAbout;
   scroll_row_ = 0;
-  // Help / About has no filter input; clear any leftover Settings-mode query so
-  // its rows are never silently filtered by a stale needle.
+  // Same filter-first opening as Settings: the list is ~190 command rows, so
+  // scrolling to find one keybinding is the wrong default. RebuildHelpRows has
+  // always applied the query; it just had nowhere to type it.
+  focused_pane_ = SettingsPane::Filter;
   query_.clear();
   query_editor_.SetText("");
   CancelValueEdit();
