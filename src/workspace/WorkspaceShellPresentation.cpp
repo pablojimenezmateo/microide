@@ -4,6 +4,7 @@
 #include <cmath>
 #include <string>
 
+#include "project/GitRepositoryMetadataTracker.h"
 #include "workspace/GitRepositoryService.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
@@ -213,6 +214,10 @@ void WorkspaceShell::RefreshStatusBar() {
           .is_git_repo_valid =
               [](const std::filesystem::path& project_root) {
                 return GitRepositoryService::IsGitRepoValid(project_root);
+              },
+          .read_head_branch =
+              [](const std::filesystem::path& project_root) {
+                return project::ReadHeadBranchName(project_root);
               },
           .active_lsp_status_strings =
               [this](bool ensure_started, std::string& text, std::string& tooltip,

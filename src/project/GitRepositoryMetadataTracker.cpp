@@ -142,6 +142,22 @@ std::optional<std::string> ReadSymbolicHeadRef(const std::filesystem::path& head
 
 }  // namespace
 
+std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& project_root) {
+  const std::optional<std::filesystem::path> git_dir = ResolveGitDir(project_root);
+  if (!git_dir.has_value()) {
+    return std::nullopt;
+  }
+  const std::optional<std::string> ref = ReadSymbolicHeadRef(*git_dir / "HEAD");
+  if (!ref.has_value()) {
+    return std::nullopt;  // detached HEAD — no branch name to show
+  }
+  std::string name = std::filesystem::path(*ref).filename().string();
+  if (name.empty()) {
+    return std::nullopt;
+  }
+  return name;
+}
+
 void GitRepositoryMetadataTracker::Reset() {
   project_root_.clear();
   baseline_.reset();

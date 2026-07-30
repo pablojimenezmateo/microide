@@ -2,11 +2,20 @@
 
 #include <filesystem>
 #include <optional>
+#include <string>
 #include <vector>
 
 #include "project/ProjectChangeTypes.h"
 
 namespace microide::project {
+
+// The branch HEAD points at ("main"), read straight out of `<gitdir>/HEAD` — no
+// subprocess. Follows a `.git` file to a linked worktree/submodule gitdir the same
+// way the change tracker does. Returns nullopt for a detached HEAD (no branch to
+// name) or a path that is not a repository. Used to label the status bar before the
+// first `git status` snapshot exists, so a freshly-opened repo does not report
+// itself as unversioned.
+std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& project_root);
 
 class GitRepositoryMetadataTracker {
  public:

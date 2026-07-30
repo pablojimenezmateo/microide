@@ -48,8 +48,24 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     if (branch_label.empty() && repo_available) {
       branch_label = git_state.base_ref;
     }
+    if (branch_label.empty() && repo_available && operations.read_head_branch) {
+      // Nothing has produced a `git status` snapshot yet — which is the normal
+      // state for the first seconds after opening a project, and stays the state
+      // indefinitely if the user never opens the Source Control view. Falling
+      // through to "no-scm" here made a perfectly ordinary git checkout label
+      // itself "no-scm [clean]": a contradiction, since only source control can
+      // know it is clean. `<gitdir>/HEAD` answers this with one file read.
+      if (!head_branch_cache_.valid || head_branch_cache_.project_root != project_root) {
+        head_branch_cache_.project_root = project_root;
+        head_branch_cache_.branch = operations.read_head_branch(project_root).value_or(std::string{});
+        head_branch_cache_.valid = true;
+      }
+      branch_label = head_branch_cache_.branch;
+    }
     if (branch_label.empty()) {
-      branch_label = "no-scm";
+      // A detached HEAD in a real repository still is not "no source control";
+      // say what it actually is.
+      branch_label = repo_available ? "detached" : "no-scm";
     }
 
     const bool cache_hit = project_segment_cache_.valid &&

@@ -8,6 +8,7 @@
 #include "workspace/WorkspaceLayout.h"
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 namespace microide::tests {
@@ -200,9 +201,63 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
          "an in-session git init must be reflected without a stale project_root cache");
 }
 
+// A git checkout with no `git status` snapshot yet labelled itself
+// "no-scm [clean]" -- a contradiction, since only source control can know a tree
+// is clean. That is the state for the first seconds after opening a project, and
+// it persists indefinitely if the user never opens the Source Control view. The
+// branch now comes from `<gitdir>/HEAD` (one file read, no subprocess) until a
+// real snapshot supersedes it.
+void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
+  WorkspaceContext context;
+  context.current_project_state.root = "/tmp/statusbar-head-branch";
+  StatusBarService service;
+
+  microide::workspace::StatusBarModelService model;
+  microide::workspace::StatusBarModelService::Operations ops;
+  ops.is_git_repo_valid = [](const std::filesystem::path&) { return true; };
+  ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
+  std::size_t head_reads = 0;
+  ops.read_head_branch = [&](const std::filesystem::path&) -> std::optional<std::string> {
+    ++head_reads;
+    return std::string("main");
+  };
+
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(service.Segment(StatusBarSegmentId::Project).text == "main [clean]",
+         "a repo with no snapshot yet should name its branch, not report no-scm");
+  Expect(head_reads == 1, "the HEAD read should happen once");
+
+  // The status bar rebuilds every frame; HEAD must not be re-read each time.
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(head_reads == 1, "the HEAD branch must be cached per project root, not re-read per frame");
+
+  // A detached HEAD has no branch name, but it is still a repository.
+  WorkspaceContext detached;
+  detached.current_project_state.root = "/tmp/statusbar-head-detached";
+  StatusBarService detached_service;
+  microide::workspace::StatusBarModelService detached_model;
+  ops.read_head_branch = [](const std::filesystem::path&) { return std::nullopt; };
+  detached_model.Refresh(detached_service, ops, detached.current_project_state, nullptr);
+  Expect(detached_service.Segment(StatusBarSegmentId::Project).text == "detached [clean]",
+         "a detached HEAD is not 'no source control'");
+
+  // No repository at all still reads no-scm.
+  WorkspaceContext bare;
+  bare.current_project_state.root = "/tmp/statusbar-head-none";
+  StatusBarService bare_service;
+  microide::workspace::StatusBarModelService bare_model;
+  ops.is_git_repo_valid = [](const std::filesystem::path&) { return false; };
+  bare_model.Refresh(bare_service, ops, bare.current_project_state, nullptr);
+  Expect(bare_service.Segment(StatusBarSegmentId::Project).text == "no-scm",
+         "a project outside any repository still reports no-scm");
+}
+
 }  // namespace
 
 void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceStatusBar/NamesBranchFromHeadBeforeFirstGitSnapshot",
+          TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot);
   AddTest(tests, "WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit",
           TestStatusBarRepoAvailabilityReflectsInSessionGitInit);
   AddTest(tests, "WorkspaceStatusBar/LspToneFromTypedSeverityNotLabelText",

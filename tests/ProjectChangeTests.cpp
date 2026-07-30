@@ -265,9 +265,57 @@ void TestGitRepositoryMetadataTrackerSkipsFifoHeadWithoutBlocking() {
 }
 #endif
 
+// ReadHeadBranchName backs the status bar's branch label before the first
+// `git status` snapshot exists, so it has to handle the same layouts the tracker
+// does (ordinary checkout, linked worktree/submodule `.git` file) and refuse to
+// invent a branch for a detached HEAD.
+void TestReadHeadBranchNameResolvesLayouts() {
+  TemporaryDirectory temp_dir;
+
+  const std::filesystem::path plain = temp_dir.path() / "plain";
+  std::filesystem::create_directories(plain / ".git");
+  WriteFile(plain / ".git" / "HEAD", "ref: refs/heads/main\n");
+  Expect(project::ReadHeadBranchName(plain).value_or("") == "main",
+         "an ordinary checkout should report its branch");
+
+  // A branch name with slashes keeps only the leaf, matching git's short name.
+  WriteFile(plain / ".git" / "HEAD", "ref: refs/heads/feature/stable-sort\n");
+  Expect(project::ReadHeadBranchName(plain).value_or("") == "stable-sort",
+         "a namespaced branch should report its short name");
+
+  // Detached HEAD: a raw object id, no branch to name.
+  WriteFile(plain / ".git" / "HEAD",
+            "9f2c1b7a4e6d8c0f1a2b3c4d5e6f708192a3b4c5\n");
+  Expect(!project::ReadHeadBranchName(plain).has_value(),
+         "a detached HEAD has no branch name");
+
+  // A linked worktree's `.git` is a FILE pointing at the real gitdir.
+  const std::filesystem::path worktree = temp_dir.path() / "worktree";
+  const std::filesystem::path real_gitdir = temp_dir.path() / "main/.git/worktrees/wt";
+  std::filesystem::create_directories(worktree);
+  std::filesystem::create_directories(real_gitdir);
+  WriteFile(real_gitdir / "HEAD", "ref: refs/heads/wt-branch\n");
+  WriteFile(worktree / ".git", "gitdir: " + real_gitdir.string() + "\n");
+  Expect(project::ReadHeadBranchName(worktree).value_or("") == "wt-branch",
+         "a linked worktree should resolve its own gitdir's HEAD");
+
+  // Not a repository at all.
+  const std::filesystem::path bare = temp_dir.path() / "bare";
+  std::filesystem::create_directories(bare);
+  Expect(!project::ReadHeadBranchName(bare).has_value(),
+         "a directory outside any repository has no branch");
+
+  // An unsafe symbolic ref must not resolve (same guard the tracker applies).
+  WriteFile(plain / ".git" / "HEAD", "ref: ../../../etc/passwd\n");
+  Expect(!project::ReadHeadBranchName(plain).has_value(),
+         "an escaping symbolic ref must be refused");
+}
+
 }  // namespace
 
 void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectChange/ReadHeadBranchNameResolvesLayouts",
+          TestReadHeadBranchNameResolvesLayouts);
   AddTest(tests, "ProjectChange/GitMetadataRejectsUnsafeSymbolicRef",
           TestGitRepositoryMetadataTrackerRejectsUnsafeSymbolicRef);
 #if defined(__unix__) || defined(__APPLE__)

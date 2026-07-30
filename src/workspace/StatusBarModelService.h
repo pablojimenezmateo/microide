@@ -16,6 +16,9 @@ class StatusBarModelService {
  public:
   struct Operations {
     std::function<bool(const std::filesystem::path&)> is_git_repo_valid;
+    // Branch name straight out of `<gitdir>/HEAD` (no subprocess), used only while
+    // no `git status` snapshot has arrived yet. Result is cached per project root.
+    std::function<std::optional<std::string>(const std::filesystem::path&)> read_head_branch;
     // Fills text + tooltip and, in the fourth argument, the semantic tone derived
     // from typed LSP readiness state (so the model never re-scans the label text).
     std::function<void(bool, std::string&, std::string&, StatusBarSegmentTone&)>
@@ -41,6 +44,16 @@ class StatusBarModelService {
     std::size_t syntax_revision = 0;
   };
 
+  // `<gitdir>/HEAD` is only consulted while there is no git snapshot, but the
+  // status bar rebuilds every frame — so remember the answer per project root
+  // instead of re-reading the file on each one. Any HEAD movement lands a real
+  // snapshot through GitRepositoryMetadataTracker, which supersedes this.
+  struct HeadBranchCache {
+    std::filesystem::path project_root;
+    std::string branch;
+    bool valid = false;
+  };
+
   struct ProjectSegmentCache {
     std::string branch_label;
     std::string cleanliness;
@@ -48,6 +61,8 @@ class StatusBarModelService {
     std::string tooltip;
     bool valid = false;
   };
+
+  HeadBranchCache head_branch_cache_;
 
   struct EditorSegmentsCache {
     const editor::TextViewport* viewport = nullptr;
