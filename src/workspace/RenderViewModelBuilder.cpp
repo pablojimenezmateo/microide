@@ -90,7 +90,6 @@ struct ProjectSearchStatusKey {
   bool running = false;
   bool query_empty = true;
   bool truncated = false;
-  bool can_replace_all = false;
   std::size_t results_size = 0;
   std::size_t searched_files = 0;
   std::size_t total_files = 0;
@@ -104,41 +103,39 @@ thread_local struct ProjectSearchStatusCache {
   std::string text;
 } g_project_search_status_cache;
 
-std::string ComposeProjectSearchStatus(const ProjectSearchState& ps, bool can_replace_all) {
-  const std::string match_actions =
-      can_replace_all
-          ? JoinHintSegments({"/ query", "= replace", "r rerun", "R replace all", "c count all"})
-          : JoinHintSegments({"/ query", "= replace", "r rerun", "c count all"});
+// Status only — no key cheat-sheet. The sidebar is ~270px wide, so appending
+// "/ query | = replace | r rerun | R replace all | c count all" guaranteed the
+// line was cut mid-word ("26 matches | / query | = rep…") and ate the part that
+// carried information. No other sidebar inlines its keys either; the search
+// panel's keys live in Help/About next to the git sidebar's, and every button
+// already carries a hover tooltip.
+std::string ComposeProjectSearchStatus(const ProjectSearchState& ps) {
   if (ps.editing) {
-    return ps.edit_field == ProjectSearchEditField::Query
-               ? JoinHintSegments({"Editing query", "Enter apply", "Esc cancel"})
-               : JoinHintSegments({"Editing replace", "Enter apply", "Esc cancel"});
+    // No "Editing query"/"Editing replace" prefix: the field being edited already
+    // draws with the accent border and a caret, and spelling it out here pushed
+    // the line past the sidebar width so the keys themselves were what got cut.
+    return JoinHintSegments({"Enter apply", "Esc cancel"});
   }
   if (!ps.error.empty()) {
-    return JoinHintSegments({"Error", "/ query", "= replace", "r rerun"});
+    return "Search failed";
   }
   if (ps.running) {
     return BuildCountStatus("Searching ", ps.results.size(), " matches") +
            BuildSearchProgressSuffix(ps.searched_files, ps.total_files);
   }
   if (ps.results.empty()) {
-    return ps.query.text().empty()
-               ? JoinHintSegments({"/ query", "= replace", "buttons change mode, case, hidden"})
-               : FormatEmptyState("matches") + "  |  " + match_actions;
+    return ps.query.text().empty() ? std::string("Type to search the project")
+                                   : FormatEmptyState("matches");
   }
   if (ps.truncated) {
     return ps.total_matches > ps.results.size()
-               ? BuildShownOfTotalStatus(ps.results.size(), ps.total_matches, "  |  " + match_actions)
-               : BuildCountStatus("Showing first ", ps.results.size(),
-                                  " matches  |  " + match_actions);
+               ? BuildShownOfTotalStatus(ps.results.size(), ps.total_matches, "")
+               : BuildCountStatus("Showing first ", ps.results.size(), " matches");
   }
-  return BuildCountStatus("", ps.results.size(), " matches  |  " + match_actions);
+  return BuildCountStatus("", ps.results.size(), " matches");
 }
 
 std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
-  // Replace-all now works in both literal and regex modes (regex substitutes with
-  // capture-group expansion), so the only gate is a non-empty query.
-  const bool can_replace_all = !ps.query.text().empty();
   const ProjectSearchStatusKey key{
       .editing = ps.editing,
       .edit_field = ps.edit_field,
@@ -146,7 +143,6 @@ std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
       .running = ps.running,
       .query_empty = ps.query.text().empty(),
       .truncated = ps.truncated,
-      .can_replace_all = can_replace_all,
       .results_size = ps.results.size(),
       .searched_files = ps.searched_files,
       .total_files = ps.total_files,
@@ -154,7 +150,7 @@ std::string_view CachedProjectSearchStatus(const ProjectSearchState& ps) {
   };
   auto& cache = g_project_search_status_cache;
   if (!cache.valid || !(cache.key == key)) {
-    cache.text = ComposeProjectSearchStatus(ps, can_replace_all);
+    cache.text = ComposeProjectSearchStatus(ps);
     cache.key = key;
     cache.valid = true;
   }

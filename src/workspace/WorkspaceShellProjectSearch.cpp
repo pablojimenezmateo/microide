@@ -303,14 +303,17 @@ void WorkspaceShell::ToggleProjectSearchScopeExpanded() {
   RequestSidebarRedraw();
 }
 
-std::string WorkspaceShell::ProjectSearchModeButtonLabel() const {
-  return context_.current_project_state.overlay.workflow.project_search.options.pattern_mode ==
-                 project::ProjectSearchPatternMode::Regex
-             ? "Rx"
-             : "Lit";
+// The three toggle glyphs. ".*" is the same regex affordance the editor and
+// terminal find bars already paint (and the same one VSCode uses), so the one
+// concept the two search surfaces share now looks the same in both instead of
+// reading "Rx"/"Lit" here and ".*" there. Case stays a word because this surface
+// is tri-state (sensitive / insensitive / smart) and no glyph carries that.
+// Views, not strings: these are drawn every sidebar frame.
+std::string_view WorkspaceShell::ProjectSearchModeButtonLabel() const {
+  return ".*";
 }
 
-std::string WorkspaceShell::ProjectSearchCaseButtonLabel() const {
+std::string_view WorkspaceShell::ProjectSearchCaseButtonLabel() const {
   switch (context_.current_project_state.overlay.workflow.project_search.options.case_mode) {
     case project::ProjectSearchCaseMode::Sensitive:
       return "Case";
@@ -322,7 +325,7 @@ std::string WorkspaceShell::ProjectSearchCaseButtonLabel() const {
   }
 }
 
-std::string WorkspaceShell::ProjectSearchHiddenButtonLabel() const {
+std::string_view WorkspaceShell::ProjectSearchHiddenButtonLabel() const {
   // The button highlights when active; "Hidden" reads as "include hidden files"
   // far more clearly than the old "Hide+/Hide-" polarity.
   return "Hidden";

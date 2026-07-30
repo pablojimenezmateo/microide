@@ -1305,9 +1305,9 @@
   // not layout arithmetic.
   bool ProjectSearchScopeExpanded() const;
   void ToggleProjectSearchScopeExpanded();
-  std::string ProjectSearchModeButtonLabel() const;
-  std::string ProjectSearchCaseButtonLabel() const;
-  std::string ProjectSearchHiddenButtonLabel() const;
+  std::string_view ProjectSearchModeButtonLabel() const;
+  std::string_view ProjectSearchCaseButtonLabel() const;
+  std::string_view ProjectSearchHiddenButtonLabel() const;
   bool ProjectSearchCanReplaceAll() const;
   bool ProjectSearchReplaceCaseSensitive() const;
   void ToggleProjectSearchPatternMode();

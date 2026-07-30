@@ -47,7 +47,9 @@ inline std::string JoinHintSegments(std::initializer_list<std::string_view> segm
       continue;
     }
     if (!first) {
-      result += "  |  ";
+      // Same separator the overlay key hints use ("↑↓ select · Enter choose ·
+      // Esc cancel"), so the shell spells a hint list one way.
+      result += " · ";
     }
     result.append(segment.data(), segment.size());
     first = false;

@@ -282,6 +282,65 @@ void TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage() {
                 "OverlaySurfaceViewModel::buffer_search_query_text must be std::string_view");
 }
 
+// The search sidebar's status line used to append a five-segment key cheat-sheet
+// ("26 matches | / query | = replace | r rerun | R replace all | c count all").
+// At the default 288px sidebar that is roughly twice the available width, so the
+// line always rendered cut mid-word and the count -- the part carrying
+// information -- was the only thing that survived. The keys now live in
+// Help/About beside the git sidebar's. Pin every state to the real width budget.
+void TestProjectSearchSidebarStatusFitsSidebarWidth() {
+  using microide::workspace::ProjectSearchEditField;
+  using microide::workspace::kWorkspaceDefaultSidebarWidth;
+
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  context.current_project_state.sidebar.view_id = "search";
+  auto& search = context.current_project_state.overlay.workflow.project_search;
+
+  // Sidebar text column: card width less the inset the search panel draws at on
+  // both sides (WorkspaceShellRenderSidebar's kSidebarInset).
+  constexpr float kSidebarInset = 10.0f;
+  const float text_width = kWorkspaceDefaultSidebarWidth - kSidebarInset * 2.0f;
+
+  const auto status_for = [&]() {
+    return builder.BuildSidebarSurface().project_search_status_text;
+  };
+  const auto expect_fits = [&](std::string_view what) {
+    const std::string_view status = status_for();
+    Expect(text_renderer.MeasureWidth(status) <= text_width,
+           what.data());
+    Expect(status.find(" rerun") == std::string_view::npos &&
+               status.find("count all") == std::string_view::npos &&
+               status.find("replace all") == std::string_view::npos,
+           "the search status line must not carry the key cheat-sheet any more");
+  };
+
+  expect_fits("the idle search status must fit the default sidebar width");
+
+  search.query.SetText("task");
+  search.results.assign(26, microide::project::ProjectSearchResult{});
+  expect_fits("a match-count status must fit the default sidebar width");
+
+  search.truncated = true;
+  search.total_matches = 4096;
+  expect_fits("a capped-result status must fit the default sidebar width");
+
+  search.truncated = false;
+  search.results.clear();
+  expect_fits("a no-matches status must fit the default sidebar width");
+
+  search.editing = true;
+  search.edit_field = ProjectSearchEditField::Query;
+  expect_fits("the editing hint must fit the default sidebar width");
+  search.edit_field = ProjectSearchEditField::Replace;
+  expect_fits("the replace-editing hint must fit the default sidebar width");
+
+  search.editing = false;
+  search.error = "regex compile failed at offset 12";
+  expect_fits("a search-error status must fit the default sidebar width");
+}
+
 void TestBuilderStatusBarSurfacesTooltipFromService() {
   WorkspaceContext context;
   StatusBarService service;
@@ -1074,6 +1133,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuildDebugPaneSurfaceWiresNarrowModelPointers);
   AddTest(tests, "RenderViewModelBuilder/SidebarFallbacksAreViewsIntoStableStorage",
           TestBuildSidebarSurfaceFallbacksAreViewsIntoStableStorage);
+  AddTest(tests, "RenderViewModelBuilder/ProjectSearchSidebarStatusFitsSidebarWidth",
+          TestProjectSearchSidebarStatusFitsSidebarWidth);
   AddTest(tests, "RenderViewModelBuilder/StatusBarSurfacesTooltipFromService",
           TestBuilderStatusBarSurfacesTooltipFromService);
   AddTest(tests, "RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile",
