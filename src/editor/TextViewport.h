@@ -493,6 +493,11 @@ class TextViewport {
   bool DeleteSelection();
   ViewState CaptureViewState() const;
   void RestoreViewState(const ViewState& state);
+  // Undo and Redo are the same walk in opposite directions: flush any open
+  // group, check the stack, pop, stamp the view state on the side being moved
+  // away from, apply, record the applied edit, push onto the other stack. They
+  // were written out twice; a fix to one would have missed the other.
+  bool ApplyHistoryStep(bool redo);
   void PushHistoryEntry(HistoryEntry entry, CoalesceHint hint = CoalesceHint{});
   // Swap a contiguous run of lines for its replacement and do everything that
   // has to follow: mark dirty, drop redo, re-sniff the encoding, drop the

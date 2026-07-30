@@ -132,6 +132,15 @@ class BreakpointStore {
   std::uint64_t revision() const { return revision_; }
 
  private:
+  // Shared body for SetCondition / SetHitCondition / SetLogMessage: the three
+  // differ only in which optional<string> field they write. Each spelled out the
+  // same clear-on-absent guard, mutable lookup, equality guard and revision bump;
+  // only the first carried the comment explaining why the guard has to come
+  // first.
+  void SetOptionalField(const std::filesystem::path& path,
+                        std::size_t line,
+                        std::optional<std::string> Breakpoint::*field,
+                        std::optional<std::string> value);
   static std::string PathKey(const std::filesystem::path& path);
   std::vector<Breakpoint>* MutableForKey(const std::string& key);
   // Find the breakpoint on `path:line`, creating it (sorted) when absent.

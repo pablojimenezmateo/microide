@@ -192,51 +192,40 @@ void TextViewport::DeleteForward() {
       "", true);
 }
 
-bool TextViewport::Undo() {
-  util::PerformanceTrace::Scope perf_scope("TextViewport::Undo");
+bool TextViewport::ApplyHistoryStep(bool redo) {
+  util::PerformanceTrace::Scope perf_scope(redo ? "TextViewport::Redo" : "TextViewport::Undo");
   if (undo_history_.IsGroupActive()) {
     FlushActiveUndoGroup();
   }
-  if (!undo_history_.CanUndo()) {
+  if (redo ? !undo_history_.CanRedo() : !undo_history_.CanUndo()) {
     return false;
   }
 
-  HistoryEntry entry = undo_history_.PopUndo();
-  entry.after_state = CaptureViewState();
+  HistoryEntry entry = redo ? undo_history_.PopRedo() : undo_history_.PopUndo();
+  // Stamp the view state for the side we are leaving, so stepping back lands the
+  // caret and scroll where they were.
+  (redo ? entry.before_state : entry.after_state) = CaptureViewState();
   {
-    util::PerformanceTrace::Scope scope("TextViewport::Undo::ApplyHistoryEntry");
-    ApplyHistoryEntry(entry, false);
+    util::PerformanceTrace::Scope scope(redo ? "TextViewport::Redo::ApplyHistoryEntry"
+                                             : "TextViewport::Undo::ApplyHistoryEntry");
+    ApplyHistoryEntry(entry, redo);
   }
   {
-    util::PerformanceTrace::Scope scope("TextViewport::Undo::BuildAppliedEdit");
-    SetLastAppliedEditFromEntry(entry, false);
+    util::PerformanceTrace::Scope scope(redo ? "TextViewport::Redo::BuildAppliedEdit"
+                                             : "TextViewport::Undo::BuildAppliedEdit");
+    SetLastAppliedEditFromEntry(entry, redo);
   }
-  undo_history_.PushRedo(std::move(entry));
+  if (redo) {
+    undo_history_.PushUndo(std::move(entry));
+  } else {
+    undo_history_.PushRedo(std::move(entry));
+  }
   return true;
 }
 
-bool TextViewport::Redo() {
-  util::PerformanceTrace::Scope perf_scope("TextViewport::Redo");
-  if (undo_history_.IsGroupActive()) {
-    FlushActiveUndoGroup();
-  }
-  if (!undo_history_.CanRedo()) {
-    return false;
-  }
+bool TextViewport::Undo() { return ApplyHistoryStep(/*redo=*/false); }
 
-  HistoryEntry entry = undo_history_.PopRedo();
-  entry.before_state = CaptureViewState();
-  {
-    util::PerformanceTrace::Scope scope("TextViewport::Redo::ApplyHistoryEntry");
-    ApplyHistoryEntry(entry, true);
-  }
-  {
-    util::PerformanceTrace::Scope scope("TextViewport::Redo::BuildAppliedEdit");
-    SetLastAppliedEditFromEntry(entry, true);
-  }
-  undo_history_.PushUndo(std::move(entry));
-  return true;
-}
+bool TextViewport::Redo() { return ApplyHistoryStep(/*redo=*/true); }
 
 bool TextViewport::ReplaceRange(const SelectionRange& range,
                                 std::string_view replacement,
