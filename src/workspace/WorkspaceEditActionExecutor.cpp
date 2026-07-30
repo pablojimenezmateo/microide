@@ -37,6 +37,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     return DispatchResult::Rejected;
   };
 
+  // Settings-backed editor-essentials toggles flip their setting key and nothing
+  // else, and EditorEssentialsCapabilitySettingKey already knows which actions
+  // those are — it is what the executor and the menu's checked state both read.
+  // Listing the eighteen of them again as case labels only created a second
+  // place to forget a new one.
+  if (EditorEssentialsCapabilitySettingKey(id) != nullptr) {
+    context_.ToggleEditorEssentialsCapability(id);
+    return DispatchResult::Handled;
+  }
+
   switch (id) {
     case ActionId::Completion: {
       std::string error_message;
@@ -525,31 +535,6 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       if (changed) {
         context_.NotifyEditorViewportChanged(/*last_change=*/false);
       }
-      return DispatchResult::Handled;
-    }
-    case ActionId::ToggleEditorFolding:
-    case ActionId::ToggleEditorStickyScroll:
-    case ActionId::ToggleEditorIndentGuides:
-    case ActionId::ToggleEditorRenderWhitespace:
-    case ActionId::ToggleEditorBracketMatchHighlight:
-    case ActionId::ToggleEditorAutoClosePairs:
-    case ActionId::ToggleEditorSurround:
-    case ActionId::ToggleEditorSmartIndent:
-    case ActionId::ToggleEditorToggleComment:
-    case ActionId::ToggleEditorLineOps:
-    case ActionId::ToggleEditorSortLines:
-    case ActionId::ToggleEditorAddCursorAtMatch:
-    case ActionId::ToggleEditorOccurrencesHighlight:
-    case ActionId::ToggleEditorSearchCaseSensitive:
-    case ActionId::ToggleEditorSnippets:
-    case ActionId::ToggleEditorSaveTrim:
-    case ActionId::ToggleEditorSaveEnsureNewline:
-    case ActionId::ToggleEditorAutoDetectIndent: {
-      // Toggle commands flip the corresponding setting key. Settings are read
-      // by feature consumers via `WorkspaceContext::user_settings`; this
-      // command is the canonical way to flip them from a keybinding or menu
-      // entry.
-      context_.ToggleEditorEssentialsCapability(id);
       return DispatchResult::Handled;
     }
     default:
