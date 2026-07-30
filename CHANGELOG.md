@@ -144,6 +144,11 @@ or persisted-format changes.
   partially repainted range was never invalidated and kept whatever had been drawn
   there. Visible where a blame overlay line sat: typing to dirty a buffer
   suppresses blame, but one row of the old blame text survived.
+- **Format-on-save no longer throws away the scroll when text is selected.**
+  "Reload this buffer and put the view back" existed twice; the save-path copy
+  restored the selection *after* the scroll, and moving the caret drags the scroll
+  with it. Select all, then save through a formatter or save participant, and the
+  view jumped to the end of the file. Horizontal scroll went the same way.
 - **The compare surface's collapsed-context buttons agree with their cursor.** The
   click, the hover highlight, the cursor shape and the test accessor each derived
   the action-button rects independently, against a rule the header states in prose
