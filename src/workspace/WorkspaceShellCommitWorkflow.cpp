@@ -134,10 +134,6 @@ void WorkspaceShell::PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_
   workflow.body.SetScrollLine(scroll);
 }
 
-bool WorkspaceShell::CommitWorkflowOpen() const {
-  return context_.current_project_state.sidebar.git.commit_workflow.open;
-}
-
 bool WorkspaceShell::RequestCommitWorkflowCommit() {
   InitializeCommitWorkflowService();
   return commit_workflow_service_.RequestCommit(

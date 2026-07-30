@@ -36,7 +36,6 @@ class DebugPaneService {
 
   // Set the pane width (resize drag). The frame path re-clamps against the
   // current window + sidebar width, so this stores the requested value.
-  void SetWidth(float width);
 
  private:
   void Activate(DebugPaneMode mode);

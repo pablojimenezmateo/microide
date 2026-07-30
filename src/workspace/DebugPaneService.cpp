@@ -58,17 +58,4 @@ void DebugPaneService::OpenOnStop() {
   Activate(DebugPaneMode::Variables);
 }
 
-void DebugPaneService::SetWidth(float width) {
-  if (state_.debug_pane.width == width) {
-    return;
-  }
-  state_.debug_pane.width = width;
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
-  }
-  if (operations_.request_redraw) {
-    operations_.request_redraw();
-  }
-}
-
 }  // namespace microide::workspace

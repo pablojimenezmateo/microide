@@ -91,10 +91,6 @@ bool WorkspaceActionContext::DebugSessionActive() const {
   return operations_.debug_session_active && operations_.debug_session_active();
 }
 
-bool WorkspaceActionContext::DebugSessionStopped() const {
-  return operations_.debug_session_stopped && operations_.debug_session_stopped();
-}
-
 void WorkspaceActionContext::DebugContinue() {
   if (operations_.debug_continue) {
     operations_.debug_continue();
@@ -788,7 +784,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .start_debugging = [this]() { return StartDebuggingWithDefaultConfig(); },
           .stop_debugging = [this]() { StopDebugging(); },
           .debug_session_active = [this]() { return IsDebugSessionActive(); },
-          .debug_session_stopped = [this]() { return IsDebugSessionStopped(); },
           .debug_continue = [this]() { DebugContinue(); },
           .debug_step_over = [this]() { DebugStepOver(); },
           .debug_step_in = [this]() { DebugStepIn(); },

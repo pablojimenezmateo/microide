@@ -523,7 +523,6 @@
     Unavailable,
   };
 
-  static std::span<const ActionSpec> ActionSpecs();
   static const ActionSpec* FindActionSpec(ActionId id);
   static const ActionSpec* FindActionByCommand(std::string_view command_name);
   static const std::vector<std::string>& CommandNames();
@@ -612,8 +611,6 @@
                                                int filter);
   void ConsumePendingFontFileDialogResult();
   bool SetProjectRoot(const std::filesystem::path& project_root);
-  static bool ConfigureProjectState(ProjectWorkspaceState& state,
-                                    const std::filesystem::path& project_root);
   ProjectCatalogService MakeProjectCatalogService();
   PersistenceCoordinator MakePersistenceCoordinator();
   MenuCoordinator MakeMenuCoordinator();
@@ -1130,7 +1127,6 @@
   std::string DispatchGitOperationAction(ActionId id, const std::vector<std::string>& args);
   bool OpenCommitWorkflow();
   void CloseCommitWorkflow();
-  bool CommitWorkflowOpen() const;
   bool RequestCommitWorkflowCommit();
   float GitSidebarCommitWorkflowHeight() const;
   void PrepareCommitBodyViewportForFrame(const SDL_FRect& sidebar_rect);

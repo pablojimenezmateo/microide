@@ -102,10 +102,6 @@ bool WorkspaceActionContext::SidebarVisible() const {
   return state_.sidebar.visible;
 }
 
-bool WorkspaceActionContext::SidebarTemporary() const {
-  return state_.sidebar.temporary;
-}
-
 std::string_view WorkspaceActionContext::SidebarViewId() const {
   return state_.sidebar.view_id;
 }

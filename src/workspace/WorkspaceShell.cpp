@@ -22,10 +22,6 @@ std::size_t MenuSlotIndex(WorkspaceShell::MenuId id) {
 
 }  // namespace
 
-std::span<const WorkspaceShell::ActionSpec> WorkspaceShell::ActionSpecs() {
-  return WorkspaceCommandSpecs();
-}
-
 void WorkspaceShell::InvalidateEditorBlamePath(const std::filesystem::path& path) {
   if (context_.current_project_state.root.empty() || path.empty()) {
     return;

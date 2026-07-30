@@ -229,7 +229,6 @@ class WorkspaceActionContext {
     // True when the active session is paused (`stopped`); gates continue/step
     // (require stopped) vs. pause (requires running). Execution-control verbs
     // forward to the active session (no-op when none / wrong state).
-    std::function<bool()> debug_session_stopped;
     std::function<void()> debug_continue;
     std::function<void()> debug_step_over;
     std::function<void()> debug_step_in;
@@ -317,7 +316,6 @@ class WorkspaceActionContext {
   ProjectOpenPickerResult OpenNativeFilePicker();
 
   bool SidebarVisible() const;
-  bool SidebarTemporary() const;
   std::string_view SidebarViewId() const;
   SidebarMode ActiveSidebarMode() const;
   void ShowSidebarSurface();
@@ -479,7 +477,6 @@ class WorkspaceActionContext {
   // Flip the `debug.enabled` master toggle and announce the new state via toast.
   void ToggleDebuggerEnabled();
   bool DebugSessionActive() const;
-  bool DebugSessionStopped() const;
   void StartDebuggingWithFeedback();
   void StopDebuggingWithFeedback();
   // Execution control (Phase 3). No-op when no session / wrong state.

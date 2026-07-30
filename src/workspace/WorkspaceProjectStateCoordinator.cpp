@@ -199,26 +199,6 @@ void WorkspaceShell::ApplyForcedFileIndexRefresh(const std::filesystem::path& ro
   RequestWindowRedraw();
 }
 
-bool WorkspaceShell::ConfigureProjectState(ProjectWorkspaceState& state,
-                                           const std::filesystem::path& project_root) {
-  std::error_code error;
-  const auto absolute_root = std::filesystem::absolute(project_root, error);
-  if (error || absolute_root.empty()) {
-    return false;
-  }
-
-  state.root = absolute_root.lexically_normal();
-  if (!state.directory_tree.SetRoot(state.root)) {
-    return false;
-  }
-    if (!state.file_index.SetRoot(state.root,
-                                  project::FileIndex::RootPopulationMode::Deferred)) {
-    return false;
-  }
-  state.file_finder.SetIndex(&state.file_index);
-  return true;
-}
-
 void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
   WorkspaceContext::RebindProjectState(state);
   // The active project's settings vector may have just been moved-into; re-point
