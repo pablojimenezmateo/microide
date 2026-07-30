@@ -101,6 +101,27 @@ nobody invokes compiles, wires, reads as part of the contract, and does nothing.
   Negative + positive controls in `tests/architecture/ArchitectureRuleFixtures.cpp`
   include that collision case explicitly.
 
+- **[RESOLVED 2026-07-30] The same question asked of functions: 21 with no
+  callers, deleted.** Six members (`WorkspaceShell::ConfigureProjectState` — a
+  stale second copy of project-state setup that could drift from the live path
+  in `WorkspaceProjectStateCoordinator`; `ActionSpecs`; `CommitWorkflowOpen`;
+  `WorkspaceActionContext::SidebarTemporary` / `DebugSessionStopped`;
+  `DebugPaneService::SetWidth`), eight `LspClient::ClearTest*Handler` seams
+  written for symmetry with the `Set*` halves and never called, and fourteen
+  free functions. `DetectProjectRoot` emptied `src/project/ProjectRoot.{h,cpp}`,
+  so both files went. `ParseProjectColor`/`FormatProjectColor` are worth a note:
+  the per-project accent is live, but the colour is derived from the root path
+  and carried as a struct field, never encoded as text — that pair was left over
+  from an earlier design.
+  Removing `DebugSessionStopped` stranded its `Operations` field and
+  `CheckCoordinatorOperationsAreCalled` failed the build until that went too,
+  which is the cascade it was written to catch.
+  **Method note for anyone repeating this:** a function defined inline in a
+  header and called once from a `.cpp` has exactly the same two-reference
+  signature as a dead decl+def pair. `AppendHexByte`, `PercentDecodeStrict`,
+  `SameTooltipRect` and every glyph painter look dead by reference count and are
+  not. The `.cpp` reference has to be a *definition*, not a call.
+
 - **[OPEN] TD-2026-07-30-001 — the project-search regex / case / hidden-file
   toggles are mouse-only.** Found while removing the dead
   `toggle_project_search_pattern_mode`, `cycle_project_search_case_mode` and
