@@ -25,6 +25,87 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-07-31 measurement pass (perf-runner-v1)
+
+Driven by the ranked trace summary, which the perf harness could not print until this
+pass: `MICROIDE_PERF_SUMMARY=1` folds every scope into a self-time ranking, but nothing in
+`microide_perf` called `DumpSummaryOnce`, so the env var silently did nothing there and the
+ranking was reachable only by driving a live session by hand. `PerfHarness::RunScenario`
+now resets the aggregate after warmup and writes the table per scenario. Every finding
+below came off the first three tables it printed.
+
+### Fixed
+
+- **Inline blame re-spawned git at frame rate for files it cannot answer for.**
+  `GitBlameService::Request` runs once per rendered frame (the overlay is built from the
+  render path). Its re-validation throttle required an *eligible* cache, so untracked /
+  ignored / unborn-HEAD files fell through it every time and re-ran `git rev-parse`, plus
+  `ls-files` and `status` once HEAD resolved. Ineligibility does not depend on the window,
+  so the throttle now covers it, keyed additionally on the (file, clear) generation so a
+  real edit still re-probes at once. A second half: the pre-blame verdicts were being
+  *discarded* when a scroll superseded the request after the probes had already run, so a
+  continuous scroll never wrote the cache entry the throttle needs — those verdicts are
+  about the file, not the window, and now record on generation currency alone.
+  `compare_scroll_selection`: git spawns 98 -> 42, traced main-thread time 204 -> 116 ms,
+  p50 wall 181 -> 123 ms.
+
+- **The fold scan re-walked its whole prefix on every extension.**
+  `ComputeWithBudget` always rescans `[0, scan_end)`; its incremental path serves a
+  localized edit, not a forward extension. Extending by one look-ahead window at a time
+  therefore made scrolling a large file quadratic — 108 extensions averaging 2.35 ms on the
+  50k-line fixture. The resolved prefix now grows geometrically: O(log n) extensions,
+  O(n) total work, and no change to the worst-case single hitch (the largest scan under
+  either policy is the one reaching the end of the file). The win is in the tail, where a
+  scroll hitch lives: `editor_sticky_scroll_scroll` p95 252 -> 157 ms, max 330 -> 159 ms;
+  `editor_fold_recompute` p50 88 -> 78 ms.
+
+- **A durable disk write per file open.** `RecentsService` saved the MRU inline after every
+  record — a temp + fsync + backup + rename at ~1.35 ms on the shell thread. Justified in
+  its header by "opens are user-paced", which is true of a click and false of session
+  restore, multi-select open, file-finder browsing, or anything scripted. Writes now
+  coalesce over a 750 ms window with a shutdown flush (the only reliable point — the
+  process leaves via `quick_exit()`), and re-recording the already-newest entry returns
+  before touching anything. `multi_tab_cycle` p50 114 -> 92 ms, traced main-thread time
+  104 -> 31 ms.
+
+- **`JsonObject` was a hash map.** One node allocation per member plus a bucket array per
+  object, on paths that are nothing but small objects (a DAP `variables` response is
+  hundreds of four-key objects). It is a flat vector sorted by key now: one allocation per
+  object, binary search over contiguous memory for lookup, a straight vector compare for
+  the key-order-independent equality the map gave for free, and deterministic
+  serialization. `sizeof(JsonValue)` drops 64 -> 40. The key order is (length, bytes)
+  rather than lexicographic — an internal detail that makes most lookup comparisons a
+  single integer compare, and worth ~12% on its own.
+  `dap_protocol_encode_decode` wall 72.2 -> 41.0 ms and allocations 1013110 -> 330308;
+  `lsp_message_framing` 11.2 -> 9.5 ms and 186794 -> 85794;
+  `lsp_document_symbols_parse` 95.3 -> 83.6 ms; `lsp_publish_diagnostics_parse` 28.5 -> 26.9 ms.
+
+- **Per-frame filetype detection, twice.** `DetectFiletype` materializes the
+  signature-scan head into a `vector<std::string>` and runs the detection regexes. The
+  status-bar language segment had grown its own four-field cache inline; the fold refresh
+  had none and paid ~0.85 ms per frame on a 50k-line buffer for an answer that had not
+  changed. `runtime_syntax::FiletypeMemo` is that cache extracted, held per editor tab so a
+  split view with two files does not thrash one entry.
+
+### Harness fixes found on the way
+
+- `project_search_literal` / `project_search_regex` ran `search` — Find in Buffer — not
+  project search, against a query present in no file's *content*, then slept a flat 50 ms
+  and sampled whatever had happened. Their entire ~52 ms wall was the sleep and their
+  allocations were the background index build at a random point, which is why the committed
+  baselines held p50=193 against max=166987. They now run `project-search` over a query
+  with real coverage and drive both async stages to fixed states; allocation counts are
+  exactly reproducible run to run.
+- Trace coverage added where the ranking could not localize: the steps inside
+  `PrepareFrameOnce`, the two fold scans, and the state file behind each
+  `persistence::WriteFile`.
+
+### Still open
+
+- `compare_scroll_selection` still spawns `git show` / `cat-file` **synchronously on the
+  shell thread** to load blob content for the diff (~17 ms per three iterations). Moving
+  that behind `ProjectBackgroundExecutor` is the remaining main-thread git cost there.
+
 ## 2026-07-04 measurement pass (perf-runner-v1)
 
 Full-suite ranking (10 iters, software renderer) plus targeted `perf-compare` runs. No hardware

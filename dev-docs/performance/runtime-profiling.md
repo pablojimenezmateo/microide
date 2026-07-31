@@ -118,6 +118,24 @@ The summaries are printed from `Application::Shutdown`, not from an exit hook â€
 ends in `std::quick_exit`, which runs neither `atexit` handlers nor static destructors. A run killed
 with `SIGKILL` prints nothing.
 
+### From the perf harness
+
+`microide_perf` honours `MICROIDE_PERF_SUMMARY` too, and this is usually the way to reach the
+ranking: a scenario is a fixed, repeatable workload, where a hand-driven session is not.
+
+```bash
+env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy MICROIDE_PERF_SUMMARY=1 \
+  ./build/microide-perf-make/microide/microide_perf --scenarios=<name> --iterations=3
+```
+
+The table is scoped to **one scenario's measured iterations**: the aggregate is reset after warmup,
+whose one-time cold work would otherwise dominate every row, and written before the next scenario
+starts. Running several scenarios in one invocation therefore gives one table each rather than a
+blend.
+
+Note the harness has no `Application::Shutdown` to print from â€” it writes the table itself, per
+scenario. Before that existed the env var silently did nothing here.
+
 ## 3. Event Counters
 
 The `PerfCounterId` counters (`util/PerformanceCounters.h`) answer the question a sampling profiler
