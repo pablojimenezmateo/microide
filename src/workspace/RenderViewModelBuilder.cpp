@@ -995,12 +995,12 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
         out.note_x = right_aligned_x(note);
       }
       const auto& results = finder.results();
-      // "<shown> of <indexed>", the same denominator shape the command palette and
-      // the git pickers use, so the count means one thing across quick-open.
+      // Shared with the command palette, the git pickers and the overlay footers,
+      // so the count means one thing across quick-open. Appended into the reused
+      // scratch buffer rather than built, to keep the frame allocation-free.
       compose_scratch.clear();
-      AppendUnsigned(compose_scratch, results.size());
-      compose_scratch += " of ";
-      AppendUnsigned(compose_scratch, finder.indexed_file_count());
+      AppendFilteredCountSummary(compose_scratch, results.size(), finder.indexed_file_count(),
+                                 "files");
       fill_picker_chrome("Find File", std::string_view{}, finder.query_state(),
                          TextInputSurface::FileFinder, compose_scratch,
                          /*summary_stable=*/false, "No matching files",

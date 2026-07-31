@@ -75,15 +75,17 @@ inline std::string FormatEmptyState(std::string_view noun, std::string_view qual
 // The denominator is deliberately dropped when it equals the numerator: an
 // unfiltered palette read "187 of 187", which is noise that also looks like a
 // filter is active. A bare "0 of 187" reads worse than saying nothing matched.
-inline std::string BuildFilteredCountSummary(std::size_t shown,
-                                             std::size_t total,
-                                             std::string_view noun) {
-  std::string text;
-  text.reserve(28 + noun.size());
+// Appending form, for the render view-model builder's reused scratch string: the
+// overlay chrome composes into a frame-stable buffer specifically to keep painting
+// allocation-free, so it must not take a freshly-built std::string per frame.
+inline void AppendFilteredCountSummary(std::string& text,
+                                       std::size_t shown,
+                                       std::size_t total,
+                                       std::string_view noun) {
   if (shown == 0) {
     text += "No matching ";
     text.append(noun.data(), noun.size());
-    return text;
+    return;
   }
   AppendUnsigned(text, shown);
   if (shown < total) {
@@ -92,6 +94,14 @@ inline std::string BuildFilteredCountSummary(std::size_t shown,
   }
   text.push_back(' ');
   text.append(noun.data(), noun.size());
+}
+
+inline std::string BuildFilteredCountSummary(std::size_t shown,
+                                             std::size_t total,
+                                             std::string_view noun) {
+  std::string text;
+  text.reserve(28 + noun.size());
+  AppendFilteredCountSummary(text, shown, total, noun);
   return text;
 }
 
