@@ -72,60 +72,64 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
-### [OPEN] Modal overlay backdrop stacks until the editor behind it is solid (TD-2026-07-30-100)
+### [OPEN] The git sidebar shows five empty sections on a clean tree (TD-2026-07-31-101)
 
-**User-visible.** Open the compare/commit picker (`compare <path>`, or Git ▸ Compare
-with Git Revision) over a file. The editor behind the modal should stay dimmed but
-readable. Instead it fades to a flat rectangle in about a second — breadcrumb band
-included — and only comes back when the overlay closes. It was caught by the
-2026-07-30 UI/UX screenshot pass, and it is **pre-existing**, visible in the audit
-stills taken before any change in that pass.
+**User-visible, cosmetic.** On a clean repository — the common case — the Source
+Control view lists `Conflicts (0)`, `Staged (0)`, `Unstaged (0)`, `Untracked (0)`
+and `Outgoing (0)`, each followed by its own "No merge conflicts" / "No staged
+changes" / … placeholder. Ten rows that say nothing, in a 288px rail. VSCode
+hides an empty group entirely.
 
-Reproducer (headless, isolated XDG tree, ~40s):
+`BuildGitSidebarViewModel` (`src/workspace/GitSidebarCommandCenter.cpp`) walks a
+fixed `section_order` array and pushes a section view model for every entry
+unconditionally. The shape of the fix is to skip empty sections and fall back to
+one line when *all* of them are empty — but the empty labels carry real state in
+two cases that must survive: `Changed` reads "Not a git repository" when
+`repo_available` is false, and `Outgoing` reads "Base branch unavailable" when
+`base_ref` is empty. Found by the 2026-07-31 screenshot pass; not fixed there
+because it is a behavioural change to a surface with its own test coverage, not
+a defect.
 
-```bash
-tools/repro/overlay-backdrop-repro.sh /tmp/out
-# c1.png .. c6.png sample the editor area every 0.35s.
-# Sample the editor background at (300,300): healthy overlays hold a spread of
-# dimmed values; the compare picker collapses to one flat value by c3.
-REPRO_CMD=command-palette tools/repro/overlay-backdrop-repro.sh /tmp/ok   # healthy control
-```
+### [RESOLVED 2026-07-31] Modal overlay backdrop stacks until the editor behind it is solid (TD-2026-07-30-100)
 
-What is established (each verified by experiment, not inspection):
+**Was user-visible.** Opening the compare/commit picker over a file faded the
+editor behind the modal — breadcrumb band included — to a flat rectangle in about
+a second, restored only by closing the overlay. Pre-existing; visible in the audit
+stills taken before the 2026-07-30 UI pass.
 
-- **The backdrop is the thing covering it.** Gate out the single
-  `DrawFilledRect(layout.editor_area, theme_.overlay_backdrop)` in
-  `WorkspaceShellRenderOverlay.cpp` and the editor stays fully visible and stable
-  for as long as the picker is open.
-- **It composites repeatedly onto its own output.** Paint that backdrop bright red
-  instead: the editor area converges to *pure* `(255,0,0)`, which an alpha-0xAA fill
-  can only reach by being applied over itself several times.
-- **The surface underneath is not being repainted between applications.** Force the
-  editor's background fill to bright green: no green ever survives, so the editor is
-  not painting into that region on the frames that apply the backdrop.
-- **It is specific to the compare/commit picker.** The command palette and the file
-  finder — same overlay geometry, same backdrop call, same control-channel driving —
-  stay correctly dimmed indefinitely (`(7,10,16)`…`(29,35,44)`, unchanged across all
-  six samples).
-- **It is not the partial-redraw path.** Forcing `full_redraw = true` for every frame
-  in `Application::Render` does not change it. Neither does forcing
-  `skip_editor_surface`/`skip_window_chrome` to false in `WorkspaceShell::RenderClip`
-  whenever a backdrop-drawing overlay is visible. The merged clip rects are disjoint,
-  and the clip is correctly active (verified with `SDL_RenderClipEnabled` +
-  `SDL_GetRenderClipRect` immediately before the backdrop fill), so a
-  double-composite within one frame is ruled out.
+Two independent defects, and only together did they produce the stain:
 
-What is *not* established: why `RenderActiveWorkspaceSurface` fails to paint the pane
-on those frames when `skip_editor_surface` is false and the per-pane instrumentation
-reports a live, non-placeholder viewport at the right rect. Note that adding `SDL_Log`
-instrumentation to the render path perturbs frame timing enough that the failure often
-stops reproducing — the instrumented runs mostly describe healthy frames, which is
-why the logs and the pixels disagree. Whoever picks this up should reach for a
-non-blocking capture (a ring buffer drained off the render path) rather than `SDL_Log`,
-and should start from what distinguishes the compare picker: it is the only one of the
-three that opens in a `loading` state and completes through
-`compare_picker_mailbox_` → `ApplyComparePickerFileHistory` → `RefreshPicker` on a
-later frame.
+1. **SDL's *draw* blend mode is ambient renderer state, and nothing armed it.**
+   The only `SDL_SetRenderDrawBlendMode` calls in `src/` were two hand-rolled
+   BLEND/NONE brackets around the prompt surfaces. Every other translucent fill —
+   the modal backdrop, `selection_fill`, `search_match`, `bracket_match_background`,
+   `debug_execution_line`, diagnostic underlines, `overlay_background` itself —
+   was issued under `SDL_BLENDMODE_NONE` and therefore *overwrote* its region with
+   the raw colour, alpha included, rather than compositing. Probing the render
+   target around the backdrop fill showed `(15,19,27,255)` becoming exactly
+   `(5,7,12,170)`: the theme colour with its own alpha stamped in.
+2. **The retained scene texture presented with `SDL_BLENDMODE_BLEND`**, SDL's
+   default for an RGBA render target. The window is never cleared, so that blit
+   composited the scene against the *previous* present instead of replacing it —
+   and a region carrying alpha 170 re-composited against its own output every
+   frame, converging on the backdrop colour. Hence the "stacking" appearance, and
+   hence why overlays that repaint their whole area every frame looked fine.
+
+Fixed by moving the alpha decision into `render::SetDrawColor` (opaque → NONE,
+translucent → BLEND), routing every shell draw primitive through it, and giving
+the scene texture `SDL_BLENDMODE_NONE`. Guarded by
+`WorkspaceShell/RenderedFrameIsFullyOpaque`, which asserts the underlying
+contract — a painted frame is fully opaque — rather than the symptom; it reports
+221097 translucent pixels without the fix. `tools/repro/overlay-backdrop-repro.sh`
+still reproduces the original scenario and now holds a stable dim across all six
+samples.
+
+Note for future render work: the earlier investigation's conclusion that the
+backdrop "composites repeatedly onto its own output" was right about the symptom
+and wrong about the seam — it is the *presentation* blit that repeats, not the
+fill. The instrumentation that settled it was a buffered `fopen`/`fprintf` probe
+plus `SDL_RenderReadPixels` around each render stage, not `SDL_Log` (which
+perturbs frame timing enough to hide the failure, as that note warned).
 
 ### Consumer-side reachability sweep — coordinator hooks (TD-2026-07-30-*)
 

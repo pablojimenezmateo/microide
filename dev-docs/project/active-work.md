@@ -68,6 +68,21 @@ These are implemented and should not be treated as open migration work:
   read by both the view-model builder and the click hit-test so a field cannot be painted off its own
   hit target. They previously split across two card geometries in three sizes, and the two most-used
   ones carried neither a result count nor a key hint. Do not reintroduce a per-mode overlay rect.
+- **a painted frame is fully opaque** (2026-07-31): the scene is rendered into a
+  retained RGBA texture that is blitted whole to a window that is never cleared, so
+  a translucent pixel left in that texture re-composites against its own previous
+  output on every present until the region goes flat. Translucent fills therefore
+  have to *composite*, never overwrite: `render::SetDrawColor` picks the blend mode
+  from the colour's alpha and every shell draw primitive routes through it (do not
+  call `SDL_SetRenderDrawColor` directly from a render TU), and the scene texture
+  presents with `SDL_BLENDMODE_NONE`. Guarded by
+  `WorkspaceShell/RenderedFrameIsFullyOpaque`
+- **derived chrome asks for its own repaint** (same date): the status bar is built
+  from state owned by other surfaces, so no `Request*Redraw` helper covered it and
+  it simply never repainted on a partial frame. `StatusBarService` tracks whether a
+  *painted* value changed and frame prep requests the strip when one did. Redraws
+  requested from the render path are also no longer stranded — the event loop does
+  not block with one pending, and `HandleScheduledWake` merges them in
 - **text that does not fit is truncated or wrapped, never sheared** (same pass): notification toasts
   scale their width with the window and ellipsize through `TruncateToWidthEphemeralView`; narrow-rail
   empty states (sidebar placeholders, every debug-pane mode) word-wrap through

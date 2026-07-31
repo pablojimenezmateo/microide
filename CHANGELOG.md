@@ -154,6 +154,44 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **A modal no longer eats the editor behind it.** Opening the compare/commit
+  picker over a file faded the code being compared — breadcrumb band included —
+  to a flat rectangle within about a second, and it came back only when the
+  overlay closed. Underneath was something wider: SDL's draw blend mode is
+  ambient renderer state and nothing armed it, so *every* translucent fill in the
+  app (the modal backdrop, the selection fill, search matches, bracket match, the
+  execution line, diagnostic underlines) overwrote its region with the raw colour
+  and its alpha instead of compositing over it — and the retained scene texture,
+  which SDL defaults to blending, then re-composited that region against its own
+  previous output on every present until it collapsed to the fill colour. Blend
+  mode is now derived from the colour's alpha in one shared primitive, and the
+  scene presents opaque (which is also one less per-pixel blend per frame).
+  Translucency across the app is what the theme asks for rather than an accident
+  of the presentation blend.
+- **The status bar updates.** Moving the caret left it reading `Ln 1, Col 1`, for
+  the rest of the session unless something unrelated forced a full redraw; opening
+  a `.cpp` from a `.md` left `markdown` and `Tabs: 4` sitting next to C++ source.
+  Every value on the bar is derived from state owned by another surface, so the
+  event that changed one asked for *that* surface to be repainted and the strip
+  kept its pixels — there was no request-the-status-bar path anywhere in the
+  codebase to call. It asks for itself now, and only when a painted value actually
+  moved. (This also unstalled redraws requested from the render path in general —
+  the event loop used to block with one outstanding, which had the same latent
+  effect on the compare view's progressive syntax highlighting.)
+- **The status bar describes the file the caret is in.** On a compare or merge
+  tab it read the group's active *editor* viewport instead, so a three-way merge
+  of a `.cpp` sat under `markdown  Tabs: 4` left over from the previously open
+  file — visible in the shipped merge screenshot. It reads the merge result
+  buffer / the compare tab's editable side now.
+- **The terminal is no longer blank when a startup rc runs `clear`.** The primary
+  buffer's viewport is the last N lines of the scrollback and the cursor is an
+  absolute index into it, so a `clear` issued before the panel's real geometry was
+  known left one pre-layout screen of lines with the cursor on the first — and the
+  resize that followed parked the viewport on the blank tail, with the prompt above
+  it and every subsequent line the shell printed landing off-screen. Permanently:
+  nothing scrolled it back. A shrink now drops the unused blank tail of the old
+  screen, the way xterm and VTE do. (The project's own showcase screenshots were
+  shipping a blank terminal panel because of this.)
 - **Toast messages are no longer sheared mid-word.** A notification capped its text
   at a flat 320px and let the clip rect cut the rest, so `review-branch main:
   opened 1, reused 0, skipped 2` rendered as `review-branch main: opened 1, reused
