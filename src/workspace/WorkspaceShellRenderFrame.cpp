@@ -284,10 +284,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
 
   util::PerformanceTrace::Scope trace_scope("WorkspaceShell::PrepareFrameOnce");
   util::AddPerformanceCounter(util::PerfCounterId::FramePrepareCalls);
-  ConsumePendingProjectOpenDialogResult();
-  ConsumePendingOpenFileDialogResult();
-  ConsumePendingFontFileDialogResult();
-  ConsumeProjectSearchUpdates();
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::ConsumePendingResults");
+    ConsumePendingProjectOpenDialogResult();
+    ConsumePendingOpenFileDialogResult();
+    ConsumePendingFontFileDialogResult();
+    ConsumeProjectSearchUpdates();
+  }
   text_renderer_.EnsureInitialized(renderer, presentation_scale_x_, presentation_scale_y_);
   // The terminal renderer is only needed (and only pays for its glyph atlas) once a
   // terminal is actually shown; initialize + apply its font lazily at that point.
@@ -299,23 +302,32 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   window_presentation_.logical_width = width;
   window_presentation_.logical_height = height;
   const RenderViewModelBuilder view_models(context_);
-  prepare_cached_sidebar_vm_.emplace(view_models.BuildSidebarSurface());
-  prepare_cached_bottom_panel_vm_.emplace(view_models.BuildBottomPanelSurface());
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::BuildSurfaceViewModels");
+    prepare_cached_sidebar_vm_.emplace(view_models.BuildSidebarSurface());
+    prepare_cached_bottom_panel_vm_.emplace(view_models.BuildBottomPanelSurface());
   // The debug pane can only ever be visible when the debugger is enabled, so skip
   // building its view model entirely in the common debug-off case. RenderDebugPane
   // tolerates the empty optional.
   if (DebugEnabled()) {
     prepare_cached_debug_pane_vm_.emplace(view_models.BuildDebugPaneSurface());
   }
+  }
   const SidebarSurfaceViewModel& sidebar_vm = *prepare_cached_sidebar_vm_;
   const BottomPanelSurfaceViewModel& panel_vm = *prepare_cached_bottom_panel_vm_;
   ProjectWorkspaceState& project_state = *sidebar_vm.project_state;
-  ApplyLiveSettings();
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::ApplyLiveSettings");
+    ApplyLiveSettings();
+  }
   // Resolve editor folding freshness once here, before any RenderClip runs, so the
   // state-mutating fold scan executes a single time per prepared frame instead of
   // per pane on every partial-redraw RenderClip. Render then consumes the already-
   // resolved model via GroupFoldingModelPtr (TD-2026-07-17A-004).
-  RefreshEditorFoldingModels();
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshEditorFoldingModels");
+    RefreshEditorFoldingModels();
+  }
   prepare_cached_text_input_vm_.emplace(view_models.BuildTextInputSurface());
   const float clamped_sidebar_width =
       ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
@@ -336,6 +348,7 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   WorkspaceLayout layout;
   bool workspace_layout_recomputed = false;
   if (layout_dirty_ || !prepared_frame_layout_.has_value()) {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::ComputeLayout");
     layout = ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
                            panel_vm.content != PanelContentKind::None,
                            project_state.sidebar.width, project_state.panel.height,
@@ -350,7 +363,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   } else {
     layout = *prepared_frame_layout_;
   }
-  RefreshStatusBar();
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshStatusBar");
+    RefreshStatusBar();
+  }
   // Nothing else asks for the status-bar strip: its content is derived from state
   // owned by other surfaces, so the event that changed it repaints the editor (or
   // the sidebar, or nothing) and the bar keeps stale pixels on a partial frame.
@@ -360,9 +376,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   if (status_bar_service_.TakePaintedStateChanged()) {
     RequestRedrawRect(layout.status_bar);
   }
-  RefreshSettingsOverlayCatalog();
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshSettingsOverlayCatalog");
+    RefreshSettingsOverlayCatalog();
+  }
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
-  MakeTextInputCoordinator().SyncTextInputSurface(render_window);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::SyncTextInputSurface");
+    MakeTextInputCoordinator().SyncTextInputSurface(render_window);
+  }
   if (panel_vm.content == PanelContentKind::Terminal && ActiveTerminalTab() != nullptr) {
     const SDL_FRect& panel = layout.bottom_panel;
     const auto& cached = last_terminal_panel_rect_;
