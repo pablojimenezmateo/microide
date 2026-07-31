@@ -1461,6 +1461,18 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       plugin_surface = pres->surfaces.Find(panel.surface_owner, panel.surface_id);
     }
   }
+  // Empty-state hint. Phrased like the debug pane's -- say what would put a row
+  // here -- and static, so painting it costs no allocation. The bottom panel was
+  // the last list surface in the shell that painted a blank body with no
+  // explanation: an output channel whose tab is open before the tool has written
+  // anything, and a Terminal panel with no live session, both showed a header over
+  // nothing.
+  std::string_view empty_label;
+  if (panel.content == PanelContentKind::Terminal) {
+    empty_label = "No terminal session — use + on the tab strip, or Terminal ▸ New Terminal.";
+  } else if (panel.content == PanelContentKind::Output) {
+    empty_label = "No output yet — this channel fills in as tools run.";
+  }
   return BottomPanelSurfaceViewModel{
       .content = panel.content,
       .height = panel.height,
@@ -1480,6 +1492,7 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       // the frame layout (bottom-panel header rect) is known.
       .plugin_surface = plugin_surface,
       .plugin_surface_scroll_y = static_cast<float>(panel.surface_scroll_y),
+      .empty_label = empty_label,
   };
 }
 

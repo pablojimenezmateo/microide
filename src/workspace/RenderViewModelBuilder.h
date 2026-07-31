@@ -233,6 +233,11 @@ struct BottomPanelSurfaceViewModel {
   // render TU paints this directly instead of resolving owner/id through state.
   const editor::SurfaceContent* plugin_surface = nullptr;
   float plugin_surface_scroll_y = 0.0f;
+  // Static hint drawn when the panel body has no rows, matching the debug pane and
+  // the sidebar modes. Empty for content kinds that are never a row list (a plugin
+  // surface paints itself). Resolved here rather than in the render TU so it is
+  // one testable decision instead of product logic inside a lint-covered paint.
+  std::string_view empty_label;
 
   // Terminal find bar, floating over the terminal body. Filled by frame prep
   // rather than by the builder: the bar's geometry needs the resolved layout, and

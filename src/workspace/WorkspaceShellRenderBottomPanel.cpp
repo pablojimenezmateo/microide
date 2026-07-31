@@ -588,6 +588,15 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
     }
   }
 
+  // Empty-state hint, matching the debug pane and the sidebar modes. The text is
+  // resolved by the builder; this only decides that there is nothing to draw over.
+  // Word-wrapped because the panel narrows with the sidebar and the right pane.
+  if (panel_line_count == 0 && !panel_vm.empty_label.empty()) {
+    DrawWrappedPlaceholder(text_renderer_, renderer, panel_layout.text_x, panel_layout.text_y,
+                           panel_layout.text_width, theme_.text_muted, theme_.surface_background,
+                           panel_vm.empty_label);
+  }
+
   if (terminal_panel) {
     if (auto* active_terminal = ActiveTerminalTab(); active_terminal != nullptr) {
       const terminal::TerminalCursorSnapshot cursor = active_terminal->session.CursorSnapshot();

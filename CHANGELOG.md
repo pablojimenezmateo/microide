@@ -154,6 +154,12 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **The bottom panel explains itself when it is empty.** It was the last row list
+  in the shell that painted a blank body over a header: an Output tab opened
+  before its tool writes a line (a debug console between "session started" and the
+  adapter's first byte, for instance), and a Terminal panel with no live session.
+  Both now carry the same kind of hint the debug pane and sidebar modes already
+  had.
 - **Result counts say what they are counting, and stop double-counting.** The
   command palette, launch-config picker and commit picker each showed a bare
   `187 of 187` — a denominator that only ever equals the numerator when no filter

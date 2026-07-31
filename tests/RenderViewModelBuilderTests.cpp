@@ -829,6 +829,34 @@ void TestSettingsOverlayWrapsLongDescriptions() {
   }
 }
 
+// The bottom panel was the last row list in the shell that painted a blank body
+// when it had nothing to show: an output tab opened before its tool writes a line,
+// and a Terminal panel with no live session. Both now carry a hint, resolved by the
+// builder so the lint-covered render TU only decides whether to draw it.
+void TestBottomPanelCarriesEmptyStateHints() {
+  using microide::workspace::PanelContentKind;
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+
+  context.current_project_state.panel.content = PanelContentKind::Terminal;
+  const auto terminal_vm = builder.BuildBottomPanelSurface();
+  Expect(terminal_vm.empty_label.find("terminal") != std::string_view::npos,
+         "an empty terminal panel should say how to start a session");
+
+  context.current_project_state.panel.content = PanelContentKind::Output;
+  const auto output_vm = builder.BuildBottomPanelSurface();
+  Expect(output_vm.empty_label.find("output") != std::string_view::npos,
+         "an empty output channel should say it is waiting on the tool");
+  Expect(output_vm.empty_label != terminal_vm.empty_label,
+         "the two panel kinds should not share one generic hint");
+
+  // A plugin surface paints its own body, so a generic "no rows" hint would sit
+  // underneath content the host does not own.
+  context.current_project_state.panel.content = PanelContentKind::PluginSurface;
+  Expect(builder.BuildBottomPanelSurface().empty_label.empty(),
+         "a plugin content surface should not get the host's row-list hint");
+}
+
 // A no-match list must say so exactly once. The count row sits directly above the
 // list's empty-state label, so a count line that also spells out the empty state
 // prints the same sentence twice -- which shipped in the file finder and, in a
@@ -1277,6 +1305,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestFilteredCountSummaryWording);
   AddTest(tests, "RenderViewModelBuilder/EmptyPickerStatesAreNotStatedTwice",
           TestEmptyPickerStatesAreNotStatedTwice);
+  AddTest(tests, "RenderViewModelBuilder/BottomPanelCarriesEmptyStateHints",
+          TestBottomPanelCarriesEmptyStateHints);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayControlValueIsPrecomputed",
           TestSettingsOverlayControlValueIsPrecomputed);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",
