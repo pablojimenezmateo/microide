@@ -30,6 +30,9 @@ class PerformanceTrace {
 
   static bool Enabled() { return Channel().Enabled(); }
   static bool SummaryEnabled() { return Channel().AggregateEnabled(); }
+  // True only in streaming mode. Guard a bespoke stderr line with this rather
+  // than Enabled(), or a summary-only run pays for output it never wanted.
+  static bool StreamEnabled() { return Channel().StreamEnabled(); }
   static double MinimumDurationMs() { return Channel().MinimumDurationMs(); }
 
   // Generic env-flag reader for the adjacent opt-in trace flags

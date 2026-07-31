@@ -474,14 +474,21 @@ void DebugSession::RequestVariables(
         std::vector<dap_protocol::DapVariable> variables =
             dap_protocol::ParseVariables(response.body);
         // Round-trip timing (adapter-side cost) is the suspect for slow expands.
-        // Env-gated so it is silent unless MICROIDE_PERF_TRACE is set.
+        // The span crosses two callbacks, so no scope can wrap it -- feed the
+        // measurement into the ranked summary instead, where 200 expands become
+        // one row with a count and a max rather than 200 stderr lines that rank
+        // nowhere. The label is fixed: keying it by variables_reference would
+        // mint a distinct row per expand.
         if (util::PerformanceTrace::Enabled()) {
           const double elapsed_ms = std::chrono::duration<double, std::milli>(
                                         std::chrono::steady_clock::now() - request_started)
                                         .count();
-          std::fprintf(stderr, "[perf] %8.2f ms | dap variables ref=%d children=%zu\n", elapsed_ms,
-                       variables_reference, variables.size());
-          std::fflush(stderr);
+          util::PerformanceTrace::RecordSample("dap::VariablesRoundTrip", elapsed_ms);
+          if (util::PerformanceTrace::StreamEnabled()) {
+            std::fprintf(stderr, "[perf] %8.2f ms | dap variables ref=%d children=%zu\n",
+                         elapsed_ms, variables_reference, variables.size());
+            std::fflush(stderr);
+          }
         }
         callback(true, std::move(variables));
       });

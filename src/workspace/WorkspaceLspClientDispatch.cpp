@@ -172,13 +172,28 @@ void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
   if (has_id && !has_method && (msg["id"].IsInt() || msg["id"].IsDouble()) &&
       ResponseIdInRange(msg["id"], &id)) {
     std::function<void(LspRequestOutcome, util::JsonValue)> cb;
+    std::chrono::steady_clock::time_point sent_at;
     {
       std::lock_guard lock(mutex);
       auto it = pending_requests.find(id);
       if (it != pending_requests.end()) {
         cb = std::move(it->second.callback);
+        sent_at = it->second.sent_at;
         pending_requests.erase(it);
       }
+    }
+    if (cb && util::PerformanceTrace::SummaryEnabled()) {
+      // How long the server took to answer. This is the number behind "why is
+      // completion slow" and it lives in neither process's trace: the span
+      // starts on the shell thread and ends on the I/O thread, so no scope can
+      // wrap it. One row for every answered request, ranked with everything
+      // else. Deliberately not keyed by method -- the id-to-method mapping is
+      // not retained here, and a per-method breakdown is the follow-up, not the
+      // first question.
+      const double elapsed_ms = std::chrono::duration<double, std::milli>(
+                                    std::chrono::steady_clock::now() - sent_at)
+                                    .count();
+      util::PerformanceTrace::RecordSample("lsp::RequestRoundTrip", elapsed_ms);
     }
     if (cb) {
       util::JsonValue captured = std::move(msg);

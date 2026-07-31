@@ -90,6 +90,9 @@ struct LspClient::Impl {
   struct PendingRequest {
     std::function<void(LspRequestOutcome, util::JsonValue)> callback;
     std::chrono::steady_clock::time_point deadline;
+    // For round-trip attribution. `deadline` cannot stand in for this: tests
+    // shorten request_timeout_, so deadline-minus-timeout would drift.
+    std::chrono::steady_clock::time_point sent_at;
   };
   std::unordered_map<int, PendingRequest> pending_requests;
 
@@ -377,9 +380,11 @@ struct LspClient::Impl {
   int RegisterPendingRequest(std::function<void(LspRequestOutcome, util::JsonValue)> cb) {
     std::lock_guard lock(mutex);
     const int id = next_id++;
+    const auto now = std::chrono::steady_clock::now();
     pending_requests[id] = PendingRequest{
         .callback = std::move(cb),
-        .deadline = std::chrono::steady_clock::now() + request_timeout_,
+        .deadline = now + request_timeout_,
+        .sent_at = now,
     };
     return id;
   }

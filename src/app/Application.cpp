@@ -719,17 +719,13 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       workspace_shell_.RenderClip(frame_token, renderer_, width, height);
     } else {
       bool rendered_partial = false;
-      // Only materialize the descriptive label when tracing is active; building
-      // it every partial frame would heap-allocate on the render hot path.
-      std::string partial_loop_label;
-      std::string_view partial_loop_label_view = "Application::WorkspaceRender(partial-loop)";
-      if (util::PerformanceTrace::Enabled()) {
-        partial_loop_label =
-            "Application::WorkspaceRender(partial-loop " + std::to_string(merged_clip_count) +
-            " coalesced clip rects from " + std::to_string(dirty_rect_count) + " dirty rects)";
-        partial_loop_label_view = partial_loop_label;
-      }
-      util::PerformanceTrace::Scope partial_loop_scope(partial_loop_label_view);
+      // ScopeLabel keeps the descriptive label off the render hot path: building
+      // it every partial frame would heap-allocate for nothing.
+      util::PerformanceTrace::ScopeLabel partial_loop_label(
+          "Application::WorkspaceRender(partial-loop)");
+      partial_loop_label.Field("clips", static_cast<long long>(merged_clip_count));
+      partial_loop_label.Field("dirty", static_cast<long long>(dirty_rect_count));
+      util::PerformanceTrace::Scope partial_loop_scope(partial_loop_label.View());
       for (const SDL_Rect& clip_rect : dirty_region_analysis.merged_clip_rects) {
         SDL_SetRenderClipRect(renderer_, &clip_rect);
         util::PerformanceTrace::Scope partial_scope(
