@@ -1056,6 +1056,62 @@ void TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange() {
          "a caret move should repaint the status bar so Ln/Col follows it");
 }
 
+// Settings and Help/About take the keyboard entirely, but they were the only two
+// modal surfaces in the shell that painted no backdrop — the editor behind them
+// stayed at full brightness, so neither read as modal while every quick-open
+// surface and both prompts dimmed. (Adding one was only safe once translucent
+// fills actually composited; before that a backdrop here would have stained the
+// editor the same way the compare picker's did.) Assert the pixel, and assert the
+// frame still comes out opaque with it.
+void TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  Expect(theme.overlay_backdrop.a != SDL_ALPHA_OPAQUE,
+         "the fixture is only meaningful while the backdrop is translucent");
+
+  const auto sample_editor_area = [&](bool help_about) {
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::OpenFile(shell, source);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 900, 600);
+
+    SoftwareCanvas canvas(900, 600);
+    shell.Render(canvas.renderer(), 900, 600);
+    const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+    // A point inside the editor area but clear of the centered card.
+    const int x = static_cast<int>(layout.editor_area.x + 4.0f);
+    const int y = static_cast<int>(layout.editor_area.y + layout.editor_area.h - 6.0f);
+    const SDL_Color before = canvas.PixelAt(x, y);
+
+    if (help_about) {
+      WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
+    } else {
+      WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
+    }
+    Expect(WorkspaceShellTestAccess::SettingsOverlayVisible(shell),
+           "the fixture should open the settings/help surface");
+    shell.Render(canvas.renderer(), 900, 600);
+    const SDL_Color after = canvas.PixelAt(x, y);
+
+    Expect(after.a == SDL_ALPHA_OPAQUE,
+           "the backdrop must leave the frame opaque, not stamp its own alpha");
+    Expect(after.r != before.r || after.g != before.g || after.b != before.b,
+           help_about ? "Help/About should dim the editor behind it"
+                      : "Settings should dim the editor behind it");
+    // Dimming, not overwriting: the result is a mix, not the raw backdrop colour.
+    Expect(!(after.r == theme.overlay_backdrop.r && after.g == theme.overlay_backdrop.g &&
+             after.b == theme.overlay_backdrop.b),
+           "the backdrop should composite over the editor, not replace it");
+  };
+
+  sample_editor_area(false);
+  sample_editor_area(true);
+}
+
 // A dirty rect has to fully contain the content it stands for. All three
 // row-range builders (editor, compare, merge) nudged the top up by a pixel and
 // left the height alone, so the LAST pixel row of a partially repainted range was
@@ -3334,6 +3390,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenderedFrameIsFullyOpaque);
   AddTest(tests, "WorkspaceShell/StatusBarRepaintsWhenItsValuesChange",
           TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
+  AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
+          TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
 }
 
 }  // namespace microide::tests

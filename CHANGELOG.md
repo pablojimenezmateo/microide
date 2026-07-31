@@ -178,6 +178,13 @@ public API or persisted-format changes.
   moved. (This also unstalled redraws requested from the render path in general —
   the event loop used to block with one outstanding, which had the same latent
   effect on the compare view's progressive syntax highlighting.)
+- **Settings and Help/About dim the editor behind them.** They take the keyboard
+  entirely, but they were the only two modal surfaces in the shell that painted no
+  backdrop — the editor stayed at full brightness behind them while every
+  quick-open surface and both prompts dimmed, so neither read as modal. They also
+  used to fall through to a whole-window repaint on every keystroke, scroll and
+  arrow key (~17 call sites), because the shared overlay redraw path only knew
+  about the *other* overlay surface; they repaint their own region now.
 - **The status bar describes the file the caret is in.** On a compare or merge
   tab it read the group's active *editor* viewport instead, so a three-way merge
   of a `.cpp` sat under `markdown  Tabs: 4` left over from the previously open

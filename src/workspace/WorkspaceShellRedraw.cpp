@@ -670,7 +670,19 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentBottomPanelContentRedrawRect() c
 
 std::optional<SDL_FRect> WorkspaceShell::CurrentOverlayRedrawRect() const {
   const auto layout = CurrentWorkspaceLayout();
-  if (!layout.has_value() || !context_.current_project_state.overlay.visible) {
+  if (!layout.has_value()) {
+    return std::nullopt;
+  }
+  // Settings and Help/About share this request path, but they are a different
+  // surface from `overlay`, so the check below missed them and all ~17 of their
+  // navigation/typing call sites fell through to RequestWindowRedraw — every
+  // keystroke in the Settings filter repainted the sidebar, both tab strips and
+  // the terminal. `editor_area` is the region they occupy: it covers the card,
+  // the backdrop they dim, and any dropdown anchored inside them.
+  if (settings_overlay_service_.Visible()) {
+    return layout->editor_area;
+  }
+  if (!context_.current_project_state.overlay.visible) {
     return std::nullopt;
   }
   return ComputeOverlayRect(layout->editor_area);
