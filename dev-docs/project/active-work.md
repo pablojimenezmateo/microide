@@ -83,6 +83,20 @@ These are implemented and should not be treated as open migration work:
   *painted* value changed and frame prep requests the strip when one did. Redraws
   requested from the render path are also no longer stranded — the event loop does
   not block with one pending, and `HandleScheduledWake` merges them in
+- **empty list groups are hidden, unless the header owns a control** (2026-07-31):
+  the git sidebar used to stamp a `(0)` header plus a "No …" placeholder for all
+  five workflow groups, so a clean checkout — the common case — was ten rows of
+  prose saying nothing. `ShouldShowSection` drops an empty group and one headerless
+  line covers the whole-panel states ("No changes", "Not a git repository"), as in
+  VSCode. The exception is load-bearing and general: `Outgoing` is always shown
+  because its *header row* carries the base-branch button, so hiding the group
+  would remove the only control that could make it non-empty. Before hiding any
+  empty group, check whether its header is also a control surface
+- **every filtered surface reports its own filter** (same date): Settings and
+  Help/About carry the quick-open footer — `N of M` on the left, key hint on the
+  right — and a zero-match query puts a line in the list area instead of leaving a
+  blank card. Hints are per-surface, not copied: Help/About is read-only, so it
+  says `↑↓ scroll · Esc close` rather than the picker's `Enter choose`
 - **text that does not fit is truncated or wrapped, never sheared** (same pass): notification toasts
   scale their width with the window and ellipsize through `TruncateToWidthEphemeralView`; narrow-rail
   empty states (sidebar placeholders, every debug-pane mode) word-wrap through
