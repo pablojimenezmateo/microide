@@ -311,9 +311,9 @@ void TestRefreshingDoesNotReplaceUnstagedEmptyLabel() {
       BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
   Expect(view_model.stale_banner.empty(),
          "refreshing should move snapshot activity off the summary banner");
-  Expect(view_model.sections.size() >= 3 &&
-             view_model.sections[2].empty_label == "No unstaged changes",
-         "refreshing should not replace the unstaged empty-state label");
+  Expect(!view_model.sections.empty() && !view_model.sections[0].show_header &&
+             view_model.sections[0].empty_label == "No changes",
+         "refreshing should not replace the clean-tree empty-state label");
 }
 
 // ---------------------------------------------------------------------------
@@ -365,6 +365,7 @@ std::string DigestPresentation(const GitSidebarViewModel& vm,
   for (const auto& section : vm.sections) {
     add("sect", std::to_string(static_cast<int>(section.section)));
     add("header", section.header_label);
+    addb("show_header", section.show_header);
     add("empty", section.empty_label);
     for (const auto& row : section.rows) {
       add("row_idx", std::to_string(row.entry_index));

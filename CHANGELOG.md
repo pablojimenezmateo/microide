@@ -154,6 +154,14 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **The Source Control view stops padding itself with empty groups.** A clean
+  checkout — the common case — filled the rail with `Conflicts (0)`, `Staged (0)`,
+  `Unstaged (0)`, `Untracked (0)` and `Outgoing (0)`, each with its own "No merge
+  conflicts" / "No staged changes" placeholder beneath it: ten rows saying
+  nothing. Empty groups are hidden now, as in VSCode, and a clean tree says "No
+  changes" once. Outgoing is the deliberate exception: its header carries the
+  base-branch button, so hiding it when empty would leave no way to choose a base
+  to compare against.
 - **A modal no longer eats the editor behind it.** Opening the compare/commit
   picker over a file faded the code being compared — breadcrumb band included —
   to a flat rectangle within about a second, and it came back only when the

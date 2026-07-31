@@ -201,24 +201,57 @@ std::string GitSidebarSelectionActionLine(const GitSidebarEntry& entry,
   return line;
 }
 
-std::string EmptySectionLabel(GitSidebarEntry::Section section,
-                              bool git_repo_available,
-                              bool refreshing,
-                              std::string_view git_base_ref) {
+// Only reached for a section that survived ShouldShowSection, i.e. a repository is
+// available and the section is either non-empty or the base-ref-less Outgoing one.
+std::string EmptySectionLabel(GitSidebarEntry::Section section, std::string_view git_base_ref) {
   switch (section) {
     case GitSidebarEntry::Section::Conflicts:
       return "No merge conflicts";
     case GitSidebarEntry::Section::Staged:
       return "No staged changes";
     case GitSidebarEntry::Section::Changed:
-      (void)refreshing;
-      return git_repo_available ? "No unstaged changes" : "Not a git repository";
+      return "No unstaged changes";
     case GitSidebarEntry::Section::Untracked:
       return "No untracked files";
     case GitSidebarEntry::Section::Outgoing:
       return git_base_ref.empty() ? "Base branch unavailable" : "No outgoing files";
   }
   return {};
+}
+
+std::size_t SectionCount(const GitSidebarCounts& counts, GitSidebarEntry::Section section) {
+  switch (section) {
+    case GitSidebarEntry::Section::Conflicts:
+      return counts.conflicts;
+    case GitSidebarEntry::Section::Staged:
+      return counts.staged;
+    case GitSidebarEntry::Section::Changed:
+      return counts.changed;
+    case GitSidebarEntry::Section::Untracked:
+      return counts.untracked;
+    case GitSidebarEntry::Section::Outgoing:
+      return counts.outgoing;
+  }
+  return 0;
+}
+
+// VSCode hides a source-control group that has nothing in it instead of stamping a
+// header and a placeholder for each one; on a clean tree that is ten rows of prose
+// saying nothing. Hide ours too, with two exceptions:
+//
+//   * Without a repository every group is meaningless, so none is shown; the
+//     headerless "Not a git repository" line below carries that state instead.
+//   * `Outgoing` always survives. Its header is not decoration: it carries the
+//     base-branch button, the only way to change what "outgoing" compares against,
+//     so hiding the empty group would stall the user with no way to pick a base.
+//     Its empty label also reports a missing base ref.
+bool ShouldShowSection(GitSidebarEntry::Section section,
+                       std::size_t count,
+                       const GitSidebarState& git_state) {
+  if (!git_state.repo_available) {
+    return false;
+  }
+  return count > 0 || section == GitSidebarEntry::Section::Outgoing;
 }
 
 }  // namespace
@@ -456,21 +489,38 @@ GitSidebarViewModel BuildGitSidebarViewModel(
       GitSidebarEntry::Section::Outgoing,
   };
 
+  // A clean tree means no rows anywhere, so the panel would otherwise render blank
+  // once the empty groups are hidden. One line of prose replaces them, headerless.
+  // `refreshing` deliberately does not change this text: an in-flight refresh is
+  // reported by the panel's own activity affordance, not by rewriting list content
+  // that then flickers back (see BuildGitStaleBanner, which makes the same call).
+  if (!git_state.repo_available || git_state.entries.empty()) {
+    view_model.sections.push_back(GitSidebarSectionViewModel{
+        .section = GitSidebarEntry::Section::Changed,
+        .header_label = {},
+        .empty_label = git_state.repo_available ? "No changes" : "Not a git repository",
+        .show_header = false,
+        .rows = {},
+    });
+  }
+
   for (const GitSidebarEntry::Section section : section_order) {
+    const std::size_t count = SectionCount(counts, section);
+    if (!ShouldShowSection(section, count, git_state)) {
+      continue;
+    }
     GitSidebarSectionViewModel section_vm{
         .section = section,
         .header_label = {},
-        .empty_label = EmptySectionLabel(section, git_state.repo_available, git_state.refreshing,
-                                         git_state.base_ref),
+        .empty_label = EmptySectionLabel(section, git_state.base_ref),
+        .show_header = true,
         .rows = {},
     };
 
-    std::size_t count = 0;
     for (std::size_t i = 0; i < git_state.entries.size(); ++i) {
       if (git_state.entries[i].section != section) {
         continue;
       }
-      ++count;
       const GitSidebarEntry& entry = git_state.entries[i];
       const GitSidebarEntryTextModel text_model =
           BuildGitSidebarEntryTextModel(entry.relative_path, entry.section == GitSidebarEntry::Section::Staged);

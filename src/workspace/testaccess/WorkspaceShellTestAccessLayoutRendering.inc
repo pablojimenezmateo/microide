@@ -130,6 +130,13 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.GitSidebarOutgoingBaseButtonRect(layout.sidebar);
   }
+  static std::vector<std::string> GitSidebarLineLabels(WorkspaceShell& shell) {
+    std::vector<std::string> labels;
+    for (const auto& line : shell.BuildGitSidebarLines()) {
+      labels.push_back(line.display_label);
+    }
+    return labels;
+  }
   static SDL_FRect GitSidebarEntryRowRect(WorkspaceShell& shell, std::size_t entry_index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const auto& lines = shell.BuildGitSidebarLines();

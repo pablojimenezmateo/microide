@@ -62,6 +62,9 @@ struct GitSidebarSectionViewModel {
   GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
   std::string header_label;
   std::string empty_label;
+  // False for the two whole-panel states ("Not a git repository", "No changes"),
+  // which are a single line of prose rather than a group with a count above it.
+  bool show_header = true;
   std::vector<GitSidebarRowViewModel> rows;
 };
 

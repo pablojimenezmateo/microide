@@ -59,29 +59,31 @@ void TestWorkspaceSharedGitSidebarLineHelpers() {
   const BranchReviewStateService branch_review;
   const auto lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
       git_state, std::filesystem::path{"/tmp/project"}, branch_review));
-  Expect(lines.size() == 13,
-         "git sidebar lines should include workflow headers, tree rows, and empty placeholders");
-  Expect(lines[4].kind == GitSidebarLineKind::Header && lines[4].label == "Unstaged (2)",
+  // Only the two populated groups are emitted; Conflicts/Staged/Untracked are empty
+  // and therefore absent, as they are in VSCode's source-control view.
+  Expect(lines.size() == 7,
+         "git sidebar lines should cover the populated groups and their tree rows only");
+  Expect(lines[0].kind == GitSidebarLineKind::Header && lines[0].label == "Unstaged (2)",
          "git sidebar lines should include the unstaged header with count");
-  Expect(lines[5].kind == GitSidebarLineKind::Directory && lines[5].label == "src",
+  Expect(lines[1].kind == GitSidebarLineKind::Directory && lines[1].label == "src",
          "git sidebar lines should insert a directory row for nested changed files");
-  Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 0 &&
-             lines[6].depth == 1,
+  Expect(lines[2].kind == GitSidebarLineKind::Entry && lines[2].entry_index == 0 &&
+             lines[2].depth == 1,
          "git sidebar lines should map the first changed entry under the directory");
-  Expect(lines[7].kind == GitSidebarLineKind::Entry && lines[7].entry_index == 1 &&
-             lines[7].depth == 1,
+  Expect(lines[3].kind == GitSidebarLineKind::Entry && lines[3].entry_index == 1 &&
+             lines[3].depth == 1,
          "git sidebar lines should map the second changed entry under the directory");
-  Expect(lines[10].kind == GitSidebarLineKind::Header &&
-             lines[10].label == "Outgoing (1)  origin/main",
+  Expect(lines[4].kind == GitSidebarLineKind::Header &&
+             lines[4].label == "Outgoing (1)  origin/main",
          "git sidebar lines should include the outgoing header with base label");
-  Expect(lines[11].kind == GitSidebarLineKind::Directory && lines[11].label == "src",
+  Expect(lines[5].kind == GitSidebarLineKind::Directory && lines[5].label == "src",
          "git sidebar lines should also tree-group outgoing files by directory");
-  Expect(lines[12].kind == GitSidebarLineKind::Entry && lines[12].entry_index == 2 &&
-             lines[12].depth == 1,
+  Expect(lines[6].kind == GitSidebarLineKind::Entry && lines[6].entry_index == 2 &&
+             lines[6].depth == 1,
          "git sidebar lines should map outgoing entries after the directory row");
 
   const auto selected_line = FindSelectedGitSidebarLineIndex(lines, 2);
-  Expect(selected_line.has_value() && *selected_line == 12,
+  Expect(selected_line.has_value() && *selected_line == 6,
          "git sidebar selected-line lookup should find the outgoing entry row");
   Expect(!FindSelectedGitSidebarLineIndex(lines, 9).has_value(),
          "git sidebar selected-line lookup should fail for unknown entries");
@@ -93,17 +95,24 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
   const BranchReviewStateService clean_branch_review;
   const auto clean_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
       clean_state, std::filesystem::path{"/tmp/project"}, clean_branch_review));
-  Expect(clean_lines.size() == 10,
-         "empty git sidebar should still show all workflow section headers and empty rows");
-  Expect(clean_lines[5].kind == GitSidebarLineKind::Empty &&
-             clean_lines[5].label == "No unstaged changes",
-         "git sidebar should describe a clean changed section when git is available");
+  // A clean tree hides every empty group (VSCode does the same) and says so once.
+  // Outgoing is the exception: its header carries the base-branch button.
+  Expect(clean_lines.size() == 3,
+         "a clean git sidebar should collapse to one line plus the outgoing group");
+  Expect(clean_lines[0].kind == GitSidebarLineKind::Empty && clean_lines[0].label == "No changes",
+         "git sidebar should describe a clean tree once instead of per empty section");
+  Expect(clean_lines[1].kind == GitSidebarLineKind::Header &&
+             clean_lines[1].label == "Outgoing (0)",
+         "the outgoing group should survive an empty tree so its base button stays reachable");
+  Expect(clean_lines[2].kind == GitSidebarLineKind::Empty &&
+             clean_lines[2].label == "Base branch unavailable",
+         "git sidebar should keep reporting a missing base branch");
 
   GitSidebarState no_repo_state;
   const BranchReviewStateService no_repo_branch_review;
   const auto no_repo_lines = BuildGitSidebarLineSpecs(BuildGitSidebarViewModel(
       no_repo_state, std::filesystem::path{"/tmp/project"}, no_repo_branch_review));
-  Expect(no_repo_lines[5].label == "Not a git repository",
+  Expect(no_repo_lines.size() == 1 && no_repo_lines[0].label == "Not a git repository",
          "git sidebar should distinguish non-repositories from clean repositories");
 }
 

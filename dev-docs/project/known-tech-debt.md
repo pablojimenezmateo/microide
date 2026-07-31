@@ -99,23 +99,40 @@ Fixed by excluding the master switch from `CommandTouchesDebugger`. Covered by
 that a differently-named `debug-toggle-*` verb still auto-enables, so the
 exclusion cannot widen by accident.
 
-### [OPEN] The git sidebar shows five empty sections on a clean tree (TD-2026-07-31-101)
+### [RESOLVED 2026-07-31] The git sidebar shows five empty sections on a clean tree (TD-2026-07-31-101)
 
-**User-visible, cosmetic.** On a clean repository — the common case — the Source
-Control view lists `Conflicts (0)`, `Staged (0)`, `Unstaged (0)`, `Untracked (0)`
-and `Outgoing (0)`, each followed by its own "No merge conflicts" / "No staged
-changes" / … placeholder. Ten rows that say nothing, in a 288px rail. VSCode
-hides an empty group entirely.
+**Was user-visible, cosmetic.** On a clean repository — the common case — the
+Source Control view listed `Conflicts (0)`, `Staged (0)`, `Unstaged (0)`,
+`Untracked (0)` and `Outgoing (0)`, each followed by its own "No merge conflicts"
+/ "No staged changes" / … placeholder. Ten rows that said nothing, in a 288px
+rail. VSCode hides an empty group entirely.
 
-`BuildGitSidebarViewModel` (`src/workspace/GitSidebarCommandCenter.cpp`) walks a
-fixed `section_order` array and pushes a section view model for every entry
-unconditionally. The shape of the fix is to skip empty sections and fall back to
-one line when *all* of them are empty — but the empty labels carry real state in
-two cases that must survive: `Changed` reads "Not a git repository" when
-`repo_available` is false, and `Outgoing` reads "Base branch unavailable" when
-`base_ref` is empty. Found by the 2026-07-31 screenshot pass; not fixed there
-because it is a behavioural change to a surface with its own test coverage, not
-a defect.
+`BuildGitSidebarViewModel` (`src/workspace/GitSidebarCommandCenter.cpp`) walked a
+fixed `section_order` array and pushed a section view model for every entry
+unconditionally. It now consults `ShouldShowSection` and skips the empty ones,
+which also skips composing their two labels. A clean tree renders three lines
+instead of ten; a tree with only unstaged edits renders that one group.
+
+Three states had to survive the cull, and the third is the reason this was filed
+as a behavioural change rather than fixed on sight:
+
+* **"Not a git repository"** used to be the `Changed` section's empty label.
+  Without a repo every group is meaningless, so none is emitted; a headerless
+  line carries the message alone.
+* **"Base branch unavailable"** is the `Outgoing` empty label when `base_ref` is
+  empty, and explains why that group has nothing in it.
+* **The outgoing base-branch button lives on the `Outgoing` header**
+  (`WorkspaceShell::GitSidebarOutgoingBaseButtonRect` scans the line list for
+  that header row). Hiding the group when it is empty removes the only control
+  that changes what "outgoing" compares against — so on a clean tree you could
+  never pick a base to make it non-empty. `Outgoing` is therefore always shown.
+  `WorkspaceShell/GitOutgoingBaseButtonOpensMenuAndPrompt` caught this, which is
+  why the empty-group rule is "hide, except the group that owns a control".
+
+Regression coverage: `WorkspaceShell/GitSidebarHidesEmptySections` (end-to-end,
+also asserts the base button stays hittable),
+`WorkspaceSharedGitSidebar/EmptyStates` and the presentation-cache equivalence
+fuzz, which now hashes `show_header` too.
 
 ### [RESOLVED 2026-07-31] Modal overlay backdrop stacks until the editor behind it is solid (TD-2026-07-30-100)
 

@@ -128,13 +128,15 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     const std::unordered_set<std::string>* collapsed_directory_keys) {
   std::vector<GitSidebarLineSpec> lines;
   for (const GitSidebarSectionViewModel& section : view_model.sections) {
-    lines.push_back(GitSidebarLineSpec{
-        .kind = GitSidebarLineKind::Header,
-        .section = section.section,
-        .label = section.header_label,
-        .display_label = section.header_label,
-        .tree_node_key = {},
-    });
+    if (section.show_header) {
+      lines.push_back(GitSidebarLineSpec{
+          .kind = GitSidebarLineKind::Header,
+          .section = section.section,
+          .label = section.header_label,
+          .display_label = section.header_label,
+          .tree_node_key = {},
+      });
+    }
     if (section.rows.empty()) {
       lines.push_back(GitSidebarLineSpec{
           .kind = GitSidebarLineKind::Empty,

@@ -527,6 +527,55 @@ void TestWorkspaceShellGitSidebarGroupsWorkflowSections() {
          "rename fixture should surface the destination path in the sidebar");
 }
 
+// A clean checkout used to fill the rail with five "(0)" headers and five "No …"
+// placeholders. Only the populated groups render now; Outgoing stays because its
+// header carries the base-branch button.
+void TestWorkspaceShellGitSidebarHidesEmptySections() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path tracked = root / "tracked.cpp";
+  WriteFile(tracked, "int value() { return 1; }\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "clean fixture", "clean fixture");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 0),
+         "clean fixture should settle the initial sidebar refresh with no rows");
+
+  const auto clean_labels = WorkspaceShellTestAccess::GitSidebarLineLabels(shell);
+  const auto has_label = [](const std::vector<std::string>& labels, std::string_view needle) {
+    return std::any_of(labels.begin(), labels.end(),
+                       [&](const std::string& label) { return label.find(needle) == 0; });
+  };
+  Expect(!has_label(clean_labels, "Conflicts") && !has_label(clean_labels, "Staged") &&
+             !has_label(clean_labels, "Unstaged") && !has_label(clean_labels, "Untracked"),
+         "a clean tree should not stamp a header for a workflow group that is empty");
+  Expect(has_label(clean_labels, "No changes"),
+         "a clean tree should say so once instead of five times");
+  Expect(has_label(clean_labels, "Outgoing"),
+         "the outgoing group should survive a clean tree so its base button stays reachable");
+  Expect(WorkspaceShellTestAccess::GitSidebarOutgoingBaseButtonRect(shell).has_value(),
+         "hiding empty groups must not hide the outgoing base-branch button");
+
+  // One unstaged edit brings back exactly one group, and no others.
+  WriteFile(tracked, "int value() { return 2; }\n");
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "editing a tracked file should surface one changed row");
+  const auto dirty_labels = WorkspaceShellTestAccess::GitSidebarLineLabels(shell);
+  Expect(has_label(dirty_labels, "Unstaged (1)"),
+         "a populated group should render its header with a count");
+  Expect(!has_label(dirty_labels, "Staged") && !has_label(dirty_labels, "Untracked") &&
+             !has_label(dirty_labels, "Conflicts"),
+         "the still-empty groups should stay hidden once another group fills up");
+  Expect(!has_label(dirty_labels, "No changes"),
+         "the clean-tree line should disappear as soon as there is a change to show");
+}
+
 void TestWorkspaceShellGitSidebarDiscardRequiresConfirmation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -976,6 +1025,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarKeepsOutgoingRowsWhenFilesAlsoHaveWorkingTreeChanges);
   AddTest(tests, "WorkspaceShell/GitSidebarGroupsWorkflowSections",
           TestWorkspaceShellGitSidebarGroupsWorkflowSections);
+  AddTest(tests, "WorkspaceShell/GitSidebarHidesEmptySections",
+          TestWorkspaceShellGitSidebarHidesEmptySections);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardRequiresConfirmation",
           TestWorkspaceShellGitSidebarDiscardRequiresConfirmation);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardUntrackedFileTrashesNotDeletes",
