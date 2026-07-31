@@ -78,6 +78,12 @@ struct FileCache {
   std::unordered_map<std::size_t, GitBlameLine> blame_by_line;
   std::uint64_t last_access_generation = 0;
   Clock::time_point last_validated_at = Clock::time_point::min();
+  // Which (file, clear) generation `last_validated_at` speaks for. The
+  // re-validation throttle below suppresses a repeat probe only while these still
+  // match, so a real edit or an explicit ClearCache re-probes immediately instead
+  // of waiting out the interval.
+  std::uint64_t validated_file_generation = 0;
+  std::uint64_t validated_clear_generation = 0;
 };
 
 bool FileIsTracked(const std::filesystem::path& root, const std::filesystem::path& relative_path) {
@@ -340,9 +346,25 @@ struct GitBlameService::Impl {
         cache->last_access_generation = ++access_generation;
       }
 
-      if (cache != nullptr && cache->eligible &&
-          SpansCoverWindow(cache->loaded_spans, window) &&
+      // Re-validation throttle. It used to require `cache->eligible`, which meant
+      // a file blame can never answer for -- untracked, unborn HEAD, ignored, a
+      // path git does not know -- fell through it every single time. Request()
+      // runs once per rendered frame (the inline-blame overlay is built from the
+      // render path), so an ineligible file re-spawned `git rev-parse --verify
+      // HEAD`, and whenever HEAD did resolve also `git ls-files` and `git status`,
+      // on every frame for as long as the caret stayed in it. A 3-iteration
+      // compare-scroll run measured 68 git spawns; the answer was the same all 68
+      // times.
+      //
+      // Ineligibility does not depend on the requested window, so within the
+      // interval there is nothing a re-probe could learn; only an eligible cache
+      // has to additionally cover the window it is being asked about.
+      const bool cache_answers_request =
+          cache != nullptr && (!cache->eligible || SpansCoverWindow(cache->loaded_spans, window));
+      if (cache_answers_request && cache->validated_file_generation == file_generation &&
+          cache->validated_clear_generation == request_clear_generation &&
           now - cache->last_validated_at < kCacheValidationInterval) {
+        util::AddPerformanceCounter(util::PerfCounterId::GitBlameValidationSkips);
         return;
       }
       RemovePendingRequestsForFileLocked(file_key);
@@ -513,6 +535,7 @@ struct GitBlameService::Impl {
       return;
     }
 
+    util::AddPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
     if (!gitutil::HasGitMarker(request.request.root)) {
       changed = UpdateEligibility(request, false, std::nullopt, std::nullopt, {}, {});
       if (changed) {
@@ -606,7 +629,7 @@ struct GitBlameService::Impl {
       }
       MergeSpan(&cache.loaded_spans, span);
       cache.last_access_generation = ++access_generation;
-      cache.last_validated_at = Clock::now();
+      MarkValidatedLocked(cache, request);
       cache.eligible = true;
       cache.head_id = *head_id;
       cache.stamp = *stamp;
@@ -625,7 +648,7 @@ struct GitBlameService::Impl {
       // eligible=true for a file with no blame data.
       if (auto cache_it = file_caches.find(request.file_key); cache_it != file_caches.end()) {
         FileCache& cache = cache_it->second;
-        cache.last_validated_at = Clock::now();
+        MarkValidatedLocked(cache, request);
         cache.eligible = true;
         cache.head_id = *head_id;
         cache.stamp = *stamp;
@@ -663,9 +686,19 @@ struct GitBlameService::Impl {
     cache.loaded_spans = std::move(loaded_spans);
     cache.blame_by_line = std::move(blame_by_line);
     cache.last_access_generation = ++access_generation;
-    cache.last_validated_at = Clock::now();
+    MarkValidatedLocked(cache, request);
     EnforceCacheBudgets();
     return changed;
+  }
+
+  // Stamp `cache` as validated for the generation pair the request was issued
+  // under. Kept in one place so no validation site can record the timestamp
+  // without the generations it is only valid for -- a cache validated at an older
+  // generation must not satisfy the throttle in Request().
+  static void MarkValidatedLocked(FileCache& cache, const PendingRequest& request) {
+    cache.last_validated_at = Clock::now();
+    cache.validated_file_generation = request.file_generation;
+    cache.validated_clear_generation = request.clear_generation;
   }
 
   void SetBeforeCacheApplyHook(std::function<void()> hook) {

@@ -87,6 +87,12 @@ namespace microide::util {
   X(GitStatusEntriesParsed, "git.status_entries_parsed")                                        \
   X(GitBlameQueries, "git.blame_queries")                                                       \
   X(GitBlameCacheHits, "git.blame_cache_hits")                                                  \
+  /* Blame requests that reached the git probes (rev-parse/ls-files/status) vs.  */             \
+  /* those the re-validation throttle answered from cache. The overlay asks once  */            \
+  /* per frame, so the ratio is what says whether inline blame is spawning        */            \
+  /* processes at frame rate.                                                     */            \
+  X(GitBlameValidationProbes, "git.blame_validation_probes")                                    \
+  X(GitBlameValidationSkips, "git.blame_validation_skips")                                      \
   X(GitDiffLoads, "git.diff_loads")                                                             \
   X(GitDiffBytesRead, "git.diff_bytes_read")                                                    \
   /* --- compare / merge diff pipeline ------------------------------------ */                 \

@@ -2,6 +2,7 @@
 
 #include "project/GitBlameService.h"
 #include "GitBlameServiceTestAccess.h"
+#include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <chrono>
@@ -169,6 +170,62 @@ void TestGitBlameServiceSuppressesDirtyAndUntrackedFiles() {
 
   Expect(!untracked_snapshot.eligible, "untracked files should not show blame");
   Expect(untracked_snapshot.lines.empty(), "untracked files should not publish blame text");
+}
+
+// The inline-blame overlay calls Request() from the render path, i.e. once per
+// frame for as long as the caret sits in a file. The re-validation throttle used
+// to require an ELIGIBLE cache, so a file blame can never answer for -- untracked,
+// unborn HEAD, ignored -- missed it every time and re-spawned `git rev-parse`
+// (plus `ls-files`/`status` once HEAD resolves) on every one of those frames. A
+// 3-iteration compare-scroll perf run measured 68 git spawns for an answer that
+// never changed.
+void TestGitBlameServiceThrottlesRevalidationForIneligibleFiles() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  const auto tracked_file = repo_path / "tracked.cpp";
+  const auto untracked_file = repo_path / "scratch.cpp";
+  WriteFile(tracked_file, "tracked\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "Add tracked file", "tracked file");
+  WriteFile(untracked_file, "scratch\n");
+
+  GitBlameService service;
+  const auto make_request = [&](std::size_t first_visible_line) {
+    return GitBlameRequest{
+        .root = repo_path,
+        .absolute_path = untracked_file,
+        .visible_start_line = first_visible_line,
+        .visible_line_count = 20,
+        .total_line_count = 20000,
+        .dirty = false,
+    };
+  };
+
+  // Settle once so the ineligible verdict is cached, then measure.
+  const auto settled = WaitForSnapshot(service, make_request(0));
+  Expect(!settled.eligible && !settled.loading,
+         "an untracked file should settle as ineligible before the throttle is measured");
+
+  // Scroll: every frame asks about a different visible window, which mints a
+  // different request key, so the in-flight dedup does not cover it. That is
+  // exactly the shape the render path produces, and the shape that used to
+  // re-spawn git per frame.
+  const std::uint64_t probes_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
+  for (std::size_t frame = 1; frame <= 30; ++frame) {
+    service.Request(make_request(frame * 400));
+    // Pace like a redraw loop: without this the executor's keyed coalescing
+    // absorbs the burst and hides the per-frame probe the throttle exists to
+    // stop. The whole loop stays well inside one validation interval.
+    std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  }
+  service.Stop();
+  const std::uint64_t probes_after =
+      util::ReadPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
+
+  // Without the throttle this loop measured 31 probes -- one per paced frame.
+  Expect(probes_after - probes_before <= 1,
+         "scrolling a settled-ineligible file must not re-spawn git per frame");
 }
 
 void TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges() {
@@ -508,6 +565,8 @@ void RegisterGitBlameServiceTests(std::vector<TestCase>& tests) {
           TestGitBlameServiceLoadsVisibleLinesForCleanTrackedFile);
   AddTest(tests, "GitBlame/SuppressesDirtyAndUntrackedFiles",
           TestGitBlameServiceSuppressesDirtyAndUntrackedFiles);
+  AddTest(tests, "GitBlame/ThrottlesRevalidationForIneligibleFiles",
+          TestGitBlameServiceThrottlesRevalidationForIneligibleFiles);
   AddTest(tests, "GitBlame/UsesWorkingTreeContentsForSavedTrackedChanges",
           TestGitBlameServiceUsesWorkingTreeContentsForSavedTrackedChanges);
   AddTest(tests, "GitBlame/HandlesQuotedAndSpacedPaths",
