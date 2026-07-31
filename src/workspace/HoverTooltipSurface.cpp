@@ -215,6 +215,28 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
                             kTerminalToggles);
   }
 
+  // 5b) The floating debug toolbar. It used to paint its own tooltip inside
+  //     RenderDebugToolbar, which is why those tooltips were unreliable: the
+  //     hover-motion handler invalidates the toolbar CARD, and the tooltip is
+  //     anchored below it, outside that rect. Routing it here puts it on the same
+  //     before/after invalidation as every other chrome tooltip.
+  if (!found && DebugToolbarVisible()) {
+    const DebugToolbarLayout tb = ComputeDebugToolbarLayout(
+        layout.editor_surface, DebugToolbarAvoidBelowY(layout), DebugSupportsReverse());
+    if (Contains(tb.widget, x, y)) {
+      const bool session_stopped = IsDebugSessionStopped();
+      for (std::size_t i = 0; i < tb.button_count && !found; ++i) {
+        if (!Contains(tb.buttons[i], x, y)) {
+          continue;
+        }
+        // A disabled button still gets a tooltip, so the user can learn *why* it
+        // is inert rather than meeting a dead control.
+        found = hit(std::string(DebugToolbarButtonTooltip(tb.kinds[i], session_stopped)),
+                    tb.buttons[i]);
+      }
+    }
+  }
+
   // 6) Status bar segments. Their tooltips were built every frame and thrown
   //    away: nothing ever drew them, so the one row of chrome that tells you the
   //    language, encoding, indent and LSP state explained none of it.

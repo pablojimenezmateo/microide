@@ -52,6 +52,17 @@ constexpr bool IsStepButton(DebugToolbarButton button) {
 
 }  // namespace
 
+std::string_view DebugToolbarButtonTooltip(DebugToolbarButton button, bool session_stopped) {
+  if (button == DebugToolbarButton::ContinuePause && !session_stopped) {
+    return "Pause";
+  }
+  if (!session_stopped && IsStepButton(button)) {
+    // Step controls are disabled while running: explain rather than stay silent.
+    return "Pause to step";
+  }
+  return kButtonSpecs[Index(button)].tooltip;
+}
+
 bool WorkspaceShell::DebugToolbarVisible() const {
   return DebugEnabled() && IsDebugSessionActive();
 }
@@ -163,27 +174,14 @@ void WorkspaceShell::RenderDebugToolbar(SDL_Renderer* renderer, const WorkspaceL
     }
   }
 
-  // Tooltip on top, anchored under the hovered button and clamped to the editor.
-  if (tooltip_index.has_value()) {
-    const SDL_FRect& rect = tb.buttons[*tooltip_index];
-    const DebugToolbarButton button = tb.kinds[*tooltip_index];
-    std::string_view label = kButtonSpecs[Index(button)].tooltip;
-    if (button == DebugToolbarButton::ContinuePause && !session_stopped) {
-      label = "Pause";
-    } else if (!session_stopped && IsStepButton(button)) {
-      // Step controls are disabled while running: explain rather than stay silent.
-      label = "Pause to step";
-    }
-    TooltipLayout tip = BuildTooltipLayout(text_renderer_, label, 240.0f, 80.0f);
-    float tip_x = rect.x;
-    const float max_x = layout.editor_surface.x + layout.editor_surface.w - tip.rect.w - 4.0f;
-    if (tip_x > max_x) {
-      tip_x = max_x;
-    }
-    tip.rect.x = std::max(layout.editor_surface.x + 4.0f, tip_x);
-    tip.rect.y = rect.y + rect.h + 4.0f;
-    DrawTooltip(text_renderer_, renderer, theme_, tip.rect, tip.text);
-  }
+  // The tooltip is NOT drawn here. It used to be, and that was the bug: the hover
+  // invalidation on mouse motion repaints the toolbar card, while this tooltip is
+  // anchored BELOW the card, outside that rect. Moving between buttons therefore
+  // left the tooltip region untouched, so a tooltip appeared only when some
+  // unrelated repaint happened to cover it -- "tooltips don't launch reliably".
+  // It now goes through WorkspaceShell::HoveredTooltip like every other chrome
+  // tooltip, which invalidates the outgoing and incoming cards by their own rects.
+  (void)tooltip_index;
 }
 
 bool WorkspaceShell::HandleDebugToolbarButtonDown(const SDL_Event& event,

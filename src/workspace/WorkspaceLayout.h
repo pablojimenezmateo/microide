@@ -620,4 +620,11 @@ DebugToolbarLayout ComputeDebugToolbarLayout(const SDL_FRect& editor_area,
                                              std::optional<float> avoid_below_y,
                                              bool include_reverse);
 
+// Tooltip label for a toolbar button, including the two run-state substitutions
+// (Continue reads "Pause" while running; a step control reads "Pause to step").
+// Defined in DebugToolbarSurface.cpp beside the button specs and consumed by the
+// shared hover-tooltip surface, so the label and the button it describes cannot
+// drift apart.
+std::string_view DebugToolbarButtonTooltip(DebugToolbarButton button, bool session_stopped);
+
 }  // namespace microide::workspace
