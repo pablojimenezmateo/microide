@@ -16,6 +16,7 @@
 #include "project/GlobMatch.h"
 #include "util/Parse.h"
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/SdlWake.h"
 #include "util/RegexUtil.h"
 #include "util/StringUtil.h"
@@ -251,6 +252,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     const SharedPathList& indexed_files,
     std::uint64_t run_id,
     const util::CancellationToken& token) {
+  util::PerformanceTrace::Scope perf_scope("search::RunSearch");
   std::error_code error;
   const std::filesystem::path absolute_root = std::filesystem::absolute(root, error);
   if (error || absolute_root.empty() || !std::filesystem::exists(absolute_root, error) || error ||

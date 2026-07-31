@@ -71,6 +71,12 @@ void TerminalSession::EmitProcessExitMarkerLocked() {
 }
 
 void TerminalSession::AppendOutputLocked(std::string_view data) {
+  // The escape/UTF-8 parser, called per read chunk on the terminal reader
+  // thread. Scoped per chunk, not per byte: the whole point of the ASCII bulk
+  // fast path below is that per-byte work is the cost, so per-byte
+  // instrumentation would be the same mistake.
+  util::PerformanceTrace::Scope perf_scope("terminal::AppendOutput");
+  util::AddPerformanceCounter(util::PerfCounterId::TerminalOutputBytesParsed, data.size());
   if (lines_.empty()) {
     lines_.push_back(TerminalLine{});
   }

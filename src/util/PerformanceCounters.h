@@ -44,6 +44,7 @@ namespace microide::util {
     "terminal.snapshot_line_range_if_changed_copied_lines")                                     \
   X(TerminalSnapshotLineRangeIfChangedCopiedCells,                                              \
     "terminal.snapshot_line_range_if_changed_copied_cells")                                     \
+  X(TerminalOutputBytesParsed, "terminal.output_bytes_parsed")                                  \
   X(TerminalTrimScrollbackCalls, "terminal.trim_scrollback_calls")                              \
   X(TerminalTrimScrollbackLines, "terminal.trim_scrollback_lines")                              \
   X(SearchProjectProgressPublishes, "search.project_progress_publishes")                        \
