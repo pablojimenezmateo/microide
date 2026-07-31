@@ -330,8 +330,9 @@ TraceScope::TraceScope(TraceChannel& channel, std::string_view label) {
   // here was a per-scope heap allocation in production with tracing off.
   label_.assign(label);
   channel_ = &channel;
-  parent_ = g_active_scope[channel.slot_];
-  g_active_scope[channel.slot_] = this;
+  slot_ = channel.slot_;
+  parent_ = g_active_scope[slot_];
+  g_active_scope[slot_] = this;
   depth_ = parent_ == nullptr ? 0 : parent_->depth_ + 1;
   start_ = Clock::now();
 }
@@ -343,7 +344,7 @@ TraceScope::~TraceScope() {
 
   const Clock::time_point end = Clock::now();
   const double duration_ms = DurationMs(end - start_);
-  g_active_scope[channel_->slot_] = parent_;
+  g_active_scope[slot_] = parent_;
   if (parent_ != nullptr) {
     parent_->child_ms_ += duration_ms;
   }

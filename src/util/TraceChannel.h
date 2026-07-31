@@ -145,6 +145,12 @@ class TraceScope {
  private:
   TraceChannel* channel_ = nullptr;
   TraceScope* parent_ = nullptr;
+  // Cached at construction rather than read back through `channel_` on
+  // destruction. The channels are function-local statics, so a scope alive
+  // during exit can outlive its channel's destructor, which resets the slot to a
+  // sentinel -- indexing the thread-local table with it would be an
+  // out-of-bounds write, not a no-op.
+  std::size_t slot_ = 0;
   std::string label_;
   std::chrono::steady_clock::time_point start_{};
   double child_ms_ = 0.0;
