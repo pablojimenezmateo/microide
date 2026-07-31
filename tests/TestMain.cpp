@@ -2,6 +2,7 @@
 #include "TestRunnerCli.h"
 #include "terminal/TerminalSession.h"
 #include "util/Parse.h"
+#include "util/TraceChannel.h"
 
 #include <SDL3/SDL.h>
 
@@ -314,6 +315,10 @@ void ListSelectedTestsGtest(const std::vector<microide::tests::TestCase>& tests,
 }  // namespace
 
 int main(int argc, char** argv) {
+  // Tests drive the shell from this thread; marking it keeps the trace
+  // summary's main-thread split meaningful under the suite.
+  microide::util::MarkTracingMainThread();
+
   // Use in-process placeholder terminals for the whole suite instead of spawning
   // real PTY-backed shells. Formerly a compile-time MICROIDE_TESTING fork; now a
   // runtime switch so core compiles identically for the production binary.

@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "util/PerformanceCounters.h"
+#include "util/TraceChannel.h"
 #include "util/StringUtil.h"
 
 #if defined(__linux__)
@@ -1284,6 +1285,9 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
 
 int main(int argc, char** argv) {
   using namespace microide::tests::perf;
+  // Scenarios drive the shell from this thread, so it is the main thread for
+  // trace-summary purposes.
+  microide::util::MarkTracingMainThread();
   // Pin project-search to a single worker for the whole run. The allocation
   // counter is process-global (counts every thread), so N parallel search workers
   // make a search scenario's measured allocations non-deterministic; one worker

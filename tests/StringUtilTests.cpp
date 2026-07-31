@@ -689,6 +689,21 @@ void TestTraceChannelKeepsNestingPerThread() {
   // thread — so none of their time may be subtracted from its self time.
   Expect(outer->self_ms == outer->total_ms,
          "another thread's scopes are not charged as this scope's children");
+
+  // Main-thread attribution: a background scope costs the user no frames, so it
+  // must not be counted against the thread whose stalls they feel. Ranking on
+  // self time alone put a 161 ms background tree walk above a 32 ms render stall.
+  const auto worker = std::find_if(entries.begin(), entries.end(),
+                                   [](const TraceChannel::AggregateEntry& entry) {
+                                     return entry.label == "worker";
+                                   });
+  Expect(worker != entries.end(), "the worker scopes are recorded");
+  Expect(microide::util::TracingMainThreadIsKnown(),
+         "the test binary marks its main thread, so the split is meaningful");
+  Expect(outer->main_thread_self_ms == outer->self_ms,
+         "a scope that ran on the main thread charges all of its self time there");
+  Expect(worker->main_thread_self_ms == 0.0,
+         "a scope that only ever ran off the main thread charges none");
   ::unsetenv("MICROIDE_TEST_TRACE_THREADS");
 }
 

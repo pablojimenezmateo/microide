@@ -3,6 +3,7 @@
 #include "persistence/PersistedRecordDump.h"
 #include "platform/HostPlatform.h"
 #include "util/DebugTrace.h"
+#include "util/TraceChannel.h"
 #include "workspace/ControlChannelService.h"
 #include "workspace/ControlClient.h"
 #include "workspace/ControlProtocol.h"
@@ -19,6 +20,11 @@
 #endif
 
 int main(int argc, char** argv) {
+  // This is the shell / event-loop thread: the one whose stalls the user feels.
+  // Perf summaries split self time on this boundary, because a background tree
+  // walk that costs more CPU than a render stall still costs zero frames.
+  microide::util::MarkTracingMainThread();
+
   // Writing to a subprocess/terminal/LSP pipe whose reader has died must surface as
   // EPIPE, not kill the editor. Install this before any I/O can occur.
   microide::platform::IgnoreBrokenPipeSignal();

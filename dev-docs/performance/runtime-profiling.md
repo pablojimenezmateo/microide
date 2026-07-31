@@ -65,21 +65,31 @@ env MICROIDE_STARTUP_SUMMARY=1 ./build/microide/microide
 ```
 
 ```
-[perf] summary: 114 labels, 6275 calls, 355.82 ms self total (ranked by self ms)
-[perf]      self ms     total ms       max ms       avg ms      calls  label
-[perf]      161.063      161.063      161.063     161.0632          1  WorkspaceProjectFileMonitor::ArmPendingWatch
-[perf]       85.153       85.153       15.294       3.4061         25  Application::PresentRetainedScene
-[perf]       32.611       97.501       16.529       4.6429         21  Application::Render(partial)
-[perf]       10.060       11.891        2.341       0.0148        802  TextViewport::HighlightedLineTokens
+[perf] summary: 123 labels, 6366 calls, 500.76 ms self total, 145.27 ms on the main thread
+[perf]      self ms      main ms     total ms       max ms       avg ms      calls  label
+[perf]      175.755        0.000      175.755      175.755     175.7552          1  WorkspaceProjectFileMonitor::ArmPendingWatch
+[perf]      169.109        0.000      169.109       35.410       8.4554         20  platform::RunSubprocess(program=git)
+[perf]       71.640       71.640       71.640       15.723       2.8656         25  Application::PresentRetainedScene
+[perf]       15.856       15.856       53.620       16.566       2.5533         21  Application::Render(partial)
 ```
 
 Read the columns together, not just the first one:
 
+- **main vs self** — read this one first. Self time ranks CPU cost; main time ranks *what the user
+  waits on*. In the run above the two biggest CPU consumers (a background tree walk and 20 git
+  subprocesses, 345 ms combined) cost zero frames, and the real interactive cost is 145 ms
+  dominated by present. Optimizing the top of the self-time table would have been wasted work. A
+  second table at the bottom of the dump re-ranks by main ms alone.
 - **self vs total** — a large gap means the cost is in a nested scope; follow the total down.
 - **max vs avg** — a `max` far above `avg` is a stall (one bad call), not a throughput problem. A
   `max` close to `avg` on a high call count is throughput, and the fix is usually to call it less.
 - **calls** — the cheapest wins are here. A scope averaging 0.01 ms called 800 times per session is
   a call-count bug, not a slow function.
+
+The main-thread column depends on someone calling `util::MarkTracingMainThread()` — `main()` does,
+in the app, the test binary, and the perf harness. If a new entry point does not, the summary prints
+a note saying the column is meaningless rather than letting you read zeros as "nothing runs on the
+main thread".
 
 Both summary flags compose with the streaming flags. Turning on `MICROIDE_PERF_SUMMARY` and
 `MICROIDE_PERF_TRACE` together gives the ranking plus the raw timeline, at the cost of the streaming

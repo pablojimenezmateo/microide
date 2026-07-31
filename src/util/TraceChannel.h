@@ -9,6 +9,21 @@
 
 namespace microide::util {
 
+// Mark the calling thread as the one whose latency the user feels: the shell /
+// event-loop thread. Call once, early.
+//
+// Without it every ranked summary is misleading in the same direction. A
+// background tree walk that costs 161 ms of CPU but blocks nobody outranks a
+// 32 ms render stall that drops frames, and the table gives the reader no way to
+// tell them apart -- so the tool built to find UI pitfalls points at the wrong
+// row. Scopes record which side of that line they ran on.
+void MarkTracingMainThread();
+
+// True when MarkTracingMainThread() has run somewhere in this process. When it
+// has not, the main-thread column is meaningless and the summary says so instead
+// of printing zeros.
+bool TracingMainThreadIsKnown();
+
 // One env-gated scope-timing sink.
 //
 // `StartupTrace` and `PerformanceTrace` are thin facades over this. Before this
@@ -40,6 +55,9 @@ class TraceChannel {
     // the column that ranks hotspots: a cheap outer scope that merely contains
     // an expensive one should not outrank the expensive one.
     double self_ms = 0.0;
+    // The part of `self_ms` spent on the thread marked by
+    // MarkTracingMainThread(). This is the number that costs the user a frame.
+    double main_thread_self_ms = 0.0;
     double max_ms = 0.0;
   };
 
@@ -98,7 +116,7 @@ class TraceChannel {
 
   // Called by TraceScope on scope exit. `label` is only materialized on the
   // enabled path.
-  void RecordAggregate(std::string_view label, double total_ms, double self_ms);
+  void RecordAggregate(std::string_view label, double total_ms, double self_ms, bool on_main_thread);
   Clock::time_point Origin() const;
 
   const char* prefix_ = "";
