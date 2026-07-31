@@ -339,4 +339,64 @@ RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem
   return result;
 }
 
+// Key-hint lists join on " · " (WorkspaceUiText.h's kHintSeparator / JoinHintSegments
+// / AppendHintSegment). The rule exists because the shell drifted off it twice, in
+// the same way both times: GitSidebarCommandCenter.cpp and CompareTabReview.cpp each
+// grew a private byte-identical AppendHintSegment that joined on "  |  ", so the two
+// longest and most-read hint lines in the app -- the git sidebar's action line and
+// the compare review header, both also mirrored into Help/About -- were the two that
+// disagreed with the documented convention.
+//
+// Scoped to a re-declared AppendHintSegment rather than to the "  |  " literal:
+// that separator is legitimate between unrelated fields (the breadcrumb's
+// "path  |  left -> right", the merge status line), and banning the literal outright
+// would fail those honest uses.
+RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "key-hint lists use the shared separator";
+  result.hard_fail = true;
+
+  const std::filesystem::path shared = repo_root / "src/workspace/WorkspaceUiText.h";
+  const std::string shared_text = ReadRuleTarget(result, shared);
+  if (shared_text.find("kHintSeparator") == std::string::npos ||
+      shared_text.find("void AppendHintSegment(") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = shared,
+        .line = 1,
+        .message = "rule target moved — WorkspaceUiText.h no longer defines kHintSeparator and "
+                   "AppendHintSegment; re-anchor CheckHintSegmentsUseTheSharedSeparator",
+    });
+    return result;
+  }
+
+  const std::regex redefinition(R"(\bvoid\s+AppendHintSegment\s*\()");
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    if (entry.path().filename() == "WorkspaceUiText.h") {
+      continue;  // the definition itself
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), redefinition), last; it != last; ++it) {
+      const auto offset = static_cast<std::size_t>(it->position());
+      if (offset >= is_code.size() || !is_code[offset]) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, offset),
+          .message = "AppendHintSegment is redefined here — use the shared one in "
+                     "WorkspaceUiText.h so every key-hint list joins on the same separator",
+      });
+    }
+  }
+  return result;
+}
+
 }  // namespace microide::tests::architecture

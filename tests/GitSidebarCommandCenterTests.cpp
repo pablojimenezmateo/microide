@@ -293,7 +293,7 @@ void TestCommitReadySummaryAppearsWithoutConflicts() {
   const BranchReviewStateService branch_review;
   const GitSidebarViewModel view_model =
       BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
-  Expect(view_model.commit_summary_line == "Commit ready  |  c commit",
+  Expect(view_model.commit_summary_line == "Commit ready · c commit",
          "staged changes without conflicts should surface commit readiness");
   Expect(view_model.selection_action_line.find("s stage") != std::string::npos &&
              view_model.selection_action_line.find("c commit") != std::string::npos,

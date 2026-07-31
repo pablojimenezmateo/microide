@@ -72,6 +72,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckNoStdStoInRenderOrBuilderTus", CheckNoStdStoInRenderOrBuilderTus},
       {"CheckStatusBarRefreshIsAsyncOnly", CheckStatusBarRefreshIsAsyncOnly},
       {"CheckSidebarSurfaceFallbackUsesStringView", CheckSidebarSurfaceFallbackUsesStringView},
+      {"CheckHintSegmentsUseTheSharedSeparator", CheckHintSegmentsUseTheSharedSeparator},
       {"CheckMenuItemTextResolutionIsAllocationFree",
        CheckMenuItemTextResolutionIsAllocationFree},
       {"CheckRenderViewModelsOwnProjectState", CheckRenderViewModelsOwnProjectState},

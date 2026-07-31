@@ -13,5 +13,6 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
 RuleResult CheckMenuItemTextResolutionIsAllocationFree(const std::filesystem::path& repo_root);
 RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& repo_root);
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root);
+RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& repo_root);
 
 }  // namespace microide::tests::architecture

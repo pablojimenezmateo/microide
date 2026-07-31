@@ -154,6 +154,12 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **Key hints spell themselves one way.** The git sidebar's action line and the
+  compare review header joined their segments with `|` while every other hint in
+  the app used `·` — including the overlay hint whose helper documents `·` as the
+  shell's one spelling. Both had grown a private copy of the same six-line join
+  helper. They share the real one now, so `Enter default · d diff · s stage · …`
+  matches `↑↓ select · Enter choose · Esc cancel`.
 - **The bottom panel explains itself when it is empty.** It was the last row list
   in the shell that painted a blank body over a header: an Output tab opened
   before its tool writes a line (a debug console between "session started" and the

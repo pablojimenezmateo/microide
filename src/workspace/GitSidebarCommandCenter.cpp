@@ -26,16 +26,6 @@ struct GitSidebarCounts {
   std::size_t outgoing = 0;
 };
 
-void AppendHintSegment(std::string& line, std::string_view segment) {
-  if (segment.empty()) {
-    return;
-  }
-  if (!line.empty()) {
-    line += "  |  ";
-  }
-  line.append(segment.data(), segment.size());
-}
-
 GitSidebarCounts CountEntriesBySection(const GitSidebarState& git_state) {
   GitSidebarCounts counts;
   for (const GitSidebarEntry& entry : git_state.entries) {
@@ -144,16 +134,16 @@ std::string GitSidebarCommitSummaryLine(const GitSidebarState& git_state,
     return "Commit in progress\xE2\x80\xA6";
   }
   if (git_state.commit_workflow.open) {
-    return "Commit draft open  |  Ctrl+Enter commit  |  Esc close";
+    return "Commit draft open · Ctrl+Enter commit · Esc close";
   }
   if (counts.conflicts > 0) {
-    return counts.conflicts == 1 ? "Commit blocked  |  resolve the remaining conflict"
-                                 : "Commit blocked  |  resolve conflicts first";
+    return counts.conflicts == 1 ? "Commit blocked — resolve the remaining conflict"
+                                 : "Commit blocked — resolve conflicts first";
   }
   if (counts.staged == 0) {
-    return "Commit blocked  |  nothing staged";
+    return "Commit blocked — nothing staged";
   }
-  return "Commit ready  |  c commit";
+  return "Commit ready · c commit";
 }
 
 std::string GitSidebarSelectionSummaryLine(const GitSidebarEntry& entry,

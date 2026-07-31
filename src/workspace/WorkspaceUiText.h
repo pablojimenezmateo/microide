@@ -39,20 +39,30 @@ inline void AppendUnsigned(std::string& out, std::size_t value) {
   }
 }
 
+// The one separator for key-hint lists, matching the overlay hint ("↑↓ select ·
+// Enter choose · Esc cancel"). Not for joining unrelated fields — the breadcrumb's
+// "path | left -> right" and the merge status line are separators between
+// different things, not hint segments, and keep their own punctuation.
+inline constexpr std::string_view kHintSeparator = " · ";
+
+// Appending form, for hint lists assembled conditionally (the git sidebar and the
+// compare review header add a segment per available action). Both of those carried
+// a private byte-identical copy of this that joined on "  |  " instead, so the two
+// longest, most-read hint lines in the shell were the two that disagreed with it.
+inline void AppendHintSegment(std::string& line, std::string_view segment) {
+  if (segment.empty()) {
+    return;
+  }
+  if (!line.empty()) {
+    line += kHintSeparator;
+  }
+  line.append(segment.data(), segment.size());
+}
+
 inline std::string JoinHintSegments(std::initializer_list<std::string_view> segments) {
   std::string result;
-  bool first = true;
   for (std::string_view segment : segments) {
-    if (segment.empty()) {
-      continue;
-    }
-    if (!first) {
-      // Same separator the overlay key hints use ("↑↓ select · Enter choose ·
-      // Esc cancel"), so the shell spells a hint list one way.
-      result += " · ";
-    }
-    result.append(segment.data(), segment.size());
-    first = false;
+    AppendHintSegment(result, segment);
   }
   return result;
 }

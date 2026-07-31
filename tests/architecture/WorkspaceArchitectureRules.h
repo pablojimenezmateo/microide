@@ -49,6 +49,7 @@ RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_r
 RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_root);
 RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_root);
 RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path& repo_root);
+RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& repo_root);
 RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& repo_root);
 RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& repo_root);
 RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& repo_root);

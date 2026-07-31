@@ -45,16 +45,6 @@ std::string CompareReviewHeaderStagingLabel(compare::WorkingTreeStagingView view
   return "combined";
 }
 
-void AppendHintSegment(std::string& line, std::string_view segment) {
-  if (segment.empty()) {
-    return;
-  }
-  if (!line.empty()) {
-    line += "  |  ";
-  }
-  line.append(segment.data(), segment.size());
-}
-
 }  // namespace
 
 void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
