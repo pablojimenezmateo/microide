@@ -227,7 +227,21 @@ void WorkspaceShell::RefreshStatusBar() {
           .startup_mode_text = startup_mode_text,
           .startup_mode_tooltip = startup_mode_tooltip,
       },
-      context_.current_project_state, ActiveEditorViewport());
+      context_.current_project_state, StatusBarSourceViewport());
+}
+
+const editor::TextViewport* WorkspaceShell::StatusBarSourceViewport() const {
+  // The bar describes whatever the caret is actually in. On a merge tab that is
+  // the result buffer and on a compare tab the editable right side — reading the
+  // group's active *editor* viewport instead left the previously open file's
+  // language and indent on the bar while a merge of a .cpp was on screen (the
+  // media stills showed "markdown  Tabs: 4" over a C++ three-way merge). The
+  // compare tab's read-only left side has no navigable viewport, so fall back
+  // rather than blanking the bar there.
+  if (const editor::TextViewport* navigable = ActiveNavigableViewport(); navigable != nullptr) {
+    return navigable;
+  }
+  return ActiveEditorViewport();
 }
 
 }  // namespace microide::workspace

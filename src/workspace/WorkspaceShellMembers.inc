@@ -1646,6 +1646,9 @@
   void RenderStatusBar(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RenderNotifications(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
   void RefreshStatusBar();
+  // The viewport the status bar describes: whatever the caret is actually in,
+  // which on a compare/merge tab is not the group's active editor viewport.
+  const editor::TextViewport* StatusBarSourceViewport() const;
   void ApplyLiveSettings();
   // Write a setting through the canonical chokepoint. When persist is false the
   // value is applied live (UpsertSetting + ApplyLiveSettings) but never saved to
