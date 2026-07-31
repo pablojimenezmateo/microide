@@ -94,6 +94,9 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     project_segment.text = project_segment_cache_.text;
     project_segment.tooltip = project_segment_cache_.tooltip;
     project_segment.visible = true;
+    // Its tooltip has always read "Open Source Control (...)"; now it does.
+    project_segment.command = "sidebar-show";
+    project_segment.command_arg = "git";
     branch_segment = {};
   }
   if (project_state.root.empty()) {
@@ -106,7 +109,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
                                  ? std::string(operations.startup_mode_text)
                                  : std::string(operations.startup_mode_tooltip);
     branch_segment.visible = true;
-    branch_segment.clickable = false;
+    branch_segment.command.clear();  // startup-mode text is a readout, not a control
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Branch, std::move(branch_segment));
 
@@ -125,6 +128,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     StatusBarSegmentValue line_col;
     line_col.text = editor_segments_cache_.line_column_text;
     line_col.tooltip = "Go to line/column";
+    line_col.command = "goto";
     line_col.visible = true;
     status_bar_service.SetSegment(StatusBarSegmentId::LineColumn, std::move(line_col));
 
@@ -140,6 +144,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     StatusBarSegmentValue indent;
     indent.text = editor_segments_cache_.indent_text;
     indent.tooltip = "Change indent settings";
+    indent.command = "settings";
     indent.visible = true;
     status_bar_service.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
 
@@ -206,6 +211,8 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       }
       problems.text = editor_segments_cache_.problems_text;
       problems.tooltip = "Open Problems";
+      problems.command = "sidebar-show";
+      problems.command_arg = "problems";
       problems.visible = true;
       problems.tone =
           errors > 0 ? StatusBarSegmentTone::Error : StatusBarSegmentTone::Warning;

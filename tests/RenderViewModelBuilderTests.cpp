@@ -393,7 +393,8 @@ void TestBuilderStatusBarSurfacesTooltipFromService() {
                      microide::workspace::StatusBarSegmentValue{
                          .text = "microide",
                          .tooltip = "Open Source Control (clean)",
-                         .clickable = true,
+                         .command = "sidebar-show",
+                         .command_arg = "git",
                          .visible = true,
                      });
 
@@ -408,6 +409,14 @@ void TestBuilderStatusBarSurfacesTooltipFromService() {
          "status bar VM should forward segment text to the render path");
   Expect(vm.left_segments.front().tooltip == "Open Source Control (clean)",
          "status bar VM should forward the segment tooltip so the render path can paint it");
+  // The imperative tooltip is only honest if the segment actually runs something.
+  // `clickable` is derived from the command precisely so a segment cannot look
+  // actionable while doing nothing, which is how the whole bar shipped.
+  Expect(vm.left_segments.front().clickable,
+         "a segment carrying a command should report itself clickable");
+  Expect(vm.left_segments.front().command == "sidebar-show" &&
+             vm.left_segments.front().command_arg == "git",
+         "status bar VM should forward the command so the click handler has one source");
 }
 
 void TestBuilderMarksExecutionLineOnlyForMatchingFile() {

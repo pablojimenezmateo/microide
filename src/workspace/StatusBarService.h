@@ -33,9 +33,18 @@ enum class StatusBarSegmentTone : std::uint8_t {
 struct StatusBarSegmentValue {
   std::string text;
   std::string tooltip;
-  bool clickable = false;
+  // Command run when the segment is clicked, empty for a read-only segment.
+  // `clickable` is derived from it: the two used to be independent, and every
+  // segment shipped with clickable=false and no command at all, so the bar showed
+  // imperative tooltips ("Go to Line", "Open Problems") for controls that did
+  // nothing. Keeping the flag derived means an actionable-looking segment and an
+  // actual action cannot drift apart again.
+  std::string command;
+  std::string command_arg;
   bool visible = false;
   StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
+
+  bool clickable() const { return !command.empty(); }
 };
 
 class StatusBarService {

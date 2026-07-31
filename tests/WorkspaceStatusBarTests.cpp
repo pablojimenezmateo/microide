@@ -28,10 +28,12 @@ void SetSegment(StatusBarService& service,
                 StatusBarSegmentId id,
                 std::string text,
                 bool clickable = false) {
+  // `clickable` is derived from the command now, so the fixture supplies one when
+  // the caller wants an actionable segment.
   service.SetSegment(id, StatusBarSegmentValue{
                              .text = std::move(text),
                              .tooltip = {},
-                             .clickable = clickable,
+                             .command = clickable ? "sidebar-show" : "",
                              .visible = true,
                          });
 }
@@ -133,7 +135,7 @@ void TestStatusBarPropagatesSemanticTone() {
                      StatusBarSegmentValue{
                          .text = "10 errors, 0 warnings",
                          .tooltip = {},
-                         .clickable = true,
+                         .command = "sidebar-show",
                          .visible = true,
                          .tone = StatusBarSegmentTone::Error,
                      });

@@ -297,6 +297,8 @@ struct StatusBarSegmentViewModel {
   std::string_view text;
   std::string_view tooltip;
   bool clickable = false;
+  std::string_view command;      // empty => read-only segment
+  std::string_view command_arg;  // single optional argument
   StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
 };
 

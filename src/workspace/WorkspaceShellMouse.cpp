@@ -73,6 +73,43 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     }
   }
 
+  // Status bar segments. The bar advertised actions it could not perform: every
+  // segment carried an imperative tooltip ("Go to Line", "Open Problems", "Open
+  // Source Control"), and `clickable` existed to drive a pointer cursor and a
+  // hover highlight -- but no mouse-down path ever looked at the status bar, and
+  // no segment ever set the flag. Reported from use as "I can see menus but I
+  // cannot click them". The command now travels on the segment, so the affordance
+  // and the action come from one field.
+  if (event.button.button == SDL_BUTTON_LEFT &&
+      Contains(layout.status_bar, static_cast<float>(event.button.x),
+               static_cast<float>(event.button.y))) {
+    const StatusBarViewModel status_vm =
+        RenderViewModelBuilder(context_).BuildStatusBar(layout, status_bar_service_);
+    std::string_view command;
+    std::string_view command_arg;
+    ForEachStatusBarSegmentRect(
+        status_vm, text_renderer_,
+        [&](const StatusBarSegmentViewModel& segment, const SDL_FRect& rect) {
+          if (!command.empty() || segment.command.empty() ||
+              !Contains(rect, static_cast<float>(event.button.x),
+                        static_cast<float>(event.button.y))) {
+            return;
+          }
+          command = segment.command;
+          command_arg = segment.command_arg;
+        });
+    if (!command.empty()) {
+      std::vector<std::string> args;
+      if (!command_arg.empty()) {
+        args.emplace_back(command_arg);
+      }
+      std::string error_message;
+      ExecuteCommandName(command, args, ActionSource::Command, &error_message);
+      EnsureRedraw([this]() { RequestWindowRedraw(); });
+      return true;
+    }
+  }
+
   const auto visible_hover_popup = ActiveEditorHoverPopupLayout();
   if (event.button.button == SDL_BUTTON_LEFT && visible_hover_popup.has_value() &&
       Contains(visible_hover_popup->rect, event.button.x, event.button.y)) {

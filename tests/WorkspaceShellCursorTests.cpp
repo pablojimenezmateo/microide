@@ -10,6 +10,8 @@
 namespace microide::tests {
 namespace {
 
+using microide::workspace::StatusBarSegmentId;
+
 using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 using microide::workspace::BottomPanelResizeHandleRect;
 using microide::workspace::BottomPanelResizeCursorRect;
@@ -281,7 +283,15 @@ void TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest() {
                 "left custom frame edge should use a horizontal resize cursor");
 }
 
-void TestWorkspaceShellStatusBarSegmentsAreNotClickable() {
+// The status bar's segments carry commands and answer clicks.
+//
+// This test previously asserted the opposite -- "status bar segments must not be
+// clickable" -- but that pinned a defect rather than a decision. Every segment
+// shipped with an imperative tooltip ("Go to Line", "Open Problems", "Open Source
+// Control") while `clickable` was never set anywhere and no mouse-down path ever
+// looked at the bar, so the tooltips promised actions nothing implemented. Users
+// read them as a menu and clicked nothing.
+void TestWorkspaceShellStatusBarSegmentsDispatchTheirCommands() {
   EnsureDummySdlVideoInitialized();
 
   TemporaryDirectory temp_dir;
@@ -295,23 +305,31 @@ void TestWorkspaceShellStatusBarSegmentsAreNotClickable() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::RefreshStatusBar(shell);
 
-  // The status bar has no buttons: hovering any segment yields the default cursor
-  // (no pointer), because no segment is clickable. StatusBarSegmentRect returns a
-  // segment's geometry regardless of clickability, so probe the cursor — which does
-  // gate on `clickable` — at each visible segment's center instead.
-  for (const auto id : {microide::workspace::StatusBarSegmentId::Project,
-                        microide::workspace::StatusBarSegmentId::LineColumn,
-                        microide::workspace::StatusBarSegmentId::Indent,
-                        microide::workspace::StatusBarSegmentId::Language,
-                        microide::workspace::StatusBarSegmentId::Problems}) {
-    const auto rect = WorkspaceShellTestAccess::StatusBarSegmentRect(shell, id);
-    if (!rect.has_value()) {
-      continue;  // segment not present at this width/state
-    }
-    const float cx = rect->x + rect->w * 0.5f;
-    const float cy = rect->y + rect->h * 0.5f;
-    Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(shell, cx, cy),
-           "status bar segments must not be clickable (no pointer cursor on the bottom bar)");
+  // An actionable segment shows the pointer cursor, like every other control.
+  const auto project_rect =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, StatusBarSegmentId::Project);
+  Expect(project_rect.has_value(), "the project segment should be present at this width");
+  const float px = project_rect->x + project_rect->w * 0.5f;
+  const float py = project_rect->y + project_rect->h * 0.5f;
+  Expect(WorkspaceShellTestAccess::CursorKindAtIsPointer(shell, px, py),
+         "a segment that runs a command should show the pointer cursor");
+
+  // And clicking it runs that command -- here, opening Source Control, which is
+  // exactly what its tooltip has always claimed.
+  Expect(SendMouseDown(shell, px, py, SDL_BUTTON_LEFT),
+         "a click on an actionable status bar segment should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Git,
+         "clicking the project segment should open the Source Control view");
+
+  // A read-only segment stays read-only: no command, no pointer, and the click
+  // falls through rather than being swallowed by the bar.
+  const auto encoding_rect =
+      WorkspaceShellTestAccess::StatusBarSegmentRect(shell, StatusBarSegmentId::Encoding);
+  if (encoding_rect.has_value()) {
+    Expect(WorkspaceShellTestAccess::CursorKindAtIsDefault(
+               shell, encoding_rect->x + encoding_rect->w * 0.5f,
+               encoding_rect->y + encoding_rect->h * 0.5f),
+           "a segment with no command must not advertise itself as a control");
   }
 }
 
@@ -618,8 +636,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWindowControlCursorUsesPaddedHitRect);
   AddTest(tests, "WorkspaceShell/CustomFrameResizeCursorsMatchHitTest",
           TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest);
-  AddTest(tests, "WorkspaceShell/StatusBarSegmentsAreNotClickable",
-          TestWorkspaceShellStatusBarSegmentsAreNotClickable);
+  AddTest(tests, "WorkspaceShell/StatusBarSegmentsDispatchTheirCommands",
+          TestWorkspaceShellStatusBarSegmentsDispatchTheirCommands);
   AddTest(tests, "WorkspaceShell/CursorUpdatesWhenProjectSearchResultsArriveWithoutMotion",
           TestWorkspaceShellCursorUpdatesWhenProjectSearchResultsArriveWithoutMotion);
   AddTest(tests, "WorkspaceShell/CursorSplitNonFocusedGroupTabUsesPointer",

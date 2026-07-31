@@ -1649,7 +1649,9 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
         .id = id,
         .text = seg.text,
         .tooltip = seg.tooltip,
-        .clickable = seg.clickable,
+        .clickable = seg.clickable(),
+        .command = seg.command,
+        .command_arg = seg.command_arg,
         .tone = seg.tone,
     });
   };
