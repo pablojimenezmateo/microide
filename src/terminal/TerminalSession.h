@@ -241,6 +241,9 @@ class TerminalSession {
   void SendBytesLocked(std::string_view bytes);
   void FlushPendingReply();
   void EnsureCursorLineExistsLocked();
+  // Drops the unused blank tail of the pre-resize screen when a shrink would
+  // otherwise leave the cursor above the visible window. See Resize().
+  void DropBlankTailStrandingCursorLocked();
   void AdvanceCursorRowLocked(bool wrapped_from_previous = false);
   void MoveCursorLocked(std::size_t row, std::size_t column);
   // Absolute deque row of the top of the visible screen on the primary buffer.

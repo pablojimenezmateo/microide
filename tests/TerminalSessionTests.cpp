@@ -107,6 +107,54 @@ void TestTerminalSessionReverseIndexScrollsTopMargin() {
   ExpectLineText(lines, 3, "C", "reverse index should discard the previous bottom-margin row");
 }
 
+// Regression: a shrink-resize must not strand the cursor above the visible
+// window. The primary buffer's viewport is the LAST `rows_` lines of the deque,
+// and the cursor is an absolute index into it — so a `clear` (ESC[H ESC[2J
+// ESC[3J) that lands while the session is still at its pre-layout height leaves
+// exactly `old_rows` lines with the cursor on the first, and the panel's real
+// (smaller) geometry then puts the viewport on the blank tail with the prompt
+// above it. Nothing scrolls it back: every subsequent line the shell prints goes
+// to a row that is still off-screen. That is a terminal blank for the rest of the
+// session, and it is what a `clear` in a startup rc did (visible in the shipped
+// docs/media stills, whose fixture rc clears).
+void TestTerminalSessionShrinkKeepsCursorOnScreenAfterClear() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 40);
+
+  // `clear` as ncurses emits it, then the prompt the shell writes straight after.
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[H\x1b[2J\x1b[3Jdev$ ");
+  Expect(session.LineCount() == 24, "clear should leave exactly one screen of lines");
+
+  // The panel's real geometry arrives: five rows, not twenty-four.
+  session.Resize(5, 40);
+
+  const auto lines = session.SnapshotLines();
+  const std::size_t visible_top = lines.size() > 5 ? lines.size() - 5 : 0;
+  const auto cursor = session.CursorSnapshot();
+  Expect(cursor.row >= visible_top,
+         "a shrink must not leave the cursor above the visible window");
+
+  bool prompt_visible = false;
+  for (std::size_t row = visible_top; row < lines.size(); ++row) {
+    if (LineText(lines[row]).find("dev$") != std::string::npos) {
+      prompt_visible = true;
+    }
+  }
+  Expect(prompt_visible, "the prompt written before the shrink should still be on screen");
+
+  // ...and output written after the shrink lands on screen too.
+  TerminalSessionTestAccess::AppendOutput(session, "echo hi\r\nhi\r\ndev$ ");
+  const auto after = session.SnapshotLines();
+  const std::size_t after_top = after.size() > 5 ? after.size() - 5 : 0;
+  bool echoed_visible = false;
+  for (std::size_t row = after_top; row < after.size(); ++row) {
+    if (LineText(after[row]).find("hi") != std::string::npos) {
+      echoed_visible = true;
+    }
+  }
+  Expect(echoed_visible, "output written after a shrink should be visible, not off-screen");
+}
+
 // Regression: Reverse Index (ESC M) on the PRIMARY buffer must floor at the
 // visible-screen top, not deque index 0. Before the fix it decremented the
 // absolute cursor row past the viewport into scrollback, and the next printed
@@ -2619,6 +2667,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionHardLineFeedDoesNotRelabelWrappedRow);
   AddTest(tests, "TerminalSession/InvalidUtf8StoredAsReplacementChar",
           TestTerminalSessionInvalidUtf8StoredAsReplacementChar);
+  AddTest(tests, "TerminalSession/ShrinkKeepsCursorOnScreenAfterClear",
+          TestTerminalSessionShrinkKeepsCursorOnScreenAfterClear);
   AddTest(tests, "TerminalSession/StopEscalatesToKillForStubbornChild",
           TestTerminalSessionStopEscalatesToKillForStubbornChild);
 #endif

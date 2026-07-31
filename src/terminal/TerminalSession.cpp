@@ -272,6 +272,7 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
       lines_.resize(std::max<std::size_t>(1, rows_));
     }
     EnsureCursorLineExistsLocked();
+    DropBlankTailStrandingCursorLocked();
     TrimScrollbackLocked();
     AdvanceSnapshotGenerationLocked();
   }
