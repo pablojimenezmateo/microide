@@ -41,6 +41,26 @@ Example output:
 [startup]    83.06 ms total |     7.47 ms | Application::FirstRender
 ```
 
+## Ranked Summary
+
+`MICROIDE_STARTUP_TRACE` streams one line per scope in the order they closed,
+which is the right shape when each scope runs once. It stops being readable as
+soon as a scope runs per file, per plugin, or per project entry — the same label
+appears many times and nothing adds it up.
+
+```bash
+env MICROIDE_STARTUP_SUMMARY=1 ./build/microide/microide
+```
+
+prints one table instead, ranked by **self** time (a scope's own time, with
+nested scopes subtracted) and carrying count / max / average per label. Both flags
+compose. The columns and how to read them are documented once, in
+`dev-docs/performance/runtime-profiling.md` § Ranked Scope Summary; the same
+mechanism backs both channels.
+
+The summary is emitted from `Application::Shutdown`, so a run killed with
+`SIGKILL` prints nothing.
+
 ## How To Read It
 
 - `total` is time since tracing started
