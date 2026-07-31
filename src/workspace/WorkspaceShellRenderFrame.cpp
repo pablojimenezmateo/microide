@@ -351,6 +351,15 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     layout = *prepared_frame_layout_;
   }
   RefreshStatusBar();
+  // Nothing else asks for the status-bar strip: its content is derived from state
+  // owned by other surfaces, so the event that changed it repaints the editor (or
+  // the sidebar, or nothing) and the bar keeps stale pixels on a partial frame.
+  // Ask for it here, and only when a painted value actually moved — so this costs
+  // one thin extra clip on the frames that need it and nothing on the rest.
+  // Self-terminating: the repaint does not change the model.
+  if (status_bar_service_.TakePaintedStateChanged()) {
+    RequestRedrawRect(layout.status_bar);
+  }
   RefreshSettingsOverlayCatalog();
   SDL_Window* render_window = SDL_GetRenderWindow(renderer);
   MakeTextInputCoordinator().SyncTextInputSurface(render_window);

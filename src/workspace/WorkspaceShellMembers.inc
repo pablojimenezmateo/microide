@@ -119,6 +119,9 @@
   }
   EventResult HandleEvent(const SDL_Event& event);
   EventResult HandleScheduledWake();
+  // The wake sources themselves; HandleScheduledWake wraps this to merge in any
+  // redraw the render path asked for (see its comment).
+  EventResult HandleScheduledWakeSources();
   FrameToken PrepareFrameOnce(SDL_Renderer* renderer, int width, int height);
   void RenderClip(const FrameToken& frame_token, SDL_Renderer* renderer, int width, int height,
                   std::optional<SDL_FRect> dirty_rect_hint = std::nullopt);

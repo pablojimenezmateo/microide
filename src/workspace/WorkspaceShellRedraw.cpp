@@ -878,6 +878,18 @@ WorkspaceShell::IdleWaitState WorkspaceShell::CurrentIdleWaitState() const {
   if (const auto next_delay = NextAnimationDelayMs(); next_delay.has_value()) {
     wait_ms = std::max<Uint32>(1, *next_delay);
   }
+  // A redraw asked for from the render path — progressive compare tokenization, the
+  // status-bar strip — lands in pending_render_invalidation_, which only the event
+  // dispatcher and the scheduled wake drain. Blocking here would strand it until
+  // unrelated input arrived, so don't wait at all while one is owed.
+  // HandleScheduledWake picks the rects up; the frame it produces clears them, so
+  // this does not spin.
+  if (pending_render_invalidation_.HasAnyRedraw()) {
+    return IdleWaitState{
+        .hint = IdleHint::Full,
+        .caret_remaining_ms = 0,
+    };
+  }
   // While a debug-adapter request is in flight, poll on a short interval so the
   // async response is applied promptly. The response path already wakes the loop
   // via MainThreadMailbox::PushWake (SDL_PushEvent), but a cross-thread pushed
@@ -998,6 +1010,26 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
 }
 
 WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
+  EventResult result = HandleScheduledWakeSources();
+  // Redraws requested from the render path (progressive compare tokenization, the
+  // status-bar strip) accumulate in pending_render_invalidation_, which the event
+  // dispatcher drains for events. A frame with no event behind it has to drain it
+  // too, or those rects sit there until unrelated input arrives. Merging here is
+  // the single seam that covers every wake source above.
+  const RenderInvalidation pending = ConsumePendingRenderInvalidation();
+  if (pending.full) {
+    result.redraw.full = true;
+    result.redraw.rects.clear();
+    result.handled = true;
+  } else if (!pending.rects.empty() && !result.redraw.full) {
+    result.redraw.rects.insert(result.redraw.rects.end(), pending.rects.begin(),
+                               pending.rects.end());
+    result.handled = true;
+  }
+  return result;
+}
+
+WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::HandleScheduledWake");
   if (notification_service_.ExpireDue(SDL_GetTicks())) {
     return EventResult{

@@ -1006,6 +1006,56 @@ void TestWorkspaceShellRenderedFrameIsFullyOpaque() {
          "the modal backdrop should dim the editor behind it, not overwrite it");
 }
 
+// The status bar is derived chrome: every value on it (cursor position, language,
+// indent, encoding, branch, diagnostics, LSP) is owned by some other surface. So
+// the event that changes one asks for the editor — or the sidebar, or nothing — to
+// be repainted, and on a partial-redraw frame the strip simply kept its old
+// pixels: moving the caret never updated "Ln 1, Col 1", and opening a second file
+// left the first one's language and indent on screen until an unrelated full
+// redraw happened along. It has to ask for itself, and only when it changed.
+void TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 900, 600);
+
+  SoftwareCanvas canvas(900, 600);
+  shell.Render(canvas.renderer(), 900, 600);
+  (void)shell.ConsumePendingRenderInvalidation();
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  Expect(layout.status_bar.w > 0.0f && layout.status_bar.h > 0.0f,
+         "the status bar fixture needs a visible status bar");
+
+  // A frame that changes nothing must not drag the strip along: this is the whole
+  // reason the request is gated on the model rather than issued unconditionally.
+  shell.Render(canvas.renderer(), 900, 600);
+  const auto idle_redraw = shell.ConsumePendingRenderInvalidation();
+  Expect(!AnyRectCovers(idle_redraw.rects, layout.status_bar),
+         "an unchanged status bar should not ask to be repainted");
+
+  // Move the caret. The keystroke's own invalidation covers the editor; the frame
+  // it produces is what notices Ln/Col moved.
+  const auto key_result = SendKeyDownResult(shell, SDLK_DOWN, SDL_KMOD_NONE);
+  Expect(key_result.handled, "the fixture's caret move should be handled");
+  Expect(!key_result.redraw.full && !AnyRectCovers(key_result.redraw.rects, layout.status_bar),
+         "the fixture is only meaningful if the keystroke itself misses the strip");
+
+  shell.Render(canvas.renderer(), 900, 600);
+  // ...and the loop must not block while that request is outstanding, or the strip
+  // would only catch up on the next unrelated input.
+  Expect(shell.CurrentIdleWaitState().hint != WorkspaceShell::IdleHint::Idle,
+         "the event loop must not block while a render-requested redraw is owed");
+  const auto after_move = shell.ConsumePendingRenderInvalidation();
+  Expect(after_move.full || AnyRectCovers(after_move.rects, layout.status_bar),
+         "a caret move should repaint the status bar so Ln/Col follows it");
+}
+
 // A dirty rect has to fully contain the content it stands for. All three
 // row-range builders (editor, compare, merge) nudged the top up by a pixel and
 // left the height alone, so the LAST pixel row of a partially repainted range was
@@ -3282,6 +3332,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize);
   AddTest(tests, "WorkspaceShell/RenderedFrameIsFullyOpaque",
           TestWorkspaceShellRenderedFrameIsFullyOpaque);
+  AddTest(tests, "WorkspaceShell/StatusBarRepaintsWhenItsValuesChange",
+          TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
 }
 
 }  // namespace microide::tests

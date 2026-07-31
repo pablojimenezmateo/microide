@@ -43,10 +43,33 @@ class StatusBarService {
   StatusBarService() = default;
 
   void SetSegment(StatusBarSegmentId id, StatusBarSegmentValue value) {
-    segments_[static_cast<std::size_t>(id)] = std::move(value);
+    StatusBarSegmentValue& slot = segments_[static_cast<std::size_t>(id)];
+    // Only the painted aspects mark the bar dirty. Tooltip text and clickability
+    // are hover/click state, not pixels, so a change to either must not schedule
+    // a repaint.
+    if (slot.text != value.text || slot.visible != value.visible || slot.tone != value.tone) {
+      painted_state_changed_ = true;
+    }
+    slot = std::move(value);
   }
   const StatusBarSegmentValue& Segment(StatusBarSegmentId id) const {
     return segments_[static_cast<std::size_t>(id)];
+  }
+
+  // True once since the last call if any segment's *painted* value changed.
+  //
+  // The status bar is the one shell surface no Request*Redraw helper covers: its
+  // content is derived from state that lives elsewhere (caret position, language,
+  // indent, encoding, git, LSP, diagnostics), so the event that changes it asks
+  // for the editor — or the sidebar, or nothing — to be repainted and the strip
+  // keeps its old pixels. On a partial-redraw frame that meant moving the caret
+  // never updated "Ln 1, Col 1", and opening a second file left the first one's
+  // language and indent on screen. Refreshing the model already runs once per
+  // frame; this is how the frame learns it has to repaint the strip.
+  bool TakePaintedStateChanged() {
+    const bool changed = painted_state_changed_;
+    painted_state_changed_ = false;
+    return changed;
   }
 
   const std::array<StatusBarSegmentValue, static_cast<std::size_t>(StatusBarSegmentId::Count)>&
@@ -57,6 +80,7 @@ class StatusBarService {
  private:
   std::array<StatusBarSegmentValue, static_cast<std::size_t>(StatusBarSegmentId::Count)>
       segments_{};
+  bool painted_state_changed_ = false;
 };
 
 }  // namespace microide::workspace
