@@ -92,6 +92,20 @@ These are implemented and should not be treated as open migration work:
   because its *header row* carries the base-branch button, so hiding the group
   would remove the only control that could make it non-empty. Before hiding any
   empty group, check whether its header is also a control surface
+- **an empty list says so once, in the list** (2026-07-31): the count row sits
+  directly above the list area, so a count that spells out the empty state prints
+  the same sentence twice. `BuildFilteredCountSummary` returns empty at zero
+  matches and every surface pairs it with its own list-area label; there is no
+  "0 of N" and no synthetic count. This has regressed twice (the search panel in
+  5d091f9e, the file finder plus a hardcoded `"0 of 0"` fallback right after),
+  which is why `RenderViewModelBuilder/EmptyPickerStatesAreNotStatedTwice` walks
+  every picker mode rather than trusting per-surface tests
+- **a view with no tab still needs a way in** (same date): the sidebar rail draws
+  three primary tabs and pushes everything else — Problems, Tests, Outline, plugin
+  views — into the overflow menu, and lights the overflow button whenever the
+  active view lives behind it. Filtering a view out of *both* the row and the menu
+  (as a stale retired-surface exclusion list did) leaves it reachable only by
+  command, with nothing on screen saying which view is showing
 - **every filtered surface reports its own filter** (same date): Settings and
   Help/About carry the quick-open footer — `N of M` on the left, key hint on the
   right — and a zero-match query puts a line in the list area instead of leaving a
