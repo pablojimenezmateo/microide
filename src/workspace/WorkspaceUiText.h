@@ -68,13 +68,19 @@ inline std::string FormatEmptyState(std::string_view noun, std::string_view qual
 }
 
 // Result-count line for any query-filtered list: "12 of 187 commands" while the
-// query is excluding rows, "187 commands" when it is not, "No matching commands"
-// when nothing survived. Shared by the quick-open pickers and the Settings /
-// Help-About footer so a count means the same thing everywhere.
+// query is excluding rows and "187 commands" when it is not. Shared by the
+// quick-open pickers and the Settings / Help-About footer so a count means the
+// same thing everywhere.
 //
 // The denominator is deliberately dropped when it equals the numerator: an
 // unfiltered palette read "187 of 187", which is noise that also looks like a
-// filter is active. A bare "0 of 187" reads worse than saying nothing matched.
+// filter is active.
+//
+// A zero-match list yields the EMPTY string, not "0 of 187" and not "No matching
+// commands": every one of these surfaces already prints a no-match line in the
+// list area, which is where the eye goes when the list is blank, and saying it
+// twice is the duplication this pass keeps removing. Callers pair this with their
+// own empty-state label rather than getting the message from here.
 // Appending form, for the render view-model builder's reused scratch string: the
 // overlay chrome composes into a frame-stable buffer specifically to keep painting
 // allocation-free, so it must not take a freshly-built std::string per frame.
@@ -83,8 +89,6 @@ inline void AppendFilteredCountSummary(std::string& text,
                                        std::size_t total,
                                        std::string_view noun) {
   if (shown == 0) {
-    text += "No matching ";
-    text.append(noun.data(), noun.size());
     return;
   }
   AppendUnsigned(text, shown);

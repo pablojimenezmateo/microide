@@ -844,9 +844,13 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     out.query_surface = surface;
     out.query_row_y = overlay_rect.y + OverlayQueryRowOffset(overlay.mode);
     query_ref = query_field_text(surface, query, query_available);
-    summary_ref = summary_line.empty() ? OverlayLabelRef::Direct("0 of 0")
-                  : summary_stable    ? OverlayLabelRef::Direct(summary_line)
-                                      : OverlayLabelRef::Owned(blob, summary_line);
+    // An empty summary stays empty. This used to substitute a literal "0 of 0",
+    // which a picker showing no rows then printed directly above its own "No
+    // matching …" line -- the same sentence twice, in the old count wording.
+    if (!summary_line.empty()) {
+      summary_ref = summary_stable ? OverlayLabelRef::Direct(summary_line)
+                                   : OverlayLabelRef::Owned(blob, summary_line);
+    }
     out.summary_y = overlay_rect.y + OverlaySummaryRowOffset(overlay.mode);
     out.hint = kPickerHint;
     out.hint_x = right_aligned_x(kPickerHint);
@@ -901,7 +905,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     case OverlayMode::CommitPicker: {
       const ComparePickerState& picker = overlay.workflow.compare_picker;
       compose_scratch = picker.loading ? std::string("Loading history…")
-                                       : FormatEmptyState("matching refs");
+                                       : FormatEmptyState("matching revisions");
       fill_picker_chrome(
           picker.title.empty() ? std::string_view("Compare against") : picker.title,
           picker.context_label, picker.query, TextInputSurface::CommitPicker,
@@ -914,7 +918,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     }
     case OverlayMode::LaunchConfigPicker: {
       const LaunchConfigPickerState& picker = overlay.workflow.launch_config_picker;
-      compose_scratch = FormatEmptyState("launch configurations");
+      compose_scratch = FormatEmptyState("matching launch configurations");
       fill_picker_chrome(
           picker.title.empty() ? std::string_view("Select Launch Configuration") : picker.title,
           std::string_view{}, picker.query, TextInputSurface::LaunchConfigPicker,
@@ -927,7 +931,7 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
     }
     case OverlayMode::CommandPalette: {
       const CommandPaletteState& palette = overlay.workflow.command_palette;
-      compose_scratch = FormatEmptyState("commands");
+      compose_scratch = FormatEmptyState("matching commands");
       fill_picker_chrome(palette.title.empty() ? std::string_view("Commands") : palette.title,
                          std::string_view{}, palette.query, TextInputSurface::CommandPalette,
                          palette.summary_line, /*summary_stable=*/true, compose_scratch,

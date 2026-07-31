@@ -829,6 +829,38 @@ void TestSettingsOverlayWrapsLongDescriptions() {
   }
 }
 
+// A no-match list must say so exactly once. The count row sits directly above the
+// list's empty-state label, so a count line that also spells out the empty state
+// prints the same sentence twice -- which shipped in the file finder and, in a
+// different form, in the search panel before it (5d091f9e). Walk every picker mode
+// with an empty result set and assert the two never both speak.
+void TestEmptyPickerStatesAreNotStatedTwice() {
+  using microide::workspace::OverlayMode;
+  const auto modes = std::to_array<OverlayMode>({
+      OverlayMode::FileFinder,
+      OverlayMode::CommandPalette,
+      OverlayMode::CommitPicker,
+      OverlayMode::LaunchConfigPicker,
+  });
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+  for (const OverlayMode mode : modes) {
+    WorkspaceContext context;
+    context.current_project_state.overlay.visible = true;
+    context.current_project_state.overlay.mode = mode;
+    // Every picker starts with no items, so each lands in its zero-match state.
+    RenderViewModelBuilder builder(context);
+    microide::workspace::OverlaySurfaceViewModel vm;
+    builder.BuildOverlaySurfaceInto(vm, layout, layout.editor_area, text_renderer);
+    Expect(vm.total_rows == 0, "the fixture should leave every picker with no rows");
+    Expect(!vm.empty_label.empty(),
+           "an empty picker must explain itself in the list area");
+    Expect(vm.summary_line.empty(),
+           "an empty picker must not repeat its empty state in the count row");
+  }
+}
+
 // The count line is shared by the three quick-open pickers and the two overlay
 // footers, so its wording rules are pinned once here rather than five times.
 void TestFilteredCountSummaryWording() {
@@ -839,10 +871,13 @@ void TestFilteredCountSummaryWording() {
   // "187 of 187", which is noise and reads like a filter is applied.
   Expect(BuildFilteredCountSummary(187, 187, "commands") == "187 commands",
          "an unfiltered list should omit the redundant denominator");
-  Expect(BuildFilteredCountSummary(0, 187, "commands") == "No matching commands",
-         "a zero-match list should say so rather than read '0 of 187'");
-  Expect(BuildFilteredCountSummary(0, 0, "revisions") == "No matching revisions",
-         "an empty source list should use the same zero-match wording");
+  // Empty, not "No matching commands": every caller already prints a no-match line
+  // in its list area, and the count row sits directly above it -- saying it in both
+  // places printed "No matching files" twice in the file finder.
+  Expect(BuildFilteredCountSummary(0, 187, "commands").empty(),
+         "a zero-match count line should defer to the list's own empty-state label");
+  Expect(BuildFilteredCountSummary(0, 0, "revisions").empty(),
+         "an empty source list should likewise leave the count line blank");
   Expect(BuildFilteredCountSummary(1, 1, "settings") == "1 settings",
          "the noun is caller-supplied and not pluralized here");
 }
@@ -887,10 +922,10 @@ void TestSettingsOverlayFooterReportsCountsAndKeys() {
   service.SetQuery("zzzznotathing");
   service.RebuildHelpRows(help_rows);
   const auto empty = builder.BuildSettingsOverlay(layout, service, text_renderer);
-  Expect(empty.footer_summary == "No matching shortcuts",
-         "a zero-match footer should say so instead of reading '0 of 3'");
+  Expect(empty.footer_summary.empty(),
+         "a zero-match footer should leave the count blank, not read '0 of 3'");
   Expect(!empty.empty_label.empty(),
-         "a zero-match list area should carry an explanatory label");
+         "the zero-match message belongs in the list area, exactly once");
 
   // Settings mode: same footer, different noun and keys.
   SettingsOverlayService settings;
@@ -1240,6 +1275,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayFooterReportsCountsAndKeys);
   AddTest(tests, "RenderViewModelBuilder/FilteredCountSummaryWording",
           TestFilteredCountSummaryWording);
+  AddTest(tests, "RenderViewModelBuilder/EmptyPickerStatesAreNotStatedTwice",
+          TestEmptyPickerStatesAreNotStatedTwice);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayControlValueIsPrecomputed",
           TestSettingsOverlayControlValueIsPrecomputed);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",
