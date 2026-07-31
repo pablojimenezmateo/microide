@@ -154,6 +154,14 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **Breakpoints work again on gdb 15.x.** On the Ubuntu 24.04 system gdb, a debug
+  session launched, streamed the program's entire output, and terminated without
+  ever stopping — every breakpoint silently ignored. The DAP handshake sent
+  `launch` before `setBreakpoints`, which is correct for gdb 17.x (it defers
+  running the program to `configurationDone` and rejects a `configurationDone`
+  with no launch pending) but wrong for gdb 15.x, which starts the program on
+  `launch` itself. Breakpoints now go out before `launch`, and `launch` still
+  precedes `configurationDone` — the one order that satisfies both.
 - **Settings and Help/About say how many rows a filter left, and which keys
   work.** Both gained the footer the quick-open modals already had: a count on
   the left (`2 of 171 shortcuts`, `4 of 79 settings`) and the key hint on the

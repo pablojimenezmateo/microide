@@ -567,22 +567,31 @@ Files added:
 
 Key decisions (locked):
 
-- **Handshake order: `launch` → `setBreakpoints` → `configurationDone`.** On the
-  `initialized` event `DebugSession` sends the launch/attach request *first* (when
-  the adapter advertises `supportsConfigurationDoneRequest`), then one
-  `setBreakpoints` per file, then `configurationDone`. This is the DAP-spec flow: a
-  spec-compliant adapter (gdb, lldb-dap, debugpy) defers running the debuggee until
-  `configurationDone` and **rejects a `configurationDone` that arrives with no
-  launch pending** — gdb's DAP raises `"launch or attach not specified"` and then
-  never answers the late launch, so the session hangs until the request deadline
-  fires `"debug adapter did not respond"`. Because the run is gated on
-  `configurationDone`, breakpoints sent in between are still armed before the
-  program starts. (This supersedes the earlier "launch last" workaround, which
-  targeted gdb 15.1's non-spec behavior of running the debuggee *during* `launch`.)
-  An adapter with no configuration phase starts the debuggee on `launch` itself, so
-  there `setBreakpoints` precedes `launch`. Pinned by
-  `DebugService/SessionLaunchHandshakeOrder` against a mock that enforces the gdb
-  rule.
+- **Handshake order: `setBreakpoints` → `launch` → `configurationDone`.** On the
+  `initialized` event `DebugSession` sends one `setBreakpoints` per file (plus
+  function breakpoints and exception filters), then the launch/attach request,
+  then `configurationDone` — unconditionally, with no capability branch. Two
+  adapter generations pull in opposite directions and only this order satisfies
+  both:
+
+  * **gdb 17.x** *rejects a `configurationDone` that arrives with no launch
+    pending* — its DAP raises `"launch or attach not specified"` and then never
+    answers the late launch, so the session hangs until the request deadline fires
+    `"debug adapter did not respond"`. Launch must therefore precede
+    `configurationDone`.
+  * **gdb 15.1** (the Ubuntu 24.04 LTS default, so not a historical footnote)
+    starts the debuggee *during* `launch` rather than deferring to
+    `configurationDone`. Breakpoints must therefore precede `launch`, or the
+    program runs to completion before a single one is armed. The failure is quiet:
+    the session launches, streams the program's whole output, and terminates
+    normally, having stopped nowhere. `Breakpoint 1 at …` arrives in the console
+    *after* the `terminated` event, which is the tell.
+
+  Sending breakpoints first satisfies both, and adapters with no configuration
+  phase (which also run on `launch`) get the order they need for free. All
+  requests ride the client's single ordered stream, so send order is delivery
+  order. Pinned by `DebugService/SessionLaunchHandshakeOrder`, which asserts both
+  halves against a mock that enforces the gdb 17.x rejection rule.
 - **`setBreakpoints` fires in stream order, not awaited.** The single ordered
   `DapClient` stream guarantees the adapter receives requests in send order (the
   DAP handshake requires send-order, not response-order); verification reflects back

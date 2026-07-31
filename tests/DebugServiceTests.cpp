@@ -582,12 +582,16 @@ void TestDebugSessionLaunchHandshakeOrder() {
   // 17.2 does), so reaching Terminated cleanly already proves launch preceded it.
   Expect(!captured.terminated_failed, "spec-compliant handshake must not fail the session");
 
-  // Pin the DAP handshake order: launch  ->  setBreakpoints  ->  configurationDone.
-  // gdb's DAP defers running the debuggee until configurationDone and rejects a
-  // configurationDone with no launch pending, so launch must be in flight first;
-  // breakpoints still precede configurationDone, so they are armed before the run.
+  // Pin the DAP handshake order: setBreakpoints  ->  launch  ->  configurationDone.
+  // Both halves matter, and each was a shipped bug:
+  //   * launch before configurationDone -- gdb 17.x rejects a configurationDone
+  //     with no launch pending and then never answers the late launch (the strict
+  //     mock enforces this, so a regression hangs/fails the session here).
+  //   * breakpoints before launch -- gdb 15.x starts the debuggee on launch rather
+  //     than deferring to configurationDone, so a launch-first order let the
+  //     program run to completion before any breakpoint was armed.
   // finish_launch() emits this command list while handling configurationDone, so
-  // by then launch, setBreakpoints, and configurationDone have all been recorded.
+  // by then setBreakpoints, launch, and configurationDone have all been recorded.
   const std::size_t order_pos = captured.output.find("commands:");
   Expect(order_pos != std::string::npos, "adapter should emit its command order");
   const std::size_t launch_pos = captured.output.find("launch", order_pos);
@@ -596,9 +600,10 @@ void TestDebugSessionLaunchHandshakeOrder() {
   Expect(launch_pos != std::string::npos && set_pos != std::string::npos &&
              cfg_pos != std::string::npos,
          "adapter should record launch, setBreakpoints, and configurationDone");
-  Expect(launch_pos < set_pos, "launch must be sent before setBreakpoints");
+  Expect(set_pos < launch_pos,
+         "setBreakpoints must be sent before launch, or an adapter that runs on "
+         "launch never arms them");
   Expect(launch_pos < cfg_pos, "launch must be sent before configurationDone");
-  Expect(set_pos < cfg_pos, "setBreakpoints must be sent before configurationDone");
   manager.ShutdownAll();
 }
 

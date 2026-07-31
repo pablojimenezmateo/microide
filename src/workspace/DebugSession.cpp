@@ -226,24 +226,29 @@ void DebugSession::HandleEvent(const std::string& event, const util::JsonValue& 
     // Clamp gdb value formatting before the program runs, so the first expand of a
     // (possibly uninitialized) local cannot trigger unbounded formatting.
     SendDebuggerValueLimits();
-    // DAP handshake ordering: the launch/attach request must be in flight *before*
-    // configurationDone. A spec-compliant adapter (gdb, lldb-dap, debugpy) defers
-    // running the debuggee until configurationDone and rejects a configurationDone
-    // that arrives with no launch pending — gdb's DAP raises "launch or attach not
-    // specified" and then never answers the late launch, hanging the session. Since
-    // the run is gated on configurationDone, breakpoints sent in between are still
-    // armed first. An adapter with no configuration phase starts the debuggee on
-    // the launch request itself, so there breakpoints must precede launch.
-    const bool launch_first = client_->Capabilities().supports_configuration_done_request;
-    if (launch_first) {
-      SendLaunchRequest();
-    }
+    // DAP handshake ordering: breakpoints -> launch/attach -> configurationDone.
+    // This is the only order that works across the adapters in the wild, because
+    // two of them impose opposite-looking constraints:
+    //
+    //   * gdb 17.x rejects a configurationDone that arrives with no launch pending
+    //     ("launch or attach not specified") and then never answers the late
+    //     launch, hanging the session. So launch must precede configurationDone.
+    //   * gdb 15.x (and any adapter with no configuration phase) starts the
+    //     debuggee on the *launch* request itself rather than deferring to
+    //     configurationDone. So breakpoints must precede launch, or the program
+    //     runs to completion before a single breakpoint is armed -- the session
+    //     "works" but never stops anywhere.
+    //
+    // Sending breakpoints first satisfies both: launch is still in flight before
+    // configurationDone, and no adapter can start the program before the
+    // breakpoints reach it. All requests ride the client's single ordered stream,
+    // so send order is delivery order regardless of response order. Sending
+    // breakpoints unconditionally first also removes a capability branch that
+    // could only ever be wrong for one of the two gdb generations.
     SendAllBreakpoints();
     SendFunctionBreakpoints();
     SendExceptionFilters();
-    if (!launch_first) {
-      SendLaunchRequest();
-    }
+    SendLaunchRequest();
     SendConfigurationDone();
   } else if (event == "output") {
     if (callbacks_.on_output) {
