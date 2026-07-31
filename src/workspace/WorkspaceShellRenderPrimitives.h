@@ -425,70 +425,30 @@ inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color c
 // free, and batches into one SDL_RenderFillRects call.
 inline void DrawArcStroke(SDL_Renderer* renderer, float cx, float cy, float radius,
                           float start_rad, float end_rad, SDL_Color color,
-                          float thickness = 2.0f) {
+                          float thickness = 1.0f) {
   if (renderer == nullptr || radius <= 0.0f) {
     return;
   }
   const float sweep = std::fabs(end_rad - start_rad);
-  // One sample per pixel of arc length, plus a floor so tiny arcs stay smooth.
-  const int samples = std::max(8, static_cast<int>(sweep * radius) + 2);
-  constexpr int kMaxSamples = 256;
+  // Two samples per pixel of arc length: the defect in the old glyphs was sample
+  // DENSITY, not stroke weight. A handful of long chords shows its facets; enough
+  // samples give a smooth curve at the same 1px weight as the straight-line glyphs
+  // (Step Into/Out), which is the shell's line-art convention.
+  const int samples = std::max(12, static_cast<int>(sweep * radius * 2.0f) + 2);
+  constexpr int kMaxSamples = 320;
   const int count = std::min(samples, kMaxSamples);
   std::array<SDL_FRect, kMaxSamples> stamps{};
-  const float half = thickness * 0.5f;
   for (int i = 0; i < count; ++i) {
     const float t = static_cast<float>(i) / static_cast<float>(count - 1);
     const float ang = start_rad + (end_rad - start_rad) * t;
-    stamps[static_cast<std::size_t>(i)] = SDL_FRect{cx + radius * std::cos(ang) - half,
-                                                    cy + radius * std::sin(ang) - half, thickness,
-                                                    thickness};
+    // Snap to the pixel grid so a 1px stroke stays crisp instead of smearing
+    // across two rows at sub-pixel positions.
+    stamps[static_cast<std::size_t>(i)] =
+        SDL_FRect{std::floor(cx + radius * std::cos(ang)), std::floor(cy + radius * std::sin(ang)),
+                  thickness, thickness};
   }
   render::SetDrawColor(renderer, color);
   SDL_RenderFillRects(renderer, stamps.data(), count);
-}
-
-// Filled triangle by scanline. Used for glyph arrowheads, which as two stray
-// hairlines read as noise hanging off the end of a stroke rather than as a head.
-inline void DrawFilledTriangle(SDL_Renderer* renderer, float x1, float y1, float x2, float y2,
-                               float x3, float y3, SDL_Color color) {
-  if (renderer == nullptr) {
-    return;
-  }
-  const float min_y = std::floor(std::min({y1, y2, y3}));
-  const float max_y = std::ceil(std::max({y1, y2, y3}));
-  const int rows = static_cast<int>(max_y - min_y);
-  if (rows <= 0) {
-    return;
-  }
-  constexpr int kMaxRows = 64;
-  std::array<SDL_FRect, kMaxRows> spans{};
-  int span_count = 0;
-  const auto edge_x = [](float ax, float ay, float bx, float by, float y, float& out) {
-    if ((y < std::min(ay, by)) || (y > std::max(ay, by)) || ay == by) {
-      return false;
-    }
-    out = ax + (bx - ax) * (y - ay) / (by - ay);
-    return true;
-  };
-  for (int i = 0; i < rows && span_count < kMaxRows; ++i) {
-    const float y = min_y + static_cast<float>(i) + 0.5f;
-    float xs[3];
-    int n = 0;
-    float hit = 0.0f;
-    if (edge_x(x1, y1, x2, y2, y, hit)) { xs[n++] = hit; }
-    if (edge_x(x2, y2, x3, y3, y, hit)) { xs[n++] = hit; }
-    if (edge_x(x3, y3, x1, y1, y, hit)) { xs[n++] = hit; }
-    if (n < 2) {
-      continue;
-    }
-    const float left = *std::min_element(xs, xs + n);
-    const float right = *std::max_element(xs, xs + n);
-    spans[static_cast<std::size_t>(span_count++)] =
-        SDL_FRect{std::floor(left), min_y + static_cast<float>(i), std::max(1.0f, right - left),
-                  1.0f};
-  }
-  render::SetDrawColor(renderer, color);
-  SDL_RenderFillRects(renderer, spans.data(), span_count);
 }
 
 // Right-pointing filled triangle (Continue / play).
@@ -546,17 +506,19 @@ inline void DrawStepOverGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   if (renderer == nullptr) {
     return;
   }
-  // A 2px arc hopping left-to-right over a dot, with a solid arrowhead landing on
-  // the right. Previously ten hairline chords plus two stray lines for a head,
-  // which at button size read as a scribble rather than a step-over arrow.
+  // An arc hopping left-to-right over a dot, at the same 1px weight and with the
+  // same two-line head as Step Into/Out. The old version drew the arc as ten long
+  // chords, so it showed its facets and read as a scribble; the fix is sample
+  // density, not a heavier stroke.
   constexpr float kPi = 3.14159265f;
   const float cx = std::floor(rect.x + rect.w * 0.5f) + 0.5f;
   const float cy = std::floor(rect.y + rect.h * 0.52f) + 0.5f;
   const float r = std::max(3.0f, rect.w * 0.26f);
   DrawArcStroke(renderer, cx, cy, r, kPi, 2.0f * kPi, color);
-  const float tip_x = cx + r;
-  DrawFilledTriangle(renderer, tip_x, cy + 3.0f, tip_x - 3.0f, cy - 2.0f, tip_x + 3.0f, cy - 2.0f,
-                     color);
+  const float tip_x = std::floor(cx + r);
+  render::SetDrawColor(renderer, color);
+  SDL_RenderLine(renderer, tip_x - 3.0f, cy - 3.0f, tip_x, cy);
+  SDL_RenderLine(renderer, tip_x + 3.0f, cy - 3.0f, tip_x, cy);
   DrawGlyphDot(renderer, cx, cy + 4.0f, color);
 }
 
@@ -595,19 +557,20 @@ inline void DrawRestartGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   if (renderer == nullptr) {
     return;
   }
-  // A 2px ring with a gap at the top-right, closed by a solid arrowhead. The old
-  // version stepped a full turn in sixteen chords, so it drew a visibly lumpy
-  // polygon instead of a circle.
+  // A 1px ring with a gap at the top-right and a two-line head, matching the other
+  // toolbar glyphs. The old version stepped a full turn in sixteen chords, so it
+  // drew a visibly lumpy polygon instead of a circle.
   constexpr float kPi = 3.14159265f;
   const float cx = std::floor(rect.x + rect.w * 0.5f) + 0.5f;
   const float cy = std::floor(rect.y + rect.h * 0.5f) + 0.5f;
   const float r = std::max(3.0f, rect.h * 0.28f);
   constexpr float kStart = -0.30f * kPi;
   DrawArcStroke(renderer, cx, cy, r, kStart, kStart + 1.62f * kPi, color);
-  const float hx = cx + r * std::cos(kStart);
-  const float hy = cy + r * std::sin(kStart);
-  DrawFilledTriangle(renderer, hx + 3.5f, hy + 1.5f, hx - 2.5f, hy - 2.0f, hx - 0.5f, hy + 4.0f,
-                     color);
+  const float hx = std::floor(cx + r * std::cos(kStart));
+  const float hy = std::floor(cy + r * std::sin(kStart));
+  render::SetDrawColor(renderer, color);
+  SDL_RenderLine(renderer, hx, hy, hx - 4.0f, hy - 1.0f);
+  SDL_RenderLine(renderer, hx, hy, hx - 1.0f, hy + 4.0f);
 }
 
 // Left-pointing filled triangle (Reverse Continue) — the mirror of DrawPlayGlyph.
@@ -644,9 +607,10 @@ inline void DrawStepBackGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   const float cy = std::floor(rect.y + rect.h * 0.52f) + 0.5f;
   const float r = std::max(3.0f, rect.w * 0.26f);
   DrawArcStroke(renderer, cx, cy, r, kPi, 2.0f * kPi, color);
-  const float tip_x = cx - r;
-  DrawFilledTriangle(renderer, tip_x, cy + 3.0f, tip_x - 3.0f, cy - 2.0f, tip_x + 3.0f, cy - 2.0f,
-                     color);
+  const float tip_x = std::floor(cx - r);
+  render::SetDrawColor(renderer, color);
+  SDL_RenderLine(renderer, tip_x - 3.0f, cy - 3.0f, tip_x, cy);
+  SDL_RenderLine(renderer, tip_x + 3.0f, cy - 3.0f, tip_x, cy);
   DrawGlyphDot(renderer, cx, cy + 4.0f, color);
 }
 
@@ -655,9 +619,9 @@ inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
     return;
   }
 
-  // Two 2px strokes rather than two hairlines. A 1px unantialiased tick at
-  // checkbox size reads as broken and lopsided, which is what the boolean rows in
-  // Settings and every checkable menu row were showing.
+  // Proportional geometry at the shell's 1px line-art weight. The tick used to mix
+  // fractions with a fixed -3px inset, which made it lopsided and clipped at the
+  // bottom of the box; the weight was never the problem.
   render::SetDrawColor(renderer, color);
   const float left = std::floor(rect.x + rect.w * 0.22f);
   const float mid_x = std::floor(rect.x + rect.w * 0.43f);
@@ -665,10 +629,8 @@ inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   const float mid_y = std::floor(rect.y + rect.h * 0.50f);
   const float low_y = std::floor(rect.y + rect.h * 0.70f);
   const float top_y = std::floor(rect.y + rect.h * 0.30f);
-  for (float d = 0.0f; d < 2.0f; d += 1.0f) {
-    SDL_RenderLine(renderer, left, mid_y + d, mid_x, low_y + d);
-    SDL_RenderLine(renderer, mid_x, low_y + d, right, top_y + d);
-  }
+  SDL_RenderLine(renderer, left, mid_y, mid_x, low_y);
+  SDL_RenderLine(renderer, mid_x, low_y, right, top_y);
 }
 
 inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) {
