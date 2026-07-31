@@ -3,60 +3,134 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <string_view>
 #include <utility>
 #include <vector>
 
 namespace microide::util {
 
+// Free-running process-wide event counters. Cheap enough (one relaxed atomic
+// add) to leave armed in release builds, which is the point: they answer "how
+// many times did this actually run?" from a real session, where a sampling
+// profiler only says "this was hot".
+//
+// The id and its wire name are declared once, here. They used to live in two
+// parallel lists -- an enum here and a positionally-indexed name table in the
+// .cpp -- so inserting an id without inserting its name at the same position
+// still compiled and silently relabelled every counter after that point,
+// attributing one subsystem's numbers to another. A test existed only to catch
+// that; the X-macro removes the failure mode instead of guarding it.
+//
+// Naming: "<subsystem>.<event>". Counters ending in a plural noun count that
+// noun (lines, bytes, cells); everything else counts calls or events.
+#define MICROIDE_PERF_COUNTERS(X)                                                              \
+  X(FramePrepareCalls, "frame.prepare_calls")                                                  \
+  X(FrameRefreshEditorFoldingModelsCalls, "frame.refresh_editor_folding_models_calls")          \
+  X(FrameApplyEditorPreferencesAllTabsCalls, "frame.apply_editor_preferences_all_tabs_calls")   \
+  X(FrameRefreshStatusBarCalls, "frame.refresh_status_bar_calls")                               \
+  X(RenderBuildEditorViewModelCalls, "render.build_editor_view_model_calls")                    \
+  X(EditorRefreshEncodingCalls, "editor.refresh_encoding_calls")                                \
+  X(EditorInvalidateDerivedCachesCalls, "editor.invalidate_derived_caches_calls")               \
+  X(EditorInvalidateDerivedCachesLines, "editor.invalidate_derived_caches_lines")               \
+  X(EditorContentRevisionBumps, "editor.content_revision_bumps")                                \
+  X(EditorSyntaxRevisionBumps, "editor.syntax_revision_bumps")                                  \
+  X(EditorLayoutShapeRevisionBumps, "editor.layout_shape_revision_bumps")                       \
+  X(EditorPresentationRevisionBumps, "editor.presentation_revision_bumps")                      \
+  X(EditorEnsureWrappedRowLayoutsRebuilds, "editor.ensure_wrapped_row_layouts_rebuilds")        \
+  X(EditorEnsureWrappedRowLayoutsLineVisits, "editor.ensure_wrapped_row_layouts_line_visits")   \
+  X(TerminalSnapshotLineRangeIfChangedCalls, "terminal.snapshot_line_range_if_changed_calls")   \
+  X(TerminalSnapshotLineRangeIfChangedCopiedLines,                                              \
+    "terminal.snapshot_line_range_if_changed_copied_lines")                                     \
+  X(TerminalSnapshotLineRangeIfChangedCopiedCells,                                              \
+    "terminal.snapshot_line_range_if_changed_copied_cells")                                     \
+  X(TerminalTrimScrollbackCalls, "terminal.trim_scrollback_calls")                              \
+  X(TerminalTrimScrollbackLines, "terminal.trim_scrollback_lines")                              \
+  X(SearchProjectProgressPublishes, "search.project_progress_publishes")                        \
+  X(SearchProjectLowerLineCalls, "search.project_lower_line_calls")                             \
+  X(SearchProjectLowerLineBytes, "search.project_lower_line_bytes")                             \
+  X(SearchProjectCandidateFilesFromIndex, "search.project_candidate_files_from_index")          \
+  X(SearchProjectScopeFilteredFiles, "search.project_scope_filtered_files")                     \
+  X(FileFinderCacheBuildCalls, "search.file_finder_cache_build_calls")                          \
+  X(FileFinderCacheEntriesBuilt, "search.file_finder_cache_entries_built")                      \
+  X(ProjectFileScannerCollectProjectFilesCalls, "project.collect_project_files_calls")          \
+  X(RenderTextWidthCacheQueries, "render.text_width_cache_queries")                             \
+  X(RenderTextWidthCacheHits, "render.text_width_cache_hits")                                   \
+  X(RenderTextTextureCacheHits, "render.text_texture_cache_hits")                               \
+  X(RenderTextTextureCacheMisses, "render.text_texture_cache_misses")                           \
+  X(RenderTextTextureCacheEvictions, "render.text_texture_cache_evictions")                     \
+  X(RenderViewModelBuildFrameSurfaceCalls, "render.view_model_build_frame_surface_calls")       \
+  X(RenderViewModelBuildOverlaySurfaceCalls, "render.view_model_build_overlay_surface_calls")   \
+  X(EditorHighlightCacheForcedMisses, "editor.highlight_cache_forced_misses")                   \
+  X(EditorHighlightCacheEvictions, "editor.highlight_cache_evictions")                          \
+  X(RenderClipInvocations, "render.clip_invocations")                                           \
+  X(WorkspaceScheduledWakes, "workspace.scheduled_wakes")                                       \
+  X(WorkspaceWakeReasonPluginReload, "workspace.wake_reason_plugin_reload")                     \
+  X(WorkspaceWakeReasonCaretBlink, "workspace.wake_reason_caret_blink")                         \
+  X(WorkspaceWakeReasonNone, "workspace.wake_reason_none")                                      \
+  X(TerminalScrollbackLinesAllocated, "terminal.scrollback_lines_allocated")                    \
+  X(TerminalEscapeSequencesAborted, "terminal.escape_sequences_aborted")                        \
+  X(RenderGlyphAtlasRuns, "render.glyph_atlas_runs")                                            \
+  X(RenderGlyphAtlasGlyphs, "render.glyph_atlas_glyphs")                                        \
+  X(RenderGlyphAtlasFallbacks, "render.glyph_atlas_fallbacks")                                  \
+  /* --- subprocess / external tools ------------------------------------- */                  \
+  X(SubprocessSpawns, "subprocess.spawns")                                                      \
+  X(SubprocessWaitMs, "subprocess.wait_ms")                                                     \
+  X(SubprocessOutputBytes, "subprocess.output_bytes")                                           \
+  X(SubprocessTimeouts, "subprocess.timeouts")                                                  \
+  /* --- git ------------------------------------------------------------- */                  \
+  X(GitStatusRefreshCalls, "git.status_refresh_calls")                                          \
+  X(GitStatusEntriesParsed, "git.status_entries_parsed")                                        \
+  X(GitBlameQueries, "git.blame_queries")                                                       \
+  X(GitBlameCacheHits, "git.blame_cache_hits")                                                  \
+  X(GitDiffLoads, "git.diff_loads")                                                             \
+  X(GitDiffBytesRead, "git.diff_bytes_read")                                                    \
+  /* --- compare / merge diff pipeline ------------------------------------ */                 \
+  X(CompareModelBuilds, "compare.model_builds")                                                 \
+  X(CompareModelInputLines, "compare.model_input_lines")                                        \
+  X(CompareModelRowsProduced, "compare.model_rows_produced")                                    \
+  X(CompareIntralineDiffLines, "compare.intraline_diff_lines")                                  \
+  X(MergeModelBuilds, "merge.model_builds")                                                     \
+  X(MergeModelConflictsFound, "merge.model_conflicts_found")                                    \
+  /* --- persisted state -------------------------------------------------- */                 \
+  X(PersistenceRecordWrites, "persistence.record_writes")                                       \
+  X(PersistenceRecordBytesWritten, "persistence.record_bytes_written")                          \
+  X(PersistenceRecordReads, "persistence.record_reads")                                         \
+  X(PersistenceRecordBytesRead, "persistence.record_bytes_read")                                \
+  /* --- plugin runtime --------------------------------------------------- */                 \
+  X(PluginLuaCallbackDispatches, "plugin.lua_callback_dispatches")                              \
+  X(PluginLuaCallbackErrors, "plugin.lua_callback_errors")                                      \
+  X(PluginHostApiCalls, "plugin.host_api_calls")                                                \
+  X(PluginSnapshotRebuilds, "plugin.snapshot_rebuilds")                                         \
+  /* --- language server / debug adapter ---------------------------------- */                 \
+  X(LspRequestsSent, "lsp.requests_sent")                                                       \
+  X(LspNotificationsSent, "lsp.notifications_sent")                                             \
+  X(LspMessagesReceived, "lsp.messages_received")                                               \
+  X(LspBytesReceived, "lsp.bytes_received")                                                     \
+  X(LspJsonParseCalls, "lsp.json_parse_calls")                                                  \
+  X(DapMessagesSent, "dap.messages_sent")                                                       \
+  X(DapMessagesReceived, "dap.messages_received")                                               \
+  /* --- filesystem watch / index ----------------------------------------- */                 \
+  X(FileWatcherWakes, "watch.wakes")                                                            \
+  X(FileWatcherEventsCoalesced, "watch.events_coalesced")                                       \
+  X(FileIndexApplyBatchCalls, "watch.file_index_apply_batch_calls")                             \
+  X(FileIndexRebuilds, "watch.file_index_rebuilds")                                             \
+  /* --- background work -------------------------------------------------- */                 \
+  X(TaskExecutorTasksEnqueued, "task.enqueued")                                                 \
+  X(TaskExecutorTasksRun, "task.run")                                                           \
+  X(MainThreadMailboxPosts, "task.main_thread_mailbox_posts")                                   \
+  X(MainThreadMailboxDrains, "task.main_thread_mailbox_drains")                                 \
+  /* --- text document model ---------------------------------------------- */                 \
+  X(DocumentLineQueries, "document.line_queries")                                               \
+  X(DocumentEdits, "document.edits")                                                            \
+  X(DocumentFullTextMaterializations, "document.full_text_materializations")                    \
+  X(DocumentFullTextBytes, "document.full_text_bytes")
+
 enum class PerfCounterId : std::size_t {
-  FramePrepareCalls = 0,
-  FrameRefreshEditorFoldingModelsCalls,
-  FrameApplyEditorPreferencesAllTabsCalls,
-  FrameRefreshStatusBarCalls,
-  RenderBuildEditorViewModelCalls,
-  EditorRefreshEncodingCalls,
-  EditorInvalidateDerivedCachesCalls,
-  EditorInvalidateDerivedCachesLines,
-  EditorContentRevisionBumps,
-  EditorSyntaxRevisionBumps,
-  EditorLayoutShapeRevisionBumps,
-  EditorPresentationRevisionBumps,
-  EditorEnsureWrappedRowLayoutsRebuilds,
-  EditorEnsureWrappedRowLayoutsLineVisits,
-  TerminalSnapshotLineRangeIfChangedCalls,
-  TerminalSnapshotLineRangeIfChangedCopiedLines,
-  TerminalSnapshotLineRangeIfChangedCopiedCells,
-  TerminalTrimScrollbackCalls,
-  TerminalTrimScrollbackLines,
-  SearchProjectProgressPublishes,
-  SearchProjectLowerLineCalls,
-  SearchProjectLowerLineBytes,
-  SearchProjectCandidateFilesFromIndex,
-  SearchProjectScopeFilteredFiles,
-  FileFinderCacheBuildCalls,
-  FileFinderCacheEntriesBuilt,
-  ProjectFileScannerCollectProjectFilesCalls,
-  RenderTextWidthCacheQueries,
-  RenderTextWidthCacheHits,
-  RenderTextTextureCacheHits,
-  RenderTextTextureCacheMisses,
-  RenderTextTextureCacheEvictions,
-  RenderViewModelBuildFrameSurfaceCalls,
-  RenderViewModelBuildOverlaySurfaceCalls,
-  EditorHighlightCacheForcedMisses,
-  EditorHighlightCacheEvictions,
-  RenderClipInvocations,
-  WorkspaceScheduledWakes,
-  WorkspaceWakeReasonPluginReload,
-  WorkspaceWakeReasonCaretBlink,
-  WorkspaceWakeReasonNone,
-  TerminalScrollbackLinesAllocated,
-  TerminalEscapeSequencesAborted,
-  RenderGlyphAtlasRuns,
-  RenderGlyphAtlasGlyphs,
-  RenderGlyphAtlasFallbacks,
-  Count,
+#define MICROIDE_PERF_COUNTER_ENUM(id, name) id,
+  MICROIDE_PERF_COUNTERS(MICROIDE_PERF_COUNTER_ENUM)
+#undef MICROIDE_PERF_COUNTER_ENUM
+      Count,
 };
 
 constexpr std::size_t kPerfCounterCount = static_cast<std::size_t>(PerfCounterId::Count);
@@ -71,5 +145,16 @@ std::vector<std::pair<std::string_view, std::uint64_t>> NonZeroCounterDelta(
     const PerfCounterSnapshot& before,
     const PerfCounterSnapshot& after);
 std::string_view PerformanceCounterName(PerfCounterId id);
+
+// Write every non-zero counter to `out`, sorted by name. This is the live-app
+// readout: before it existed the counters could only be observed from the perf
+// harness, so a real session's numbers were unreachable.
+void WritePerformanceCounters(std::FILE* out);
+
+// True when MICROIDE_PERF_COUNTERS is set. Callers use it to arm a shutdown dump.
+bool PerformanceCounterDumpRequested();
+
+// Idempotent shutdown dump, gated on PerformanceCounterDumpRequested().
+void DumpPerformanceCountersOnce();
 
 }  // namespace microide::util

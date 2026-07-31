@@ -47,7 +47,76 @@ The diff benchmark now measures the rewritten pipeline directly. It reports:
 
 Use it when you want a stable before/after number for compare-heavy changes.
 
-## 2. Live Redraw And Resize Trace
+## 2. Ranked Scope Summary (Start Here)
+
+`MICROIDE_PERF_TRACE` streams one line per scope. That is the right tool once you know *which*
+scope you care about, and the wrong one for finding it: the line is written and flushed inside the
+parent scope, so the firehose perturbs the numbers it is printing, and a hot inner scope buries the
+signal under thousands of lines.
+
+For "where does the time actually go?", use the aggregating mode instead. It records nothing to
+stderr during the run and prints one table at shutdown, ranked by **self** time — total wall time
+inside a scope minus the time charged to scopes nested directly under it — so a cheap outer scope
+cannot outrank the expensive one it merely contains:
+
+```bash
+env SDL_VIDEODRIVER=dummy MICROIDE_PERF_SUMMARY=1 ./build/microide/microide
+env MICROIDE_STARTUP_SUMMARY=1 ./build/microide/microide
+```
+
+```
+[perf] summary: 114 labels, 6275 calls, 355.82 ms self total (ranked by self ms)
+[perf]      self ms     total ms       max ms       avg ms      calls  label
+[perf]      161.063      161.063      161.063     161.0632          1  WorkspaceProjectFileMonitor::ArmPendingWatch
+[perf]       85.153       85.153       15.294       3.4061         25  Application::PresentRetainedScene
+[perf]       32.611       97.501       16.529       4.6429         21  Application::Render(partial)
+[perf]       10.060       11.891        2.341       0.0148        802  TextViewport::HighlightedLineTokens
+```
+
+Read the columns together, not just the first one:
+
+- **self vs total** — a large gap means the cost is in a nested scope; follow the total down.
+- **max vs avg** — a `max` far above `avg` is a stall (one bad call), not a throughput problem. A
+  `max` close to `avg` on a high call count is throughput, and the fix is usually to call it less.
+- **calls** — the cheapest wins are here. A scope averaging 0.01 ms called 800 times per session is
+  a call-count bug, not a slow function.
+
+Both summary flags compose with the streaming flags. Turning on `MICROIDE_PERF_SUMMARY` and
+`MICROIDE_PERF_TRACE` together gives the ranking plus the raw timeline, at the cost of the streaming
+distortion.
+
+Labels are capped at 4096 distinct strings per channel; anything past that folds into an
+`<aggregate-overflow>` row. Labels embed paths (`TextViewport::OpenFile(path=...)`), so without the
+cap a long session would grow the table without bound.
+
+The summaries are printed from `Application::Shutdown`, not from an exit hook — the shutdown path
+ends in `std::quick_exit`, which runs neither `atexit` handlers nor static destructors. A run killed
+with `SIGKILL` prints nothing.
+
+## 3. Event Counters
+
+The `PerfCounterId` counters (`util/PerformanceCounters.h`) answer the question a sampling profiler
+cannot: *how many times did this actually run?* They are one relaxed atomic add each and stay armed
+in release builds.
+
+```bash
+env MICROIDE_PERF_COUNTERS=1 ./build/microide/microide
+```
+
+```
+[counters] 27 of 89 counters non-zero
+[counters]               2489  render.text_texture_cache_hits
+[counters]                146  render.text_texture_cache_misses
+[counters]                963  render.text_width_cache_queries
+```
+
+The perf harness prints per-scenario counter *deltas* for the same counters, so a scenario
+regression and a live session can be compared against each other directly.
+
+Counters are declared once in the `MICROIDE_PERF_COUNTERS` X-macro list — id and wire name in the
+same row. Add new ones there; do not add a parallel name table.
+
+## 4. Live Redraw And Resize Trace
 
 Enable the runtime profiler with:
 

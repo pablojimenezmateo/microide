@@ -5,11 +5,15 @@
 #include "util/PerformanceCounters.h"
 #include "util/SaturatingMath.h"
 #include "util/StringUtil.h"
+#include "util/TraceChannel.h"
 
 #include <algorithm>
 #include <cstdint>
+#include <cstdlib>
+#include <string>
 #include <string_view>
 #include <limits>
+#include <thread>
 
 #include <utility>
 #include <vector>
@@ -548,45 +552,142 @@ void TestStringUtilContainsCaseInsensitiveAscii() {
   Expect(!ContainsCaseInsensitiveAscii("aaaa", "aab "), "a near-miss tail still rejects");
 }
 
-// kCounterNames is indexed POSITIONALLY by PerfCounterId in NonZeroCounterDelta,
-// and only its *size* is compiler-checked (both are sized by kPerfCounterCount).
-// So removing or inserting an id without making the matching edit at the matching
-// position in the name table still compiles, and silently relabels every counter
-// after that point — perf output would attribute one subsystem's numbers to
-// another. Two dead counters were removed from both lists in 2026-07-26; these
-// anchors are what makes the next such edit fail loudly instead.
+// Ids and names are now expanded from one MICROIDE_PERF_COUNTERS list, so the
+// old failure mode — inserting an id without inserting its name at the matching
+// position, silently relabelling every counter after that point — is gone by
+// construction and the positional anchors this test used to pin are no longer
+// meaningful. What the macro cannot check is that two entries did not get the
+// same *name*: a copy-pasted row compiles, and then two subsystems' numbers land
+// under one label in every readout. That, and the naming convention, is what is
+// left to test.
 void TestPerformanceCounterNamesStayAlignedWithIds() {
   using microide::util::PerfCounterId;
   using microide::util::PerformanceCounterName;
 
-  const auto pinned = {
-      std::pair{PerfCounterId::FramePrepareCalls, std::string_view("frame.prepare_calls")},
-      std::pair{PerfCounterId::SearchProjectProgressPublishes,
-                std::string_view("search.project_progress_publishes")},
-      // The id immediately after the pair removed in 2026-07-26: if a future edit
-      // drops an id without dropping its name (or vice versa), this is the first
-      // anchor to shift.
-      std::pair{PerfCounterId::SearchProjectLowerLineCalls,
-                std::string_view("search.project_lower_line_calls")},
-      std::pair{PerfCounterId::FileFinderCacheBuildCalls,
-                std::string_view("search.file_finder_cache_build_calls")},
-  };
-  for (const auto& [id, expected] : pinned) {
-    Expect(PerformanceCounterName(id) == expected,
-           "perf counter name table must stay positionally aligned with PerfCounterId");
-  }
-
-  // Every name must be present and distinct: a duplicate is the other symptom of
-  // a botched insert, and an empty slot means the table is short.
   std::vector<std::string_view> all;
   for (std::size_t i = 0; i < microide::util::kPerfCounterCount; ++i) {
     const std::string_view name = PerformanceCounterName(static_cast<PerfCounterId>(i));
     Expect(!name.empty(), "every perf counter id must have a name");
+    // "<subsystem>.<event>": the dump groups by this prefix, and a name with no
+    // dot sorts into nobody's group.
+    const std::size_t dot = name.find('.');
+    Expect(dot != std::string_view::npos && dot > 0 && dot + 1 < name.size(),
+           "perf counter names must be <subsystem>.<event>");
     all.push_back(name);
   }
   std::sort(all.begin(), all.end());
   Expect(std::adjacent_find(all.begin(), all.end()) == all.end(),
          "perf counter names must be unique");
+}
+
+// The aggregating mode is the one that has to be right: a self-time column that
+// double-counts nested scopes would rank every outer scope above the inner one
+// actually burning the time, which is the exact mistake the summary exists to
+// avoid.
+void TestTraceChannelAggregatesSelfTimeBelowChildren() {
+  using microide::util::TraceChannel;
+  using microide::util::TraceScope;
+
+  ::setenv("MICROIDE_TEST_TRACE_AGGREGATE", "1", 1);
+  TraceChannel channel("test", /*stream_env=*/nullptr, "MICROIDE_TEST_TRACE_AGGREGATE",
+                       /*min_duration_env=*/nullptr);
+  Expect(channel.AggregateEnabled(), "aggregate mode follows its env flag");
+  Expect(!channel.StreamEnabled(), "a null stream env leaves streaming off");
+
+  {
+    TraceScope outer(channel, "outer");
+    for (int i = 0; i < 3; ++i) {
+      TraceScope inner(channel, "inner");
+      // Busy-wait rather than sleep: sleeping is not guaranteed to advance the
+      // steady clock by the requested amount on a loaded machine, and the
+      // assertions below only need inner to dominate outer.
+      const auto start = std::chrono::steady_clock::now();
+      while (std::chrono::steady_clock::now() - start < std::chrono::milliseconds(2)) {
+      }
+    }
+  }
+
+  const std::vector<TraceChannel::AggregateEntry> entries = channel.AggregateSnapshot();
+  Expect(entries.size() == 2, "one entry per distinct label");
+  // Ranked by self time, so the child that burned the time must come first even
+  // though the parent's total wall time is larger.
+  Expect(entries.front().label == "inner", "the summary ranks by self time, not total");
+  Expect(entries.front().count == 3, "repeat scopes accumulate into one row");
+
+  const TraceChannel::AggregateEntry& inner = entries[0];
+  const TraceChannel::AggregateEntry& outer = entries[1];
+  Expect(outer.label == "outer", "the containing scope is the second row");
+  Expect(outer.total_ms >= inner.total_ms, "the parent's total includes its children");
+  Expect(outer.self_ms < inner.self_ms, "child time is subtracted from parent self time");
+  Expect(inner.max_ms <= inner.total_ms, "max is one call, total is all of them");
+  Expect(inner.count == 3 && inner.total_ms >= inner.max_ms, "total covers every call");
+
+  channel.ResetAggregate();
+  Expect(channel.AggregateSnapshot().empty(), "ResetAggregate drops accumulated labels");
+  ::unsetenv("MICROIDE_TEST_TRACE_AGGREGATE");
+}
+
+// Labels embed paths and counts, so a long session can mint unbounded distinct
+// labels. The cap must fold the excess into one bucket rather than growing the
+// map forever — an instrumentation leak is worse than the pitfall it hunts.
+void TestTraceChannelCapsDistinctLabels() {
+  using microide::util::TraceChannel;
+  using microide::util::TraceScope;
+
+  ::setenv("MICROIDE_TEST_TRACE_CAP", "1", 1);
+  TraceChannel channel("test", /*stream_env=*/nullptr, "MICROIDE_TEST_TRACE_CAP",
+                       /*min_duration_env=*/nullptr);
+
+  const std::size_t over = TraceChannel::kMaxAggregateLabels + 64;
+  for (std::size_t i = 0; i < over; ++i) {
+    TraceScope scope(channel, "label-" + std::to_string(i));
+  }
+
+  const std::vector<TraceChannel::AggregateEntry> entries = channel.AggregateSnapshot();
+  Expect(entries.size() <= TraceChannel::kMaxAggregateLabels + 1,
+         "distinct labels stay bounded by the cap plus the overflow bucket");
+  const auto overflow = std::find_if(entries.begin(), entries.end(),
+                                     [](const TraceChannel::AggregateEntry& entry) {
+                                       return entry.label == "<aggregate-overflow>";
+                                     });
+  Expect(overflow != entries.end(), "labels past the cap fold into the overflow bucket");
+  Expect(overflow->count == over - TraceChannel::kMaxAggregateLabels,
+         "the overflow bucket keeps a truthful call count");
+  ::unsetenv("MICROIDE_TEST_TRACE_CAP");
+}
+
+// Nesting depth used to live in one shared, mutex-guarded int, so a scope on a
+// background thread shifted the indentation of a concurrent main-thread scope
+// and both threads' self-time attribution. Depth is per-thread now.
+void TestTraceChannelKeepsNestingPerThread() {
+  using microide::util::TraceChannel;
+  using microide::util::TraceScope;
+
+  ::setenv("MICROIDE_TEST_TRACE_THREADS", "1", 1);
+  TraceChannel channel("test", /*stream_env=*/nullptr, "MICROIDE_TEST_TRACE_THREADS",
+                       /*min_duration_env=*/nullptr);
+
+  {
+    TraceScope held(channel, "main-outer");
+    std::thread worker([&channel] {
+      for (int i = 0; i < 32; ++i) {
+        TraceScope scope(channel, "worker");
+      }
+    });
+    worker.join();
+  }
+
+  const std::vector<TraceChannel::AggregateEntry> entries = channel.AggregateSnapshot();
+  const auto outer = std::find_if(entries.begin(), entries.end(),
+                                  [](const TraceChannel::AggregateEntry& entry) {
+                                    return entry.label == "main-outer";
+                                  });
+  Expect(outer != entries.end(), "the main-thread scope is recorded");
+  // The worker's scopes are not nested inside `main-outer` — they ran on another
+  // thread — so none of their time may be subtracted from its self time.
+  Expect(outer->self_ms == outer->total_ms,
+         "another thread's scopes are not charged as this scope's children");
+  ::unsetenv("MICROIDE_TEST_TRACE_THREADS");
 }
 
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
@@ -598,6 +699,11 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StringUtil/AppendUtf8EncodesAllSequenceLengths",
           TestStringUtilAppendUtf8EncodesAllSequenceLengths);
   AddTest(tests, "Util/SaturatingMath", TestSaturatingMath);
+  AddTest(tests, "Util/TraceChannelAggregatesSelfTimeBelowChildren",
+          TestTraceChannelAggregatesSelfTimeBelowChildren);
+  AddTest(tests, "Util/TraceChannelCapsDistinctLabels", TestTraceChannelCapsDistinctLabels);
+  AddTest(tests, "Util/TraceChannelKeepsNestingPerThread",
+          TestTraceChannelKeepsNestingPerThread);
   AddTest(tests, "StringUtil/IsAllAsciiDigits", TestStringUtilIsAllAsciiDigits);
   AddTest(tests, "StringUtil/SplitAsciiWhitespace", TestStringUtilSplitAsciiWhitespace);
   AddTest(tests, "StringUtil/BoundedSplitStopsAtCap", TestStringUtilBoundedSplitStopsAtCap);

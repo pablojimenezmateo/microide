@@ -29,6 +29,7 @@
 #include "render/RendererInfo.h"
 #include "workspace/ControlSpec.h"
 #include "util/StartupTrace.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/WindowPresentation.h"
 
@@ -539,6 +540,13 @@ void Application::Shutdown() {
   DestroySdlResources();
 
   workspace_shell_.Shutdown();
+
+  // Emit the opt-in perf readouts here rather than from an exit hook: the
+  // shutdown path below ends in std::quick_exit, which runs neither atexit
+  // handlers nor static destructors.
+  util::PerformanceTrace::DumpSummaryOnce();
+  util::StartupTrace::DumpSummaryOnce();
+  util::DumpPerformanceCountersOnce();
 
   // Reset lifecycle state so the destructor and any second Shutdown() are clean
   // no-ops, and so an in-process Initialize()/Shutdown() cycle (headless tests)

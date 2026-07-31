@@ -357,6 +357,7 @@ set(MICROIDE_CORE_SOURCES
   src/util/SerialWorkQueue.cpp
   src/util/Parse.cpp
   src/util/PerformanceCounters.cpp
+  src/util/TraceChannel.cpp
   src/util/PerformanceTrace.cpp
   src/util/Sha256.cpp
   src/util/StartupTrace.cpp
@@ -1134,6 +1135,7 @@ if(MICROIDE_FUZZ)
     src/util/Parse.cpp
     src/util/StringUtil.cpp
     src/util/PerformanceCounters.cpp
+    src/util/TraceChannel.cpp
     src/util/PerformanceTrace.cpp
     tests/fuzz/TerminalSessionOutputFuzz.cpp
   )
@@ -1285,6 +1287,7 @@ add_executable(microide_diff_bench
   src/render/ThemeFile.cpp
   src/util/GitConflictMarkers.cpp
   src/util/PerformanceCounters.cpp
+  src/util/TraceChannel.cpp
   src/util/PerformanceTrace.cpp
   src/util/Parse.cpp
   src/util/StartupTrace.cpp
