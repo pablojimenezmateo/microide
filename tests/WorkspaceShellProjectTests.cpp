@@ -2921,6 +2921,40 @@ void TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange() {
          "copy with context should prepend the enclosing opener, relative path and line range");
 }
 
+// The path label falls back to the absolute path for a buffer outside the project
+// root. Worth pinning on its own: the label came from a file-local RelativePathLabel
+// that shadowed the shared one in WorkspacePathUtils with the SAME name, the
+// REVERSED argument order, and a different out-of-root result (empty vs the absolute
+// path). Both parameters are std::filesystem::path, so mixing the two up compiles
+// silently — this asserts the surviving behaviour rather than trusting the swap.
+void TestWorkspaceShellCopySelectionWithContextOutsideProjectRootUsesAbsolutePath() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path outside = temp_dir.path() / "elsewhere" / "stray.cpp";
+  std::filesystem::create_directories(root);
+  std::filesystem::create_directories(outside.parent_path());
+  WriteFile(outside, "int main() {\n  int value = 1;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, outside);
+
+  std::string clipboard_text;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [&](std::string_view text) {
+    clipboard_text = std::string(text);
+    return true;
+  });
+
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 5);
+  Expect(WorkspaceShellTestAccess::ExecuteCopySelectionWithContext(shell),
+         "copy with context should execute for a buffer outside the project root");
+  Expect(clipboard_text.find(outside.generic_string()) != std::string::npos,
+         "an out-of-root buffer should be labelled with its absolute path, not a "
+         "'..'-relative one and not an empty label");
+  Expect(clipboard_text.find("..") == std::string::npos,
+         "the label must not escape the root with a relative path");
+}
+
 void TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5006,6 +5040,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellHiddenIgnoredDirectoryUsesSameLazyExpansionRules);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextUsesRelativePathAndLineRange",
           TestWorkspaceShellCopySelectionWithContextUsesRelativePathAndLineRange);
+  AddTest(tests, "WorkspaceShell/CopySelectionWithContextOutsideProjectRootUsesAbsolutePath",
+          TestWorkspaceShellCopySelectionWithContextOutsideProjectRootUsesAbsolutePath);
   AddTest(tests, "WorkspaceShell/CopySelectionWithContextWithoutSelectionCopiesCurrentLine",
           TestWorkspaceShellCopySelectionWithContextWithoutSelectionCopiesCurrentLine);
   AddTest(tests,

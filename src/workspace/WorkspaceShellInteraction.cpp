@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceShell.h"
 
+#include "workspace/WorkspacePathUtils.h"
+
 #include <cctype>
 #include <filesystem>
 #include <optional>
@@ -38,22 +40,6 @@ std::string JoinLineRange(editor::LineSpan lines,
     joined += lines[line];
   }
   return joined;
-}
-
-// Renders the project-relative label for a buffer path, or an empty string
-// when the path falls outside the project root (or there is no root).
-std::string RelativePathLabel(const std::filesystem::path& path,
-                              const std::filesystem::path& project_root) {
-  if (project_root.empty() || path.empty()) {
-    return {};
-  }
-  const std::filesystem::path relative = path.lexically_relative(project_root);
-  const bool starts_with_parent =
-      relative.begin() != relative.end() && *relative.begin() == std::filesystem::path("..");
-  if (relative.empty() || starts_with_parent) {
-    return {};
-  }
-  return relative.generic_string();
 }
 
 }  // namespace
@@ -316,7 +302,8 @@ std::optional<std::string> WorkspaceShell::SelectionTextWithContext() {
   }
 
   const std::filesystem::path path = viewport->path().lexically_normal();
-  std::string path_label = RelativePathLabel(path, context_.current_project_state.root);
+  // Shared helper: relative label inside the root, absolute path outside it.
+  std::string path_label = RelativePathLabel(context_.current_project_state.root, path);
   if (path_label.empty()) {
     path_label = path.empty() ? "untitled" : path.string();
   }
