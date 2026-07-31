@@ -115,6 +115,7 @@ namespace microide::util {
   X(DapBytesReceived, "dap.bytes_received")                                                     \
   /* --- filesystem watch / index ----------------------------------------- */                 \
   X(FileWatcherWakes, "watch.wakes")                                                            \
+  X(FileWatcherPollScans, "watch.poll_scans")                                                    \
   X(FileWatcherEventsCoalesced, "watch.events_coalesced")                                       \
   X(FileIndexApplyBatchCalls, "watch.file_index_apply_batch_calls")                             \
   X(FileIndexRebuilds, "watch.file_index_rebuilds")                                             \

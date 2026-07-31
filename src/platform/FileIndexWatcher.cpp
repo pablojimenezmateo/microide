@@ -2,6 +2,8 @@
 
 #include "platform/HostPlatform.h"
 #include "project/ProjectTraversalFilter.h"
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
 #include <SDL3/SDL.h>
@@ -218,6 +220,9 @@ IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
                                    project::ProjectTraversalFilter* filter,
                                    std::size_t max_entries,
                                    const std::atomic<bool>* stop_requested = nullptr) {
+  // Full recursive walk of the project tree. Runs once per watch on a background
+  // thread, and it is the dominant single cost of opening a project.
+  util::PerformanceTrace::Scope perf_scope("watch::BuildInitialBatch");
   IndexUpdateBatch batch;
   batch.is_initial = true;
   batch.truncated =
@@ -266,6 +271,12 @@ class PollStopSignal {
 // batch and a snapshot taken here describe the same file set.
 detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
                                             const std::vector<std::string>& exclude_globs) {
+  // The poll fallback re-walks the whole tree every interval, forever, on any
+  // host without native watch events. That is a standing CPU cost with no user
+  // action behind it, so it needs to be visible in an idle-soak summary -- the
+  // call count alone tells you whether the native backend is actually in use.
+  util::PerformanceTrace::Scope perf_scope("watch::BuildPollSnapshot");
+  util::AddPerformanceCounter(util::PerfCounterId::FileWatcherPollScans);
   detail::FileIndexSnapshot result;
   project::ProjectTraversalFilter filter(root, exclude_globs);
   std::error_code error;
