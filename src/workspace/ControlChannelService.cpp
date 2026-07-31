@@ -81,6 +81,16 @@ bool CommandTouchesDebugger(const std::string& command) {
     return false;
   }
   const std::string_view verb(command.data() + start, command.size() - start);
+  // ...except the master switch itself. `debug-toggle-enabled` exists to flip
+  // `debug.enabled`, so auto-enabling first made it impossible to turn the
+  // debugger OFF over the channel: the toggle read "enabled" every single time,
+  // wrote "false", reported "Debugger disabled" — and the next debug- command
+  // turned it straight back on. Three toggles in a row logged
+  // raw=true/wrote=1/after=false three times, i.e. a no-op that always claims to
+  // have disabled. Everything else in the surface still auto-enables.
+  if (verb.starts_with("debug-toggle-enabled")) {
+    return false;
+  }
   return verb.starts_with("breakpoint-") || verb.starts_with("debug-");
 }
 

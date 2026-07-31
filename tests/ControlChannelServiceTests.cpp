@@ -626,6 +626,20 @@ void TestDebugCommandAutoEnablesDebugger() {
   ExchangeLine(service, fd, R"({"id":3,"command":"open /tmp/proj/a.cpp"})");
   Expect(ensure_calls == 2, "a non-debug command should not auto-enable the debugger");
 
+  // ...but not the master switch. Auto-enabling before `debug-toggle-enabled`
+  // made it impossible to turn the debugger OFF over the channel: the toggle read
+  // "enabled" every time, wrote "false", reported "Debugger disabled", and the
+  // next debug- command turned it straight back on. Verified against a live
+  // headless instance — three toggles in a row logged the same
+  // raw=true / wrote=1 / after=false, i.e. a no-op that always claimed to disable.
+  ExchangeLine(service, fd, R"({"id":4,"command":"debug-toggle-enabled"})");
+  Expect(ensure_calls == 2,
+         "the debug.enabled master toggle must not be auto-enabled before it runs");
+
+  // The prefix rule still holds for everything else that merely starts similarly.
+  ExchangeLine(service, fd, R"({"id":5,"command":"debug-toggle-something-else"})");
+  Expect(ensure_calls == 3, "other debug- commands should still auto-enable");
+
   ::close(fd);
   service.Stop();
   std::filesystem::remove_all(runtime, ec);
