@@ -41,7 +41,7 @@ cm_die() { printf 'capture-media: %s\n' "$*" >&2; exit 1; }
 cm_init() {
   [[ -x "$CM_BIN" ]] || cm_die "microide binary not found at $CM_BIN (build it, or set MICROIDE_BIN)"
   command -v Xvfb   >/dev/null || cm_die "Xvfb not installed (apt install xvfb)"
-  command -v import >/dev/null || cm_die "ImageMagick 'import' not installed (apt install imagemagick)"
+  cm_check_grabber
 
   # A fixed, neutral work root keeps the embedded terminal prompt and the control
   # channel's JSON (which echoes absolute paths) free of random scratch suffixes.
@@ -180,7 +180,47 @@ cm_park_mouse() { timeout 3 xdotool mousemove 8 8 2>/dev/null || true; }
 # status bar + command target follow the file we actually open.
 cm_close_welcome() { cm_key ctrl+w; cm_settle 0.4; }
 
-# cm_capture <outfile.png> [--crop] — grab the current frame.
+# --- frame grabbing --------------------------------------------------------
+# ImageMagick's `import` is preferred when present; otherwise fall back to
+# `xwd` (x11-apps, tiny, always available next to Xvfb) piped through
+# xwd2png.py. Both write a PNG and honour the HiDPI 2x downsample, so nothing
+# downstream needs to know which one ran.
+
+# cm_check_grabber — verify some usable screen grabber exists (called by cm_init).
+cm_check_grabber() {
+  command -v import >/dev/null && return 0
+  command -v xwd >/dev/null \
+    && python3 -c 'import PIL' 2>/dev/null \
+    && return 0
+  cm_die "no screen grabber: install ImageMagick ('import') or x11-apps ('xwd') plus python3-pil"
+}
+
+# cm_grab <outfile.png> — one raw frame of the whole virtual screen.
+cm_grab() {
+  local out="$1"
+  mkdir -p "$(dirname "$out")"
+  if command -v import >/dev/null; then
+    import -display "$CM_DISPLAY_NUM" -window root "$out"
+    if [[ "$CM_HIDPI" == "1" ]] && command -v convert >/dev/null; then
+      convert "$out" -resize 50% "$out"   # downsample 2x -> crisp 1x deliverable
+    fi
+  else
+    local half=(); [[ "$CM_HIDPI" == "1" ]] && half=(--half)
+    xwd -display "$CM_DISPLAY_NUM" -root -silent \
+      | python3 "$CM_REPO_ROOT/tools/capture-media/xwd2png.py" "$out" "${half[@]}" >/dev/null
+  fi
+}
+
+# cm_dimensions <file.png> — "WxH", for logging.
+cm_dimensions() {
+  if command -v identify >/dev/null; then
+    identify -format '%wx%h' "$1" 2>/dev/null
+  else
+    python3 -c 'import sys;from PIL import Image;i=Image.open(sys.argv[1]);print(f"{i.width}x{i.height}")' "$1" 2>/dev/null
+  fi
+}
+
+# cm_capture <outfile.png> [--no-toast] — grab the current frame.
 # Default grabs the whole virtual screen (window fills it). --no-toast waits for
 # transient toasts to fade first.
 cm_capture() {
@@ -189,13 +229,8 @@ cm_capture() {
   while [[ $# -gt 0 ]]; do case "$1" in --no-toast) fade=1;; esac; shift; done
   cm_park_mouse
   [[ "$fade" == "1" ]] && sleep 2.8
-  mkdir -p "$(dirname "$out")"
-  import -display "$CM_DISPLAY_NUM" -window root "$out"
-  if [[ "$CM_HIDPI" == "1" ]]; then
-    # downsample 2x -> crisp 1x deliverable
-    convert "$out" -resize 50% "$out"
-  fi
-  cm_log "wrote $out ($(identify -format '%wx%h' "$out" 2>/dev/null))"
+  cm_grab "$out"
+  cm_log "wrote $out ($(cm_dimensions "$out"))"
 }
 
 cm_cleanup() {

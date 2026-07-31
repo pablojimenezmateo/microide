@@ -43,7 +43,7 @@ cm_query tabs > "$OUT/tabs-before.json" 2>&1 || true
 cm_send ${REPRO_CMD:-compare src/scheduler.cpp}
 for i in 1 2 3 4 5 6; do
   sleep 0.35
-  import -display "$CM_DISPLAY_NUM" -window root "$OUT/c$i.png"
+  cm_grab "$OUT/c$i.png"
 done
 cm_capture "$OUT/c-compare-picker.png"
 cm_key Escape

@@ -31,8 +31,11 @@ Files live in `tools/capture-media/`:
   capturable, isolates *all* on-disk state in a throwaway XDG tree (the real
   microide config/session is never touched), seeds the bundled plugins (notably
   `gdb-dap`), drives the instance via the **control channel**, injects keystrokes
-  with **xdotool**, and grabs frames with ImageMagick `import`. Because it runs
+  with **xdotool**, and grabs frames through `cm_capture`. Because it runs
   entirely on Xvfb it never steals the real desktop and works headless / in CI.
+  The grabber is ImageMagick `import` when present and otherwise `xwd` piped
+  through `xwd2png.py` (x11-apps + Pillow), so stills and the repro scripts run
+  on a box with no ImageMagick — only the hero *video* still needs ffmpeg.
 - **`make-fixture.sh`** — builds the deterministic demo project (`taskflow`): a
   small C++ git repo with pinned author/dates, a compiled `-g` binary for the
   debugger, and a divergent branch engineered to conflict for the merge scene.
@@ -87,13 +90,17 @@ checked into the real project tree.
 
 ## Dependencies
 
-`Xvfb`, `ffmpeg` (with libx264 + libvpx-vp9), ImageMagick (`import`/`convert`),
-**`xdotool`** (live keystroke/typing injection — required for the hero video and
-the welcome-tab close), and — for the debugger scene — `gdb` plus the bundled
-`gdb-dap` plugin. On Debian/Ubuntu:
+`Xvfb`, a screen grabber — either ImageMagick (`import`/`convert`) **or** x11-apps
+(`xwd`) plus Pillow — **`xdotool`** (live keystroke/typing injection — required for
+the hero video and the welcome-tab close), and — for the debugger scene — `gdb`
+plus the bundled `gdb-dap` plugin. The hero *video* additionally needs `ffmpeg`
+(with libx264 + libvpx-vp9); `--shots-only` and the `tools/repro/` scripts do not.
+On Debian/Ubuntu:
 
 ```bash
 sudo apt install xvfb ffmpeg imagemagick xdotool gdb
+# or, without ImageMagick (stills + repro scripts only):
+sudo apt install xvfb x11-apps python3-pil xdotool gdb
 ```
 
 ## Troubleshooting
