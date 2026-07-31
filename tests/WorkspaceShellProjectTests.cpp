@@ -81,6 +81,25 @@ bool WaitForProjectSearchCompletion(WorkspaceShell& shell, std::chrono::millisec
       [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
 }
 
+// A project search is dispatched asynchronously, so `!running` is also true in the
+// window BEFORE the worker picks it up — a plain wait-for-not-running can return on
+// its first poll and leave the caller asserting against the previous (empty) result
+// set. Pass the results revision sampled before dispatch and this waits for a run
+// that actually landed. (WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated
+// flaked exactly this way under TSAN's slower scheduling: the search had not
+// started, so nothing was truncated yet.)
+bool WaitForProjectSearchResults(WorkspaceShell& shell,
+                                 std::uint64_t revision_before,
+                                 std::chrono::milliseconds timeout) {
+  return WaitUntil(
+      [&shell, revision_before]() {
+        return !WorkspaceShellTestAccess::ProjectSearchRunning(shell) &&
+               WorkspaceShellTestAccess::ProjectSearchResultsRevision(shell) != revision_before;
+      },
+      timeout, std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
+}
+
 platform::IndexUpdateBatch BuildInjectedCreateBatch(const std::filesystem::path& root,
                                                     const std::filesystem::path& relative_path) {
   const std::filesystem::path absolute_path = root / relative_path;
@@ -4341,11 +4360,13 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
          "truncated replace-all fixture should open the project");
   Expect(WaitForFileIndexPath(shell,
                               std::filesystem::path("m_" + std::to_string(kMatchFiles - 1) + ".txt"),
-                              true, std::chrono::milliseconds(2000)),
+                              true, std::chrono::milliseconds(10000)),
          "truncated replace-all fixture should index the whole match set");
 
+  const std::uint64_t revision_before =
+      WorkspaceShellTestAccess::ProjectSearchResultsRevision(shell);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
-  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(3000)),
+  Expect(WaitForProjectSearchResults(shell, revision_before, std::chrono::milliseconds(15000)),
          "truncated replace-all fixture should complete the search");
   Expect(WorkspaceShellTestAccess::ProjectSearchTruncated(shell),
          "more matches than the display cap must mark the results truncated");
