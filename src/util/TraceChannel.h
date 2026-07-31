@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <chrono>
 #include <cstdint>
 #include <cstdio>
@@ -79,9 +80,9 @@ class TraceChannel {
   TraceChannel(const TraceChannel&) = delete;
   TraceChannel& operator=(const TraceChannel&) = delete;
 
-  bool Enabled() const { return stream_enabled_ || aggregate_enabled_; }
-  bool StreamEnabled() const { return stream_enabled_; }
-  bool AggregateEnabled() const { return aggregate_enabled_; }
+  bool Enabled() const { return StreamEnabled() || AggregateEnabled(); }
+  bool StreamEnabled() const { return stream_enabled_.load(std::memory_order_relaxed); }
+  bool AggregateEnabled() const { return aggregate_enabled_.load(std::memory_order_relaxed); }
   double MinimumDurationMs() const { return minimum_duration_ms_; }
 
   // Rebase the elapsed-time origin and clear nesting depth. No-op when the
@@ -120,8 +121,13 @@ class TraceChannel {
   Clock::time_point Origin() const;
 
   const char* prefix_ = "";
-  bool stream_enabled_ = false;
-  bool aggregate_enabled_ = false;
+  // Atomic because the destructor disarms them to tell *other* threads' scopes
+  // to take the fast path. A plain bool written on the exiting thread and read
+  // on a worker is a data race by the letter of the model, and relaxed ordering
+  // is free on every target here -- Enabled() is the hottest read in the whole
+  // tracer and this does not change its codegen.
+  std::atomic<bool> stream_enabled_{false};
+  std::atomic<bool> aggregate_enabled_{false};
   bool dumped_ = false;
   double minimum_duration_ms_ = 0.0;
   // Index into the thread-local active-scope table. Assigned at construction.

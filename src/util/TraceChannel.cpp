@@ -129,6 +129,8 @@ TraceChannel::TraceChannel(const char* prefix,
       stream_enabled_(EnvFlagEnabled(stream_env)),
       aggregate_enabled_(EnvFlagEnabled(aggregate_env)),
       minimum_duration_ms_(ParseMinimumDurationMs(min_duration_env)) {
+  // No other thread can observe this object yet, so relaxed stores below are
+  // ordered by the caller's acquisition of it.
   if (!Enabled()) {
     // An off channel needs neither a slot nor state; only its enabled flags are
     // ever read.
@@ -139,8 +141,8 @@ TraceChannel::TraceChannel(const char* prefix,
   if (slot_ == kNoSlot) {
     // More live channels than the thread-local table can index. Degrade to off
     // rather than corrupting another channel's scope stack.
-    stream_enabled_ = false;
-    aggregate_enabled_ = false;
+    stream_enabled_.store(false, std::memory_order_relaxed);
+    aggregate_enabled_.store(false, std::memory_order_relaxed);
     std::fprintf(stderr, "[%s] trace channel disabled: more than %zu channels are live\n", prefix_,
                  kMaxChannels);
     return;
@@ -152,8 +154,8 @@ TraceChannel::~TraceChannel() {
   // Channels are function-local statics, so this runs at exit. Disarm before
   // freeing: any TraceScope constructed after this point (from a later static
   // destructor) must take the disabled fast path rather than touch `impl_`.
-  stream_enabled_ = false;
-  aggregate_enabled_ = false;
+  stream_enabled_.store(false, std::memory_order_relaxed);
+  aggregate_enabled_.store(false, std::memory_order_relaxed);
   if (slot_ != kNoSlot) {
     g_active_scope[slot_] = nullptr;
     ReleaseSlot(slot_);
@@ -211,7 +213,7 @@ void TraceChannel::RecordAggregate(std::string_view label, double total_ms, doub
 }
 
 void TraceChannel::RecordSample(std::string_view label, double duration_ms) {
-  if (!aggregate_enabled_ || impl_ == nullptr) {
+  if (!AggregateEnabled() || impl_ == nullptr) {
     return;
   }
   RecordAggregate(label, duration_ms, duration_ms, g_is_main_thread);
@@ -313,7 +315,7 @@ void TraceChannel::WriteAggregate(std::FILE* out) const {
 }
 
 void TraceChannel::DumpAggregateOnce() {
-  if (!aggregate_enabled_ || dumped_) {
+  if (!AggregateEnabled() || dumped_) {
     return;
   }
   dumped_ = true;
