@@ -130,15 +130,18 @@ std::vector<HelpAboutRow> BuildHelpRows(const WorkspaceStartupOptions& startup_o
   rows.push_back(HelpAboutRow{.label = "microide", .detail = "Desktop IDE"});
   rows.push_back(HelpAboutRow{.label = "Version", .detail = MICROIDE_VERSION});
   AppendStartupHelpRows(rows, startup_options);
+  // Hand-written mirrors of the two sidebars' own action lines, so they join on the
+  // shared hint separator too (kHintSeparator) rather than reading as a different
+  // kind of list from the line they mirror.
   rows.push_back(HelpAboutRow{.label = "Git sidebar (focused)",
-                              .detail = "Enter default view | d diff | s stage | u unstage | "
-                                         "x discard (confirm) | m merge | c commit | r refresh | "
+                              .detail = "Enter default view · d diff · s stage · u unstage · "
+                                         "x discard (confirm) · m merge · c commit · r refresh · "
                                          "o open file"});
   // These used to be inlined into the search panel's own status line, where the
   // ~270px sidebar cut them mid-word. They belong next to the git sidebar's keys.
   rows.push_back(HelpAboutRow{.label = "Search sidebar (focused)",
-                              .detail = "Enter open match | j/k move | / query | = replace | "
-                                         "i include | x exclude | r rerun | R replace all | "
+                              .detail = "Enter open match · j/k move · / query · = replace · "
+                                         "i include · x exclude · r rerun · R replace all · "
                                          "c count all"});
   const std::unordered_map<ActionId, std::string> chord_by_action =
       BuildActionChordLookup(keybindings);
