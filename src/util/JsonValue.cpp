@@ -16,8 +16,8 @@ namespace microide::util {
 const JsonValue& JsonValue::operator[](std::string_view key) const {
   static const JsonValue kNull;
   if (const auto* o = std::get_if<JsonObject>(&v)) {
-    auto it = o->find(key);  // transparent lookup: no temporary std::string
-    if (it != o->end()) return it->second;
+    auto it = o->find(key);  // binary search over the sorted entries; no allocation
+    if (it != o->end()) return it->value;
   }
   return kNull;
 }
@@ -32,7 +32,7 @@ const JsonValue& JsonValue::operator[](std::size_t idx) const {
 
 bool JsonValue::HasKey(std::string_view key) const {
   if (const auto* o = std::get_if<JsonObject>(&v)) {
-    return o->find(key) != o->end();  // transparent lookup: no temporary std::string
+    return o->find(key) != o->end();
   }
   return false;
 }
@@ -265,9 +265,16 @@ struct Parser {
       if (!Expect(':')) return std::nullopt;
       auto val = ParseValue();
       if (!val) return std::nullopt;
-      obj[key->AsString()] = std::move(*val);
+      // Append; the sort at the closing brace establishes the invariant. Moving
+      // the key out of the parsed JsonValue matters: `obj[key->AsString()]`
+      // copied every key string a second time, on top of the map node it
+      // allocated for it.
+      obj.AppendInDocumentOrder(std::move(*key->MutableString()), std::move(*val));
       SkipWhitespace();
-      if (Expect('}')) return JsonValue(std::move(obj));
+      if (Expect('}')) {
+        obj.SortAfterParse();
+        return JsonValue(std::move(obj));
+      }
       if (!Expect(',')) return std::nullopt;
     }
   }
@@ -382,12 +389,12 @@ void AppendValue(std::string& out, const JsonValue& val, int depth = 0) {
   if (val.IsObject()) {
     out += '{';
     bool first = true;
-    for (const auto& [k, v] : val.AsObject()) {
+    for (const auto& entry : val.AsObject()) {
       if (!first) out += ',';
       first = false;
-      AppendEscaped(out, k);
+      AppendEscaped(out, entry.key);
       out += ':';
-      AppendValue(out, v, depth + 1);
+      AppendValue(out, entry.value, depth + 1);
     }
     out += '}';
   }

@@ -270,6 +270,64 @@ void TestNumberGrammarStrictness() {
 // Structural equality is the correctness basis for the LSP registration fast
 // path (comparing init-options/settings without serializing). Objects must
 // compare key-order-independently; nested structures compare deeply.
+// JsonObject is a sorted flat vector now, not an unordered_map. Three properties
+// the old container gave for free have to be re-established explicitly, because
+// every LSP/DAP/control path depends on them.
+void TestObjectMemberSemantics() {
+  // 1. Duplicate keys: last-wins, as `obj[key] = value` did.
+  const auto dup = ParseJson(R"({"k":1,"other":9,"k":2,"k":3})");
+  Expect(dup.has_value(), "an object with duplicate keys should still parse");
+  Expect(dup->AsObject().size() == 2, "duplicate keys collapse to one member");
+  Expect((*dup)["k"].AsInt() == 3, "the LAST occurrence of a duplicate key wins");
+  Expect((*dup)["other"].AsInt() == 9, "collapsing duplicates leaves other members intact");
+
+  // 2. Lookup finds every member regardless of the order they arrived in, and
+  //    misses report missing. The internal order is (length, bytes), so use keys
+  //    that would sort differently under plain lexicographic order.
+  const auto mixed = ParseJson(R"({"zzz":1,"a":2,"mm":3,"bbbb":4,"n":5})");
+  Expect(mixed.has_value(), "fixture should parse");
+  Expect((*mixed)["zzz"].AsInt() == 1 && (*mixed)["a"].AsInt() == 2 &&
+             (*mixed)["mm"].AsInt() == 3 && (*mixed)["bbbb"].AsInt() == 4 &&
+             (*mixed)["n"].AsInt() == 5,
+         "every member resolves regardless of document order");
+  Expect((*mixed)["missing"].IsNull() && !mixed->HasKey("missing"),
+         "an absent key reports missing");
+
+  // 3. Serialization is deterministic and order-independent: two objects with the
+  //    same members in different document order produce identical bytes.
+  const auto a = ParseJson(R"({"one":1,"two":[2,{"deep":true}],"three":"x"})");
+  const auto b = ParseJson(R"({"three":"x","one":1,"two":[2,{"deep":true}]})");
+  Expect(a.has_value() && b.has_value(), "reorder fixtures should parse");
+  Expect(SerializeJson(*a) == SerializeJson(*b),
+         "key order in the source must not change the serialized bytes");
+  Expect(*a == *b, "structural equality stays key-order-independent");
+}
+
+// The parse-time sort switches from a hand-rolled insertion sort to std::stable_sort
+// past a size threshold; a wide object must come out identical either way, including
+// its duplicate handling.
+void TestWideObjectSortsAndDedupes() {
+  std::string text = "{";
+  // 80 distinct keys emitted in reverse so nothing is accidentally pre-sorted,
+  // with every key also repeated once earlier carrying a wrong value.
+  for (int i = 79; i >= 0; --i) {
+    text += "\"k" + std::to_string(i) + "\":-1,";
+  }
+  for (int i = 0; i < 80; ++i) {
+    text += "\"k" + std::to_string(i) + "\":" + std::to_string(i);
+    if (i != 79) text += ",";
+  }
+  text += "}";
+
+  const auto parsed = ParseJson(text);
+  Expect(parsed.has_value(), "a wide object should parse");
+  Expect(parsed->AsObject().size() == 80, "duplicates collapse across the wide-object path too");
+  for (int i = 0; i < 80; ++i) {
+    Expect((*parsed)["k" + std::to_string(i)].AsInt() == i,
+           "every wide-object member resolves to its last value");
+  }
+}
+
 void TestStructuralEqualityIsOrderIndependentAndDeep() {
   const auto a = ParseJson(R"({"a":1,"b":{"x":[1,2,3],"y":"t"}})");
   const auto b = ParseJson(R"({"b":{"y":"t","x":[1,2,3]},"a":1})");  // reordered keys
@@ -356,6 +414,8 @@ void RegisterJsonValueTests(std::vector<TestCase>& tests) {
           TestNumberFormattingIsLocaleIndependent);
   AddTest(tests, "JsonValue/DoubleSerializesInShortestRoundTripForm",
           TestDoubleSerializesInShortestRoundTripForm);
+  AddTest(tests, "JsonValue/ObjectMemberSemantics", TestObjectMemberSemantics);
+  AddTest(tests, "JsonValue/WideObjectSortsAndDedupes", TestWideObjectSortsAndDedupes);
   AddTest(tests, "JsonValue/StructuralEqualityIsOrderIndependentAndDeep",
           TestStructuralEqualityIsOrderIndependentAndDeep);
   AddTest(tests, "JsonValue/RawControlCharsInStringRejected",
