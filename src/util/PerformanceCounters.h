@@ -123,6 +123,7 @@ namespace microide::util {
   X(TaskExecutorTasksEnqueued, "task.enqueued")                                                 \
   X(TaskExecutorTasksRun, "task.run")                                                           \
   X(MainThreadMailboxPosts, "task.main_thread_mailbox_posts")                                   \
+  X(MainThreadMailboxPostsCoalesced, "task.main_thread_mailbox_posts_coalesced")                \
   X(MainThreadMailboxDrains, "task.main_thread_mailbox_drains")                                 \
   /* --- text document model ---------------------------------------------- */                 \
   X(DocumentEdits, "document.edits")                                                            \

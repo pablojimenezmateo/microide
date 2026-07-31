@@ -275,6 +275,11 @@ struct DapClient::Impl {
       return false;
     }
     const std::string serialized = SerializeMessage(msg);
+    // Mirrors the LSP transport: this path bypasses the outbound queue, so
+    // counting only DrainOutbound would omit the handshake and every
+    // shutdown-time send.
+    util::AddPerformanceCounter(util::PerfCounterId::DapMessagesSent);
+    util::AddPerformanceCounter(util::PerfCounterId::DapBytesSent, serialized.size());
     if (lock_timeout > std::chrono::milliseconds::zero()) {
       // Bounded acquisition via try_lock polling (not timed_mutex::try_lock_for,
       // which ThreadSanitizer mis-models). If the io_thread is stuck writing to a

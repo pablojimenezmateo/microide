@@ -56,6 +56,9 @@ void TaskExecutor::Submit(std::string coalesce_key, Task task) {
         }
       }
     }
+    // Counted before the worker can coalesce or cancel it, so
+    // enqueued-minus-run is the amount of submitted work that never ran. That
+    // gap is the signal; treating them as equal would hide it.
     AddPerformanceCounter(PerfCounterId::TaskExecutorTasksEnqueued);
     pending_.push_back(TaskEntry{.task = std::move(task),
                                  .state = std::move(state),

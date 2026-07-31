@@ -40,11 +40,16 @@ void MainThreadMailbox::PostWithoutWake(Action action) {
 }
 
 void MainThreadMailbox::PostLatest(std::string key, Action action) {
+  // Counted here too, not only in PostWithoutWake: PostLatest has its own body
+  // and does not route through it, so a service that posts exclusively through
+  // the coalescing path would read as an idle mailbox.
+  AddPerformanceCounter(PerfCounterId::MainThreadMailboxPosts);
   {
     std::lock_guard lock(mutex_);
     if (const auto it = keyed_index_.find(key);
         it != keyed_index_.end() && it->second < actions_.size()) {
       // Replace the superseded closure in place (its captured payload is dropped).
+      AddPerformanceCounter(PerfCounterId::MainThreadMailboxPostsCoalesced);
       actions_[it->second] = std::move(action);
     } else {
       keyed_index_[std::move(key)] = actions_.size();

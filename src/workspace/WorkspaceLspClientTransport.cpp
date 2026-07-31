@@ -55,6 +55,11 @@ bool LspClient::Impl::SendMessageImmediate(const util::JsonValue& msg, bool allo
     return false;
   }
   const std::string serialized = SerializeMessage(msg);
+  // Counted here as well as in DrainOutbound: this path bypasses the outbound
+  // queue entirely (the initialize handshake and every shutdown-time send), so
+  // counting only the drain would silently omit them.
+  util::AddPerformanceCounter(util::PerfCounterId::LspMessagesSent);
+  util::AddPerformanceCounter(util::PerfCounterId::LspBytesSent, serialized.size());
   if (lock_timeout > std::chrono::milliseconds::zero()) {
     // Bounded acquisition via try_lock polling (not timed_mutex::try_lock_for,
     // which ThreadSanitizer mis-models). On timeout the caller force-kills, which
