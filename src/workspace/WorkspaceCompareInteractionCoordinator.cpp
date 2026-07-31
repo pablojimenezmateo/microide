@@ -16,6 +16,7 @@
 #include "project/GitCompareService.h"
 #include "project/PatchGenerator.h"
 #include "workspace/CompareTabReview.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -256,8 +257,8 @@ void CompareInteractionCoordinator::RefreshPicker() {
     }
     picker.matches.push_back(item);
   }
-  picker.summary_line = std::to_string(picker.matches.size()) + " of " +
-                        std::to_string(picker.items.size());
+  picker.summary_line =
+      BuildFilteredCountSummary(picker.matches.size(), picker.items.size(), "revisions");
   operations_.reset_overlay_scroll();
   operations_.request_overlay_redraw();
 }

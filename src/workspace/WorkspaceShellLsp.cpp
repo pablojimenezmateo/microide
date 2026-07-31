@@ -10,6 +10,7 @@
 #include "util/StringUtil.h"
 #include "workspace/ControlSpec.h"
 #include "workspace/FileUri.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/LspFeatureFlags.h"
 #include "workspace/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
@@ -520,8 +521,8 @@ void WorkspaceShell::RefreshLaunchConfigPicker() {
     }
     picker.matches.push_back(item);
   }
-  picker.summary_line =
-      std::to_string(picker.matches.size()) + " of " + std::to_string(picker.items.size());
+  picker.summary_line = BuildFilteredCountSummary(picker.matches.size(), picker.items.size(),
+                                                  "configurations");
   ResetOverlayScroll();
   RequestOverlayRedraw();
 }

@@ -1760,20 +1760,13 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   vm.footer_rect = MakeRect(vm.rect.x + 1.0f, vm.rect.y + vm.rect.h - kSettingsFooterH - 1.0f,
                             vm.rect.w - 2.0f, kSettingsFooterH);
   {
-    const std::size_t shown = service.VisibleRowCount();
-    const std::size_t total = service.TotalRowCount();
     const bool help = vm.mode == SettingsOverlayMode::HelpAbout;
+    const std::size_t shown = service.VisibleRowCount();
+    vm.footer_summary = BuildFilteredCountSummary(shown, service.TotalRowCount(),
+                                                  help ? "shortcuts" : "settings");
     if (shown == 0) {
-      vm.footer_summary = "No matches";
       vm.empty_label = help ? "No command or shortcut matches this filter."
                             : "No setting matches this filter.";
-    } else {
-      vm.footer_summary = std::to_string(shown);
-      if (!vm.query_empty && total > shown) {
-        vm.footer_summary += " of ";
-        vm.footer_summary += std::to_string(total);
-      }
-      vm.footer_summary += help ? " shortcuts" : " settings";
     }
   }
   // Help/About rows are read-only, so it says "scroll", not "choose"; Settings has

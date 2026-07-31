@@ -154,6 +154,12 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **Result counts say what they are counting, and stop double-counting.** The
+  command palette, launch-config picker and commit picker each showed a bare
+  `187 of 187` — a denominator that only ever equals the numerator when no filter
+  is active, which reads like one is. All three (and the two new overlay footers)
+  now share one helper: `12 of 187 commands` while filtering, `187 commands` when
+  not, `No matching commands` when nothing survived.
 - **The Problems, Tests and Outline sidebars are reachable again.** All three are
   registered sidebar views that render fine, but both the sidebar's view-tab row
   and its overflow menu filtered them out by name — a leftover from when they were

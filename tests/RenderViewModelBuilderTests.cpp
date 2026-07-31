@@ -8,6 +8,7 @@
 #include "workspace/DebugViewModel.h"
 #include "workspace/RecentsService.h"
 #include "workspace/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/WorkspaceShellRenderPrimitives.h"
 #include "workspace/SettingsOverlayService.h"
 #include "workspace/StatusBarService.h"
@@ -828,6 +829,24 @@ void TestSettingsOverlayWrapsLongDescriptions() {
   }
 }
 
+// The count line is shared by the three quick-open pickers and the two overlay
+// footers, so its wording rules are pinned once here rather than five times.
+void TestFilteredCountSummaryWording() {
+  using microide::workspace::BuildFilteredCountSummary;
+  Expect(BuildFilteredCountSummary(12, 187, "commands") == "12 of 187 commands",
+         "an active filter should report survivors out of the pre-filter total");
+  // The denominator is dropped when it adds nothing: the palette used to read
+  // "187 of 187", which is noise and reads like a filter is applied.
+  Expect(BuildFilteredCountSummary(187, 187, "commands") == "187 commands",
+         "an unfiltered list should omit the redundant denominator");
+  Expect(BuildFilteredCountSummary(0, 187, "commands") == "No matching commands",
+         "a zero-match list should say so rather than read '0 of 187'");
+  Expect(BuildFilteredCountSummary(0, 0, "revisions") == "No matching revisions",
+         "an empty source list should use the same zero-match wording");
+  Expect(BuildFilteredCountSummary(1, 1, "settings") == "1 settings",
+         "the noun is caller-supplied and not pluralized here");
+}
+
 // Both overlay modes carry the quick-open footer: how many rows survived the filter
 // (and out of how many), plus the keys that drive the surface. Help/About is
 // read-only, so its hint says "scroll", not "choose".
@@ -868,7 +887,7 @@ void TestSettingsOverlayFooterReportsCountsAndKeys() {
   service.SetQuery("zzzznotathing");
   service.RebuildHelpRows(help_rows);
   const auto empty = builder.BuildSettingsOverlay(layout, service, text_renderer);
-  Expect(empty.footer_summary == "No matches",
+  Expect(empty.footer_summary == "No matching shortcuts",
          "a zero-match footer should say so instead of reading '0 of 3'");
   Expect(!empty.empty_label.empty(),
          "a zero-match list area should carry an explanatory label");
@@ -1219,6 +1238,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",
           TestSettingsOverlayFooterReportsCountsAndKeys);
+  AddTest(tests, "RenderViewModelBuilder/FilteredCountSummaryWording",
+          TestFilteredCountSummaryWording);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayControlValueIsPrecomputed",
           TestSettingsOverlayControlValueIsPrecomputed);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",

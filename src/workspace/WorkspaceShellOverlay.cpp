@@ -9,6 +9,7 @@
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceActionCoordinator.h"
 #include "workspace/WorkspaceCommandParsing.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/WorkspaceCommandLineCoordinator.h"
 #include "workspace/WorkspaceCommandRegistry.h"
 
@@ -412,7 +413,7 @@ void WorkspaceShell::RefreshCommandPalette() {
                      [&](std::size_t lhs, std::size_t rhs) { return rank(lhs) < rank(rhs); });
   }
   palette.summary_line =
-      std::to_string(palette.matches.size()) + " of " + std::to_string(palette.items.size());
+      BuildFilteredCountSummary(palette.matches.size(), palette.items.size(), "commands");
   ResetOverlayScroll();
   RequestOverlayRedraw();
 }
