@@ -72,32 +72,32 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
-### [OPEN — needs diagnosis] Breakpoint gutter dot does not track `breakpoint-set` (TD-2026-07-31-102)
+### [RESOLVED 2026-07-31] `debug-toggle-enabled` could never disable the debugger (TD-2026-07-31-102)
 
-**Lead, not a diagnosis.** Two headless runs disagree about whether a breakpoint
-set through the control channel paints its gutter dot, and neither matches the
-documented rule ("breakpoint gutter dots only render when the debugger is
-enabled").
+Filed as a breakpoint-gutter lead; the gutter was innocent. Over the control
+channel the master debugger toggle was a no-op that always claimed to have
+disabled: three `debug-toggle-enabled` in a row logged the same
+`raw=true / wrote=1 / after=false`. The toast said "Debugger disabled" every
+time, including on a run that started disabled.
 
-- `open src/scheduler.cpp` → `breakpoint-set src/scheduler.cpp 19`, debugger in
-  its startup state (which the gdb-dap plugin appears to leave *enabled* — the
-  first `debug-toggle-enabled` reports "Debugger disabled"): **no dot** in the
-  gutter, in that state or after toggling either way.
-- `debug-toggle-enabled` → `breakpoint-set src/scheduler.cpp 19` →
-  `debug-pane-breakpoints`: **dot present**, and the pane lists
-  `[x] scheduler.cpp:19` — with the "Debugger disabled" toast still on screen.
+`ControlChannelService` auto-enables the debugger before any `breakpoint-*` or
+`debug-*` command, so a headless driver never has to send
+`set-setting debug.enabled true` first. The prefix rule also matched
+`debug-toggle-enabled` — the one command whose whole purpose is to flip that
+setting. So each toggle was preceded by an enable: it read "enabled", wrote
+"false", reported "Debugger disabled", and the next `debug-` command turned it
+straight back on.
 
-So the dot appears in the run where the toast says the debugger is *off* and not
-in the run where it is on. Candidate explanations, none verified: the gutter reads
-`DebugEnabled()` at frame time while the toggle writes elsewhere; the dot is
-coupled to the debug pane's visibility rather than to the debugger; or
-`breakpoint-set` lands in the store without invalidating the gutter's redraw rect
-(which would make it the same class of bug as the status bar — a surface nothing
-asks to repaint). Start by resolving what `DebugEnabled()` actually returns in
-each run rather than by reading the render path.
+This is what produced the confusing gutter observations: the dot vanished on the
+first toggle (the write did land) and did not come back on the second (which
+re-enabled and then re-disabled), while `debug-pane-breakpoints` — also a
+`debug-` verb — auto-enabled and made it reappear. A forced full repaint did
+*not* bring it back, which is what ruled out a redraw bug.
 
-Repro: `tools/capture-media/lib.sh` + `cm_send` as above; see the headless
-screenshot workflow. Found by the 2026-07-31 screenshot pass.
+Fixed by excluding the master switch from `CommandTouchesDebugger`. Covered by
+`ControlChannelService/DebugCommandAutoEnablesDebugger`, which now also asserts
+that a differently-named `debug-toggle-*` verb still auto-enables, so the
+exclusion cannot widen by accident.
 
 ### [OPEN] The git sidebar shows five empty sections on a clean tree (TD-2026-07-31-101)
 

@@ -178,6 +178,13 @@ public API or persisted-format changes.
   moved. (This also unstalled redraws requested from the render path in general —
   the event loop used to block with one outstanding, which had the same latent
   effect on the compare view's progressive syntax highlighting.)
+- **The debugger toggle can turn the debugger off.** Over the control channel
+  `debug-toggle-enabled` was a no-op that always reported "Debugger disabled",
+  in both directions: the channel auto-enables the debugger before any
+  `breakpoint-*`/`debug-*` command so headless drivers need no prelude, and the
+  prefix rule also caught the one command whose purpose is to flip that setting.
+  Each toggle was preceded by an enable, so it read "enabled", wrote "false", and
+  the next `debug-` command turned it back on. The master switch is excluded now.
 - **Settings and Help/About dim the editor behind them.** They take the keyboard
   entirely, but they were the only two modal surfaces in the shell that painted no
   backdrop — the editor stayed at full brightness behind them while every
