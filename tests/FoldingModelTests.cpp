@@ -398,6 +398,53 @@ void TestEnsureFoldsForVisibleRangeBudgetGuardOnHugeFile() {
          "scrolling near the closer must resolve the far opener");
 }
 
+// Extending the resolved prefix must grow it GEOMETRICALLY, not by one look-ahead
+// window at a time.
+//
+// ComputeWithBudget always rescans `[0, scan_end)` from the start -- its
+// incremental path serves a localized edit, not a forward extension -- so an
+// extension policy that only reaches the current viewport makes scrolling a large
+// file quadratic: each of the O(n / window) extensions re-walks the whole prefix.
+// Scrolling a 50k-line buffer measured 108 extensions averaging 2.35 ms, all on
+// the shell thread, and showed up as a p95/max blowout (252/330 ms vs a 152 ms
+// p50) rather than in the median -- the shape of a scroll hitch.
+//
+// Walk a viewport down a large document and count recomputes via revision().
+void TestVisibleRangeExtensionGrowsResolvedPrefixGeometrically() {
+  constexpr std::size_t kBodyLines = 32000;
+  std::vector<std::string> lines;
+  lines.reserve(kBodyLines + 2);
+  lines.push_back("namespace n {");
+  for (std::size_t i = 0; i < kBodyLines; ++i) {
+    lines.push_back("  int v = 0;");
+  }
+  lines.push_back("}");
+
+  const auto options = DefaultCStyleOptions();
+  FoldingModel model;
+  constexpr std::size_t kBudget = 2000;
+  constexpr std::size_t kWindow = 40;
+
+  const std::size_t before = model.revision();
+  for (std::size_t top = 0; top + kWindow < lines.size(); top += kWindow) {
+    Expect(model.EnsureFoldsForVisibleRange(lines, options, top, top + kWindow, kBudget),
+           "each scrolled resolve should finish");
+  }
+  const std::size_t recomputes = model.revision() - before;
+
+  // One-window-at-a-time extension needs ~(lines - budget) / lookahead recomputes;
+  // doubling from the 2000-line budget to 32002 lines needs 5. Leave headroom for
+  // the look-ahead-driven first pass without leaving room for a linear policy.
+  Expect(recomputes <= 12,
+         "scrolling a large document must extend the fold prefix geometrically, "
+         "not once per look-ahead window");
+
+  // Geometric growth must not cost coverage: the far closer still resolves.
+  const auto fold = model.FoldStartingAt(0);
+  Expect(fold.has_value() && fold->closer_line == kBodyLines + 1,
+         "the outer fold spanning the whole document must resolve by the last viewport");
+}
+
 // The workspace refresh gate skips recompute only when the fold model is fresh AND
 // the visible range is already resolved (IsVisibleRangeResolved). On a file larger
 // than the compute budget the first pass resolves only a prefix, so the predicate
@@ -730,6 +777,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestEnsureFoldsForVisibleRangeResolvesVisibleOpenerWithDistantCloser);
   AddTest(tests, "EditorFolding/VisibleRange/BudgetGuardOnHugeFile",
           TestEnsureFoldsForVisibleRangeBudgetGuardOnHugeFile);
+  AddTest(tests, "EditorFolding/VisibleRange/ExtensionGrowsResolvedPrefixGeometrically",
+          TestVisibleRangeExtensionGrowsResolvedPrefixGeometrically);
   AddTest(tests, "EditorFolding/VisibleRange/IsVisibleRangeResolvedTracksBudgetedPrefix",
           TestIsVisibleRangeResolvedTracksBudgetedPrefix);
   AddTest(tests, "EditorFolding/VisibleRange/ExtendsOnScroll",

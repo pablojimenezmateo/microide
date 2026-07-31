@@ -1,5 +1,7 @@
 #include "editor/FoldingModel.h"
 
+#include "util/PerformanceTrace.h"
+
 #include <algorithm>
 #include <array>
 #include <cstddef>
@@ -444,6 +446,7 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
                                      bool bracket_scan_complete) -> bool {
     std::vector<FoldRange> indent_ranges;
     if (options.use_indent_source) {
+      util::PerformanceTrace::Scope si("FoldingModel::ScanIndentRanges");
       ScanIndentRanges(lines, scan_end, options.tab_size, bracket_ranges, max_lines,
                        indent_ranges, complete_);
     }
@@ -485,8 +488,11 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
 
   std::vector<FoldRange> bracket_ranges;
   if (!resume_valid || !kept_prefix_exists) {
-    ScanBracketRanges(lines, options.bracket_pairs, scan_end, max_lines, bracket_ranges, complete_,
-                      syntax_viewport);
+    {
+      util::PerformanceTrace::Scope sb("FoldingModel::ScanBracketRanges");
+      ScanBracketRanges(lines, options.bracket_pairs, scan_end, max_lines, bracket_ranges, complete_,
+                        syntax_viewport);
+    }
     return merge_indent_and_finish(std::move(bracket_ranges), complete_);
   }
 
@@ -558,7 +564,26 @@ bool FoldingModel::EnsureFoldsForVisibleRange(
   // span finite and far-below openers keep resolving on scroll.
   // `resolved_prefix_line_count_` is owned by ComputeWithBudget.
   const std::size_t budget = max_lines == 0 ? line_count : max_lines;
-  const std::size_t scan_end = std::min(line_count, std::max(target_end, budget));
+  // Grow the resolved prefix GEOMETRICALLY, not by the visible window.
+  //
+  // ComputeWithBudget always rescans `[0, scan_end)` from the start -- its
+  // incremental path only serves a localized edit, not a forward extension -- so
+  // extending the prefix by one look-ahead window at a time makes scrolling a
+  // large file quadratic: every extension re-walks the whole prefix. Scrolling a
+  // 50k-line file measured 108 extensions averaging 2.35 ms each (216 ms, over
+  // half of the whole editor_sticky_scroll_scroll scenario), all of it on the
+  // shell thread.
+  //
+  // Doubling makes the number of extensions O(log n) and the total scan work
+  // O(n). It does NOT raise the worst-case single hitch: the largest scan under
+  // either policy is the one that reaches the end of the file, and the first
+  // extension is still bounded by `budget` (the per-frame compute budget), so
+  // first paint keeps its bound.
+  const std::size_t doubled_prefix = resolved_prefix_line_count_ >= line_count / 2
+                                         ? line_count
+                                         : resolved_prefix_line_count_ * 2;
+  const std::size_t scan_end =
+      std::min(line_count, std::max({target_end, budget, doubled_prefix}));
   const std::size_t work_budget = max_lines == 0 ? line_count : std::max(max_lines, scan_end);
   ComputeWithBudget(lines, options, work_budget, incremental_resume_line, scan_end,
                     syntax_viewport);
