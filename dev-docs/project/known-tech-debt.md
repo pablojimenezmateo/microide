@@ -72,6 +72,33 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### [OPEN — needs diagnosis] Breakpoint gutter dot does not track `breakpoint-set` (TD-2026-07-31-102)
+
+**Lead, not a diagnosis.** Two headless runs disagree about whether a breakpoint
+set through the control channel paints its gutter dot, and neither matches the
+documented rule ("breakpoint gutter dots only render when the debugger is
+enabled").
+
+- `open src/scheduler.cpp` → `breakpoint-set src/scheduler.cpp 19`, debugger in
+  its startup state (which the gdb-dap plugin appears to leave *enabled* — the
+  first `debug-toggle-enabled` reports "Debugger disabled"): **no dot** in the
+  gutter, in that state or after toggling either way.
+- `debug-toggle-enabled` → `breakpoint-set src/scheduler.cpp 19` →
+  `debug-pane-breakpoints`: **dot present**, and the pane lists
+  `[x] scheduler.cpp:19` — with the "Debugger disabled" toast still on screen.
+
+So the dot appears in the run where the toast says the debugger is *off* and not
+in the run where it is on. Candidate explanations, none verified: the gutter reads
+`DebugEnabled()` at frame time while the toggle writes elsewhere; the dot is
+coupled to the debug pane's visibility rather than to the debugger; or
+`breakpoint-set` lands in the store without invalidating the gutter's redraw rect
+(which would make it the same class of bug as the status bar — a surface nothing
+asks to repaint). Start by resolving what `DebugEnabled()` actually returns in
+each run rather than by reading the render path.
+
+Repro: `tools/capture-media/lib.sh` + `cm_send` as above; see the headless
+screenshot workflow. Found by the 2026-07-31 screenshot pass.
+
 ### [OPEN] The git sidebar shows five empty sections on a clean tree (TD-2026-07-31-101)
 
 **User-visible, cosmetic.** On a clean repository — the common case — the Source
