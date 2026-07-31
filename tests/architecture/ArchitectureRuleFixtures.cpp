@@ -2,6 +2,7 @@
 
 #include "TestSupport.h"
 #include "architecture/TerminalArchitectureRules.h"
+#include "architecture/WorkspaceArchitectureRules.h"
 #include "architecture/WorkspaceCoordinatorArchitectureRules.h"
 #include "architecture/WorkspaceServiceArchitectureRules.h"
 #include "architecture/WorkspaceShellArchitectureRules.h"
@@ -518,6 +519,57 @@ void RunMissingRuleTargetFixtures() {
 // One entry point for every rule fixture, so ArchitectureInvariantsTests.cpp stays
 // the thin dispatcher its own size rule asks for: adding a fixture no longer costs
 // a line there.
+void RunPerfCounterProducerRuleFixtures() {
+  // A green lint run is not evidence a rule works. This one scans for
+  // `PerfCounterId::<Id>` across src/, which is exactly the shape that goes
+  // quietly blind if the X-macro or the enum spelling is reworked -- and its
+  // whole job is to catch a counter that nothing increments, which is invisible
+  // by construction (it just never appears in any dump).
+  TemporaryDirectory counter_dir;
+  const std::filesystem::path& root = counter_dir.path();
+  std::filesystem::create_directories(root / "src/util");
+  std::filesystem::create_directories(root / "src/workspace");
+
+  const char* kHeader =
+      "#define MICROIDE_PERF_COUNTERS(X) \\\n"
+      "  X(WiredUp, \"a.wired_up\") \\\n"
+      "  X(Orphan, \"a.orphan\")\n";
+
+  // Negative control: `Orphan` is declared and never incremented.
+  WriteFile(root / "src/util/PerformanceCounters.h", kHeader);
+  WriteFile(root / "src/workspace/User.cpp",
+            "void f(){ AddPerformanceCounter(util::PerfCounterId::WiredUp); }\n");
+  const RuleResult orphaned = CheckEveryPerfCounterHasAProducer(root);
+  Expect(orphaned.violations.size() == 1,
+         "perf-counter rule must flag a declared counter that nothing increments");
+
+  // Positive control: wire the orphan up and the rule must go quiet. Without
+  // this half, a rule that matched no producers at all would satisfy the
+  // negative case by flagging everything.
+  WriteFile(root / "src/workspace/User.cpp",
+            "void f(){ AddPerformanceCounter(util::PerfCounterId::WiredUp); }\n"
+            "void g(){ AddPerformanceCounter(util::PerfCounterId::Orphan, 2); }\n");
+  Expect(CheckEveryPerfCounterHasAProducer(root).violations.empty(),
+         "perf-counter rule must accept a counter that is incremented anywhere in src/");
+
+  // The name table in PerformanceCounters.cpp mentions every id through the same
+  // macro expansion; treating it as a producer would make the rule vacuous.
+  WriteFile(root / "src/util/PerformanceCounters.cpp",
+            "const char* kNames[] = { \"a.wired_up\", \"a.orphan\" };\n"
+            "void h(){ (void)PerfCounterId::Orphan; }\n");
+  WriteFile(root / "src/workspace/User.cpp",
+            "void f(){ AddPerformanceCounter(util::PerfCounterId::WiredUp); }\n");
+  Expect(CheckEveryPerfCounterHasAProducer(root).violations.size() == 1,
+         "perf-counter rule must not count the declaration or the name table as a producer");
+
+  // Loud-missing-target guard: an X-macro that no longer spells its ids the same
+  // way must fail, not scan nothing and report green.
+  WriteFile(root / "src/util/PerformanceCounters.h",
+            "#define MICROIDE_PERF_COUNTERS(X)\nenum class PerfCounterId { Count };\n");
+  Expect(!CheckEveryPerfCounterHasAProducer(root).violations.empty(),
+         "perf-counter rule must fail loudly when it finds no counter declarations");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -529,6 +581,7 @@ void RunAllRuleFixtures() {
   RunPaintedScrollbarRuleFixtures();
   RunWheelFocusRuleFixtures();
   RunMissingRuleTargetFixtures();
+  RunPerfCounterProducerRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

@@ -50,6 +50,8 @@ void RunRenderTuTextCompositionRuleFixtures();
 void RunPaintedScrollbarRuleFixtures();
 void RunWheelFocusRuleFixtures();
 void RunMissingRuleTargetFixtures();
+// Negative + positive control for CheckEveryPerfCounterHasAProducer.
+void RunPerfCounterProducerRuleFixtures();
 
 // Runs every fixture above.
 void RunAllRuleFixtures();

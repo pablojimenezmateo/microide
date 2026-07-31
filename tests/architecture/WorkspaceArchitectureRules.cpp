@@ -83,6 +83,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckPaintedScrollbarsAreGrabbable", CheckPaintedScrollbarsAreGrabbable},
       {"CheckWheelHandlersDoNotMoveFocus", CheckWheelHandlersDoNotMoveFocus},
       {"CheckDebugSubsystemThreadingBehindDapClient", CheckDebugSubsystemThreadingBehindDapClient},
+      {"CheckEveryPerfCounterHasAProducer", CheckEveryPerfCounterHasAProducer},
   };
   return rules;
 }

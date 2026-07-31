@@ -6,6 +6,10 @@
 #include <filesystem>
 #include <fstream>
 #include <regex>
+#include <set>
+#include <string>
+#include <utility>
+#include <vector>
 
 namespace microide::tests::architecture {
 
@@ -393,6 +397,81 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
           .line = LineNumberAt(text, offset),
           .message = "AppendHintSegment is redefined here — use the shared one in "
                      "WorkspaceUiText.h so every key-hint list joins on the same separator",
+      });
+    }
+  }
+  return result;
+}
+
+RuleResult CheckEveryPerfCounterHasAProducer(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "every perf counter is incremented somewhere in src/";
+  result.hard_fail = true;
+
+  const std::filesystem::path header = repo_root / "src/util/PerformanceCounters.h";
+  const std::string header_text = ReadRuleTarget(result, header);
+  if (header_text.find("#define MICROIDE_PERF_COUNTERS(X)") == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = header,
+        .line = 1,
+        .message = "rule target moved -- PerformanceCounters.h no longer declares its ids through "
+                   "the MICROIDE_PERF_COUNTERS X-macro; re-anchor "
+                   "CheckEveryPerfCounterHasAProducer",
+    });
+    return result;
+  }
+
+  // Ids as declared, in order. The X-macro guarantees each has a *name*; nothing
+  // guarantees anything ever increments it, and a counter with no producer reads
+  // zero forever. That is worse than an absent counter: a reader sees the row
+  // missing from the dump and concludes the code path did not run.
+  std::vector<std::pair<std::string, std::size_t>> declared;
+  const std::regex declaration(R"(\bX\(\s*(\w+)\s*,)");
+  for (std::sregex_iterator it(header_text.begin(), header_text.end(), declaration), last;
+       it != last; ++it) {
+    declared.emplace_back((*it)[1].str(), LineNumberAt(header_text, static_cast<std::size_t>(it->position())));
+  }
+  if (declared.empty()) {
+    result.violations.push_back(Violation{
+        .path = header,
+        .line = 1,
+        .message = "rule found no counter declarations to check -- the X-macro spelling changed "
+                   "and this rule is scanning nothing",
+    });
+    return result;
+  }
+
+  std::set<std::string> produced;
+  const std::regex use(R"(\bPerfCounterId::(\w+))");
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    if (entry.path().filename() == "PerformanceCounters.h" ||
+        entry.path().filename() == "PerformanceCounters.cpp") {
+      continue;  // the declaration and the name table are not producers
+    }
+    const std::string text = ReadText(entry.path());
+    for (std::sregex_iterator it(text.begin(), text.end(), use), last; it != last; ++it) {
+      produced.insert((*it)[1].str());
+    }
+  }
+
+  for (const auto& [id, line] : declared) {
+    if (id == "Count") {
+      continue;  // the enum terminator, not a counter
+    }
+    if (produced.count(id) == 0) {
+      result.violations.push_back(Violation{
+          .path = header,
+          .line = line,
+          .message = "this perf counter is never incremented in src/ -- it will read zero forever "
+                     "and its absence from a dump reads as \"that code did not run\". Wire it up "
+                     "or delete it",
       });
     }
   }
