@@ -296,6 +296,18 @@ struct GitBlameService::Impl {
     return it == file_generations.end() ? 0 : it->second;
   }
 
+  // Generation currency only: the request still describes the same file content
+  // and the same cache epoch, regardless of which window is now newest.
+  bool GenerationsStillCurrentLocked(const PendingRequest& request) const {
+    return request.clear_generation == clear_generation &&
+           request.file_generation == CurrentFileGenerationLocked(request.file_key);
+  }
+
+  bool GenerationsStillCurrent(const PendingRequest& request) const {
+    std::lock_guard lock(mutex);
+    return GenerationsStillCurrentLocked(request);
+  }
+
   bool RequestStillCurrentLocked(const PendingRequest& request) const {
     const auto latest_it = latest_request_keys.find(request.file_key);
     const bool is_latest_request =
@@ -536,8 +548,16 @@ struct GitBlameService::Impl {
     }
 
     util::AddPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
+    // The verdicts below are about the FILE, not the requested window: whether the
+    // root is a repo, whether HEAD resolves, whether the path is tracked. They
+    // stay true no matter where the viewport scrolled to while the probes ran, so
+    // they are recorded even once a newer window has superseded this request.
+    // Discarding them -- what the plain RequestStillCurrent early-return did --
+    // meant a continuous scroll never wrote a cache entry, so the re-validation
+    // throttle had nothing to hit and every window re-spawned `git rev-parse`.
     if (!gitutil::HasGitMarker(request.request.root)) {
-      changed = UpdateEligibility(request, false, std::nullopt, std::nullopt, {}, {});
+      changed = UpdateEligibility(request, false, std::nullopt, std::nullopt, {}, {},
+                                  /*require_latest_request=*/false);
       if (changed) {
         PushWakeEvent();
       }
@@ -546,15 +566,22 @@ struct GitBlameService::Impl {
 
     const auto head_id = gitutil::ResolveHeadId(request.request.root);
     const auto stamp = ReadFileStamp(request.request.absolute_path);
-    if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
+    if (token.IsCancellationRequested() || !GenerationsStillCurrent(request)) {
       return;
     }
     if (!head_id.has_value() || !stamp.has_value() ||
         !FileIsTracked(request.request.root, request.relative_path)) {
-      changed = UpdateEligibility(request, false, head_id, stamp, {}, {});
+      changed = UpdateEligibility(request, false, head_id, stamp, {}, {},
+                                  /*require_latest_request=*/false);
       if (changed) {
         PushWakeEvent();
       }
+      return;
+    }
+
+    // Past here the work is window-specific (which spans to blame), so a
+    // superseded request stops rather than loading a window nobody is looking at.
+    if (!RequestStillCurrent(request)) {
       return;
     }
 
@@ -666,9 +693,13 @@ struct GitBlameService::Impl {
                          const std::optional<std::string>& head_id,
                          const std::optional<FileStamp>& stamp,
                          std::vector<Span> loaded_spans,
-                         std::unordered_map<std::size_t, GitBlameLine> blame_by_line) {
+                         std::unordered_map<std::size_t, GitBlameLine> blame_by_line,
+                         bool require_latest_request = true) {
     std::lock_guard lock(mutex);
-    if (!RequestStillCurrentLocked(request)) {
+    // A window-independent verdict only needs the generations to still match; the
+    // latest-request gate exists to stop a stale WINDOW's data from landing.
+    if (require_latest_request ? !RequestStillCurrentLocked(request)
+                               : !GenerationsStillCurrentLocked(request)) {
       return false;
     }
     auto& cache = file_caches[request.file_key];
