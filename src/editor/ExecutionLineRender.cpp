@@ -1,4 +1,5 @@
 #include "editor/ExecutionLineRender.h"
+#include "render/SurfacePrimitives.h"
 
 #include <algorithm>
 #include <cmath>
@@ -25,7 +26,7 @@ void DrawExecutionLineGutterMarker(SDL_Renderer* renderer, const render::Theme& 
   }
   const SDL_FRect bounds = ExecutionLineGutterMarkerRect(gutter_x, y, gutter_width, line_height);
   const SDL_Color color = theme.debug_execution_arrow;
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
 
   // Right-pointing isosceles triangle filled as horizontal spans. The triangle
   // occupies the middle ~60% of the bounds height; its tip is at the right edge,

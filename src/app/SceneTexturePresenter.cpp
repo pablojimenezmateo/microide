@@ -45,6 +45,13 @@ bool SceneTexturePresenter::Ensure(SDL_Renderer* renderer, int logical_width, in
   }
 
   SDL_SetTextureScaleMode(texture_, SDL_SCALEMODE_NEAREST);
+  // The retained scene is an opaque full-window backbuffer: nothing is behind it,
+  // and the window is never cleared between presents. SDL defaults an RGBA target
+  // to SDL_BLENDMODE_BLEND, which made every present composite the scene against
+  // the *previous* present instead of replacing it — so any region whose alpha was
+  // not 255 darkened a little more each frame until it went flat (that is what ate
+  // the editor behind a modal, TD-2026-07-30-100). NONE is also the cheaper blit.
+  SDL_SetTextureBlendMode(texture_, SDL_BLENDMODE_NONE);
   width_ = logical_width;
   height_ = logical_height;
   valid_ = false;

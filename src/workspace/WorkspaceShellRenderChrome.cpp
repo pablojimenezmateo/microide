@@ -297,8 +297,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       DrawSelectableRowBackground(renderer, theme_, item.rect, theme_.chrome_background, true);
     } else if (has_tone) {
       const SDL_Color tinted = render::BlendColors(theme_.chrome_background, tone_fill, 0.28f);
-      SDL_SetRenderDrawColor(renderer, tinted.r, tinted.g, tinted.b, 0xff);
-      SDL_RenderFillRect(renderer, &item.rect);
+      DrawFilledRect(renderer, item.rect, SDL_Color{tinted.r, tinted.g, tinted.b, 0xff});
     }
     const SDL_Color row_bg = hovered ? theme_.row_highlight
                                           : (has_tone ? render::BlendColors(theme_.chrome_background,
@@ -324,12 +323,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       const float bar_y = item.rect.y + (item.rect.h - bar_h) * 0.5f;
       const SDL_FRect track{bar_x, bar_y, kBarW, bar_h};
       const SDL_Color track_color = render::BlendColors(row_bg, theme_.border, 0.6f);
-      SDL_SetRenderDrawColor(renderer, track_color.r, track_color.g, track_color.b, 0xff);
-      SDL_RenderFillRect(renderer, &track);
+      DrawFilledRect(renderer, track, SDL_Color{track_color.r, track_color.g, track_color.b, 0xff});
       const SDL_FRect fill{bar_x, bar_y, kBarW * std::clamp(item.item.progress, 0.0f, 1.0f), bar_h};
       const SDL_Color fill_color = has_tone ? tone_fill : theme_.accent;
-      SDL_SetRenderDrawColor(renderer, fill_color.r, fill_color.g, fill_color.b, 0xff);
-      SDL_RenderFillRect(renderer, &fill);
+      DrawFilledRect(renderer, fill, SDL_Color{fill_color.r, fill_color.g, fill_color.b, 0xff});
       text_right = bar_x - 6.0f;
     }
     const SDL_FRect text_rect =

@@ -13,7 +13,6 @@ void WorkspaceShell::RenderPromptSurface(
     return;
   }
 
-  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
   DrawFilledRect(renderer, layout.full, theme_.overlay_backdrop);
 
   const SDL_FRect dialog = ComputePromptSurfaceRect(layout.full);
@@ -58,10 +57,6 @@ void WorkspaceShell::RenderPromptSurface(
             .active = context_.prompts.surface.selected_button == static_cast<int>(i),
         });
   }
-
-  // Restore the default blend mode so BLEND does not leak into later draws in the
-  // frame, matching RenderDirtyPromptSurface below.
-  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
 
 void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
@@ -70,7 +65,6 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
     return;
   }
 
-  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
   DrawFilledRect(renderer, layout.full, theme_.overlay_backdrop);
 
   const SDL_FRect dialog = ComputeDirtyPromptRect(layout.full);
@@ -102,8 +96,6 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
             .active = context_.prompts.dirty.selected_action == static_cast<int>(i),
         });
   }
-
-  SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_NONE);
 }
 
 }  // namespace microide::workspace

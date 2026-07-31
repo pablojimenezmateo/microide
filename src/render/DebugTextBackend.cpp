@@ -1,4 +1,5 @@
 #include "render/DebugTextBackend.h"
+#include "render/SurfacePrimitives.h"
 
 #include <string>
 
@@ -13,7 +14,7 @@ void DebugTextBackend::DrawString(SDL_Renderer* renderer,
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  SetDrawColor(renderer, color);
   const std::string owned_text(text);
   SDL_RenderDebugText(renderer, x, y, owned_text.c_str());
 }

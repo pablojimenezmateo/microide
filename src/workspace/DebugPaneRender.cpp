@@ -120,7 +120,7 @@ void WorkspaceShell::RenderDebugPaneSurface(SDL_Renderer* renderer,
   const auto draw_disclosure = [&](float x, float line_y, bool expanded, SDL_Color color) {
     const float size = 7.0f;
     const float cy = line_y + panel_layout.line_height * 0.5f - 1.0f;
-    SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+    render::SetDrawColor(renderer, color);
     if (expanded) {
       for (int i = 0; i < static_cast<int>(size); ++i) {
         const float w = size - static_cast<float>(i) * 2.0f;

@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "support/SoftwareCanvas.h"
+
 #include "editor/EditorViewRenderer.h"
 #include "editor/FoldingModel.h"
 #include "editor/TextViewport.h"
@@ -270,30 +272,6 @@ void EnsureDummySdlVideo() {
   Expect(initialized, "SDL should initialize with the dummy video driver");
 }
 
-class SoftwareCanvas final {
- public:
-  SoftwareCanvas(int width, int height) {
-    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
-    Expect(surface_ != nullptr, "allocation-discipline test should allocate a software surface");
-    renderer_ = SDL_CreateSoftwareRenderer(surface_);
-    Expect(renderer_ != nullptr, "allocation-discipline test should create a software renderer");
-  }
-
-  ~SoftwareCanvas() {
-    if (renderer_ != nullptr) {
-      SDL_DestroyRenderer(renderer_);
-    }
-    if (surface_ != nullptr) {
-      SDL_DestroySurface(surface_);
-    }
-  }
-
-  SDL_Renderer* renderer() const { return renderer_; }
-
- private:
-  SDL_Surface* surface_ = nullptr;
-  SDL_Renderer* renderer_ = nullptr;
-};
 
 void TestIndentGuideRunsPreserveCapacityAcrossStableRenders() {
   EnsureDummySdlVideo();

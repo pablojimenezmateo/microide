@@ -1,4 +1,5 @@
 #include "editor/BreakpointRender.h"
+#include "render/SurfacePrimitives.h"
 
 #include <algorithm>
 #include <cmath>
@@ -39,7 +40,7 @@ void DrawBreakpointGutterMarker(SDL_Renderer* renderer, const render::Theme& the
       color.a = static_cast<Uint8>(static_cast<float>(color.a) * 0.6f);
     }
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
 
   // Fill the shape as horizontal spans (one rect per scanline). The marker is tiny
   // (≤12px), so this is a handful of fills coalesced by SDL's batcher. A disc uses

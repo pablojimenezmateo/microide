@@ -1,4 +1,5 @@
 #include "workspace/OverviewRuler.h"
+#include "render/SurfacePrimitives.h"
 
 #include <algorithm>
 #include <cmath>
@@ -168,15 +169,13 @@ void DrawLane(SDL_Renderer* renderer, const render::Theme& theme, const SDL_FRec
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, theme.surface_raised.r, theme.surface_raised.g,
-                         theme.surface_raised.b, theme.surface_raised.a);
+  render::SetDrawColor(renderer, theme.surface_raised);
   SDL_RenderFillRect(renderer, &lane);
-  SDL_SetRenderDrawColor(renderer, theme.border.r, theme.border.g, theme.border.b, theme.border.a);
+  render::SetDrawColor(renderer, theme.border);
   SDL_RenderRect(renderer, &lane);
 
   for (const Marker& marker : markers) {
-    SDL_SetRenderDrawColor(renderer, marker.color.r, marker.color.g, marker.color.b,
-                           marker.color.a);
+    render::SetDrawColor(renderer, marker.color);
     SDL_RenderFillRect(renderer, &marker.rect);
   }
 }

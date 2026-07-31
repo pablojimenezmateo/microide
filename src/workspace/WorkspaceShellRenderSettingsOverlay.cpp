@@ -18,7 +18,7 @@ void DrawStepperArrow(SDL_Renderer* renderer, const SDL_FRect& rect, bool left, 
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   if (left) {
@@ -35,7 +35,7 @@ void DrawResetGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color col
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy - 3.0f);
@@ -49,7 +49,7 @@ void DrawFocusRing(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color colo
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const SDL_FRect inner = {rect.x + 1.0f, rect.y + 1.0f, rect.w - 2.0f, rect.h - 2.0f};
   SDL_RenderRect(renderer, &inner);
 }
@@ -134,8 +134,7 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
       const std::size_t caret = settings_overlay_service_.QueryEditor().caret();
       const std::string_view prefix = vm.query.substr(0, std::min(caret, vm.query.size()));
       const float caret_x = text_x + text_renderer_.MeasureWidth(prefix);
-      SDL_SetRenderDrawColor(renderer, theme_.accent.r, theme_.accent.g, theme_.accent.b,
-                             theme_.accent.a);
+      render::SetDrawColor(renderer, theme_.accent);
       SDL_RenderLine(renderer, caret_x, vm.filter_rect.y + 4.0f, caret_x,
                      vm.filter_rect.y + vm.filter_rect.h - 4.0f);
     }

@@ -365,7 +365,7 @@ inline void DrawChevron(SDL_Renderer* renderer,
                         float center_y,
                         bool expanded,
                         SDL_Color color) {
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   if (expanded) {
     SDL_RenderLine(renderer, x, center_y - 2.0f, x + 4.0f, center_y + 2.0f);
     SDL_RenderLine(renderer, x + 8.0f, center_y - 2.0f, x + 4.0f, center_y + 2.0f);
@@ -381,7 +381,7 @@ inline void DrawCloseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   SDL_RenderLine(renderer, cx - 3.0f, cy - 3.0f, cx + 3.0f, cy + 3.0f);
@@ -396,7 +396,7 @@ inline void DrawArrowGlyph(SDL_Renderer* renderer,
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   if (up) {
@@ -420,7 +420,7 @@ inline void DrawPlayGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const float base_x = std::floor(rect.x + rect.w * 0.38f);
   const float tip_x = std::floor(rect.x + rect.w * 0.66f);
@@ -443,7 +443,7 @@ inline void DrawPauseGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const float bar_h = std::floor(rect.h * 0.34f);
@@ -458,7 +458,7 @@ inline void DrawStopGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float side = std::floor(rect.h * 0.34f);
   const SDL_FRect square{std::floor(rect.x + (rect.w - side) * 0.5f),
                          std::floor(rect.y + (rect.h - side) * 0.5f), side, side};
@@ -470,7 +470,7 @@ inline void DrawStepOverGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.46f);
   const float r = std::floor(rect.w * 0.22f);
@@ -501,7 +501,7 @@ inline void DrawStepIntoGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float top = std::floor(rect.y + rect.h * 0.30f);
   const float tip = std::floor(rect.y + rect.h * 0.58f);
@@ -516,7 +516,7 @@ inline void DrawStepOutGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float bottom = std::floor(rect.y + rect.h * 0.56f);
   const float tip = std::floor(rect.y + rect.h * 0.28f);
@@ -531,7 +531,7 @@ inline void DrawRestartGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const float r = std::floor(rect.h * 0.26f);
@@ -565,7 +565,7 @@ inline void DrawReverseContinueGlyph(SDL_Renderer* renderer, const SDL_FRect& re
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const float base_x = std::floor(rect.x + rect.w * 0.62f);
   const float tip_x = std::floor(rect.x + rect.w * 0.34f);
@@ -588,7 +588,7 @@ inline void DrawStepBackGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.46f);
   const float r = std::floor(rect.w * 0.22f);
@@ -619,7 +619,7 @@ inline void DrawCheckGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Co
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float left = std::floor(rect.x + 2.0f);
   const float mid_x = std::floor(rect.x + rect.w * 0.45f);
   const float right = std::floor(rect.x + rect.w - 2.0f);
@@ -634,7 +634,7 @@ inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   SDL_RenderLine(renderer, cx - 4.0f, cy, cx + 4.0f, cy);
@@ -643,7 +643,7 @@ inline void DrawPlusGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Col
 
 // Small filled dot used as a node marker in line-art glyphs.
 inline void DrawGlyphDot(SDL_Renderer* renderer, float cx, float cy, SDL_Color color) {
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const SDL_FRect dot{std::floor(cx) - 1.0f, std::floor(cy) - 1.0f, 2.0f, 2.0f};
   SDL_RenderFillRect(renderer, &dot);
 }
@@ -653,7 +653,7 @@ inline void DrawFolderGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const SDL_FRect body{cx - 5.0f, cy - 2.0f, 10.0f, 7.0f};
@@ -668,7 +668,7 @@ inline void DrawSearchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   // Diamond lens (rounder than a square) plus a diagonal handle.
@@ -685,7 +685,7 @@ inline void DrawBranchGlyph(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_C
   if (renderer == nullptr) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float cx = std::floor(rect.x + rect.w * 0.5f);
   const float cy = std::floor(rect.y + rect.h * 0.5f);
   const float trunk_x = cx - 3.0f;
@@ -725,7 +725,7 @@ inline void DrawWindowControlGlyph(SDL_Renderer* renderer,
     return;
   }
 
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   const float left = rect.x + 4.0f;
   const float right = rect.x + rect.w - 4.0f;
   const float top = rect.y + 4.0f;
@@ -1017,7 +1017,7 @@ inline void DrawTabStripOverflowButton(const render::TextRenderer& text_renderer
   const float cx = rect.x + 9.0f;
   const float cy = rect.y + rect.h * 0.5f;
   const float arm = std::max(3.0f, rect.h * 0.22f);
-  SDL_SetRenderDrawColor(renderer, foreground.r, foreground.g, foreground.b, foreground.a);
+  render::SetDrawColor(renderer, foreground);
   if (point_right) {
     SDL_RenderLine(renderer, cx - arm * 0.5f, cy - arm, cx + arm * 0.5f, cy);
     SDL_RenderLine(renderer, cx + arm * 0.5f, cy, cx - arm * 0.5f, cy + arm);

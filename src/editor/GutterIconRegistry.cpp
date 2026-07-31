@@ -1,4 +1,5 @@
 #include "editor/GutterIconRegistry.h"
+#include "render/SurfacePrimitives.h"
 
 #include <algorithm>
 #include <array>
@@ -148,7 +149,7 @@ void GutterIconRegistry::Draw(SDL_Renderer* renderer, GutterIconShape shape, SDL
   const float radius = bounds.w * 0.5f;
   const float cx = bounds.x + radius;
   const float cy = bounds.y + radius;
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
 
   const auto no_inner = [](float) { return 0.0f; };
   switch (shape) {

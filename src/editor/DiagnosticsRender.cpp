@@ -1,4 +1,5 @@
 #include "editor/DiagnosticsRender.h"
+#include "render/SurfacePrimitives.h"
 
 #include <algorithm>
 
@@ -99,7 +100,7 @@ void DrawDiagnosticGutterMarker(SDL_Renderer* renderer,
   }
   const SDL_FRect rect = DiagnosticGutterMarkerRect(gutter_x, y, gutter_width, line_height);
   const SDL_Color color = DiagnosticSeverityColor(theme, severity);
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   SDL_RenderFillRect(renderer, &rect);
 }
 

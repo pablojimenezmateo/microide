@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "support/SoftwareCanvas.h"
+
 #include "TerminalSessionTestAccess.h"
 #include "render/Theme.h"
 #include "util/PerformanceCounters.h"
@@ -57,30 +59,6 @@ void EnsureDummySdlVideo() {
   Expect(initialized, "SDL should initialize with the dummy video driver");
 }
 
-class SoftwareCanvas final {
- public:
-  SoftwareCanvas(int width, int height) {
-    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
-    Expect(surface_ != nullptr, "workspace redraw regression test should allocate a software surface");
-    renderer_ = SDL_CreateSoftwareRenderer(surface_);
-    Expect(renderer_ != nullptr, "workspace redraw regression test should create a software renderer");
-  }
-
-  ~SoftwareCanvas() {
-    if (renderer_ != nullptr) {
-      SDL_DestroyRenderer(renderer_);
-    }
-    if (surface_ != nullptr) {
-      SDL_DestroySurface(surface_);
-    }
-  }
-
-  SDL_Renderer* renderer() const { return renderer_; }
-
- private:
-  SDL_Surface* surface_ = nullptr;
-  SDL_Renderer* renderer_ = nullptr;
-};
 
 SDL_Rect InflateClipRect(const SDL_FRect& rect,
                          microide::render::TextClipPadding padding,
@@ -960,6 +938,72 @@ void TestWorkspaceShellTabTooltipRendersAboveSidebar() {
          "hovered tab tooltips should render above the sidebar fill");
 
   SDL_DestroySurface(pixels);
+}
+
+// A frame is painted into a retained, reused RGBA scene texture and then blitted
+// whole to the window, which is never cleared. That only works while the painted
+// frame is fully opaque: a translucent fill issued without arming SDL's (ambient)
+// draw blend mode overwrites its region instead of compositing, stamping its own
+// sub-255 alpha into the target — and the region then re-composites against the
+// previous present on every frame until it collapses to the fill colour. That is
+// what ate the editor behind an open modal (TD-2026-07-30-100): the backdrop is
+// alpha 0xaa, so within about a second the code being compared was a flat
+// rectangle. Assert the contract directly — over an open modal, with its
+// translucent backdrop, selection fill and card background all in play, every
+// pixel of the frame comes out opaque.
+void TestWorkspaceShellRenderedFrameIsFullyOpaque() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int main() {\n  return 0;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 900, 600);
+  WorkspaceShellTestAccess::OpenCommandPalette(shell);
+  Expect(WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+         "the opacity fixture needs a backdrop-drawing modal open");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  Expect(theme.overlay_backdrop.a != SDL_ALPHA_OPAQUE,
+         "the fixture is only meaningful while the modal backdrop is translucent");
+
+  SoftwareCanvas canvas(900, 600);
+  shell.Render(canvas.renderer(), 900, 600);
+
+  int translucent_pixels = 0;
+  SDL_Color first_bad{};
+  int first_bad_x = 0;
+  int first_bad_y = 0;
+  for (int y = 0; y < 600; ++y) {
+    for (int x = 0; x < 900; ++x) {
+      const SDL_Color pixel = canvas.PixelAt(x, y);
+      if (pixel.a != SDL_ALPHA_OPAQUE) {
+        if (translucent_pixels == 0) {
+          first_bad = pixel;
+          first_bad_x = x;
+          first_bad_y = y;
+        }
+        ++translucent_pixels;
+      }
+    }
+  }
+  Expect(translucent_pixels == 0,
+         "a painted frame must be fully opaque; " + std::to_string(translucent_pixels) +
+             " pixels were not, first at (" + std::to_string(first_bad_x) + "," +
+             std::to_string(first_bad_y) + ") alpha=" + std::to_string(first_bad.a));
+
+  // ...and the backdrop must dim what is behind it rather than replace it: an
+  // overwriting fill lands on exactly the backdrop colour, a compositing one does
+  // not. Sample the editor area well below the modal card.
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const SDL_Color dimmed =
+      canvas.PixelAt(static_cast<int>(layout.editor_surface.x + 8.0f),
+                     static_cast<int>(layout.editor_surface.y + layout.editor_surface.h - 8.0f));
+  Expect(!(dimmed.r == theme.overlay_backdrop.r && dimmed.g == theme.overlay_backdrop.g &&
+           dimmed.b == theme.overlay_backdrop.b),
+         "the modal backdrop should dim the editor behind it, not overwrite it");
 }
 
 // A dirty rect has to fully contain the content it stands for. All three
@@ -3236,6 +3280,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFullscreenStateDisablesResizableFrameHitTest);
   AddTest(tests, "WorkspaceShell/WindowPresentationStateUpdatesChromeAndSize",
           TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize);
+  AddTest(tests, "WorkspaceShell/RenderedFrameIsFullyOpaque",
+          TestWorkspaceShellRenderedFrameIsFullyOpaque);
 }
 
 }  // namespace microide::tests

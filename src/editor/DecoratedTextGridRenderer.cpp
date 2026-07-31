@@ -1,4 +1,5 @@
 #include "editor/DecoratedTextGridRenderer.h"
+#include "render/SurfacePrimitives.h"
 
 #include <algorithm>
 #include <cmath>
@@ -288,7 +289,7 @@ void FlushFillRun(SDL_Renderer* renderer,
   if (batch.empty()) {
     return;
   }
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   SDL_RenderFillRects(renderer, batch.data(), static_cast<int>(batch.size()));
   batch.clear();
 }

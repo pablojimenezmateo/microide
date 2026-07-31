@@ -180,8 +180,7 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
                                           .priority = 0};
   overview::Marker caret_marker;
   if (overview::BuildMarker(inner_lane, total_rows, caret_input, caret_marker)) {
-    SDL_SetRenderDrawColor(renderer, caret_marker.color.r, caret_marker.color.g,
-                           caret_marker.color.b, caret_marker.color.a);
+    render::SetDrawColor(renderer, caret_marker.color);
     SDL_RenderFillRect(renderer, &caret_marker.rect);
   }
 }
@@ -243,7 +242,7 @@ void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
 void WorkspaceShell::DrawFilledRect(SDL_Renderer* renderer,
                                     const SDL_FRect& rect,
                                     SDL_Color color) const {
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   SDL_RenderFillRect(renderer, &rect);
 }
 
@@ -262,7 +261,7 @@ void WorkspaceShell::DrawSurfaceFocusRing(SDL_Renderer* renderer, const SDL_FRec
 void WorkspaceShell::DrawRect(SDL_Renderer* renderer,
                               const SDL_FRect& rect,
                               SDL_Color color) const {
-  SDL_SetRenderDrawColor(renderer, color.r, color.g, color.b, color.a);
+  render::SetDrawColor(renderer, color);
   SDL_RenderRect(renderer, &rect);
 }
 

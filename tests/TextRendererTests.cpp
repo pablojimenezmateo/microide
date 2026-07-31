@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "support/SoftwareCanvas.h"
+
 #include "editor/DiagnosticsRender.h"
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/EditorViewRenderer.h"
@@ -42,6 +44,42 @@ struct TextRendererTestAccess {
 };
 
 namespace {
+
+// A translucent draw composites over what is already there and leaves the target
+// opaque — the frame is painted into a retained RGBA scene texture that is blitted
+// whole to a window that is never cleared, so a sub-255 alpha left in the target
+// re-composites on every present until the region goes flat. Underlines are dimmed
+// to 55%, so their pixels are a mix of the severity colour and the row beneath,
+// not the severity colour with a 140 alpha stamped on it.
+void ExpectDimmedOver(SDL_Surface* pixels,
+                      int x,
+                      int y,
+                      SDL_Color source,
+                      double dim,
+                      SDL_Color beneath,
+                      std::string_view message) {
+  Uint8 r = 0;
+  Uint8 g = 0;
+  Uint8 b = 0;
+  Uint8 a = 0;
+  Expect(SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a), std::string(message) + " (read)");
+  Expect(a == SDL_ALPHA_OPAQUE, std::string(message) + " (must stay opaque)");
+  const double alpha =
+      std::clamp(std::lround(static_cast<double>(source.a) * dim), 0l, 255l) / 255.0;
+  const auto mix = [alpha](Uint8 src, Uint8 dst) {
+    return static_cast<int>(std::lround(src * alpha + dst * (1.0 - alpha)));
+  };
+  const int want_r = mix(source.r, beneath.r);
+  const int want_g = mix(source.g, beneath.g);
+  const int want_b = mix(source.b, beneath.b);
+  Expect(std::abs(static_cast<int>(r) - want_r) <= 2 &&
+             std::abs(static_cast<int>(g) - want_g) <= 2 &&
+             std::abs(static_cast<int>(b) - want_b) <= 2,
+         std::string(message) + " (expected the dimmed mix, got " + std::to_string(r) + "," +
+             std::to_string(g) + "," + std::to_string(b) + " want " + std::to_string(want_r) + "," +
+             std::to_string(want_g) + "," + std::to_string(want_b) + ")");
+}
+
 
 class CountingTextBackend final : public microide::render::TextRendererBackend {
  public:
@@ -119,30 +157,6 @@ void EnsureDummySdlVideo() {
   Expect(initialized, "SDL should initialize with the dummy video driver");
 }
 
-class SoftwareCanvas final {
- public:
-  SoftwareCanvas(int width, int height) {
-    surface_ = SDL_CreateSurface(width, height, SDL_PIXELFORMAT_RGBA8888);
-    Expect(surface_ != nullptr, "renderer regression test should allocate a software surface");
-    renderer_ = SDL_CreateSoftwareRenderer(surface_);
-    Expect(renderer_ != nullptr, "renderer regression test should create a software renderer");
-  }
-
-  ~SoftwareCanvas() {
-    if (renderer_ != nullptr) {
-      SDL_DestroyRenderer(renderer_);
-    }
-    if (surface_ != nullptr) {
-      SDL_DestroySurface(surface_);
-    }
-  }
-
-  SDL_Renderer* renderer() const { return renderer_; }
-
- private:
-  SDL_Surface* surface_ = nullptr;
-  SDL_Renderer* renderer_ = nullptr;
-};
 
 const CountingTextBackend::DrawCall* FindDrawCall(const std::vector<CountingTextBackend::DrawCall>& calls,
                                                   std::string_view text,
@@ -797,11 +811,10 @@ void TestDecoratedTextGridRendererPaintsRowFillAndUnderline() {
   Expect(r == 0x10 && g == 0x40 && b == 0x70 && a == 0xff,
          "decorated text grid renderer should preserve the row fill above the underline band");
 
-  Expect(SDL_ReadSurfacePixel(pixels, 40, 18, &r, &g, &b, &a),
-         "decorated text grid test should read the underline pixel");
-  Expect(r == 0xd0 && g == 0x30 && b == 0x20 &&
-             a == static_cast<Uint8>(std::lround(0xff * 0.55)),
-         "decorated text grid renderer should paint the underline without recoloring the whole row");
+  ExpectDimmedOver(pixels, 40, 18, SDL_Color{0xd0, 0x30, 0x20, 0xff}, 0.55,
+                   SDL_Color{0x10, 0x40, 0x70, 0xff},
+                   "decorated text grid renderer should paint the underline without recoloring the "
+                   "whole row");
 
   Expect(SDL_ReadSurfacePixel(pixels, 132, 10, &r, &g, &b, &a),
          "decorated text grid test should read a pixel outside the fill");
@@ -1186,12 +1199,9 @@ void TestEditorViewRendererPaintsDiagnosticUnderlines() {
              b == theme.editor_background.b && a == theme.editor_background.a,
          "diagnostic underlines should not recolor the whole editor row");
 
-  Expect(SDL_ReadSurfacePixel(pixels, underline_x, underline_y, &r, &g, &b, &a),
-         "diagnostic underline renderer test should read the underline pixel");
-  Expect(r == theme.diagnostic_warning.r && g == theme.diagnostic_warning.g &&
-             b == theme.diagnostic_warning.b &&
-             a == static_cast<Uint8>(std::lround(theme.diagnostic_warning.a * 0.55)),
-         "diagnostic underlines should use the severity color from the theme");
+  ExpectDimmedOver(pixels, underline_x, underline_y, theme.diagnostic_warning, 0.55,
+                   theme.editor_background,
+                   "diagnostic underlines should use the severity color from the theme");
 
   SDL_DestroySurface(pixels);
 }

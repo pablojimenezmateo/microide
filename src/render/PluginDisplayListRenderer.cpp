@@ -77,12 +77,12 @@ void ReplayDisplayList(SDL_Renderer* renderer, TextRenderer& text_renderer,
                  op.color);
         break;
       case DrawOp::Line:
-        SDL_SetRenderDrawColor(renderer, op.color.r, op.color.g, op.color.b, op.color.a);
+        SetDrawColor(renderer, op.color);
         SDL_RenderLine(renderer, ox + op.rect.x, oy + op.rect.y, ox + op.rect.w,
                        oy + op.rect.h);
         break;
       case DrawOp::Polyline: {
-        SDL_SetRenderDrawColor(renderer, op.color.r, op.color.g, op.color.b, op.color.a);
+        SetDrawColor(renderer, op.color);
         // Translate into the reused scratch buffer; polyline point counts are capped.
         polyline_points.clear();
         polyline_points.reserve(op.data_count);
