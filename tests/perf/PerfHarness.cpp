@@ -17,6 +17,7 @@
 #include "WorkspaceShellEventHelpers.h"
 #include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
@@ -482,6 +483,17 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     }
   }
 
+  // MICROIDE_PERF_SUMMARY=1 folds every trace scope into a ranked self-time
+  // table. The harness is the tool you reach for when hunting a hotspot, yet it
+  // was the one binary that never printed that table -- it has no shutdown path
+  // that calls DumpSummaryOnce, so the env var silently did nothing here and the
+  // ranked view was reachable only from a hand-driven live session. Scope the
+  // table to one scenario's measured iterations: reset after warmup (whose
+  // one-time cold work would otherwise dominate every row) and write it out
+  // before the next scenario starts, so each scenario gets its own ranking
+  // instead of one process-wide blend of 70 unrelated workloads.
+  util::PerformanceTrace::ResetSummary();
+
   for (std::size_t i = 0; i < options.iterations; ++i) {
     std::cerr << "[perf] scenario=" << scenario.name << " iteration=" << (i + 1) << "/"
               << options.iterations << '\n';
@@ -531,6 +543,11 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
         .phase_metrics = context.TakePhaseMetrics(),
         .perf_counters = std::move(counter_deltas),
     });
+  }
+  if (util::PerformanceTrace::SummaryEnabled()) {
+    std::cerr << "[perf] trace summary for scenario=" << scenario.name << " ("
+              << options.iterations << " measured iterations)\n";
+    util::PerformanceTrace::WriteSummary(stderr);
   }
   aggregate.metrics = AggregateMetrics(aggregate.iterations);
   ShutdownDriver(&driver);
