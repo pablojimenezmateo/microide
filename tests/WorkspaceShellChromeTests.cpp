@@ -871,8 +871,9 @@ void TestWorkspaceShellSidebarModeTabsPresent() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
 
-  // The header row exposes the three primary view tabs, laid out left-to-right, and no overflow
-  // button when no plugin views are registered.
+  // The header row exposes the three primary view tabs, laid out left-to-right, plus
+  // an overflow button for the builtin views that have no tab (Problems, Tests,
+  // Outline) and any plugin views.
   const SDL_FRect tree_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "tree");
   const SDL_FRect search_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "search");
   const SDL_FRect git_tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, "git");
@@ -880,8 +881,8 @@ void TestWorkspaceShellSidebarModeTabsPresent() {
          "Project, Search, and Source Control tabs should all be present");
   Expect(tree_tab.x < search_tab.x && search_tab.x < git_tab.x,
          "mode tabs should be laid out in Project / Search / Source Control order");
-  Expect(WorkspaceShellTestAccess::SidebarModeOverflowRect(shell).w <= 0.0f,
-         "no overflow button should appear without plugin-contributed views");
+  Expect(WorkspaceShellTestAccess::SidebarModeOverflowRect(shell).w > 0.0f,
+         "the tabless builtin views should give the row an overflow button");
 }
 
 void TestWorkspaceShellTabTooltipRendersAboveSidebar() {

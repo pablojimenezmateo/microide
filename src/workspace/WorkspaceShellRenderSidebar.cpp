@@ -218,7 +218,14 @@ void WorkspaceShell::RenderSidebarSurface(SDL_Renderer* renderer, const Workspac
   if (mode_row.has_overflow) {
     const bool hovered =
         last_mouse_position_valid_ && Contains(mode_row.overflow_rect, last_mouse_x_, last_mouse_y_);
-    const bool active = sidebar_mode_open || FindBuiltinSidebarView(active_view_id) == nullptr;
+    // Lit whenever the current view lives behind the overflow rather than in a tab
+    // (Problems / Tests / Outline / any plugin view), so the rail always shows where
+    // you are. Testing "is it a builtin view" instead of "is it one of the drawn
+    // tabs" left the row completely unlit in the three builtin overflow views.
+    const bool active_view_has_tab =
+        std::any_of(mode_row.tabs.begin(), mode_row.tabs.begin() + mode_row.tab_count,
+                    [&](const SidebarModeTab& tab) { return tab.id == active_view_id; });
+    const bool active = sidebar_mode_open || !active_view_has_tab;
     const ButtonColors colors = ResolveButtonColors(
         theme_, ButtonTone::Neutral,
         ButtonVisualState{.enabled = true, .hovered = hovered, .active = active});

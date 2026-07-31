@@ -3425,9 +3425,12 @@ void TestWorkspaceShellSidebarModeTabsSwitchView() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
 
-  // With no plugin views, the header row shows three primary tabs and no overflow.
-  Expect(WorkspaceShellTestAccess::SidebarModeOverflowRect(shell).w <= 0.0f,
-         "with no plugin views the mode row should not show an overflow button");
+  // Three primary tabs plus an overflow button. The overflow is not plugin-only:
+  // Problems, Tests and Outline are builtin views with no tab of their own, and
+  // they were once filtered out of both the row and its menu, leaving them
+  // reachable only by typing `sidebar-show problems`.
+  Expect(WorkspaceShellTestAccess::SidebarModeOverflowRect(shell).w > 0.0f,
+         "the builtin overflow views should give the mode row an overflow button");
 
   const auto click_tab = [&](std::string_view id) {
     const SDL_FRect tab = WorkspaceShellTestAccess::SidebarModeTabRect(shell, id);
@@ -3451,6 +3454,27 @@ void TestWorkspaceShellSidebarModeTabsSwitchView() {
   Expect(click_tab("tree"), "clicking the Project tab should be handled");
   Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Tree,
          "clicking the Project tab should activate Tree mode");
+
+  // The tabless builtin views are reachable from the overflow menu, and selecting
+  // one actually switches to it.
+  const SDL_FRect overflow = WorkspaceShellTestAccess::SidebarModeOverflowRect(shell);
+  Expect(SendMouseDown(shell, overflow.x + overflow.w * 0.5f, overflow.y + overflow.h * 0.5f,
+                       SDL_BUTTON_LEFT),
+         "clicking the mode-row overflow button should be handled");
+  const auto overflow_labels = WorkspaceShellTestAccess::SidebarModeMenuLabels(shell);
+  const auto lists = [&](std::string_view label) {
+    return std::any_of(overflow_labels.begin(), overflow_labels.end(),
+                       [&](const std::string& item) { return item == label; });
+  };
+  Expect(lists("Problems") && lists("Tests") && lists("Outline"),
+         "the mode-row overflow menu should list every view that has no tab");
+  const auto problems_rect = WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Problems");
+  Expect(problems_rect.has_value(), "the overflow menu should expose a Problems entry rect");
+  Expect(SendMouseDown(shell, problems_rect->x + problems_rect->w * 0.5f,
+                       problems_rect->y + problems_rect->h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking the Problems entry should be handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Problems,
+         "choosing Problems from the overflow menu should activate the Problems view");
 }
 
 void TestWorkspaceShellProjectTabsDragReorderToEnd() {

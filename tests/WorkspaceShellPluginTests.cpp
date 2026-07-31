@@ -3064,11 +3064,16 @@ return ide.plugin({
   Expect(std::find(labels.begin(), labels.end(), "Example Sidebar") != labels.end(),
          "sidebar mode menu should list loaded plugin sidebars by label");
   Expect(std::find(labels.begin(), labels.end(), "Chat") == labels.end(),
-         "the sidebar mode menu should omit the chat view");
-  Expect(std::find(labels.begin(), labels.end(), "Problems") == labels.end(),
-         "the sidebar mode menu should omit the Problems entry");
-  Expect(std::find(labels.begin(), labels.end(), "Tests") == labels.end(),
-         "the sidebar mode menu should omit the Tests entry");
+         "the sidebar mode menu should omit the chat view, which no longer exists");
+  // Problems / Tests / Outline are builtin views with no tab of their own, so the
+  // overflow menu is the only place they can be reached. They were excluded here
+  // back when they were retired surfaces and stayed excluded after being reshipped.
+  Expect(std::find(labels.begin(), labels.end(), "Problems") != labels.end(),
+         "the sidebar mode menu should list the tabless Problems view");
+  Expect(std::find(labels.begin(), labels.end(), "Tests") != labels.end(),
+         "the sidebar mode menu should list the tabless Tests view");
+  Expect(std::find(labels.begin(), labels.end(), "Outline") != labels.end(),
+         "the sidebar mode menu should list the tabless Outline view");
 
   const auto example_rect =
       WorkspaceShellTestAccess::SidebarModeMenuItemRect(shell, "Example Sidebar");

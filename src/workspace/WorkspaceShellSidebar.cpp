@@ -242,7 +242,12 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
   }
 
   // Primary tabs are the builtin Project / Search / Source Control views, honoring the user's
-  // hidden/order policy. Any non-hidden plugin view spills into the overflow menu.
+  // hidden/order policy. Everything else -- Problems, Tests, Outline, and any
+  // non-hidden plugin view -- spills into the overflow menu. Those three builtins
+  // used to be filtered out of both the row and the menu, a leftover from when they
+  // were retired surfaces; they came back without the rail being told, so they were
+  // reachable only by typing `sidebar-show problems` and, once shown, left the rail
+  // with no highlighted tab and no control to get back.
   const auto& policies = context_.current_project_state.sidebar_policies;
   for (const SidebarViewInfo& view : OrderedSidebarViews(plugin_runtime_.Host(), policies)) {
     if (view.id == "tree" || view.id == "search" || view.id == "git") {
@@ -250,8 +255,7 @@ SidebarModeRowLayout WorkspaceShell::SidebarModeRow(const SDL_FRect& sidebar_rec
         layout.tabs[static_cast<std::size_t>(layout.tab_count++)] =
             SidebarModeTab{.id = view.id, .mode = view.mode, .rect = {}};
       }
-    } else if (view.id != "chat" && view.id != "problems" && view.id != "tests" &&
-               view.id != "outline") {
+    } else {
       layout.has_overflow = true;
     }
   }

@@ -122,11 +122,13 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
     sidebar_mode_menu_items_.reserve(views.size());
     sidebar_mode_menu_entries_.reserve(views.size());
 
+    // Every registered view is listed, primary tabs included: the items are
+    // checkable, so the menu doubles as the "which view am I in" readout for the
+    // views that have no tab of their own. Problems/Tests/Outline used to be
+    // skipped here (and in SidebarModeRow) from when they were retired surfaces --
+    // they were re-shipped without being re-listed, leaving three views with no UI
+    // path at all.
     for (const SidebarViewInfo& view : views) {
-      if (view.id == "chat" || view.id == "problems" || view.id == "tests" ||
-          view.id == "outline") {
-        continue;
-      }
       sidebar_mode_menu_entries_.push_back(
           SidebarModeMenuEntry{.label = std::string(view.label), .id = std::string(view.id)});
       const auto& entry = sidebar_mode_menu_entries_.back();

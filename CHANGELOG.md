@@ -154,6 +154,14 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **The Problems, Tests and Outline sidebars are reachable again.** All three are
+  registered sidebar views that render fine, but both the sidebar's view-tab row
+  and its overflow menu filtered them out by name — a leftover from when they were
+  retired surfaces, never undone when they came back. They could only be opened by
+  typing `sidebar-show problems` in the command palette, and once open the rail
+  showed three unhighlighted tabs, no overflow button, and no way back. They now
+  appear in the overflow menu, and the overflow button lights up whenever the
+  active view is one of the tabless ones.
 - **Breakpoints work again on gdb 15.x.** On the Ubuntu 24.04 system gdb, a debug
   session launched, streamed the program's entire output, and terminated without
   ever stopping — every breakpoint silently ignored. The DAP handshake sent
