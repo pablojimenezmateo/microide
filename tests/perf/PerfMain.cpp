@@ -543,25 +543,69 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "project_search_literal",
       .smoke = true,
+      // Decoupled tolerances (see perf-harness.md). Now that the async stages are
+      // driven to fixed states the ALLOCATION counts are exactly reproducible
+      // run to run -- that is the real oracle here, and it is gated tight. The
+      // measured work is a couple of milliseconds, where this shared runner's
+      // scheduler jitter is +/-20%, so the wall envelope is widened rather than
+      // letting jitter trip a gate every other run.
+      .tolerance_p50_percent = 75.0,
+      .tolerance_p95_percent = 250.0,
+      .tolerance_max_percent = 400.0,
+      .tolerance_alloc_p50_percent = 10.0,
+      .tolerance_alloc_p95_percent = 20.0,
+      .tolerance_alloc_max_percent = 50.0,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/kernel_sized_project");
-            (void)context.ExecuteCommand("search node_0001");
-            context.Wait(std::chrono::milliseconds(50));
-            context.ConsumeProjectSearchUpdates();
+            // `search` is Find in Buffer (Ctrl+F), not project search -- this
+            // scenario ran the wrong command against a query that appears in no
+            // file's CONTENT (`node_0001` is a filename in this fixture), then
+            // slept 50 ms. Its whole 52 ms wall was that sleep, and its
+            // allocations were whatever the background file-index build happened
+            // to have reached, which is why the committed baseline holds
+            // p50=193 against p95=91930 and max=166987.
+            //
+            // Run the search the name promises, over a query with real coverage
+            // (999 hits across the 1200-file fixture), and drive both async
+            // stages to fixed states as search_first_result does: the index build
+            // first (node_1200.cc is in the last subsystem directory, so its
+            // presence means the build completed), then the search itself.
+            if (!context.WaitForFileIndexPath("subsys_19/node_1200.cc",
+                                              std::chrono::seconds(15))) {
+              throw std::runtime_error("project_search_literal: file index did not build in time");
+            }
+            context.StartSearch("symbol_0");
+            if (!context.WaitForProjectSearchFinished(std::chrono::seconds(15))) {
+              throw std::runtime_error("project_search_literal: search did not finish in time");
+            }
             context.PumpFrames(2);
           },
   });
   PerfHarness::RegisterScenario(Scenario{
       .name = "project_search_regex",
       .smoke = true,
+      // See project_search_literal.
+      .tolerance_p50_percent = 75.0,
+      .tolerance_p95_percent = 250.0,
+      .tolerance_max_percent = 400.0,
+      .tolerance_alloc_p50_percent = 10.0,
+      .tolerance_alloc_p95_percent = 20.0,
+      .tolerance_alloc_max_percent = 50.0,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/kernel_sized_project");
+            // See project_search_literal: same wrong command, same content-free
+            // query, same fixed-sleep sampling.
+            if (!context.WaitForFileIndexPath("subsys_19/node_1200.cc",
+                                              std::chrono::seconds(15))) {
+              throw std::runtime_error("project_search_regex: file index did not build in time");
+            }
             context.ToggleProjectSearchPatternMode();
-            (void)context.ExecuteCommand("search node_0[0-9]+");
-            context.Wait(std::chrono::milliseconds(50));
-            context.ConsumeProjectSearchUpdates();
+            context.StartSearch("symbol_0[0-9]+");
+            if (!context.WaitForProjectSearchFinished(std::chrono::seconds(15))) {
+              throw std::runtime_error("project_search_regex: search did not finish in time");
+            }
             context.PumpFrames(2);
           },
   });
