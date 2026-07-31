@@ -1,6 +1,8 @@
 #pragma once
 
+#include <cstdint>
 #include <cstdio>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -32,6 +34,17 @@ class PerformanceTrace {
   // (MICROIDE_TRACE_REDRAW and friends).
   static bool FlagEnabled(const char* env_name);
 
+  // Fold an already-measured duration into the ranked summary. See
+  // TraceChannel::RecordSample.
+  static void RecordSample(std::string_view label, double duration_ms) {
+    Channel().RecordSample(label, duration_ms);
+  }
+  static void RecordSampleNs(std::string_view label, std::uint64_t duration_ns) {
+    if (Channel().AggregateEnabled()) {
+      Channel().RecordSample(label, static_cast<double>(duration_ns) / 1'000'000.0);
+    }
+  }
+
   static void ResetSummary() { Channel().ResetAggregate(); }
   static std::vector<TraceChannel::AggregateEntry> SummarySnapshot() {
     return Channel().AggregateSnapshot();
@@ -49,6 +62,35 @@ class PerformanceTrace {
 
    private:
     TraceScope scope_;
+  };
+
+  // Assembles a `Base(key=value,key=value)` label, doing the string work only
+  // when the channel is on.
+  //
+  // A trace label that carries the path/index/size it ran on is what makes a
+  // summary row actionable ("which file was slow", not "some file was"), but
+  // the concatenation is pure waste in a normal run. Every call site that
+  // wanted one was hand-rolling the same `if (Enabled())` guard around a
+  // `std::string +=` chain; a missed guard is an allocation per call in
+  // production.
+  class ScopeLabel {
+   public:
+    explicit ScopeLabel(std::string_view base);
+
+    ScopeLabel(const ScopeLabel&) = delete;
+    ScopeLabel& operator=(const ScopeLabel&) = delete;
+
+    ScopeLabel& Field(std::string_view key, std::string_view value);
+    ScopeLabel& Field(std::string_view key, long long value);
+
+    // Empty when the channel is off -- Scope ignores the label in that case, so
+    // there is nothing to build.
+    std::string_view View();
+
+   private:
+    std::string text_;
+    bool enabled_ = false;
+    bool open_ = false;
   };
 };
 

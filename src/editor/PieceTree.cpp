@@ -5,6 +5,9 @@
 #include <limits>
 #include <utility>
 
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
+
 namespace microide::editor {
 
 namespace {
@@ -463,6 +466,14 @@ std::vector<std::string> PieceTree::SliceLines(std::size_t begin, std::size_t en
 }
 
 std::vector<std::string> PieceTree::ToVector() const {
+  // A whole-document materialization: one std::string per line, O(document).
+  // The piece tree exists so the hot paths never need this, so a non-trivial
+  // count here means a caller is copying the document per frame or per keystroke.
+  // (The per-line read path is deliberately NOT counted -- an atomic add on
+  // LineView would cost more than the counter could ever reveal.)
+  util::PerformanceTrace::Scope perf_scope("editor::PieceTree::ToVector");
+  util::AddPerformanceCounter(util::PerfCounterId::DocumentFullTextMaterializations);
+  util::AddPerformanceCounter(util::PerfCounterId::DocumentFullTextBytes, original_.size());
   std::vector<std::string> out;
   if (line_count_ == 0) return out;
   ExtractLineRange(0, line_count_, out);
@@ -473,6 +484,7 @@ std::vector<std::string> PieceTree::ToVector() const {
 
 void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
                                  const std::vector<std::string>& inserted) {
+  util::AddPerformanceCounter(util::PerfCounterId::DocumentEdits);
   const std::size_t n = line_count_;
   start = std::min(start, n);
   removed = std::min(removed, n - start);

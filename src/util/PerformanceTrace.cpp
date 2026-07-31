@@ -14,6 +14,43 @@ TraceChannel& PerformanceTrace::Channel() {
   return channel;
 }
 
+PerformanceTrace::ScopeLabel::ScopeLabel(std::string_view base) {
+  if (!Enabled()) {
+    return;
+  }
+  enabled_ = true;
+  text_.assign(base);
+}
+
+PerformanceTrace::ScopeLabel& PerformanceTrace::ScopeLabel::Field(std::string_view key,
+                                                                 std::string_view value) {
+  if (!enabled_) {
+    return *this;
+  }
+  text_ += open_ ? ',' : '(';
+  open_ = true;
+  text_.append(key);
+  text_ += '=';
+  text_.append(value);
+  return *this;
+}
+
+PerformanceTrace::ScopeLabel& PerformanceTrace::ScopeLabel::Field(std::string_view key,
+                                                                 long long value) {
+  if (!enabled_) {
+    return *this;
+  }
+  return Field(key, std::to_string(value));
+}
+
+std::string_view PerformanceTrace::ScopeLabel::View() {
+  if (open_) {
+    text_ += ')';
+    open_ = false;
+  }
+  return text_;
+}
+
 bool PerformanceTrace::FlagEnabled(const char* env_name) {
   if (env_name == nullptr || env_name[0] == '\0') {
     return false;

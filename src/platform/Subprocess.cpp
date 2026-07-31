@@ -5,6 +5,9 @@
 #include <chrono>
 #include <cstdlib>
 
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
+
 #if defined(__unix__) || defined(__APPLE__)
 #include <array>
 #include <csignal>
@@ -499,9 +502,11 @@ void WriteAllToHandle(HANDLE handle, const std::string& text) {
 
 #endif
 
-}  // namespace
-
-SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const SubprocessOptions& options) {
+// Split from RunSubprocess so the instrumentation wrapper below covers every one
+// of this function's ~10 early returns without threading a scope guard through
+// each of them.
+SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& argv,
+                                             const SubprocessOptions& options) {
   SubprocessResult result;
   if (argv.empty()) {
     return result;
@@ -782,6 +787,46 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv, const Subpr
   result.stderr_text = "Subprocess execution is not implemented on this platform";
   return result;
 #endif
+}
+
+}  // namespace
+
+SubprocessResult RunSubprocess(const std::vector<std::string>& argv,
+                               const SubprocessOptions& options) {
+  // Every git invocation, external tool, and one-shot helper the editor runs
+  // funnels through here, and each one is a fork+exec plus a blocking wait on a
+  // background thread. This was the single largest unmeasured cost in the app:
+  // a session could spend seconds in child processes with nothing in any trace
+  // to say so.
+  util::PerformanceTrace::ScopeLabel label("platform::RunSubprocess");
+  if (!argv.empty()) {
+    // Program basename only. The full argv would mint a distinct label per
+    // invocation (paths, revs, sha1s), which blows the label cap and buries the
+    // aggregate rather than ranking it.
+    std::string_view program = argv.front();
+    const std::size_t slash = program.find_last_of('/');
+    if (slash != std::string_view::npos) {
+      program.remove_prefix(slash + 1);
+    }
+    label.Field("program", program);
+  }
+  util::PerformanceTrace::Scope scope(label.View());
+
+  const auto start = std::chrono::steady_clock::now();
+  SubprocessResult result = RunSubprocessUninstrumented(argv, options);
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+
+  util::AddPerformanceCounter(util::PerfCounterId::SubprocessSpawns);
+  util::AddPerformanceCounter(
+      util::PerfCounterId::SubprocessWaitMs,
+      static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count()));
+  util::AddPerformanceCounter(util::PerfCounterId::SubprocessOutputBytes,
+                              result.stdout_text.size() + result.stderr_text.size());
+  if (result.timed_out) {
+    util::AddPerformanceCounter(util::PerfCounterId::SubprocessTimeouts);
+  }
+  return result;
 }
 
 }  // namespace microide::platform

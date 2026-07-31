@@ -11,6 +11,7 @@
 #include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
 namespace microide::project {
@@ -218,6 +219,10 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
   if (!blob.has_value()) {
     return std::nullopt;
   }
+  // Every compare/merge/review surface that shows a revision's side loads it
+  // here, so this is what feeds the diff pipeline's input-line counter.
+  util::AddPerformanceCounter(util::PerfCounterId::GitDiffLoads);
+  util::AddPerformanceCounter(util::PerfCounterId::GitDiffBytesRead, blob->content.size());
   return GitFileContentAtCommit{
       .exists = true, .content = blob->content, .truncated = blob->truncated};
 }

@@ -74,6 +74,14 @@ class TraceChannel {
   // summary scoped to one phase rather than the whole process.
   void ResetAggregate();
 
+  // Fold an externally measured duration into the same ranked table, as a leaf
+  // (self == total). For subsystems that already time themselves in a shape a
+  // scope cannot wrap -- the compare pipeline's per-stage nanosecond profile,
+  // an LSP round-trip that spans two callbacks. Without this their numbers exist
+  // but are only reachable from a bench binary, so a live session cannot say
+  // where compare time went. No-op when aggregation is off.
+  void RecordSample(std::string_view label, double duration_ms);
+
   // Snapshot ranked by descending self time. Safe to call from any thread.
   std::vector<AggregateEntry> AggregateSnapshot() const;
 

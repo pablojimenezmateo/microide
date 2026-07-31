@@ -7,6 +7,8 @@
 #include "workspace/StdioClientQueue.h"
 #include "util/DebugTrace.h"
 #include "util/MainThreadMailbox.h"
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/WakePipe.h"
 
 #include <atomic>
@@ -252,6 +254,8 @@ struct DapClient::Impl {
     }
     std::lock_guard wlock(write_mutex);
     for (QueuedMessage& queued : batch) {
+      util::AddPerformanceCounter(util::PerfCounterId::DapMessagesSent);
+      util::AddPerformanceCounter(util::PerfCounterId::DapBytesSent, queued.approx_bytes);
       if (!proc.Write(std::move(queued).TakeSerialized())) {
         SetLastError("failed to send message to debug adapter");
         stop_io.store(true, std::memory_order_release);
@@ -420,6 +424,7 @@ struct DapClient::Impl {
         break;
       }
       if (!chunk->empty()) {
+        util::AddPerformanceCounter(util::PerfCounterId::DapBytesReceived, chunk->size());
         framer_.Append(*chunk);
       }
       if (framer_.BufferedBytes() > kMaxDapReadBufferBytes) {
@@ -450,6 +455,10 @@ struct DapClient::Impl {
   // --- dispatch -------------------------------------------------------------
   void DispatchMessage(util::JsonValue msg) {
     // Single funnel for every inbound message (responses, events, reverse requests).
+    // Mirrors lsp::DispatchMessage -- these two transports duplicate each other,
+    // so instrumenting one and not the other leaves half the picture.
+    util::PerformanceTrace::Scope perf_scope("dap::DispatchMessage");
+    util::AddPerformanceCounter(util::PerfCounterId::DapMessagesReceived);
     util::DebugTrace::Message("recv", msg);
     const std::string& type = msg["type"].AsString();
     if (type == "response") {

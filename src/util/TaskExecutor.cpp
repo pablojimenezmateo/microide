@@ -5,6 +5,8 @@
 #include <exception>
 #include <utility>
 
+#include "util/PerformanceCounters.h"
+
 namespace microide::util {
 
 CancellationToken::CancellationToken(std::shared_ptr<State> state) : state_(std::move(state)) {}
@@ -54,6 +56,7 @@ void TaskExecutor::Submit(std::string coalesce_key, Task task) {
         }
       }
     }
+    AddPerformanceCounter(PerfCounterId::TaskExecutorTasksEnqueued);
     pending_.push_back(TaskEntry{.task = std::move(task),
                                  .state = std::move(state),
                                  .coalesce_key = std::move(coalesce_key)});
@@ -105,6 +108,7 @@ void TaskExecutor::WorkerMain(std::size_t slot) {
       // and skip the active_states_ clear below, hanging WaitForIdle(). Swallow it
       // here and keep the worker alive, matching SerialWorkQueue's firewall.
       try {
+        AddPerformanceCounter(PerfCounterId::TaskExecutorTasksRun);
         entry.task(token);
       } catch (const std::exception& ex) {
         std::fprintf(stderr, "[task-executor] task threw std::exception: %s\n", ex.what());

@@ -79,6 +79,9 @@ namespace microide::util {
   X(SubprocessOutputBytes, "subprocess.output_bytes")                                           \
   X(SubprocessTimeouts, "subprocess.timeouts")                                                  \
   /* --- git ------------------------------------------------------------- */                  \
+  X(GitCommandsRun, "git.commands_run")                                                         \
+  X(GitCommandOutputBytes, "git.command_output_bytes")                                          \
+  X(GitCommandFailures, "git.command_failures")                                                 \
   X(GitStatusRefreshCalls, "git.status_refresh_calls")                                          \
   X(GitStatusEntriesParsed, "git.status_entries_parsed")                                        \
   X(GitBlameQueries, "git.blame_queries")                                                       \
@@ -100,16 +103,15 @@ namespace microide::util {
   /* --- plugin runtime --------------------------------------------------- */                 \
   X(PluginLuaCallbackDispatches, "plugin.lua_callback_dispatches")                              \
   X(PluginLuaCallbackErrors, "plugin.lua_callback_errors")                                      \
-  X(PluginHostApiCalls, "plugin.host_api_calls")                                                \
-  X(PluginSnapshotRebuilds, "plugin.snapshot_rebuilds")                                         \
   /* --- language server / debug adapter ---------------------------------- */                 \
-  X(LspRequestsSent, "lsp.requests_sent")                                                       \
-  X(LspNotificationsSent, "lsp.notifications_sent")                                             \
+  X(LspMessagesSent, "lsp.messages_sent")                                                       \
+  X(LspBytesSent, "lsp.bytes_sent")                                                             \
   X(LspMessagesReceived, "lsp.messages_received")                                               \
   X(LspBytesReceived, "lsp.bytes_received")                                                     \
-  X(LspJsonParseCalls, "lsp.json_parse_calls")                                                  \
   X(DapMessagesSent, "dap.messages_sent")                                                       \
+  X(DapBytesSent, "dap.bytes_sent")                                                             \
   X(DapMessagesReceived, "dap.messages_received")                                               \
+  X(DapBytesReceived, "dap.bytes_received")                                                     \
   /* --- filesystem watch / index ----------------------------------------- */                 \
   X(FileWatcherWakes, "watch.wakes")                                                            \
   X(FileWatcherEventsCoalesced, "watch.events_coalesced")                                       \
@@ -121,7 +123,6 @@ namespace microide::util {
   X(MainThreadMailboxPosts, "task.main_thread_mailbox_posts")                                   \
   X(MainThreadMailboxDrains, "task.main_thread_mailbox_drains")                                 \
   /* --- text document model ---------------------------------------------- */                 \
-  X(DocumentLineQueries, "document.line_queries")                                               \
   X(DocumentEdits, "document.edits")                                                            \
   X(DocumentFullTextMaterializations, "document.full_text_materializations")                    \
   X(DocumentFullTextBytes, "document.full_text_bytes")

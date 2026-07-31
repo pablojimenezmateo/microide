@@ -13,6 +13,8 @@
 #include <utility>
 #include <vector>
 
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/LspProtocol.h"
 #include "workspace/ProtocolNumeric.h"
@@ -140,6 +142,11 @@ void LspClient::Impl::HandleServerRequest(const util::JsonValue& id, const std::
 }
 
 void LspClient::Impl::DispatchMessage(util::JsonValue msg) {
+  // Runs on the LSP I/O thread. A chatty server (clangd publishing diagnostics
+  // per keystroke) can make this the busiest loop in the process, and nothing
+  // measured it.
+  util::PerformanceTrace::Scope perf_scope("lsp::DispatchMessage");
+  util::AddPerformanceCounter(util::PerfCounterId::LspMessagesReceived);
   const bool has_method = msg.HasKey("method") && msg["method"].IsString();
   const bool has_id = msg.HasKey("id") && !msg["id"].IsNull();
   if (shutting_down.load(std::memory_order_acquire)) {

@@ -6,6 +6,8 @@
 #include <utility>
 #include <vector>
 
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
 namespace microide::compare {
@@ -114,6 +116,7 @@ std::vector<TaggedChange> TaggedChanges(const std::vector<SideChange>& changes, 
 MergeModel BuildMergeModel(const std::string& base,
                            const std::string& incoming,
                            const std::string& current) {
+  util::PerformanceTrace::Scope perf_scope("merge::BuildMergeModel");
   MergeModel model;
   model.base_lines = util::SplitLines(base);
   model.incoming_lines = util::SplitLines(incoming);
@@ -216,6 +219,8 @@ MergeModel BuildMergeModel(const std::string& base,
     model.hunks[i].index = static_cast<int>(i);
   }
 
+  util::AddPerformanceCounter(util::PerfCounterId::MergeModelBuilds);
+  util::AddPerformanceCounter(util::PerfCounterId::MergeModelConflictsFound, model.hunks.size());
   return model;
 }
 

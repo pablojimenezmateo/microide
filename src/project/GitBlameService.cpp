@@ -20,6 +20,7 @@
 #include "project/GitCommandUtil.h"
 #include "util/TransparentStringHash.h"
 #include "util/Parse.h"
+#include "util/PerformanceCounters.h"
 #include "util/SaturatingMath.h"
 #include "util/SdlWake.h"
 #include "util/TaskExecutor.h"
@@ -377,6 +378,9 @@ struct GitBlameService::Impl {
   }
 
   GitBlameSnapshot Snapshot(const GitBlameRequest& request) const {
+    // Queried from frame prep on every frame the caret line is blamed, so the
+    // hit rate here is what keeps inline blame off the git subprocess path.
+    util::AddPerformanceCounter(util::PerfCounterId::GitBlameQueries);
     GitBlameSnapshot snapshot;
     snapshot.absolute_path = request.absolute_path.lexically_normal();
     snapshot.visible_start_line = request.visible_start_line;
@@ -424,6 +428,7 @@ struct GitBlameService::Impl {
                                                     clear_generation);
     const auto cache_it = file_caches.find(file_key);
     if (cache_it != file_caches.end()) {
+      util::AddPerformanceCounter(util::PerfCounterId::GitBlameCacheHits);
       const FileCache& cache = cache_it->second;
       snapshot.eligible = cache.eligible;
       if (result_window.start <= result_window.end) {

@@ -5,6 +5,8 @@
 #include <system_error>
 
 #include "platform/Subprocess.h"
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
@@ -155,6 +157,16 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
                                             std::string stdin_text,
                                             bool silence_stderr,
                                             int timeout_ms) {
+  // Label by subcommand only. This is the single choke point every git call in
+  // the app funnels through, so `git.status` vs `git.blame` vs `git.diff` is the
+  // breakdown worth having; the operands (paths, revs, sha1s) would mint a fresh
+  // label per invocation and turn the ranked summary back into a log.
+  util::PerformanceTrace::ScopeLabel label("git::RunCommand");
+  if (!arguments.empty()) {
+    label.Field("sub", arguments.front());
+  }
+  util::PerformanceTrace::Scope perf_scope(label.View());
+
   std::vector<std::string> command;
   command.reserve(arguments.size() + 4);
   command.emplace_back("git");
@@ -188,6 +200,12 @@ CommandResult ReadGitCommandOutputWithStdin(const std::filesystem::path& root,
   options.stdin_text = std::move(stdin_text);
   options.timeout_ms = timeout_ms;
   const platform::SubprocessResult result = platform::RunSubprocess(command, options);
+  util::AddPerformanceCounter(util::PerfCounterId::GitCommandsRun);
+  util::AddPerformanceCounter(util::PerfCounterId::GitCommandOutputBytes,
+                              result.stdout_text.size() + result.stderr_text.size());
+  if (result.exit_code != 0) {
+    util::AddPerformanceCounter(util::PerfCounterId::GitCommandFailures);
+  }
   std::string output = result.stdout_text;
   if (!silence_stderr && !result.stderr_text.empty()) {
     if (!output.empty() && output.back() != '\n') {

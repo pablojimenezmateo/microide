@@ -10,6 +10,7 @@
 #include "platform/HostPlatform.h"
 #include "project/ProjectFileScanner.h"
 #include "util/DurableFile.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 
@@ -205,6 +206,9 @@ void FileIndex::Refresh() {
 bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
                            const std::function<bool()>& is_cancelled) {
   util::PerformanceTrace::Scope perf_scope("FileIndex::ApplyBatch");
+  util::AddPerformanceCounter(util::PerfCounterId::FileIndexApplyBatchCalls);
+  util::AddPerformanceCounter(util::PerfCounterId::FileWatcherEventsCoalesced,
+                              batch.changes.size());
   if (batch.is_initial) {
     util::PerformanceTrace::Scope initial_scope("FileIndex::ApplyBatch::InitialBulkLoad");
     // Poll the cancellation predicate periodically (not every iteration) so an
@@ -419,6 +423,7 @@ bool FileIndex::RemoveProjectSubtreeLocked(const std::filesystem::path& relative
 
 void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const {
   util::PerformanceTrace::Scope perf_scope("FileIndex::RebuildCacheLocked");
+  util::AddPerformanceCounter(util::PerfCounterId::FileIndexRebuilds);
   auto rebuilt = std::make_shared<std::vector<std::filesystem::path>>();
   if (root_.empty()) {
     cache.files = std::shared_ptr<const std::vector<std::filesystem::path>>(std::move(rebuilt));

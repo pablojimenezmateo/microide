@@ -11,6 +11,8 @@
 #include <mutex>
 #include <thread>
 
+#include "util/PerformanceCounters.h"
+
 namespace microide::workspace {
 
 // Flush every queued outbound message. Runs only on the I/O thread; holds
@@ -37,6 +39,8 @@ void LspClient::Impl::DrainOutbound() {
   }
   std::lock_guard wlock(write_mutex);
   for (QueuedMessage& queued : batch) {
+    util::AddPerformanceCounter(util::PerfCounterId::LspMessagesSent);
+    util::AddPerformanceCounter(util::PerfCounterId::LspBytesSent, queued.approx_bytes);
     if (!proc.Write(std::move(queued).TakeSerialized())) {
       SetLastError("failed to send message to language server");
       stop_io.store(true, std::memory_order_release);
@@ -155,7 +159,10 @@ void LspClient::Impl::IoMain() {
     }
     auto chunk = proc.Read(4096, read_timeout);
     if (!chunk) break;  // EOF / fatal read error
-    if (!chunk->empty()) framer_.Append(*chunk);
+    if (!chunk->empty()) {
+      util::AddPerformanceCounter(util::PerfCounterId::LspBytesReceived, chunk->size());
+      framer_.Append(*chunk);
+    }
     if (framer_.BufferedBytes() > kMaxLspReadBufferBytes) {
       break;  // runaway server (no valid frame): tear the session down
     }

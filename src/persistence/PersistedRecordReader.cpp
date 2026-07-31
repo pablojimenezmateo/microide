@@ -1,6 +1,8 @@
 #include "persistence/PersistedRecordReader.h"
 
 #include "persistence/PersistedRecordWriter.h"
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 
 #include <array>
 #include <cstddef>
@@ -153,12 +155,15 @@ std::optional<PersistedRecordReadResult> TryReadSpecificFile(
     return std::nullopt;
   }
 
+  util::PerformanceTrace::Scope perf_scope("persistence::ReadRecordFile");
   std::vector<std::byte> file_bytes;
   PersistedRecordReaderError read_error = PersistedRecordReaderError::None;
   if (!ReadAllBytes(path, &file_bytes, &read_error)) {
     SetError(error, read_error);
     return std::nullopt;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordReads);
+  util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordBytesRead, file_bytes.size());
 
   PersistedRecordReadResult decoded;
   PersistedRecordReaderError decode_error = PersistedRecordReaderError::None;

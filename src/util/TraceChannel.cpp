@@ -193,6 +193,13 @@ void TraceChannel::RecordAggregate(std::string_view label, double total_ms, doub
   entry.max_ms = std::max(entry.max_ms, total_ms);
 }
 
+void TraceChannel::RecordSample(std::string_view label, double duration_ms) {
+  if (!aggregate_enabled_ || impl_ == nullptr) {
+    return;
+  }
+  RecordAggregate(label, duration_ms, duration_ms);
+}
+
 std::vector<TraceChannel::AggregateEntry> TraceChannel::AggregateSnapshot() const {
   std::vector<AggregateEntry> entries;
   if (impl_ == nullptr) {

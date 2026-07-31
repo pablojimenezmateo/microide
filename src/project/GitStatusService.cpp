@@ -5,6 +5,8 @@
 
 #include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 
 namespace microide::project {
@@ -12,19 +14,27 @@ namespace microide::project {
 std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
     const std::filesystem::path& root) {
   util::StartupTrace::Scope trace_scope("CollectGitStatuses");
+  util::PerformanceTrace::Scope perf_scope("git::CollectGitStatuses");
+  util::AddPerformanceCounter(util::PerfCounterId::GitStatusRefreshCalls);
   const GitRepository repo(root);
   if (!repo.IsValid()) {
     return {};
   }
-  return repo.GetStatuses();
+  std::unordered_map<std::string, GitFileStatus> statuses = repo.GetStatuses();
+  util::AddPerformanceCounter(util::PerfCounterId::GitStatusEntriesParsed, statuses.size());
+  return statuses;
 }
 
 std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root) {
+  util::PerformanceTrace::Scope perf_scope("git::CollectGitWorkingTreeEntries");
+  util::AddPerformanceCounter(util::PerfCounterId::GitStatusRefreshCalls);
   const GitRepository repo(root);
   if (!repo.IsValid()) {
     return {};
   }
-  return repo.GetWorkingTreeEntries();
+  std::vector<GitWorkingTreeEntry> entries = repo.GetWorkingTreeEntries();
+  util::AddPerformanceCounter(util::PerfCounterId::GitStatusEntriesParsed, entries.size());
+  return entries;
 }
 
 std::unordered_map<std::string, GitFileStatus> BuildGitStatusMap(

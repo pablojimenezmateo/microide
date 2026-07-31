@@ -10,6 +10,8 @@
 #include <string_view>
 #include <vector>
 
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/SaturatingMath.h"
 #include "util/StringUtil.h"
 
@@ -1510,6 +1512,26 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   const std::uint64_t measured_substeps = profile.split_lines_ns + profile.line_alignment_ns +
                                           profile.hunk_alignment_ns + profile.intraline_ns;
   profile.row_assembly_ns = util::SaturatingSub(profile.total_ns, measured_substeps);
+
+  // The stage profile above has always existed, but only microide_diff_bench
+  // ever read it -- a compare that felt slow in the running app had no way to
+  // say which stage was responsible. Fold the same numbers into the ranked
+  // summary so a live session answers that question directly. Off unless
+  // MICROIDE_PERF_SUMMARY is set, and the timings are already taken either way.
+  util::PerformanceTrace::RecordSampleNs("compare::Build::SplitLines", profile.split_lines_ns);
+  util::PerformanceTrace::RecordSampleNs("compare::Build::LineAlignment",
+                                         profile.line_alignment_ns);
+  util::PerformanceTrace::RecordSampleNs("compare::Build::HunkAlignment",
+                                         profile.hunk_alignment_ns);
+  util::PerformanceTrace::RecordSampleNs("compare::Build::Intraline", profile.intraline_ns);
+  util::PerformanceTrace::RecordSampleNs("compare::Build::RowAssembly", profile.row_assembly_ns);
+
+  util::AddPerformanceCounter(util::PerfCounterId::CompareModelBuilds);
+  util::AddPerformanceCounter(util::PerfCounterId::CompareModelInputLines,
+                              left_lines.size() + right_lines.size());
+  util::AddPerformanceCounter(util::PerfCounterId::CompareModelRowsProduced, model.rows.size());
+  util::AddPerformanceCounter(util::PerfCounterId::CompareIntralineDiffLines,
+                              profile.token_intraline_calls + profile.codepoint_intraline_calls);
   return result;
 }
 

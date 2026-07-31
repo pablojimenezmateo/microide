@@ -185,6 +185,20 @@ add_library(microide_runtime_syntax_generated OBJECT
 
 target_include_directories(microide_runtime_syntax_generated PRIVATE src)
 
+# The scope tracer and event counters. Every instrumented translation unit pulls
+# these in, and the standalone bench/fuzz targets list their sources explicitly
+# rather than linking microide_core -- so instrumenting one more file used to
+# mean hunting down which of eight hand-written source lists now fails to link.
+# Fuzz targets fail SILENTLY there: no default build flow compiles them.
+# Append this variable to any such list instead.
+set(MICROIDE_INSTRUMENTATION_SOURCES
+  src/util/PerformanceCounters.cpp
+  src/util/PerformanceTrace.cpp
+  src/util/StartupTrace.cpp
+  src/util/StringUtil.cpp
+  src/util/TraceChannel.cpp
+)
+
 set(MICROIDE_CORE_SOURCES
   src/app/BackgroundTaskCounter.cpp
   src/editor/BracketScanner.cpp
@@ -1004,6 +1018,11 @@ if(MICROIDE_FUZZ)
   endif()
 
   function(microide_configure_fuzz_target target_name)
+    # Give every fuzz target the tracer and counters unconditionally. Fuzz
+    # targets list their sources by hand and no default build flow compiles
+    # them, so instrumenting a file they happen to include used to break their
+    # link silently, days later. Duplicates here are deduplicated by CMake.
+    target_sources(${target_name} PRIVATE ${MICROIDE_INSTRUMENTATION_SOURCES})
     target_include_directories(${target_name} PRIVATE src tests)
     target_compile_options(${target_name} PRIVATE
       -fsanitize=fuzzer,address
@@ -1297,6 +1316,7 @@ add_executable(microide_diff_bench
   tools/CompareBench.cpp
 )
 
+target_sources(microide_diff_bench PRIVATE ${MICROIDE_INSTRUMENTATION_SOURCES})
 target_include_directories(microide_diff_bench PRIVATE src)
 target_link_libraries(microide_diff_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
@@ -1322,6 +1342,7 @@ add_executable(microide_search_bench
   tools/ProjectSearchBench.cpp
 )
 
+target_sources(microide_search_bench PRIVATE ${MICROIDE_INSTRUMENTATION_SOURCES})
 target_include_directories(microide_search_bench PRIVATE src)
 target_link_libraries(microide_search_bench PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 
@@ -1343,6 +1364,7 @@ add_executable(microide_lsp_serialize_bench
   tools/LspSerializationBench.cpp
 )
 
+target_sources(microide_lsp_serialize_bench PRIVATE ${MICROIDE_INSTRUMENTATION_SOURCES})
 target_include_directories(microide_lsp_serialize_bench PRIVATE src)
 target_link_libraries(microide_lsp_serialize_bench PRIVATE ${MICROIDE_SDL3_TARGET})
 

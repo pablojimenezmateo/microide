@@ -7,6 +7,8 @@
 #include <string>
 
 #include "plugin/LuaError.h"
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #endif
 
 namespace microide::plugin {
@@ -156,6 +158,14 @@ bool LuaRuntime::PCall(int nargs, int nresults, std::string* error_message) cons
     return false;
   }
 
+  // The two PCall entry points are the only way plugin Lua ever runs, so this is
+  // the whole plugin runtime's cost in two rows. Plugins were previously invisible
+  // to every trace: a slow one looked like a slow host.
+  // lua_pcall catches the watchdog's longjmp rather than propagating it, so the
+  // scope's destructor is not at risk here (see tools/audit-lua-longjmp.py).
+  util::PerformanceTrace::Scope perf_scope("plugin::LuaPCall");
+  util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackDispatches);
+
   deadline_ = std::chrono::steady_clock::now() + call_budget_;
   lua_sethook(state_, &LuaRuntime::TimeoutHook, LUA_MASKCOUNT, kHookInstructionBatch);
   const int status = lua_pcall(state_, nargs, nresults, 0);
@@ -167,6 +177,7 @@ bool LuaRuntime::PCall(int nargs, int nresults, std::string* error_message) cons
     }
     return true;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackErrors);
   if (error_message != nullptr) {
     const char* raw = lua_tostring(state_, -1);
     *error_message = raw != nullptr ? std::string(raw) : std::string("unknown Lua error");
@@ -187,6 +198,9 @@ bool LuaRuntime::PCallNested(int nargs, int nresults, std::string* error_message
   // bounded against its original deadline after this callback returns. We arm the
   // hook explicitly rather than assume the outer PCall left it installed, so this
   // helper is correct even if a future caller is not itself under a PCall.
+  util::PerformanceTrace::Scope perf_scope("plugin::LuaPCallNested");
+  util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackDispatches);
+
   const std::chrono::steady_clock::time_point outer_deadline = deadline_;
   const lua_Hook outer_hook = lua_gethook(state_);
   const int outer_mask = lua_gethookmask(state_);
@@ -204,6 +218,7 @@ bool LuaRuntime::PCallNested(int nargs, int nresults, std::string* error_message
     }
     return true;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::PluginLuaCallbackErrors);
   if (error_message != nullptr) {
     const char* raw = lua_tostring(state_, -1);
     *error_message = raw != nullptr ? std::string(raw) : std::string("unknown Lua error");

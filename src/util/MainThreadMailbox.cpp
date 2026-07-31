@@ -2,6 +2,9 @@
 
 #include <utility>
 
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
+
 namespace microide::util {
 
 namespace {
@@ -30,6 +33,7 @@ void MainThreadMailbox::Post(Action action) {
 }
 
 void MainThreadMailbox::PostWithoutWake(Action action) {
+  AddPerformanceCounter(PerfCounterId::MainThreadMailboxPosts);
   std::lock_guard lock(mutex_);
   actions_.push_back(std::move(action));
   queued_.store(static_cast<int>(actions_.size()), std::memory_order_release);
@@ -92,6 +96,11 @@ bool MainThreadMailbox::RetryWakeIfPending() const {
 }
 
 int MainThreadMailbox::Drain() {
+  // Runs on the shell thread inside the event loop, so a background service that
+  // posts per-item instead of per-batch turns into main-thread cost. The
+  // posts/drains ratio is the tell.
+  PerformanceTrace::Scope perf_scope("util::MainThreadMailbox::Drain");
+  AddPerformanceCounter(PerfCounterId::MainThreadMailboxDrains);
   std::vector<Action> actions;
   {
     std::lock_guard lock(mutex_);

@@ -2,6 +2,8 @@
 
 #include "persistence/PersistedRecord.h"
 #include "util/DurableFile.h"
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/TextFileIO.h"
 
 #include <cstddef>
@@ -38,6 +40,13 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
                                       std::span<const std::byte> body,
                                       std::uint32_t capability_flags,
                                       PersistedRecordWriterError* error) {
+  // Session/config saves run on the shell thread at project switch and shutdown,
+  // where a slow durable write shows up to the user as a stall on close. Nothing
+  // measured them before.
+  util::PerformanceTrace::Scope perf_scope("persistence::WriteFile");
+  util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordWrites);
+  util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordBytesWritten, body.size());
+
   SetError(error, PersistedRecordWriterError::None);
   if (path.empty()) {
     SetError(error, PersistedRecordWriterError::InvalidPath);
