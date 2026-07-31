@@ -101,7 +101,7 @@ file under `/tmp` so results can be read back without rerunning:
 tools/run-checks.sh tests   # -> /tmp/microide-tests.log
 tools/run-checks.sh asan    # -> /tmp/microide-asan.log
 tools/run-checks.sh ubsan   # -> /tmp/microide-ubsan.log
-tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log  (needs vm.mmap_rnd_bits=28)
+tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log  (no sudo needed; see below)
 tools/run-checks.sh perf-tests  # -> /tmp/microide-perf-tests.log (allocation counting armed)
 tools/run-checks.sh all     # all four in sequence
 ```
@@ -129,8 +129,11 @@ Sanitizer and fuzz workflows expected for risky changes:
 ```bash
 cmake --preset microide-asan && cmake --build build/microide-asan -j8 && ctest --test-dir build/microide-asan --output-on-failure
 cmake --preset microide-ubsan && cmake --build build/microide-ubsan -j8 && ctest --test-dir build/microide-ubsan --output-on-failure
-sudo sysctl vm.mmap_rnd_bits=28
-cmake --preset microide-tsan && cmake --build build/microide-tsan -j8 && ctest --test-dir build/microide-tsan --output-on-failure
+cmake --preset microide-tsan && cmake --build build/microide-tsan -j8
+# No sudo: setarch -R clears ASLR for this process only. `sudo sysctl
+# vm.mmap_rnd_bits=28` is the machine-wide fallback if personality() is blocked.
+setarch -R env TSAN_OPTIONS=suppressions=tests/tsan.supp \
+  ctest --test-dir build/microide-tsan --output-on-failure
 cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build/microide-fuzz -j8
 ./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=60 tests/fuzz/corpora/PersistedRecordReaderFuzz

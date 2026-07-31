@@ -100,16 +100,31 @@ check_sanitizer() {
   export UBSAN_OPTIONS="halt_on_error=1:print_stacktrace=1:log_path=${LOG_DIR}/microide-ubsan-rt"
   export TSAN_OPTIONS="halt_on_error=1:suppressions=${REPO_ROOT}/tests/tsan.supp:log_path=${LOG_DIR}/microide-tsan-rt"
 
+  # TSAN aborts at startup ("unexpected memory mapping") when the kernel's ASLR
+  # entropy is higher than its shadow-mapping assumptions. The documented fix is
+  # `sudo sysctl vm.mmap_rnd_bits=28`, which needs root and changes the setting
+  # machine-wide for every process.
+  #
+  # `setarch -R` gets the same result with neither: it clears ASLR for one child
+  # via personality(ADDR_NO_RANDOMIZE), so only the ctest process tree is
+  # affected and nothing needs elevating. Some sandboxes block that personality
+  # bit, so probe it and fall back to the sysctl advice rather than failing.
+  local test_prefix=""
   if [[ "$san" == "tsan" ]]; then
-    echo "run-checks: TSAN requires 'sudo sysctl vm.mmap_rnd_bits=28' before running." >&2
-    echo "            If TSAN aborts at startup, run that and retry." >&2
+    if command -v setarch >/dev/null 2>&1 && setarch -R true >/dev/null 2>&1; then
+      test_prefix="setarch -R "
+      echo "run-checks: TSAN running under 'setarch -R' (per-process ASLR off; no sudo needed)." >&2
+    else
+      echo "run-checks: 'setarch -R' unavailable here, so TSAN needs the machine-wide" >&2
+      echo "            'sudo sysctl vm.mmap_rnd_bits=28'. If TSAN aborts at startup, run that." >&2
+    fi
   fi
 
   run_logged "$log" bash -c '
     set -e
     cmake --preset '"$preset"'
     cmake --build '"$build_dir"' -j'"$JOBS"'
-    ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_SAN_JOBS"'
+    '"$test_prefix"'ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_SAN_JOBS"'
   '
   local rc=$?
 

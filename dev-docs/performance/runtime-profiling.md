@@ -17,13 +17,28 @@ On some Linux hosts, ThreadSanitizer fails at startup with:
 
 `FATAL: ThreadSanitizer: unexpected memory mapping ...`
 
-Set a lower ASLR mmap entropy value before running TSAN binaries:
+The kernel's ASLR entropy is above what TSAN's shadow mapping assumes. Clear ASLR for the one
+process instead of lowering it for the whole machine — no root required:
+
+```bash
+setarch -R env TSAN_OPTIONS=suppressions=tests/tsan.supp \
+  ./build/microide-tsan/microide/microide_tests
+```
+
+`setarch -R` calls `personality(ADDR_NO_RANDOMIZE)` on the child, so the setting dies with the
+process and affects nothing else. `tools/run-checks.sh tsan` already does this (and already exports
+the suppressions); prefer it over driving the binary by hand.
+
+The suppressions file is not optional: without it a libdbus lock-order inversion and a Mesa
+`libgallium` race in the third-party stack report as failures that have nothing to do with this
+codebase.
+
+Fallback for sandboxes that block that personality bit — machine-wide, needs root, persists until
+reboot:
 
 ```bash
 sudo sysctl vm.mmap_rnd_bits=28
 ```
-
-Then run TSAN tests (for example `build/microide-tsan/microide/microide_tests`).
 
 ## 1. Diff Pipeline Benchmark
 

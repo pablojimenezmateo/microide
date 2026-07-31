@@ -52,8 +52,11 @@ Sanitizer and fuzzing commands:
 ```bash
 cmake --preset microide-asan && cmake --build build/microide-asan -j8 && ctest --test-dir build/microide-asan --output-on-failure
 cmake --preset microide-ubsan && cmake --build build/microide-ubsan -j8 && ctest --test-dir build/microide-ubsan --output-on-failure
-sudo sysctl vm.mmap_rnd_bits=28
-cmake --preset microide-tsan && cmake --build build/microide-tsan -j8 && ctest --test-dir build/microide-tsan --output-on-failure
+cmake --preset microide-tsan && cmake --build build/microide-tsan -j8
+# No sudo: setarch -R clears ASLR for this process only. `sudo sysctl
+# vm.mmap_rnd_bits=28` is the machine-wide fallback if personality() is blocked.
+setarch -R env TSAN_OPTIONS=suppressions=tests/tsan.supp \
+  ctest --test-dir build/microide-tsan --output-on-failure
 cmake -S . -B build/microide-fuzz -DMICROIDE_FUZZ=ON -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
 cmake --build build/microide-fuzz -j8
 ./build/microide-fuzz/microide/PersistedRecordReaderFuzz -max_total_time=60 tests/fuzz/corpora/PersistedRecordReaderFuzz
