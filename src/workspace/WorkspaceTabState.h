@@ -15,6 +15,7 @@
 #include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
 #include "editor/FoldingModel.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SnippetEngine.h"
 #include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
@@ -244,6 +245,12 @@ struct TabEntry {
     // language_id)` fingerprint when the buffer or language changes.
     std::unique_ptr<editor::FoldingModel> folding_model =
         std::make_unique<editor::FoldingModel>();
+    // Memoized filetype for this tab's buffer. The fold refresh asks for the
+    // language of every editor group's active tab on every prepared frame, and
+    // detection is not free -- it materializes the signature-scan head and runs
+    // the detection regexes. Per-tab rather than per-shell so a split view with
+    // two different files does not thrash a single-entry memo.
+    editor::runtime_syntax::FiletypeMemo filetype_memo;
     editor::SnippetSessionState snippet_session;
   };
 

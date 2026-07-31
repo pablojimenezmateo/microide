@@ -150,21 +150,8 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
 
     StatusBarSegmentValue language;
     const std::filesystem::path viewport_path = viewport->path().lexically_normal();
-    std::string filetype;
-    const std::size_t syntax_revision = editor::runtime_syntax::RegistryRevision();
-    if (language_cache_.viewport == viewport &&
-        language_cache_.content_revision == viewport->content_revision() &&
-        language_cache_.path == viewport_path &&
-        language_cache_.syntax_revision == syntax_revision) {
-      filetype = language_cache_.filetype;
-    } else {
-      filetype = editor::runtime_syntax::DetectFiletype(viewport_path, viewport->lines());
-      language_cache_.viewport = viewport;
-      language_cache_.content_revision = viewport->content_revision();
-      language_cache_.path = viewport_path;
-      language_cache_.filetype = filetype;
-      language_cache_.syntax_revision = syntax_revision;
-    }
+    const std::string& filetype = language_memo_.Resolve(
+        viewport, viewport_path, viewport->content_revision(), viewport->lines());
     if (!filetype.empty()) {
       language.text = filetype;
       language.tooltip = "Language: " + filetype;
@@ -188,7 +175,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     }
     status_bar_service.SetSegment(StatusBarSegmentId::Encoding, std::move(encoding));
   } else {
-    language_cache_ = {};
+    language_memo_.Invalidate();
     editor_segments_cache_.viewport = nullptr;
     editor_segments_cache_.line_column_text.clear();
     editor_segments_cache_.indent_text.clear();

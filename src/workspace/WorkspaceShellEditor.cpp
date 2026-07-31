@@ -187,8 +187,14 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
   const auto setting_enabled = [this](std::string_view id, bool default_value) {
     return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
-  const std::string language_id =
-      editor::runtime_syntax::DetectFiletype(active_viewport->path(), active_viewport->lines());
+  // Memoized: this runs for every editor group on every prepared frame, and the
+  // fold model itself is fingerprint-gated to a no-op on a settled frame -- so
+  // without the memo the only work the frame did here was re-detecting a
+  // filetype that had not changed. Measured at ~0.85 ms/frame on a 50k-line
+  // buffer, which was 60% of the whole editor_sticky_scroll_scroll scenario.
+  const std::string& language_id = editor_tab->filetype_memo.Resolve(
+      active_viewport, active_viewport->path(), active_viewport->content_revision(),
+      active_viewport->lines());
   const auto resolved = language_contract_.ResolveView(language_id);
   EnsureFoldingModelFresh(*editor_tab, *active_viewport, resolved.contract,
                           context_.current_project_state.editor_preferences.tab_size,

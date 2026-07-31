@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 #include "workspace/LayoutModeService.h"
 #include "workspace/StatusBarService.h"
@@ -33,17 +34,6 @@ class StatusBarModelService {
                const editor::TextViewport* active_viewport);
 
  private:
-  struct LanguageCache {
-    const editor::TextViewport* viewport = nullptr;
-    std::uint64_t content_revision = 0;
-    std::filesystem::path path;
-    std::string filetype;
-    // A plugin/built-in syntax reload can change DetectFiletype's answer without
-    // touching the viewport/revision/path, so the registry revision is part of
-    // the cache key or the language label goes stale after a reload.
-    std::size_t syntax_revision = 0;
-  };
-
   // `<gitdir>/HEAD` is only consulted while there is no git snapshot, but the
   // status bar rebuilds every frame — so remember the answer per project root
   // instead of re-reading the file on each one. Any HEAD movement lands a real
@@ -77,7 +67,10 @@ class StatusBarModelService {
     std::string problems_text;
   };
 
-  LanguageCache language_cache_;
+  // Shared memo (see runtime_syntax::FiletypeMemo). This was a hand-rolled
+  // four-field cache here while the fold refresh -- the other per-frame caller --
+  // had none at all; one implementation now serves both.
+  editor::runtime_syntax::FiletypeMemo language_memo_;
   ProjectSegmentCache project_segment_cache_;
   EditorSegmentsCache editor_segments_cache_;
 };
