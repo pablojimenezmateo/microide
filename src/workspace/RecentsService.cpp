@@ -30,6 +30,7 @@ void RecentsService::Configure(const PersistenceService& persistence) {
       platform::ResolveAppDirectory(platform::UserDirectoryKind::State, "microide");
   storage_path_ = state_root.empty() ? std::filesystem::path{} : state_root / "recents";
   state_ = PersistedMruState{};
+  save_pending_ = false;
   ++revision_;
   if (!storage_path_.empty()) {
     persistence_->LoadMruState(storage_path_, &state_);
@@ -47,6 +48,11 @@ void RecentsService::RecordProjectOpen(const std::filesystem::path& root) {
   if (root.empty()) {
     return;
   }
+  // Re-opening what is already newest changes nothing, so it must not cost a
+  // durable write. Reopening the active project is the common case.
+  if (!state_.recent_project_roots.empty() && state_.recent_project_roots.front() == root) {
+    return;
+  }
   PromoteToFront(state_.recent_project_roots, root, MaxProjects());
   ++revision_;
   Save();
@@ -58,6 +64,9 @@ void RecentsService::RecordFileOpen(const std::filesystem::path& file,
     return;
   }
   auto& files = state_.recent_files;
+  if (!files.empty() && files.front().path == file && files.front().project_root == project_root) {
+    return;
+  }
   files.erase(std::remove_if(files.begin(), files.end(),
                              [&](const PersistedRecentFile& entry) { return entry.path == file; }),
               files.end());
@@ -136,6 +145,25 @@ const std::vector<std::filesystem::path>& RecentsService::ExistingRecentFilesFor
 }
 
 void RecentsService::Save() const {
+  save_pending_ = true;
+  const auto now = std::chrono::steady_clock::now();
+  if (now - last_save_at_ < SaveCoalesceWindow()) {
+    return;
+  }
+  last_save_at_ = now;
+  WriteNow();
+}
+
+void RecentsService::FlushPendingSave() const {
+  if (!save_pending_) {
+    return;
+  }
+  last_save_at_ = std::chrono::steady_clock::now();
+  WriteNow();
+}
+
+void RecentsService::WriteNow() const {
+  save_pending_ = false;
   if (persistence_ == nullptr || storage_path_.empty()) {
     return;
   }

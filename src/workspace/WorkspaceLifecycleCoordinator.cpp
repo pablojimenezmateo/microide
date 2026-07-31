@@ -87,6 +87,7 @@ void LifecycleCoordinator::Shutdown() {
   // inactive. Re-persisting them here would re-hydrate and re-write identical data
   // for every inactive project, so it is intentionally omitted.
   operations_.save_workspace_session();
+  operations_.flush_recents();
   operations_.shutdown_project_search_runtime();
   // Stop the control listener and remove the discovery descriptor. Cheap (the
   // I/O thread wakes via its self-pipe, so the join returns immediately) and off
@@ -345,6 +346,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
               },
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
+          .flush_recents = [this]() { recents_service_.FlushPendingSave(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .stop_control_channel = [this]() { control_channel_service_.Stop(); },
       });

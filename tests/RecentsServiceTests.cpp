@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
 #include "workspace/RecentsService.h"
+#include "workspace/PersistenceService.h"
+#include "util/PerformanceCounters.h"
 
 #include <cstddef>
 #include <filesystem>
@@ -104,6 +106,87 @@ void TestRecentsExistingProjectsFilterAndCacheInvalidation() {
   Expect(after[0] == two, "the newest recorded project is first");
 }
 
+// The MRU coalesces its durable writes, so what lands on disk is no longer a
+// straight consequence of RecordFileOpen. Nothing covered the round trip at all
+// before -- every other test in this file skips Configure() and stays in memory --
+// so the coalescing had no way to be caught if it dropped writes.
+void TestRecentsSurviveFlushAndReload() {
+  TemporaryDirectory temp_dir;
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", temp_dir.path().string());
+  const microide::workspace::PersistenceService persistence;
+
+  {
+    RecentsService recents;
+    recents.Configure(persistence);
+    recents.RecordProjectOpen("/proj");
+    recents.RecordFileOpen("/proj/a.cpp", "/proj");
+    recents.RecordFileOpen("/proj/b.cpp", "/proj");
+    recents.FlushPendingSave();
+  }
+
+  RecentsService reloaded;
+  reloaded.Configure(persistence);
+  const auto files = reloaded.RecentFilesFor("/proj", 10);
+  Expect(files.size() == 2, "a flushed MRU should reload both recorded files");
+  Expect(files[0] == std::filesystem::path("/proj/b.cpp"),
+         "the reloaded MRU should keep newest-first ordering");
+  Expect(!reloaded.RecentProjects().empty() &&
+             reloaded.RecentProjects().front() == std::filesystem::path("/proj"),
+         "a flushed MRU should reload the recorded project");
+}
+
+// A burst of opens -- session restore, a multi-select open, arrowing through the
+// file finder -- must fold into one durable write, not one per file. Each write is
+// a temp+fsync+backup+rename on the shell thread.
+void TestRecentsBurstCoalescesIntoOneWrite() {
+  TemporaryDirectory temp_dir;
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", temp_dir.path().string());
+  const microide::workspace::PersistenceService persistence;
+
+  RecentsService recents;
+  recents.Configure(persistence);
+  const std::uint64_t before =
+      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+  for (std::size_t i = 0; i < 40; ++i) {
+    recents.RecordFileOpen("/proj/f" + std::to_string(i) + ".cpp", "/proj");
+  }
+  const std::uint64_t after =
+      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+  Expect(after - before <= 1, "a burst of opens must not cost one durable write per file");
+
+  // Nothing is lost: the pending state still lands on flush.
+  recents.FlushPendingSave();
+  RecentsService reloaded;
+  reloaded.Configure(persistence);
+  Expect(reloaded.RecentFilesFor("/proj", 100).size() == 40,
+         "the coalesced burst must be fully persisted by the flush");
+}
+
+// Re-opening what is already newest is a no-op, and a no-op must not write.
+void TestRecentsReopeningNewestEntryDoesNotWrite() {
+  TemporaryDirectory temp_dir;
+  ScopedEnvVar scoped_state("XDG_STATE_HOME", temp_dir.path().string());
+  const microide::workspace::PersistenceService persistence;
+
+  RecentsService recents;
+  recents.Configure(persistence);
+  recents.RecordFileOpen("/proj/a.cpp", "/proj");
+  recents.FlushPendingSave();
+
+  const std::uint64_t before =
+      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+  for (int i = 0; i < 10; ++i) {
+    recents.RecordFileOpen("/proj/a.cpp", "/proj");
+    recents.RecordProjectOpen("/proj-x");
+    recents.RecordProjectOpen("/proj-x");
+  }
+  recents.FlushPendingSave();
+  const std::uint64_t after =
+      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::PersistenceRecordWrites);
+  Expect(after - before <= 1,
+         "re-recording the entry that is already newest must not write");
+}
+
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RecentsService/ExistingProjectsFilterAndCacheInvalidation",
           TestRecentsExistingProjectsFilterAndCacheInvalidation);
@@ -113,6 +196,11 @@ void RegisterRecentsServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RecentsService/FilesScopedToProjectRoot",
           TestRecentsFilesAreScopedToProjectRoot);
   AddTest(tests, "RecentsService/FilesDedupeOnReopen", TestRecentsFilesDedupeOnReopen);
+  AddTest(tests, "RecentsService/SurviveFlushAndReload", TestRecentsSurviveFlushAndReload);
+  AddTest(tests, "RecentsService/BurstCoalescesIntoOneWrite",
+          TestRecentsBurstCoalescesIntoOneWrite);
+  AddTest(tests, "RecentsService/ReopeningNewestEntryDoesNotWrite",
+          TestRecentsReopeningNewestEntryDoesNotWrite);
 }
 
 }  // namespace microide::tests

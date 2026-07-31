@@ -43,7 +43,13 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
   // Session/config saves run on the shell thread at project switch and shutdown,
   // where a slow durable write shows up to the user as a stall on close. Nothing
   // measured them before.
-  util::PerformanceTrace::Scope perf_scope("persistence::WriteFile");
+  // Labelled by file stem: the store holds a handful of well-known files (project
+  // state, user config, session), so this ranks "which state file is being
+  // rewritten, how often" instead of collapsing every save into one row. Without
+  // it a hot row here says only that something is writing.
+  util::PerformanceTrace::ScopeLabel perf_label("persistence::WriteFile");
+  perf_label.Field("file", path.stem().native());
+  util::PerformanceTrace::Scope perf_scope(perf_label.View());
   util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordWrites);
   util::AddPerformanceCounter(util::PerfCounterId::PersistenceRecordBytesWritten, body.size());
 
