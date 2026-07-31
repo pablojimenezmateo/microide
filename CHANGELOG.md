@@ -154,6 +154,13 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **Settings and Help/About say how many rows a filter left, and which keys
+  work.** Both gained the footer the quick-open modals already had: a count on
+  the left (`2 of 171 shortcuts`, `4 of 79 settings`) and the key hint on the
+  right. Typing a needle that matched nothing used to leave a large blank card
+  with no explanation; it now says so in the list area and reads "No matches" in
+  the footer. Help/About advertises `↑↓ scroll · Esc close` rather than the
+  picker's "Enter choose", because its rows are read-only.
 - **The Source Control view stops padding itself with empty groups.** A clean
   checkout — the common case — filled the rail with `Conflicts (0)`, `Staged (0)`,
   `Unstaged (0)`, `Untracked (0)` and `Outgoing (0)`, each with its own "No merge

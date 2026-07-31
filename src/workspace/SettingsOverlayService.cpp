@@ -211,6 +211,7 @@ void SettingsOverlayService::RebuildSettingsRows(
     }
     return index;
   };
+  settings_rows_total_ = settings.size() + extra_rows.size();
   const auto user_index = index_layer(user_settings);
   const auto project_index = index_layer(project_settings);
   const auto lookup = [](const std::unordered_map<std::string_view, const std::string*>& index,
@@ -331,6 +332,7 @@ void SettingsOverlayService::RebuildSettingsRows(
 }
 
 void SettingsOverlayService::RebuildHelpRows(std::vector<HelpAboutRow> rows) {
+  help_rows_total_ = rows.size();
   help_rows_.clear();
   help_rows_.reserve(rows.size());
   for (HelpAboutRow& row : rows) {
@@ -346,6 +348,16 @@ std::size_t SettingsOverlayService::VisibleRowCount() const {
       return settings_rows_.size();
     case SettingsOverlayMode::HelpAbout:
       return help_rows_.size();
+  }
+  return 0;
+}
+
+std::size_t SettingsOverlayService::TotalRowCount() const {
+  switch (mode_) {
+    case SettingsOverlayMode::Settings:
+      return settings_rows_total_;
+    case SettingsOverlayMode::HelpAbout:
+      return help_rows_total_;
   }
   return 0;
 }

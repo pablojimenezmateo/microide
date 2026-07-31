@@ -1689,6 +1689,9 @@ constexpr float kSettingsHelpPadRight = 16.0f;
 constexpr float kSettingsHelpPadY = 10.0f;
 constexpr float kSettingsHelpColumnGap = 16.0f;
 constexpr float kSettingsHelpEntryGap = 6.0f;
+// Footer band carrying the result count and the key hint, matching the quick-open
+// modals. Both modes reserve it, so the two surfaces end at the same place.
+constexpr float kSettingsFooterH = 24.0f;
 constexpr float kSettingsBtnW = 24.0f;
 constexpr float kSettingsBtnH = 22.0f;
 constexpr float kSettingsValueSlotW = 100.0f;
@@ -1751,12 +1754,40 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     return vm;
   }
 
+  // Footer band: reserved from the bottom of the card before either mode lays its
+  // content out, so the list/pane heights below account for it. Inset by the card
+  // border so painting it does not erase the card's bottom edge.
+  vm.footer_rect = MakeRect(vm.rect.x + 1.0f, vm.rect.y + vm.rect.h - kSettingsFooterH - 1.0f,
+                            vm.rect.w - 2.0f, kSettingsFooterH);
+  {
+    const std::size_t shown = service.VisibleRowCount();
+    const std::size_t total = service.TotalRowCount();
+    const bool help = vm.mode == SettingsOverlayMode::HelpAbout;
+    if (shown == 0) {
+      vm.footer_summary = "No matches";
+      vm.empty_label = help ? "No command or shortcut matches this filter."
+                            : "No setting matches this filter.";
+    } else {
+      vm.footer_summary = std::to_string(shown);
+      if (!vm.query_empty && total > shown) {
+        vm.footer_summary += " of ";
+        vm.footer_summary += std::to_string(total);
+      }
+      vm.footer_summary += help ? " shortcuts" : " settings";
+    }
+  }
+  // Help/About rows are read-only, so it says "scroll", not "choose"; Settings has
+  // two panes and editable values, so it advertises Tab and Enter.
+  vm.footer_hint = vm.mode == SettingsOverlayMode::HelpAbout
+                       ? "↑↓ scroll · Esc close"
+                       : "Tab pane · ↑↓ move · Enter edit · Esc close";
+
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
     vm.title = "Help / About";
     vm.filter_placeholder = "Type to filter commands and shortcuts…";
     vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
                               vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
-    vm.help_rows = service.HelpRows();
+    vm.help_rows = std::span<const HelpAboutRow>(service.HelpRows());
 
     // Two read-only columns with a word-wrapped detail, scrolled a whole entry at
     // a time. The label column sizes to the widest label, bounded so a long one
@@ -1774,7 +1805,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     vm.help_entry_gap = kSettingsHelpEntryGap;
 
     const float list_top = vm.filter_rect.y + vm.filter_rect.h + kSettingsHelpPadY;
-    const float list_bottom = vm.rect.y + vm.rect.h - kSettingsHelpPadY;
+    const float list_bottom = vm.footer_rect.y - kSettingsHelpPadY;
     const float available_height = std::max(0.0f, list_bottom - list_top);
     vm.help_list_rect = MakeRect(vm.rect.x, list_top, vm.rect.w, std::max(1.0f, available_height));
 
@@ -1814,7 +1845,7 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
   vm.filter_rect = MakeRect(vm.rect.x + kSettingsPad, vm.rect.y + kSettingsHeaderH + 4.0f,
                             vm.rect.w - 2.0f * kSettingsPad, kSettingsFilterH);
   const float content_top = vm.filter_rect.y + vm.filter_rect.h + 8.0f;
-  const float content_bottom = vm.rect.y + vm.rect.h - kSettingsPad;
+  const float content_bottom = vm.footer_rect.y - kSettingsPad;
   const float content_height = std::max(0.0f, content_bottom - content_top);
   const float left_w = std::clamp(vm.rect.w * 0.26f, 150.0f, 240.0f);
   vm.left_pane_rect = MakeRect(vm.rect.x, content_top, left_w, content_height);

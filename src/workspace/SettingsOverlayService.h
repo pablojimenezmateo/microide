@@ -143,6 +143,9 @@ class SettingsOverlayService {
   const std::vector<SettingsOverlayRow>& SettingsRows() const { return settings_rows_; }
   const std::vector<HelpAboutRow>& HelpRows() const { return help_rows_; }
   std::size_t VisibleRowCount() const;
+  // Row count before the query filter, so the overlay footer can say "12 of 190"
+  // rather than leaving the user to guess how much a needle actually excluded.
+  std::size_t TotalRowCount() const;
 
   // --- Two-pane navigation state ---
   const std::vector<std::string>& Categories() const { return categories_; }
@@ -191,6 +194,10 @@ class SettingsOverlayService {
   int picker_scroll_ = 0;
   std::vector<SettingsOverlayRow> settings_rows_;
   std::vector<HelpAboutRow> help_rows_;
+  // Pre-filter row counts, captured by the two rebuilds. Kept rather than recomputed
+  // because the unfiltered inputs are the caller's and are gone by paint time.
+  std::size_t settings_rows_total_ = 0;
+  std::size_t help_rows_total_ = 0;
   std::vector<std::string> categories_;
   // Per-category ordered indices into settings_rows_, rebuilt once per
   // RebuildSettingsRows. RowAtVisibleIndex/RowCountInCategory read these instead of

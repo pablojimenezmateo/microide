@@ -146,6 +146,31 @@ void WorkspaceShell::RenderSettingsOverlay(SDL_Renderer* renderer,
     }
   }
 
+  // --- Footer: result count on the left, key hint on the right (both modes) ---
+  {
+    DrawFilledRect(renderer, vm.footer_rect, theme_.chrome_background);
+    DrawFilledRect(renderer, MakeRect(vm.footer_rect.x, vm.footer_rect.y, vm.footer_rect.w, 1.0f),
+                   theme_.border);
+    const float text_y = vm.footer_rect.y + 5.0f;
+    text_renderer_.DrawStringOn(renderer, vm.footer_rect.x + 14.0f, text_y, theme_.text_muted,
+                                theme_.chrome_background, vm.footer_summary);
+    const float hint_w = text_renderer_.MeasureWidth(vm.footer_hint);
+    const float hint_x = vm.footer_rect.x + vm.footer_rect.w - 14.0f - hint_w;
+    if (hint_x > vm.footer_rect.x + 14.0f + text_renderer_.MeasureWidth(vm.footer_summary) + 12.0f) {
+      text_renderer_.DrawStringOn(renderer, hint_x, text_y, theme_.text_disabled,
+                                  theme_.chrome_background, vm.footer_hint);
+    }
+  }
+
+  // A filter that matched nothing leaves both modes with an empty content area;
+  // say so there rather than under a blank rectangle.
+  if (!vm.empty_label.empty()) {
+    text_renderer_.DrawStringOn(renderer, vm.rect.x + 18.0f,
+                                vm.filter_rect.y + vm.filter_rect.h + 12.0f, theme_.text_muted,
+                                theme_.surface_background, vm.empty_label);
+    return;
+  }
+
   if (vm.mode == SettingsOverlayMode::HelpAbout) {
     RenderHelpAboutRows(renderer, vm, text_renderer_, theme_,
                         context_.interaction_state.drag_target == DragTarget::SettingsScrollbar);

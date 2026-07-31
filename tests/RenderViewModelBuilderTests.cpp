@@ -828,6 +828,72 @@ void TestSettingsOverlayWrapsLongDescriptions() {
   }
 }
 
+// Both overlay modes carry the quick-open footer: how many rows survived the filter
+// (and out of how many), plus the keys that drive the surface. Help/About is
+// read-only, so its hint says "scroll", not "choose".
+void TestSettingsOverlayFooterReportsCountsAndKeys() {
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  TextRenderer text_renderer;
+  const auto layout = ComputeLayout(1280.0f, 720.0f, true, true, 280.0f, 160.0f,
+                                    LayoutModeInputs{}, true);
+
+  SettingsOverlayService service;
+  service.OpenHelpAbout();
+  const std::vector<microide::workspace::HelpAboutRow> help_rows = {
+      {"Command Palette…", "Ctrl+Shift+P"},
+      {"Split Editor Right", "split-right"},
+      {"Toggle Terminal", "Ctrl+`"},
+  };
+  service.RebuildHelpRows(help_rows);
+
+  const auto unfiltered = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(unfiltered.footer_summary == "3 shortcuts",
+         "an unfiltered Help/About footer should report the row count with no 'of'");
+  Expect(unfiltered.footer_hint.find("scroll") != std::string_view::npos &&
+             unfiltered.footer_hint.find("choose") == std::string_view::npos,
+         "a read-only list should advertise scrolling, not choosing");
+  Expect(unfiltered.empty_label.empty(), "a populated list should carry no empty-state label");
+  Expect(unfiltered.help_list_rect.y + unfiltered.help_list_rect.h <= unfiltered.footer_rect.y,
+         "the help list must end above the footer band, not run under it");
+
+  // The filter narrows the list, and the footer says how much it hid.
+  service.SetQuery("split");
+  service.RebuildHelpRows(help_rows);
+  const auto filtered = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(filtered.footer_summary == "1 of 3 shortcuts",
+         "a filtered footer should report survivors out of the pre-filter total");
+
+  // A filter that matches nothing must not leave a blank card.
+  service.SetQuery("zzzznotathing");
+  service.RebuildHelpRows(help_rows);
+  const auto empty = builder.BuildSettingsOverlay(layout, service, text_renderer);
+  Expect(empty.footer_summary == "No matches",
+         "a zero-match footer should say so instead of reading '0 of 3'");
+  Expect(!empty.empty_label.empty(),
+         "a zero-match list area should carry an explanatory label");
+
+  // Settings mode: same footer, different noun and keys.
+  SettingsOverlayService settings;
+  settings.OpenSettings();
+  std::vector<SettingsOverlayRow> rows;
+  for (int i = 0; i < 4; ++i) {
+    SettingsOverlayRow row;
+    row.id = "test.row" + std::to_string(i);
+    row.label = i == 0 ? "Needle" : "Other";
+    rows.push_back(row);
+  }
+  settings.RebuildSettingsRows({}, {}, {}, rows);
+  const auto settings_vm = builder.BuildSettingsOverlay(layout, settings, text_renderer);
+  Expect(settings_vm.footer_summary == "4 settings",
+         "the Settings footer should count settings, not shortcuts");
+  Expect(settings_vm.footer_hint.find("Tab pane") != std::string_view::npos,
+         "an editable two-pane surface should advertise Tab and Enter");
+  Expect(settings_vm.right_pane_rect.y + settings_vm.right_pane_rect.h <=
+             settings_vm.footer_rect.y,
+         "the Settings value pane must end above the footer band");
+}
+
 // The font-picker dropdown windows a long family list; when it overflows the visible
 // window the builder must emit scrollbar geometry (drawn by the render pass) and the
 // scroll offset must control which slice of families becomes item view models.
@@ -1151,6 +1217,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestSettingsOverlaySectionHeaderAndSubsections);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFontPickerBuildsScrollbarOnOverflow",
           TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow);
+  AddTest(tests, "RenderViewModelBuilder/SettingsOverlayFooterReportsCountsAndKeys",
+          TestSettingsOverlayFooterReportsCountsAndKeys);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayControlValueIsPrecomputed",
           TestSettingsOverlayControlValueIsPrecomputed);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayWrapsLongDescriptions",

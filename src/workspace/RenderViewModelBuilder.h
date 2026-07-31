@@ -438,7 +438,18 @@ struct SettingsOverlayViewModel {
   std::string_view section_title;     // view into service-owned category label
   std::string_view section_subtitle;  // static blurb (empty for unknown categories)
   std::vector<SettingsRowViewModel> rows;  // rows of the selected category only
-  std::vector<HelpAboutRow> help_rows;
+  // View onto the service-owned filtered help rows. It used to be a copy, which
+  // duplicated ~190 label/detail string pairs on every paint of the overlay.
+  std::span<const HelpAboutRow> help_rows;
+  // Footer band: the same "N of M" summary and key hint the quick-open modals
+  // carry, so a filtered list says how much it is hiding and the keys that drive
+  // it are visible. The summary is composed per frame; the hint is a literal.
+  SDL_FRect footer_rect{};
+  std::string footer_summary;
+  std::string_view footer_hint;
+  // Drawn in the list/pane area when the filter matched nothing, so the card is
+  // never a blank rectangle with only a footer under it.
+  std::string_view empty_label;
   // Help/About column geometry. The rest of its scroll model reuses the shared
   // fields above (scroll_row / max_scroll / visible_rows / scrollbar), so the
   // wheel handler, the scrollbar grab and the paint all read one source. It used

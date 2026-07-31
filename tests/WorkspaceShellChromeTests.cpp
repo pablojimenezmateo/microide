@@ -3167,8 +3167,10 @@ void TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   // A short canvas so the settings pane holds only a few rows and a bottom selection
-  // is guaranteed to start off-screen at scroll 0.
-  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 420);
+  // is guaranteed to start off-screen at scroll 0 — but tall enough that the tallest
+  // row still fits the pane, or "fully visible" would be unsatisfiable rather than
+  // merely unmet (rows are variable-height and one can exceed a very short pane).
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 560);
   WorkspaceShellTestAccess::OpenSettingsOverlay(shell);
   WorkspaceShellTestAccess::SetSettingsOverlayCategory(shell, 0);
 
