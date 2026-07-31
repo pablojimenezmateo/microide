@@ -65,11 +65,11 @@ void ProjectCatalogService::PersistActiveEntry() {
 
 bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
                                                  bool activate_restored_tab) {
-  std::string perf_label = "ProjectCatalogService::ActivateProjectState";
-  if (util::PerformanceTrace::Enabled() && !state.root.empty()) {
-    perf_label += "(root=" + state.root.string() + ")";
+  util::PerformanceTrace::ScopeLabel perf_label("ProjectCatalogService::ActivateProjectState");
+  if (!state.root.empty()) {
+    perf_label.Field("root", state.root);
   }
-  util::PerformanceTrace::Scope trace_scope(perf_label);
+  util::PerformanceTrace::Scope trace_scope(perf_label.View());
   if (!state.initialized) {
     bool initialized = false;
     {
@@ -104,11 +104,11 @@ bool ProjectCatalogService::ActivateProjectState(ProjectWorkspaceState& state,
 }
 
 void ProjectCatalogService::StoreCurrentProjectState(ProjectWorkspaceState& state) {
-  std::string perf_label = "ProjectCatalogService::StoreCurrentProjectState";
-  if (util::PerformanceTrace::Enabled() && !context_.current_project_state.root.empty()) {
-    perf_label += "(root=" + context_.current_project_state.root.string() + ")";
+  util::PerformanceTrace::ScopeLabel perf_label("ProjectCatalogService::StoreCurrentProjectState");
+  if (!context_.current_project_state.root.empty()) {
+    perf_label.Field("root", context_.current_project_state.root);
   }
-  util::PerformanceTrace::Scope trace_scope(perf_label);
+  util::PerformanceTrace::Scope trace_scope(perf_label.View());
   operations_.sync_active_editor_tab();
   operations_.stop_project_search();
   operations_.stop_file_index_watcher();
@@ -122,11 +122,11 @@ void ProjectCatalogService::StoreCurrentProjectState(ProjectWorkspaceState& stat
 }
 
 void ProjectCatalogService::LoadProjectState(ProjectWorkspaceState& state) {
-  std::string perf_label = "ProjectCatalogService::LoadProjectState";
-  if (util::PerformanceTrace::Enabled() && !state.root.empty()) {
-    perf_label += "(root=" + state.root.string() + ")";
+  util::PerformanceTrace::ScopeLabel perf_label("ProjectCatalogService::LoadProjectState");
+  if (!state.root.empty()) {
+    perf_label.Field("root", state.root);
   }
-  util::PerformanceTrace::Scope trace_scope(perf_label);
+  util::PerformanceTrace::Scope trace_scope(perf_label.View());
   {
     util::PerformanceTrace::Scope scope("ProjectCatalogService::LoadProjectState::StopProjectSearch");
     operations_.stop_project_search();

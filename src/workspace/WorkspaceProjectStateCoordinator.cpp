@@ -49,11 +49,12 @@ void LogProjectIndexBatch(const std::filesystem::path& root,
 }  // namespace
 
 bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
-  std::string perf_label = "WorkspaceShell::StartFileIndexWatcherForCurrentProject";
-  if (util::PerformanceTrace::Enabled() && !context_.current_project_state.root.empty()) {
-    perf_label += "(root=" + context_.current_project_state.root.string() + ")";
+  util::PerformanceTrace::ScopeLabel perf_label(
+      "WorkspaceShell::StartFileIndexWatcherForCurrentProject");
+  if (!context_.current_project_state.root.empty()) {
+    perf_label.Field("root", context_.current_project_state.root);
   }
-  util::PerformanceTrace::Scope perf_scope(perf_label);
+  util::PerformanceTrace::Scope perf_scope(perf_label.View());
   if (context_.current_project_state.root.empty()) {
     return false;
   }

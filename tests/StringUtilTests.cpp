@@ -5,11 +5,13 @@
 #include "util/PerformanceCounters.h"
 #include "util/SaturatingMath.h"
 #include "util/StringUtil.h"
+#include "util/PerformanceTrace.h"
 #include "util/TraceChannel.h"
 
 #include <algorithm>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <limits>
@@ -690,6 +692,40 @@ void TestTraceChannelKeepsNestingPerThread() {
   ::unsetenv("MICROIDE_TEST_TRACE_THREADS");
 }
 
+// ScopeLabel replaced ten hand-rolled `if (Enabled()) label += ...` chains. Its
+// whole reason to exist is that a missed guard is a heap allocation per call in
+// production, so the off-path contract is the assertion that matters.
+void TestScopeLabelBuildsNothingWhenTheChannelIsOff() {
+  using microide::util::PerformanceTrace;
+  using microide::util::TraceChannel;
+
+  ::unsetenv("MICROIDE_TEST_LABEL_OFF");
+  TraceChannel off("test", "MICROIDE_TEST_LABEL_OFF", /*aggregate_env=*/nullptr,
+                   /*min_duration_env=*/nullptr);
+  Expect(!off.Enabled(), "an unset env leaves the channel off");
+
+  PerformanceTrace::ScopeLabel label(off, "Some::Scope");
+  label.Field("path", std::filesystem::path("/a/very/long/path/that/would/allocate"));
+  label.Field("index", 7);
+  Expect(label.View().empty(), "an off channel builds no label text at all");
+
+  ::setenv("MICROIDE_TEST_LABEL_ON", "1", 1);
+  TraceChannel on("test", "MICROIDE_TEST_LABEL_ON", /*aggregate_env=*/nullptr,
+                  /*min_duration_env=*/nullptr);
+  PerformanceTrace::ScopeLabel built(on, "Some::Scope");
+  built.Field("path", std::filesystem::path("/a/b"));
+  built.Field("index", 7);
+  Expect(built.View() == "Some::Scope(path=/a/b,index=7)",
+         "fields are comma-joined inside one parenthesized group");
+  // View() must be idempotent: a caller that reads it twice (or logs it before
+  // passing it to a Scope) must not get a second closing paren.
+  Expect(built.View() == "Some::Scope(path=/a/b,index=7)", "View() is idempotent");
+
+  PerformanceTrace::ScopeLabel bare(on, "Bare::Scope");
+  Expect(bare.View() == "Bare::Scope", "a label with no fields gains no parentheses");
+  ::unsetenv("MICROIDE_TEST_LABEL_ON");
+}
+
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StringUtil/AsciiClassifiersAreLocaleIndependent",
           TestStringUtilAsciiClassifiersAreLocaleIndependent);
@@ -704,6 +740,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Util/TraceChannelCapsDistinctLabels", TestTraceChannelCapsDistinctLabels);
   AddTest(tests, "Util/TraceChannelKeepsNestingPerThread",
           TestTraceChannelKeepsNestingPerThread);
+  AddTest(tests, "Util/ScopeLabelBuildsNothingWhenTheChannelIsOff",
+          TestScopeLabelBuildsNothingWhenTheChannelIsOff);
   AddTest(tests, "StringUtil/IsAllAsciiDigits", TestStringUtilIsAllAsciiDigits);
   AddTest(tests, "StringUtil/SplitAsciiWhitespace", TestStringUtilSplitAsciiWhitespace);
   AddTest(tests, "StringUtil/BoundedSplitStopsAtCap", TestStringUtilBoundedSplitStopsAtCap);

@@ -105,11 +105,9 @@ std::vector<std::string> SplitOnLineFeedOnly(std::string_view content) {
 }  // namespace
 
 bool TextViewport::OpenFile(const std::filesystem::path& path) {
-  std::string perf_label = "TextViewport::OpenFile";
-  if (util::PerformanceTrace::Enabled()) {
-    perf_label += "(path=" + path.string() + ")";
-  }
-  util::PerformanceTrace::Scope perf_scope(perf_label);
+  util::PerformanceTrace::ScopeLabel perf_label("TextViewport::OpenFile");
+  perf_label.Field("path", path);
+  util::PerformanceTrace::Scope perf_scope(perf_label.View());
   EnsureDocument();
   std::optional<std::string> content = util::ReadTextFile(path);
   if (!content.has_value()) {

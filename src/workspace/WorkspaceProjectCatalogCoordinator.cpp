@@ -111,14 +111,12 @@ void ProjectCatalogCoordinator::PersistActiveEntry() {
   if (!context_.HasActiveProjectCatalogEntry()) {
     return;
   }
-  std::string perf_label = "ProjectCatalogCoordinator::PersistActiveEntry";
-  if (util::PerformanceTrace::Enabled()) {
-    if (const auto* entry = context_.ProjectCatalogEntry(context_.project_catalog.active_index);
-        entry != nullptr && !entry->root.empty()) {
-      perf_label += "(root=" + entry->root.string() + ")";
-    }
+  util::PerformanceTrace::ScopeLabel perf_label("ProjectCatalogCoordinator::PersistActiveEntry");
+  if (const auto* entry = context_.ProjectCatalogEntry(context_.project_catalog.active_index);
+      entry != nullptr && !entry->root.empty()) {
+    perf_label.Field("root", entry->root);
   }
-  util::PerformanceTrace::Scope trace_scope(perf_label);
+  util::PerformanceTrace::Scope trace_scope(perf_label.View());
   {
     util::PerformanceTrace::Scope scope("ProjectCatalogCoordinator::SaveConfigState");
     operations_.save_config_state();

@@ -14,8 +14,8 @@ TraceChannel& PerformanceTrace::Channel() {
   return channel;
 }
 
-PerformanceTrace::ScopeLabel::ScopeLabel(std::string_view base) {
-  if (!Enabled()) {
+PerformanceTrace::ScopeLabel::ScopeLabel(TraceChannel& channel, std::string_view base) {
+  if (!channel.Enabled()) {
     return;
   }
   enabled_ = true;
@@ -40,7 +40,23 @@ PerformanceTrace::ScopeLabel& PerformanceTrace::ScopeLabel::Field(std::string_vi
   if (!enabled_) {
     return *this;
   }
-  return Field(key, std::to_string(value));
+  const std::string text = std::to_string(value);
+  return Field(key, std::string_view(text));
+}
+
+PerformanceTrace::ScopeLabel& PerformanceTrace::ScopeLabel::FieldPath(
+    std::string_view key,
+    const std::filesystem::path& value) {
+  if (!enabled_) {
+    return *this;
+  }
+  if constexpr (std::is_same_v<std::filesystem::path::value_type, char>) {
+    // POSIX: native() is the stored buffer, so this is a view, not a copy.
+    return Field(key, std::string_view(value.native()));
+  } else {
+    const std::string text = value.string();
+    return Field(key, std::string_view(text));
+  }
 }
 
 std::string_view PerformanceTrace::ScopeLabel::View() {

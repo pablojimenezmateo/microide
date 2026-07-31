@@ -295,16 +295,13 @@ void TabCoordinator::Activate(std::size_t index) {
   if (index >= state_.focused_group().open_tabs.size()) {
     return;
   }
-  std::string perf_label = "TabCoordinator::Activate";
-  if (util::PerformanceTrace::Enabled()) {
-    perf_label += "(index=" + std::to_string(index);
-    if (!state_.focused_group().open_tabs[index].path.empty()) {
-      perf_label += ",path=" + state_.focused_group().open_tabs[index].path.string();
-    }
-    perf_label += ")";
+  util::PerformanceTrace::ScopeLabel perf_label("TabCoordinator::Activate");
+  perf_label.Field("index", static_cast<long long>(index));
+  if (!state_.focused_group().open_tabs[index].path.empty()) {
+    perf_label.Field("path", state_.focused_group().open_tabs[index].path);
   }
   util::StartupTrace::Scope trace_scope("TabCoordinator::Activate");
-  util::PerformanceTrace::Scope perf_scope(perf_label);
+  util::PerformanceTrace::Scope perf_scope(perf_label.View());
 
   if (state_.focused_group().active_tab_index == index) {
     auto& active_tab = state_.focused_group().open_tabs[index];
@@ -613,11 +610,9 @@ bool TabCoordinator::OpenUntitled() {
   return true;
 }
 bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
-  std::string perf_label = "TabCoordinator::OpenFileInNewTab";
-  if (util::PerformanceTrace::Enabled()) {
-    perf_label += "(path=" + path.string() + ")";
-  }
-  util::PerformanceTrace::Scope perf_scope(perf_label);
+  util::PerformanceTrace::ScopeLabel perf_label("TabCoordinator::OpenFileInNewTab");
+  perf_label.Field("path", path);
+  util::PerformanceTrace::Scope perf_scope(perf_label.View());
   if (state_.root.empty()) {
     return false;
   }

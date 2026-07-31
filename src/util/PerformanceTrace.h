@@ -2,7 +2,9 @@
 
 #include <cstdint>
 #include <cstdio>
+#include <filesystem>
 #include <string>
+#include <type_traits>
 #include <string_view>
 #include <vector>
 
@@ -75,7 +77,11 @@ class PerformanceTrace {
   // production.
   class ScopeLabel {
    public:
-    explicit ScopeLabel(std::string_view base);
+    explicit ScopeLabel(std::string_view base) : ScopeLabel(Channel(), base) {}
+    // Explicit-channel form. Production code uses the one-argument constructor;
+    // this exists so the formatting and the off-path contract are testable
+    // without a process-wide env var, rather than through a test backdoor.
+    ScopeLabel(TraceChannel& channel, std::string_view base);
 
     ScopeLabel(const ScopeLabel&) = delete;
     ScopeLabel& operator=(const ScopeLabel&) = delete;
@@ -83,11 +89,27 @@ class PerformanceTrace {
     ScopeLabel& Field(std::string_view key, std::string_view value);
     ScopeLabel& Field(std::string_view key, long long value);
 
+    // Paths are the most common field, so they get an overload rather than
+    // leaving each caller to reach for `.native()` (free on POSIX, a wstring
+    // that will not convert on Windows) or `.string()` (an allocation on both).
+    //
+    // Constrained to *exactly* std::filesystem::path: a plain
+    // `const std::filesystem::path&` overload is ambiguous against the
+    // string_view one for a std::string argument, since path and string_view are
+    // both one user-defined conversion away.
+    template <typename P,
+              typename = std::enable_if_t<std::is_same_v<std::decay_t<P>, std::filesystem::path>>>
+    ScopeLabel& Field(std::string_view key, const P& value) {
+      return FieldPath(key, value);
+    }
+
     // Empty when the channel is off -- Scope ignores the label in that case, so
     // there is nothing to build.
     std::string_view View();
 
    private:
+    ScopeLabel& FieldPath(std::string_view key, const std::filesystem::path& value);
+
     std::string text_;
     bool enabled_ = false;
     bool open_ = false;

@@ -130,13 +130,11 @@ void TextViewport::EnsureInitialHighlightState() const {
   // above -- this is reached from every EnsureHighlightCaches, so an
   // unconditional std::string here was a heap allocation on every highlight
   // query.
-  std::string perf_label;
-  std::string_view perf_label_view = "TextViewport::EnsureInitialHighlightState";
-  if (util::PerformanceTrace::Enabled() && !document_->path.empty()) {
-    perf_label = "TextViewport::EnsureInitialHighlightState(path=" + document_->path.string() + ")";
-    perf_label_view = perf_label;
+  util::PerformanceTrace::ScopeLabel perf_label("TextViewport::EnsureInitialHighlightState");
+  if (!document_->path.empty()) {
+    perf_label.Field("path", document_->path);
   }
-  util::PerformanceTrace::Scope perf_scope(perf_label_view);
+  util::PerformanceTrace::Scope perf_scope(perf_label.View());
   // Pass the live buffer directly: InitialState only inspects a bounded head, so
   // this never materializes the whole document (the previous Snapshot() copied
   // the entire file -- megabytes, one alloc per line -- just to read 64 lines,
