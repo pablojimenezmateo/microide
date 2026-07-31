@@ -27,6 +27,42 @@ namespace microide::terminal {
 
 namespace {
 
+// A shrink can strand the cursor above the visible window. The primary buffer's
+// viewport is the LAST `rows` lines of the deque and the cursor is an absolute
+// index into it, so shrinking `rows` moves the viewport down past a cursor sitting
+// higher up — and nothing brings it back, because the shell keeps writing to rows
+// that are now permanently off-screen. The reachable case is a `clear`
+// (ESC[H ESC[2J ESC[3J) issued before the panel's real geometry is known: it leaves
+// exactly one pre-layout screen of lines with the cursor on the first, and the
+// resize that follows parks the viewport on the blank tail.
+//
+// xterm and VTE drop the unused blank remainder of the old screen on a shrink, so
+// do that — and only that. Lines below the cursor that still hold text are kept
+// (they are real output), and nothing is dropped unless the cursor is genuinely
+// stranded, so an ordinary shrink over scrollback is untouched.
+void DropBlankTailStrandingCursor(std::deque<TerminalLine>& lines,
+                                  std::size_t rows,
+                                  std::size_t cursor_row) {
+  if (rows == 0) {
+    return;
+  }
+  const auto line_is_blank = [](const TerminalLine& line) {
+    for (const TerminalCell& cell : line.cells) {
+      const std::string_view text = cell.DisplayText();
+      if (!text.empty() && text != " ") {
+        return false;
+      }
+    }
+    return true;
+  };
+  // `cursor_row + rows < lines.size()` is exactly "the cursor is above the visible
+  // top" (which is lines.size() - rows).
+  while (lines.size() > rows && cursor_row + rows < lines.size() &&
+         line_is_blank(lines.back())) {
+    lines.pop_back();
+  }
+}
+
 // Process-wide flag backing UsePlaceholderTerminalsForTesting(). Set once by the
 // test harness before any terminal is created and never mutated concurrently, so
 // a plain bool is sufficient.
@@ -272,7 +308,9 @@ void TerminalSession::Resize(std::size_t rows, std::size_t columns) {
       lines_.resize(std::max<std::size_t>(1, rows_));
     }
     EnsureCursorLineExistsLocked();
-    DropBlankTailStrandingCursorLocked();
+    if (!use_alternate_screen_) {
+      DropBlankTailStrandingCursor(lines_, rows_, cursor_row_);
+    }
     TrimScrollbackLocked();
     AdvanceSnapshotGenerationLocked();
   }

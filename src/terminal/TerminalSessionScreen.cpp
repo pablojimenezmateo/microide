@@ -466,40 +466,6 @@ void TerminalSession::EraseInLineLocked(int mode) {
   }
 }
 
-// A shrink can strand the cursor above the visible window. The primary buffer's
-// viewport is the LAST `rows_` lines of the deque and `cursor_row_` is an absolute
-// index into it, so shrinking `rows_` moves the viewport down past a cursor sitting
-// higher up — and nothing brings it back, because the shell keeps writing to rows
-// that are now permanently off-screen. The reachable case is a `clear`
-// (ESC[H ESC[2J ESC[3J) issued before the panel's real geometry is known: it leaves
-// exactly one pre-layout screen of lines with the cursor on the first, and the
-// resize that follows parks the viewport on the blank tail.
-//
-// xterm and VTE drop the unused blank remainder of the old screen on a shrink, so
-// do that — and only that. Lines below the cursor that still hold text are kept
-// (they are real output), and nothing is dropped unless the cursor is genuinely
-// stranded, so an ordinary shrink over scrollback is untouched.
-void TerminalSession::DropBlankTailStrandingCursorLocked() {
-  if (use_alternate_screen_ || rows_ == 0) {
-    return;
-  }
-  const auto line_is_blank = [](const TerminalLine& line) {
-    for (const TerminalCell& cell : line.cells) {
-      const std::string_view text = cell.DisplayText();
-      if (!text.empty() && text != " ") {
-        return false;
-      }
-    }
-    return true;
-  };
-  // `cursor_row_ + rows_ < lines_.size()` is exactly "the cursor is above the
-  // visible top" (which is lines_.size() - rows_).
-  while (lines_.size() > rows_ && cursor_row_ + rows_ < lines_.size() &&
-         line_is_blank(lines_.back())) {
-    lines_.pop_back();
-  }
-}
-
 void TerminalSession::BlankLineToCurrentBackgroundLocked(TerminalLine& line) {
   // Background Color Erase: an erase with a non-default background (an explicit
   // background color, or reverse video which swaps in the foreground) must paint
