@@ -25,6 +25,114 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-01 measurement pass, second round (perf-runner-v1)
+
+Driven by the ranked trace summary again. The theme this time is that **a wall-time
+number in a scope is not evidence that the code in that scope is slow** — three of the
+findings below are cases where the traced call was innocent and the surrounding
+measurement was lying, and one of them turned out to be a blocking syscall nobody would
+guess is blocking.
+
+### Fixed
+
+- **A fold model attaching wiped every layout cache, then immediately rebuilt one.**
+  `TextViewport::SetFoldingModel` called `InvalidateVisualColumnCache()`, which drops the
+  per-line visual-column table, the visible-line layout LRU, and the wrapped-row layouts.
+  Its very next statement, `ClampScrollState()`, reads `MaxVisualColumns()` — so
+  attaching a model forced a full O(lines) rebuild of the width table, ~10 ms of
+  shell-thread time inside a prepared frame on the 50k-line fixture, paid the first time
+  a fold scan resolved any range. Folds change which lines are *visible*, never how wide
+  any line is; the one fold-dependent product (the wrapped-row layout) is already keyed
+  on `(folding_model, fold_revision)`.
+
+- **Every line's width was computed one UTF-8 code point at a time.**
+  `VisualColumnForTextColumn` walked each line with a `Utf8SequenceLength` call and a
+  tab-stop branch per character, even though a byte below 0x80 that is not a tab always
+  contributes exactly one column. `TextLayoutCache::MaxVisualColumns` runs it over every
+  line of a buffer on open. Skipping to the first byte that can break that assumption,
+  eight bytes at a time, took `BuildVisualLineColumns` from 11.4 to 1.7 ms per call on
+  the 50k-line fixture.
+
+- **Opening a file walked its contents four times.** A byte-at-a-time line-ending
+  classification, a `memchr` for NUL, an all-ASCII scan, and a byte-at-a-time LF
+  normalization. An LF-only file is now decided by one `memchr` for CR (no CR means no
+  CRLF and no CR ending, so nothing else can change the verdict); the NUL and non-ASCII
+  scans are one pass; and normalization copies the runs between carriage returns
+  (0.69 → 0.17 ms on the 1 MB mixed-endings fixture). The eight-bytes-at-a-time scan is
+  shared with the line-width fast path above as `util::FirstNonAsciiOrByte`.
+
+- **`close()` on an inotify descriptor blocks for milliseconds, at random.**
+  This is the one worth remembering. Releasing an fsnotify group makes the kernel wait
+  for an SRCU grace period before its marks can be freed, so closing an inotify fd
+  sporadically costs multiple milliseconds *regardless of watch count* — a standalone
+  20-line C program that creates a descriptor with a **single** watch and closes it
+  measures 0.02 ms most iterations and 3–6 ms on the rest. A project switch retires two
+  such descriptors (the file-index watcher and the project tree watcher's native
+  backend) and closed both inline on the shell thread. They now go through
+  `platform::RetireDescriptorAsync`. `multi_project_switch` p50 wall 79 → 23 ms;
+  `SetProjectFileMonitorRoot` 98.8 → 0.3 ms and `StopFileIndexWatcher` 56 → 1.3 ms across
+  the measured iterations.
+
+  Two wrong turns on the way there, both worth not repeating: the per-watch
+  `inotify_rm_watch` loop that ran before each close was removed (redundant — closing the
+  descriptor releases every watch on it) and did **not** explain the cost; and a
+  size-thresholded offload was written and thrown away after the watch count went into
+  the trace label and showed the fixtures hold about twenty watches while a descriptor
+  with *one* was just as slow. Put the count in the label first.
+
+### Instrumentation added
+
+Every one of the fixes above came out of a scope that did not exist before this pass, so
+this is not incidental:
+
+- The three steps of the per-frame fold refresh (`RefreshEditorFoldingModels` was the
+  largest main-thread scope in the suite and held all of it in *self* time), the range
+  merge inside `ComputeWithBudget`, and the two halves of `MaxVisualColumns`.
+- The twelve subsystem paints `WorkspaceRootView::Render` dispatches to. It was the
+  second-largest main-thread scope, also entirely self time, and could say only
+  "painting is slow".
+- The four stages of `TextViewport::OpenFile` and the five steps of
+  `StoreCurrentProjectState`.
+- Watcher teardown: `Unwatch` split into native/poll, each thread join named, and the
+  inotify close carrying its **watch count** in the label — that count is what falsified
+  the "kernel is freeing a big watch table" theory.
+
+### Gate maintenance
+
+- **Three permanently-red gates now mean something.** `debug_value_tree_paging`,
+  `debug_breakpoints_model_rebuild` and `debug_pane_hittest_geometry` had failed their
+  wall baselines across two measurement passes on unmodified code. They now use the
+  decoupled tolerances the tech-debt coverage scenarios already use (allocations tight at
+  10/20/50 %, wall wide at 75/250/400 %), and `debug_pane_hittest_geometry` repeats its
+  sweep 100× because one sweep resolved in ~0.1 ms — below anything this runner can time.
+- **Most committed baselines were stale in the vacuous direction.** Comparing a full
+  gated run against `tests/perf/baselines/`, the majority of scenarios measured at
+  10–30 % of their committed wall p50 and a small fraction of their allocation counts —
+  `multi_project_switch` at 79 ms against a 185 ms baseline, `switch_and_idle` at ~90 ms
+  against 265 ms. Regression gates only trip on increases, so those scenarios had been
+  passing against numbers no longer connected to the code, and would not have caught a
+  3× regression. Rebaselined.
+
+### Still open
+
+- `persistence::WriteFile(file=workspace-session)` is now the dominant main-thread cost
+  of a project switch: 1.9 ms average and up to 26.8 ms for one durable write (temp +
+  fsync + backup rotation + rename), once per switch. `RecentsService` already
+  establishes the coalescing pattern (750 ms window + shutdown flush) and it would fold a
+  burst of switches into one write — but a single switch would still pay one write, so
+  the win is mostly on the benchmark rather than for a user. The fsync itself should stay:
+  the write is what makes the atomic rename meaningful.
+- `RuntimeSyntaxRegistry::HighlightLine` is ~5 µs per line and runs one PCRE2 execution
+  per pattern rule per line. `ReusableMatchData` does a `thread_local unordered_map`
+  lookup keyed by the compiled-pattern address on every one of those executions; a stable
+  slot index into a per-thread vector would make it an array index. Not attempted —
+  measured at a few percent of the highlight path.
+- Unchanged from the previous round: `compare_scroll_selection` still runs `git show` /
+  `cat-file` synchronously on the shell thread, and
+  `ProjectCatalogService::LoadProjectState::SetProjectFileMonitorRoot`'s re-arm is
+  deferred while its teardown is not (though the teardown is no longer where the time
+  went).
+
 ## 2026-08-01 measurement pass (perf-runner-v1)
 
 Driven by the ranked trace summary again, starting from a full-suite wall-time ranking. Two of
