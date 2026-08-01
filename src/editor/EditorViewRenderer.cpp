@@ -453,6 +453,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
   const std::vector<IndentGuideRun>* indent_guides_to_paint = nullptr;
   if (indent_guides_enabled) {
+    // Cache probe plus, on a miss, the whole visible-window guide computation.
+    // Both live between the row loop and the frame setup, so without a scope they
+    // land in Render's self time with everything else that is not a row.
+    util::PerformanceTrace::Scope scope("EditorViewRenderer::Render::IndentGuides");
     const std::size_t indent_width =
         viewport.indent_width() == 0 ? 1 : viewport.indent_width();
     const std::size_t fold_emphasis_revision =
@@ -525,6 +529,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
   if (metrics.sticky_scroll_rows > 0 && view_model != nullptr &&
       !view_model->sticky_lines.empty()) {
+    util::PerformanceTrace::Scope scope("EditorViewRenderer::Render::StickyRows");
     for (std::size_t si = 0; si < view_model->sticky_lines.size(); ++si) {
       const std::size_t line_index = view_model->sticky_lines[si];
       if (line_index >= lines.size()) {

@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include <set>
+
 #include "editor/BracketScanner.h"
 #include "editor/FoldingModel.h"
 #include "editor/IndentDetect.h"
@@ -697,6 +699,78 @@ void TestIndentGuidesEmitsRunsAtNestedDepths() {
          "column-4 guide should coalesce rows 2..5 into one run (depth-1 contiguous block)");
 }
 
+// ComputeIndentGuides emits vertical runs by sweeping one guide column at a time.
+// It used to emit one entry per (row, column) and std::sort the lot so a
+// coalescing pass could merge neighbours -- thousands of entries per frame on
+// deeply indented content, and 92% of the step's cost.
+//
+// The runs are a compressed encoding of a coverage set, so check the encoding
+// against the set: every (column, row) a naive per-row computation would mark
+// must be covered by exactly one run, and no run may cover anything else. Uses
+// tabs, mixed depths, blank lines, dedents and an out-of-range row, since those
+// are where a sweep and a sort can disagree.
+void TestIndentGuidesRunsMatchNaiveCoverage() {
+  using microide::editor::ComputeIndentGuides;
+  using microide::editor::IndentGuideRun;
+  using microide::editor::LeadingVisualIndent;
+
+  const std::vector<std::string> lines = {
+      "top();",              // 0: no indent
+      "    a();",            // 1: depth 1
+      "        b();",        // 2: depth 2
+      "",                    // 3: blank
+      "            c();",    // 4: depth 3
+      "        d();",        // 5: back to depth 2
+      "\te();",              // 6: a tab, which is a full stop
+      "\t\tf();",            // 7: two tabs
+      "   odd();",           // 8: indent that is not a multiple of the width
+      "}",                   // 9
+  };
+  constexpr std::size_t kTabSize = 4;
+  constexpr std::size_t kIndentWidth = 4;
+
+  for (std::size_t caret_line : {std::size_t{2}, std::size_t{7}, SIZE_MAX}) {
+    // Include a row index past the end of the buffer: it must contribute nothing.
+    std::vector<std::size_t> visible_rows;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      visible_rows.push_back(i);
+    }
+    visible_rows.push_back(lines.size() + 3);
+
+    const std::size_t caret_lead =
+        caret_line < lines.size() ? LeadingVisualIndent(lines[caret_line], kTabSize) : 0;
+    std::vector<IndentGuideRun> runs;
+    ComputeIndentGuides(lines, visible_rows, kTabSize, kIndentWidth, caret_line, caret_lead,
+                        &runs);
+
+    // Naive coverage: a guide sits at every multiple of the indent width up to
+    // and including the row's leading visual indent.
+    std::set<std::pair<std::size_t, std::size_t>> expected;  // (column, row)
+    for (std::size_t row = 0; row < visible_rows.size(); ++row) {
+      const std::size_t line_index = visible_rows[row];
+      if (line_index >= lines.size()) {
+        continue;
+      }
+      const std::size_t leading = LeadingVisualIndent(lines[line_index], kTabSize);
+      for (std::size_t column = kIndentWidth; column <= leading; column += kIndentWidth) {
+        expected.insert({column, row});
+      }
+    }
+
+    std::set<std::pair<std::size_t, std::size_t>> covered;
+    for (const IndentGuideRun& run : runs) {
+      Expect(run.start_row <= run.end_row, "a run must not be empty");
+      for (std::size_t row = run.start_row; row <= run.end_row; ++row) {
+        const bool fresh = covered.insert({run.column, row}).second;
+        Expect(fresh, "runs must not overlap — each (column, row) belongs to exactly one run");
+      }
+    }
+    Expect(covered == expected,
+           "the emitted runs must cover exactly the (column, row) pairs a naive per-row "
+           "computation marks");
+  }
+}
+
 void TestIndentGuidesMarksActiveAtParentColumn() {
   using microide::editor::ComputeIndentGuides;
   using microide::editor::IndentGuideRun;
@@ -1334,6 +1408,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestLanguageContractAppliesUserOverrides);
   AddTest(tests, "EditorEssentials/IndentGuides/EmitsRunsAtNestedDepths",
           TestIndentGuidesEmitsRunsAtNestedDepths);
+  AddTest(tests, "EditorEssentials/IndentGuides/RunsMatchNaiveCoverage",
+          TestIndentGuidesRunsMatchNaiveCoverage);
   AddTest(tests, "EditorEssentials/IndentGuides/MarksActiveAtParentColumn",
           TestIndentGuidesMarksActiveAtParentColumn);
   AddTest(tests, "EditorEssentials/IndentGuides/FoldModelEmphasisOnInnerCloser",
