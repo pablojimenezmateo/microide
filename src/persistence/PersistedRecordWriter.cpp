@@ -64,15 +64,18 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
   // the user's config/session symlink to `.bak` and publish a fresh regular file at the
   // link path. Resolving here lands every temp/backup/rename on the real target and
   // preserves the link (same fix already applied to editor text saves, TD-2026-07-17A-127).
-  const std::filesystem::path target = util::ResolveSymlinkTarget(path);
-
-  const std::filesystem::path parent = target.parent_path();
-  if (!parent.empty()) {
-    std::error_code mkdir_error;
-    std::filesystem::create_directories(parent, mkdir_error);
-    if (mkdir_error) {
-      SetError(error, PersistedRecordWriterError::CreateDirectoryFailed);
-      return false;
+  std::filesystem::path target;
+  {
+    util::PerformanceTrace::Scope scope("persistence::WriteFile::ResolveAndMakeDirs");
+    target = util::ResolveSymlinkTarget(path);
+    const std::filesystem::path parent = target.parent_path();
+    if (!parent.empty()) {
+      std::error_code mkdir_error;
+      std::filesystem::create_directories(parent, mkdir_error);
+      if (mkdir_error) {
+        SetError(error, PersistedRecordWriterError::CreateDirectoryFailed);
+        return false;
+      }
     }
   }
 
@@ -88,12 +91,16 @@ bool PersistedRecordWriter::WriteFile(const std::filesystem::path& path,
   std::filesystem::remove(temp_path, fs_error);
   fs_error.clear();
 
-  if (!WriteFileBytesDurable(temp_path, file_bytes)) {
-    std::filesystem::remove(temp_path, fs_error);
-    SetError(error, PersistedRecordWriterError::WriteFailed);
-    return false;
+  {
+    util::PerformanceTrace::Scope scope("persistence::WriteFile::DurableWrite");
+    if (!WriteFileBytesDurable(temp_path, file_bytes)) {
+      std::filesystem::remove(temp_path, fs_error);
+      SetError(error, PersistedRecordWriterError::WriteFailed);
+      return false;
+    }
   }
 
+  util::PerformanceTrace::Scope rotate_scope("persistence::WriteFile::RotateAndRename");
   const bool destination_exists = FileExists(target);
   if (destination_exists) {
     std::filesystem::remove(backup_path, fs_error);
