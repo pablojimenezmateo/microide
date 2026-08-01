@@ -237,10 +237,17 @@ void RunJsonRpcMessageFraming(ScenarioContext& context) {
 
 // ---- Registration ----------------------------------------------------------
 
+// Roughly 5 ms of pure decoding, and every iteration measures the same work, so
+// its p95/max baseline sits a hair above its p50 with no natural headroom at all
+// -- a single context switch in one of ten iterations pushed max to 19.6 ms
+// against a 5.15 ms baseline while the p50 and the allocation count were
+// unchanged. Widen the tail only; the p50 and the exact allocation gate stay.
 const ScenarioRegistration g_perf_lsp_semantic_tokens_decode({Scenario{
     .name = "lsp_semantic_tokens_decode",
     .smoke = true,
     .baseline_gated = true,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunLspSemanticTokensDecode,
 }});
 const ScenarioRegistration g_perf_lsp_publish_diagnostics_parse({Scenario{
