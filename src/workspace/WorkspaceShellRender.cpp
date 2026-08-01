@@ -104,11 +104,21 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     }
   }
 
-  RenderFrameBase(renderer, layout, *clip_cached_frame_vm_);
+  // Each surface gets its own scope: this function is the top of the per-frame
+  // paint and every call below it is a whole subsystem, so without them the
+  // ranked summary charges the lot to `WorkspaceRootView::Render` self time and
+  // says only "painting is slow".
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::FrameBase");
+    RenderFrameBase(renderer, layout, *clip_cached_frame_vm_);
+  }
   if (!skip_editor_surface) {
-    RenderActiveWorkspaceSurface(renderer, layout, frame_token, prepared_frame_draw_editor_caret_,
-                                 &active_editor_pane_rect, *clip_cached_frame_vm_,
-                                 *clip_cached_overlay_vm_);
+    {
+      util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::EditorSurface");
+      RenderActiveWorkspaceSurface(renderer, layout, frame_token, prepared_frame_draw_editor_caret_,
+                                   &active_editor_pane_rect, *clip_cached_frame_vm_,
+                                   *clip_cached_overlay_vm_);
+    }
     if (editor_hover_refresh_pending_ && last_mouse_position_valid_) {
       util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::RefreshHover");
       UpdateEditorHover(last_mouse_x_, last_mouse_y_);
@@ -119,35 +129,54 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
     RenderSignatureHelpPopup(renderer);
   }
   if (!skip_window_chrome) {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::WindowChrome");
     RenderWindowChrome(renderer, layout);
   }
   if (!skip_sidebar) {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::Sidebar");
     RenderSidebarSurface(renderer, layout);
   }
   if (!skip_right_pane) {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::DebugPane");
     RenderDebugPaneSurface(renderer, layout);
   }
-  RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::Overlay");
+    RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
+  }
   if (!skip_bottom_panel) {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::BottomPanel");
     RenderBottomPanelSurface(
         renderer, layout,
         ActiveTerminalTab() != nullptr ? ActiveTerminalTab()->session.LineCount() : std::size_t{0});
   }
-  RenderHoverTooltip(renderer, layout);
-  RenderMenuPopups(renderer, layout);
-  RenderStatusBar(renderer, layout);
-  RenderSettingsOverlay(renderer, layout);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::TooltipAndMenus");
+    RenderHoverTooltip(renderer, layout);
+    RenderMenuPopups(renderer, layout);
+  }
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::StatusBar");
+    RenderStatusBar(renderer, layout);
+  }
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::SettingsOverlay");
+    RenderSettingsOverlay(renderer, layout);
+  }
 
-  SDL_Window* render_window = SDL_GetRenderWindow(renderer);
-  const auto active_text_input_visual =
-      BuildActiveTextInputVisual(layout, active_editor_pane_rect);
-  RenderPromptSurface(renderer, layout, active_text_input_visual);
-  RenderSingleLineTextSelection(renderer, active_text_input_visual);
-  RenderActiveTextInputCaret(renderer, active_text_input_visual);
-  RenderTextComposition(renderer, active_text_input_visual);
-  UpdateTextInputArea(renderer, render_window, active_text_input_visual);
-  RenderDirtyPromptSurface(renderer, layout);
-  RenderNotifications(renderer, layout);
+  {
+    util::PerformanceTrace::Scope scope("WorkspaceRootView::Render::TextInputAndNotifications");
+    SDL_Window* render_window = SDL_GetRenderWindow(renderer);
+    const auto active_text_input_visual =
+        BuildActiveTextInputVisual(layout, active_editor_pane_rect);
+    RenderPromptSurface(renderer, layout, active_text_input_visual);
+    RenderSingleLineTextSelection(renderer, active_text_input_visual);
+    RenderActiveTextInputCaret(renderer, active_text_input_visual);
+    RenderTextComposition(renderer, active_text_input_visual);
+    UpdateTextInputArea(renderer, render_window, active_text_input_visual);
+    RenderDirtyPromptSurface(renderer, layout);
+    RenderNotifications(renderer, layout);
+  }
 
   if (menu_hover_trace && context_.menu_state.menu_bar_open) {
     const double elapsed_ms =
