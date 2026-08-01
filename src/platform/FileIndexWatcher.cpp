@@ -477,6 +477,7 @@ struct FileIndexWatcher::Impl {
   void StopInitialScan() {
     stop_initial_scan.store(true, std::memory_order_release);
     if (initial_scan_worker.joinable()) {
+      util::PerformanceTrace::Scope scope("watch::StopInitialScan::Join");
       initial_scan_worker.join();
     }
     stop_initial_scan.store(false, std::memory_order_release);
@@ -492,47 +493,65 @@ struct FileIndexWatcher::Impl {
       }
     }
     if (setup_thread.joinable()) {
+      util::PerformanceTrace::Scope scope("watch::StopNative::JoinSetupThread");
       setup_thread.join();
     }
     if (!native_active) {
       // Setup thread aborted (or never ran successfully); just clean up any FDs it left behind.
-      for (auto& [wd, path] : wd_to_path) {
-        if (inotify_fd >= 0) {
-          inotify_rm_watch(inotify_fd, wd);
-        }
-      }
-      wd_to_path.clear();
+      DropAllWatchesAndCloseInotify();
       CloseIfValid(control_pipe[0]);
       CloseIfValid(control_pipe[1]);
       control_pipe[0] = control_pipe[1] = -1;
-      CloseIfValid(inotify_fd);
-      inotify_fd = -1;
       stop_native_setup.store(false, std::memory_order_release);
       setup_done.store(false, std::memory_order_release);
       return;
     }
     native_active = false;
     if (worker.joinable()) {
+      util::PerformanceTrace::Scope scope("watch::StopNative::JoinWorker");
       worker.join();
     }
     CloseIfValid(control_pipe[0]);
     CloseIfValid(control_pipe[1]);
     control_pipe[0] = control_pipe[1] = -1;
-    for (auto& [wd, path] : wd_to_path) {
-      if (inotify_fd >= 0) {
-        inotify_rm_watch(inotify_fd, wd);
-      }
-    }
-    wd_to_path.clear();
-    CloseIfValid(inotify_fd);
-    inotify_fd = -1;
+    DropAllWatchesAndCloseInotify();
     stop_native_setup.store(false, std::memory_order_release);
     setup_done.store(false, std::memory_order_release);
+  }
+
+  // Release every inotify watch this instance holds.
+  //
+  // Closing the inotify descriptor is all it takes: inotify(7) guarantees that
+  // once the last descriptor referring to an instance is closed, the kernel frees
+  // the object AND every watch associated with it. Both teardown paths used to
+  // walk `wd_to_path` calling inotify_rm_watch per entry first -- one syscall per
+  // watched directory, on the shell thread (Unwatch runs there on every project
+  // switch and close), immediately before the close that would have done it
+  // anyway. This tree keeps one watch per directory, so on a real source
+  // checkout that is thousands of redundant syscalls per switch.
+  //
+  // The watch count goes in the label because it is the one number that says
+  // whether a teardown stall is the kernel freeing a big watch table or (as it
+  // turned out to be here, on a fixture holding ~20 watches) the shell thread
+  // being descheduled while the background index scans run.
+  void DropAllWatchesAndCloseInotify() {
+    {
+      util::PerformanceTrace::ScopeLabel label("watch::StopNative::CloseInotifyFd");
+      label.Field("watches", static_cast<long long>(wd_to_path.size()));
+      util::PerformanceTrace::Scope scope(label.View());
+      CloseIfValid(inotify_fd);
+      inotify_fd = -1;
+    }
+    {
+      util::PerformanceTrace::Scope scope("watch::StopNative::ClearWatchMap");
+      wd_to_path.clear();
+    }
   }
 
   void StopPoll() {
     stop_poll.Stop();
     if (poll_worker.joinable()) {
+      util::PerformanceTrace::Scope scope("watch::StopPoll::Join");
       poll_worker.join();
     }
   }
@@ -931,6 +950,7 @@ struct FileIndexWatcher::Impl {
   void StopInitialScan() {
     stop_initial_scan.store(true, std::memory_order_release);
     if (initial_scan_worker.joinable()) {
+      util::PerformanceTrace::Scope scope("watch::StopInitialScan::Join");
       initial_scan_worker.join();
     }
     stop_initial_scan.store(false, std::memory_order_release);
@@ -1117,6 +1137,7 @@ struct FileIndexWatcher::Impl {
   void StopInitialScan() {
     stop_initial_scan.store(true, std::memory_order_release);
     if (initial_scan_worker.joinable()) {
+      util::PerformanceTrace::Scope scope("watch::StopInitialScan::Join");
       initial_scan_worker.join();
     }
     stop_initial_scan.store(false, std::memory_order_release);
@@ -1340,6 +1361,7 @@ struct FileIndexWatcher::Impl {
   void StopPoll() {
     stop_poll.Stop();
     if (poll_worker.joinable()) {
+      util::PerformanceTrace::Scope scope("watch::StopPoll::Join");
       poll_worker.join();
     }
   }
@@ -1502,17 +1524,24 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
 }
 
 void FileIndexWatcher::Unwatch() {
-#if defined(__linux__)
-  impl_->StopNative();
-  impl_->StopPoll();
-#elif defined(__APPLE__)
-  impl_->StopNative();
-  impl_->StopPoll();
-#elif defined(_WIN32)
-  impl_->StopNative();
-  impl_->StopPoll();
+  // Every branch below joins background threads, and this runs on the shell
+  // thread from StopFileIndexWatcher (project switch / close). Scope the halves
+  // so a switch stall can be attributed to the backend that actually blocked.
+  util::PerformanceTrace::Scope perf_scope("watch::Unwatch");
+#if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)
+  {
+    util::PerformanceTrace::Scope scope("watch::Unwatch::StopNative");
+    impl_->StopNative();
+  }
+  {
+    util::PerformanceTrace::Scope scope("watch::Unwatch::StopPoll");
+    impl_->StopPoll();
+  }
 #else
-  impl_->StopPoll();
+  {
+    util::PerformanceTrace::Scope scope("watch::Unwatch::StopPoll");
+    impl_->StopPoll();
+  }
 #endif
   impl_->is_native.store(false, std::memory_order_release);
   impl_->root.clear();

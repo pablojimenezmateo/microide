@@ -109,7 +109,11 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   perf_label.Field("path", path);
   util::PerformanceTrace::Scope perf_scope(perf_label.View());
   EnsureDocument();
-  std::optional<std::string> content = util::ReadTextFile(path);
+  std::optional<std::string> content;
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ReadTextFile");
+    content = util::ReadTextFile(path);
+  }
   if (!content.has_value()) {
     return false;
   }
@@ -117,8 +121,13 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   // Convert directly to the editor's canonical LF buffer. The old CRLF/CR path
   // decoded into vector<string> and PieceTree immediately joined it back into a
   // string, so a dense CRLF file could force one allocation per line on open.
-  const LineEndingMetadata metadata = AnalyzeLineEndings(*content);
-  const TextEncoding encoding = DetectEncoding(*content);
+  LineEndingMetadata metadata;
+  TextEncoding encoding = TextEncoding::UTF8;
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ClassifyContent");
+    metadata = AnalyzeLineEndings(*content);
+    encoding = DetectEncoding(*content);
+  }
   if (encoding == TextEncoding::Bytes) {
     // Opaque/binary content: a 0x0D or 0x0A is data, not a line ending. Split on '\n'
     // only (keeping CR bytes in the line) and label the ending LF so Save joins with a
@@ -127,8 +136,16 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
                /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
     return true;
   }
-  ResetStateFromText(CanonicalizeLineEndingsToLf(std::move(*content), metadata), path,
-                     metadata.line_ending, metadata.mixed_line_endings, encoding, false, false);
+  std::string canonical;
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::OpenFile::CanonicalizeLineEndings");
+    canonical = CanonicalizeLineEndingsToLf(std::move(*content), metadata);
+  }
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ResetStateFromText");
+    ResetStateFromText(std::move(canonical), path, metadata.line_ending,
+                       metadata.mixed_line_endings, encoding, false, false);
+  }
   return true;
 }
 

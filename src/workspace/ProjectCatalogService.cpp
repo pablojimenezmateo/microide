@@ -109,16 +109,36 @@ void ProjectCatalogService::StoreCurrentProjectState(ProjectWorkspaceState& stat
     perf_label.Field("root", context_.current_project_state.root);
   }
   util::PerformanceTrace::Scope trace_scope(perf_label.View());
-  operations_.sync_active_editor_tab();
-  operations_.stop_project_search();
-  operations_.stop_file_index_watcher();
-  operations_.close_tree_context_menu();
+  {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::StoreCurrentProjectState::SyncActiveEditorTab");
+    operations_.sync_active_editor_tab();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::StoreCurrentProjectState::StopProjectSearch");
+    operations_.stop_project_search();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::StoreCurrentProjectState::StopFileIndexWatcher");
+    operations_.stop_file_index_watcher();
+  }
+  {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::StoreCurrentProjectState::CloseTreeContextMenu");
+    operations_.close_tree_context_menu();
+  }
   context_.current_project_state.initialized = true;
   context_.current_project_state.restore_persistence_on_activate = false;
   context_.current_project_state.overlay.workflow.project_search.running = false;
-  state = std::move(context_.current_project_state);
-  operations_.rebind_project_state(state);
-  operations_.reset_current_project_state_storage();
+  {
+    util::PerformanceTrace::Scope scope(
+        "ProjectCatalogService::StoreCurrentProjectState::MoveProjectState");
+    state = std::move(context_.current_project_state);
+    operations_.rebind_project_state(state);
+    operations_.reset_current_project_state_storage();
+  }
 }
 
 void ProjectCatalogService::LoadProjectState(ProjectWorkspaceState& state) {
