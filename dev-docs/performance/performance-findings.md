@@ -25,6 +25,83 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-01 measurement pass, fifth round (perf-runner-v1)
+
+Continuation of the fourth round's open item: after the line-0 fixes, the fold
+model was essentially the entire cost of editing a large file. It rescans the
+whole document on every keystroke, and this round is about how much of that
+scan was avoidable work rather than about stopping the rescan (still open).
+
+### Fixed
+
+- **The indent measure counted leading whitespace one byte at a time.**
+  `MeasureIndent` runs for every line of the document on every fold recompute.
+  On shallow code that is nothing; on deeply nested code it is the whole scan --
+  the 50k-line fixture averages 131 leading whitespace bytes per line, and the
+  pass cost 2.30 ms per keystroke against 0.25 ms when a probe read only each
+  line's first byte. Leading spaces are now counted eight bytes at a time
+  (`util::LeadingByteRun`); a tab still falls into the exact per-character rule
+  from where it appears. **2.30 -> 0.63 ms**, and
+  `mid_file_edit_latency_large_file` 204 -> 136 ms.
+- **The "incremental" bracket resume walked the whole document anyway.** It
+  avoids re-emitting ranges for the lines before the edit, but still walked every
+  byte of them to rebuild the bracket stack -- half a document per keystroke on a
+  mid-file edit, and neither half of the resume had a scope, so it had never
+  appeared in a ranking. Consecutive keystrokes in one place resume at the same
+  line, and an edit at or after a line cannot change a byte before it, so the
+  stack is reusable while the resume line is unchanged. That is sound precisely
+  because the resume line is the *minimum* line touched since the last refresh:
+  an earlier edit lowers it and the memo stops matching.
+  **BuildBracketStackPrefix 120 calls / 176 ms -> 1 call / 1.4 ms**; scenario
+  136 -> 126 ms.
+- **A sequential line walk cost a tree descent per line.** `PieceTree::LineView`
+  needs the start of line `i` and of `i+1`; the one-entry memo can only ever hold
+  one of them, so an ascending walk paid a descent plus a binary search per line,
+  and then a *second* descent inside `TryViewRange` to turn the byte range back
+  into a view of the piece it had just located. Both are O(1) now, keyed off the
+  node the last resolved newline sat in: measured 2,502,600 O(1) steps against
+  2,544 descents, and 2,502,744 in-node views against 312. Kept despite a wall
+  win inside the noise band, because it is strictly less work on the editor's
+  hottest read primitive; the remaining per-line cost is call overhead, not the
+  lookup.
+
+### A measurement mistake worth repeating back
+
+The first attempt at localising the indent scan replaced
+`MeasureIndent(lines[i], ...)` with a **constant** and concluded that 99.6% of
+the pass was the line lookup. The compiler hoisted the constant out of the loop,
+so that experiment measured a memset. The correct probe keeps the call and
+changes only what it does with the result (`lines[i].empty()`, then
+`lines[i].substr(0, 1)`), which said the opposite: the lookup was ~10% and the
+byte counting was ~90%. **An ablation that lets the compiler delete the
+surrounding work measures nothing.**
+
+The same lesson applied to the tests: the first version of both fold-memo
+regression tests PASSED against deliberately broken code, because the two
+bracket stacks being compared happened to coincide. They now alternate resume
+lines between different bracket depths and give the two documents brackets
+opened at different lines.
+
+### Still open
+
+- **The fold model still rescans the whole document on every keystroke.** What
+  is left after this round is the bracket tail scan (~2.4 ms), the indent measure
+  (~0.63 ms) and the range merge (~0.65 ms) -- roughly 3.7 ms per keystroke on
+  the 50k-line fixture. The remaining structural fixes are the ones named last
+  round: checkpointed bracket stacks (the syntax highlighter already does exactly
+  this for its state chain, in the same file), and VSCode's approach of computing
+  fold ranges behind a debounce while shifting the existing ranges by the edit
+  delta.
+- **An edit at line 0 cannot use the bracket resume at all** -- there is nothing
+  before it to keep -- so it rescans fully every keystroke and
+  `first_line_edit_latency_large_file` sits at 188 ms against the mid-file
+  burst's 134. Confirmed rather than assumed: `BuildBracketStackPrefix` records
+  zero calls in that scenario. Only checkpointing would help here.
+- Unchanged from earlier rounds: the workspace-session durable write, the
+  `ReusableMatchData` hash lookup per regex execution, `ResolveGitBaseReference`'s
+  six spawns on the shell thread, and the synchronous blob loads in
+  `compare_scroll_selection`.
+
 ## 2026-08-01 measurement pass, fourth round (perf-runner-v1)
 
 Theme: **the same edit costs wildly different amounts depending on where in the
