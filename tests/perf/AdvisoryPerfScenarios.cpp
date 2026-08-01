@@ -3,10 +3,14 @@
 #include <chrono>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <tuple>
+#include <utility>
 
 #if defined(__linux__)
 #include <unistd.h>
@@ -90,6 +94,37 @@ class ScopedTempTree {
  private:
  std::filesystem::path root_;
 };
+
+// Fixture trees for the compare/merge scenarios below, built ONCE per process and
+// shared by every measured iteration.
+//
+// They used to be built inside the scenario body, so each iteration rewrote a
+// 1 MiB seed file two or three times and — for the git-backed ones — ran `git
+// init`, two `git config`s, `git add`, and `git commit`: five subprocess spawns on
+// the scenario thread, all inside the measured window. On
+// compare_scroll_large_fixture that setup was ~190 ms of the ~250 ms of
+// main-thread time the scenario reported, so the scroll burst it exists to measure
+// accounted for under a quarter of its own number, and a real regression in it
+// would have been invisible under the setup noise.
+//
+// The scenarios only ever read these trees after building them (they scroll, they
+// select, they type into an in-memory result buffer), so one build per process is
+// sound. The trees are removed when the map's destructor runs at exit — the perf
+// binary returns from main rather than quick_exit-ing, so that actually happens.
+const std::filesystem::path& EnsureSharedFixtureTree(
+    const std::string& name,
+    const std::function<void(const std::filesystem::path&)>& build) {
+  static std::map<std::string, ScopedTempTree> trees;
+  const auto existing = trees.find(name);
+  if (existing != trees.end()) {
+    return existing->second.root();
+  }
+  const auto [inserted, ok] =
+      trees.emplace(std::piecewise_construct, std::forward_as_tuple(name),
+                    std::forward_as_tuple(std::filesystem::temp_directory_path() / name));
+  build(inserted->second.root());
+  return inserted->second.root();
+}
 
 void RequireGitCommandSuccess(const std::filesystem::path& repo_path,
                               const std::vector<std::string>& args,
@@ -269,15 +304,15 @@ void RunMergeScrollLargeFixture(ScenarioContext& context) {
     return;
   }
 
-  const std::string source = ReadFileTextOrThrow(seed);
-  const std::filesystem::path temp_root =
-      std::filesystem::temp_directory_path() / "microide-perf-merge-scroll";
-  ScopedTempTree temp_tree(temp_root);
-  WriteFileTextOrThrow(temp_tree.root() / "base.txt", source);
-  WriteFileTextOrThrow(temp_tree.root() / "incoming.txt", source + "\nINCOMING_PERF_TAIL\n");
-  WriteFileTextOrThrow(temp_tree.root() / "current.txt", source + "\nCURRENT_PERF_TAIL\n");
+  const std::filesystem::path root =
+      EnsureSharedFixtureTree("microide-perf-merge-scroll", [&](const std::filesystem::path& dir) {
+        const std::string source = ReadFileTextOrThrow(seed);
+        WriteFileTextOrThrow(dir / "base.txt", source);
+        WriteFileTextOrThrow(dir / "incoming.txt", source + "\nINCOMING_PERF_TAIL\n");
+        WriteFileTextOrThrow(dir / "current.txt", source + "\nCURRENT_PERF_TAIL\n");
+      });
 
-  if (!context.Open(temp_tree.root())) {
+  if (!context.Open(root)) {
     throw std::runtime_error("merge_scroll_large_fixture: failed to open temp project root");
   }
   context.Measure("merge_large.open_to_first_paint", [&] {
@@ -301,16 +336,16 @@ void RunCompareScrollLargeFixture(ScenarioContext& context) {
     return;
   }
 
-  const std::string source = ReadFileTextOrThrow(seed);
-  const std::filesystem::path temp_root =
-      std::filesystem::temp_directory_path() / "microide-perf-compare-scroll";
-  ScopedTempTree repo_dir(temp_root);
-  InitializeGitRepo(repo_dir.root());
-  WriteFileTextOrThrow(repo_dir.root() / "large.txt", source);
-  CommitAll(repo_dir.root(), "add large compare fixture");
-  WriteFileTextOrThrow(repo_dir.root() / "large.txt", source + "\nWORKTREE_PERF_TAIL\n");
+  const std::filesystem::path root = EnsureSharedFixtureTree(
+      "microide-perf-compare-scroll", [&](const std::filesystem::path& dir) {
+        const std::string source = ReadFileTextOrThrow(seed);
+        InitializeGitRepo(dir);
+        WriteFileTextOrThrow(dir / "large.txt", source);
+        CommitAll(dir, "add large compare fixture");
+        WriteFileTextOrThrow(dir / "large.txt", source + "\nWORKTREE_PERF_TAIL\n");
+      });
 
-  if (!context.Open(repo_dir.root())) {
+  if (!context.Open(root)) {
     throw std::runtime_error("compare_scroll_large_fixture: failed to open temp git repo");
   }
   context.Measure("compare_large.open_to_first_paint", [&] {
@@ -329,14 +364,14 @@ void RunCompareScrollLargeFixture(ScenarioContext& context) {
 
 void RunMergeScrollInterleavedHunks(ScenarioContext& context) {
   constexpr int kBlocks = 420;
-  const std::filesystem::path temp_root =
-      std::filesystem::temp_directory_path() / "microide-perf-merge-interleaved";
-  ScopedTempTree temp_tree(temp_root);
-  WriteFileTextOrThrow(temp_tree.root() / "base.cpp", BuildInterleavedBaseText(kBlocks));
-  WriteFileTextOrThrow(temp_tree.root() / "incoming.cpp", BuildInterleavedVariantText(kBlocks, 0));
-  WriteFileTextOrThrow(temp_tree.root() / "current.cpp", BuildInterleavedVariantText(kBlocks, 1));
+  const std::filesystem::path root = EnsureSharedFixtureTree(
+      "microide-perf-merge-interleaved", [&](const std::filesystem::path& dir) {
+        WriteFileTextOrThrow(dir / "base.cpp", BuildInterleavedBaseText(kBlocks));
+        WriteFileTextOrThrow(dir / "incoming.cpp", BuildInterleavedVariantText(kBlocks, 0));
+        WriteFileTextOrThrow(dir / "current.cpp", BuildInterleavedVariantText(kBlocks, 1));
+      });
 
-  if (!context.Open(temp_tree.root())) {
+  if (!context.Open(root)) {
     throw std::runtime_error("merge_scroll_interleaved_hunks: failed to open temp project root");
   }
   context.Measure("merge_interleaved.open_to_first_paint", [&] {
@@ -359,18 +394,18 @@ void RunMergeScrollInterleavedHunks(ScenarioContext& context) {
 
 void RunCompareScrollSelectionFixture(ScenarioContext& context) {
   constexpr int kBlocks = 420;
-  const std::filesystem::path temp_root =
-      std::filesystem::temp_directory_path() / "microide-perf-compare-selection";
-  ScopedTempTree repo_dir(temp_root);
-  InitializeGitRepo(repo_dir.root());
-  WriteFileTextOrThrow(repo_dir.root() / "large.cpp", BuildInterleavedBaseText(kBlocks));
-  CommitAll(repo_dir.root(), "add interleaved compare fixture");
-  WriteFileTextOrThrow(repo_dir.root() / "large.cpp", BuildInterleavedVariantText(kBlocks, 0));
+  const std::filesystem::path root = EnsureSharedFixtureTree(
+      "microide-perf-compare-selection", [&](const std::filesystem::path& dir) {
+        InitializeGitRepo(dir);
+        WriteFileTextOrThrow(dir / "large.cpp", BuildInterleavedBaseText(kBlocks));
+        CommitAll(dir, "add interleaved compare fixture");
+        WriteFileTextOrThrow(dir / "large.cpp", BuildInterleavedVariantText(kBlocks, 0));
+      });
 
-  if (!context.Open(repo_dir.root())) {
+  if (!context.Open(root)) {
     throw std::runtime_error("compare_scroll_selection_fixture: failed to open temp git repo");
   }
-  const std::filesystem::path source = repo_dir.root() / "large.cpp";
+  const std::filesystem::path source = root / "large.cpp";
   context.Measure("compare_selection.open_to_first_paint", [&] {
     if (!workspace::WorkspaceShell::TestAccess::OpenWorkingTreeComparison(
             context.Shell(), source, "HEAD", "HEAD")) {
