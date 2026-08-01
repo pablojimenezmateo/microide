@@ -25,6 +25,87 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-01 measurement pass, fourth round (perf-runner-v1)
+
+Theme: **the same edit costs wildly different amounts depending on where in the
+file you make it**, and nothing measured that. Every editing scenario in the suite
+typed somewhere in the middle of the file, so a whole class of first-line
+pathologies was invisible.
+
+### Fixed
+
+- **Editing line 0 rebuilt every line's visual width.** `InvalidateDerivedCaches`
+  has a dedicated branch for a content edit anchored at line 0 — line 0 genuinely
+  is special for the highlight state, because the syntax state chains forward from
+  it — and that branch dropped the per-line visual-column table along with the
+  visible-line layouts. The next `MaxVisualColumns()` then recomputed the width of
+  every line in the buffer, per keystroke. A line's width depends on that line's
+  bytes and nothing else, so line 0 is not special here, and the incremental
+  update every edit path already runs handles it. On the 50k-line fixture an
+  identical enter/backspace burst measured **121 full rebuilds (269.7 ms) at line 0
+  against 1 (3.1 ms) at line 25000**.
+- **The same branch cleared two 50k-entry vectors** that `EnsureHighlightCaches`
+  resized straight back, value-initialising ~50k `SyntaxState`s (2 MB) per
+  keystroke. The non-zero-start branch a few lines below already documents the
+  right answer ("drop the validity cursor instead of looping SyntaxState{} into
+  ~50 000 entries"); the two had drifted.
+- **A heap allocation per keystroke in the width update.** `UpdateVisualColumnCacheAfterEdit`
+  built a fresh vector for the inserted-line widths — usually to hold one value.
+  Mostly hidden before, because an edit at line 0 bailed out of that function
+  early; with line 0 on the incremental path it showed up immediately as +22,710
+  allocations on the snippet mirror scenario.
+- **The indent fold scan re-derived "is this line blank" for every line.**
+  `ScanIndentRanges` measures every line's indent into an array, then walks that
+  array; the walk asked `LineIsBlankOrIndentOnly(lines[i])` — a piece-tree line
+  lookup plus a byte scan — for a question the measure pass had already answered
+  (`MeasureIndent` returns its sentinel *exactly* when the line is all spaces and
+  tabs). The check could never fire. Emission pass **227.0 -> 8.9 ms** across the
+  mid-file burst; `mid_file_edit_latency_large_file` p50 wall 245 -> 205 ms.
+
+`first_line_edit_latency_large_file` overall: p50 wall **277.9 -> 169.1 ms**,
+shell-thread allocations **57,123 -> 19,147**. It is now faster than the mid-file
+burst rather than dramatically slower.
+
+### Instrumentation added
+
+- `first_line_edit_latency_large_file`, the mirror of the existing mid-file
+  scenario. The two differ only in the line they edit, which is the point: a
+  position-dependent cost is invisible without a differential pair.
+- `FoldingModel::ScanIndentRanges::Measure`, splitting the per-line measure from
+  the range walk. That split is what showed the walk was 40% of the scan for no
+  reason.
+
+### Still open — and this is now the dominant editor cost
+
+**The fold model rescans the whole document on every keystroke.** After the fixes
+above it is essentially all that is left of a large-file edit: on the 50k-line
+fixture the mid-file burst spends ~320 ms of its ~205 ms/iteration budget in
+`ScanIndentRanges` alone (2.6 ms per keystroke), and the first-line burst adds a
+full bracket rescan on top (the bracket scanner has an incremental resume path,
+but it requires a resume line > 0).
+
+Two measurements worth carrying into that work:
+
+1. **99.6% of the indent measure pass is the line lookup, not the measuring.**
+   Replacing `MeasureIndent(lines[i], ...)` with a constant took the pass from
+   2.58 ms to 0.011 ms per call. `PieceTree::LineView` memoizes a single line
+   index, and its own comment explains it leaves the memo holding `index + 1` for
+   the next ascending call — but each call also asks for `index + 1`'s start,
+   which misses, so a sequential walk pays one full tree descent per line. A
+   cursor or a range-visiting API (`ExtractLineRange` already does one pruned
+   walk for many lines) would make this O(bytes) instead of O(lines · log n), and
+   it would pay off well beyond folding.
+2. **The scan should not be running at all on most keystrokes.** VSCode computes
+   fold ranges asynchronously behind a debounce and shifts the existing ranges by
+   the edit delta meanwhile. The pieces are already here — `ConsumeFoldEditAnchorLine`,
+   `computed_line_count_`, and `RemapCollapsedFlags` — so the missing part is
+   deferring the recompute rather than a new mechanism.
+
+Also still open from earlier rounds: the workspace-session durable write, the
+`ReusableMatchData` hash lookup per regex execution, `ResolveGitBaseReference`'s
+six spawns on the shell thread, and the synchronous blob loads in
+`compare_scroll_selection`.
+
 ## 2026-08-01 measurement pass, third round (perf-runner-v1)
 
 This round started from a gate failure rather than a ranking, and the failure turned
