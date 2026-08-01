@@ -60,6 +60,122 @@ void TestViewportDetachFoldingModelRestoresVisualRows() {
          "detaching the folding model should expose every logical line again");
 }
 
+// The bracket scan's incremental-resume path reuses the bracket stack it built
+// for the previous recompute when the resume line is unchanged — which is sound
+// only because the resume line is the MINIMUM line touched since, so an edit
+// anywhere before it lowers the line and stops the reuse.
+//
+// That is an easy invariant to break and an invisible one to break: a stale
+// stack produces wrong fold ranges, not a crash. So compare the incrementally
+// resumed model against a from-scratch compute after every edit in a sequence
+// that deliberately mixes edits after, at, and BEFORE the previous resume line.
+void TestFoldingIncrementalResumeMatchesFullRecompute() {
+  std::vector<std::string> lines;
+  for (int block = 0; block < 12; ++block) {
+    lines.push_back("void f" + std::to_string(block) + "() {");
+    lines.push_back("  if (x) {");
+    lines.push_back("    body();");
+    lines.push_back("  }");
+    lines.push_back("}");
+  }
+
+  FoldingModel incremental;
+  const auto options = DefaultCStyleOptions();
+  Expect(incremental.Compute(lines, options), "seed compute should complete");
+
+  // (line to edit, replacement). Deliberately walks backwards at points so the
+  // resume line drops below the previous one, and repeats a line so the memo is
+  // exercised on its hit path too.
+  // Each block spans five lines: `void fN() {`, `  if (x) {`, `    body();`,
+  // `  }`, `}`. So a resume at 5B+2 sees TWO open brackets and a resume at 5B+4
+  // sees one -- alternating between those depths across different blocks is what
+  // makes a wrongly-reused stack produce different ranges rather than the same
+  // ones by luck.
+  const std::vector<std::pair<std::size_t, std::string>> edits = {
+      {42, "    body(); more();"},  // depth 2 at resume
+      {42, "    body();"},          // same line again: the memo's hit path
+      {14, "}  // f2"},             // depth 1, and BEFORE the previous resume line
+      {12, "    body(); x();"},     // depth 2, earlier block
+      {44, "}  // f8"},             // depth 1, later block
+      {22, "    body(); y();"},     // depth 2
+      {22, "    body();"},
+      {24, "}  // f4"},             // depth 1
+      {57, "  if (z) {"},           // depth 1, last block
+  };
+
+  for (const auto& [line, text] : edits) {
+    lines[line] = text;
+    // Resume exactly at the edited line, which is what the viewport publishes.
+    incremental.ComputeWithBudget(lines, options, /*max_lines=*/0, line);
+
+    FoldingModel fresh;
+    Expect(fresh.Compute(lines, options), "reference compute should complete");
+
+    Expect(incremental.ranges().size() == fresh.ranges().size(),
+           "incremental resume must produce the same number of fold ranges as a full "
+           "recompute of the same content");
+    for (std::size_t i = 0; i < fresh.ranges().size(); ++i) {
+      Expect(incremental.ranges()[i].opener_line == fresh.ranges()[i].opener_line &&
+                 incremental.ranges()[i].closer_line == fresh.ranges()[i].closer_line &&
+                 incremental.ranges()[i].source == fresh.ranges()[i].source,
+             "incremental resume must produce identical fold ranges to a full recompute — a "
+             "reused bracket stack that is no longer valid shows up exactly here");
+    }
+  }
+}
+
+// The prefix-stack memo records which LINE it was computed for, not which
+// document. A full rescan is the path a freshly loaded or reset document takes,
+// so the memo has to be dropped there — otherwise an edit that happens to resume
+// at the same line as the previous document's would reuse a stack describing
+// content that is gone.
+void TestFoldingPrefixMemoDoesNotSurviveAFullRecompute() {
+  // Line 7 sits two brackets deep here...
+  std::vector<std::string> deep;
+  for (int block = 0; block < 6; ++block) {
+    deep.push_back("void f" + std::to_string(block) + "() {");
+    deep.push_back("  if (x) {");
+    deep.push_back("    body();");
+    deep.push_back("  }");
+    deep.push_back("}");
+  }
+  // ...and one bracket deep here, opened at a DIFFERENT line. That difference is
+  // the whole point: if both documents happened to have the same bracket open at
+  // line 7, reusing the wrong stack would emit the same ranges by luck and prove
+  // nothing. A short block first so the resume still finds a kept prefix.
+  std::vector<std::string> flat(deep.size(), "  body();");
+  flat[0] = "void a() {";
+  flat[1] = "  x();";
+  flat[2] = "}";
+  flat[3] = "void b() {";
+  flat[flat.size() - 1] = "}";
+
+  const auto options = DefaultCStyleOptions();
+  FoldingModel model;
+  Expect(model.Compute(deep, options), "seed compute on the deep document");
+  // Populate the memo for line 7 against the deep document.
+  deep[7] = "    body(); more();";
+  model.ComputeWithBudget(deep, options, /*max_lines=*/0, /*incremental_resume_line=*/7);
+
+  // A full recompute on entirely different content — what a document load does.
+  Expect(model.Compute(flat, options), "full recompute on the flat document");
+
+  // Now resume at the same line on the new content.
+  flat[7] = "  body(); more();";
+  model.ComputeWithBudget(flat, options, /*max_lines=*/0, /*incremental_resume_line=*/7);
+
+  FoldingModel fresh;
+  Expect(fresh.Compute(flat, options), "reference compute on the flat document");
+  Expect(model.ranges().size() == fresh.ranges().size(),
+         "a resume after a full recompute must not reuse the previous document's bracket "
+         "stack");
+  for (std::size_t i = 0; i < fresh.ranges().size(); ++i) {
+    Expect(model.ranges()[i].opener_line == fresh.ranges()[i].opener_line &&
+               model.ranges()[i].closer_line == fresh.ranges()[i].closer_line,
+           "fold ranges after a cross-document resume must match a full recompute");
+  }
+}
+
 // The indent scan treats "blank or indent only" as a property of the measured
 // indent (a sentinel value) rather than re-scanning the line's bytes. Those are
 // the same predicate — MeasureIndent returns the sentinel exactly when every byte
@@ -321,6 +437,10 @@ void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
           TestTextViewportMoveClearsFoldingModelBinding);
   AddTest(tests, "EditorFolding/Viewport/DetachModelRestoresVisualRows",
           TestViewportDetachFoldingModelRestoresVisualRows);
+  AddTest(tests, "EditorFolding/PrefixMemoDoesNotSurviveAFullRecompute",
+          TestFoldingPrefixMemoDoesNotSurviveAFullRecompute);
+  AddTest(tests, "EditorFolding/IncrementalResumeMatchesFullRecompute",
+          TestFoldingIncrementalResumeMatchesFullRecompute);
   AddTest(tests, "EditorFolding/WhitespaceOnlyLinesAreNeitherOpenersNorDedents",
           TestFoldingWhitespaceOnlyLinesAreNeitherOpenersNorDedents);
   AddTest(tests, "EditorFolding/Viewport/AttachModelKeepsWidthCaches",

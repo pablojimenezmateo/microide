@@ -58,11 +58,7 @@ std::size_t MeasureIndent(std::string_view line, std::size_t tab_size) {
 // bracket it records the line of the opener; the corresponding close on a
 // later line emits a fold range. Brackets balanced on the same line are
 // ignored (no fold opportunity).
-struct StackEntry {
-  char open;
-  char close;
-  std::size_t line;
-};
+using StackEntry = FoldingModel::BracketStackEntry;
 
 // 256-entry table: BracketKind[byte] selects which pair the byte belongs to (1..127), or 0 when the
 // byte is not a bracket character at all. The bracket-scan inner loop runs once per source byte, so
@@ -453,6 +449,7 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
   std::vector<FoldRange> previous_ranges;
   std::vector<bool> previous_collapsed;
   if (previous_collapsed_count > 0 || resume_valid) {
+    util::PerformanceTrace::Scope scope("FoldingModel::CopyPreviousRanges");
     previous_ranges = ranges_;
   }
   if (previous_collapsed_count > 0) {
@@ -513,6 +510,12 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
 
   std::vector<FoldRange> bracket_ranges;
   if (!resume_valid || !kept_prefix_exists) {
+    // Full rescan. Drop the prefix-stack memo: this is the path a freshly loaded
+    // or reset document takes, and the memo says nothing about which document it
+    // was computed for -- only which line. Without this, a later edit that
+    // happened to resume at the same line as some previous document's would
+    // reuse that document's stack.
+    prefix_stack_valid_ = false;
     {
       util::PerformanceTrace::Scope sb("FoldingModel::ScanBracketRanges");
       ScanBracketRanges(lines, options.bracket_pairs, scan_end, max_lines, bracket_ranges, complete_,
@@ -527,9 +530,31 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
   // Build the bracket lookup table once and share it between the prefix walk and
   // the tail scan (the two consumers on this incremental-resume path).
   const BracketLookupTable bracket_table = BuildBracketLookupTable(options.bracket_pairs);
-  if (!BuildBracketStackPrefix(lines, bracket_table, incremental_resume_line, max_lines,
-                               lines_visited, prefix_stack, prefix_lines_complete,
-                               syntax_viewport)) {
+  bool prefix_ok = false;
+  if (prefix_stack_valid_ && prefix_stack_line_ == incremental_resume_line) {
+    // Same resume line as the last recompute, so every byte before it is
+    // byte-for-byte what it was then (the resume line is the minimum line
+    // touched since, so an earlier edit would have lowered it). The stack it
+    // produced is still the stack.
+    prefix_stack = prefix_stack_;
+    prefix_ok = true;
+  } else {
+    // The incremental-resume path avoids EMITTING ranges for the prefix, but it
+    // still walks every byte before the edit anchor to rebuild the bracket stack.
+    // Scoped because that is the half of a mid-file recompute nothing measured.
+    util::PerformanceTrace::Scope scope("FoldingModel::BuildBracketStackPrefix");
+    prefix_ok = BuildBracketStackPrefix(lines, bracket_table, incremental_resume_line, max_lines,
+                                        lines_visited, prefix_stack, prefix_lines_complete,
+                                        syntax_viewport);
+    if (prefix_ok && prefix_lines_complete) {
+      prefix_stack_ = prefix_stack;
+      prefix_stack_line_ = incremental_resume_line;
+      prefix_stack_valid_ = true;
+    } else {
+      prefix_stack_valid_ = false;
+    }
+  }
+  if (!prefix_ok) {
     bracket_ranges.clear();
     complete_ = true;
     ScanBracketRanges(lines, options.bracket_pairs, scan_end, max_lines, bracket_ranges, complete_,
@@ -547,9 +572,12 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
 
   std::vector<FoldRange> tail_brackets;
   bool tail_complete = prefix_lines_complete;
-  ScanBracketRangesTail(lines, bracket_table, incremental_resume_line, scan_end,
-                        std::move(prefix_stack), max_lines, lines_visited,
-                        tail_brackets, tail_complete, syntax_viewport);
+  {
+    util::PerformanceTrace::Scope scope("FoldingModel::ScanBracketRangesTail");
+    ScanBracketRangesTail(lines, bracket_table, incremental_resume_line, scan_end,
+                          std::move(prefix_stack), max_lines, lines_visited,
+                          tail_brackets, tail_complete, syntax_viewport);
+  }
 
   bracket_ranges.reserve(kept_brackets.size() + tail_brackets.size());
   bracket_ranges.insert(bracket_ranges.end(), kept_brackets.begin(), kept_brackets.end());
@@ -816,6 +844,8 @@ bool FoldingModel::IsCollapsedAtOpener(std::size_t line) const {
 void FoldingModel::Clear() {
   ranges_.clear();
   collapsed_.clear();
+  prefix_stack_.clear();
+  prefix_stack_valid_ = false;
   collapsed_count_ = 0;
   complete_ = true;
   dirty_ = true;

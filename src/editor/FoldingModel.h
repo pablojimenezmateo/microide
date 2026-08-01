@@ -147,6 +147,15 @@ class FoldingModel {
   }
   const Fingerprint& fingerprint() const { return fingerprint_; }
 
+ public:
+  // One open bracket on the scan stack. Public only so the scanners in the .cpp
+  // can name it; it is an implementation detail of the bracket scan.
+  struct BracketStackEntry {
+    char open = 0;
+    char close = 0;
+    std::size_t line = 0;
+  };
+
  private:
   struct CollapsedInterval {
     std::size_t lo = 0;  // first hidden line (opener + 1)
@@ -157,6 +166,23 @@ class FoldingModel {
   // prefix `hi` running-max, plus a per-range prefix running-max of `closer_line`
   // for InnermostFoldContaining. Cheap when ranges_/collapsed_ are unchanged.
   void EnsureLookupCache() const;
+
+  // Bracket stack as of the start of `prefix_stack_line_`.
+  //
+  // The incremental-resume path avoids re-EMITTING fold ranges for the lines
+  // before an edit, but it still had to walk every byte of them to know which
+  // brackets were open at the edit point -- half a document per keystroke on a
+  // mid-file edit. Consecutive keystrokes in one place all resume at the same
+  // line, and an edit at or after that line cannot change any byte before it, so
+  // the stack computed for it stays valid: reuse it while the resume line is
+  // unchanged.
+  //
+  // The resume line is the MINIMUM line touched since the last refresh consumed
+  // it, so an edit anywhere earlier lowers it and the memo stops matching --
+  // which is exactly the condition under which the prefix is no longer intact.
+  std::vector<BracketStackEntry> prefix_stack_;
+  std::size_t prefix_stack_line_ = 0;
+  bool prefix_stack_valid_ = false;
 
   std::vector<FoldRange> ranges_;
   std::vector<bool> collapsed_;  // parallel to ranges_
