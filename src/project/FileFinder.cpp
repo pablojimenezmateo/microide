@@ -32,7 +32,6 @@ void FileFinder::SetIndex(const FileIndex* index) {
 
 void FileFinder::InvalidateIndexCache() {
   cached_entries_.clear();
-  entry_index_by_path_.clear();
   cache_ready_ = false;
   cached_index_version_ = 0;
   has_last_match_ = false;
@@ -67,25 +66,50 @@ void FileFinder::Refresh() {
   // the ranked listing below excludes anything already surfaced here.
   std::unordered_set<std::string> recent_shown;
   if (query_.text().empty() && !recent_relative_paths_.empty()) {
+    // Resolve the recents against the cache with a map keyed on the RECENTS
+    // (bounded by RecentsService::MaxFiles(), i.e. tens of entries), scanned
+    // against the index once. The finder used to keep a path -> index map over
+    // every indexed file for this, rebuilt on every cache rebuild: one string
+    // copy and one hash node per file in the project, on the shell thread, to
+    // serve at most a few dozen lookups that only happen while the query is
+    // empty.
+    std::unordered_map<std::string_view, std::size_t> recent_rank;
+    recent_rank.reserve(recent_relative_paths_.size());
+    std::vector<std::string> recent_strings;
+    recent_strings.reserve(recent_relative_paths_.size());
     for (const std::filesystem::path& recent : recent_relative_paths_) {
+      std::string recent_string = recent.string();
+      if (recent_string.empty()) {
+        continue;
+      }
+      recent_strings.push_back(std::move(recent_string));
+      // Newest-first order is the input order; a duplicate keeps its first rank.
+      recent_rank.emplace(std::string_view(recent_strings.back()), recent_strings.size() - 1);
+    }
+
+    // (rank, entry index) for every cached entry that is a recent, then emit in
+    // rank order so the newest recent still leads.
+    std::vector<std::pair<std::size_t, std::size_t>> found;
+    found.reserve(recent_rank.size());
+    for (std::size_t entry_index = 0; entry_index < cached_entries_.size(); ++entry_index) {
+      const auto it = recent_rank.find(std::string_view(cached_entries_[entry_index].path_string));
+      if (it != recent_rank.end()) {
+        found.emplace_back(it->second, entry_index);
+      }
+    }
+    std::sort(found.begin(), found.end());
+
+    for (const auto& [rank, entry_index] : found) {
       // Recents are deep-copied into results_ before the ranked tail applies its
       // cap, so a large/corrupt persisted recents list would otherwise materialize
       // an unbounded result set. Enforce the same visible budget here.
       if (results_.size() >= kMaxResults) {
         break;
       }
-      const std::string recent_string = recent.string();
-      if (recent_string.empty() || recent_shown.count(recent_string) != 0) {
-        continue;
-      }
-      const auto found = entry_index_by_path_.find(recent_string);
-      if (found == entry_index_by_path_.end()) {
-        continue;
-      }
-      const CachedFileEntry& entry = cached_entries_[found->second];
-      recent_shown.insert(recent_string);
+      const CachedFileEntry& entry = cached_entries_[entry_index];
+      recent_shown.insert(entry.path_string);
       results_.push_back(FileFinderResult{
-          .relative_path = entry.relative_path,
+          .relative_path = std::filesystem::path(entry.path_string),
           .path_string = entry.path_string,
           .score = 0,
       });
@@ -168,7 +192,7 @@ void FileFinder::Refresh() {
   for (std::size_t i = 0; i < keep; ++i) {
     const CachedFileEntry& entry = cached_entries_[ranked_refs[i].index];
     results_.push_back(FileFinderResult{
-        .relative_path = entry.relative_path,
+        .relative_path = std::filesystem::path(entry.path_string),
         .path_string = entry.path_string,
         .score = ranked_refs[i].score,
     });
@@ -201,7 +225,7 @@ std::optional<std::filesystem::path> FileFinder::SelectedPath() const {
   return results_[selected_index_].relative_path;
 }
 
-int FileFinder::SubsequenceScore(const std::string& text, const std::string& query) {
+int FileFinder::SubsequenceScore(std::string_view text, const std::string& query) {
   if (query.empty()) {
     return 0;
   }
@@ -258,7 +282,7 @@ int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string&
   const bool filename_possible = (entry.lower_filename_mask & query_mask) == query_mask;
 
   const int path_score = SubsequenceScore(entry.lower_path, query);
-  const int file_score = filename_possible ? SubsequenceScore(entry.lower_filename, query)
+  const int file_score = filename_possible ? SubsequenceScore(entry.lower_filename(), query)
                                            : std::numeric_limits<int>::max();
   if (path_score == std::numeric_limits<int>::max() &&
       file_score == std::numeric_limits<int>::max()) {
@@ -270,8 +294,8 @@ int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string&
                   : path_score * 3 + static_cast<int>(entry.path_string.size());
 
   if (file_score != std::numeric_limits<int>::max()) {
-    score = std::min(score, file_score - 20 + static_cast<int>(entry.lower_filename.size()));
-    if (entry.lower_filename.rfind(query, 0) == 0) {
+    score = std::min(score, file_score - 20 + static_cast<int>(entry.lower_filename().size()));
+    if (entry.lower_filename().rfind(query, 0) == 0) {
       score -= 30;
     }
   }
@@ -304,23 +328,22 @@ void FileFinder::EnsureCacheBuilt() {
   util::AddPerformanceCounter(util::PerfCounterId::FileFinderCacheEntriesBuilt, files.size());
   cached_entries_.clear();
   cached_entries_.reserve(files.size());
-  entry_index_by_path_.clear();
-  entry_index_by_path_.reserve(files.size());
   for (const auto& path : files) {
     std::string path_string = path.relative_path.string();
-    entry_index_by_path_.emplace(path_string, cached_entries_.size());
     std::string lower_path = util::Utf8CaseFold(path_string);
-    std::string lower_filename = util::Utf8CaseFold(path.relative_path.filename().string());
     const std::uint64_t lower_path_mask = CharPresenceMask(lower_path);
-    const std::uint64_t lower_filename_mask = CharPresenceMask(lower_filename);
-    cached_entries_.push_back(CachedFileEntry{
-        .relative_path = path.relative_path,
-        .path_string = std::move(path_string),
-        .lower_path = std::move(lower_path),
-        .lower_filename = std::move(lower_filename),
-        .lower_path_mask = lower_path_mask,
-        .lower_filename_mask = lower_filename_mask,
-    });
+    // Fold once, for the whole path, and take the filename as a suffix of it --
+    // folding the filename separately was a second fold plus a second string per
+    // indexed file. See CachedFileEntry for why the separator search is sound on
+    // the folded bytes.
+    const std::size_t separator = lower_path.find_last_of("/\\");
+    const std::size_t filename_offset = separator == std::string::npos ? 0 : separator + 1;
+    CachedFileEntry& entry = cached_entries_.emplace_back();
+    entry.path_string = std::move(path_string);
+    entry.lower_path = std::move(lower_path);
+    entry.lower_filename_offset = filename_offset;
+    entry.lower_path_mask = lower_path_mask;
+    entry.lower_filename_mask = CharPresenceMask(entry.lower_filename());
   }
   cached_index_version_ = snapshot.version;
   cache_ready_ = true;

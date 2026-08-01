@@ -51,16 +51,29 @@ class FileFinder {
   std::optional<std::filesystem::path> SelectedPath() const;
 
  private:
+  // One per indexed file, rebuilt whole whenever the index version moves -- so
+  // every field here costs one allocation per file in the project, on the shell
+  // thread, and its own resident bytes for as long as the finder is alive. It used
+  // to carry the same path four times (a std::filesystem::path, its string, the
+  // folded string, and the folded filename); it carries it twice now.
   struct CachedFileEntry {
-    std::filesystem::path relative_path;
     std::string path_string;
     std::string lower_path;
-    std::string lower_filename;
+    // The folded filename is a suffix of the folded path, so it is an offset, not
+    // a fourth string. Path separators are ASCII and case folding never adds or
+    // removes one, so the last separator in the FOLDED path bounds the same
+    // component it bounds in the original -- true even for a fold that changes a
+    // component's byte length.
+    std::size_t lower_filename_offset = 0;
     // Presence bitmask over the folded bytes (see CharPresenceMask). A query
     // whose mask is not a subset of these cannot possibly be a subsequence, so
     // the O(len * query) scan below is skipped outright.
     std::uint64_t lower_path_mask = 0;
     std::uint64_t lower_filename_mask = 0;
+
+    std::string_view lower_filename() const {
+      return std::string_view(lower_path).substr(lower_filename_offset);
+    }
   };
 
   // 64-bucket presence set: bit (byte % 64) for every byte of `text`. Subsequence
@@ -70,7 +83,7 @@ class FileFinder {
   // rejects it. Cheap enough to run over the whole index per keystroke.
   static std::uint64_t CharPresenceMask(std::string_view text);
 
-  static int SubsequenceScore(const std::string& text, const std::string& query);
+  static int SubsequenceScore(std::string_view text, const std::string& query);
   static int RankMatchCached(const CachedFileEntry& entry, const std::string& query,
                              std::uint64_t query_mask);
   void EnsureCacheBuilt();
@@ -80,9 +93,6 @@ class FileFinder {
   std::vector<std::filesystem::path> recent_relative_paths_;
   std::vector<FileFinderResult> results_;
   std::vector<CachedFileEntry> cached_entries_;
-  // path_string -> index into cached_entries_, so the empty-query recents lookup
-  // is O(1) instead of an O(recents * entries) linear find.
-  std::unordered_map<std::string, std::size_t> entry_index_by_path_;
   bool cache_ready_ = false;
   std::uint64_t cached_index_version_ = 0;
   std::size_t selected_index_ = 0;

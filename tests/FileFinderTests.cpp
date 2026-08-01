@@ -318,6 +318,80 @@ void TestFileFinderNarrowsToEntryBeyondDisplayCap() {
 // TD-2026-07-17-076: empty-query recents are deep-copied into results_ BEFORE the
 // ranked tail applies its cap. A large (or corrupt persisted) recents list must not
 // bypass the visible-result budget, so the recents prefix is now capped too.
+// Recents lead the empty finder in NEWEST-FIRST order, which is the order they
+// were handed in — not the order they happen to sit in the file index. The
+// resolution used to be a lookup per recent against a path -> index map built over
+// every indexed file; it is a single scan of the index against a map of the
+// recents now, so the emitted order comes from an explicit rank rather than from
+// the iteration. Give it recents whose newest-first order is the REVERSE of index
+// order, so an implementation that emits in scan order fails.
+void TestFileFinderEmitsRecentsNewestFirstRegardlessOfIndexOrder() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "recents-order fixture should initialize deferred file index root");
+  Expect(index.ApplyBatch(MakeInitialBatch({"src/a.cpp", "src/b.cpp", "src/c.cpp",
+                                            "src/d.cpp"})),
+         "recents-order fixture should apply initial index batch");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+  finder.SetRecentRelativePaths({"src/d.cpp", "src/b.cpp", "src/a.cpp"});
+  finder.SetQuery("");
+
+  Expect(finder.results().size() == 4, "every indexed file should be listed exactly once");
+  Expect(finder.results()[0].path_string == "src/d.cpp" &&
+             finder.results()[1].path_string == "src/b.cpp" &&
+             finder.results()[2].path_string == "src/a.cpp",
+         "recents must lead in newest-first order, not in file-index order");
+  Expect(finder.results()[3].path_string == "src/c.cpp",
+         "the non-recent file should follow the recents");
+}
+
+// The cached folded filename is a suffix of the cached folded path rather than a
+// separately folded string. That is only sound if case folding cannot move the
+// component boundary — it cannot introduce or remove an ASCII separator, but it
+// CAN change a component's byte length. Pin it with a filename whose fold is
+// longer than the original (U+0130 folds to two code points) and with a file that
+// has no directory component at all.
+void TestFileFinderFoldedFilenameMatchesSeparateFold() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+         "fold fixture should initialize deferred file index root");
+  // "\xC4\xB0" is U+0130 LATIN CAPITAL LETTER I WITH DOT ABOVE, whose full case
+  // fold is two code points (three bytes) — longer than the original two.
+  Expect(index.ApplyBatch(MakeInitialBatch({"toplevel.cpp", "SRC/\xC4\xB0stanbul.cpp",
+                                            "deep/nested/dir/Widget.cpp"})),
+         "fold fixture should apply initial index batch");
+
+  FileFinder finder;
+  finder.SetIndex(&index);
+
+  // A filename-only query must still match each file through the filename path,
+  // including the one whose folded filename changed length and the one with no
+  // directory component.
+  finder.SetQuery("widget");
+  Expect(finder.results().size() == 1 &&
+             finder.results().front().path_string == "deep/nested/dir/Widget.cpp",
+         "a filename query should match through the folded filename suffix");
+
+  finder.SetQuery("toplevel");
+  Expect(finder.results().size() == 1 &&
+             finder.results().front().path_string == "toplevel.cpp",
+         "a file with no directory component should match on its whole path as filename");
+
+  finder.SetQuery("stanbul");
+  Expect(finder.results().size() == 1,
+         "a filename whose case fold changes byte length should still match");
+}
+
 void TestFileFinderCapsRecentsOnEmptyQuery() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -475,6 +549,10 @@ void RegisterFileFinderTests(std::vector<TestCase>& tests) {
           TestFileFinderIncrementalTypingMatchesFreshQuery);
   AddTest(tests, "FileFinder/PrependsRecentsWhenQueryEmpty",
           TestFileFinderPrependsRecentsWhenQueryEmpty);
+  AddTest(tests, "FileFinder/EmitsRecentsNewestFirstRegardlessOfIndexOrder",
+          TestFileFinderEmitsRecentsNewestFirstRegardlessOfIndexOrder);
+  AddTest(tests, "FileFinder/FoldedFilenameMatchesSeparateFold",
+          TestFileFinderFoldedFilenameMatchesSeparateFold);
   AddTest(tests, "FileFinder/RebuildsCacheWhenFileIndexVersionChanges",
           TestFileFinderRebuildsCacheWhenFileIndexVersionChanges);
   AddTest(tests, "FileFinder/PreservesQueryAcrossIndexChanges",
