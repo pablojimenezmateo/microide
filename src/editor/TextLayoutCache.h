@@ -256,6 +256,10 @@ class TextLayoutCache {
   mutable std::optional<std::size_t> cached_max_visual_columns_;
   mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
   mutable std::deque<std::size_t> cached_visual_line_columns_;
+  // Scratch for UpdateVisualColumnCacheAfterEdit's inserted-line widths. A local
+  // vector there is one heap allocation per edit -- i.e. per keystroke, on the
+  // shell thread -- for what is usually a single value.
+  mutable std::vector<std::size_t> inserted_columns_scratch_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
   mutable std::uint64_t cached_max_visual_columns_content_revision_ = 0;
 };

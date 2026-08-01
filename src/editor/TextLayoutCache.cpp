@@ -464,7 +464,8 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     return;
   }
 
-  std::vector<std::size_t> inserted_columns;
+  std::vector<std::size_t>& inserted_columns = inserted_columns_scratch_;
+  inserted_columns.clear();
   inserted_columns.reserve(inserted_lines.size());
   for (const std::string& line : inserted_lines) {
     inserted_columns.push_back(TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size));
