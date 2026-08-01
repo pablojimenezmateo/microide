@@ -60,6 +60,45 @@ void TestViewportDetachFoldingModelRestoresVisualRows() {
          "detaching the folding model should expose every logical line again");
 }
 
+// The indent scan treats "blank or indent only" as a property of the measured
+// indent (a sentinel value) rather than re-scanning the line's bytes. Those are
+// the same predicate — MeasureIndent returns the sentinel exactly when every byte
+// is a space or a tab — but "exactly" is worth a test, because the interesting
+// input is the one that is neither empty nor code: a line of pure whitespace.
+//
+// A whitespace-only line must not open a fold, and must not terminate the block
+// it sits inside (it is skipped, not treated as a dedent).
+void TestFoldingWhitespaceOnlyLinesAreNeitherOpenersNorDedents() {
+  const std::vector<std::string> lines = {
+      "def outer():",   // 0: opener
+      "    first()",    // 1: body
+      "      \t  ",      // 2: whitespace only, indented deeper than the body
+      "    second()",   // 3: body again — the block must not have ended at line 2
+      "",               // 4: empty line
+      "    third()",    // 5: still the same block
+      "done()",         // 6: the real dedent
+  };
+
+  FoldingModel model;
+  editor::FoldingModel::ComputeOptions options;
+  options.tab_size = 4;
+  options.use_indent_source = true;  // no bracket pairs: indent folds only
+  Expect(model.Compute(lines, options), "indent-only fold compute should complete");
+
+  bool found_outer = false;
+  for (const editor::FoldRange& range : model.ranges()) {
+    Expect(range.opener_line != 2 && range.opener_line != 4,
+           "a whitespace-only line must never be a fold opener");
+    if (range.opener_line == 0) {
+      found_outer = true;
+      Expect(range.closer_line == 5,
+             "whitespace-only lines inside a block must not end it early — the block runs "
+             "to the last indented line before the real dedent");
+    }
+  }
+  Expect(found_outer, "the indented block under line 0 should produce a fold");
+}
+
 // Attaching or detaching a fold model changes which lines are visible, never how
 // wide any line is, so it must not wipe the width-derived layout caches. It used
 // to call InvalidateVisualColumnCache(), and the very next statement
@@ -282,6 +321,8 @@ void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
           TestTextViewportMoveClearsFoldingModelBinding);
   AddTest(tests, "EditorFolding/Viewport/DetachModelRestoresVisualRows",
           TestViewportDetachFoldingModelRestoresVisualRows);
+  AddTest(tests, "EditorFolding/WhitespaceOnlyLinesAreNeitherOpenersNorDedents",
+          TestFoldingWhitespaceOnlyLinesAreNeitherOpenersNorDedents);
   AddTest(tests, "EditorFolding/Viewport/AttachModelKeepsWidthCaches",
           TestViewportAttachFoldingModelKeepsWidthCaches);
   AddTest(tests, "EditorFolding/Viewport/PartialBudgetCollapseOmitsHiddenRows",

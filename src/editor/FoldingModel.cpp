@@ -16,6 +16,9 @@ namespace microide::editor {
 
 namespace {
 
+// Returned by MeasureIndent for a line whose every byte is a space or a tab
+// (including an empty line). It doubles as the "blank or indent only" predicate:
+// nothing else can produce it, so callers must not re-derive that separately.
 constexpr std::size_t kSentinelIndent = static_cast<std::size_t>(-1);
 
 std::size_t MeasureIndent(std::string_view line, std::size_t tab_size) {
@@ -31,13 +34,6 @@ std::size_t MeasureIndent(std::string_view line, std::size_t tab_size) {
     }
   }
   return kSentinelIndent;  // line is whitespace-only / blank
-}
-
-bool LineIsBlankOrIndentOnly(std::string_view line) {
-  for (char c : line) {
-    if (c != ' ' && c != '\t') return false;
-  }
-  return true;
 }
 
 // Single-line bracket scanner that emits balanced bracket fold ranges across
@@ -239,13 +235,19 @@ void ScanIndentRanges(LineSpan lines,
   // zero-inited and never touched on a budgeted recompute of a big file.
   std::vector<std::size_t> indents(scan_end, kSentinelIndent);
   std::size_t scanned = 0;
-  for (std::size_t i = 0; i < scan_end; ++i) {
-    if (max_lines != 0 && scanned >= max_lines) {
-      complete = false;
-      break;
+  {
+    // Split from the emission pass below: this one is a pure per-line measure over
+    // the whole scan window and the other is the range walk, and they have very
+    // different fixes if either dominates.
+    util::PerformanceTrace::Scope perf_scope("FoldingModel::ScanIndentRanges::Measure");
+    for (std::size_t i = 0; i < scan_end; ++i) {
+      if (max_lines != 0 && scanned >= max_lines) {
+        complete = false;
+        break;
+      }
+      ++scanned;
+      indents[i] = MeasureIndent(lines[i], tab_size);
     }
-    ++scanned;
-    indents[i] = MeasureIndent(lines[i], tab_size);
   }
 
   // The emission pass only reads the precomputed `indents[]` array; it must not
@@ -264,8 +266,13 @@ void ScanIndentRanges(LineSpan lines,
     ++scanned;
     if (bracket_opener[i]) continue;
     const std::size_t opener_indent = indents[i];
-    if (opener_indent == kSentinelIndent) continue;  // blank line
-    if (LineIsBlankOrIndentOnly(lines[i])) continue;
+    // `kSentinelIndent` IS "blank or indent only": MeasureIndent returns it
+    // exactly when every byte of the line is a space or a tab, which is the same
+    // predicate LineIsBlankOrIndentOnly computes. Re-asking cost a piece-tree
+    // line lookup plus a byte scan for every non-blank line in the document, on
+    // every fold recompute -- and with it gone this pass reads no line text at
+    // all, only the measured indents.
+    if (opener_indent == kSentinelIndent) continue;
     // Find the next non-blank line to determine if a deeper-indented body starts.
     std::size_t body_start = i + 1;
     while (body_start < scan_end && indents[body_start] == kSentinelIndent) {
