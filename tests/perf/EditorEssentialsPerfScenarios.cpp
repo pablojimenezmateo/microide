@@ -172,11 +172,20 @@ void RunEditorToggleCommentLargeSelection(ScenarioContext& context) {
   if (vp.lines().size() <= last) {
     throw std::runtime_error("editor_toggle_comment_large_selection: file too short");
   }
-  vp.MoveCursorTo(first, 0, false);
-  vp.MoveCursorTo(last, vp.lines()[last].size(), true);
+  // Repeated so the median is measurable: one toggle resolves in ~1.3 ms, and
+  // this runner's CPU modes are tens of percent apart, so the gate flaked at any
+  // envelope narrow enough to be worth having. The selection has to be
+  // re-established each time -- a toggle collapses it, and without this the
+  // repetitions are no-ops that inflate the loop count without doing the work
+  // (the allocation count is what says which of the two you have). Toggling an
+  // even number of times also leaves the buffer as it started.
   context.Measure("toggle_line_comment.1000_lines", [&] {
-    if (!context.ExecuteCommand("toggle-line-comment")) {
-      throw std::runtime_error("toggle-line-comment failed");
+    for (int i = 0; i < 16; ++i) {
+      vp.MoveCursorTo(first, 0, false);
+      vp.MoveCursorTo(last, vp.lines()[last].size(), true);
+      if (!context.ExecuteCommand("toggle-line-comment")) {
+        throw std::runtime_error("toggle-line-comment failed");
+      }
     }
   });
 }
