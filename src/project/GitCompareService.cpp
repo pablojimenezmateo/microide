@@ -1,5 +1,7 @@
 #include "project/GitCompareService.h"
 
+#include "util/PerformanceTrace.h"
+
 #include <algorithm>
 #include <array>
 #include <filesystem>
@@ -228,6 +230,11 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
 }
 
 std::optional<GitBranchReference> ResolveGitBaseReference(const std::filesystem::path& root) {
+  // Chains up to six git subprocesses (symbolic-ref, config, config, symbolic-ref,
+  // show-ref, rev-parse) to answer one question. Scoped because that is ~8 ms of
+  // spawn cost whose thread and call count are the whole story -- the ranking
+  // showed the cluster as five separate RunSubprocess rows with no owner.
+  util::PerformanceTrace::Scope perf_scope("git::ResolveBaseReference");
   const GitRepository repo(root);
   if (!repo.IsValid()) {
     return std::nullopt;
