@@ -44,6 +44,30 @@ std::size_t FirstNonAsciiOrByte(std::string_view text, char also_match) {
   return text.size();
 }
 
+std::size_t LeadingByteRun(std::string_view text, char byte) {
+  constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
+  constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
+  const std::uint64_t match_word = kLowOnes * static_cast<unsigned char>(byte);
+  std::size_t index = 0;
+  // Classic has-zero-byte trick over `word ^ match_word`: a zero byte there marks
+  // a byte equal to `byte`, so a non-zero mask means the run ends inside this
+  // word and the scalar tail resolves exactly where.
+  for (; index + sizeof(std::uint64_t) <= text.size(); index += sizeof(std::uint64_t)) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, text.data() + index, sizeof(word));
+    const std::uint64_t marks = word ^ match_word;
+    if (((marks - kLowOnes) & ~marks & kHighBits) != (kHighBits)) {
+      break;
+    }
+  }
+  for (; index < text.size(); ++index) {
+    if (text[index] != byte) {
+      return index;
+    }
+  }
+  return text.size();
+}
+
 std::size_t Utf8SequenceLength(unsigned char lead_byte) {
   if (lead_byte <= 0x7F) {
     return 1;

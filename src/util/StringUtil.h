@@ -39,6 +39,14 @@ std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset);
 // It reads eight bytes per iteration, so the answer for a plain-ASCII span costs
 // a fraction of a byte-at-a-time loop.
 std::size_t FirstNonAsciiOrByte(std::string_view text, char also_match);
+
+// Length of the run of bytes equal to `byte` at the start of `text`;
+// `text.size()` when every byte matches.
+//
+// The leading-indent scan is the motivating caller: measuring a line's indent
+// means counting its leading spaces, and doing that one byte at a time costs
+// real time on deeply nested code. Reads eight bytes per iteration.
+std::size_t LeadingByteRun(std::string_view text, char byte);
 // Decode the first UTF-8 codepoint of `glyph`. Returns U+FFFD on malformed or
 // empty input. Intended for already-grouped single-glyph slices.
 char32_t DecodeUtf8Codepoint(std::string_view glyph);

@@ -456,6 +456,45 @@ void TestStringUtilUnicodeCaseFold() {
 }
 
 
+// LeadingByteRun reads eight bytes at a time, so the cases that matter are the
+// run ending at every offset inside a word, on a word boundary, and in the
+// sub-word tail — plus the all-matching span, which is the branch the indent
+// scan uses to recognise a blank line.
+void TestStringUtilLeadingByteRun() {
+  const auto reference = [](std::string_view text, char byte) {
+    for (std::size_t i = 0; i < text.size(); ++i) {
+      if (text[i] != byte) {
+        return i;
+      }
+    }
+    return text.size();
+  };
+  const char kBytes[] = {' ', '\0', 'a'};
+  for (char byte : kBytes) {
+    for (std::size_t length = 0; length <= 24; ++length) {
+      const std::string all(length, byte);
+      Expect(util::LeadingByteRun(all, byte) == length,
+             "an all-matching span returns its whole size");
+      Expect(util::LeadingByteRun(all, byte) == reference(all, byte),
+             "an all-matching span matches the reference");
+      for (std::size_t at = 0; at < length; ++at) {
+        std::string text = all;
+        // A byte that differs from the searched one in every case above.
+        text[at] = byte == 'z' ? 'y' : 'z';
+        Expect(util::LeadingByteRun(text, byte) == reference(text, byte),
+               "the run must end at the first non-matching byte, at every offset");
+        Expect(util::LeadingByteRun(text, byte) == at,
+               "the run length is the offset of the first non-matching byte");
+      }
+    }
+  }
+  // A high byte must terminate the run like any other non-match (the word-at-a-
+  // time trick must not confuse the sign bit for a match).
+  std::string high(20, ' ');
+  high[13] = static_cast<char>(0xC3);
+  Expect(util::LeadingByteRun(high, ' ') == 13, "a non-ASCII byte ends the run");
+}
+
 // FirstNonAsciiOrByte reads eight bytes at a time, so the cases that matter are
 // exactly the ones a handful of literals miss: the target byte landing at every
 // offset inside a word, on a word boundary, and in the sub-word tail. Check it
@@ -804,6 +843,7 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestScopeLabelBuildsNothingWhenTheChannelIsOff);
   AddTest(tests, "StringUtil/IsAllAsciiDigits", TestStringUtilIsAllAsciiDigits);
   AddTest(tests, "StringUtil/FirstNonAsciiOrByte", TestStringUtilFirstNonAsciiOrByte);
+  AddTest(tests, "StringUtil/LeadingByteRun", TestStringUtilLeadingByteRun);
   AddTest(tests, "StringUtil/SplitAsciiWhitespace", TestStringUtilSplitAsciiWhitespace);
   AddTest(tests, "StringUtil/BoundedSplitStopsAtCap", TestStringUtilBoundedSplitStopsAtCap);
   AddTest(tests, "StringUtil/DecodeLinesSinglePassRegression",
