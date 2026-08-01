@@ -1023,9 +1023,14 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     highlight_cache_.clear();
     highlight_cache_order_.clear();
     initial_highlight_state_.reset();
-    line_highlight_states_.clear();
+    // Drop the validity cursors, NOT the storage. Every read of these two is
+    // gated on its cursor (`line < line_highlight_states_valid_through_`,
+    // `index < highlight_checkpoints_valid_through_`), so stale entries below a
+    // zeroed cursor are unreachable -- while clearing the vectors made
+    // EnsureHighlightCaches resize them straight back, value-initialising ~50k
+    // SyntaxStates (2 MB) on every keystroke. This is the same lazy invalidation
+    // the non-zero-start path below already documents; the two had simply drifted.
     line_highlight_states_valid_through_ = 0;
-    highlight_checkpoints_.clear();
     highlight_checkpoints_valid_through_ = 0;
     highlight_state_content_revision_ = document_->content_revision;
     highlight_state_syntax_revision_ = document_->syntax_revision;

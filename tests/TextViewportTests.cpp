@@ -3207,6 +3207,41 @@ void TestTextViewportOpenNormalizesEveryLineEndingMix() {
   }
 }
 
+// Editing line 0 invalidates the highlight state chain (the syntax state chains
+// forward from line 0, so everything below it is suspect) by zeroing the
+// validity cursors rather than by clearing the per-line state vectors. The
+// entries below a zeroed cursor are unreachable, so this must be behaviourally
+// identical to wiping them -- pin that a multi-line construct opened ON line 0
+// still colours the lines below it correctly after the opening line is edited.
+void TestTextViewportFirstLineEditRehighlightsFollowingLines() {
+  TextViewport viewport;
+  // A block comment opened on line 0 swallows the lines below it.
+  viewport.LoadContent("/* comment\nstill inside\nalso inside\n", "/tmp/first-line-syntax.cpp");
+  viewport.SetViewportSize(10, 40);
+
+  const auto line_is_comment = [&viewport](std::size_t line) {
+    const auto tokens = viewport.HighlightedLineTokens(line);
+    return !tokens.empty() && tokens.front() == SyntaxTokenKind::Comment;
+  };
+  Expect(line_is_comment(1) && line_is_comment(2),
+         "lines under a block comment opened on line 0 should start out commented");
+
+  // Close the comment on line 0. Everything below must stop being comment.
+  viewport.MoveCursorTo(0, viewport.lines()[0].size());
+  viewport.InsertText(" */");
+  Expect(!line_is_comment(1) && !line_is_comment(2),
+         "closing the block comment on line 0 must re-highlight every line below it — the "
+         "state chain from line 0 is exactly what the line-0 invalidation has to drop");
+
+  // And reopening it must bring them back.
+  viewport.MoveCursorTo(0, viewport.lines()[0].size());
+  for (int i = 0; i < 3; ++i) {
+    viewport.Backspace();
+  }
+  Expect(line_is_comment(1) && line_is_comment(2),
+         "reopening the block comment on line 0 must re-comment the lines below it");
+}
+
 // A content edit anchored at line 0 must go down the SAME incremental
 // visual-column path as an edit anywhere else.
 //
@@ -3688,6 +3723,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportOpenNormalizesEveryLineEndingMix);
   AddTest(tests, "TextViewport/FirstLineEditKeepsVisualColumnCacheIncremental",
           TestTextViewportFirstLineEditKeepsVisualColumnCacheIncremental);
+  AddTest(tests, "TextViewport/FirstLineEditRehighlightsFollowingLines",
+          TestTextViewportFirstLineEditRehighlightsFollowingLines);
   AddTest(tests, "TextViewport/FastLoadMatchesCrlfDecode",
           TestTextViewportFastLoadMatchesCrlfDecode);
   AddTest(tests, "TextViewport/FastLoadPreservesCrOnlyLines",
