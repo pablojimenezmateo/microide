@@ -8,6 +8,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "workspace/EditorTabService.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
@@ -192,18 +193,29 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
   // without the memo the only work the frame did here was re-detecting a
   // filetype that had not changed. Measured at ~0.85 ms/frame on a 50k-line
   // buffer, which was 60% of the whole editor_sticky_scroll_scroll scenario.
-  const std::string& language_id = editor_tab->filetype_memo.Resolve(
-      active_viewport, active_viewport->path(), active_viewport->content_revision(),
-      active_viewport->lines());
-  const auto resolved = language_contract_.ResolveView(language_id);
-  EnsureFoldingModelFresh(*editor_tab, *active_viewport, resolved.contract,
-                          context_.current_project_state.editor_preferences.tab_size,
-                          setting_enabled("editor.fold.enabled", true),
-                          active_viewport->visible_lines());
-  editor_tab->viewport.SetFoldingModel(editor_tab->folding_model->ranges().empty() &&
-                                               editor_tab->folding_model->collapsed_flags().empty()
-                                           ? nullptr
-                                           : editor_tab->folding_model.get());
+  const LanguageContract* contract = nullptr;
+  {
+    util::PerformanceTrace::Scope s("WorkspaceShell::EnsureFoldingModelFreshForTab::Language");
+    const std::string& language_id = editor_tab->filetype_memo.Resolve(
+        active_viewport, active_viewport->path(), active_viewport->content_revision(),
+        active_viewport->lines());
+    contract = language_contract_.ResolveView(language_id).contract;
+  }
+  {
+    util::PerformanceTrace::Scope s("WorkspaceShell::EnsureFoldingModelFreshForTab::EnsureFresh");
+    EnsureFoldingModelFresh(*editor_tab, *active_viewport, contract,
+                            context_.current_project_state.editor_preferences.tab_size,
+                            setting_enabled("editor.fold.enabled", true),
+                            active_viewport->visible_lines());
+  }
+  {
+    util::PerformanceTrace::Scope s("WorkspaceShell::EnsureFoldingModelFreshForTab::SetModel");
+    editor_tab->viewport.SetFoldingModel(
+        editor_tab->folding_model->ranges().empty() &&
+                editor_tab->folding_model->collapsed_flags().empty()
+            ? nullptr
+            : editor_tab->folding_model.get());
+  }
   return editor_tab->folding_model.get();
 }
 

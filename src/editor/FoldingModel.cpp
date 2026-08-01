@@ -451,6 +451,7 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
                        indent_ranges, complete_);
     }
 
+    util::PerformanceTrace::Scope sm("FoldingModel::MergeRanges");
     ranges_.reserve(bracket_ranges.size() + indent_ranges.size());
     ranges_.insert(ranges_.end(), bracket_ranges.begin(), bracket_ranges.end());
     ranges_.insert(ranges_.end(), indent_ranges.begin(), indent_ranges.end());

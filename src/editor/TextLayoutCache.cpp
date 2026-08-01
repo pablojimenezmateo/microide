@@ -4,6 +4,7 @@
 
 #include "editor/FoldingModel.h"
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
 namespace microide::editor {
@@ -424,6 +425,7 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
 
   if (cached_max_visual_columns_tab_size_ != tab_size ||
       cached_visual_line_columns_.size() != lines.size()) {
+    util::PerformanceTrace::Scope s("TextLayoutCache::BuildVisualLineColumns");
     cached_visual_line_columns_.assign(lines.size(), 0);
     for (std::size_t index = 0; index < lines.size(); ++index) {
       cached_visual_line_columns_[index] =
@@ -431,6 +433,7 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
     }
   }
 
+  util::PerformanceTrace::Scope sm("TextLayoutCache::ScanVisualLineColumnsMax");
   std::size_t max_columns = 0;
   std::size_t max_line = 0;
   for (std::size_t index = 0; index < cached_visual_line_columns_.size(); ++index) {
