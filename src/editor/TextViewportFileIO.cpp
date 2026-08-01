@@ -25,10 +25,23 @@ struct LineEndingMetadata {
 };
 
 LineEndingMetadata AnalyzeLineEndings(std::string_view content) {
+  // An LF-only file -- every file this editor writes, and the overwhelming
+  // majority it opens -- is fully described by "there is no CR anywhere": no CR
+  // means no CRLF and no CR ending, so the style is LF, nothing is mixed, and
+  // the LF count cannot change any of that. Answer it with one `memchr` over the
+  // buffer instead of a byte-at-a-time classification loop, which is what this
+  // ran for every byte of every file opened.
+  const std::size_t first_cr = content.find('\r');
+  if (first_cr == std::string_view::npos) {
+    return LineEndingMetadata{};
+  }
+
+  // There is at least one CR: the counts genuinely matter now, but everything
+  // before the first one is LF-or-payload, so start the classification there.
   std::size_t crlf = 0;
-  std::size_t lf = 0;
+  std::size_t lf = std::count(content.begin(), content.begin() + first_cr, '\n');
   std::size_t cr = 0;
-  for (std::size_t i = 0; i < content.size(); ++i) {
+  for (std::size_t i = first_cr; i < content.size(); ++i) {
     if (content[i] == '\r') {
       if (i + 1 < content.size() && content[i + 1] == '\n') {
         ++crlf;
@@ -61,16 +74,24 @@ std::string CanonicalizeLineEndingsToLf(std::string_view content,
   if (!metadata.has_cr) {
     return std::string(content);
   }
+  // Copy the runs between carriage returns wholesale rather than one
+  // `push_back` per byte: the CRs are the only thing this transform touches, and
+  // on the files that reach here (a CRLF checkout is every byte of the file) the
+  // per-byte loop was the whole cost.
   std::string normalized;
   normalized.reserve(content.size());
-  for (std::size_t i = 0; i < content.size(); ++i) {
-    if (content[i] == '\r') {
-      normalized.push_back('\n');
-      if (i + 1 < content.size() && content[i + 1] == '\n') {
-        ++i;
-      }
-    } else {
-      normalized.push_back(content[i]);
+  std::size_t i = 0;
+  while (i < content.size()) {
+    const std::size_t next_cr = content.find('\r', i);
+    if (next_cr == std::string_view::npos) {
+      normalized.append(content.substr(i));
+      break;
+    }
+    normalized.append(content.substr(i, next_cr - i));
+    normalized.push_back('\n');
+    i = next_cr + 1;
+    if (i < content.size() && content[i] == '\n') {
+      ++i;
     }
   }
   return normalized;
@@ -350,17 +371,21 @@ void TextViewport::UpgradeEncodingForInsertedLines(
 }
 
 TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content) {
-  if (content.find('\0') != std::string_view::npos) {
-    return TextEncoding::Bytes;
-  }
-
-  const bool ascii_only = std::all_of(content.begin(), content.end(), [](char character) {
-    return static_cast<unsigned char>(character) < 0x80;
-  });
-  if (ascii_only) {
+  // One scan answers both questions the common case asks -- "is there a NUL?"
+  // and "is there any non-ASCII byte?" -- instead of walking the whole buffer
+  // twice. An all-ASCII file (most source files) is now decided in a single pass.
+  const std::size_t interesting = util::FirstNonAsciiOrByte(content, '\0');
+  if (interesting == content.size()) {
     return TextEncoding::ASCII;
   }
-
+  if (content[interesting] == '\0') {
+    return TextEncoding::Bytes;
+  }
+  // Non-ASCII: a NUL may still lurk past this point, and IsValidUtf8 would
+  // happily accept one, so the NUL check still has to cover the remainder.
+  if (content.find('\0', interesting) != std::string_view::npos) {
+    return TextEncoding::Bytes;
+  }
   return util::IsValidUtf8(content) ? TextEncoding::UTF8 : TextEncoding::Bytes;
 }
 

@@ -28,6 +28,17 @@ struct DecodedText {
 
 std::size_t Utf8SequenceLength(unsigned char lead_byte);
 std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset);
+
+// Offset of the first byte in `text` that is either non-ASCII (>= 0x80) or equal
+// to `also_match`; `text.size()` when there is no such byte.
+//
+// This is the "how far can I treat this as boring ASCII?" primitive that whole-
+// buffer and whole-line scans keep needing with a different second byte: `'\t'`
+// for visual-width layout (a tab is the only ASCII byte that is not one cell),
+// `'\0'` for encoding detection (a NUL is the only ASCII byte that means binary).
+// It reads eight bytes per iteration, so the answer for a plain-ASCII span costs
+// a fraction of a byte-at-a-time loop.
+std::size_t FirstNonAsciiOrByte(std::string_view text, char also_match);
 // Decode the first UTF-8 codepoint of `glyph`. Returns U+FFFD on malformed or
 // empty input. Intended for already-grouped single-glyph slices.
 char32_t DecodeUtf8Codepoint(std::string_view glyph);

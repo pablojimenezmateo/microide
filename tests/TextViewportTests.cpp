@@ -3125,6 +3125,88 @@ void TestTextViewportFastLoadDetectsEncoding() {
   Expect(bytes.line_count() == 2, "NUL is in-line content, only '\\n' splits lines");
 }
 
+// Opening a file classifies its line endings and normalizes them to LF. Both
+// halves grew fast paths -- the classifier answers an LF-only file from a single
+// `memchr` without counting anything, and the normalizer copies the runs between
+// carriage returns instead of one byte at a time -- so pin the results against a
+// deliberately naive reference implementation over every arrangement of CR, LF
+// and CRLF that a real file can present, including the ones that straddle the
+// run boundaries: a lone CR at the very end (no byte follows to test for LF), a
+// CRLF split so the LF starts the next run, and back-to-back CRs.
+void TestTextViewportOpenNormalizesEveryLineEndingMix() {
+  const auto reference_normalize = [](std::string_view content) {
+    std::string out;
+    for (std::size_t i = 0; i < content.size(); ++i) {
+      if (content[i] != '\r') {
+        out.push_back(content[i]);
+        continue;
+      }
+      out.push_back('\n');
+      if (i + 1 < content.size() && content[i + 1] == '\n') {
+        ++i;
+      }
+    }
+    return out;
+  };
+
+  const std::string kBodies[] = {
+      "",         "a",          "abc",         "\n",       "\r",
+      "\r\n",     "\n\r",       "\r\r",        "\r\r\n",   "\r\n\r",
+      "a\r",      "a\n",        "a\r\nb",      "a\rb\nc",  "a\n\rb",
+      "one\r\ntwo\r\nthree\r\n", "one\ntwo\nthree\n",      "one\rtwo\rthree\r",
+      "mixed\r\nstyles\nhere\rend",
+  };
+  int index = 0;
+  for (const std::string& body : kBodies) {
+    const std::string name = "lineendmix" + std::to_string(index++) + ".txt";
+    TextViewport view;
+    Expect(view.OpenFile(WriteScratchFile(name, body)), "line-ending mix fixture opens");
+
+    // The buffer must hold exactly the LF-normalized bytes, split on LF.
+    const std::string expected_text = reference_normalize(body);
+    std::string actual_text;
+    for (std::size_t line = 0; line < view.line_count(); ++line) {
+      if (line != 0) {
+        actual_text.push_back('\n');
+      }
+      actual_text.append(view.lines().LineView(line));
+    }
+    Expect(actual_text == expected_text,
+           "opening a file must produce exactly the LF-normalized content");
+
+    // And the classifier's verdict must match a plain count of each style.
+    std::size_t crlf = 0;
+    std::size_t lf = 0;
+    std::size_t cr = 0;
+    for (std::size_t i = 0; i < body.size(); ++i) {
+      if (body[i] == '\r') {
+        if (i + 1 < body.size() && body[i + 1] == '\n') {
+          ++crlf;
+          ++i;
+        } else {
+          ++cr;
+        }
+      } else if (body[i] == '\n') {
+        ++lf;
+      }
+    }
+    util::LineEnding expected_ending = util::LineEnding::LF;
+    if (crlf >= lf && crlf >= cr && crlf > 0) {
+      expected_ending = util::LineEnding::CRLF;
+    } else if (lf >= cr && lf > 0) {
+      expected_ending = util::LineEnding::LF;
+    } else if (cr > 0) {
+      expected_ending = util::LineEnding::CR;
+    }
+    const bool expected_mixed =
+        ((crlf > 0 ? 1 : 0) + (lf > 0 ? 1 : 0) + (cr > 0 ? 1 : 0)) > 1;
+    Expect(view.line_ending() == expected_ending,
+           "the dominant line ending must match a plain count of each style");
+    Expect(view.has_mixed_line_endings() == expected_mixed,
+           "the mixed-endings flag must match a plain count of each style");
+  }
+}
+
 // LoadLines (dirty-tab session restore) moves an already line-split buffer straight
 // in, skipping the LoadContent(SerializeLines(...)) join-then-resplit. It must be
 // exactly equivalent to that old round-trip: same lines, same line ending, dirty.
@@ -3545,6 +3627,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestUndoHistoryEnforcesByteBudget);
   AddTest(tests, "TextViewport/LoadLinesMatchesSerializeRoundTrip",
           TestTextViewportLoadLinesMatchesSerializeRoundTrip);
+  AddTest(tests, "TextViewport/OpenNormalizesEveryLineEndingMix",
+          TestTextViewportOpenNormalizesEveryLineEndingMix);
   AddTest(tests, "TextViewport/FastLoadMatchesCrlfDecode",
           TestTextViewportFastLoadMatchesCrlfDecode);
   AddTest(tests, "TextViewport/FastLoadPreservesCrOnlyLines",

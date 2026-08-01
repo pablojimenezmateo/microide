@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstring>
 #include <limits>
 
 #include "util/SaturatingMath.h"
@@ -15,6 +17,32 @@ std::size_t ClampUtf8Offset(std::string_view text, std::size_t offset) {
 }
 
 }  // namespace
+
+std::size_t FirstNonAsciiOrByte(std::string_view text, char also_match) {
+  constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
+  constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
+  const std::uint64_t match_word = kLowOnes * static_cast<unsigned char>(also_match);
+  std::size_t index = 0;
+  // `word & kHighBits` flags any non-ASCII byte; the classic has-zero-byte trick
+  // over `word ^ match_word` flags any byte equal to `also_match`. A byte >= 0x80
+  // can produce a false positive in the second term, but it is already flagged by
+  // the first, so the union is exact and the scalar tail resolves the offset.
+  for (; index + sizeof(std::uint64_t) <= text.size(); index += sizeof(std::uint64_t)) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, text.data() + index, sizeof(word));
+    const std::uint64_t marks = word ^ match_word;
+    if (((word & kHighBits) | ((marks - kLowOnes) & ~marks & kHighBits)) != 0) {
+      break;
+    }
+  }
+  for (; index < text.size(); ++index) {
+    const auto byte = static_cast<unsigned char>(text[index]);
+    if (byte >= 0x80 || text[index] == also_match) {
+      return index;
+    }
+  }
+  return text.size();
+}
 
 std::size_t Utf8SequenceLength(unsigned char lead_byte) {
   if (lead_byte <= 0x7F) {

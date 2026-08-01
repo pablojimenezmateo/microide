@@ -455,6 +455,51 @@ void TestStringUtilUnicodeCaseFold() {
   Expect(!Utf8IsIdentifierCodepoint(0x2013), "en-dash is not identifier content");
 }
 
+
+// FirstNonAsciiOrByte reads eight bytes at a time, so the cases that matter are
+// exactly the ones a handful of literals miss: the target byte landing at every
+// offset inside a word, on a word boundary, and in the sub-word tail. Check it
+// against a plain byte-at-a-time reference at every length and every position,
+// for both bytes production passes it ('\t' for layout, '\0' for encoding).
+void TestStringUtilFirstNonAsciiOrByte() {
+  const auto reference = [](std::string_view text, char also_match) {
+    for (std::size_t i = 0; i < text.size(); ++i) {
+      if (static_cast<unsigned char>(text[i]) >= 0x80 || text[i] == also_match) {
+        return i;
+      }
+    }
+    return text.size();
+  };
+  const char kTargets[] = {'\t', '\0', 'q'};
+  for (char target : kTargets) {
+    for (std::size_t length = 0; length <= 24; ++length) {
+      const std::string plain(length, 'a');
+      Expect(util::FirstNonAsciiOrByte(plain, target) == reference(plain, target),
+             "a span with no match returns its size");
+      for (std::size_t at = 0; at < length; ++at) {
+        // The searched-for byte itself.
+        std::string with_target = plain;
+        with_target[at] = target;
+        Expect(util::FirstNonAsciiOrByte(with_target, target) == reference(with_target, target),
+               "the target byte is found at every offset");
+        // A high byte, which must be reported even though it is not the target.
+        std::string with_high = plain;
+        with_high[at] = static_cast<char>(0xC3);
+        Expect(util::FirstNonAsciiOrByte(with_high, target) == reference(with_high, target),
+               "a non-ASCII byte is found at every offset");
+        // A high byte AFTER the target: the earlier of the two must win.
+        if (at + 1 < length) {
+          std::string both = plain;
+          both[at] = target;
+          both[at + 1] = static_cast<char>(0xC3);
+          Expect(util::FirstNonAsciiOrByte(both, target) == reference(both, target),
+                 "the earliest matching byte wins");
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 // The falsey/truthy token sets are shared by the env-var tracing switches and by
@@ -758,6 +803,7 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Util/ScopeLabelBuildsNothingWhenTheChannelIsOff",
           TestScopeLabelBuildsNothingWhenTheChannelIsOff);
   AddTest(tests, "StringUtil/IsAllAsciiDigits", TestStringUtilIsAllAsciiDigits);
+  AddTest(tests, "StringUtil/FirstNonAsciiOrByte", TestStringUtilFirstNonAsciiOrByte);
   AddTest(tests, "StringUtil/SplitAsciiWhitespace", TestStringUtilSplitAsciiWhitespace);
   AddTest(tests, "StringUtil/BoundedSplitStopsAtCap", TestStringUtilBoundedSplitStopsAtCap);
   AddTest(tests, "StringUtil/DecodeLinesSinglePassRegression",

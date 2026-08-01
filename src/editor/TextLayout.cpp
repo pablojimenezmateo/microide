@@ -1,8 +1,6 @@
 #include "editor/TextLayout.h"
 
 #include <algorithm>
-#include <cstdint>
-#include <cstring>
 
 #include "util/StringUtil.h"
 
@@ -21,27 +19,7 @@ namespace {
 // buffer is computed on open (`TextLayoutCache::MaxVisualColumns`), so this is
 // the difference between a byte scan and 50k decoder loops on a large file.
 std::size_t FirstNonPlainAsciiByte(std::string_view text) {
-  constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
-  constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
-  constexpr std::uint64_t kTabs = kLowOnes * static_cast<unsigned char>('\t');
-  std::size_t index = 0;
-  // Eight bytes per iteration: `word & kHighBits` flags any non-ASCII byte and
-  // the classic has-zero-byte trick over `word ^ kTabs` flags any tab.
-  for (; index + sizeof(std::uint64_t) <= text.size(); index += sizeof(std::uint64_t)) {
-    std::uint64_t word = 0;
-    std::memcpy(&word, text.data() + index, sizeof(word));
-    const std::uint64_t tab_marks = word ^ kTabs;
-    if (((word & kHighBits) | ((tab_marks - kLowOnes) & ~tab_marks & kHighBits)) != 0) {
-      break;
-    }
-  }
-  for (; index < text.size(); ++index) {
-    const auto byte = static_cast<unsigned char>(text[index]);
-    if (byte >= 0x80 || byte == '\t') {
-      return index;
-    }
-  }
-  return text.size();
+  return util::FirstNonAsciiOrByte(text, '\t');
 }
 
 }  // namespace
