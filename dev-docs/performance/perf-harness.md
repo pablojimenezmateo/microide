@@ -529,13 +529,20 @@ Two caveats on this host:
   process is fresh (see the scenario's two-check contract above), so a full-suite run exercises
   the order-independent growth budget instead.
 - **Check the machine is idle before trusting a number, and before rebaselining.** These are
-  wall-clock gates on a shared workstation. A concurrent build in another checkout moved four
-  unrelated pure-unit micro-benchmarks (`debug_pane_hittest_geometry`,
-  `debug_value_tree_paging`, `debug_breakpoints_model_rebuild`,
-  `mid_file_edit_latency_large_file`) 80–120% over their committed baselines with **byte-identical
-  allocation counts** — which is the tell: identical allocations means the algorithm did not
-  change and the machine did. Rebaselining under that load would have written the contention into
-  the committed numbers.
+  wall-clock gates on a shared workstation, and they are much noisier than the committed
+  tolerances assume. Measured on 2026-08-01, four scenarios
+  (`debug_pane_hittest_geometry`, `debug_value_tree_paging`, `debug_breakpoints_model_rebuild`,
+  `mid_file_edit_latency_large_file`) sat 40–120% over their committed baselines **on an
+  unmodified checkout of the previous commit**, with byte-identical allocation counts. Repeat
+  runs of the same binary swung `debug_pane_hittest_geometry` across 0.148–0.225 ms and
+  `debug_value_tree_paging` across 3.6–6.8 ms.
+
+  Two rules follow. First, a failed wall gate is not evidence of a regression until you have run
+  the same scenario on a baseline checkout in the same conditions — build the previous commit in
+  a worktree and measure both, interleaved. Second, identical allocation counts across a "+50%"
+  wall reading mean the algorithm did not change; the machine did. Do not rebaseline in that
+  state — it writes the noise into the committed numbers and destroys the signal for everyone
+  after you.
 
 ## Ad-hoc Branch-vs-Commit Comparison
 

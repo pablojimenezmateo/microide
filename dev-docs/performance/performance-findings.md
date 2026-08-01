@@ -111,6 +111,19 @@ Each of these existed because the ranking bottomed out somewhere uninformative:
   (`ArmPendingWatch`, 0 main ms); the teardown half is not.
 - Unchanged from the previous pass: `compare_scroll_selection` still runs `git show` /
   `cat-file` synchronously on the shell thread to load blob content.
+- **Four committed wall baselines no longer hold on this runner, and did not before this pass
+  either.** `debug_pane_hittest_geometry`, `debug_value_tree_paging`,
+  `debug_breakpoints_model_rebuild`, and `mid_file_edit_latency_large_file` measure 40–120% over
+  their committed p50 — including on an unmodified checkout of the previous commit, built and run
+  in a worktree for exactly this comparison. Allocation counts are byte-identical to baseline in
+  every case, so nothing algorithmic moved. Repeat runs of one binary swung
+  `debug_pane_hittest_geometry` across 0.148–0.225 ms and `debug_value_tree_paging` across
+  3.6–6.8 ms, which is far outside their 10%/20% tolerances: these micro-benchmarks measure
+  sub-15 ms of work and the runner cannot hold that envelope any more. Deliberately **not**
+  rebaselined here — capturing under this jitter would bake it into the committed numbers. What
+  they need is either a quieter measurement environment or wall tolerances decoupled from their
+  (still exactly deterministic) allocation gates, the way the tech-debt coverage scenarios
+  already are.
 
 ## 2026-07-31 measurement pass (perf-runner-v1)
 
