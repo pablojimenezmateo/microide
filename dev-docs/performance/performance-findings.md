@@ -25,6 +25,93 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-01 measurement pass (perf-runner-v1)
+
+Driven by the ranked trace summary again, starting from a full-suite wall-time ranking. Two of
+the five findings are cases where the thing being measured was not the thing that was slow, which
+is the recurring theme: the ranking is only as good as the scopes under it.
+
+### Fixed
+
+- **Every subprocess spawn slept up to 5 ms after its output was already read.**
+  Once `PumpChildIo` drained the pipes, `RunSubprocess`'s deadline loop probed the child with
+  `waitpid(WNOHANG)` and, if it was not reapable yet, slept a flat `poll(nullptr, 0, 5)`. The
+  comment justified that with "the child exits when its stdio closes, so the first WNOHANG
+  catches it with no sleep" — a race the parent usually loses, because the kernel closes the
+  child's descriptors partway through exit. It now waits on a **pidfd**: one poll that returns
+  exactly when the child is reapable, no sleep, exact timeout. (No-pidfd kernels keep the probe
+  loop at 1 ms.) This is on every git invocation the editor makes, several of which still run
+  synchronously on the shell thread. `compare_scroll_selection`: git spawn 7.82 → 5.10 ms
+  average, main-thread git time 145.7 → 106.5 ms, p50 wall 499 → 428 ms.
+
+- **Glyph composites were built in a pixel format the renderer does not store.**
+  Composites were `RGBA32` (ABGR8888 on little-endian); the software renderer's textures are
+  ARGB8888. `SDL_CreateTextureFromSurface` therefore converted the whole bitmap channel by
+  channel on **every** cache miss — and a scroll through unseen content misses on essentially
+  every string it draws. That upload was 605 ms of the 2035 ms a 640-page-down sweep over a
+  50k-line file spends, three times the cost of rasterizing the glyphs. Building the composite
+  (and the coverage atlas it is assembled from) in the renderer's own format makes the upload a
+  copy: 605 → 509 ms. Output is unchanged — the conversion was lossless, just work.
+
+- **The compare tab reclassified and re-laid-out itself on events that changed nothing.**
+  `RefreshCompareTabDerivedState` carries a fingerprint whose whole purpose is to skip whole-file
+  work, then ran the two most expensive things it does unconditionally: the semantic
+  classification (which serialized the entire right viewport, copied the entire left string, and
+  scanned both for NUL bytes / a submodule pointer / a line-ending-only difference — that last
+  one allocating two more whole-file strings) and the full presentation row rebuild. Both are now
+  gated on their real inputs, the classifier takes views instead of owned strings, and the
+  line-ending comparison walks both buffers normalized without materializing anything.
+
+- **A state file was rewritten durably even when it already held those bytes.**
+  Every persisted-state save is a temp write + fsync + backup rotation + rename on the shell
+  thread, and a project switch does three of them at ~1.1 ms each — mostly re-encoding state that
+  had not changed. `PersistenceService` now remembers the body each path was last observed to
+  hold (set on load *and* on save) and skips a save whose body equals it, gated on the primary
+  file still existing. `multi_project_switch`: project-config writes 29 → 5, project-session
+  writes 29 → 5, main-thread persistence time 98 → 54 ms.
+
+- **Per-frame answers in the status bar that move per project.** `root.lexically_normal()` and
+  `viewport->path().lexically_normal()` allocated a path every frame; a scan for "does the
+  worktree have changes" walked every git sidebar entry every frame (1000 iterations/frame on the
+  1000-changed-file fixture). Both keyed on what actually changes them now.
+
+### Harness fixes found on the way
+
+- The four temp-tree compare/merge scenarios rebuilt their fixture **inside the measured
+  iteration**: a 1 MiB seed file rewritten two or three times, plus `git init` + two `git config`
+  + `git add` + `git commit` for the git-backed ones. On `compare_scroll_large_fixture` the
+  ranking put 190 of the ~250 ms of main-thread time in `RunSubprocess(program=git)` — and only 4
+  of those 24 spawns were the application's. The scroll burst the scenario exists to measure was
+  under a quarter of its own number. Fixtures are now built once per process and shared.
+
+### Instrumentation added
+
+Each of these existed because the ranking bottomed out somewhere uninformative:
+
+- `EditorViewRenderer::Render::Rows` held 46% of the page-down scenario in *self* time with
+  nothing under it. Split into the per-row layout resolve, the decorated-row assembly, and the
+  gutter line number — and, inside the text backend, `RasterizeString` vs `UploadStringTexture`.
+  That split is what located the pixel-format conversion.
+- `WorkspaceShell::RefreshCompareTabDerivedState` and its model rebuild had no scope at all, so
+  the compare refresh cost above did not appear in any table.
+
+### Still open
+
+- The gutter line number costs **2.4x the entire decorated text row it sits beside** (0.0105 ms
+  vs 0.0049 ms). It is a separate whole-string composite per row, and on a page-down sweep every
+  number is a fresh cache miss. Drawing it per digit from cached single-digit entries would make
+  it allocation- and upload-free, but digit origins would snap to the device grid independently
+  rather than as one string, which risks 1 px spacing jitter. Not attempted.
+- A texture-recycling pool over the string cache was implemented and **removed**: evicted
+  textures matched an incoming composite's exact (width, height, format) only 4% of the time,
+  because composite width tracks string length continuously. Bucketing widths would raise the
+  hit rate at the cost of padding every composite; not attempted.
+- `ProjectCatalogService::LoadProjectState::SetProjectFileMonitorRoot` is ~1.8 ms of synchronous
+  shell-thread time per project switch. The re-arm is already deferred to a worker
+  (`ArmPendingWatch`, 0 main ms); the teardown half is not.
+- Unchanged from the previous pass: `compare_scroll_selection` still runs `git show` /
+  `cat-file` synchronously on the shell thread to load blob content.
+
 ## 2026-07-31 measurement pass (perf-runner-v1)
 
 Driven by the ranked trace summary, which the perf harness could not print until this

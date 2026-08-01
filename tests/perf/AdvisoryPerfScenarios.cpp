@@ -32,6 +32,17 @@ namespace {
 // gated scenario on perf-runner-v1 with the new floor.
 constexpr std::uint64_t kRepoOpenIdleRssBudgetBytes = 256ULL * 1024ULL * 1024ULL;
 
+// Growth this scenario's own open is allowed to add, enforced regardless of what
+// else already ran in the process. Measured at ~90 MiB in a fresh process (153 MiB
+// steady state from a ~63 MiB pre-open baseline); 160 MiB leaves the same kind of
+// headroom the absolute budget does while still catching a real regression.
+constexpr std::uint64_t kRepoOpenIdleRssGrowthBudgetBytes = 160ULL * 1024ULL * 1024ULL;
+
+// RSS at scenario entry below which the process counts as fresh, so the absolute
+// budget above is this scenario's to answer for. A full-suite run enters here well
+// past this (measured 279 MiB after 48 other scenarios).
+constexpr std::uint64_t kRepoOpenIdleFreshProcessRssBytes = 128ULL * 1024ULL * 1024ULL;
+
 struct ProcessSample {
   std::uint64_t rss_bytes = 0;
 };
@@ -188,6 +199,19 @@ std::string BuildInterleavedVariantText(int block_count, int side) {
 
 void RunRepoOpenRssIdle(ScenarioContext& context) {
   const std::filesystem::path project = "tests/perf/fixtures/large_project";
+  // RSS is a PROCESS number, and every scenario in a run shares one process. This
+  // gate used to compare the absolute figure against the budget no matter what
+  // else had already run, so in a full-suite run it was really asserting "the sum
+  // of forty-eight unrelated scenarios' peak footprint is under 256 MiB" — it read
+  // 279 MiB there against 153 MiB for the same scenario run on its own, and which
+  // side of the line it landed on depended on the scenario order and the iteration
+  // count. That is not a repo-open memory gate.
+  //
+  // The order-independent thing this scenario controls is the footprint its own
+  // open adds, so that is what is always enforced. The absolute budget still means
+  // something in a fresh process, so it is enforced too — but only when the
+  // process is actually fresh, judged by the RSS already resident at entry.
+  const ProcessSample rss_at_entry = ReadProcessSample();
   ProcessSample rss_after_open{};
   ProcessSample rss_after_idle{};
   context.Measure("repo_open.open_and_first_frames", [&] {
@@ -201,22 +225,41 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
     (void)context.Wait(std::chrono::milliseconds(500));
     rss_after_idle = ReadProcessSample();
   });
+  constexpr double kMib = 1024.0 * 1024.0;
+  const auto mib = [](std::uint64_t bytes) { return static_cast<double>(bytes) / kMib; };
+  const std::uint64_t open_growth_bytes =
+      rss_after_idle.rss_bytes > rss_at_entry.rss_bytes
+          ? rss_after_idle.rss_bytes - rss_at_entry.rss_bytes
+          : 0;
+  // A fresh process is under the entry threshold; anything above it means other
+  // scenarios already ran here and the absolute figure is not this scenario's.
+  const bool process_is_fresh = rss_at_entry.rss_bytes <= kRepoOpenIdleFreshProcessRssBytes;
   if (rss_after_open.rss_bytes > 0 || rss_after_idle.rss_bytes > 0) {
-    constexpr double kMib = 1024.0 * 1024.0;
-    std::cerr << "repo_open_rss_idle: rss_after_open=" << rss_after_open.rss_bytes
-              << " (" << (static_cast<double>(rss_after_open.rss_bytes) / kMib) << " MiB)"
+    std::cerr << "repo_open_rss_idle: rss_at_entry=" << rss_at_entry.rss_bytes
+              << " (" << mib(rss_at_entry.rss_bytes) << " MiB)"
+              << " rss_after_open=" << rss_after_open.rss_bytes
+              << " (" << mib(rss_after_open.rss_bytes) << " MiB)"
               << " rss_after_idle=" << rss_after_idle.rss_bytes
-              << " (" << (static_cast<double>(rss_after_idle.rss_bytes) / kMib) << " MiB)"
-              << " budget_bytes=" << kRepoOpenIdleRssBudgetBytes
-              << " (" << (static_cast<double>(kRepoOpenIdleRssBudgetBytes) / kMib) << " MiB)\n";
+              << " (" << mib(rss_after_idle.rss_bytes) << " MiB)"
+              << " open_growth=" << open_growth_bytes
+              << " (" << mib(open_growth_bytes) << " MiB)"
+              << " growth_budget=" << mib(kRepoOpenIdleRssGrowthBudgetBytes) << " MiB"
+              << " absolute_budget=" << mib(kRepoOpenIdleRssBudgetBytes) << " MiB"
+              << (process_is_fresh ? " (fresh process: absolute budget enforced)"
+                                   : " (shared process: absolute budget not this scenario's,"
+                                     " growth budget enforced)")
+              << "\n";
   }
-  if (rss_after_idle.rss_bytes > kRepoOpenIdleRssBudgetBytes) {
-    constexpr double kMib = 1024.0 * 1024.0;
-    const double actual_mib = static_cast<double>(rss_after_idle.rss_bytes) / kMib;
-    const double budget_mib = static_cast<double>(kRepoOpenIdleRssBudgetBytes) / kMib;
+  if (open_growth_bytes > kRepoOpenIdleRssGrowthBudgetBytes) {
     throw std::runtime_error(
-        "repo_open_rss_idle: steady-state RSS " + std::to_string(actual_mib) +
-        " MiB exceeded budget " + std::to_string(budget_mib) + " MiB");
+        "repo_open_rss_idle: opening the large project grew RSS by " +
+        std::to_string(mib(open_growth_bytes)) + " MiB, over the " +
+        std::to_string(mib(kRepoOpenIdleRssGrowthBudgetBytes)) + " MiB growth budget");
+  }
+  if (process_is_fresh && rss_after_idle.rss_bytes > kRepoOpenIdleRssBudgetBytes) {
+    throw std::runtime_error(
+        "repo_open_rss_idle: steady-state RSS " + std::to_string(mib(rss_after_idle.rss_bytes)) +
+        " MiB exceeded budget " + std::to_string(mib(kRepoOpenIdleRssBudgetBytes)) + " MiB");
   }
 }
 

@@ -386,8 +386,18 @@ Local dummy-driver runs are advisory (`provenance=advisory`); they are useful fo
 triage but SHALL NOT replace `perf-runner-v1` evidence when updating committed baselines.
 
 - `repo_open_rss_idle` (gate): opens the large-project fixture, pumps the first frames, waits
-  500 ms at idle, and asserts steady-state RSS ≤ 64 MiB on Linux while also tracking wall time and
-  allocations through the normal baseline machinery
+  500 ms at idle, and gates memory while also tracking wall time and allocations through the normal
+  baseline machinery. Two checks, because RSS is a **process** number and every scenario in a run
+  shares one process:
+  - **always**: the RSS growth this scenario's own open adds (entry → idle) must stay under
+    160 MiB. This is the order-independent gate — it measures only what the scenario controls.
+  - **only in a fresh process** (RSS at scenario entry ≤ 128 MiB): steady-state RSS must stay
+    under the 256 MiB absolute budget.
+
+  The absolute check used to run unconditionally, which in a full-suite run made it assert that
+  the summed peak footprint of every earlier scenario was under budget: it read 279 MiB there
+  versus 153 MiB for the same scenario run on its own, and which side of the line it landed on
+  depended on scenario order and iteration count. Do not restore an unconditional absolute check.
   - fixture root:
     - `tests/perf/fixtures/large_project/`
   - baseline:
@@ -510,10 +520,22 @@ replacing gate numbers.
 The maintainer's development workstation is the designated `perf-runner-v1` host. Baselines
 regenerated there with `microide_perf --update-baseline` (under `xvfb-run -a env
 SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy`, passing `--reference-runner=perf-runner-v1` so reports
-carry reference provenance) are authoritative, not local-advisory. One caveat: the
-`repo_open_rss_idle` hard 256 MiB steady-state RSS gate cannot pass on this host under xvfb
-software-GL (llvmpipe inflates idle RSS to ~300 MiB), so that scenario is excluded from workstation
-rebaselines and its committed baseline is left unchanged.
+carry reference provenance) are authoritative, not local-advisory.
+
+Two caveats on this host:
+
+- `repo_open_rss_idle`'s absolute 256 MiB steady-state gate is inflated by xvfb software-GL
+  (llvmpipe). It measures ~153 MiB for a fresh process here, but it only runs at all when the
+  process is fresh (see the scenario's two-check contract above), so a full-suite run exercises
+  the order-independent growth budget instead.
+- **Check the machine is idle before trusting a number, and before rebaselining.** These are
+  wall-clock gates on a shared workstation. A concurrent build in another checkout moved four
+  unrelated pure-unit micro-benchmarks (`debug_pane_hittest_geometry`,
+  `debug_value_tree_paging`, `debug_breakpoints_model_rebuild`,
+  `mid_file_edit_latency_large_file`) 80–120% over their committed baselines with **byte-identical
+  allocation counts** — which is the tell: identical allocations means the algorithm did not
+  change and the machine did. Rebaselining under that load would have written the contention into
+  the committed numbers.
 
 ## Ad-hoc Branch-vs-Commit Comparison
 
