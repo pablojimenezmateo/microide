@@ -1,10 +1,16 @@
 #include "TestSupport.h"
 
+#include "platform/DescriptorRetire.h"
 #include "platform/FileWatcher.h"
 #include "platform/Filesystem.h"
 #include "platform/FsOps.h"
 #include "platform/HostIntegration.h"
 #include "platform/Trash.h"
+
+#if defined(__unix__) || defined(__APPLE__)
+#include <poll.h>
+#include <unistd.h>
+#endif
 
 #include <chrono>
 #include <condition_variable>
@@ -422,9 +428,44 @@ void TestOpenUrlRejectsUnsafeSchemesAndOverlongInput() {
   Expect(!microide::platform::OpenUrl(overlong).ok, "an over-long URL is refused");
 }
 
+
+#if defined(__unix__) || defined(__APPLE__)
+// RetireDescriptorAsync hands a descriptor to a background worker so the caller
+// never blocks in close(2) -- which, for an inotify descriptor, sporadically
+// costs milliseconds. The contract that matters is simply that the close DOES
+// happen, off the caller's thread, and that a negative descriptor is ignored.
+//
+// Observed through a pipe rather than by polling fcntl: fcntl on a closed number
+// can be confused by descriptor reuse, whereas the read end of a pipe reports EOF
+// exactly when the last write end is closed, and nothing else.
+void TestRetireDescriptorAsyncEventuallyCloses() {
+  microide::platform::RetireDescriptorAsync(-1);  // must not crash or enqueue
+
+  int fds[2] = {-1, -1};
+  Expect(::pipe(fds) == 0, "test needs a pipe");
+  microide::platform::RetireDescriptorAsync(fds[1]);
+
+  // Wait for the write end to go away, bounded so a failure reports rather than
+  // hangs the suite.
+  pollfd waiter{.fd = fds[0], .events = POLLIN, .revents = 0};
+  const int ready = ::poll(&waiter, 1, 5000);
+  Expect(ready == 1, "the retired write end should be closed within the timeout");
+
+  char byte = 0;
+  Expect(::read(fds[0], &byte, 1) == 0,
+         "the read end should see EOF, which happens only once the retired "
+         "descriptor is actually closed");
+  ::close(fds[0]);
+}
+#endif
+
 }  // namespace
 
 void RegisterFilesystemTests(std::vector<TestCase>& tests) {
+#if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "Platform/RetireDescriptorAsyncEventuallyCloses",
+          TestRetireDescriptorAsyncEventuallyCloses);
+#endif
   AddTest(tests, "Platform/OpenUrlRejectsUnsafeSchemesAndOverlongInput",
           TestOpenUrlRejectsUnsafeSchemesAndOverlongInput);
   AddTest(tests, "Filesystem/CopyPathAcceptsBareFilenameDestination",

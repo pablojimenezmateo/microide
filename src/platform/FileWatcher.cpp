@@ -1,5 +1,8 @@
 #include "platform/FileWatcher.h"
 
+#include "platform/DescriptorRetire.h"
+#include "util/PerformanceTrace.h"
+
 #include <algorithm>
 #include <array>
 #include <cerrno>
@@ -182,13 +185,21 @@ struct FileTreeWatcher::NativeBackend {
       : on_change_(std::move(on_change)) {}
 
   ~NativeBackend() {
-    RequestStop();
-    if (worker_.joinable()) {
-      worker_.join();
+    {
+      util::PerformanceTrace::Scope scope("watch::TreeWatcher::Backend::JoinWorker");
+      RequestStop();
+      if (worker_.joinable()) {
+        worker_.join();
+      }
     }
     CloseIfValid(control_pipe_[0]);
     CloseIfValid(control_pipe_[1]);
-    CloseIfValid(inotify_fd_);
+    // Retired, not closed here: the worker is joined above, so nothing can touch
+    // this descriptor again, and closing an inotify fd blocks for milliseconds at
+    // random (see RetireDescriptorAsync). This destructor runs on the shell thread
+    // on every project switch.
+    RetireDescriptorAsync(inotify_fd_);
+    inotify_fd_ = -1;
   }
 
   NativeBackend(const NativeBackend&) = delete;
@@ -601,14 +612,24 @@ void FileTreeWatcher::SetRoots(std::vector<std::filesystem::path> roots) {
 
 void FileTreeWatcher::Clear() {
   std::unique_ptr<NativeBackend> old_backend;
-  std::scoped_lock lock(mutex_);
-  roots_.clear();
-  snapshot_.reset();
-  pending_change_ = false;
-  polling_required_ = true;
-  tree_too_large_ = false;
-  old_backend = std::move(native_backend_);
-  next_poll_at_ = std::chrono::steady_clock::time_point::min();
+  {
+    util::PerformanceTrace::Scope scope("watch::TreeWatcher::Clear::AcquireLock");
+    mutex_.lock();
+  }
+  {
+    std::lock_guard<std::mutex> lock(mutex_, std::adopt_lock);
+    roots_.clear();
+    snapshot_.reset();
+    pending_change_ = false;
+    polling_required_ = true;
+    tree_too_large_ = false;
+    old_backend = std::move(native_backend_);
+    next_poll_at_ = std::chrono::steady_clock::time_point::min();
+  }
+  // Destroyed outside the lock (it joins the backend's worker thread), and scoped
+  // so a switch stall can be attributed to the join rather than to the lock.
+  util::PerformanceTrace::Scope scope("watch::TreeWatcher::Clear::DestroyBackend");
+  old_backend.reset();
 }
 
 std::optional<std::chrono::milliseconds> FileTreeWatcher::NextPollDelay() const {

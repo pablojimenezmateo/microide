@@ -149,7 +149,15 @@ void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& pr
 
   const std::filesystem::path normalized_root = project_root.lexically_normal();
   {
-    std::scoped_lock state_lock(state_mutex_);
+    // The state lock and the watcher teardown are scoped separately: the arming
+    // worker holds `state_mutex_` around its own watcher calls, so a switch can
+    // block here on work that has nothing to do with the teardown itself.
+    {
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceProjectFileMonitor::SetProjectRoot::AcquireStateLock");
+      state_mutex_.lock();
+    }
+    std::lock_guard<std::mutex> state_lock(state_mutex_, std::adopt_lock);
     ++arm_generation_;
     ResetChangeSignals();
     if (deferred_arming_) {
@@ -157,6 +165,8 @@ void WorkspaceProjectFileMonitor::SetProjectRoot(const std::filesystem::path& pr
       watched_project_root_.clear();
       deferred_arm_baseline_ = std::filesystem::file_time_type::clock::now();
       traversal_filter_.reset();
+      util::PerformanceTrace::Scope scope(
+          "WorkspaceProjectFileMonitor::SetProjectRoot::ClearWatcher");
       watcher_.SetDeferInitialSnapshot(true);
       watcher_.SetEntryFilter({});
       watcher_.Clear();

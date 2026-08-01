@@ -1,5 +1,6 @@
 #include "platform/FileIndexWatcher.h"
 
+#include "platform/DescriptorRetire.h"
 #include "platform/HostPlatform.h"
 #include "project/ProjectTraversalFilter.h"
 #include "util/PerformanceCounters.h"
@@ -535,17 +536,14 @@ struct FileIndexWatcher::Impl {
   // turned out to be here, on a fixture holding ~20 watches) the shell thread
   // being descheduled while the background index scans run.
   void DropAllWatchesAndCloseInotify() {
-    {
-      util::PerformanceTrace::ScopeLabel label("watch::StopNative::CloseInotifyFd");
-      label.Field("watches", static_cast<long long>(wd_to_path.size()));
-      util::PerformanceTrace::Scope scope(label.View());
-      CloseIfValid(inotify_fd);
-      inotify_fd = -1;
-    }
-    {
-      util::PerformanceTrace::Scope scope("watch::StopNative::ClearWatchMap");
-      wd_to_path.clear();
-    }
+    // Retired rather than closed inline: every thread that could touch this
+    // descriptor has been joined by the time we get here, and closing an inotify
+    // fd blocks for milliseconds at random (see RetireDescriptorAsync). Unwatch()
+    // runs on the shell thread on every project switch and close.
+    RetireDescriptorAsync(inotify_fd);
+    inotify_fd = -1;
+    util::PerformanceTrace::Scope scope("watch::StopNative::ClearWatchMap");
+    wd_to_path.clear();
   }
 
   void StopPoll() {

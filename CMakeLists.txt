@@ -259,6 +259,7 @@ set(MICROIDE_CORE_SOURCES
   src/platform/AsyncSubprocess.cpp
   src/platform/ControlSocketClient.cpp
   src/platform/ControlSocketServer.cpp
+  src/platform/DescriptorRetire.cpp
   src/platform/FileIndexWatcher.cpp
   src/platform/FileWatcher.cpp
   src/platform/Filesystem.cpp
