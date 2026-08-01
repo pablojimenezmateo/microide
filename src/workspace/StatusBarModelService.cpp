@@ -19,15 +19,30 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
   StatusBarSegmentValue project_segment;
   StatusBarSegmentValue branch_segment;
   if (!project_state.root.empty()) {
-    const std::filesystem::path project_root = project_state.root.lexically_normal();
+    // See GitSnapshotDerivedCache: both of these are per-frame costs keyed on
+    // state that moves on a project switch / git snapshot, not on a frame.
+    if (git_derived_cache_.raw_root != project_state.root) {
+      git_derived_cache_.raw_root = project_state.root;
+      git_derived_cache_.normalized_root = project_state.root.lexically_normal();
+      git_derived_cache_.worktree_scan_valid = false;
+    }
+    const std::filesystem::path& project_root = git_derived_cache_.normalized_root;
     const auto& git_state = project_state.sidebar.git;
     const bool has_git_snapshot = git_state.repo_available || !git_state.branch_label.empty() ||
                                   !git_state.base_ref.empty() || !git_state.base_label.empty() ||
                                   !git_state.entries.empty();
-    const bool snapshot_has_worktree_changes = std::any_of(
-        git_state.entries.begin(), git_state.entries.end(), [](const GitSidebarEntry& entry) {
-          return IsGitWorkflowSection(entry.section);
-        });
+    if (!git_derived_cache_.worktree_scan_valid ||
+        git_derived_cache_.snapshot_generation != git_state.snapshot_generation ||
+        git_derived_cache_.entry_count != git_state.entries.size()) {
+      git_derived_cache_.snapshot_generation = git_state.snapshot_generation;
+      git_derived_cache_.entry_count = git_state.entries.size();
+      git_derived_cache_.has_worktree_changes = std::any_of(
+          git_state.entries.begin(), git_state.entries.end(), [](const GitSidebarEntry& entry) {
+            return IsGitWorkflowSection(entry.section);
+          });
+      git_derived_cache_.worktree_scan_valid = true;
+    }
+    const bool snapshot_has_worktree_changes = git_derived_cache_.has_worktree_changes;
     const bool tree_has_worktree_changes =
         !has_git_snapshot && project_state.directory_tree.has_dirty_files();
     const bool has_worktree_changes = snapshot_has_worktree_changes || tree_has_worktree_changes;
@@ -101,6 +116,7 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
   }
   if (project_state.root.empty()) {
     project_segment_cache_ = {};
+    git_derived_cache_ = {};
   }
   status_bar_service.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
   if (!operations.startup_mode_text.empty()) {
@@ -149,9 +165,15 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     status_bar_service.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
 
     StatusBarSegmentValue language;
-    const std::filesystem::path viewport_path = viewport->path().lexically_normal();
+    // Same story as the project root: normalizing allocated a path every frame
+    // for a value that only moves when the buffer's file does.
+    if (editor_segments_cache_.raw_viewport_path != viewport->path()) {
+      editor_segments_cache_.raw_viewport_path = viewport->path();
+      editor_segments_cache_.normalized_viewport_path = viewport->path().lexically_normal();
+    }
     const std::string& filetype = language_memo_.Resolve(
-        viewport, viewport_path, viewport->content_revision(), viewport->lines());
+        viewport, editor_segments_cache_.normalized_viewport_path, viewport->content_revision(),
+        viewport->lines());
     if (!filetype.empty()) {
       language.text = filetype;
       language.tooltip = "Language: " + filetype;

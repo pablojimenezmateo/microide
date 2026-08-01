@@ -54,6 +54,24 @@ class StatusBarModelService {
 
   HeadBranchCache head_branch_cache_;
 
+  // Two per-frame costs this refresh used to pay unconditionally, both keyed on
+  // things that move far less often than once a frame:
+  //
+  //  - `root.lexically_normal()`, which allocates a whole path every frame for a
+  //    project root that changes only when the user switches projects
+  //  - a scan of every git sidebar entry looking for a worktree change, which on
+  //    a 1000-changed-file repository is 1000 iterations per frame for an answer
+  //    that only moves when a new git snapshot lands
+  struct GitSnapshotDerivedCache {
+    std::filesystem::path raw_root;
+    std::filesystem::path normalized_root;
+    std::uint64_t snapshot_generation = 0;
+    std::size_t entry_count = 0;
+    bool has_worktree_changes = false;
+    bool worktree_scan_valid = false;
+  };
+  GitSnapshotDerivedCache git_derived_cache_;
+
   struct EditorSegmentsCache {
     const editor::TextViewport* viewport = nullptr;
     std::size_t cursor_line = 0;
@@ -65,6 +83,8 @@ class StatusBarModelService {
     std::string line_column_text;
     std::string indent_text;
     std::string problems_text;
+    std::filesystem::path raw_viewport_path;
+    std::filesystem::path normalized_viewport_path;
   };
 
   // Shared memo (see runtime_syntax::FiletypeMemo). This was a hand-rolled
