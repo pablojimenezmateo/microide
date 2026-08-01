@@ -1017,7 +1017,68 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   }
 }
 
+// A save whose encoded body already sits on disk is skipped -- these writes are
+// durable (temp + fsync + backup rotation + rename) and run on the shell thread,
+// so re-writing identical bytes is a stall for nothing. The two things that skip
+// must never break: a record that changed still writes, and a record whose file
+// went away underneath the memo is recreated rather than assumed present.
+void TestPersistenceServiceSkipsRewritingIdenticalState() {
+  using microide::persistence::PersistedRecordReader;
+  using microide::persistence::PersistedRecordWriter;
+  using microide::workspace::PersistenceService;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "user.config";
+  PersistenceService service;
+
+  PersistedUserConfigState state{.ui_scale = 1.0f, .settings = {{"theme", "dark"}}};
+  Expect(service.SaveUserConfig(path, state), "first save should succeed");
+  Expect(std::filesystem::exists(path), "the record should exist after the first save");
+  Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
+         "a first save has no prior primary to rotate into a backup");
+
+  // Identical state: skipped, so no backup rotation happens. That absence is the
+  // observable proof the durable write did not run.
+  Expect(service.SaveUserConfig(path, state), "an unchanged save should report success");
+  Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
+         "an unchanged save must not rewrite the record (no backup rotation)");
+
+  // Changed state writes through, and now there is a prior primary to rotate.
+  state.settings[0].second = "light";
+  Expect(service.SaveUserConfig(path, state), "a changed save should write through");
+  Expect(std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
+         "a real write rotates the previous primary into the backup");
+  {
+    const auto reread = PersistedRecordReader::ReadFile(path);
+    PersistedUserConfigState reloaded;
+    Expect(reread.has_value() && DecodeUserConfigRecord(reread->body, &reloaded),
+           "the rewritten primary should decode");
+    Expect(reloaded.settings.size() == 1 && reloaded.settings[0].second == "light",
+           "the rewritten primary should hold the changed state");
+  }
+
+  // The file disappearing must invalidate the memo: an identical save recreates it.
+  std::error_code error;
+  std::filesystem::remove(path, error);
+  Expect(!std::filesystem::exists(path), "the record should be gone before the recreate check");
+  Expect(service.SaveUserConfig(path, state), "an identical save should recreate a missing record");
+  Expect(std::filesystem::exists(path),
+         "a save must not be skipped against a record that no longer exists");
+
+  // A load also seeds the memo, so the very first save after a restore of
+  // unchanged state is skipped too.
+  PersistenceService fresh_service;
+  PersistedUserConfigState loaded;
+  Expect(fresh_service.LoadUserConfig(path, &loaded), "load should succeed");
+  std::filesystem::remove(PersistedRecordWriter::BackupPathFor(path), error);
+  Expect(fresh_service.SaveUserConfig(path, loaded), "an unchanged post-load save should succeed");
+  Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
+         "a save of exactly what was loaded must not rewrite the record");
+}
+
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PersistedStateRecord/PersistenceServiceSkipsRewritingIdenticalState",
+          TestPersistenceServiceSkipsRewritingIdenticalState);
   AddTest(tests, "PersistedStateRecord/PersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite",
           TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite);
   AddTest(tests, "PersistedStateRecord/ProjectConfigMigratesLegacyEditorPrefTags",

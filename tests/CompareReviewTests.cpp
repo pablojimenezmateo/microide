@@ -264,6 +264,46 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                      Expect(metadata.mode_changed, "executable delta should mark mode change");
                    }});
 
+  tests.push_back(
+      {"CompareReview/SemanticLineEndingOnlyMetadata",
+       [] {
+         // The classifier used to answer this by allocating two whole-file
+         // NormalizeLineEndings copies and comparing them; it now walks both
+         // buffers collapsing line endings as it goes, allocating nothing. The
+         // collapse rule has to stay identical to util::NormalizeLineEndings
+         // ('\r' becomes '\n' and swallows a following '\n'), and this had no
+         // coverage at all before the rewrite.
+         const auto classify = [](std::string_view left, std::string_view right) {
+           return InferCompareSemanticFileMetadata(CompareSemanticMetadataInput{
+                      .path = "f.txt",
+                      .left_content = left,
+                      .right_content = right,
+                      .git_entry = std::nullopt,
+                      .old_path = {},
+                  })
+               .line_ending_only;
+         };
+
+         Expect(classify("a\r\nb\r\n", "a\nb\n"),
+                "CRLF vs LF over identical text is a line-ending-only change");
+         Expect(classify("a\rb\r", "a\nb\n"),
+                "lone CR vs LF over identical text is a line-ending-only change");
+         Expect(classify("a\r\nb\n", "a\nb\r\n"),
+                "mixed endings that normalize equal are a line-ending-only change");
+         Expect(!classify("a\nb\n", "a\nb\n"),
+                "identical content is not a change at all");
+         Expect(!classify("a\r\nb\r\n", "a\nc\n"),
+                "differing text is not a line-ending-only change even across endings");
+         Expect(!classify("a\r\nb\r\n", "a\nb\nc\n"),
+                "a trailing extra line is not a line-ending-only change");
+         Expect(!classify("a\r\nb\r\n", "a\nb"),
+                "a missing trailing newline is not a line-ending-only change");
+         Expect(!classify("", "a\n"), "content appearing is not a line-ending-only change");
+         // A '\r' at the very end has no following byte to swallow, which is the
+         // boundary the walk has to get right.
+         Expect(classify("a\r", "a\n"), "a trailing lone CR normalizes to a trailing LF");
+       }});
+
   tests.push_back({"CompareReview/PresentationMetadataRow",
                    [] {
                      const auto model = BuildCompareModel("a\n", "b\n");
