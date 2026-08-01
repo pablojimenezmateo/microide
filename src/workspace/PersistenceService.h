@@ -58,6 +58,22 @@ class PersistenceService {
   // primary is not clobbered with stale backup-derived state. A differing body
   // (a real mutation) writes normally and clears the guard.
   mutable std::unordered_map<std::string, std::vector<std::byte>> backup_recovery_baseline_;
+
+  // The record body each path was last observed to hold — set on a successful
+  // load and on a successful save. A save whose encoded body equals it, for a
+  // path whose primary file still exists, is already on disk byte for byte.
+  //
+  // These writes are durable: temp file, fsync, backup rotation, rename. They run
+  // on the shell thread at project switch and shutdown, and a project switch
+  // rewrites three of them — measured at ~1.1 ms each, ~98 ms of the ~350 ms of
+  // main-thread time in the multi-project-switch scenario — for state that
+  // usually did not change at all. Skipping an identical body removes the stall
+  // without weakening durability: the bytes it would have written are the bytes
+  // already there.
+  //
+  // Bodies past kMaxMemoizedBodyBytes are not retained, so a pathologically large
+  // session cannot pin memory here.
+  mutable std::unordered_map<std::string, std::vector<std::byte>> persisted_body_memo_;
 };
 
 }  // namespace microide::workspace
