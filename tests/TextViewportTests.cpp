@@ -3207,6 +3207,63 @@ void TestTextViewportOpenNormalizesEveryLineEndingMix() {
   }
 }
 
+// A content edit anchored at line 0 must go down the SAME incremental
+// visual-column path as an edit anywhere else.
+//
+// It did not: the line-0 branch of InvalidateDerivedCaches dropped the whole
+// per-line width table along with the visible-line layouts, so the next
+// MaxVisualColumns() recomputed the width of every line in the buffer. On a
+// 50k-line file an identical enter/backspace burst measured 121 full rebuilds
+// at line 0 against 1 at line 25000 -- typing at the top of a large file was
+// the slowest place to type. Line 0 is special for the highlight state (the
+// syntax chain starts there); it is not special for widths, because a line's
+// visual width depends on that line's bytes and nothing else.
+//
+// Pinned two ways: the horizontal-scroll clamp still tracks the widest line
+// after editing line 0 (correctness -- a stale table would clamp wrong), and
+// the edit takes the in-place incremental branch rather than a rebuild.
+void TestTextViewportFirstLineEditKeepsVisualColumnCacheIncremental() {
+  TextViewport viewport;
+  // Line 0 is the widest line, so the max-column bookkeeping has to follow it.
+  viewport.LoadContent(std::string(200, 'w') + "\nshort\nshorter\n", "/tmp/first-line-edit.txt");
+  viewport.SetViewportSize(10, 20);
+
+  const auto clamped_horizontal_scroll = [&viewport]() {
+    viewport.SetHorizontalScroll(100000);
+    return viewport.horizontal_scroll();
+  };
+
+  const std::size_t before = clamped_horizontal_scroll();
+  Expect(before > 0, "a 200-column line in a 20-column viewport should allow horizontal scroll");
+
+#ifndef NDEBUG
+  const std::size_t inplace_before = viewport.VisualColumnIncrementalInplaceCountForDebug();
+#endif
+
+  // Widen line 0 by ten columns, in place (no line-count change).
+  viewport.MoveCursorTo(0, 0);
+  for (int i = 0; i < 10; ++i) {
+    viewport.InsertText("x");
+  }
+
+#ifndef NDEBUG
+  Expect(viewport.VisualColumnIncrementalInplaceCountForDebug() == inplace_before + 10,
+         "each single-line edit at line 0 must take the in-place incremental width path, "
+         "not drop the table and force a full rebuild");
+#endif
+
+  Expect(clamped_horizontal_scroll() == before + 10,
+         "widening the widest line by ten columns must widen the horizontal scroll range by "
+         "exactly ten");
+
+  // And narrowing it again must pull the range back.
+  for (int i = 0; i < 10; ++i) {
+    viewport.Backspace();
+  }
+  Expect(clamped_horizontal_scroll() == before,
+         "narrowing the widest line back must restore the horizontal scroll range");
+}
+
 // LoadLines (dirty-tab session restore) moves an already line-split buffer straight
 // in, skipping the LoadContent(SerializeLines(...)) join-then-resplit. It must be
 // exactly equivalent to that old round-trip: same lines, same line ending, dirty.
@@ -3629,6 +3686,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportLoadLinesMatchesSerializeRoundTrip);
   AddTest(tests, "TextViewport/OpenNormalizesEveryLineEndingMix",
           TestTextViewportOpenNormalizesEveryLineEndingMix);
+  AddTest(tests, "TextViewport/FirstLineEditKeepsVisualColumnCacheIncremental",
+          TestTextViewportFirstLineEditKeepsVisualColumnCacheIncremental);
   AddTest(tests, "TextViewport/FastLoadMatchesCrlfDecode",
           TestTextViewportFastLoadMatchesCrlfDecode);
   AddTest(tests, "TextViewport/FastLoadPreservesCrOnlyLines",

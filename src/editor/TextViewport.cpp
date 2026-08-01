@@ -1004,7 +1004,22 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   }
 
   if (safe_start == 0) {
-    layout_cache_.ClearVisibleLineAndMaxColumns();
+    // Drop the visible-line layouts from line 0 -- i.e. all of them -- but NOT the
+    // per-line visual-column table, which is what ClearVisibleLineAndMaxColumns
+    // would also have taken.
+    //
+    // Line 0 is special for the highlight state below, because the syntax state
+    // chains forward from it. It is not special for widths: a line's visual column
+    // count depends on that line's bytes and nothing else, and the incremental
+    // UpdateVisualColumnCacheAfterEdit that every edit path runs right after this
+    // handles line 0 exactly like any other line. Wiping the table here meant the
+    // next MaxVisualColumns() rebuilt the width of every line in the buffer, so
+    // an edit anchored at line 0 cost an O(document) rebuild that the same edit
+    // one line lower did not: on the 50k-line fixture, an identical
+    // enter/backspace burst measured 121 full rebuilds (269.7 ms) at line 0
+    // against 1 (3.1 ms) at line 25000. Typing at the top of a large file was the
+    // slowest place to type.
+    layout_cache_.InvalidateVisibleLineCacheFrom(0);
     highlight_cache_.clear();
     highlight_cache_order_.clear();
     initial_highlight_state_.reset();

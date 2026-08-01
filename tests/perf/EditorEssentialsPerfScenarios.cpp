@@ -475,6 +475,38 @@ void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
   });
 }
 
+// Same burst as above, on the FIRST line instead of the middle of the file.
+//
+// This exists because the two were not the same cost and nothing measured the
+// difference: a content edit anchored at line 0 took a wholesale-invalidation
+// branch that dropped the per-line visual-column table, so the next frame
+// rebuilt the width of every line in the buffer -- an O(document) rebuild per
+// keystroke that an edit one line lower did not pay. Typing at the top of a
+// large file is an ordinary thing to do, and it was the slowest place to type.
+void RunFirstLineEditLatencyLargeFile(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!PathExistsNoThrow(cpp_50k)) {
+    std::cerr << "first_line_edit_latency_large_file: missing fixture " << cpp_50k << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  if (vp.lines().size() < 2) {
+    throw std::runtime_error("first_line_edit_latency_large_file: file too short");
+  }
+  vp.MoveCursorTo(0, 0, false);
+  context.PumpFrames(2);  // warm highlights/layout for the visible window
+  context.Measure("first_line_edit.enter_backspace_burst", [&] {
+    for (int i = 0; i < 24; ++i) {
+      context.KeyDown(SDLK_RETURN);
+      context.KeyDown(SDLK_BACKSPACE);
+      context.PumpFrames(1);
+    }
+  });
+}
+
 // The "Moby Dick workout" (hogbaysoftware.com/posts/moby-dick-workout): a
 // full-novel responsiveness test. Drives the six canonical steps on the real
 // ~1.2 MB / ~22k-line Project Gutenberg Moby-Dick body through the same SDL
@@ -659,6 +691,11 @@ const ScenarioRegistration g_perf_mid_file_edit_latency_large_file({Scenario{
     .name = "mid_file_edit_latency_large_file",
     .smoke = false,
     .run = RunMidFileEditLatencyLargeFile,
+}});
+const ScenarioRegistration g_perf_first_line_edit_latency_large_file({Scenario{
+    .name = "first_line_edit_latency_large_file",
+    .smoke = false,
+    .run = RunFirstLineEditLatencyLargeFile,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",
