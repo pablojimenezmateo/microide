@@ -25,6 +25,65 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-01 measurement pass, sixth round (perf-runner-v1)
+
+Two findings and one rejected change. The rejected one is the more useful entry.
+
+### Fixed
+
+- **Indent guides were sorted every frame.** `ComputeIndentGuides` emitted one
+  entry per (visible row, guide column) and `std::sort`ed the lot so a coalescing
+  pass could merge neighbours into vertical runs. The entry count is rows x indent
+  levels -- thousands per frame on deeply indented content -- and the guides are
+  recomputed on every scrolled frame by design, since the cache key includes the
+  scroll line. The step had no scope, so it sat inside the renderer's self time;
+  scoped, it was the largest single thing in the editor's render path, and the
+  sort was **15.6 ms of its 17.0 ms** across a 372-frame scroll. Sweeping one
+  guide column at a time produces the runs already grouped and already in row
+  order, so there is nothing to sort: **46 -> 4.2 us per frame**.
+- `LeadingVisualIndent` (called per visible row by the above) now shares
+  `util::LeadingByteRun` with the fold scan's `MeasureIndent` -- the same
+  leading-whitespace scan had been written twice.
+
+### Rejected: deferring persisted-record writes to a background thread
+
+`persistence::WriteFile` was the largest main-thread scope in the smoke suite
+(123 ms across the run). Splitting it settled what it is: the durable write is
+**1.58 ms of a 1.60 ms write (97.6%)**, up to 6.7 ms; the backup rotation and
+rename together are 0.038 ms and the path/directory work 0.0095 ms. So the cost
+is the fsync, and the only levers are off-thread, less often, or not at all.
+
+A serial background writer was implemented -- queue, worker, flush before every
+read so a load could never see a stale file, flush at the shutdown seam that
+already flushes recents. It was **backed out**, because the test suite said
+something the design had assumed away: `SaveX()` returning true currently *means*
+the bytes are on disk. `PersistenceServiceSkipsRewritingIdenticalState` checks
+`std::filesystem::exists` immediately after a save, and three
+`WorkspaceShell/...AfterRestart` tests model a real user flow -- change a
+setting, restart -- by reading with a fresh shell while the old one is still
+alive. Flushing before reads *through the same service* does not cover either.
+
+The observers of that contract are not enumerable from inside the service (other
+instances, other processes, the control channel, a user looking at the file), and
+the failure mode for missing one is silent state loss. Deferring is the right
+idea and VSCode does it; doing it safely needs the contract changed deliberately
+-- every caller audited, `SaveX` documented as "queued", and the flush points
+chosen from that audit rather than from where tests happened to fail.
+
+The stage-split instrumentation is kept, so the next attempt starts from the
+number rather than from a guess.
+
+### Still open
+
+Unchanged from the fifth round: the fold model still rescans the whole document
+per keystroke (bracket tail scan, indent measure, range merge -- roughly 3.7 ms
+on the 50k-line fixture), and an edit at line 0 cannot resume at all. Beyond
+that, `RuntimeSyntaxRegistry::HighlightLine` is ~5.6 us per line and runs one
+PCRE2 execution per pattern rule; `ReusableMatchData` does a thread_local
+`unordered_map` lookup keyed on the compiled-pattern address for every one of
+those executions, which a slot index derived from the rule index would make an
+array read (~9% of the highlight path, not attempted).
+
 ## 2026-08-01 measurement pass, fifth round (perf-runner-v1)
 
 Continuation of the fourth round's open item: after the line-0 fixes, the fold
