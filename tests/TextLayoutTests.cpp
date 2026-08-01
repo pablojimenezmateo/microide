@@ -2,6 +2,7 @@
 
 #include "editor/TextLayout.h"
 #include "editor/TextLayoutCache.h"
+#include "util/StringUtil.h"
 
 #include <cstddef>
 #include <string>
@@ -114,6 +115,51 @@ void TestResolveVisualColumnMatchesTextLayout() {
   }
 }
 
+// VisualColumnForTextColumn skips decoding over the plain-ASCII prefix of a line
+// and only walks code points from the first tab / first byte >= 0x80. That prefix
+// scan reads eight bytes at a time, so the interesting cases are exactly the ones
+// a hand-written row array does not cover: the special byte landing at every
+// offset inside a chunk, on the chunk boundary, and in the sub-chunk tail.
+//
+// Differentially check the fast path against a straightforward per-code-point
+// reference walk for a special byte at EVERY offset of lines spanning several
+// chunk lengths, at every query column.
+void TestVisualColumnFastPathMatchesReferenceWalk() {
+  const auto reference_walk = [](std::string_view line, std::size_t text_column) {
+    const std::size_t clamped = TextLayout::ClampTextColumn(line, text_column);
+    std::size_t visual = 0;
+    for (std::size_t i = 0; i < clamped;) {
+      visual = TextLayout::AdvanceVisualColumn(visual, line[i], kTabSize);
+      i += util::Utf8SequenceLength(line, i);
+    }
+    return visual;
+  };
+
+  // Tab, a 2-byte code point, a 3-byte code point, and a lone invalid byte (which
+  // the decoder charges as one cell) — every class the prefix scan must refuse to
+  // swallow.
+  const std::string kSpecials[] = {"\t", "\xC3\xA9", "\xE4\xB8\xAD", "\xFF"};
+  for (std::size_t length = 0; length <= 20; ++length) {
+    const std::string ascii(length, 'a');
+    // The all-plain line itself: the fast path returns without decoding at all.
+    for (std::size_t c = 0; c <= ascii.size(); ++c) {
+      Expect(TextLayout::VisualColumnForTextColumn(ascii, c, kTabSize) == reference_walk(ascii, c),
+             "plain-ASCII fast path matches the reference walk");
+    }
+    for (const std::string& special : kSpecials) {
+      for (std::size_t at = 0; at <= length; ++at) {
+        std::string line = ascii;
+        line.insert(at, special);
+        for (std::size_t c = 0; c <= line.size(); ++c) {
+          Expect(TextLayout::VisualColumnForTextColumn(line, c, kTabSize) ==
+                     reference_walk(line, c),
+                 "prefix-skipping fast path matches the reference walk at every chunk offset");
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 // TextLayoutCache::InvalidateAll documents that it "wipes every cache + every
@@ -215,6 +261,8 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextLayout/AdvanceVisualColumnTabStops", TestAdvanceVisualColumnTabStops);
   AddTest(tests, "TextLayout/VisualColumnMapMatchesDirectWalk",
           TestVisualColumnMapMatchesDirectWalk);
+  AddTest(tests, "TextLayout/VisualColumnFastPathMatchesReferenceWalk",
+          TestVisualColumnFastPathMatchesReferenceWalk);
   AddTest(tests, "TextLayout/TextVisualRoundTrip", TestTextVisualRoundTrip);
   AddTest(tests, "TextLayout/ResolveVisualColumnMatchesTextLayout",
           TestResolveVisualColumnMatchesTextLayout);

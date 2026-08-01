@@ -1,10 +1,50 @@
 #include "editor/TextLayout.h"
 
 #include <algorithm>
+#include <cstdint>
+#include <cstring>
 
 #include "util/StringUtil.h"
 
 namespace microide::editor {
+
+namespace {
+
+// Offset of the first byte in `text` that is not a plain, single-cell ASCII
+// character — that is, the first tab (which expands to a stop) or the first
+// byte >= 0x80 (which begins a multi-byte code point). Returns `text.size()`
+// when the whole span is plain ASCII.
+//
+// Every byte before that offset contributes exactly one visual column, so the
+// prefix needs no UTF-8 decoding and no per-character tab arithmetic at all.
+// Source lines are overwhelmingly that shape, and the width of every line in a
+// buffer is computed on open (`TextLayoutCache::MaxVisualColumns`), so this is
+// the difference between a byte scan and 50k decoder loops on a large file.
+std::size_t FirstNonPlainAsciiByte(std::string_view text) {
+  constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
+  constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
+  constexpr std::uint64_t kTabs = kLowOnes * static_cast<unsigned char>('\t');
+  std::size_t index = 0;
+  // Eight bytes per iteration: `word & kHighBits` flags any non-ASCII byte and
+  // the classic has-zero-byte trick over `word ^ kTabs` flags any tab.
+  for (; index + sizeof(std::uint64_t) <= text.size(); index += sizeof(std::uint64_t)) {
+    std::uint64_t word = 0;
+    std::memcpy(&word, text.data() + index, sizeof(word));
+    const std::uint64_t tab_marks = word ^ kTabs;
+    if (((word & kHighBits) | ((tab_marks - kLowOnes) & ~tab_marks & kHighBits)) != 0) {
+      break;
+    }
+  }
+  for (; index < text.size(); ++index) {
+    const auto byte = static_cast<unsigned char>(text[index]);
+    if (byte >= 0x80 || byte == '\t') {
+      return index;
+    }
+  }
+  return text.size();
+}
+
+}  // namespace
 
 TextLayout::LineVisualColumnMap::LineVisualColumnMap(std::string_view line,
                                                      std::size_t tab_size) {
@@ -51,8 +91,11 @@ std::size_t TextLayout::VisualColumnForTextColumn(std::string_view line,
                                                   std::size_t text_column,
                                                   std::size_t tab_size) {
   const std::size_t clamped_column = ClampTextColumn(line, text_column);
-  std::size_t visual_column = 0;
-  for (std::size_t i = 0; i < clamped_column;) {
+  // The plain-ASCII prefix is 1 byte = 1 column, so start the decoding loop at
+  // the first byte that can break that (see FirstNonPlainAsciiByte).
+  const std::size_t plain_prefix = FirstNonPlainAsciiByte(line.substr(0, clamped_column));
+  std::size_t visual_column = plain_prefix;
+  for (std::size_t i = plain_prefix; i < clamped_column;) {
     visual_column = AdvanceVisualColumn(visual_column, line[i], tab_size);
     i += util::Utf8SequenceLength(line, i);
   }
