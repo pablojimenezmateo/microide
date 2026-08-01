@@ -394,9 +394,25 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(5);
           },
   });
+  // Five real project opens per iteration, each of which arms a file-index build
+  // and a tree watch on background threads. Those threads allocate, the
+  // allocation counter is process-global, and which measured iteration their work
+  // lands in is up to the scheduler -- so NEITHER metric is deterministic here the
+  // way a pure-unit scenario's is. Measured spread over five consecutive runs of
+  // an unchanged binary: wall p50 25.4-34.7 ms (+37%), allocations 128.6k-151.9k
+  // (+18%). Envelopes are sized to cover that with headroom rather than left at
+  // the harness defaults, where the scenario would false-trip constantly; they
+  // still catch the kind of regression this scenario exists to catch (the switch
+  // teardown that made it a 79 ms p50 before the inotify retire landed).
   PerfHarness::RegisterScenario(Scenario{
       .name = "multi_project_switch",
       .smoke = true,
+      .tolerance_p50_percent = 60.0,
+      .tolerance_p95_percent = 150.0,
+      .tolerance_max_percent = 250.0,
+      .tolerance_alloc_p50_percent = 40.0,
+      .tolerance_alloc_p95_percent = 80.0,
+      .tolerance_alloc_max_percent = 150.0,
       .run =
           [](ScenarioContext& context) {
             const std::vector<std::filesystem::path> projects = {
