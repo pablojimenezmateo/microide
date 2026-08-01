@@ -394,25 +394,19 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(5);
           },
   });
-  // Five real project opens per iteration, each of which arms a file-index build
-  // and a tree watch on background threads. Those threads allocate, the
-  // allocation counter is process-global, and which measured iteration their work
-  // lands in is up to the scheduler -- so NEITHER metric is deterministic here the
-  // way a pure-unit scenario's is. Measured spread over five consecutive runs of
-  // an unchanged binary: wall p50 25.4-34.7 ms (+37%), allocations 128.6k-151.9k
-  // (+18%). Envelopes are sized to cover that with headroom rather than left at
-  // the harness defaults, where the scenario would false-trip constantly; they
-  // still catch the kind of regression this scenario exists to catch (the switch
-  // teardown that made it a 79 ms p50 before the inotify retire landed).
+  // Five real project opens per iteration, each arming a file-index build and a
+  // tree watch on background threads. Their WALL is not reproducible on this
+  // runner -- five consecutive runs of one unchanged binary spread the p50 across
+  // 25.4-34.7 ms (+37%) -- so the wall envelope is sized to cover that. The
+  // allocation envelope stays tight: the counter is per-thread, so this scenario
+  // reports only the shell thread's allocations and reports the same number every
+  // run. That tight gate is what would catch a regression like the switch
+  // teardown this scenario found (a 79 ms p50 before the inotify retire landed).
   PerfHarness::RegisterScenario(Scenario{
       .name = "multi_project_switch",
       .smoke = true,
-      .tolerance_p50_percent = 60.0,
-      .tolerance_p95_percent = 150.0,
-      .tolerance_max_percent = 250.0,
-      .tolerance_alloc_p50_percent = 40.0,
-      .tolerance_alloc_p95_percent = 80.0,
-      .tolerance_alloc_max_percent = 150.0,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             const std::vector<std::filesystem::path> projects = {
@@ -471,9 +465,13 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
+  // Wall spread +20% p50/p95/max across four consecutive runs of one unchanged
+  // binary; allocations are exact, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "typing_large_file",
       .smoke = true,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
@@ -484,9 +482,13 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
+  // Small measured phase (~1.5 ms) whose wall this runner cannot hold at the
+  // default envelope; allocations are exact, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "scroll_large_file",
       .smoke = true,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
@@ -565,12 +567,8 @@ void RegisterBuiltInScenarios() {
       // measured work is a couple of milliseconds, where this shared runner's
       // scheduler jitter is +/-20%, so the wall envelope is widened rather than
       // letting jitter trip a gate every other run.
-      .tolerance_p50_percent = 75.0,
-      .tolerance_p95_percent = 250.0,
-      .tolerance_max_percent = 400.0,
-      .tolerance_alloc_p50_percent = 10.0,
-      .tolerance_alloc_p95_percent = 20.0,
-      .tolerance_alloc_max_percent = 50.0,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/kernel_sized_project");
@@ -602,12 +600,8 @@ void RegisterBuiltInScenarios() {
       .name = "project_search_regex",
       .smoke = true,
       // See project_search_literal.
-      .tolerance_p50_percent = 75.0,
-      .tolerance_p95_percent = 250.0,
-      .tolerance_max_percent = 400.0,
-      .tolerance_alloc_p50_percent = 10.0,
-      .tolerance_alloc_p95_percent = 20.0,
-      .tolerance_alloc_max_percent = 50.0,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/kernel_sized_project");
@@ -780,6 +774,15 @@ void RegisterBuiltInScenarios() {
           },
   });
   // Task 9.2: file_finder_cold — open large fixture, measure time-to-first file-finder result.
+  //
+  // The finder rebuilds its whole candidate cache whenever the file index version
+  // moves, and the index is built on a background thread, so WITHOUT the wait
+  // below the rebuild lands in one or two of the ten iterations at random: the
+  // measured allocations were 286 on the median and ~42,000 on the p95, and which
+  // run captured a baseline decided whether the gate passed. Waiting for the index
+  // to reach its last file puts the rebuild inside EVERY iteration -- which is
+  // also the case the scenario is named for, a *cold* finder over a fully indexed
+  // 10k-file project -- and makes the count identical run to run.
   PerfHarness::RegisterScenario(Scenario{
       .name = "file_finder_cold",
       .smoke = false,
@@ -792,6 +795,10 @@ void RegisterBuiltInScenarios() {
             }
             if (!context.Open(fixture)) {
               throw std::runtime_error("file_finder_cold: failed to open fixture");
+            }
+            if (!context.WaitForFileIndexPath("src_49/file_09999.cpp",
+                                              std::chrono::seconds(20))) {
+              throw std::runtime_error("file_finder_cold: file index did not finish building");
             }
             context.PumpFrames(2);
             context.OpenFileFinder();
@@ -818,6 +825,9 @@ void RegisterBuiltInScenarios() {
           },
   });
   // Task 9.5: search_first_result — search for a symbol near end of 10k-file corpus.
+  // Measures ~2.5 ms, which four consecutive runs of one unchanged binary
+  // spread by +-23%. Allocations are byte-identical across those runs, so they
+  // keep the tight gate and stay the real oracle here.
   PerfHarness::RegisterScenario(Scenario{
       .name = "search_first_result",
       .smoke = false,
@@ -832,10 +842,15 @@ void RegisterBuiltInScenarios() {
       // razor-thin baseline (also 20,207) has no headroom, so a lone iteration
       // spilled by an incidental background wake would trip them. Widen p95/max to
       // absorb that irreducible global-counter tail noise rather than false-positive
-      // — the deterministic p50 already catches any genuine regression.
+      // — the deterministic allocation p50 already catches any genuine regression.
+      //
+      // That determinism is the ALLOCATION count, not the wall: the measured phase
+      // is ~2.5 ms and four consecutive runs of one unchanged binary spread its
+      // wall p50 by +-23%, so the wall envelopes are widened too and the allocation
+      // envelopes stay tight. Which is the point of decoupling them.
       .warmup_iterations = 16,
-      .tolerance_p95_percent = 250.0,
-      .tolerance_max_percent = 400.0,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
@@ -864,18 +879,26 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
+  // Wall spread +33% p50 / +23% p95 across four consecutive runs of one
+  // unchanged binary; allocations byte-identical, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "cold_startup_small_project",
       .smoke = true,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/small_project");
             context.PumpFrames(5);
           },
   });
+  // Wall spread +29% p50 across four consecutive runs of one unchanged binary.
+  // Allocations are exact (the counter is per-thread), so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "cold_startup_large_project",
       .smoke = true,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
@@ -1177,9 +1200,13 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
+  // Wall spread +54% p50 / +90% max across four consecutive runs of one
+  // unchanged binary; allocations byte-identical, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_smart_indent_typing",
       .smoke = false,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);
@@ -1205,9 +1232,13 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(2);
           },
   });
+  // Wall spread +29% p50 / +37% p95 across four consecutive runs of one
+  // unchanged binary; allocations byte-identical, so they stay tight.
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_surround_multi_caret",
       .smoke = false,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);
@@ -1492,9 +1523,25 @@ int main(int argc, char** argv) {
         std::filesystem::path("tests/perf/baselines") / (scenario.name + ".json");
     if (options->update_baseline) {
       if (!scenario.baseline_gated) {
-        std::cerr << "refusing to update baseline for advisory-only scenario: " << scenario.name
-                  << '\n';
-        return 1;
+        // Refusing to write an advisory scenario's baseline is right; aborting
+        // the whole run over it was not. A bare `--update-baseline` sweeps in
+        // every registered scenario, so one advisory entry made "rebaseline the
+        // suite" impossible -- the run died partway through and left every
+        // baseline it had not reached untouched, which is how the committed set
+        // drifted 3-8x stale. Skip it and carry on; fail only when the caller
+        // named it explicitly, where the request really is unsatisfiable.
+        const bool named_explicitly =
+            !options->scenarios.empty() &&
+            std::find(options->scenarios.begin(), options->scenarios.end(), scenario.name) !=
+                options->scenarios.end();
+        std::cerr << (named_explicitly ? "refusing to update baseline for advisory-only scenario: "
+                                       : "[perf] skipping baseline update for advisory-only "
+                                         "scenario: ")
+                  << scenario.name << '\n';
+        if (named_explicitly) {
+          return 1;
+        }
+        continue;
       }
       // A negative allocation tolerance means "inherit the matching wall
       // tolerance" -- resolve it here so the written baseline always carries an

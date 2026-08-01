@@ -476,23 +476,13 @@ void RunBranchReviewPresentationMarkers(ScenarioContext& context) {
 // tools/perf-compare.py current-vs-main run, where shared machine load cancels.
 // Wall and allocation tolerances are decoupled per baseline (see Baseline.h), so
 // the loose wall envelope never blinds the tight allocation complexity gate.
-constexpr double kTdCoverageTolP50 = 75.0;
-constexpr double kTdCoverageTolP95 = 250.0;
-constexpr double kTdCoverageTolMax = 400.0;
-constexpr double kTdCoverageAllocP50 = 10.0;
-constexpr double kTdCoverageAllocP95 = 20.0;
-constexpr double kTdCoverageAllocMax = 50.0;
 
 const ScenarioRegistration g_perf_assist_ranked_union_merge({Scenario{
     .name = "assist_ranked_union_merge",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunAssistRankedUnionMerge,
 }});
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -500,12 +490,8 @@ const ScenarioRegistration g_perf_plugin_status_item_update({Scenario{
     .name = "plugin_status_item_update",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunPluginStatusItemUpdate,
 }});
 #endif
@@ -513,72 +499,48 @@ const ScenarioRegistration g_perf_settings_rows_rebuild({Scenario{
     .name = "settings_rows_rebuild",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunSettingsRowsRebuild,
 }});
 const ScenarioRegistration g_perf_reference_snippet_file_window({Scenario{
     .name = "reference_snippet_file_window",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunReferenceSnippetFileWindow,
 }});
 const ScenarioRegistration g_perf_multi_caret_remap_burst({Scenario{
     .name = "multi_caret_remap_burst",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunMultiCaretRemapBurst,
 }});
 const ScenarioRegistration g_perf_snippet_many_mirror_edit({Scenario{
     .name = "snippet_many_mirror_edit",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunSnippetManyMirrorEdit,
 }});
 const ScenarioRegistration g_perf_user_config_record_decode({Scenario{
     .name = "user_config_record_decode",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunUserConfigRecordDecode,
 }});
 const ScenarioRegistration g_perf_branch_review_presentation_markers({Scenario{
     .name = "branch_review_presentation_markers",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kTdCoverageTolP50,
-    .tolerance_p95_percent = kTdCoverageTolP95,
-    .tolerance_max_percent = kTdCoverageTolMax,
-    .tolerance_alloc_p50_percent = kTdCoverageAllocP50,
-    .tolerance_alloc_p95_percent = kTdCoverageAllocP95,
-    .tolerance_alloc_max_percent = kTdCoverageAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunBranchReviewPresentationMarkers,
 }});
 

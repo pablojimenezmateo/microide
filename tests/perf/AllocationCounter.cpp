@@ -1,24 +1,43 @@
 #include "AllocationCounter.h"
 
-#include <atomic>
 #include <cstdlib>
 #include <new>
 
 namespace {
 
-std::atomic<std::uint64_t> g_allocations{0};
-std::atomic<std::uint64_t> g_frees{0};
-std::atomic<std::uint64_t> g_bytes_allocated{0};
-std::atomic<std::uint64_t> g_bytes_freed{0};
+// PER-THREAD, not process-global.
+//
+// Every consumer of these counters snapshots and deltas on one thread and asks a
+// question about that thread's work: "did this frame allocate", "how many
+// allocations does this scenario's measured phase do". A process-global counter
+// answers a different question, and answers it nondeterministically: the editor
+// runs file-index builds, tree walks, git, and syntax prefetch on workers, so a
+// worker's allocations were charged to whichever measured iteration the scheduler
+// happened to run them in. That made whole scenarios unusable as gates --
+// `cold_startup_large_project` measured a p50 of 399 allocations on one run and
+// 1749 on the next, `scroll_large_file` 4410 and 10580, from identical binaries.
+// No percentage tolerance covers a 4x swing without being meaningless.
+//
+// Counting per thread makes the number deterministic AND makes it the number that
+// matters: allocation on the shell thread is what costs the user a frame.
+// Background allocation is still visible where it belongs -- in the ranked trace
+// summary's self-time column and in the RSS budget scenario.
+//
+// A side benefit: a plain thread-local increment replaces an atomic
+// read-modify-write on the hottest possible path.
+thread_local std::uint64_t t_allocations = 0;
+thread_local std::uint64_t t_frees = 0;
+thread_local std::uint64_t t_bytes_allocated = 0;
+thread_local std::uint64_t t_bytes_freed = 0;
 
 inline void RecordAlloc(std::size_t size) {
-  g_allocations.fetch_add(1, std::memory_order_relaxed);
-  g_bytes_allocated.fetch_add(static_cast<std::uint64_t>(size), std::memory_order_relaxed);
+  ++t_allocations;
+  t_bytes_allocated += static_cast<std::uint64_t>(size);
 }
 
 inline void RecordFree(std::size_t size) {
-  g_frees.fetch_add(1, std::memory_order_relaxed);
-  g_bytes_freed.fetch_add(static_cast<std::uint64_t>(size), std::memory_order_relaxed);
+  ++t_frees;
+  t_bytes_freed += static_cast<std::uint64_t>(size);
 }
 
 }  // namespace
@@ -27,10 +46,10 @@ namespace microide::tests::perf {
 
 AllocationSnapshot Allocations::Snapshot() {
   return AllocationSnapshot{
-      .allocations = g_allocations.load(std::memory_order_relaxed),
-      .frees = g_frees.load(std::memory_order_relaxed),
-      .bytes_allocated = g_bytes_allocated.load(std::memory_order_relaxed),
-      .bytes_freed = g_bytes_freed.load(std::memory_order_relaxed),
+      .allocations = t_allocations,
+      .frees = t_frees,
+      .bytes_allocated = t_bytes_allocated,
+      .bytes_freed = t_bytes_freed,
   };
 }
 
@@ -60,7 +79,8 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept {
   if (ptr != nullptr) {
-    g_frees.fetch_add(1, std::memory_order_relaxed);
+    // Sized-deallocation is unavailable on this overload, so only the count moves.
+    RecordFree(0);
   }
   std::free(ptr);
 }

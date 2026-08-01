@@ -169,27 +169,55 @@ struct Scenario {
   // measured iteration is uniform and the p95/max percentiles aren't governed by
   // a single noisy cold sample. Keep 0 for scenarios that are already uniform.
   std::size_t warmup_iterations = 0;
-  // Per-metric regression tolerances (percent) written into this scenario's
-  // baseline at --update-baseline time; default to the harness-wide 10/20/50.
-  // Only override for a scenario whose steady-state median is deterministic but
-  // whose flat baseline leaves the tail no natural headroom, so an occasional
-  // background-thread wake (caught by the process-global allocation counter)
-  // would trip max/p95: keep p50 tight and loosen p95/max so the gate stays
-  // reliable without going blind to a real regression the p50 gate would catch.
-  double tolerance_p50_percent = 10.0;
-  double tolerance_p95_percent = 20.0;
-  double tolerance_max_percent = 50.0;
-  // Allocation-metric tolerances, written into the baseline alongside the wall
-  // tolerances above. Allocation counts are deterministic run-to-run, so a
-  // scenario that widens its wall envelopes for machine jitter can keep these
-  // tight to preserve a precise complexity gate. A negative value means "inherit
-  // the matching wall tolerance" (the default), so a scenario that does not set
-  // these behaves exactly as before decoupling: both metrics on the same percent.
-  double tolerance_alloc_p50_percent = -1.0;
-  double tolerance_alloc_p95_percent = -1.0;
-  double tolerance_alloc_max_percent = -1.0;
+  // Per-metric regression tolerances (percent), written into this scenario's
+  // baseline at --update-baseline time.
+  //
+  // WALL is gated loosely and ALLOCATIONS tightly, on purpose. Three full gated
+  // runs of one unchanged binary on this reference runner produced 14, 2 and 0
+  // failures against baselines captured from that same binary, with wall
+  // overshoots up to +159% on the p50 -- the machine lands in stable modes tens
+  // of percent apart and the smallest scenarios (a 2 ms median) are dominated by
+  // it. A 10% wall gate here is not a regression detector, it is a coin flip, and
+  // a suite that is red on half its runs detects nothing at all because nobody
+  // reads it.
+  //
+  // Allocation counts, since the counter became per-thread (AllocationCounter.cpp),
+  // ARE byte-identical run to run. They scale with the work done, so they catch
+  // exactly the regressions that matter most -- an added allocation on a hot path,
+  // a cache that stopped hitting, an O(n) walk that became O(n^2) -- and they catch
+  // them precisely. That is the oracle; keep it tight.
+  //
+  // What this policy gives up is a constant-factor wall regression under ~2x. That
+  // is already the job of the interleaved current-vs-main tools/perf-compare.py
+  // run, where shared machine load cancels because both sides pay it.
+  double tolerance_p50_percent = 100.0;
+  double tolerance_p95_percent = 150.0;
+  double tolerance_max_percent = 200.0;
+  // A negative value means "inherit the matching wall tolerance". Do not use it:
+  // it exists only so the resolution rule stays expressible, and inheriting the
+  // wall envelope would throw away the precise gate above.
+  double tolerance_alloc_p50_percent = 10.0;
+  double tolerance_alloc_p95_percent = 20.0;
+  double tolerance_alloc_max_percent = 50.0;
   std::function<void(ScenarioContext&)> run;
 };
+
+// Wall envelopes for the handful of scenarios that need an even wider tail than
+// the (already wide) default -- a flat baseline whose p95/max have no natural
+// headroom at all, so a single context switch in one of ten iterations trips
+// them. Allocation envelopes are NOT widened here: see Scenario above for why
+// they are the gate that matters.
+namespace tolerance {
+
+inline constexpr double kJitterWallP50 = 100.0;
+inline constexpr double kJitterWallP95 = 250.0;
+inline constexpr double kJitterWallMax = 400.0;
+
+inline constexpr double kExactAllocP50 = 10.0;
+inline constexpr double kExactAllocP95 = 20.0;
+inline constexpr double kExactAllocMax = 50.0;
+
+}  // namespace tolerance
 
 class PerfHarness {
  public:

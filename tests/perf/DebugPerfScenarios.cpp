@@ -495,12 +495,6 @@ void RunDebugSessionStopToVariables(ScenarioContext& context) {
 //
 // This is deliberately NOT applied to every scenario in this file: the ones that
 // hold their envelope keep their tight wall gate.
-constexpr double kJitterBoundTolP50 = 75.0;
-constexpr double kJitterBoundTolP95 = 250.0;
-constexpr double kJitterBoundTolMax = 400.0;
-constexpr double kJitterBoundAllocP50 = 10.0;
-constexpr double kJitterBoundAllocP95 = 20.0;
-constexpr double kJitterBoundAllocMax = 50.0;
 
 const ScenarioRegistration g_perf_debug_value_tree_expand_large({Scenario{
     .name = "debug_value_tree_expand_large",
@@ -518,12 +512,8 @@ const ScenarioRegistration g_perf_debug_value_tree_paging({Scenario{
     .name = "debug_value_tree_paging",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kJitterBoundTolP50,
-    .tolerance_p95_percent = kJitterBoundTolP95,
-    .tolerance_max_percent = kJitterBoundTolMax,
-    .tolerance_alloc_p50_percent = kJitterBoundAllocP50,
-    .tolerance_alloc_p95_percent = kJitterBoundAllocP95,
-    .tolerance_alloc_max_percent = kJitterBoundAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunDebugValueTreePaging,
 }});
 const ScenarioRegistration g_perf_dap_protocol_encode_decode({Scenario{
@@ -536,24 +526,16 @@ const ScenarioRegistration g_perf_debug_breakpoints_model_rebuild({Scenario{
     .name = "debug_breakpoints_model_rebuild",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kJitterBoundTolP50,
-    .tolerance_p95_percent = kJitterBoundTolP95,
-    .tolerance_max_percent = kJitterBoundTolMax,
-    .tolerance_alloc_p50_percent = kJitterBoundAllocP50,
-    .tolerance_alloc_p95_percent = kJitterBoundAllocP95,
-    .tolerance_alloc_max_percent = kJitterBoundAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunDebugBreakpointsModelRebuild,
 }});
 const ScenarioRegistration g_perf_debug_pane_hittest_geometry({Scenario{
     .name = "debug_pane_hittest_geometry",
     .smoke = true,
     .baseline_gated = true,
-    .tolerance_p50_percent = kJitterBoundTolP50,
-    .tolerance_p95_percent = kJitterBoundTolP95,
-    .tolerance_max_percent = kJitterBoundTolMax,
-    .tolerance_alloc_p50_percent = kJitterBoundAllocP50,
-    .tolerance_alloc_p95_percent = kJitterBoundAllocP95,
-    .tolerance_alloc_max_percent = kJitterBoundAllocMax,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunDebugPaneHittestGeometry,
 }});
 const ScenarioRegistration g_perf_debug_session_stop_to_variables({Scenario{

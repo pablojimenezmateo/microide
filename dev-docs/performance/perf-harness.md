@@ -35,6 +35,50 @@ messages, PR descriptions, or release notes, use phrasing like "no regression on
 `<scenario>`" or "improves `<scenario>` p50 from X to Y on `perf-runner-v1`," not "fastest" or
 "X% faster than $other_editor."
 
+## Gating Policy: Loose Wall, Exact Allocations
+
+The two gated metrics are deliberately asymmetric, and reading a result depends on
+knowing which one fired.
+
+- **Allocation counts are the oracle.** The counting `operator new`/`delete` counts
+  **per thread** (`tests/perf/AllocationCounter.cpp`), so a scenario reports what its
+  own thread did and nothing else. That number is byte-identical run to run — across
+  three full gated runs of one unchanged binary it never moved once. It scales with
+  the work performed, so it catches an added allocation on a hot path, a cache that
+  stopped hitting, and an O(n) walk that became O(n²), and it catches them precisely.
+  Default tolerances stay tight: **10 / 20 / 50 %**. Never widen an allocation
+  envelope to make a red gate green — if a count is not reproducible, the scenario is
+  measuring something it should not, and the fix is to make the scenario deterministic
+  (see `file_finder_cold`, which waits for the file index rather than letting a
+  background rebuild land in a random subset of its iterations).
+- **Wall times are advisory-by-tolerance.** This shared reference runner lands in
+  stable CPU modes tens of percent apart; the same three full runs produced 0, 3 and 0
+  wall failures against baselines captured from that same binary, with overshoots
+  above +150 % on the loaded run. A 10 % wall gate here is a coin flip, and a suite
+  that is red on a third of its runs detects nothing because nobody reads it. Defaults
+  are **100 / 150 / 200 %** — still enough to catch an algorithmic blowup.
+
+What this gives up is a constant-factor wall regression under ~2x. That is the job of
+the interleaved `tools/perf-compare.py` current-vs-main run, where shared machine load
+cancels because both sides pay it.
+
+Shared tolerance constants live in `tolerance::` in `tests/perf/PerfHarness.h`; prefer
+them over fresh numbers.
+
+## Rebaselining
+
+`--update-baseline` with no `--scenarios` rewrites every gated baseline, and that is
+the intended way to use it after a change that moves many scenarios. Do it on an idle
+machine, then run the suite a few times and confirm the failures that remain are wall
+failures with byte-identical allocation counts — that is what "machine load, not a
+regression" looks like.
+
+Stale baselines fail silently: gates only trip on *increases*, so a baseline captured
+before an improvement lets the scenario pass against a number no longer connected to
+the code. The committed set had drifted 3–8x that way, in part because a bare
+`--update-baseline` used to abort partway through on the first advisory-only scenario
+it reached, leaving everything after it untouched.
+
 ## Configure
 
 ```bash
