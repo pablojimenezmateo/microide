@@ -25,6 +25,89 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-01 measurement pass, third round (perf-runner-v1)
+
+This round started from a gate failure rather than a ranking, and the failure turned
+out to be about the instrument, not the code. The theme: **a regression suite that
+cannot fail is worth less than one that fails honestly**, and the metric worth gating
+is the one that is reproducible.
+
+### The suite was not detecting anything
+
+- **Most committed baselines were 3–8x stale, in the vacuous direction.** Gates only
+  trip on *increases*, so a scenario measuring 79 ms against a 185 ms baseline passes —
+  silently, forever. A full gated run compared against the committed set showed the
+  majority of scenarios at 10–30 % of their baseline wall and a small fraction of their
+  baseline allocations.
+- **A bare `--update-baseline` could not finish.** It swept in every registered
+  scenario and returned 1 on the first advisory-only one it reached, leaving every
+  baseline after it untouched. That is a good part of how the drift accumulated. It
+  skips advisory scenarios now and fails only when one is named explicitly.
+
+### The allocation counter was measuring the wrong thing
+
+The counting `operator new`/`delete` used process-global atomics. Every consumer
+snapshots and deltas on one thread and asks a question about *that thread's* work, so
+the editor's background file-index builds, tree walks and git were being charged to
+whichever measured iteration the scheduler ran them in. `cold_startup_large_project`
+reported a p50 of 399 allocations on one run and 1749 on the next from identical
+binaries; `scroll_large_file` 4410 and 10580. No percentage tolerance covers a 4x swing
+without being meaningless.
+
+Counting **per thread** makes the number deterministic and makes it the number that
+matters — allocation on the shell thread is what costs a frame. Across three full gated
+runs of one unchanged binary the allocation gate never fired once. It also replaces an
+atomic read-modify-write with a plain thread-local increment on the hottest path in the
+process, and it makes the "this frame must not allocate" tests mean the frame rather
+than the whole process.
+
+That, in turn, allowed the gating policy to become honest: **wall loose (100/150/200 %),
+allocations tight (10/20/50 %)**. The same three runs produced 0, 3 and 0 wall failures
+against baselines captured from that binary, overshooting +150 % on the loaded run —
+with allocations byte-identical in every one of those failures. A 10 % wall gate on this
+runner is a coin flip. What the policy gives up (a constant-factor wall regression under
+~2x) is already `tools/perf-compare.py`'s job, where shared load cancels.
+
+A scenario whose *allocation* count is not reproducible is now treated as a scenario
+bug, not a tolerance problem: `file_finder_cold` waits for the file index instead of
+letting the finder-cache rebuild land in a random subset of its iterations.
+
+### Fixed (product code)
+
+- **The file finder's cache rebuild was half redundant.** It rebuilds an entry per
+  indexed file whenever the index version moves — so any file change makes the next
+  finder open pay it — and each entry stored the same path four times: a
+  `std::filesystem::path`, its string, the folded string, and a separately folded
+  filename. The path is only read when a (capped) result row is materialized, and the
+  folded filename is a *suffix* of the folded path, so it is an offset. A `path -> index`
+  map over every indexed file, existing only so the empty-query recents lookup was O(1),
+  was inverted to a map over the recents (tens of entries) scanned against the index
+  once. 81,914 → 41,913 allocations on the 10k-file fixture, plus a
+  `std::filesystem::path` and a `std::string` per file off the resident cache.
+
+### Instrumentation added
+
+- **Every subprocess spawn now names its subcommand.** `RunSubprocess(program=git)` was
+  one row for every git invocation; it reported 37 ms of shell-thread time in the git
+  sidebar refresh and could not say which call that was. It resolves into status 22.4,
+  diff 6.5, symbolic-ref 3.8, show-ref 2.9, config 1.5. Bounded to short lowercase
+  `[a-z0-9-]` arguments so paths, revisions and object ids cannot blow the label cap.
+- `git::ResolveBaseReference`, which chains up to six spawns to answer one question.
+
+### Still open
+
+- **`ResolveGitBaseReference` runs on the shell thread**: one call, 7.98 ms, entirely
+  main-thread, in `git_sidebar_refresh_large_repo` — almost all of it process-spawn
+  cost. `GitRepositoryService::ResolveOutgoingBaseCached` memoizes it against
+  `(root, head_oid, branch, upstream)`, so the cost is per cold open / per HEAD move,
+  but it is paid where the user waits.
+- `git status` shows 16–22 ms of *main-thread* time in the git sidebar scenarios even
+  though the refresh is supposed to be asynchronous. Worth attributing before assuming
+  the async path covers every caller.
+- Unchanged from the previous round: the workspace-session durable write, the
+  `ReusableMatchData` hash lookup per regex execution, and the synchronous
+  `git show`/`cat-file` blob loads in `compare_scroll_selection`.
+
 ## 2026-08-01 measurement pass, second round (perf-runner-v1)
 
 Driven by the ranked trace summary again. The theme this time is that **a wall-time
