@@ -859,6 +859,39 @@ SubprocessResult RunSubprocess(const std::vector<std::string>& argv,
       program.remove_prefix(slash + 1);
     }
     label.Field("program", program);
+    // Plus the subcommand, when there is an argument that looks like one: the
+    // program basename alone ranks "git is slow", which is never the actionable
+    // statement -- `git status` on a big worktree and `git rev-parse` are four
+    // orders of magnitude apart, and a row that mixes them cannot say which of
+    // the two is on the shell thread.
+    //
+    // Bounded on purpose: only a short, lowercase, [a-z0-9-] argument qualifies,
+    // which admits every git/tool subcommand and rejects the paths, revisions and
+    // object ids that would mint a distinct label per invocation and blow the
+    // label cap.
+    bool skip_next_value = false;
+    for (std::size_t i = 1; i < argv.size(); ++i) {
+      const std::string_view argument = argv[i];
+      if (skip_next_value) {
+        skip_next_value = false;
+        continue;  // the value of a flag that takes one (e.g. `git -C <dir>`)
+      }
+      if (!argument.empty() && argument.front() == '-') {
+        // git's global flags that consume the following argument.
+        skip_next_value = argument == "-C" || argument == "-c";
+        continue;
+      }
+      constexpr std::size_t kMaxSubcommandLength = 24;
+      const bool looks_like_subcommand =
+          !argument.empty() && argument.size() <= kMaxSubcommandLength &&
+          std::all_of(argument.begin(), argument.end(), [](unsigned char c) {
+            return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-';
+          });
+      if (looks_like_subcommand) {
+        label.Field("sub", argument);
+      }
+      break;
+    }
   }
   util::PerformanceTrace::Scope scope(label.View());
 
