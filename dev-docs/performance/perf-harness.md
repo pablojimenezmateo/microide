@@ -96,6 +96,16 @@ Live in `tests/perf/DebugPerfScenarios.cpp`. Two flavors, split by determinism:
   flat row list the bottom-panel render TU draws, and it is allocation-stable (zero in-phase
   allocations on steady state). These are **gated** (`smoke = true, baseline_gated = true`) with
   committed reference-runner baselines under `tests/perf/baselines/`.
+
+  Three of them — `debug_value_tree_paging`, `debug_breakpoints_model_rebuild`, and
+  `debug_pane_hittest_geometry` — carry **decoupled tolerances** (wall 75/250/400 %, allocations
+  10/20/50 %), the same split the tech-debt coverage scenarios use. They measure single-digit
+  milliseconds of deterministic computation, and this runner cannot hold a 10 % wall envelope over
+  work that small: repeat runs of one unchanged binary land in two stable modes ~40 % apart. Their
+  allocation counts, by contrast, are byte-identical run to run — that is the real complexity gate,
+  and it stays tight. `debug_pane_hittest_geometry` additionally repeats its hit-test sweep 100×
+  (same inputs, more of them) because one sweep resolved in ~0.1 ms, below anything this runner can
+  time. Do not copy these tolerances onto scenarios that hold their envelope.
 - **One live mock-adapter session scenario** (`debug_session_stop_to_variables`) drives a real
   `DapManager` + `DebugSession` against an embedded Python DAP adapter and measures the
   stop → stackTrace → scopes → variables latency; it is subprocess-backed (noisier), skips
