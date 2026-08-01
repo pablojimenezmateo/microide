@@ -406,7 +406,7 @@ void TestAsciiGlyphAtlasMatchesPerColorRendering() {
   TTF_Font* font = OpenTestMonospaceFont();
   Expect(font != nullptr, "atlas pixel-identity test should find a usable monospace font");
 
-  auto atlas = microide::render::AsciiGlyphAtlas::Build(font);
+  auto atlas = microide::render::AsciiGlyphAtlas::Build(font, SDL_PIXELFORMAT_RGBA32);
   Expect(atlas != nullptr, "atlas should build from a usable font");
 
   const std::vector<SDL_Color> colors = {
@@ -455,7 +455,7 @@ void TestAsciiGlyphAtlasCoversPrintableRange() {
   TTF_Font* font = OpenTestMonospaceFont();
   Expect(font != nullptr, "atlas coverage test should find a usable monospace font");
 
-  auto atlas = microide::render::AsciiGlyphAtlas::Build(font);
+  auto atlas = microide::render::AsciiGlyphAtlas::Build(font, SDL_PIXELFORMAT_RGBA32);
   Expect(atlas != nullptr, "atlas should build from a usable font");
 
   SDL_Surface* scratch = SDL_CreateSurface(64, atlas->FontHeightPx(), SDL_PIXELFORMAT_RGBA32);

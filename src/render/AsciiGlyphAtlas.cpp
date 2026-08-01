@@ -10,7 +10,8 @@ namespace {
 constexpr SDL_Color kWhite{255, 255, 255, 255};
 }  // namespace
 
-std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font) {
+std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font,
+                                                        SDL_PixelFormat surface_format) {
   if (font == nullptr) {
     return nullptr;
   }
@@ -38,7 +39,7 @@ std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font) {
   atlas->font_height_px_ = font_height;
   atlas->reserved_slot_width_ = reserved;
   atlas->atlas_ = SDL_CreateSurface(static_cast<int>(kSlotCount) * reserved, font_height,
-                                    SDL_PIXELFORMAT_RGBA32);
+                                    surface_format);
   if (atlas->atlas_ == nullptr) {
     return nullptr;
   }

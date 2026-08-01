@@ -33,7 +33,13 @@ class AsciiGlyphAtlas {
   // Reserves the atlas surface and per-glyph layout for `font` at its current
   // size, without rasterizing any glyph yet. Returns nullptr if the font is null
   // or the backing surface cannot be allocated.
-  static std::unique_ptr<AsciiGlyphAtlas> Build(TTF_Font* font);
+  //
+  // `surface_format` is the format callers will blit this atlas into (the
+  // renderer's texture format). Matching it makes every glyph blit a straight
+  // copy instead of a per-pixel channel conversion, and it costs nothing: the
+  // one conversion left is the per-glyph rasterization at atlas-fill time.
+  static std::unique_ptr<AsciiGlyphAtlas> Build(TTF_Font* font,
+                                                SDL_PixelFormat surface_format);
 
   AsciiGlyphAtlas(const AsciiGlyphAtlas&) = delete;
   AsciiGlyphAtlas& operator=(const AsciiGlyphAtlas&) = delete;

@@ -23,6 +23,7 @@
 #include "render/PixelAlign.h"
 #include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "util/StringUtil.h"
 
@@ -97,6 +98,27 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
     return false;
   }
   LoadFallbackFonts();
+
+  // Build glyph composites in the format the renderer will actually store them
+  // in. SDL_CreateTextureFromSurface converts when the surface format differs
+  // from the texture format it picks, and it picked one that differed: the
+  // composites were RGBA32 (ABGR8888 on little-endian) while the software
+  // renderer's textures are ARGB8888, so every string upload swizzled the whole
+  // bitmap channel by channel. On a scroll through fresh content that is a
+  // per-row conversion of the row text plus its line number, and it measured at
+  // three times the cost of rasterizing the glyphs in the first place.
+  //
+  // The first entry of the renderer's texture-format list is its preferred one.
+  // Falling back to RGBA32 keeps the previous behaviour if the query fails.
+  texture_format_ = SDL_PIXELFORMAT_RGBA32;
+  if (const SDL_PropertiesID renderer_properties = SDL_GetRendererProperties(renderer_);
+      renderer_properties != 0) {
+    const auto* formats = static_cast<const SDL_PixelFormat*>(SDL_GetPointerProperty(
+        renderer_properties, SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER, nullptr));
+    if (formats != nullptr && formats[0] != SDL_PIXELFORMAT_UNKNOWN) {
+      texture_format_ = formats[0];
+    }
+  }
 
   // Batched-text path is GPU-only: it is a measured win on a GPU backend
   // (row + gutter runs collapse to per-row SDL_RenderGeometry submits, avoiding
@@ -338,7 +360,7 @@ void SdlTtfTextBackend::EnsureAsciiAtlas() {
   if (ascii_atlas_ != nullptr || font_ == nullptr) {
     return;
   }
-  ascii_atlas_ = AsciiGlyphAtlas::Build(font_);
+  ascii_atlas_ = AsciiGlyphAtlas::Build(font_, texture_format_);
 }
 
 SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text,
@@ -363,7 +385,7 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
   const int total_width_px =
       std::max(1, static_cast<int>(std::ceil(static_cast<float>(text.size()) * cell_width_px)));
 
-  SDL_Surface* composite = SDL_CreateSurface(total_width_px, font_height_px, SDL_PIXELFORMAT_RGBA32);
+  SDL_Surface* composite = SDL_CreateSurface(total_width_px, font_height_px, texture_format_);
   if (composite == nullptr) {
     return nullptr;
   }
@@ -1127,16 +1149,24 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   // that the ASCII-spacing regressions depend on. Non-ASCII falls back to the
   // SDL_ttf whole-string blended path, which already handles shaped glyphs.
   SDL_Surface* surface = nullptr;
-  if (CanUseFastAscii(text)) {
-    surface = BuildAsciiCompositeSurface(text, color);
-  }
-  if (surface == nullptr) {
-    surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
+  {
+    // The two halves of a cache miss, separated: rasterizing the string and
+    // uploading it. On a scroll through fresh content every row misses twice (its
+    // text and its line number), so this is the dominant render cost there, and
+    // the ranked summary could not previously say which half it was.
+    util::PerformanceTrace::Scope raster_scope("render::TextBackend::RasterizeString");
+    if (CanUseFastAscii(text)) {
+      surface = BuildAsciiCompositeSurface(text, color);
+    }
+    if (surface == nullptr) {
+      surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
+    }
   }
   if (surface == nullptr) {
     return nullptr;
   }
 
+  util::PerformanceTrace::Scope upload_scope("render::TextBackend::UploadStringTexture");
   SDL_Texture* texture = SDL_CreateTextureFromSurface(renderer_, surface);
   if (texture == nullptr) {
     SDL_DestroySurface(surface);

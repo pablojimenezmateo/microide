@@ -179,6 +179,12 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // with cache_ so eviction can enforce a VRAM budget without rescanning.
   std::size_t cache_bytes_ = 0;
 
+  // The pixel format the renderer stores textures in, resolved at init. Glyph
+  // composites (and the coverage atlas they are blitted from) are built in this
+  // format so uploading one is a copy rather than a whole-bitmap channel
+  // conversion. See Initialize.
+  SDL_PixelFormat texture_format_ = SDL_PIXELFORMAT_RGBA32;
+
   // Colour-independent coverage atlas for ASCII composites. Built lazily on the
   // first ASCII miss and rebuilt (via ClearCache) when the font size changes.
   std::unique_ptr<AsciiGlyphAtlas> ascii_atlas_;

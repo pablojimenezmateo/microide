@@ -642,10 +642,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // Bind the row layout by reference: the soft-wrap branch fills a reusable
     // owned scratch, the common branch hands back the cache entry in place. This
     // avoids copying the LayoutLine (string + 2 vectors) per visible row.
-    const LayoutLine& row_layout =
-        soft_wrap ? (wrapped_layout_scratch =
-                         viewport.VisibleWrappedRowLayout(visual_row_index, caret_visual_row))
-                  : viewport.VisibleLineLayoutRef(line_index);
+    // Scoped: on a scroll through fresh content this is a cache miss per row (a
+    // full line layout build), and it was previously indistinguishable from the
+    // rest of the row loop in the ranked summary.
+    const LayoutLine& row_layout = [&]() -> const LayoutLine& {
+      util::PerformanceTrace::Scope layout_scope("EditorViewRenderer::Render::RowLayout");
+      return soft_wrap ? (wrapped_layout_scratch = viewport.VisibleWrappedRowLayout(
+                              visual_row_index, caret_visual_row))
+                       : viewport.VisibleLineLayoutRef(line_index);
+    }();
     // Caret is per-call (not baked into the cached layout): the wrap branch
     // already resolved it onto the scratch; the common branch resolves it here.
     const TextViewport::LineCaret row_caret =
@@ -978,7 +983,13 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.tab_size = viewport.tab_size();
     row_input.text_renderer = &text_renderer;
     row_input.theme = &theme;
-    BuildDecoratedRow(row_desc, row_input);
+    {
+      // Assembly (token runs, fills, diagnostics, inlays) as distinct from the
+      // paint below it. Without this the whole cost landed in the Rows scope's
+      // self time, which is where the ranking stopped being able to say more.
+      util::PerformanceTrace::Scope build_scope("EditorViewRenderer::Render::BuildDecoratedRow");
+      BuildDecoratedRow(row_desc, row_input);
+    }
     {
       util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::DecoratedRow");
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
@@ -1044,6 +1055,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         number.text.assign(line_number_buf, end);
       } else {
         // Non-batching backend: draw inline exactly as before, no collection cost.
+        util::PerformanceTrace::Scope gutter_scope("EditorViewRenderer::Render::GutterNumber");
         text_renderer.DrawStringOn(renderer, number_x, y, number_color,
                                    selected ? theme.row_highlight : theme.gutter_background,
                                    std::string_view{line_number_buf, end});
