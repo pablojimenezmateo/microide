@@ -26,12 +26,23 @@ struct CompareTabReviewRefreshInput {
   std::uint64_t snapshot_generation = 0;
   std::string merge_base_commit;
   bool opened_from_commit_picker = false;
+  // Set by the caller when the compared content actually changed since the last
+  // refresh. The cheap review/staging/branch-target inference below always reruns;
+  // this only gates the semantic classification, which has to read both whole
+  // buffers. Callers that cannot tell leave it true and pay the old cost.
+  bool content_changed = true;
 };
 
 void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                    const CompareTabReviewRefreshInput& input);
 
 void RefreshCompareTabPresentation(CompareTabState& compare_tab);
+// Clamps the selected presentation row into range and moves it off a non-Model row
+// (a metadata or collapsed-context summary line) onto the first real row. Split out
+// of RefreshCompareTabPresentation so a refresh that skips the presentation rebuild
+// still normalizes the selection — the rebuild is now conditional, the invariant
+// is not.
+void NormalizeCompareSelectionToModelRow(CompareTabState& compare_tab);
 void RefreshCompareReviewHeader(CompareTabState& compare_tab);
 
 void ApplyBranchReviewPresentationMarkers(CompareTabState& compare_tab,

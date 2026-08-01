@@ -137,6 +137,22 @@ struct CompareTabState {
   std::size_t derived_left_line_count = 0;
   bool derived_ignore_whitespace = false;
   bool derived_fingerprint_valid = false;
+  // Semantic classification (binary / submodule / line-ending-only) and the
+  // presentation model derive from the same two content buffers the fingerprint
+  // above guards, so they are gated on it too. Recomputing them per refresh cost a
+  // whole-buffer serialize of the right pane plus several full scans of both files
+  // on every keystroke, mouse, focus, and plugin event — the exact work the
+  // fingerprint exists to skip. `semantic_inputs_valid` additionally covers the git
+  // entry the classifier reads (rename/mode), which the model fingerprint does not.
+  bool semantic_inputs_valid = false;
+  std::size_t semantic_git_entry_signature = 0;
+  // Guards the presentation rebuild. Bumped whenever anything the builder consumes
+  // that is NOT the model changes: the semantic metadata and the whitespace option.
+  // Collapse-state mutations refresh the presentation directly through
+  // RefreshCompareTabPresentation, which revalidates this.
+  bool presentation_valid = false;
+  std::uint64_t presentation_built_model_revision = 0;
+  bool presentation_built_show_whitespace = false;
   bool model_stale = false;
   bool model_refreshing = false;
   std::optional<CompareHoverState> hover_state;

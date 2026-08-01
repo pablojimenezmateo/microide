@@ -1,8 +1,8 @@
 #include "compare/CompareSemanticMetadata.h"
 
 #include <algorithm>
-
-#include "util/StringUtil.h"
+#include <cstddef>
+#include <string>
 
 namespace microide::compare {
 
@@ -47,9 +47,36 @@ bool LineEndingOnlyChange(std::string_view left, std::string_view right) {
   if (left == right) {
     return false;
   }
-  const std::string normalized_left = util::NormalizeLineEndings(left);
-  const std::string normalized_right = util::NormalizeLineEndings(right);
-  return normalized_left == normalized_right;
+  // Compare the two buffers as if both had been line-ending normalized, without
+  // materializing the normalized copies. This used to call NormalizeLineEndings
+  // twice, allocating two whole-file strings every time the compare surface
+  // reclassified its semantic metadata; the walk below is allocation-free and
+  // bails at the first differing byte, which for a real diff is early.
+  //
+  // The collapse rule must stay identical to util::NormalizeLineEndings: a '\r'
+  // becomes '\n' and swallows an immediately following '\n'.
+  std::size_t left_index = 0;
+  std::size_t right_index = 0;
+  while (left_index < left.size() && right_index < right.size()) {
+    char left_char = left[left_index];
+    if (left_char == '\r') {
+      left_char = '\n';
+      left_index += (left_index + 1 < left.size() && left[left_index + 1] == '\n') ? 2 : 1;
+    } else {
+      ++left_index;
+    }
+    char right_char = right[right_index];
+    if (right_char == '\r') {
+      right_char = '\n';
+      right_index += (right_index + 1 < right.size() && right[right_index + 1] == '\n') ? 2 : 1;
+    } else {
+      ++right_index;
+    }
+    if (left_char != right_char) {
+      return false;
+    }
+  }
+  return left_index == left.size() && right_index == right.size();
 }
 
 }  // namespace

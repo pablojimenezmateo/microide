@@ -8,6 +8,7 @@
 #include <limits>
 
 #include "editor/SyntaxHighlighter.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/CompareTabReview.h"
@@ -449,6 +450,7 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
 }
 
 void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab) const {
+  util::PerformanceTrace::Scope trace_scope("WorkspaceShell::RefreshCompareTabDerivedState");
   // The model, syntax state, and per-row token buffers derive purely from the two
   // content buffers and the build options. This refresh fires from ~10 call sites (key
   // input, mouse, focus, plugin refresh, external change), many of which leave the
@@ -471,6 +473,8 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
       compare_tab.derived_left_content_hash != left_content_hash ||
       compare_tab.derived_ignore_whitespace != ignore_whitespace;
   if (content_changed) {
+    util::PerformanceTrace::Scope rebuild_scope(
+        "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
     const std::string right_content =
         util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()), right_line_ending);
     compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content,
@@ -496,9 +500,26 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
       .git_entry = std::nullopt,
       .snapshot_generation = context_.current_project_state.sidebar.git.snapshot_generation,
       .merge_base_commit = context_.current_project_state.sidebar.git.base_ref,
+      .content_changed = content_changed,
   };
+  const compare::CompareSemanticFileMetadata semantic_before = compare_tab.semantic_file;
   ApplyCompareTabReviewMetadata(compare_tab, review_input);
-  RefreshCompareTabPresentation(compare_tab);
+  // The presentation model is a whole-file row list built from the compare model,
+  // the semantic metadata, and the whitespace option — nothing else. Rebuilding it
+  // unconditionally made every keystroke and mouse event on a compare tab O(rows)
+  // with a fresh row vector; the guard below keeps that cost on the events that
+  // actually change one of its inputs. Collapse-state edits refresh the
+  // presentation through RefreshCompareTabPresentation directly, which revalidates.
+  const bool presentation_inputs_changed =
+      !compare_tab.presentation_valid ||
+      compare_tab.presentation_built_model_revision != compare_tab.model_revision ||
+      compare_tab.presentation_built_show_whitespace != compare_tab.show_whitespace ||
+      compare_tab.semantic_file != semantic_before;
+  if (presentation_inputs_changed) {
+    RefreshCompareTabPresentation(compare_tab);
+  } else {
+    NormalizeCompareSelectionToModelRow(compare_tab);
+  }
   ApplyBranchReviewPresentationMarkers(compare_tab,
                                        context_.current_project_state.branch_review);
   RefreshCompareReviewHeader(compare_tab);

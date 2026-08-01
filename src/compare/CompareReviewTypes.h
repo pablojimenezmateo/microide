@@ -42,6 +42,10 @@ struct CompareSemanticFileMetadata {
   bool submodule_pointer_changed = false;
   std::string old_submodule_oid;
   std::string new_submodule_oid;
+
+  // Lets a caller ask "did the classification actually move?" so downstream work
+  // keyed on it (the compare presentation model) can be skipped when it did not.
+  bool operator==(const CompareSemanticFileMetadata&) const = default;
 };
 
 struct BranchReviewTargetIdentity {

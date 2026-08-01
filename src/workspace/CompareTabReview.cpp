@@ -4,6 +4,7 @@
 #include <unordered_map>
 
 #include "compare/BranchReviewStateTypes.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
 
@@ -45,10 +46,44 @@ std::string CompareReviewHeaderStagingLabel(compare::WorkingTreeStagingView view
   return "combined";
 }
 
+// Identity of the git entry the semantic classifier reads (rename source and
+// target). It is the one classifier input the compare tab's content fingerprint
+// does not cover, so the memo below has to notice when it moves.
+std::size_t GitEntrySignature(const std::optional<project::GitRepositoryEntry>& entry) {
+  if (!entry.has_value()) {
+    return 0;
+  }
+  const auto mix = [](std::size_t seed, std::size_t value) {
+    return seed ^ (value + 0x9e3779b97f4a7c15ULL + (seed << 6) + (seed >> 2));
+  };
+  std::size_t signature = 1;
+  signature = mix(signature, static_cast<std::size_t>(entry->kind));
+  signature = mix(signature, std::filesystem::hash_value(entry->path.relative_path));
+  if (entry->old_path.has_value()) {
+    signature = mix(signature, std::filesystem::hash_value(entry->old_path->relative_path));
+  }
+  return signature;
+}
+
 }  // namespace
 
 void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                    const CompareTabReviewRefreshInput& input) {
+  // The semantic classification reads both whole buffers — it serializes the right
+  // viewport and scans both files for NUL bytes, a submodule pointer, and a
+  // line-ending-only difference. That is the single most expensive thing this
+  // refresh does, and the refresh fires from ~10 event sites (every keystroke,
+  // mouse move, focus change, plugin refresh), almost all of which leave the
+  // compared content untouched. Gate it on the caller's content-changed signal plus
+  // the git entry, which is the only other input it reads.
+  const std::size_t git_entry_signature = GitEntrySignature(input.git_entry);
+  const bool semantic_inputs_changed = input.content_changed ||
+                                       !compare_tab.semantic_inputs_valid ||
+                                       compare_tab.semantic_git_entry_signature !=
+                                           git_entry_signature;
+  compare_tab.semantic_inputs_valid = true;
+  compare_tab.semantic_git_entry_signature = git_entry_signature;
+
   // A plain (non-git) compare has no refs to infer from. The mode is sticky —
   // fixed at build time — so this refresh (fired from ~10 sites) must not
   // re-infer it back to a git mode and re-enable staging/branch review. Keep the
@@ -56,12 +91,18 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
   if (compare_tab.plain_compare) {
     compare_tab.review_mode = compare::CompareReviewMode::Plain;
     compare_tab.staging_view = compare::WorkingTreeStagingView::Combined;
+    if (!semantic_inputs_changed) {
+      return;
+    }
+    // The serialized right buffer has to outlive the input: its content fields are
+    // views now, so binding the temporary directly would dangle by the next line.
+    const std::string plain_right_content =
+        util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
+                                      compare_tab.right_viewport.line_ending());
     compare::CompareSemanticMetadataInput plain_semantic_input{
         .path = compare_tab.path,
         .left_content = compare_tab.left_content,
-        .right_content =
-            util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
-                                 compare_tab.right_viewport.line_ending()),
+        .right_content = plain_right_content,
         .git_entry = std::nullopt,
         .old_path = {},
     };
@@ -78,12 +119,17 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
         input.repository_root, compare_tab.commit_hash, compare_tab.right_ref,
         input.merge_base_commit, input.snapshot_generation);
   }
+  if (!semantic_inputs_changed) {
+    return;
+  }
+  // Same lifetime rule as the plain branch above: the input holds views.
+  const std::string right_content =
+      util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
+                                    compare_tab.right_viewport.line_ending());
   compare::CompareSemanticMetadataInput semantic_input{
       .path = compare_tab.path,
       .left_content = compare_tab.left_content,
-      .right_content =
-          util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
-                               compare_tab.right_viewport.line_ending()),
+      .right_content = right_content,
       .git_entry = input.git_entry,
       .old_path = {},
   };
@@ -143,21 +189,35 @@ void ApplyBranchReviewPresentationMarkers(
 }
 
 void RefreshCompareTabPresentation(CompareTabState& compare_tab) {
+  util::PerformanceTrace::Scope trace_scope("workspace::RefreshCompareTabPresentation");
   compare_tab.presentation = compare::BuildComparePresentationModel(
       compare_tab.model, compare_tab.semantic_file, PresentationOptionsFromTab(compare_tab),
       compare_tab.presentation.collapse_state, compare_tab.model_revision);
   ++compare_tab.presentation_revision;
-  if (!compare_tab.presentation.rows.empty()) {
-    compare_tab.selected_row =
-        std::min(compare_tab.selected_row, compare_tab.presentation.rows.size() - 1);
-    const auto& selected = compare_tab.presentation.rows[compare_tab.selected_row];
-    if (selected.kind != compare::ComparePresentationRowKind::Model) {
-      for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
-        if (compare_tab.presentation.rows[i].kind == compare::ComparePresentationRowKind::Model) {
-          compare_tab.selected_row = i;
-          break;
-        }
-      }
+  // Record what this build consumed, so the derived-state refresh can tell whether
+  // a later event moved any of it. Collapse-state edits call straight in here, and
+  // they are exactly the case the (model, options, semantic) triple cannot see —
+  // revalidating here keeps them correct without a fourth revision counter.
+  compare_tab.presentation_valid = true;
+  compare_tab.presentation_built_model_revision = compare_tab.model_revision;
+  compare_tab.presentation_built_show_whitespace = compare_tab.show_whitespace;
+  NormalizeCompareSelectionToModelRow(compare_tab);
+}
+
+void NormalizeCompareSelectionToModelRow(CompareTabState& compare_tab) {
+  if (compare_tab.presentation.rows.empty()) {
+    return;
+  }
+  compare_tab.selected_row =
+      std::min(compare_tab.selected_row, compare_tab.presentation.rows.size() - 1);
+  const auto& selected = compare_tab.presentation.rows[compare_tab.selected_row];
+  if (selected.kind == compare::ComparePresentationRowKind::Model) {
+    return;
+  }
+  for (std::size_t i = 0; i < compare_tab.presentation.rows.size(); ++i) {
+    if (compare_tab.presentation.rows[i].kind == compare::ComparePresentationRowKind::Model) {
+      compare_tab.selected_row = i;
+      return;
     }
   }
 }
