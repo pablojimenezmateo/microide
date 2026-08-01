@@ -125,7 +125,15 @@ void TextViewport::SetFoldingModel(const FoldingModel* folding_model) {
     return;
   }
   folding_model_ = folding_model;
-  InvalidateVisualColumnCache();
+  // Deliberately no InvalidateVisualColumnCache() here. Attaching or detaching a
+  // fold model changes which lines are *visible*, never how wide any line is, so
+  // the per-line visual-column table and the visible-line text cache it wipes are
+  // both still valid. The one layout product that does depend on folds -- the
+  // wrapped-row layout -- is already keyed on (folding_model, fold_revision) and
+  // rebuilds itself. Wiping the lot cost a full O(lines) recompute of
+  // MaxVisualColumns() on the very next line (ClampScrollState reads it): ~10 ms
+  // of shell-thread stall on a 50k-line buffer, paid the first time a fold scan
+  // resolved a range. Only the vertical mapping moved, so only re-clamp.
   ClampScrollState();
   EnsureCursorVisible();
 }

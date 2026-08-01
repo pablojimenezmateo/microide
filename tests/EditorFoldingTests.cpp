@@ -60,6 +60,46 @@ void TestViewportDetachFoldingModelRestoresVisualRows() {
          "detaching the folding model should expose every logical line again");
 }
 
+// Attaching or detaching a fold model changes which lines are visible, never how
+// wide any line is, so it must not wipe the width-derived layout caches. It used
+// to call InvalidateVisualColumnCache(), and the very next statement
+// (ClampScrollState -> MaxVisualColumns) then rebuilt the per-line width table
+// from scratch: a full O(lines) walk, ~10 ms of shell-thread stall on a 50k-line
+// buffer, paid the first time a fold scan resolved any range.
+//
+// Pin it by cache behavior, not by timing: the visible-line layout cache must
+// still serve the same keys after the model is attached and after it is detached.
+void TestViewportAttachFoldingModelKeepsWidthCaches() {
+  TextViewport viewport;
+  viewport.LoadContent("void f() {\n  a();\n  b();\n}\nafter();\n", "/tmp/editor-fold-cache.cpp");
+
+  const auto warm_and_count_hits = [&viewport]() {
+    viewport.ResetCacheStats();
+    for (std::size_t line = 0; line < viewport.line_count(); ++line) {
+      (void)viewport.VisibleLineLayoutRef(line);
+    }
+    return viewport.CacheStats().visible_line_hits;
+  };
+
+  (void)warm_and_count_hits();
+  const std::size_t warm_hits = warm_and_count_hits();
+  Expect(warm_hits == viewport.line_count(),
+         "a warmed visible-line cache must serve every repeat query — otherwise this test "
+         "cannot tell a preserved cache from a wiped one");
+
+  FoldingModel model;
+  Expect(model.Compute(viewport.lines().Snapshot(), DefaultCStyleOptions()),
+         "fold compute should succeed for the cache fixture");
+  viewport.SetFoldingModel(&model);
+  Expect(warm_and_count_hits() == viewport.line_count(),
+         "attaching a fold model must not invalidate the visible-line layout cache: folds "
+         "change which lines are visible, not how wide any line is");
+
+  viewport.SetFoldingModel(nullptr);
+  Expect(warm_and_count_hits() == viewport.line_count(),
+         "detaching a fold model must not invalidate the visible-line layout cache either");
+}
+
 // Partial `ComputeWithBudget` still yields actionable ranges; viewport honors collapsed hiding
 // for resolved folds while `complete()==false` (§5.12 / §5.13 partial fallback).
 void TestViewportPartialBudgetCollapsedFoldStillOmitsHiddenRows() {
@@ -242,6 +282,8 @@ void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
           TestTextViewportMoveClearsFoldingModelBinding);
   AddTest(tests, "EditorFolding/Viewport/DetachModelRestoresVisualRows",
           TestViewportDetachFoldingModelRestoresVisualRows);
+  AddTest(tests, "EditorFolding/Viewport/AttachModelKeepsWidthCaches",
+          TestViewportAttachFoldingModelKeepsWidthCaches);
   AddTest(tests, "EditorFolding/Viewport/PartialBudgetCollapseOmitsHiddenRows",
           TestViewportPartialBudgetCollapsedFoldStillOmitsHiddenRows);
   AddTest(tests, "EditorFolding/Viewport/EditExposesFoldAnchorForIncrementalRefresh",
