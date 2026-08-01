@@ -268,6 +268,29 @@ void PieceTree::DeleteRange(std::uint32_t pos, std::uint32_t length) {
 
 std::uint32_t PieceTree::LineStartByte(std::size_t line) const {
   if (line == 0) return 0;
+
+  // O(1) ascending step. Every sequential reader -- the fold scans, syntax
+  // highlighting, the renderer's row loop -- walks lines in order, and each
+  // LineView(i) needs the start of i+1, which the one-entry memo above never
+  // holds. That made a sequential walk pay a full descent plus a binary search
+  // per line: 99.6% of the indent fold scan's cost on a 50k-line file was this
+  // lookup rather than the work it fed.
+  //
+  // The newline this call wants is the one immediately after the last resolved
+  // newline, so while it is still inside the same piece it is simply the next
+  // entry of that piece's buffer newline array.
+  if (walk_valid_ && line == walk_line_ + 1) {
+    const Node& node = nodes_[walk_node_];
+    if (walk_target_ + 1 < node.self_newlines) {
+      const std::vector<std::uint32_t>& newlines = NewlinesOf(node.buffer);
+      const std::uint32_t offset = newlines[walk_nl_pos_ + 1];
+      ++walk_target_;
+      ++walk_nl_pos_;
+      walk_line_ = line;
+      return walk_base_ + (offset - node.start) + 1;
+    }
+  }
+
   std::uint32_t target = static_cast<std::uint32_t>(line - 1);  // which '\n'
   NodeId id = root_;
   std::uint32_t acc = 0;
@@ -281,8 +304,19 @@ std::uint32_t PieceTree::LineStartByte(std::size_t line) const {
     target -= left_nl;
     acc += TreeLength(node.left);
     if (target < node.self_newlines) {
-      const std::uint32_t off = NthNewlineOffset(node.buffer, node.start, target);
-      return acc + (off - node.start) + 1;
+      // Inlined NthNewlineOffset so the array position is available to seed the
+      // ascending-step state above.
+      const std::vector<std::uint32_t>& newlines = NewlinesOf(node.buffer);
+      const auto first = std::lower_bound(newlines.begin(), newlines.end(), node.start);
+      const std::size_t nl_pos = static_cast<std::size_t>(first - newlines.begin()) + target;
+      const std::uint32_t offset = newlines[nl_pos];
+      walk_valid_ = true;
+      walk_line_ = line;
+      walk_node_ = id;
+      walk_base_ = acc;
+      walk_target_ = target;
+      walk_nl_pos_ = nl_pos;
+      return acc + (offset - node.start) + 1;
     }
     target -= node.self_newlines;
     acc += node.length;
@@ -371,6 +405,21 @@ std::string_view PieceTree::LineView(std::size_t index) const {
   const std::uint32_t end =
       (index + 1 < line_count_) ? LineStartByteMemoized(index + 1) - 1 : ByteSize();
   const std::uint32_t length = end - start;
+
+  // The line-start lookups above leave `walk_node_` holding the piece the last
+  // resolved newline lives in. A line whose bytes lie wholly inside that piece --
+  // which is every line of an unedited region, and the overwhelming majority
+  // everywhere else -- can be viewed straight out of it, skipping TryViewRange's
+  // own tree descent. Without this a sequential walk paid a descent per line even
+  // once the line-start lookup itself was O(1).
+  if (walk_valid_ && length != 0) {
+    const Node& node = nodes_[walk_node_];
+    if (start >= walk_base_ && start + length <= walk_base_ + node.length) {
+      return std::string_view(BufferOf(node.buffer).data() + node.start + (start - walk_base_),
+                              length);
+    }
+  }
+
   bool ok = false;
   const std::string_view view = TryViewRange(start, length, ok);
   if (ok) return view;

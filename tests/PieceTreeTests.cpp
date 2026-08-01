@@ -139,6 +139,60 @@ void TestPieceTreeRandomizedEquivalence() {
   }
 }
 
+// LineView keeps ascending-walk state — which node the last resolved newline sat
+// in, its byte base, and its position in that buffer's newline array — so a
+// sequential reader pays no tree descent per line. TestPieceTreeRandomizedEquivalence
+// walks lines in order, which is the path that state is built for; the risk this
+// adds is the OTHER order, where the state describes a piece unrelated to the line
+// being asked for and must be declined rather than trusted.
+//
+// Fuzz random access orders over a fragmented tree, interleaved with edits, against
+// the naive model.
+void TestPieceTreeRandomAccessOrderMatchesModel() {
+  const std::uint64_t seeds[] = {5u, 23u, 0xBEEFu, 0x1234u};
+  for (std::uint64_t seed : seeds) {
+    Rng rng(seed);
+    PieceTree tree;
+    VectorModel model;
+    std::vector<std::string> initial;
+    const std::size_t initial_lines = 20 + rng.Below(40);
+    for (std::size_t i = 0; i < initial_lines; ++i) initial.push_back(MakeLine(rng));
+    tree.Reset(initial);
+    model.Reset(initial);
+
+    for (int step = 0; step < 120; ++step) {
+      // Fragment further: each edit spawns add-buffer pieces, so the walk state's
+      // "still inside the same piece" test starts failing in interesting places.
+      const std::size_t n = model.lines.size();
+      const std::size_t start = rng.Below(n + 1);
+      const std::size_t removed = rng.Below((n - std::min(start, n)) + 1);
+      std::vector<std::string> inserted;
+      for (std::size_t i = 0; i < rng.Below(3); ++i) inserted.push_back(MakeLine(rng));
+      tree.ReplaceLineRange(start, removed, inserted);
+      model.ReplaceLineRange(start, removed, inserted);
+
+      const std::size_t count = model.lines.size();
+      if (count == 0) {
+        continue;
+      }
+      // Random order, including repeats and backwards runs.
+      for (int probe = 0; probe < 40; ++probe) {
+        const std::size_t line = rng.Below(count);
+        Expect(tree.LineView(line) == model.lines[line],
+               "random-order LineView must match the model — ascending-walk state must "
+               "never answer for a line it does not describe");
+        Expect(tree.LineLength(line) == model.lines[line].size(),
+               "random-order LineLength must match the model");
+      }
+      // A descending sweep, which is the exact inverse of what the state expects.
+      for (std::size_t line = count; line-- > 0;) {
+        Expect(tree.LineView(line) == model.lines[line],
+               "descending LineView must match the model");
+      }
+    }
+  }
+}
+
 void TestPieceTreeSliceLines() {
   PieceTree tree({"l0", "l1", "l2", "l3", "l4"});
   const std::vector<std::string> slice = tree.SliceLines(1, 4);
@@ -452,6 +506,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/AddBufferCompaction", TestPieceTreeAddBufferCompaction);
   AddTest(tests, "PieceTree/MidLineEdits", TestPieceTreeMidLineEdits);
   AddTest(tests, "PieceTree/RandomizedEquivalence", TestPieceTreeRandomizedEquivalence);
+  AddTest(tests, "PieceTree/RandomAccessOrderMatchesModel",
+          TestPieceTreeRandomAccessOrderMatchesModel);
   AddTest(tests, "PieceTree/SliceLines", TestPieceTreeSliceLines);
   AddTest(tests, "PieceTree/SliceLinesEquivalence", TestPieceTreeSliceLinesEquivalence);
   AddTest(tests, "PieceTree/ResetFromTextMatchesReset", TestPieceTreeResetFromTextMatchesReset);

@@ -213,6 +213,7 @@ class PieceTree {
   void BumpRevision() {
     line_view_cache_.clear();
     cached_line_start_index_ = kNoCachedLine;
+    walk_valid_ = false;
   }
 
   std::string original_;
@@ -241,6 +242,25 @@ class PieceTree {
   static constexpr std::size_t kNoCachedLine = std::numeric_limits<std::size_t>::max();
   mutable std::size_t cached_line_start_index_ = kNoCachedLine;
   mutable std::uint32_t cached_line_start_byte_ = 0;
+
+  // Ascending-walk state for LineStartByte.
+  //
+  // Resolving line N means finding the (N-1)-th newline of the document, which
+  // costs a tree descent plus a binary search over the source buffer's newline
+  // offsets. Line N+1 wants the very next newline -- so when it is still inside
+  // the same piece, it is the next entry of that same array and needs neither.
+  // This records exactly enough to take that step: which node the last resolved
+  // newline was in, that node's byte base, its index within the node, and its
+  // absolute index in the buffer's newline array.
+  //
+  // Every mutation routes through BumpRevision (see the note there), which is
+  // what makes holding a NodeId here safe.
+  mutable bool walk_valid_ = false;
+  mutable std::size_t walk_line_ = 0;
+  mutable NodeId walk_node_ = kNull;
+  mutable std::uint32_t walk_base_ = 0;
+  mutable std::uint32_t walk_target_ = 0;
+  mutable std::size_t walk_nl_pos_ = 0;
 };
 
 }  // namespace microide::editor
