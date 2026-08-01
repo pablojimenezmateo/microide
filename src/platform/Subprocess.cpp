@@ -13,6 +13,7 @@
 #include <csignal>
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/syscall.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -88,6 +89,24 @@ class UniqueFd {
  private:
   int fd_ = -1;
 };
+
+// A pollable handle on a child, so waiting for it to become reapable is an event
+// wait rather than a sleep-and-probe spin. Returns -1 when the kernel has no
+// pidfd_open (pre-5.3 Linux, other Unices); callers fall back to probing.
+//
+// The descriptor-creation close-on-exec rule applies here as it does to
+// socket/open/pipe2: pidfd_open sets close-on-exec on the returned descriptor
+// itself, so there is no follow-up fcntl and no window for another thread's
+// fork/exec to inherit it.
+int OpenPidFd(pid_t pid) {
+#if defined(__linux__) && defined(SYS_pidfd_open)
+  const long fd = syscall(SYS_pidfd_open, pid, 0u);
+  return fd < 0 ? -1 : static_cast<int>(fd);
+#else
+  (void)pid;
+  return -1;
+#endif
+}
 
 bool OpenPipe(bool enabled, std::array<UniqueFd, 2>* pipe_fds) {
   if (pipe_fds == nullptr) {
@@ -601,30 +620,61 @@ SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& arg
   // A child can close/redirect its stdio and then keep running (or hang). PumpChildIo
   // returns once the pipes drain, NOT when the process exits, so without this the
   // blocking waitpid below would ignore timeout_ms entirely. Enforce the remaining
-  // deadline with a non-blocking waitpid poll; the common case (child exits when its
-  // stdio closes) is caught by the very first WNOHANG with no sleep.
+  // deadline here.
+  //
+  // This used to be a WNOHANG spin with a flat `poll(nullptr, 0, 5)` between probes,
+  // on the theory that "the child exits when its stdio closes, so the first WNOHANG
+  // catches it with no sleep". That is a race, and it loses far more often than it
+  // wins: the child's descriptors are closed by the kernel *during* exit, so the
+  // parent routinely observes EOF a few microseconds before the process is
+  // reapable — and then slept a full 5 ms. Measured on the compare/git scenarios,
+  // that put ~5 ms of pure sleep on the majority of git spawns, several of which run
+  // synchronously on the shell thread.
+  //
+  // Wait on the child as an event instead: a pidfd polls readable exactly when the
+  // process becomes reapable, so the common case costs one syscall and no sleep, and
+  // the timeout stays exact. pidfd_open sets close-on-exec itself. Where the syscall
+  // is unavailable (pre-5.3 Linux, other Unices) fall back to the probe loop with a
+  // sub-millisecond backoff rather than a flat 5 ms.
   if (!timed_out && !output_truncated && options.timeout_ms > 0) {
     const auto deadline = wait_start + std::chrono::milliseconds(options.timeout_ms);
+    const auto reap_finished = [&](int probe_status) {
+      if (WIFEXITED(probe_status)) {
+        result.exit_code = WEXITSTATUS(probe_status);
+      } else if (WIFSIGNALED(probe_status)) {
+        result.exit_code = 128 + WTERMSIG(probe_status);
+      }
+    };
+    UniqueFd child_pidfd(OpenPidFd(pid));
     while (true) {
       int probe_status = 0;
       const pid_t probed = waitpid(pid, &probe_status, WNOHANG);
       if (probed == pid) {
-        if (WIFEXITED(probe_status)) {
-          result.exit_code = WEXITSTATUS(probe_status);
-        } else if (WIFSIGNALED(probe_status)) {
-          result.exit_code = 128 + WTERMSIG(probe_status);
-        }
+        reap_finished(probe_status);
         return result;
       }
       if (probed < 0 && errno != EINTR) {
         result.exit_code = -1;
         return result;
       }
-      if (std::chrono::steady_clock::now() >= deadline) {
+      const auto now = std::chrono::steady_clock::now();
+      if (now >= deadline) {
         timed_out = true;
         break;
       }
-      poll(nullptr, 0, 5);  // brief sleep; only reached while the child lingers
+      const auto remaining_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                    deadline - now)
+                                    .count();
+      if (child_pidfd.IsValid()) {
+        // Sleep until the child is actually reapable (or the deadline lands),
+        // rounding the remaining window up so a sub-millisecond tail still waits.
+        pollfd child_poll{.fd = child_pidfd.Get(), .events = POLLIN, .revents = 0};
+        poll(&child_poll, 1, static_cast<int>(std::min<long long>(remaining_ms + 1, 1000)));
+        continue;
+      }
+      // Only reached without pidfd support: probe at 1 ms instead of 5 ms, so an
+      // already-exiting child is reaped within a millisecond of becoming reapable.
+      poll(nullptr, 0, 1);
     }
   }
 
