@@ -69,28 +69,69 @@ using CompiledRegex = util::CompiledRegex;
 // unaffected (NOTBOL only changes the circumflex assertion).
 void FindAllRegex(std::string_view text,
                   const CompiledRegex& pattern,
+                  std::size_t match_slot,
                   std::vector<MatchRange>& matches,
                   bool at_line_start = true);
 
-util::RegexMatchData& ReusableMatchData(const CompiledRegex& pattern) {
-  // Keyed by CompiledRegex address, but a syntax reload replaces MutableRegistry()
-  // and destroys the old CompiledRegex objects — the allocator can then hand a new,
-  // differently-shaped pattern the same address, so a stale match-data block sized
-  // for the old pattern would be reused. Clear the per-thread cache whenever the
-  // registry revision advances so no entry outlives the pattern it was built for.
-  // TD-2026-07-17A-115.
-  thread_local std::unordered_map<const CompiledRegex*, util::RegexMatchData> match_data_by_pattern;
+// Per-thread cache of pcre2 match-data blocks, one slot per compiled regex in
+// the registry.
+//
+// The highlighter runs one regex per pattern rule per line -- ~40 executions on
+// a C++ line -- and each needs its pattern-shaped match data. This used to be an
+// `unordered_map` keyed on the CompiledRegex address, so every one of those
+// executions paid a hash and a probe. Every regex the hot path can reach already
+// lives at a known index in `registry.rules`, so the slot is derivable
+// arithmetically and the lookup becomes an array read.
+//
+// Slot layout (see MatchSlot* below): rules occupy `rules.size() * kSlotsPerRule`
+// slots, definitions the block after them. The vector is sized from the live
+// registry and dropped whenever the registry revision advances: a syntax reload
+// destroys the old CompiledRegex objects, and a match-data block sized for the
+// old pattern must never be reused for the new one at the same index
+// (TD-2026-07-17A-115 -- the same hazard the address-keyed map had).
+enum : std::size_t {
+  kSlotsPerRule = 4,
+  kRuleSlotPattern = 0,
+  kRuleSlotStart = 1,
+  kRuleSlotEnd = 2,
+  kRuleSlotSkip = 3,
+  kSlotsPerDefinition = 3,
+  kDefinitionSlotFilename = 0,
+  kDefinitionSlotHeader = 1,
+  kDefinitionSlotSignature = 2,
+};
+
+constexpr std::size_t kNoMatchSlot = static_cast<std::size_t>(-1);
+
+std::size_t RuleMatchSlot(std::size_t rule_index, std::size_t kind) {
+  return rule_index * kSlotsPerRule + kind;
+}
+
+util::RegexMatchData& ReusableMatchData(const CompiledRegex& pattern, std::size_t slot) {
+  thread_local std::vector<util::RegexMatchData> match_data_slots;
   thread_local std::size_t cached_revision = 0;
+  // Callers outside the registry's own tables (and any future one that forgets a
+  // slot) share this scratch block; it is re-created per call only when the
+  // previous holder was a different pattern, which never happens on a hot path.
+  thread_local util::RegexMatchData unslotted;
   const std::size_t revision = RegistryRevision();
   if (revision != cached_revision) {
-    match_data_by_pattern.clear();
+    match_data_slots.clear();
+    unslotted = util::RegexMatchData();
     cached_revision = revision;
   }
-  auto [it, inserted] = match_data_by_pattern.try_emplace(&pattern);
-  if (inserted || !it->second.valid()) {
-    it->second = pattern.CreateMatchData();
+  if (slot == kNoMatchSlot) {
+    unslotted = pattern.CreateMatchData();
+    return unslotted;
   }
-  return it->second;
+  if (slot >= match_data_slots.size()) {
+    match_data_slots.resize(slot + 1);
+  }
+  util::RegexMatchData& data = match_data_slots[slot];
+  if (!data.valid()) {
+    data = pattern.CreateMatchData();
+  }
+  return data;
 }
 
 std::string NormalizePattern(std::string_view pattern) {
@@ -128,9 +169,14 @@ std::size_t AdvanceToNextCodePoint(std::string_view text, std::size_t offset) {
   return next;
 }
 
+// `match_slot` / `skip_slot` index the per-thread match-data arena (see
+// ReusableMatchData); pass kNoMatchSlot for a regex that does not live in the
+// registry's rule/definition tables.
 std::optional<MatchRange> FindFirstRegex(std::string_view text,
                                          const CompiledRegex& pattern,
+                                         std::size_t match_slot,
                                          const CompiledRegex* skip = nullptr,
+                                         std::size_t skip_slot = kNoMatchSlot,
                                          bool allow_zero_length = false,
                                          bool at_line_start = true) {
   if (!pattern.valid()) {
@@ -138,7 +184,7 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
   }
   if (skip != nullptr && skip->valid()) {
     thread_local std::vector<MatchRange> skip_matches;
-    FindAllRegex(text, *skip, skip_matches, at_line_start);
+    FindAllRegex(text, *skip, skip_slot, skip_matches, at_line_start);
     if (skip_matches.empty()) {
       // No skip regions on this segment → masking would be the identity
       // (masked_buf == text). Search the raw text directly, skipping the O(n)
@@ -149,7 +195,8 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
       // to mask. (This does not change the O(n²) worst case a region with many
       // nested children still re-scans the shrinking tail but it removes the copy
       // and halves the pattern scans on the dominant escape-free segments.)
-      return FindFirstRegex(text, pattern, nullptr, allow_zero_length, at_line_start);
+      return FindFirstRegex(text, pattern, match_slot, nullptr, kNoMatchSlot, allow_zero_length,
+                            at_line_start);
     }
     thread_local std::string masked_buf;
     masked_buf.assign(text);
@@ -157,10 +204,11 @@ std::optional<MatchRange> FindFirstRegex(std::string_view text,
       std::fill(masked_buf.begin() + static_cast<std::ptrdiff_t>(match.start),
                 masked_buf.begin() + static_cast<std::ptrdiff_t>(match.end), '\0');
     }
-    return FindFirstRegex(masked_buf, pattern, nullptr, allow_zero_length, at_line_start);
+    return FindFirstRegex(masked_buf, pattern, match_slot, nullptr, kNoMatchSlot, allow_zero_length,
+                          at_line_start);
   }
 
-  auto& match_data = ReusableMatchData(pattern);
+  auto& match_data = ReusableMatchData(pattern, match_slot);
   if (!match_data.valid()) {
     return std::nullopt;
   }
@@ -189,6 +237,7 @@ constexpr std::size_t kMaxMatchesPerRulePerLine = 8192;
 
 void FindAllRegex(std::string_view text,
                   const CompiledRegex& pattern,
+                  std::size_t match_slot,
                   std::vector<MatchRange>& matches,
                   bool at_line_start) {
   matches.clear();
@@ -196,7 +245,7 @@ void FindAllRegex(std::string_view text,
     return;
   }
 
-  auto& match_data = ReusableMatchData(pattern);
+  auto& match_data = ReusableMatchData(pattern, match_slot);
   if (!match_data.valid()) {
     return;
   }
@@ -226,8 +275,10 @@ void FindAllRegex(std::string_view text,
   }
 }
 
-bool RegexMatches(std::string_view text, const CompiledRegex& pattern) {
-  return FindFirstRegex(text, pattern).has_value();
+bool RegexMatches(std::string_view text,
+                  const CompiledRegex& pattern,
+                  std::size_t match_slot = kNoMatchSlot) {
+  return FindFirstRegex(text, pattern, match_slot).has_value();
 }
 
 struct FiletypeCandidateSet {
@@ -294,6 +345,16 @@ struct Registry {
   // Compiled can std::call_once through a const registry reference.
   mutable std::vector<std::once_flag> definition_compile_flags;
 };
+
+// Match-data slot for a definition-level regex (filename / header / signature),
+// in the block after the rules' slots. Detection scans every definition's
+// filename regex per file open, so these need the same reuse the rules get --
+// without a slot each execution would allocate its own match-data block.
+std::size_t DefinitionMatchSlot(const Registry& registry,
+                                std::size_t definition_index,
+                                std::size_t kind) {
+  return registry.rules.size() * kSlotsPerRule + definition_index * kSlotsPerDefinition + kind;
+}
 
 struct BuildOutput {
   Registry registry;
@@ -758,7 +819,8 @@ void ApplyPatternRules(const Registry& registry,
       continue;
     }
 
-    FindAllRegex(segment, rule.pattern, matches, /*at_line_start=*/absolute_offset == 0);
+    FindAllRegex(segment, rule.pattern, RuleMatchSlot(index, kRuleSlotPattern), matches,
+                 /*at_line_start=*/absolute_offset == 0);
     for (const MatchRange match : matches) {
       MarkRange(tokens, absolute_offset + match.start, absolute_offset + match.end, rule.group);
     }
@@ -783,7 +845,8 @@ std::optional<RegionStartMatch> FindEarliestRegionStart(const Registry& registry
     }
 
     const std::optional<MatchRange> match = FindFirstRegex(
-        segment, rule.start, rule.skip.valid() ? &rule.skip : nullptr,
+        segment, rule.start, RuleMatchSlot(index, kRuleSlotStart),
+        rule.skip.valid() ? &rule.skip : nullptr, RuleMatchSlot(index, kRuleSlotSkip),
         /*allow_zero_length=*/false, at_line_start);
     if (!match.has_value() || match->start >= search_limit) {
       continue;
@@ -855,7 +918,11 @@ void HighlightLineScoped(const Registry& registry,
     const std::string_view tail = line.substr(cursor);
     std::optional<MatchRange> end_match;
     if (region != nullptr) {
-      end_match = FindFirstRegex(tail, region->end, region->skip.valid() ? &region->skip : nullptr,
+      // region_id is the rule index plus one (see RuleByRegionId).
+      const std::size_t region_rule_index = region_id - 1;
+      end_match = FindFirstRegex(tail, region->end, RuleMatchSlot(region_rule_index, kRuleSlotEnd),
+                                 region->skip.valid() ? &region->skip : nullptr,
+                                 RuleMatchSlot(region_rule_index, kRuleSlotSkip),
                                  /*allow_zero_length=*/true, /*at_line_start=*/cursor == 0);
     }
     const bool closes_immediately = end_match.has_value() && end_match->start == 0;
@@ -981,8 +1048,10 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
       if (definition == nullptr || !definition->signature_regex.valid()) {
         continue;
       }
+      const std::size_t signature_slot =
+          DefinitionMatchSlot(registry, definition_id - 1, kDefinitionSlotSignature);
       for (std::size_t i = 0; i < line_limit; ++i) {
-        if (RegexMatches((*lines)[i], definition->signature_regex)) {
+        if (RegexMatches((*lines)[i], definition->signature_regex, signature_slot)) {
           return definition_id;
         }
       }
@@ -1010,7 +1079,8 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
       if (definition == nullptr || !definition->filename_regex.valid()) {
         continue;
       }
-      if (RegexMatches(path_text, definition->filename_regex)) {
+      if (RegexMatches(path_text, definition->filename_regex,
+                       DefinitionMatchSlot(registry, definition_id - 1, kDefinitionSlotFilename))) {
         matches.push_back(definition_id);
       }
     }
@@ -1142,12 +1212,15 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
       const Definition& definition = registry.definitions[i];
       const std::uint32_t definition_id = static_cast<std::uint32_t>(i + 1);
 
-      if (definition.filename_regex.valid() && RegexMatches(path_text, definition.filename_regex)) {
+      if (definition.filename_regex.valid() &&
+          RegexMatches(path_text, definition.filename_regex,
+                       DefinitionMatchSlot(registry, i, kDefinitionSlotFilename))) {
         filename_matches.push_back(definition_id);
         continue;
       }
       if (filename_matches.empty() && definition.header_regex.valid() &&
-          RegexMatches(header_line, definition.header_regex)) {
+          RegexMatches(header_line, definition.header_regex,
+                       DefinitionMatchSlot(registry, i, kDefinitionSlotHeader))) {
         header_matches.push_back(definition_id);
       }
     }
