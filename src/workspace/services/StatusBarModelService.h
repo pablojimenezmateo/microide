@@ -83,8 +83,6 @@ class StatusBarModelService {
     std::string line_column_text;
     std::string indent_text;
     std::string problems_text;
-    std::filesystem::path raw_viewport_path;
-    std::filesystem::path normalized_viewport_path;
   };
 
   ProjectSegmentCache project_segment_cache_;

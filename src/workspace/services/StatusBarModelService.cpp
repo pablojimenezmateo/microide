@@ -165,12 +165,9 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     status_bar_service.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
 
     StatusBarSegmentValue language;
-    // Same story as the project root: normalizing allocated a path every frame
-    // for a value that only moves when the buffer's file does.
-    if (editor_segments_cache_.raw_viewport_path != viewport->path()) {
-      editor_segments_cache_.raw_viewport_path = viewport->path();
-      editor_segments_cache_.normalized_viewport_path = viewport->path().lexically_normal();
-    }
+    // The viewport owns the memo, so a settled buffer costs a field compare here.
+    // The normalized-path cache this used to keep existed only to key the status
+    // bar's own filetype memo; both went away with it.
     const std::string& filetype = viewport->language_id();
     if (!filetype.empty()) {
       language.text = filetype;
