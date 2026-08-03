@@ -4,16 +4,33 @@
   static bool RestoreUserConfig(WorkspaceShell& shell) {
     return shell.MakePersistenceCoordinator().RestoreUserConfig();
   }
+  // State saves are applied on a background worker, so "saved" and "on disk" are
+  // no longer the same instant. Process exit reconciles them (~WorkspaceShell
+  // flushes); a test that models a restart WITHOUT destroying the first shell has
+  // to say so explicitly.
+  static void FlushPendingStateWrites(WorkspaceShell& shell) {
+    shell.persistence_service_.FlushPendingWrites();
+  }
+
   static bool RestoreConfigState(WorkspaceShell& shell) {
     return shell.MakePersistenceCoordinator().RestoreConfigState();
   }
+  // The Save* seams below flush before returning. State writes are applied on a
+  // background worker, so a save only ACCEPTS the record; production reconciles
+  // that at process exit (~WorkspaceShell). A test that drives a save and then
+  // reads the file back -- directly or through a second shell -- is asserting the
+  // on-disk effect, so these seams give it the synchronous behaviour it is
+  // written against instead of a race. Use FlushPendingStateWrites for saves that
+  // happen through other paths.
   static void SaveSessionState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveSessionState();
+    FlushPendingStateWrites(shell);
   }
   // Crash-safety session flush seam: invoke the exact routine the debounced timer fires,
   // and inspect/drive the debounce arming, without simulating SDL clock advancement.
   static void FlushSessionStateForCrashSafety(WorkspaceShell& shell) {
     shell.FlushSessionStateForCrashSafety();
+    FlushPendingStateWrites(shell);
   }
   static void ArmSessionFlushTimer(WorkspaceShell& shell) { shell.MaybeArmSessionFlushTimer(); }
   static bool SessionFlushArmed(WorkspaceShell& shell) { return shell.session_flush_armed_; }
@@ -25,9 +42,11 @@
   }
   static void SaveWorkspaceSession(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveWorkspaceSession();
+    FlushPendingStateWrites(shell);
   }
   static void SaveConfigState(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveConfigState();
+    FlushPendingStateWrites(shell);
   }
   static void ConfirmDirtyPrompt(WorkspaceShell& shell, int selected_action) {
     shell.context_.prompts.dirty.selected_action = selected_action;
@@ -676,6 +695,7 @@
   }
   static void SaveUserConfig(WorkspaceShell& shell) {
     shell.MakePersistenceCoordinator().SaveUserConfig();
+    FlushPendingStateWrites(shell);
   }
   static void ApplyStartupSettingOverrides(WorkspaceShell& shell) {
     shell.ApplyStartupSettingOverrides();

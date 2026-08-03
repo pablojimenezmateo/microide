@@ -6,6 +6,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "persistence/PersistedRecordWriteQueue.h"
 #include "workspace/WorkspacePersistenceFormat.h"
 
 namespace microide::workspace {
@@ -49,6 +50,15 @@ class PersistenceService {
   // remove would let stale state resurrect on the next restore.
   void DeleteState(const std::filesystem::path& target_path) const;
 
+  // Block until every accepted Save has actually reached disk.
+  //
+  // Saves are applied on a background thread (see PersistedRecordWriteQueue), so
+  // a Save returning true means the record was accepted, not that the bytes have
+  // landed. Anything that needs the old synchronous guarantee -- shutting down,
+  // or handing the file to something outside this process -- calls this. The
+  // Load/Delete paths already flush internally.
+  void FlushPendingWrites() const { write_queue_.Flush(); }
+
  private:
   // Paths whose in-memory state was recovered from a `.bak` because the primary
   // was present but unreadable/corrupt (not merely absent). Maps the normalized
@@ -59,21 +69,9 @@ class PersistenceService {
   // (a real mutation) writes normally and clears the guard.
   mutable std::unordered_map<std::string, std::vector<std::byte>> backup_recovery_baseline_;
 
-  // The record body each path was last observed to hold — set on a successful
-  // load and on a successful save. A save whose encoded body equals it, for a
-  // path whose primary file still exists, is already on disk byte for byte.
-  //
-  // These writes are durable: temp file, fsync, backup rotation, rename. They run
-  // on the shell thread at project switch and shutdown, and a project switch
-  // rewrites three of them — measured at ~1.1 ms each, ~98 ms of the ~350 ms of
-  // main-thread time in the multi-project-switch scenario — for state that
-  // usually did not change at all. Skipping an identical body removes the stall
-  // without weakening durability: the bytes it would have written are the bytes
-  // already there.
-  //
-  // Bodies past kMaxMemoizedBodyBytes are not retained, so a pathologically large
-  // session cannot pin memory here.
-  mutable std::unordered_map<std::string, std::vector<std::byte>> persisted_body_memo_;
+  // Applies the durable record writes off the shell thread, and owns the
+  // "already on disk byte for byte" memo that skips redundant ones.
+  mutable persistence::PersistedRecordWriteQueue write_queue_;
 };
 
 }  // namespace microide::workspace

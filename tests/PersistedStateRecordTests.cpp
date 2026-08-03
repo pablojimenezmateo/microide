@@ -980,8 +980,13 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   // Save v1 then v2: the second save rotates v1 into the `.bak` sibling.
   PersistedUserConfigState v1{.ui_scale = 1.0f, .settings = {{"theme", "backup-good"}}};
   Expect(service.SaveUserConfig(path, v1), "first save should succeed");
+  // Land v1 before saving v2. Saves coalesce per path, so back-to-back saves are
+  // ONE write of the latest body -- and this test needs two real writes for the
+  // first to be rotated into the backup by the second.
+  service.FlushPendingWrites();
   PersistedUserConfigState v2{.ui_scale = 1.0f, .settings = {{"theme", "current"}}};
   Expect(service.SaveUserConfig(path, v2), "second save should rotate v1 into the backup");
+  service.FlushPendingWrites();
   Expect(std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "a backup of the prior primary should exist");
 
@@ -997,6 +1002,7 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   // An immediate save of the unchanged recovered state must be suppressed so the
   // still-recoverable corrupt primary is preserved for manual recovery.
   Expect(service.SaveUserConfig(path, loaded), "no-op save should report success");
+  service.FlushPendingWrites();
   {
     const auto reread = PersistedRecordReader::ReadFile(path);
     Expect(reread.has_value() && reread->used_backup,
@@ -1006,6 +1012,7 @@ void TestPersistenceServiceGuardsCorruptPrimaryFromBackupOverwrite() {
   // A genuine mutation lifts the guard: the save now heals the primary on disk.
   loaded.settings[0].second = "user-edited";
   Expect(service.SaveUserConfig(path, loaded), "a mutated save should write through");
+  service.FlushPendingWrites();
   {
     const auto reread = PersistedRecordReader::ReadFile(path);
     Expect(reread.has_value() && !reread->used_backup,
@@ -1033,6 +1040,9 @@ void TestPersistenceServiceSkipsRewritingIdenticalState() {
 
   PersistedUserConfigState state{.ui_scale = 1.0f, .settings = {{"theme", "dark"}}};
   Expect(service.SaveUserConfig(path, state), "first save should succeed");
+  // Saves are applied on a background worker; this test asserts on-disk effects,
+  // so it waits for them rather than racing the writer.
+  service.FlushPendingWrites();
   Expect(std::filesystem::exists(path), "the record should exist after the first save");
   Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "a first save has no prior primary to rotate into a backup");
@@ -1040,12 +1050,14 @@ void TestPersistenceServiceSkipsRewritingIdenticalState() {
   // Identical state: skipped, so no backup rotation happens. That absence is the
   // observable proof the durable write did not run.
   Expect(service.SaveUserConfig(path, state), "an unchanged save should report success");
+  service.FlushPendingWrites();
   Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "an unchanged save must not rewrite the record (no backup rotation)");
 
   // Changed state writes through, and now there is a prior primary to rotate.
   state.settings[0].second = "light";
   Expect(service.SaveUserConfig(path, state), "a changed save should write through");
+  service.FlushPendingWrites();
   Expect(std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "a real write rotates the previous primary into the backup");
   {
@@ -1062,6 +1074,7 @@ void TestPersistenceServiceSkipsRewritingIdenticalState() {
   std::filesystem::remove(path, error);
   Expect(!std::filesystem::exists(path), "the record should be gone before the recreate check");
   Expect(service.SaveUserConfig(path, state), "an identical save should recreate a missing record");
+  service.FlushPendingWrites();
   Expect(std::filesystem::exists(path),
          "a save must not be skipped against a record that no longer exists");
 
@@ -1072,6 +1085,7 @@ void TestPersistenceServiceSkipsRewritingIdenticalState() {
   Expect(fresh_service.LoadUserConfig(path, &loaded), "load should succeed");
   std::filesystem::remove(PersistedRecordWriter::BackupPathFor(path), error);
   Expect(fresh_service.SaveUserConfig(path, loaded), "an unchanged post-load save should succeed");
+  fresh_service.FlushPendingWrites();
   Expect(!std::filesystem::exists(PersistedRecordWriter::BackupPathFor(path)),
          "a save of exactly what was loaded must not rewrite the record");
 }

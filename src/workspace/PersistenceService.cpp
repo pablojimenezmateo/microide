@@ -12,28 +12,16 @@
 
 #include "persistence/PersistedRecordReader.h"
 #include "persistence/PersistedRecordWriter.h"
+#include "util/PerformanceTrace.h"
 
 namespace microide::workspace {
 namespace {
 
 using BackupRecoveryBaselines = std::unordered_map<std::string, std::vector<std::byte>>;
-using PersistedBodyMemo = std::unordered_map<std::string, std::vector<std::byte>>;
-
-// Ceiling on a memoized body. Above it the write-skip check is dropped rather
-// than holding a second copy of a large session in memory.
-constexpr std::size_t kMaxMemoizedBodyBytes = 1024ull * 1024;
+using WriteQueue = persistence::PersistedRecordWriteQueue;
 
 std::string GuardKey(const std::filesystem::path& path) {
   return path.lexically_normal().string();
-}
-
-void RememberBody(PersistedBodyMemo& memo, const std::string& key,
-                  const std::vector<std::byte>& body) {
-  if (body.size() > kMaxMemoizedBodyBytes) {
-    memo.erase(key);
-    return;
-  }
-  memo[key] = body;
 }
 
 // True only when the state came from the `.bak` because the primary was PRESENT
@@ -52,11 +40,19 @@ bool LoadStructuredRecord(const std::filesystem::path& path,
                           EncodeBinary encode_binary,
                           PersistedState* out,
                           BackupRecoveryBaselines& baselines,
-                          PersistedBodyMemo& memo) {
+                          persistence::PersistedRecordWriteQueue& write_queue) {
   if (out == nullptr) {
     return false;
   }
   const std::string key = GuardKey(path);
+  // A queued save for this path may not have landed yet; the file has to hold it
+  // before it is read back. Scoped because it is the one place a caller can still
+  // block on the writer -- a hot row here means something reads state back often
+  // enough to serialize against its own saves.
+  {
+    util::PerformanceTrace::Scope scope("persistence::LoadFlushWait");
+    write_queue.Flush();
+  }
   const auto record = persistence::PersistedRecordReader::ReadFile(path);
   if (!record.has_value()) {
     return false;
@@ -65,8 +61,8 @@ bool LoadStructuredRecord(const std::filesystem::path& path,
     return false;
   }
   // What the file holds right now. A later save of unchanged state encodes to
-  // exactly this, and WriteGuardedRecord can then skip the durable rewrite.
-  RememberBody(memo, key, record->body);
+  // exactly this, and the write queue can then skip the durable rewrite.
+  write_queue.NoteOnDiskBody(path, record->body);
   if (RecoveredFromCorruptPrimary(*record)) {
     // Capture the baseline by re-encoding through the SAME encoder a Save uses,
     // so an unchanged state produces byte-identical output and is suppressed.
@@ -82,12 +78,17 @@ bool LoadStructuredRecord(const std::filesystem::path& path,
   return true;
 }
 
-// Writes unless the path is guarded and `body` is identical to the recovery
-// baseline (no user mutation since a corrupt-primary recovery), in which case the
-// write is suppressed and reported as success so callers treat it as persisted.
+// Accepts the record unless the path is guarded and `body` is identical to the
+// recovery baseline (no user mutation since a corrupt-primary recovery), in which
+// case the write is suppressed and reported as success so callers treat it as
+// persisted.
+//
+// "Accepted" rather than "written": the durable write happens on the queue's
+// worker. Skipping an unchanged body now lives with the writer, which is what
+// lets a failed write leave the memo alone and be retried.
 bool WriteGuardedRecord(const std::filesystem::path& path, const std::vector<std::byte>& body,
                         std::uint32_t version, BackupRecoveryBaselines& baselines,
-                        PersistedBodyMemo& memo) {
+                        WriteQueue& write_queue) {
   const std::string key = GuardKey(path);
   if (auto it = baselines.find(key); it != baselines.end()) {
     if (it->second == body) {
@@ -95,21 +96,8 @@ bool WriteGuardedRecord(const std::filesystem::path& path, const std::vector<std
     }
     baselines.erase(it);
   }
-  // Already on disk, byte for byte: skip the temp write + fsync + backup rotation
-  // + rename. The existence check keeps this honest — if the file went away
-  // underneath us the memo is stale and the record has to be rewritten.
-  if (const auto memo_it = memo.find(key); memo_it != memo.end() && memo_it->second == body) {
-    std::error_code error;
-    if (std::filesystem::exists(path, error) && !error) {
-      return true;
-    }
-    memo.erase(memo_it);
-  }
-  if (!persistence::PersistedRecordWriter::WriteFile(path, body, version)) {
-    memo.erase(key);
-    return false;
-  }
-  RememberBody(memo, key, body);
+  util::PerformanceTrace::Scope scope("persistence::QueueRecordWrite");
+  write_queue.Queue(path, body, version);
   return true;
 }
 
@@ -149,7 +137,7 @@ bool PersistenceService::LoadUserConfig(const std::filesystem::path& target_path
   RemoveLegacyPersistenceArtifactsFor(target_path);
   return LoadStructuredRecord<PersistedUserConfigState>(target_path, DecodeUserConfigRecord,
                                                        EncodeUserConfigRecord, state,
-                                                       backup_recovery_baseline_, persisted_body_memo_);
+                                                       backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::SaveUserConfig(const std::filesystem::path& target_path,
@@ -159,7 +147,7 @@ bool PersistenceService::SaveUserConfig(const std::filesystem::path& target_path
   }
   std::vector<std::byte> body;
   return EncodeUserConfigRecord(state, &body) &&
-         WriteGuardedRecord(target_path, body, 1u, backup_recovery_baseline_, persisted_body_memo_);
+         WriteGuardedRecord(target_path, body, 1u, backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::LoadProjectConfig(const std::filesystem::path& target_path,
@@ -170,7 +158,7 @@ bool PersistenceService::LoadProjectConfig(const std::filesystem::path& target_p
   RemoveLegacyPersistenceArtifactsFor(target_path);
   return LoadStructuredRecord<PersistedProjectConfigState>(target_path, DecodeProjectConfigRecord,
                                                           EncodeProjectConfigRecord, state,
-                                                          backup_recovery_baseline_, persisted_body_memo_);
+                                                          backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::SaveProjectConfig(const std::filesystem::path& target_path,
@@ -180,7 +168,7 @@ bool PersistenceService::SaveProjectConfig(const std::filesystem::path& target_p
   }
   std::vector<std::byte> body;
   return EncodeProjectConfigRecord(state, &body) &&
-         WriteGuardedRecord(target_path, body, 2u, backup_recovery_baseline_, persisted_body_memo_);
+         WriteGuardedRecord(target_path, body, 2u, backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::LoadProjectSession(const std::filesystem::path& target_path,
@@ -191,7 +179,7 @@ bool PersistenceService::LoadProjectSession(const std::filesystem::path& target_
   RemoveLegacyPersistenceArtifactsFor(target_path);
   return LoadStructuredRecord<PersistedProjectSessionState>(target_path, DecodeProjectSessionRecord,
                                                            EncodeProjectSessionRecord, state,
-                                                           backup_recovery_baseline_, persisted_body_memo_);
+                                                           backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::SaveProjectSession(const std::filesystem::path& target_path,
@@ -201,7 +189,7 @@ bool PersistenceService::SaveProjectSession(const std::filesystem::path& target_
   }
   std::vector<std::byte> body;
   return EncodeProjectSessionRecord(state, &body) &&
-         WriteGuardedRecord(target_path, body, 3u, backup_recovery_baseline_, persisted_body_memo_);
+         WriteGuardedRecord(target_path, body, 3u, backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::LoadWorkspaceSession(const std::filesystem::path& target_path,
@@ -212,7 +200,7 @@ bool PersistenceService::LoadWorkspaceSession(const std::filesystem::path& targe
   RemoveLegacyPersistenceArtifactsFor(target_path);
   return LoadStructuredRecord<PersistedWorkspaceSessionState>(
       target_path, DecodeWorkspaceSessionRecord, EncodeWorkspaceSessionRecord, state,
-      backup_recovery_baseline_, persisted_body_memo_);
+      backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::SaveWorkspaceSession(const std::filesystem::path& target_path,
@@ -222,7 +210,7 @@ bool PersistenceService::SaveWorkspaceSession(const std::filesystem::path& targe
   }
   std::vector<std::byte> body;
   return EncodeWorkspaceSessionRecord(state, &body) &&
-         WriteGuardedRecord(target_path, body, 4u, backup_recovery_baseline_, persisted_body_memo_);
+         WriteGuardedRecord(target_path, body, 4u, backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::LoadDebugState(const std::filesystem::path& target_path,
@@ -232,7 +220,7 @@ bool PersistenceService::LoadDebugState(const std::filesystem::path& target_path
   }
   return LoadStructuredRecord<PersistedDebugState>(target_path, DecodeDebugStateRecord,
                                                     EncodeDebugStateRecord, state,
-                                                    backup_recovery_baseline_, persisted_body_memo_);
+                                                    backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::SaveDebugState(const std::filesystem::path& target_path,
@@ -242,7 +230,7 @@ bool PersistenceService::SaveDebugState(const std::filesystem::path& target_path
   }
   std::vector<std::byte> body;
   return EncodeDebugStateRecord(state, &body) &&
-         WriteGuardedRecord(target_path, body, 5u, backup_recovery_baseline_, persisted_body_memo_);
+         WriteGuardedRecord(target_path, body, 5u, backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::LoadMruState(const std::filesystem::path& target_path,
@@ -251,7 +239,7 @@ bool PersistenceService::LoadMruState(const std::filesystem::path& target_path,
     return false;
   }
   return LoadStructuredRecord<PersistedMruState>(target_path, DecodeMruRecord, EncodeMruRecord, state,
-                                                  backup_recovery_baseline_, persisted_body_memo_);
+                                                  backup_recovery_baseline_, write_queue_);
 }
 
 bool PersistenceService::SaveMruState(const std::filesystem::path& target_path,
@@ -261,7 +249,7 @@ bool PersistenceService::SaveMruState(const std::filesystem::path& target_path,
   }
   std::vector<std::byte> body;
   return EncodeMruRecord(state, &body) &&
-         WriteGuardedRecord(target_path, body, 6u, backup_recovery_baseline_, persisted_body_memo_);
+         WriteGuardedRecord(target_path, body, 6u, backup_recovery_baseline_, write_queue_);
 }
 
 void PersistenceService::DeleteState(const std::filesystem::path& target_path) const {
@@ -270,16 +258,9 @@ void PersistenceService::DeleteState(const std::filesystem::path& target_path) c
   }
   const std::string key = GuardKey(target_path);
   backup_recovery_baseline_.erase(key);
-  // The record is going away, so the memo of what it held must go with it or a
-  // later save of that same body would be skipped against a file that no longer
-  // exists. (The existence probe in WriteGuardedRecord also catches this; erasing
-  // here keeps the memo from outliving its record in the first place.)
-  persisted_body_memo_.erase(key);
-  std::error_code error;
-  std::filesystem::remove(target_path, error);
-  // Also remove the backup, or the reader would fall back to it and resurrect the
-  // state this call is meant to clear.
-  std::filesystem::remove(persistence::PersistedRecordWriter::BackupPathFor(target_path), error);
+  // Ordered behind any write already accepted for this path, and superseding any
+  // still queued, without waiting for either.
+  write_queue_.QueueDelete(target_path);
 }
 
 }  // namespace microide::workspace

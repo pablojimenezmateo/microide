@@ -2044,6 +2044,10 @@ void TestWorkspaceShellTabSizeSettingStaysVisibleAfterRestart() {
   Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.tab_size", "2"),
          "setting editor.tab_size should succeed before restart");
 
+  // Model the restart faithfully: the first shell's state writes land at process
+  // exit, and this test keeps it alive, so flush explicitly before reading back.
+  WorkspaceShellTestAccess::FlushPendingStateWrites(shell);
+
   WorkspaceShell reloaded_shell;
   WorkspaceShellTestAccess::SetProjectRoot(reloaded_shell, root);
   Expect(WorkspaceShellTestAccess::RestoreConfigState(reloaded_shell),
@@ -2098,6 +2102,7 @@ void TestWorkspaceShellFontSizeIsProjectScopedAndPersists() {
 
   // Round-trips for project A: the canonical value is reapplied to the editor
   // preferences and the stored setting survives for the overlay display.
+  WorkspaceShellTestAccess::FlushPendingStateWrites(shell);
   WorkspaceShell reloaded_shell;
   WorkspaceShellTestAccess::SetProjectRoot(reloaded_shell, root_a);
   Expect(WorkspaceShellTestAccess::RestoreConfigState(reloaded_shell),
@@ -2133,6 +2138,10 @@ void TestWorkspaceShellCommandTabSizeStaysVisibleAfterRestart() {
   WorkspaceShellTestAccess::OpenFile(shell, source);
   Expect(ExecuteCommand(shell, "tab-size 5"),
          "tab-size command should update editor preferences and persist project config");
+
+  // Model the restart faithfully: the first shell's state writes land at process
+  // exit, and this test keeps it alive, so flush explicitly before reading back.
+  WorkspaceShellTestAccess::FlushPendingStateWrites(shell);
 
   WorkspaceShell reloaded_shell;
   WorkspaceShellTestAccess::SetProjectRoot(reloaded_shell, root);

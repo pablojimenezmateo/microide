@@ -31,6 +31,11 @@ class LifecycleCoordinator {
     // one pending. The process leaves via quick_exit(), so shutdown is the only
     // point that can land it.
     std::function<void()> flush_recents;
+    // Persisted workspace state (session, config, project state) is written on a
+    // background worker so a save never stalls the shell. Same reason as
+    // flush_recents: the process leaves via quick_exit(), which runs no
+    // destructors, so shutdown is the only point that can land what is queued.
+    std::function<void()> flush_persisted_state;
     std::function<void()> shutdown_project_search_runtime;
     std::function<void()> stop_control_channel;
     // There is deliberately no clear_terminal_tabs / destroy_cursors here: see

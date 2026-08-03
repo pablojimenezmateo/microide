@@ -88,6 +88,11 @@ void LifecycleCoordinator::Shutdown() {
   // for every inactive project, so it is intentionally omitted.
   operations_.save_workspace_session();
   operations_.flush_recents();
+  // Land every state write the saves above only QUEUED. This has to come after
+  // all of them, and it has to be here rather than in a destructor: the process
+  // exits via quick_exit() right after Shutdown() returns, so nothing downstream
+  // of this point runs.
+  operations_.flush_persisted_state();
   operations_.shutdown_project_search_runtime();
   // Stop the control listener and remove the discovery descriptor. Cheap (the
   // I/O thread wakes via its self-pipe, so the join returns immediately) and off
@@ -347,6 +352,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .save_workspace_session =
               [this]() { MakePersistenceCoordinator().SaveWorkspaceSession(); },
           .flush_recents = [this]() { recents_service_.FlushPendingSave(); },
+          .flush_persisted_state = [this]() { persistence_service_.FlushPendingWrites(); },
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .stop_control_channel = [this]() { control_channel_service_.Stop(); },
       });

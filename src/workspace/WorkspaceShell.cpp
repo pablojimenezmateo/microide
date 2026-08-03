@@ -59,6 +59,13 @@ WorkspaceShell::~WorkspaceShell() {
   // before `plugin_runtime_`, and plugin teardown invokes
   // RequestEditorSurfaceRedraw via the shell callbacks.
   plugin_runtime_.Shutdown();
+  // Land every accepted state write before the process goes away. Saves are
+  // applied on a background worker now, so "the setting was saved" and "the
+  // bytes are on disk" are no longer the same instant; this is where they are
+  // reconciled. The queue's own destructor also flushes, but doing it here keeps
+  // it ordered with the rest of teardown rather than buried in member
+  // destruction order.
+  persistence_service_.FlushPendingWrites();
 }
 
 WorkspaceShell::SidebarMode WorkspaceShell::SidebarModeForViewId(std::string_view view_id) const {

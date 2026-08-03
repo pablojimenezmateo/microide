@@ -176,6 +176,31 @@ void SerialWorkQueue::Drain() {
   drained.wait();
 }
 
+void SerialWorkQueue::Flush() {
+  std::promise<void> barrier;
+  std::future<void> flushed = barrier.get_future();
+  {
+    std::lock_guard lock(mutex_);
+    if (stop_ || !started_.load(std::memory_order_acquire)) {
+      // Never started: nothing was ever queued, so there is nothing to complete.
+      // Already stopped: Shutdown() cancelled the backlog and joined the worker, so
+      // no one is left to run a barrier -- blocking on one would hang forever.
+      return;
+    }
+    // Unlike Drain(), leave the queued jobs alone: the barrier simply goes to the
+    // TAIL, so waiting on it waits for all of them to run first.
+    if (hooks_.on_enqueue) {
+      hooks_.on_enqueue();
+    }
+    queue_.push_back(Job{.key = {},
+                         .task = [&barrier]() { barrier.set_value(); },
+                         .cancelled = false,
+                         .run_even_if_cancelled = true});
+  }
+  cv_.notify_one();
+  flushed.wait();
+}
+
 void SerialWorkQueue::Shutdown(std::chrono::milliseconds deadline) {
   {
     std::lock_guard lock(mutex_);

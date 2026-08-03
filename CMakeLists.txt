@@ -276,6 +276,8 @@ set(MICROIDE_CORE_SOURCES
   src/persistence/PersistedRecordDump.cpp
   src/persistence/PersistedRecordReader.cpp
   src/persistence/PersistedRecordWriter.cpp
+  src/persistence/PersistedRecordWriteQueue.cpp
+  src/persistence/PersistedRecordWriteQueue.cpp
   src/plugin/PluginLuaInterop.cpp
   src/plugin/PluginLuaBufferProjectInterop.cpp
   src/plugin/PluginLuaContextInterop.cpp
@@ -902,6 +904,7 @@ add_executable(microide_tests
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp
   tests/LineEditSpanTests.cpp
+  tests/PersistedRecordWriteQueueTests.cpp
   tests/SyntaxDefinitionLoaderTests.cpp
   tests/Sha256Tests.cpp
   tests/StringUtilTests.cpp

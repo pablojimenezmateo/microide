@@ -101,6 +101,14 @@ class SerialWorkQueue {
   // Must be called from a thread other than the worker. No-op if never started.
   void Drain();
 
+  // Block until every job queued at the time of the call has RUN. The opposite of
+  // Drain(), which reaches idle by cancelling the backlog: Flush() reaches idle by
+  // completing it. Use this when queued work must not be lost -- a persisted-state
+  // writer whose queue is the only place the user's session exists until it lands
+  // on disk. Must be called from a thread other than the worker; no-op if never
+  // started (nothing was ever queued to lose).
+  void Flush();
+
   // Cancel queued jobs and join the worker, waiting up to `deadline` (see note
   // above on why the join is unconditional in practice).
   void Shutdown(std::chrono::milliseconds deadline = std::chrono::milliseconds(2000));
