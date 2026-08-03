@@ -35,12 +35,19 @@ The authoritative product thesis, priority order, and non-goals live in
 
 When tradeoffs conflict, use this order:
 
-1. correctness
-2. speed
+1. speed
+2. correctness
 3. low CPU usage
 4. low memory usage
 5. maintainability and simplicity
 6. compatibility only when it is explicitly required
+
+Speed leads because latency is the product. That is not a licence to ship wrong behavior:
+correctness sits above CPU, memory, and clarity so it is never traded for those, and a fast
+path that is wrong on an input users routinely supply is not a valid solution. What the
+ordering does buy is the right to bound a pathological input — a cap, a truncation, a coarser
+fallback — in exchange for a materially faster common path, provided the limit is surfaced or
+documented rather than silent.
 
 Compatibility is not a default constraint. Internal APIs, temporary abstractions, and stale call
 patterns can be broken or removed if that is the cleanest way to improve the system.
@@ -63,7 +70,7 @@ patterns can be broken or removed if that is the cleanest way to improve the sys
 
 ## Performance Rules
 
-- Speed is the main optimization target after correctness.
+- Speed is the primary optimization target; correctness is the floor it may not sink below.
 - CPU comes before memory, especially idle CPU and redraw-path CPU.
 - Measure before and after performance-sensitive changes.
 - Use `dev-docs/performance/perf-harness.md` scenarios and baselines as the primary regression oracle.

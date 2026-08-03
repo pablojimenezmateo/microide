@@ -96,7 +96,7 @@ The PTY child sees `TERM=xterm-256color` and `COLORTERM=truecolor`.
 
 ## Performance
 
-Goals (per repo priority): correctness first, then speed, then low CPU/memory.
+Goals (per repo priority): speed first, then correctness, then low CPU/memory.
 
 - **Hot path stays branch-cheap.** Printable ASCII bypasses UTF-8 decoding and
   the width tables (`PutGlyphLocked` / `CodepointDisplayWidth` fast paths), so

@@ -20,7 +20,22 @@ than comparative marketing claims.
 
 ### Requirement: Priority Order For Engineering Tradeoffs
 
-When MicroIDE engineering tradeoffs conflict, the project SHALL resolve them in the following order: (1) correctness, (2) speed, (3) low CPU usage, (4) low memory footprint, (5) architectural clarity, (6) compatibility only when explicitly required.
+When MicroIDE engineering tradeoffs conflict, the project SHALL resolve them in the following order: (1) speed, (2) correctness, (3) low CPU usage, (4) low memory footprint, (5) architectural clarity, (6) compatibility only when explicitly required.
+
+Speed leads because latency is the product. This SHALL NOT be read as a licence to ship
+observably wrong behavior: a fast path that produces a wrong result on an input a user
+routinely supplies is not a valid solution, and correctness ranks above CPU, memory, and
+clarity precisely so that it is never traded away for those. What the ordering does license
+is bounded, *declared* degradation on rare or pathological inputs — truncation, a cap, a
+coarser fallback — bought in exchange for a materially faster common path.
+
+#### Scenario: Speed beats broader handling of a pathological input
+- **WHEN** a change can either handle an unbounded pathological input exactly at the cost of frame-time on the common path, or bound that input with a declared cap or fallback and keep the common path fast
+- **THEN** the bounded-and-fast path SHALL be taken, and the degradation SHALL be surfaced to the user or recorded as a documented limit rather than left silent
+
+#### Scenario: Speed does not license a wrong common-case result
+- **WHEN** a faster implementation would produce an observably wrong result for an input a user routinely supplies
+- **THEN** the faster implementation SHALL NOT land on the strength of its speed alone
 
 #### Scenario: Correctness beats compatibility
 - **WHEN** a fix for an observably wrong behavior requires breaking a non-contractual compatibility shim

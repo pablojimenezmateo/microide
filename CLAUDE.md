@@ -5,7 +5,7 @@ Purpose: first-stop operating guide for agents working in this repository.
 ## Quick Scan
 
 - `microide` is a native desktop IDE shell built in C++20 with CMake and SDL3.
-- The current priority is correctness first, then speed, then low CPU usage.
+- The current priority is speed first, then correctness, then low CPU usage, then low memory. Speed leads because latency is the product; correctness still outranks CPU/memory/clarity, so a fast path that is wrong on a routine input is not a valid solution. See `AGENTS.md` § Priority Order.
 - Plugin support is an active expansion phase; keep plugin seams narrow and host-owned.
 - `AGENTS.md` owns repo policy, `dev-docs/project/active-work.md` owns current direction, and `dev-docs/project/implementation-guide.md` owns the durable product map.
 - Build with `cmake`, test with `ctest`, and use focused `microide_tests` filters for quick validation.

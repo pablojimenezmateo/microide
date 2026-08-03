@@ -8,8 +8,8 @@ source of truth for shipped baseline and accepted scope cuts.
 This roadmap intentionally does not list every generic IDE feature that could exist. It tracks
 the next meaningful slices for this codebase under the repo policy:
 
-1. correctness
-2. speed
+1. speed
+2. correctness
 3. low CPU usage
 4. low memory usage
 5. maintainability and simplicity

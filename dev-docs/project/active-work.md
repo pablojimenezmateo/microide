@@ -41,14 +41,20 @@ good enough, and what is deliberately not being built.
 
 Engineering decisions should follow this order:
 
-1. correctness over compatibility
-2. speed
+1. speed
+2. correctness
 3. low CPU usage
 4. low memory usage
 5. architectural clarity
+6. compatibility only when explicitly required
+
+Speed leads because latency is the product. Correctness still outranks CPU, memory, and
+clarity, so it is never traded for those — but a pathological input may be bounded with a
+declared cap or fallback to keep the common path fast. `AGENTS.md` § Priority Order and
+`openspec/specs/product-vision/spec.md` carry the authoritative wording.
 
 Broad refactors are acceptable when they improve the result. Do not preserve stale boundaries,
-legacy helpers, or accidental compatibility if they block correctness or performance.
+legacy helpers, or accidental compatibility if they block speed or correctness.
 
 ## Shipped Baseline
 
