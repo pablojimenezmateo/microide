@@ -36,8 +36,8 @@ One decorated text-grid pipeline across **editor**, **compare**, and **merge**:
 
 - `src/editor/DecoratedTextGridRenderer.*` — shared per-row paint
 - `src/editor/EditorViewRenderer.*` — editor viewport uses decorated grid
-- `src/workspace/WorkspaceShellCompareRender.cpp` — compare-specific layout + `CompareMergeRender`
-- `src/workspace/WorkspaceShellMergeRender.cpp` — merge panes + shared helpers
+- `src/workspace/render/WorkspaceShellRenderCompare.cpp` — compare-specific layout + `CompareMergeRender`
+- `src/workspace/render/WorkspaceShellRenderMerge.cpp` — merge panes + shared helpers
 - `src/workspace/CompareMergeRender.*` — compare/merge row metrics and decoration assembly
 
 **View models:**

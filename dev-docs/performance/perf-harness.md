@@ -124,13 +124,33 @@ coverage and a clear owner.
 | Terminal and output | `terminal_scroll_long_output` | p50/p95/max wall time, allocation counts | terminal panel, scroll and redraw integration |
 | Idle and long soak | `idle_soak_30s`, `long_soak_8h`, `switch_and_idle` | wake-up count, wall time, allocation counts | event loop, scheduled wake handling, watchers |
 | Debugger / DAP | `debug_value_tree_expand_large`, `debug_value_tree_rebuild`, `debug_value_tree_paging`, `dap_protocol_encode_decode`, `debug_breakpoints_model_rebuild`, `debug_pane_hittest_geometry`, `debug_session_stop_to_variables` | p50/p95/max wall time, allocation counts | `DebugValueTree`, `DapProtocol`, `DebugBreakpointsModel`, debug pane geometry, `DebugService`/`DebugSession` |
-| LSP / language server | `lsp_semantic_tokens_decode`, `lsp_publish_diagnostics_parse`, `lsp_document_symbols_parse`, `lsp_message_framing` | p50/p95/max wall time, allocation counts | `lsp_protocol` decode helpers, `LspMessageFramer` transport framing |
+| LSP / language server | `lsp_semantic_tokens_decode`, `lsp_publish_diagnostics_parse`, `lsp_document_symbols_parse`, `lsp_message_framing` | p50/p95/max wall time, allocation counts | `lsp_protocol` decode helpers, `JsonRpcMessageFramer` transport framing |
 | Syntax highlighting | `syntax_highlight_cpp_lines`, `syntax_highlight_python_lines`, `syntax_advance_state_cpp_lines` | p50/p95/max wall time, allocation counts | `runtime_syntax::HighlightLine` / `AdvanceState` -- the per-line token path every cold scroll and file open pays synchronously |
 | Tech-debt hot-path coverage | `assist_ranked_union_merge`, `plugin_status_item_update`, `settings_rows_rebuild`, `reference_snippet_file_window`, `multi_caret_remap_burst`, `snippet_many_mirror_edit`, `user_config_record_decode`, `branch_review_presentation_markers` | p50/p95/max wall time, allocation counts (tight, decoupled from wall) | the TD-2026-07-17A rewritten hot paths — `assist_merge::RankedUnion`, `registry_interop::ApplyStatusItemUpdate`, `SettingsOverlayService::RebuildSettingsRows`, `util::ReadFileLineWindow`, `detail::ResolveMultiCaretRemapSites`, snippet mirror shifts, user-config decode, `ApplyBranchReviewPresentationMarkers` |
+| Editor preference application | `settings_change_many_tabs` | per-phase p50/p95/max wall time, allocation counts (**1% p50 allocation tolerance** — see below) | `ApplyEditorPreferencesToAllTabs`: the walk every settings change, project activation and session restore makes over every open tab in every editor group. Split into two measured phases so the cheap per-viewport setters and the filetype-detect + language-contract family can never hide inside one number. |
 | Plugin contribution-cap budgets | `plugin_status_items_resolve_at_cap`, `plugin_keybindings_resolve_at_cap` | p50/p95/max wall time, allocation counts | the resolve seams whose measured cost derives the caps in `plugin/PluginContributionLimits.h` (TD-2026-07-17-019): `ResolveStatusItems` at `kMaxPluginStatusItems`, `ResolveKeybindings` at `kMaxPluginContributionsPerKind`. Re-measure these before raising either cap. |
 
 When a hotspot class has no deterministic coverage, add a scenario + baseline in the same change
 before closing the performance pass.
+
+### Editor preference application
+
+`settings_change_many_tabs` (in `tests/perf/EditorEssentialsPerfScenarios.cpp`) opens 40 `.cpp`
+tabs over a dedicated fixture — `tests/perf/fixtures/settings_tabs_project/`, which carries its own
+`.editorconfig`; a shared fixture could not be used because dropping one in would have moved
+`multi_tab_cycle`, `cold_startup_large_project` and `multi_project_switch` off their baselines.
+
+Two things about it are deliberate and easy to break:
+
+- **The allocation tolerance is 1%, not the default 10%.** The regression this scenario exists to
+  catch is a few hundred allocations against a ~64k baseline. At the default tolerance the gate
+  would sit an order of magnitude above the signal and pass a real regression — which was verified
+  by reverting the fix and watching the gate stay green until the tolerance was tightened.
+- **Both phases are fixed-cost now, not per-tab.** As of TD-2026-08-03-110 neither the cheap family
+  nor the contract family allocates per open tab, so running the scenario at `kTabCount` 10 instead
+  of 40 leaves the cheap family byte-identical and the contract family within 2 allocations. Read a
+  few percent here as noise in the fixed per-settings-change overhead; read a large jump as per-tab
+  work having come back — and re-running at a different `kTabCount` is the cheap way to tell which.
 
 ### Debugger / DAP scenarios
 

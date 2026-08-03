@@ -1,9 +1,12 @@
 # LSP Subsystem Architecture
 
-First-stop map of the Language Server Protocol subsystem. There is no `src/lsp/`
-directory — the code lives under `src/workspace/`. This doc reflects the state
-after the `lsp-dedup-and-feature-wiring` consolidation (the 1332-line transport
-header was split; framing and tracing were extracted).
+First-stop map of the Language Server Protocol subsystem. The code lives under
+`src/workspace/lsp/` (there is no top-level `src/lsp/`); the four entries that
+live elsewhere are marked in the file map below. This doc reflects the state after the
+`lsp-dedup-and-feature-wiring` consolidation (the 1332-line transport header was
+split; framing and tracing were extracted) and the 2026-08-03 `src/workspace`
+subsystem split, which moved these files from `src/workspace/` into
+`src/workspace/lsp/`.
 
 ## Layers
 
@@ -26,7 +29,7 @@ platform::AsyncSubprocess stdio pipes to the language-server process
 Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) via
 `ctx.lsp.add{...}`; the host owns lifecycle, transport, and rendering.
 
-## File map (all under `src/workspace/`)
+## File map (all under `src/workspace/lsp/` unless marked otherwise)
 
 | File | Role |
 |------|------|
@@ -37,15 +40,16 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
 | `WorkspaceLspClientLifecycle.cpp` | Blocking initialize handshake (`DoInitializeBlocking`), shutdown (`DoShutdown`/`BeginShutdown`/`WaitForShutdown`), readiness (`SetProgressReadiness`). |
 | `WorkspaceLspClientRequests.cpp` | Interactive request methods (hover/completion/signatureHelp/codeAction/formatting/rangeFormatting/definition/typeDefinition/implementation/declaration/references/prepareRename/rename/documentSymbol/workspaceSymbol/semanticTokens/inlayHint/documentHighlight/codeLens/executeCommand/callHierarchy). definition + the three sibling navigations share one templated `DispatchLocationRequest`. |
 | `editor/InlayHintColumns.{h,cpp}` | Pure per-row inlay-hint grid displacement (**under `src/editor/`, not `src/workspace/`**): `InlayRowDisplacement` (cells-before / next-anchor / hit-test inverse), `BuildInlayRowSpans` (line decorations → row-local spans), and `RealVisualColumnForDisplayColumn` (the mouse inverse). |
-| `LspMessageFraming.{h,cpp}` | `LspMessageFramer`: the `Content-Length` JSON-RPC codec as a pure, unit-tested value type (partial-frame + oversized-skip state). |
+| `JsonRpcMessageFraming.{h,cpp}` | **Under `src/workspace/`** (shared with DAP, which speaks the same stdio JSON-RPC transport). `JsonRpcMessageFramer`: the `Content-Length` codec as a pure, unit-tested value type (partial-frame + oversized-skip state). Fuzzed by `JsonRpcMessageFramingFuzz`. |
 | `LspClientTrace.{h,cpp}` | `TraceLspLifecycle` (opt-in via `MICROIDE_TRACE_LSP_LIFECYCLE`) + transport tuning constants (`kLspRequestTimeout`, queue/message/read-buffer caps). |
 | `WorkspaceLspManager.{h,cpp}` | `LspManager`: one subprocess per canonical language id (aliases share one), non-blocking retiring-clients drain. |
 | `LspService.{h,cpp}` | Per-project doc sync, diagnostics convert+publish, semantic-token request/publish with generation guards, diagnostic shifting on dirty edits, readiness/status strings, the closed-file on-disk edit applier, and the server-initiated `applyEdit` handler. |
+| `LspFileWatchRegistry.{h,cpp}` | `workspace/didChangeWatchedFiles`: the set of glob patterns servers have registered interest in, plus the per-file match. Patterns are split into relative-to-base and absolute buckets **at registration time**, so the per-changed-file loop does one comparison per pattern instead of re-deciding the pattern's kind every time. |
 | `LspProtocol.{h,cpp}` | JSON ↔ LSP wire mapping (parse/encode helpers), incl. the shared `ParseWorkspaceEdit` (rename / code-action / applyEdit all route through it). |
-| `AssistProviderMerge.h` | Pure, unit-tested ranking / de-dup / navigation-choice helpers for the LSP-primary concurrent provider merge. |
+| `AssistProviderMerge.h` | **Under `src/workspace/`.** Pure, unit-tested ranking / de-dup / navigation-choice helpers for the LSP-primary concurrent provider merge. |
 | `LspPositionEncoding.{h,cpp}` | Pure byte ↔ code-unit codec (utf-8/16/32). |
 | `LspViewportPositions.h` | Viewport-aware wrappers over the codec (the single home for "resolve line in a viewport, then convert its column"). |
-| `WorkspaceShellLsp.cpp` | Thin `WorkspaceShell` forwarders → `LspService`; document-symbol → outline adapter. |
+| `WorkspaceShellLsp.cpp` | **Under `src/workspace/shell/`.** Thin `WorkspaceShell` forwarders → `LspService`; document-symbol → outline adapter. |
 
 ## Load-bearing invariants
 
@@ -57,6 +61,18 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   per-keystroke incremental sync only sends ranged edits when the server
   negotiated utf-8; otherwise it falls back to a full-document replace (no
   per-column re-encoding needed).
+- **Watched-file notifications are registration-driven and capped.** Servers
+  subscribe through `client/registerCapability` for
+  `workspace/didChangeWatchedFiles` (and drop it through
+  `unregisterCapability`); `LspFileWatchRegistry` answers "does this changed path
+  interest this server". Registrations are bounded
+  (`kMaxLspFileWatchRegistrations` = 64, `kMaxLspFileWatchPatternsPerRegistration`
+  = 128) because the list is server-controlled input and the match runs on the
+  shell thread for every file in a change batch. A server that registers past the
+  cap is served its first N patterns rather than being allowed to make project
+  changes O(server's appetite). `RelativePattern` bases and the `WatchKind`
+  bitmask (1=Create, 2=Change, 4=Delete; absent means all three) are honoured, so
+  a server that asked only about deletions is not woken for edits.
 - **didOpen carries current text.** `ResolveOpenDocumentForSync` captures
   `was_open` *before* opening, because a fresh `didOpen` sends the already-edited
   buffer; a following `didChange` would then double-apply and desync the server.

@@ -81,11 +81,11 @@ The LSP subsystem is the template at every layer. Concrete anchors:
 | Concern | LSP anchor (template) | DAP counterpart |
 | --- | --- | --- |
 | Protocol client | `src/workspace/WorkspaceLspClient*.{h,cpp}`, `WorkspaceLspClientInternal.h` | `src/workspace/WorkspaceDapClient*` (Phase 0 ✔) |
-| Wire-type mapping | `src/workspace/LspProtocol.{h,cpp}` | `src/workspace/DapProtocol.{h,cpp}` (Phase 0 ✔) |
+| Wire-type mapping | `src/workspace/lsp/LspProtocol.{h,cpp}` | `src/workspace/debug/DapProtocol.{h,cpp}` (Phase 0 ✔) |
 | Async subprocess transport | `src/platform/AsyncSubprocess.h` (poll + stdout_fd) | reused as-is |
 | JSON codec | `src/util/JsonValue.h` | reused as-is |
 | Service wired into shell | `src/workspace/lsp/LspService.h` (`Configure(ctx, Operations)`, `SetWakeEventType`, `ConsumeLspCallbacks()` drained per frame) | `DebugService` (Phase 1) |
-| Per-language/adapter manager | `src/workspace/WorkspaceLspManager.{h,cpp}` | `WorkspaceDapManager` (Phase 1) |
+| Per-language/adapter manager | `src/workspace/lsp/WorkspaceLspManager.{h,cpp}` | `WorkspaceDapManager` (Phase 1) |
 | Plugin contribution | `ctx.lsp.add` → `ContributedLanguageServer` in `src/plugin/PluginHost.h`, parsed in `PluginProviderRegistrationParsers.cpp` | `ctx.debug.add` → `ContributedDebugAdapter` (Phase 1) |
 | Gutter click | fold-marker click sub-region in `src/workspace/coordinators/WorkspaceEditorMouseCoordinator.cpp`; `WorkspaceLayout::VisibleTextGridLineAtY()` | breakpoint toggle (Phase 2) |
 | Gutter marker render | `src/editor/DiagnosticsRender.cpp` `DiagnosticGutterMarkerRect` | breakpoint dots (Phase 2) |
@@ -171,7 +171,7 @@ the `debug.enabled` toggle and Start/Stop Debugging commands gate the surface, a
 Original plan, retained for reference:
 
 
-- New: `src/workspace/DebugService.{h,cpp}` (mirror `LspService`), `WorkspaceDapManager.{h,cpp}`
+- New: `src/workspace/debug/DebugService.{h,cpp}` (mirror `LspService`), `WorkspaceDapManager.{h,cpp}`
   (mirror `WorkspaceLspManager`), `DebugSession.{h,cpp}` (state machine
   Inactive→Initializing→Running→Stopped→Terminated), `LaunchConfig.h`.
 - Plugin seam: add `ContributedDebugAdapter` to `src/plugin/PluginHost.h`,
@@ -203,7 +203,7 @@ contribute launch configs that Start Debugging can target.
 
 Original plan, retained for reference:
 
-- New: `src/workspace/BreakpointStore.{h,cpp}` (per-project path→breakpoints, with
+- New: `src/editor/BreakpointStore.{h,cpp}` (per-project path→breakpoints, with
   condition/hit/log fields reserved for Phase 6).
 - Gutter click in `WorkspaceEditorMouseCoordinator.cpp` (model on the fold-marker
   sub-region; partition the gutter so it does not collide with fold markers).
@@ -246,7 +246,7 @@ leaf value can be edited inline (`SingleLineEditor` → `setVariable`, gated on
 
 Original plan, retained for reference:
 
-- New: `src/workspace/DebugVariablesModel.{h,cpp}` (lazy tree keyed by
+- New: `src/workspace/debug/DebugVariablesModel.{h,cpp}` (lazy tree keyed by
   `variablesReference`, cleared on each stop).
 - On frame focus → `scopes`; on expand → `variables` (paged via `start`/`count`);
   inline edit via `SingleLineEditor` → `setVariable`. Row text prebuilt in the view
@@ -498,18 +498,18 @@ Files added:
 
 - `src/workspace/debug/LaunchConfig.h` — native launch/attach config (`name`, `type`,
   `request`, verbatim `arguments`). No `.vscode/launch.json` import.
-- `src/workspace/DebugSession.{h,cpp}` — lifecycle state machine
+- `src/workspace/debug/DebugSession.{h,cpp}` — lifecycle state machine
   (`Inactive→Initializing→Configuring→Running→Stopped→Terminated/Failed`) on top of
   a `DapClient`. Drives initialize → launch/attach (queued; the client flushes it
   once the initialize response arrives) → `configurationDone` (gated on
   `supportsConfigurationDoneRequest`) → running; streams `output`; tears down on
   `terminated`/`exited`. `RequestStop` prefers `terminate` over `disconnect` when
   the adapter supports it.
-- `src/workspace/WorkspaceDapManager.{h,cpp}` — per-project `DapManager`: adapter
+- `src/workspace/debug/WorkspaceDapManager.{h,cpp}` — per-project `DapManager`: adapter
   registry keyed by adapter `type` (mirrors `LspManager`'s per-language servers),
   owning the transient active `DebugSession`. `RegisterAdapter` / `RetainAdaptersIn`
   / `StartSession` / `StopActiveSession` / `DrainCallbacks`.
-- `src/workspace/DebugService.{h,cpp}` — shell-facing facade mirroring `LspService`:
+- `src/workspace/debug/DebugService.{h,cpp}` — shell-facing facade mirroring `LspService`:
   `Configure`, `SetWakeEventType`, `CurrentDapManager`/`EnsureProjectDapManager`,
   `ConsumeDapCallbacks`, `StartDebugging`/`StopDebugging`.
 
@@ -715,7 +715,7 @@ sends `pause`), `RenderViewModelBuilder/MarksExecutionLineOnlyForMatchingFile`
 
 Files added:
 
-- `src/workspace/DebugVariablesModel.{h,cpp}` — the lazy Variables tree for the
+- `src/workspace/debug/DebugVariablesModel.{h,cpp}` — the lazy Variables tree for the
   focused frame. Source of truth is a node tree keyed by a stable monotonic
   `node_id` (with a `variablesReference → node` index); a prebuilt **flat row
   list** (`DebugVariableRowView`: prebuilt `display_name`/`display_value`/
@@ -862,7 +862,7 @@ Tests added (`tests/DebugServiceTests.cpp`, `tests/DapProtocolTests.cpp`,
 
 Files added:
 
-- `src/workspace/DebugValueTree.{h,cpp}` — the shared lazy value-tree core
+- `src/workspace/debug/DebugValueTree.{h,cpp}` — the shared lazy value-tree core
   extracted from `DebugVariablesModel` (node store keyed by stable id +
   `variablesReference` index, flatten → `DebugVariableRowView` rows, lazy
   expand/`ApplyVariables`, `ApplySetVariable`/`SetNodeValue` via a shared
@@ -870,7 +870,7 @@ Files added:
   target). `DebugVariablesModel` is now a thin wrapper owning one (adding only
   `BeginFrame`/`ApplyScopes`); its public API and the `VariablesModelTreeBehavior`
   test are unchanged, guarding the refactor.
-- `src/workspace/DebugWatchModel.{h,cpp}` — the Watch panel model: a persistent
+- `src/workspace/debug/DebugWatchModel.{h,cpp}` — the Watch panel model: a persistent
   ordered expression list + a transient `DebugValueTree`. `BeginEvaluation`
   pre-creates one placeholder root per expression (stable, ordered rows) and
   `ApplyEvaluate(index, …)` folds each async result in by index; structured
@@ -935,7 +935,7 @@ Tests added:
 
 Three additive features (multi-session deferred to Phase 8). Files added:
 
-- `src/workspace/DebugBreakpointsModel.{h,cpp}` — backs the new **"Breakpoints"**
+- `src/workspace/debug/DebugBreakpointsModel.{h,cpp}` — backs the new **"Breakpoints"**
   peer bottom-panel tab: the persisted enabled exception-filter id set + the active
   session's advertised filters + a prebuilt flat row list (a header, one toggle row
   per advertised filter, then navigable `file:line` breakpoint rows). Rebuilt by
@@ -1025,7 +1025,7 @@ protocol additions — the change is ownership plumbing + event routing.
 
 Files changed (no new files; the design reused existing seams):
 
-- `src/workspace/WorkspaceDapManager.{h,cpp}` — `session_` (single `unique_ptr`)
+- `src/workspace/debug/WorkspaceDapManager.{h,cpp}` — `session_` (single `unique_ptr`)
   became a `SessionEntry` vector (`{id, attention, unique_ptr<DebugSession>}`) +
   `active_session_id_` + a monotonic `next_session_id_`. `StartSession` takes a
   **callbacks factory** (`make_callbacks(int id)` — the id is assigned first so
@@ -1038,7 +1038,7 @@ Files changed (no new files; the design reused existing seams):
   is terminal **and** whose I/O thread has joined — never inside a callback —
   repointing the active id; returns the removed ids). `DrainCallbacks` pumps every
   session.
-- `src/workspace/DebugSession.{h,cpp}` — added `Reactivate()`: re-resolves the
+- `src/workspace/debug/DebugSession.{h,cpp}` — added `Reactivate()`: re-resolves the
   retained `last_stop_`'s stack + threads (re-fires `on_stopped`/`on_threads`) so a
   session switch rebuilds the shared view from the picked session's current stop.
 - `src/workspace/debug/DebugViewModel.h` — `DebugExecutionView` gained
@@ -1046,7 +1046,7 @@ Files changed (no new files; the design reused existing seams):
   `Session` variant; `PanelRowAt`/`PanelRowCount` lay rows out **sessions → threads
   → frames**. `Clear()` **preserves** the session selector (sourced from
   `DapManager`, survives resume so the switcher stays visible while running).
-- `src/workspace/DebugService.{h,cpp}` — `BuildSessionCallbacks(id, label)` routes
+- `src/workspace/debug/DebugService.{h,cpp}` — `BuildSessionCallbacks(id, label)` routes
   by originating session: the active session projects into the shared views
   (`ProjectStop` factored out), a background `stopped` sets attention and (when the
   active session is *not* itself stopped) **auto-focuses** the just-paused session.

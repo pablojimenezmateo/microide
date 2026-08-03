@@ -92,15 +92,15 @@ client ──JSONL──▶ ControlSocketServer (platform, 1 I/O thread)
   main thread; replies/broadcasts are queued from the main thread and flushed by
   the I/O thread. Mirrors the DAP client's marshaling discipline: the background
   thread never touches host state.
-- `src/workspace/ControlChannelService.{h,cpp}` — owns the server, drains inbound
+- `src/workspace/control/ControlChannelService.{h,cpp}` — owns the server, drains inbound
   requests on the control SDL wake event (`ConsumeControlCallbacks`), dispatches
   commands through the `Operations.execute_command_line` seam, answers queries by
   reading `WorkspaceContext`, and broadcasts debug events (wired from the
   `DebugService` operations in `WorkspaceShellPlugins.cpp`).
-- `src/workspace/ControlProtocol.{h,cpp}` — request/response/event (de)serialize
+- `src/workspace/control/ControlProtocol.{h,cpp}` — request/response/event (de)serialize
   plus `ControlChannelHelpText()`, the single source of truth for the protocol
   text rendered by `microide control-help` and the man page.
-- `src/workspace/ControlSpec.{h,cpp}` — parse the cold-start spec (incl. the
+- `src/workspace/control/ControlSpec.{h,cpp}` — parse the cold-start spec (incl. the
   `settings` key) and translate it to command lines (`QuoteCommandArg` keeps
   arguments `ParseCommandLine`-safe).
 - `src/workspace/shell/WorkspaceShellLsp.cpp` — thin shell forwarders, plus

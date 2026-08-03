@@ -125,7 +125,7 @@ A type whose name ends in `ViewModel` SHALL NOT contain a field of type `Workspa
 
 ### Requirement: Workspace-State File I/O Is Owned By PersistenceService
 
-No file outside `src/workspace/PersistenceService.{h,cpp}`, the one-shot legacy importer (until removed in the scheduled follow-up), and `src/persistence/*` SHALL open files matching the project-state, user-config, workspace-session, or conversation-registry filename patterns. The architectural-lint test SHALL enforce the boundary.
+No file outside `src/workspace/persistence/PersistenceService.{h,cpp}`, the one-shot legacy importer (until removed in the scheduled follow-up), and `src/persistence/*` SHALL open files matching the project-state, user-config, workspace-session, or conversation-registry filename patterns. The architectural-lint test SHALL enforce the boundary.
 
 #### Scenario: Direct file I/O for workspace state is rejected
 - **WHEN** a translation unit outside the allowed set opens a file matching the documented patterns
