@@ -570,6 +570,51 @@ void RunPerfCounterProducerRuleFixtures() {
          "perf-counter rule must fail loudly when it finds no counter declarations");
 }
 
+void RunViewportFiletypeMemoRuleFixtures() {
+  // The rule's whole job is to distinguish two overloads of one name by arity, so
+  // both halves have to be pinned: a rule that flagged every DetectFiletype call
+  // would satisfy the negative control while breaking every legitimate path-only
+  // caller, and a rule whose arity walk was wrong would report green forever.
+  TemporaryDirectory filetype_dir;
+  const std::filesystem::path& root = filetype_dir.path();
+  std::filesystem::create_directories(root / "src/editor");
+  std::filesystem::create_directories(root / "src/workspace");
+  WriteFile(root / "src/editor/TextViewport.cpp",
+            "const std::string& TextViewport::language_id() const {\n"
+            "  language_id_ = runtime_syntax::DetectFiletype(document_->path, lines);\n"
+            "  return language_id_;\n"
+            "}\n");
+
+  // Negative control: a content-reading call outside the memo.
+  WriteFile(root / "src/workspace/Caller.cpp",
+            "void f(){ auto id = DetectFiletype(viewport.path(), viewport.lines()); }\n");
+  Expect(CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.size() == 1,
+         "viewport-filetype rule must flag DetectFiletype(path, lines) outside the memo");
+
+  // Positive control: the path-only overload is legal everywhere -- callers with
+  // no buffer in hand have nothing to memoize against. Nested parens in the
+  // argument must not read as a second argument.
+  WriteFile(root / "src/workspace/Caller.cpp",
+            "void f(){ auto id = DetectFiletype(bucket.path); }\n"
+            "void g(){ auto id = DetectFiletype(Normalize(a, b)); }\n");
+  Expect(CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.empty(),
+         "viewport-filetype rule must accept the path-only overload, including a nested call");
+
+  // A mention in a comment or a string is not a call site.
+  WriteFile(root / "src/workspace/Caller.cpp",
+            "// DetectFiletype(path, lines) is what this used to do.\n"
+            "const char* kDoc = \"DetectFiletype(path, lines)\";\n"
+            "void f(){ auto id = DetectFiletype(bucket.path); }\n");
+  Expect(CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.empty(),
+         "viewport-filetype rule must not match comments or string literals");
+
+  // Loud-missing-target guard: if the memo stops calling DetectFiletype the rule
+  // is funnelling callers into nothing, so it must fail rather than pass.
+  WriteFile(root / "src/editor/TextViewport.cpp", "void nothing() {}\n");
+  Expect(!CheckViewportFiletypeGoesThroughTheViewportMemo(root).violations.empty(),
+         "viewport-filetype rule must fail loudly when the memo no longer detects anything");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -582,6 +627,7 @@ void RunAllRuleFixtures() {
   RunWheelFocusRuleFixtures();
   RunMissingRuleTargetFixtures();
   RunPerfCounterProducerRuleFixtures();
+  RunViewportFiletypeMemoRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

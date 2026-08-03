@@ -236,11 +236,21 @@ bool WorkspaceShell::PrepareEditorViewportForSave(const std::filesystem::path& p
   // no active plugin save participants AND no enabled formatter for this filetype.
   // The common no-plugin/no-formatter save then pays zero preparation serialization
   // (TextViewport::Save does its own single serialize), instead of the previous
-  // two-or-three full-buffer passes. DetectFiletype only scans the first lines, so the
-  // filetype probe is cheap. (TD-2026-07-16-16.)
+  // two-or-three full-buffer passes. (TD-2026-07-16-16.)
   const bool has_save_participants =
       plugin_runtime_.enabled() && !save_participant_registry_.Specs().empty();
-  const std::string filetype = editor::runtime_syntax::DetectFiletype(path, viewport.lines());
+  // Every current caller passes viewport.path(), so this is the viewport's own
+  // memo — no buffer head scan on the save path. `path` is still the target (it
+  // is what save participants receive), so if a save-as ever routes a different
+  // one, detect from the DESTINATION's name: saving a Python buffer as `.lua`
+  // should pick the lua formatter, not the source buffer's language.
+  std::string destination_filetype;
+  if (path != viewport.path()) {
+    destination_filetype = editor::runtime_syntax::DetectFiletype(path);
+  }
+  const std::string_view filetype = path == viewport.path()
+                                        ? std::string_view(viewport.language_id())
+                                        : std::string_view(destination_filetype);
   // Autosave suppresses the formatter so a background write never blocks the UI thread
   // on an external subprocess; explicit saves still format.
   const bool format_on_save = !autosave_suppress_format_on_save_ &&

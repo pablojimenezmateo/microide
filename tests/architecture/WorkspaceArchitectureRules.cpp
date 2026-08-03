@@ -84,6 +84,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckWheelHandlersDoNotMoveFocus", CheckWheelHandlersDoNotMoveFocus},
       {"CheckDebugSubsystemThreadingBehindDapClient", CheckDebugSubsystemThreadingBehindDapClient},
       {"CheckEveryPerfCounterHasAProducer", CheckEveryPerfCounterHasAProducer},
+      {"CheckViewportFiletypeGoesThroughTheViewportMemo",
+       CheckViewportFiletypeGoesThroughTheViewportMemo},
   };
   return rules;
 }

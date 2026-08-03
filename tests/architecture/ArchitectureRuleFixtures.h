@@ -52,6 +52,10 @@ void RunWheelFocusRuleFixtures();
 void RunMissingRuleTargetFixtures();
 // Negative + positive control for CheckEveryPerfCounterHasAProducer.
 void RunPerfCounterProducerRuleFixtures();
+// Negative + positive control for CheckViewportFiletypeGoesThroughTheViewportMemo:
+// the two-argument (content-reading) overload must be flagged outside the memo and
+// the one-argument (path-only) overload must not be.
+void RunViewportFiletypeMemoRuleFixtures();
 
 // Runs every fixture above.
 void RunAllRuleFixtures();

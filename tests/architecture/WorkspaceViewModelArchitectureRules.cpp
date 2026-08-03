@@ -478,4 +478,107 @@ RuleResult CheckEveryPerfCounterHasAProducer(const std::filesystem::path& repo_r
   return result;
 }
 
+RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "buffer-content filetype detection goes through TextViewport::language_id()";
+  result.hard_fail = true;
+
+  // Filetype detection is a bounded head scan plus regexes plus an owned string,
+  // and callers ask constantly about buffers that did not change: every prepared
+  // frame (fold refresh, status bar), every LSP/assist request, every save, and
+  // once per open tab on every settings change.
+  //
+  // Four independent memos had grown around that -- `runtime_syntax::FiletypeMemo`
+  // with two instances, plus `LspUiState::language_cache_*`, whose path-only key
+  // silently pinned a stale language for content-detected buffers (a shebang with
+  // no extension). Detection now lives behind `TextViewport::language_id()`, keyed
+  // on the inputs detection actually reads. This rule is the ratchet that stops a
+  // fifth from accreting: the two-argument `DetectFiletype(path, lines)` form --
+  // the one that reads buffer content -- is reserved for the memo itself.
+  //
+  // The one-argument path-only form stays legal everywhere: callers with no buffer
+  // in hand (session restore's language hint, a diagnostics bucket keyed by path)
+  // have nothing to memoize against.
+  const std::filesystem::path memo = repo_root / "src/editor/TextViewport.cpp";
+  if (RequireRuleTarget(result, memo)) {
+    const std::string memo_text = ReadText(memo);
+    if (memo_text.find("DetectFiletype") == std::string::npos) {
+      result.violations.push_back(Violation{
+          .path = memo,
+          .line = 1,
+          .message = "rule target moved -- TextViewport.cpp no longer calls DetectFiletype, so "
+                     "the memo this rule funnels every caller into is gone; re-anchor "
+                     "CheckViewportFiletypeGoesThroughTheViewportMemo",
+      });
+      return result;
+    }
+  }
+
+  // `DetectFiletype(` followed by a top-level comma before its closing paren, i.e.
+  // the two-argument content-reading overload.
+  const std::regex call(R"(\bDetectFiletype\s*\()");
+  std::size_t scanned_calls = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    const std::filesystem::path filename = entry.path().filename();
+    // The declaration/definition of the overload, and the memo that owns it.
+    if (filename == "RuntimeSyntaxRegistry.h" || filename == "RuntimeSyntaxRegistry.cpp" ||
+        filename == "TextViewport.cpp") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), call), last; it != last; ++it) {
+      const std::size_t open_paren = static_cast<std::size_t>(it->position() + it->length()) - 1;
+      if (open_paren >= is_code.size() || !is_code[open_paren]) {
+        continue;  // a mention in a comment or a string literal is not a call
+      }
+      ++scanned_calls;
+      std::size_t depth = 0;
+      bool has_top_level_comma = false;
+      for (std::size_t i = open_paren; i < text.size(); ++i) {
+        if (i < is_code.size() && !is_code[i]) {
+          continue;
+        }
+        const char ch = text[i];
+        if (ch == '(') {
+          ++depth;
+        } else if (ch == ')') {
+          if (--depth == 0) {
+            break;
+          }
+        } else if (ch == ',' && depth == 1) {
+          has_top_level_comma = true;
+        }
+      }
+      if (!has_top_level_comma) {
+        continue;  // path-only overload
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, static_cast<std::size_t>(it->position())),
+          .message = "content-reading DetectFiletype(path, lines) outside the viewport memo: use "
+                     "TextViewport::language_id(), which memoizes on document identity, content "
+                     "revision, path and registry revision. Four separate caches for this already "
+                     "accreted once; one of them silently served a stale language",
+      });
+    }
+  }
+  if (scanned_calls == 0) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src",
+        .line = 1,
+        .message = "rule found no DetectFiletype call sites at all -- the spelling changed and "
+                   "this rule is scanning nothing",
+    });
+  }
+  return result;
+}
+
 }  // namespace microide::tests::architecture

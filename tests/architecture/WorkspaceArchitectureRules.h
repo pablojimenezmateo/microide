@@ -56,6 +56,8 @@ RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& rep
 RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(const std::filesystem::path& repo_root);
 RuleResult CheckEditorViewModelStickyAndOccurrenceAreSpans(const std::filesystem::path& repo_root);
 RuleResult CheckEveryPerfCounterHasAProducer(const std::filesystem::path& repo_root);
+RuleResult CheckViewportFiletypeGoesThroughTheViewportMemo(
+    const std::filesystem::path& repo_root);
 
 // The full ordered list of workspace rules, each with a stable name. Both
 // RunWorkspaceArchitectureRules and the per-rule ctest registration iterate
