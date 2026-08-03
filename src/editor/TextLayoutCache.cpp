@@ -428,8 +428,12 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
     util::PerformanceTrace::Scope s("TextLayoutCache::BuildVisualLineColumns");
     cached_visual_line_columns_.assign(lines.size(), 0);
     for (std::size_t index = 0; index < lines.size(); ++index) {
+      // One LineSpan read per line: `operator[]` goes through an indirect call
+      // into the piece tree, and this loop asked for the same line twice (once
+      // for the text, once for its length) on every line of the document.
+      const std::string_view line = lines[index];
       cached_visual_line_columns_[index] =
-          TextLayout::VisualColumnForTextColumn(lines[index], lines[index].size(), tab_size);
+          TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size);
     }
   }
 
