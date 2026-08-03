@@ -1,5 +1,7 @@
 #include "render/SdlTtfTextBackend.h"
 
+#include "render/GlyphSurfaceFormat.h"
+
 #if MICROIDE_HAS_SDL3_TTF
 
 #include <SDL3/SDL.h>
@@ -108,16 +110,18 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   // per-row conversion of the row text plus its line number, and it measured at
   // three times the cost of rasterizing the glyphs in the first place.
   //
-  // The first entry of the renderer's texture-format list is its preferred one.
-  // Falling back to RGBA32 keeps the previous behaviour if the query fails.
+  // The renderer's texture-format list is in its own preference order, but these
+  // surfaces hold glyph COVERAGE, which lives in the alpha channel -- so the
+  // first entry is only usable if it has one. The software renderer advertises
+  // XRGB8888 first, and picking it discarded every glyph's shape and painted the
+  // whole UI as solid blocks. ChooseGlyphSurfaceFormat keeps the preference
+  // order and skips the formats that cannot carry alpha.
   texture_format_ = SDL_PIXELFORMAT_RGBA32;
   if (const SDL_PropertiesID renderer_properties = SDL_GetRendererProperties(renderer_);
       renderer_properties != 0) {
     const auto* formats = static_cast<const SDL_PixelFormat*>(SDL_GetPointerProperty(
         renderer_properties, SDL_PROP_RENDERER_TEXTURE_FORMATS_POINTER, nullptr));
-    if (formats != nullptr && formats[0] != SDL_PIXELFORMAT_UNKNOWN) {
-      texture_format_ = formats[0];
-    }
+    texture_format_ = ChooseGlyphSurfaceFormat(formats);
   }
 
   // Batched-text path is GPU-only: it is a measured win on a GPU backend

@@ -297,6 +297,12 @@ class TextViewport {
   // ranges (e.g. the folding bracket scanner) use this to avoid thrashing the
   // LRU on lines that may be far outside the visible region.
   std::span<const SyntaxTokenKind> HighlightedLineTokensIfCached(std::size_t line_index) const;
+  // Appends, sorted, the line indices whose highlight tokens are currently
+  // cached (at most kHighlightCacheLimit of them). The fold bracket scan uses
+  // this to apply string/comment suppression by walking a cursor through the
+  // set, instead of probing the hash map once per line it scans -- the probe
+  // was the per-line cost left after the byte scan itself got cheap.
+  void AppendCachedHighlightedLines(std::vector<std::size_t>& out) const;
   // Background highlight prefetch. These let a worker thread tokenize ahead of
   // the viewport without touching live viewport state: BuildHighlightPrefetchRequest
   // captures an immutable snapshot on the main thread, the worker turns it into a

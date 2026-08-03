@@ -118,6 +118,18 @@ std::span<const SyntaxTokenKind> TextViewport::HighlightedLineTokensIfCached(
   return std::span<const SyntaxTokenKind>(it->second.data(), it->second.size());
 }
 
+void TextViewport::AppendCachedHighlightedLines(std::vector<std::size_t>& out) const {
+  if (!syntax_highlighting_enabled()) {
+    return;
+  }
+  const std::size_t first = out.size();
+  out.reserve(first + highlight_cache_.size());
+  for (const auto& entry : highlight_cache_) {
+    out.push_back(entry.first);
+  }
+  std::sort(out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
+}
+
 void TextViewport::EnsureInitialHighlightState() const {
   if (!syntax_highlighting_enabled()) {
     initial_highlight_state_.reset();

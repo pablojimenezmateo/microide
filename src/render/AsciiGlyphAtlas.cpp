@@ -1,5 +1,7 @@
 #include "render/AsciiGlyphAtlas.h"
 
+#include "render/GlyphSurfaceFormat.h"
+
 #if MICROIDE_HAS_SDL3_TTF
 
 #include <algorithm>
@@ -38,8 +40,12 @@ std::unique_ptr<AsciiGlyphAtlas> AsciiGlyphAtlas::Build(TTF_Font* font,
   atlas->font_ = font;
   atlas->font_height_px_ = font_height;
   atlas->reserved_slot_width_ = reserved;
+  // Every slot holds one glyph's coverage, and coverage IS the alpha channel --
+  // an alpha-less surface silently turns each glyph into an opaque rectangle.
+  // The caller already picks an alpha-capable format; enforce it here too,
+  // because this class is the one that cannot function without it.
   atlas->atlas_ = SDL_CreateSurface(static_cast<int>(kSlotCount) * reserved, font_height,
-                                    surface_format);
+                                    EnsureAlphaCapableFormat(surface_format));
   if (atlas->atlas_ == nullptr) {
     return nullptr;
   }

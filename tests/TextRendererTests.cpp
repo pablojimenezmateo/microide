@@ -9,7 +9,11 @@
 #include "editor/GutterMetrics.h"
 #include "editor/TextViewport.h"
 #include "platform/RuntimePaths.h"
+#include <cstdint>
+#include <cstring>
+
 #include "render/AsciiGlyphAtlas.h"
+#include "render/GlyphSurfaceFormat.h"
 #include "render/PixelAlign.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
@@ -448,6 +452,107 @@ void TestAsciiGlyphAtlasMatchesPerColorRendering() {
   SDL_DestroySurface(translucent_target);
 
   TTF_CloseFont(font);
+}
+
+// Regression: the atlas is allocated in the renderer's preferred texture format,
+// and the SOFTWARE renderer advertises SDL_PIXELFORMAT_XRGB8888 first -- a format
+// with no alpha channel. A glyph render is the text colour at EVERY pixel with
+// the shape carried entirely by per-pixel alpha, so an alpha-less atlas discarded
+// the shape and left an opaque rectangle: under the software renderer every ASCII
+// character painted as a solid block, and only strings containing a non-ASCII byte
+// (which skip the atlas for the whole-string path) came out right.
+//
+// The two atlas tests above both passed SDL_PIXELFORMAT_RGBA32, which has alpha --
+// which is exactly why they stayed green while the shipped software-renderer path
+// was blind. Pass the format that actually broke it.
+void TestAsciiGlyphAtlasKeepsCoverageUnderAlphaLessFormat() {
+  EnsureDummySdlVideo();
+  TTF_Font* font = OpenTestMonospaceFont();
+  Expect(font != nullptr, "alpha-less atlas test should find a usable monospace font");
+
+  auto atlas = microide::render::AsciiGlyphAtlas::Build(font, SDL_PIXELFORMAT_XRGB8888);
+  Expect(atlas != nullptr, "atlas should build even when asked for an alpha-less format");
+
+  SDL_Surface* surface = atlas->Surface();
+  Expect(surface != nullptr, "atlas should expose its backing surface");
+  const SDL_PixelFormatDetails* details = SDL_GetPixelFormatDetails(surface->format);
+  Expect(details != nullptr && details->Amask != 0,
+         "the atlas must upgrade an alpha-less request: coverage has nowhere else to live");
+
+  // 'M' is dense but never fills its cell. Blit it and count distinct alpha
+  // values: a real glyph has partially covered edge pixels, a discarded-alpha
+  // block is uniformly opaque.
+  SDL_Surface* scratch = SDL_CreateSurface(64, atlas->FontHeightPx(), SDL_PIXELFORMAT_RGBA32);
+  Expect(scratch != nullptr, "alpha-less atlas scratch surface should allocate");
+  Expect(SDL_FillSurfaceRect(scratch, nullptr, 0), "scratch should clear");
+  Expect(atlas->BlitInto(scratch, 0, 'M', SDL_Color{0xff, 0xff, 0xff, 0xff}),
+         "atlas should blit a glyph built on an alpha-less request");
+
+  int transparent = 0;
+  int opaque = 0;
+  Expect(SDL_LockSurface(scratch), "scratch should lock for readback");
+  const SDL_PixelFormatDetails* scratch_details = SDL_GetPixelFormatDetails(scratch->format);
+  for (int y = 0; y < scratch->h; ++y) {
+    for (int x = 0; x < scratch->w; ++x) {
+      const auto* row = static_cast<const std::uint8_t*>(scratch->pixels) + y * scratch->pitch;
+      std::uint32_t pixel = 0;
+      std::memcpy(&pixel, row + x * 4, sizeof(pixel));
+      std::uint8_t r = 0, g = 0, b = 0, a = 0;
+      SDL_GetRGBA(pixel, scratch_details, nullptr, &r, &g, &b, &a);
+      if (a == 0) {
+        ++transparent;
+      } else if (a == 255) {
+        ++opaque;
+      }
+    }
+  }
+  SDL_UnlockSurface(scratch);
+  SDL_DestroySurface(scratch);
+
+  Expect(opaque > 0, "a rasterized glyph should have fully covered interior pixels");
+  Expect(transparent > 0,
+         "a rasterized glyph must leave uncovered pixels around its shape -- an all-opaque "
+         "cell is the solid-block failure this test exists for");
+
+  TTF_CloseFont(font);
+}
+
+// The format choice itself, independent of any font: the renderer's preference
+// order is respected, but entries that cannot hold coverage are skipped.
+void TestGlyphSurfaceFormatChoiceAlwaysCarriesAlpha() {
+  using microide::render::ChooseGlyphSurfaceFormat;
+  using microide::render::EnsureAlphaCapableFormat;
+
+  const auto has_alpha = [](SDL_PixelFormat format) {
+    const SDL_PixelFormatDetails* details = SDL_GetPixelFormatDetails(format);
+    return details != nullptr && details->Amask != 0;
+  };
+
+  // What the software renderer actually advertises: alpha-less first.
+  const SDL_PixelFormat software_like[] = {SDL_PIXELFORMAT_XRGB8888, SDL_PIXELFORMAT_XBGR8888,
+                                           SDL_PIXELFORMAT_ARGB8888, SDL_PIXELFORMAT_UNKNOWN};
+  Expect(ChooseGlyphSurfaceFormat(software_like) == SDL_PIXELFORMAT_ARGB8888,
+         "an alpha-less preferred format should be skipped for the first one with alpha");
+
+  // A GPU renderer already offers alpha first; keep its preference exactly.
+  const SDL_PixelFormat gpu_like[] = {SDL_PIXELFORMAT_ARGB8888, SDL_PIXELFORMAT_XRGB8888,
+                                      SDL_PIXELFORMAT_UNKNOWN};
+  Expect(ChooseGlyphSurfaceFormat(gpu_like) == SDL_PIXELFORMAT_ARGB8888,
+         "a renderer whose preferred format has alpha should keep it");
+
+  // Nothing usable advertised, and no list at all: still never alpha-less.
+  const SDL_PixelFormat no_alpha_at_all[] = {SDL_PIXELFORMAT_XRGB8888, SDL_PIXELFORMAT_UNKNOWN};
+  Expect(has_alpha(ChooseGlyphSurfaceFormat(no_alpha_at_all)),
+         "a list with no alpha format at all must still yield one");
+  Expect(has_alpha(ChooseGlyphSurfaceFormat(nullptr)),
+         "a missing format list must still yield an alpha-capable format");
+
+  Expect(EnsureAlphaCapableFormat(SDL_PIXELFORMAT_XRGB8888) == SDL_PIXELFORMAT_ARGB8888,
+         "XRGB should upgrade to ARGB, preserving channel order");
+  Expect(EnsureAlphaCapableFormat(SDL_PIXELFORMAT_XBGR8888) == SDL_PIXELFORMAT_ABGR8888,
+         "XBGR should upgrade to ABGR, preserving channel order");
+  Expect(EnsureAlphaCapableFormat(SDL_PIXELFORMAT_ARGB8888) == SDL_PIXELFORMAT_ARGB8888,
+         "a format that already has alpha should pass through untouched");
 }
 
 void TestAsciiGlyphAtlasCoversPrintableRange() {
@@ -2485,6 +2590,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "AsciiGlyphAtlas covers the printable ASCII range",
           TestAsciiGlyphAtlasCoversPrintableRange);
+  AddTest(tests,
+          "AsciiGlyphAtlas keeps glyph coverage when asked for an alpha-less format",
+          TestAsciiGlyphAtlasKeepsCoverageUnderAlphaLessFormat);
+  AddTest(tests,
+          "Glyph surface format choice always carries alpha",
+          TestGlyphSurfaceFormatChoiceAlwaysCarriesAlpha);
 #endif
 }
 
