@@ -135,9 +135,77 @@ void TestPerfBaselineToleranceRoundTrip() {
          "distinct wall and allocation max tolerances should round-trip");
 }
 
+// The committed wall baselines are only reproducible on the harness's own lane
+// (`--video=dummy --renderer=software`, both applied before SDL_Init). Wrapping
+// microide_perf in `xvfb-run` or exporting SDL_VIDEODRIVER charges real
+// window-system present cost: measured 2-12x on every frame-pumping scenario,
+// ~1.0x on the pure-unit ones, with byte-identical allocation counts. That shape
+// is indistinguishable from a broad code regression -- it survived two sessions
+// of investigation, because a whole-suite A/B against the baseline commit
+// reproduces it (both sides windowed) and the allocation oracle agrees with the
+// baseline (allocations do not depend on the lane). The recipe reached people
+// through the committed docs and tooling, so that is where it is pinned shut.
+void TestPerfRecipesDoNotPinAVideoDriver() {
+  const std::filesystem::path repo_root = TestRoot().parent_path();
+  const std::filesystem::path scanned[] = {
+      repo_root / "dev-docs" / "performance" / "perf-harness.md",
+      repo_root / "tools" / "perf-compare.py",
+  };
+
+  std::size_t invocations_seen = 0;
+  for (const std::filesystem::path& path : scanned) {
+    Expect(std::filesystem::exists(path),
+           "perf recipe file should exist: " + path.string());
+    const std::string text = ReadFile(path);
+    // Loud-missing-target guard: if these files stop naming the binary, the scan
+    // below passes vacuously and this lint is dead.
+    const std::size_t mentions = [&] {
+      std::size_t count = 0;
+      for (std::size_t at = text.find("microide_perf"); at != std::string::npos;
+           at = text.find("microide_perf", at + 1)) {
+        ++count;
+      }
+      return count;
+    }();
+    Expect(mentions > 0, "perf recipe should still name microide_perf: " + path.string());
+    invocations_seen += mentions;
+
+    // Scan line by line so the prose that explains *why* the wrong lane is wrong
+    // (which necessarily names it) does not trip the rule -- only a line that
+    // pins a driver *and* runs the binary, or a shell line that pins one at all.
+    std::size_t line_number = 0;
+    std::size_t line_start = 0;
+    while (line_start <= text.size()) {
+      const std::size_t line_end = text.find('\n', line_start);
+      const std::string line =
+          text.substr(line_start, line_end == std::string::npos ? std::string::npos
+                                                               : line_end - line_start);
+      ++line_number;
+      const bool sets_video_driver = line.find("SDL_VIDEODRIVER=") != std::string::npos;
+      const bool wraps_in_xvfb = line.find("xvfb-run") != std::string::npos;
+      const bool is_prose = line.find('`') != std::string::npos &&
+                            line.find("microide_perf") == std::string::npos &&
+                            line.find("./build/") == std::string::npos;
+      if ((sets_video_driver || wraps_in_xvfb) && !is_prose) {
+        Expect(false, path.string() + ":" + std::to_string(line_number) +
+                          " pins a video driver for microide_perf; the harness owns its"
+                          " lane (--video=dummy) and a windowed run is advisory only: " +
+                          line);
+      }
+      if (line_end == std::string::npos) {
+        break;
+      }
+      line_start = line_end + 1;
+    }
+  }
+  Expect(invocations_seen >= 2, "perf recipes should reference microide_perf in both files");
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/RecipesDoNotPinAVideoDriver",
+          TestPerfRecipesDoNotPinAVideoDriver);
   AddTest(tests, "PerfBaseline/AllowsImprovements", TestPerfBaselineComparisonAllowsImprovements);
   AddTest(tests, "PerfBaseline/RejectsRegressions", TestPerfBaselineComparisonRejectsRegressions);
   AddTest(tests, "PerfBaseline/DecouplesWallAndAllocationTolerances",

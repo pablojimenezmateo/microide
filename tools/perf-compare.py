@@ -187,15 +187,21 @@ def run_streaming(argv: list[str], cwd: Path, log_file,
 
 
 # ---------------------------------------------------------------------------
-# Runner detection (xvfb-run or dummy SDL)
+# Runner environment
 # ---------------------------------------------------------------------------
 
 def detect_runner() -> list[str]:
-    if shutil.which("xvfb-run"):
-        return ["xvfb-run", "-a", "env",
-                "SDL_VIDEODRIVER=x11", "SDL_AUDIODRIVER=dummy"]
-    log(None, yellow("xvfb-run not found; falling back to SDL dummy driver"))
-    return ["env", "SDL_VIDEODRIVER=dummy", "SDL_AUDIODRIVER=dummy"]
+    """Prefix for a microide_perf invocation.
+
+    Deliberately empty. microide_perf pins its own lane (video=dummy,
+    renderer=software) before SDL_Init, which is the lane the committed
+    baselines were recorded in. This used to wrap the run in `xvfb-run -a env
+    SDL_VIDEODRIVER=x11`, which charged real window-system present cost: 2-12x
+    on every frame-pumping scenario, 1.0x on the pure-unit ones. Both sides of
+    an A/B paid it so the comparison stayed valid, but it made this tool several
+    times slower and buried small deltas under present jitter.
+    """
+    return ["env", "SDL_AUDIODRIVER=dummy"]
 
 
 # ---------------------------------------------------------------------------

@@ -235,6 +235,16 @@ class PerfHarness {
     // portable and never update baselines) -- it exists so GPU-only paths like
     // batched glyph text can be measured at all.
     std::string renderer_driver = "software";
+    // SDL *video* driver to measure through. "dummy" (default) is the
+    // baseline-gated reference lane: no window system, so a present is a no-op
+    // and a scenario's wall time is the app's own work. Any real video driver
+    // (x11, wayland) adds window-system present cost that lands only on
+    // frame-pumping scenarios -- measured on perf-runner-v1 at 2-12x the dummy
+    // lane for shell scenarios and 1.0x for pure-unit ones, with byte-identical
+    // allocation counts. That asymmetry silently invalidates every wall gate, so
+    // a non-dummy video driver is advisory only, exactly like a non-software
+    // renderer. "auto"/"default" leaves SDL_VIDEODRIVER alone and lets SDL pick.
+    std::string video_driver = "dummy";
   };
 
   static void RegisterScenario(const Scenario& scenario);
@@ -248,6 +258,10 @@ class PerfHarness {
   // "software", "opengl"). Empty before the first driver init. Backs report
   // metadata so the GPU advisory lane records the real backend it measured.
   static std::string ResolvedRendererDriver();
+  // SDL video driver the most recent InitializeDriver actually resolved (e.g.
+  // "dummy", "x11"). Read back from SDL rather than from the environment so the
+  // report records the lane that was measured, not the one that was requested.
+  static std::string ResolvedVideoDriver();
 
  private:
   struct Driver {
@@ -262,7 +276,8 @@ class PerfHarness {
   static bool InitializeDriver(Driver* driver,
                                std::optional<std::uint64_t> random_seed,
                                bool keep_artifacts = false,
-                               std::string_view renderer_driver = "software");
+                               std::string_view renderer_driver = "software",
+                               std::string_view video_driver = "dummy");
   static void ShutdownDriver(Driver* driver);
 };
 

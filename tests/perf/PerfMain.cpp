@@ -54,6 +54,10 @@ struct CliOptions {
   // SDL renderer driver to measure through (see RunOptions::renderer_driver).
   // Default "software" keeps the portable, baseline-gated reference lane.
   std::string renderer_driver = "software";
+  // SDL video driver to measure through (see RunOptions::video_driver). Default
+  // "dummy" keeps the baseline-gated reference lane, and the harness sets it
+  // itself so a bare `microide_perf` reproduces the gate.
+  std::string video_driver = "dummy";
 };
 
 // Set by main() after CLI parse so scenario lambdas registered at static-init
@@ -264,6 +268,13 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
     if (arg.rfind("--renderer=", 0) == 0) {
       options.renderer_driver = arg.substr(std::string("--renderer=").size());
       if (options.renderer_driver.empty()) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (arg.rfind("--video=", 0) == 0) {
+      options.video_driver = arg.substr(std::string("--video=").size());
+      if (options.video_driver.empty()) {
         return std::nullopt;
       }
       continue;
@@ -1424,7 +1435,8 @@ int main(int argc, char** argv) {
                  "[--report-json=path] [--report-text=path] "
                  "[--reference-runner=name] "
                  "[--layout-mode=auto|regular|compact] "
-                 "[--renderer=software|auto|<sdl-driver>]\n";
+                 "[--renderer=software|auto|<sdl-driver>] "
+                 "[--video=dummy|auto|<sdl-driver>]\n";
     return 1;
   }
 
@@ -1437,6 +1449,7 @@ int main(int argc, char** argv) {
   run_options.layout_mode_override = options->layout_mode;
   run_options.keep_artifacts = options->keep_artifacts;
   run_options.renderer_driver = options->renderer_driver;
+  run_options.video_driver = options->video_driver;
 
   // A non-software renderer is the advisory GPU lane: numbers are not
   // cross-machine portable, so they are reported but never gated or written to
@@ -1447,6 +1460,20 @@ int main(int argc, char** argv) {
     std::cerr << "--update-baseline is only valid on the software reference lane; "
                  "the GPU lane (--renderer=" << run_options.renderer_driver
               << ") is advisory and cannot write baselines\n";
+    return 1;
+  }
+  // Same rule for the video lane, and it is the one that actually bit: a real
+  // video driver adds window-system present cost to every frame-pumping
+  // scenario and none to the pure-unit ones, so a windowed run reads as a
+  // 2-12x regression across half the suite with byte-identical allocation
+  // counts. Two sessions chased that as a code regression before the lane was
+  // identified. Numbers from a windowed run are advisory and cannot be written
+  // back as baselines.
+  const bool windowed_lane = run_options.video_driver != "dummy";
+  if (windowed_lane && options->update_baseline) {
+    std::cerr << "--update-baseline is only valid on the dummy video reference lane; "
+                 "a windowed run (--video=" << run_options.video_driver
+              << ") measures window-system present cost and is advisory\n";
     return 1;
   }
   const auto stale_baselines = FindStaleBaselineScenarios(PerfHarness::RegisteredScenarios());
@@ -1611,12 +1638,28 @@ int main(int argc, char** argv) {
       continue;
     }
     const BaselineComparison comparison = CompareToBaseline(*baseline, *aggregate);
+    // A windowed run measures window-system present cost the baselines never
+    // recorded, so its wall numbers are not comparable. Allocation counts are:
+    // they came out byte-identical across the dummy and x11 lanes on every
+    // scenario in the suite. Enforce the half that is still meaningful and
+    // annotate the other half rather than reporting a suite-wide wall failure
+    // that says nothing about the code.
+    bool enforced_failure = false;
+    for (const MetricComparison& metric : comparison.metrics) {
+      if (metric.passed) {
+        continue;
+      }
+      if (windowed_lane && metric.metric.find("wall") != std::string::npos) {
+        continue;
+      }
+      enforced_failure = true;
+    }
     // Print a per-scenario verdict so a tripped gate is self-diagnosing: which
     // scenario, which metric, baseline vs measured, the delta, and the tolerance
     // it blew. Without this a failing run only surfaced a bare exit code and the
     // offending metric had to be reverse-engineered from --report-json. Smoke
     // runs do not enforce, so they annotate the line as advisory.
-    const char* verdict = comparison.passed ? "PASS" : (options->smoke ? "WARN" : "FAIL");
+    const char* verdict = !enforced_failure ? "PASS" : (options->smoke ? "WARN" : "FAIL");
     std::cerr << "[perf] " << verdict << ' ' << scenario.name << " (p50_wall="
               << aggregate->metrics.p50_wall_ms << "ms, p50_alloc="
               << aggregate->metrics.p50_allocations << ")\n";
@@ -1625,14 +1668,18 @@ int main(int argc, char** argv) {
         if (metric.passed) {
           continue;
         }
+        const bool advisory_metric =
+            windowed_lane && metric.metric.find("wall") != std::string::npos;
         const double delta_percent =
             metric.expected != 0.0 ? (metric.actual / metric.expected - 1.0) * 100.0 : 0.0;
         std::cerr << "[perf]   " << metric.metric << ": baseline=" << metric.expected
                   << " measured=" << metric.actual << " (" << (delta_percent >= 0.0 ? "+" : "")
-                  << delta_percent << "%, tolerance +" << metric.tolerance_percent << "%)\n";
+                  << delta_percent << "%, tolerance +" << metric.tolerance_percent << "%)"
+                  << (advisory_metric ? "  [advisory: windowed video lane, not comparable]" : "")
+                  << '\n';
       }
     }
-    if (!comparison.passed && !options->smoke) {
+    if (enforced_failure && !options->smoke) {
       all_passed = false;
     }
   }
@@ -1648,18 +1695,21 @@ int main(int argc, char** argv) {
   ReportMetadata metadata;
   metadata.runner_class =
       options->reference_runner.value_or(std::string("local-advisory"));
-  // The GPU lane is always advisory regardless of --reference-runner: only the
-  // software reference lane can be authoritative.
+  // The GPU and windowed lanes are always advisory regardless of
+  // --reference-runner: only the software-renderer + dummy-video reference lane
+  // can be authoritative.
   metadata.provenance =
-      !gpu_lane && options->reference_runner.has_value() &&
+      !gpu_lane && !windowed_lane && options->reference_runner.has_value() &&
               *options->reference_runner == std::string("perf-runner-v1")
           ? std::string("reference")
           : std::string("advisory");
-  if (const char* video = std::getenv("SDL_VIDEODRIVER")) {
-    metadata.sdl_video_driver = video;
-  } else {
-    metadata.sdl_video_driver = "default";
-  }
+  // Report the video lane actually measured, read back from SDL. Reading
+  // SDL_VIDEODRIVER out of the environment described what was *requested* and
+  // said "default" for the common case, which is precisely the information a
+  // reviewer needs to spot a windowed run.
+  const std::string resolved_video = PerfHarness::ResolvedVideoDriver();
+  metadata.sdl_video_driver =
+      resolved_video.empty() ? run_options.video_driver : resolved_video;
   // Report the backend actually measured (the GPU lane resolves e.g. "opengl").
   const std::string resolved_renderer = PerfHarness::ResolvedRendererDriver();
   metadata.sdl_renderer_driver =

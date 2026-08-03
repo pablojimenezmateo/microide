@@ -21,10 +21,12 @@ What they do **not** tell you:
 - how microide compares to VSCode, Zed, Helix, Sublime, or any other editor — no comparative
   measurement is performed, none is published, and the existing numbers are not meaningful in
   that comparison
-- behavior under a GPU-accelerated renderer by default; the reference (gated) lane pins the software
-  renderer. An **advisory GPU lane** exists (`--renderer=auto|<sdl-driver>`) for measuring GPU-only
-  paths like the batched glyph atlas — its numbers are printed but never gated or written to baselines
-  (cross-machine GPU timings are not portable), exactly like the DAP advisory scenarios
+- behavior under a GPU-accelerated renderer or a real window system by default; the reference
+  (gated) lane pins `--renderer=software --video=dummy`, and the harness applies both itself. Two
+  **advisory lanes** exist: `--renderer=auto|<sdl-driver>` for GPU-only paths like the batched glyph
+  atlas, and `--video=x11|wayland|auto` for window-system present cost. Both are printed but never
+  gated or written to baselines (neither is cross-machine portable), exactly like the DAP advisory
+  scenarios
 - behavior on other hardware than `perf-runner-v1`; cross-machine numbers are advisory
 - whether LTO "proves" cross-translation-unit extractions are free. LTO can recover some inlining
   loss, but residual sticky-scroll/render-path regressions still need direct profiling and explicit
@@ -203,7 +205,7 @@ reference-runner baselines.
 
 They lean on **decoupled wall vs allocation tolerances** (see below): the allocation counts are
 exactly deterministic run-to-run (the real complexity oracle, gated tight at 10/20/50%), while the
-wall envelopes are widened (75/250/400%) to absorb the software-render/xvfb scheduler jitter this
+wall envelopes are widened (75/250/400%) to absorb the software-render scheduler jitter this
 shared runner shows on sub-50 ms work. A return to O(n²) still blows the allocation gate by
 hundreds-plus percent; a constant-factor wall regression is caught precisely by the interleaved
 `perf-compare.py` current-vs-main run, where machine load cancels.
@@ -293,8 +295,7 @@ When a scenario fails and you need to inspect what the harness wrote into its
 sandbox, run with `--keep-artifacts`:
 
 ```bash
-env SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy \
-  ./build/microide-perf-make/microide/microide_perf \
+./build/microide-perf-make/microide/microide_perf \
     --scenarios=<failing-scenario> \
     --iterations=1 \
     --keep-artifacts
@@ -313,8 +314,10 @@ runs without re-reading the command line:
   passed, otherwise `local-advisory`
 - `provenance`: `reference` for the gate runner, `advisory` for any local or
   alternative-runner run
-- `sdl_video_driver`, `sdl_renderer_driver`: resolved at report-time from
-  `SDL_VIDEODRIVER` and the harness's hard-coded `software` renderer hint
+- `sdl_video_driver`, `sdl_renderer_driver`: the lanes actually measured, read
+  back from SDL after init (`dummy` / `software` for a reference run). A value
+  other than `dummy` means the run paid window-system present cost and its wall
+  numbers are advisory
 - `scenarios`, `iterations`, `layout_mode`, `seed`: exact workload definition
 - `isolated_app_root`: a stable string so the report records whether artifacts
   were retained for triage
@@ -456,16 +459,16 @@ Capture or refresh all Git workstation baselines on the reference runner (requir
 when baselines move):
 
 ```bash
-xvfb-run -a env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
-  ./build/microide-perf-make/microide/microide_perf \
+./build/microide-perf-make/microide/microide_perf \
     --reference-runner=perf-runner-v1 \
     --scenarios=git_sidebar_refresh_large_repo,git_sidebar_refresh_many_untracked,diff_open_1000_file_changes,diff_next_hunk_large_file,diff_stage_hunk_large_patch,diff_stage_selected_lines,merge_open_many_conflicts,merge_next_conflict_large_file,merge_accept_hunk_interleaved,merge_edit_result_then_scroll,commit_open_with_large_staged_set,external_change_refresh_open_diff,external_change_refresh_open_merge \
     --iterations=10 \
     --update-baseline
 ```
 
-Local dummy-driver runs are advisory (`provenance=advisory`); they are useful for smoke and
-triage but SHALL NOT replace `perf-runner-v1` evidence when updating committed baselines.
+Runs without `--reference-runner=perf-runner-v1` are advisory (`provenance=advisory`); they are
+useful for smoke and triage but SHALL NOT replace reference-runner evidence when updating committed
+baselines.
 
 - `repo_open_rss_idle` (gate): opens the large-project fixture, pumps the first frames, waits
   500 ms at idle, and gates memory while also tracking wall time and allocations through the normal
@@ -544,17 +547,12 @@ triage but SHALL NOT replace `perf-runner-v1` evidence when updating committed b
 ## Run Under Virtual Display
 
 ```bash
-xvfb-run -a ./build/microide-perf-make/microide/microide_perf --smoke
+./build/microide-perf-make/microide/microide_perf --smoke
 ```
 
-If SDL fails to initialize under Xvfb, force the expected environment variable names:
-
-```bash
-xvfb-run -a env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
-  ./build/microide-perf-make/microide/microide_perf --smoke
-```
-
-Use `SDL_VIDEODRIVER` (not `SDL_VIDEO_DRIVER`).
+The harness selects its own video driver (`dummy`) and renderer (`software`) before `SDL_Init`, so
+no display, `xvfb-run`, or `SDL_VIDEODRIVER` export is needed — and none should be used, because a
+real window system charges present cost the baselines do not contain (see "Reference Runner Class").
 
 ## Baseline Workflow
 
@@ -563,8 +561,7 @@ Per-scenario baselines are stored under `tests/perf/baselines/<scenario>.json`.
 Update one or more baselines:
 
 ```bash
-xvfb-run -a env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
-  ./build/microide-perf-make/microide/microide_perf \
+./build/microide-perf-make/microide/microide_perf \
     --scenarios=<comma-separated-scenarios> \
     --iterations=10 \
     --update-baseline
@@ -573,8 +570,7 @@ xvfb-run -a env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
 Check against existing baselines:
 
 ```bash
-xvfb-run -a env SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy \
-  ./build/microide-perf-make/microide/microide_perf --iterations=10
+./build/microide-perf-make/microide/microide_perf --iterations=10
 ```
 
 ## Baseline Change Rule
@@ -600,31 +596,63 @@ must be updated from this class (or a machine with equivalent characteristics) b
 replacing gate numbers.
 
 The maintainer's development workstation is the designated `perf-runner-v1` host. Baselines
-regenerated there with `microide_perf --update-baseline` (under `xvfb-run -a env
-SDL_VIDEODRIVER=x11 SDL_AUDIODRIVER=dummy`, passing `--reference-runner=perf-runner-v1` so reports
-carry reference provenance) are authoritative, not local-advisory.
+regenerated there with `microide_perf --update-baseline --reference-runner=perf-runner-v1` (so
+reports carry reference provenance) are authoritative, not local-advisory.
 
-Two caveats on this host:
+### The reference lane is a property of the binary, not of your shell
 
-- `repo_open_rss_idle`'s absolute 256 MiB steady-state gate is inflated by xvfb software-GL
-  (llvmpipe). It measures ~153 MiB for a fresh process here, but it only runs at all when the
-  process is fresh (see the scenario's two-check contract above), so a full-suite run exercises
-  the order-independent growth budget instead.
-- **Check the machine is idle before trusting a number, and before rebaselining.** These are
-  wall-clock gates on a shared workstation, and they are much noisier than the committed
-  tolerances assume. Measured on 2026-08-01, four scenarios
-  (`debug_pane_hittest_geometry`, `debug_value_tree_paging`, `debug_breakpoints_model_rebuild`,
-  `mid_file_edit_latency_large_file`) sat 40–120% over their committed baselines **on an
-  unmodified checkout of the previous commit**, with byte-identical allocation counts. Repeat
-  runs of the same binary swung `debug_pane_hittest_geometry` across 0.148–0.225 ms and
-  `debug_value_tree_paging` across 3.6–6.8 ms.
+Run the gate **bare**:
 
-  Two rules follow. First, a failed wall gate is not evidence of a regression until you have run
-  the same scenario on a baseline checkout in the same conditions — build the previous commit in
-  a worktree and measure both, interleaved. Second, identical allocation counts across a "+50%"
-  wall reading mean the algorithm did not change; the machine did. Do not rebaseline in that
-  state — it writes the noise into the committed numbers and destroys the signal for everyone
-  after you.
+```bash
+./build/microide-perf-make/microide/microide_perf --iterations=10 \
+    --reference-runner=perf-runner-v1
+```
+
+No `xvfb-run`, no exported `SDL_VIDEODRIVER`. The harness sets its own lane before `SDL_Init`:
+
+| knob | reference lane | advisory override | why |
+| --- | --- | --- | --- |
+| renderer | `software` | `--renderer=auto\|<driver>` | GPU numbers are not cross-machine portable |
+| video | `dummy` | `--video=auto\|<driver>` | a real window system charges present cost the baselines never recorded |
+
+Both overrides mark the run advisory, refuse `--update-baseline`, and are recorded in the report
+metadata (`sdl_video_driver` is now read back from SDL, so it names the lane actually measured).
+
+**Do not wrap the gate in `xvfb-run`.** It was documented that way, and it silently invalidates
+every wall gate. Measured 2026-08-03 on perf-runner-v1, same commit, same binary, dummy lane vs
+`xvfb`+`x11`:
+
+| scenario | dummy | xvfb/x11 | ratio |
+| --- | --- | --- | --- |
+| `git_sidebar_activate` | 3.9 ms | 45.1 ms | 11.5x |
+| `window_resize_stress` | 13.9 ms | 139.5 ms | 10.0x |
+| `cold_startup_no_project` | 2.3 ms | 17.5 ms | 7.5x |
+| `compare_tab_open` | 1.6 ms | 10.3 ms | 6.5x |
+| `menu_hover_switch` | 2.2 ms | 6.0 ms | 2.7x |
+| `dap_protocol_encode_decode` | 38.0 ms | 33.0 ms | 0.87x |
+| `syntax_highlight_cpp_lines` | 12.6 ms | 15.7 ms | 1.25x |
+| `settings_rows_rebuild` | 19.0 ms | 16.6 ms | 0.87x |
+
+The cost lands **only** on scenarios that pump frames and **not at all** on pure-unit ones, and
+allocation counts come out byte-identical in both lanes. That combination is exactly what a broad
+real regression looks like, which is why it survived two sessions of investigation: a whole-suite
+A/B against the baseline commit reproduces it (both sides are windowed), and the allocation oracle
+agrees with the baseline (allocations do not depend on the lane). A windowed run now downgrades its
+wall metrics to `[advisory: windowed video lane, not comparable]` and enforces only the allocation
+gates, so it can no longer masquerade as a regression report.
+
+One caveat on this host: `repo_open_rss_idle`'s absolute 256 MiB steady-state gate is inflated when
+run under software GL (llvmpipe). It measures ~153 MiB for a fresh process here, but it only runs
+at all when the process is fresh (see the scenario's two-check contract above), so a full-suite run
+exercises the order-independent growth budget instead.
+
+**Check the machine is idle before trusting a number, and before rebaselining.** Wall gates on a
+shared workstation are noisier than the committed tolerances assume, and this box has heterogeneous
+cores (8 Zen5 at 5.16 GHz, 16 Zen5c at 3.29 GHz) — the same scenario measured 1.37x apart depending
+on which cluster the scheduler picked. So: a failed wall gate is not evidence of a regression until
+you have run the same scenario on a baseline checkout **in the same lane**, interleaved. And
+identical allocation counts across a large wall delta mean the algorithm did not change — the
+machine or the lane did. Do not rebaseline in that state.
 
 ## Ad-hoc Branch-vs-Commit Comparison
 

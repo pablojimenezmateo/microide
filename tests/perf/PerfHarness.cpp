@@ -39,6 +39,12 @@ std::string& ResolvedRendererDriverStorage() {
   return driver;
 }
 
+// SDL video driver the last InitializeDriver actually got, for report metadata.
+std::string& ResolvedVideoDriverStorage() {
+  static std::string driver;
+  return driver;
+}
+
 double Percentile(std::vector<double> values, double p) {
   if (values.empty()) {
     return 0.0;
@@ -452,7 +458,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
 
   Driver driver;
   if (!InitializeDriver(&driver, options.random_seed, options.keep_artifacts,
-                        options.renderer_driver)) {
+                        options.renderer_driver, options.video_driver)) {
     return std::nullopt;
   }
 
@@ -557,9 +563,25 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
 bool PerfHarness::InitializeDriver(Driver* driver,
                                    std::optional<std::uint64_t> random_seed,
                                    bool keep_artifacts,
-                                   std::string_view renderer_driver) {
+                                   std::string_view renderer_driver,
+                                   std::string_view video_driver) {
   if (driver == nullptr) {
     return false;
+  }
+
+  // Resolve the requested video driver the same way, and for the same reason:
+  // the lane has to be a property of the harness, not of whatever the caller
+  // happened to export. "dummy" (default) presents to nothing, which is what the
+  // committed wall baselines are recorded against; "auto"/"default" leaves the
+  // environment alone so an operator can measure a real window system on
+  // purpose. Setting it here (before SDL_Init) is what makes a bare
+  // `microide_perf` run reproduce the gate without an xvfb wrapper.
+  if (video_driver == "auto" || video_driver == "default") {
+    // Deliberately not unset: "auto" means "whatever this environment picks",
+    // which includes an operator-exported SDL_VIDEODRIVER.
+  } else if (!video_driver.empty()) {
+    const std::string video_driver_owner(video_driver);
+    setenv("SDL_VIDEODRIVER", video_driver_owner.c_str(), 1);
   }
 
   // Resolve the requested renderer driver. "software" (default) pins the
@@ -598,6 +620,9 @@ bool PerfHarness::InitializeDriver(Driver* driver,
     HarnessError() = std::string("SDL_Init failed: ") + SDL_GetError();
     return false;
   }
+  if (const char* resolved_video = SDL_GetCurrentVideoDriver(); resolved_video != nullptr) {
+    ResolvedVideoDriverStorage() = resolved_video;
+  }
 
   driver->window = SDL_CreateWindow("microide-perf", 1920, 1080, SDL_WINDOW_HIGH_PIXEL_DENSITY);
   if (driver->window == nullptr) {
@@ -634,6 +659,10 @@ bool PerfHarness::InitializeDriver(Driver* driver,
 
 std::string PerfHarness::ResolvedRendererDriver() {
   return ResolvedRendererDriverStorage();
+}
+
+std::string PerfHarness::ResolvedVideoDriver() {
+  return ResolvedVideoDriverStorage();
 }
 
 void PerfHarness::ShutdownDriver(Driver* driver) {
