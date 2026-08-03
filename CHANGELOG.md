@@ -6,15 +6,95 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
-## [Unreleased]
+## [2.8.0] - 2026-08-03
 
-A cross-subsystem review sweep, plus a UI/UX consistency pass over how the
-surfaces answer the mouse, the keyboard, and the hovering pointer — and a second
-pass driven by screenshots of every surface, which is what turned up the text
-being cut mid-word and the quick-open modals not agreeing on where they sit. No
-public API or persisted-format changes.
+The largest cycle so far, in three parts. New capability: the language server's
+call hierarchy, code lenses and occurrence highlighting; find in the terminal;
+branch, sync and stash from inside the Git surface; scoped project search; and
+column selection with the mouse. A UI/UX consistency pass over how every surface
+answers the mouse, the keyboard and the hovering pointer — with a second pass
+driven by screenshots of each one, which is what turned up the text cut mid-word
+and the quick-open modals not agreeing on where they sit. And a sustained
+performance campaign against typing, scrolling, highlighting and file-open on
+large files, measured end to end on the reference runner. No public API or
+persisted-format changes.
 
 ### Added
+
+- **Call hierarchy.** `call-hierarchy [incoming|outgoing]` answers "who calls
+  this?" and "what does this call?" through `prepareCallHierarchy` chained into
+  the calls request, rendered as navigable `file:line:col` rows in the same
+  formatter Find References uses. Direction is not just a method name: incoming
+  calls navigate to the call sites *inside* each caller, which is what someone
+  tracing a symbol wants to read, while outgoing calls navigate to each callee's
+  own name. A server without `callHierarchyProvider` says so rather than
+  reporting "no callers" — that a server cannot answer is not evidence about the
+  code.
+- **Code lenses.** `textDocument/codeLens` renders line-level server actions
+  ("2 references", "Run test") end-of-line, or as above-line strips under
+  `plugins.code_lens_above`, and clicking one runs it. `codeLens/resolve` is part
+  of the feature rather than a later addition, because rust-analyzer and
+  typescript-language-server send lenses title-less; the original lens
+  round-trips verbatim so servers can correlate through their private `data`.
+- **Occurrence highlighting comes from the language server.** The editor used to
+  highlight other uses of the symbol under the caret by scanning visible lines
+  for the same spelling — which paints an unrelated local in another scope,
+  misses a shadowed name, and cannot tell a write from a read.
+  `textDocument/documentHighlight` answers instead where a server can, with write
+  highlights taking the strong tint; everything a server cannot answer keeps the
+  textual scan. A resting caret costs four integer compares per frame.
+- **Find in the terminal.** Ctrl+F over a focused terminal opens a find bar in the
+  same compact card the in-file find uses. Every hit highlights in the grid, the
+  current one in the active-match tint, and the counter reads `n/m` (`n/m+` when
+  the 5000-match cap truncates the scan). Enter and Shift+Enter step between hits
+  and scroll them into view; the first search lands on the *newest* hit, because
+  a build log is read from the bottom. `Aa`/`ab` (Alt+C / Alt+W) toggle case and
+  whole-word. The bar is non-modal — clicking the terminal underneath keeps it
+  open and returns focus — and Escape hands the keyboard back so readline's ^F
+  stays one keystroke away. Also reachable as `terminal-find [query]`.
+- **Branch, sync and stash, from inside the editor.** Nine actions —
+  `git-switch-branch`, `git-create-branch`, `git-fetch`, `git-pull`, `git-push`,
+  `git-publish-branch`, `git-sync`, `git-stash`, `git-stash-pop` — from the
+  command palette, the Git menu and the control channel. The Source Control
+  sidebar gains a second action row: the current branch (click to open a
+  filterable branch picker over local and remote refs) and a Sync button carrying
+  the ahead/behind counts, so the button says what syncing would actually do.
+  Every operation funnels through one classifier, so git's prose becomes an
+  actionable outcome (`AuthFailed`, `NoUpstream`, `NonFastForward`,
+  `DirtyWorktree`, `Conflict`, `BadRef`, `RepoLocked`, `NetworkFailed`,
+  `NothingToDo`) instead of a raw dump. A switch or stash pop rewrites files under
+  open editors, so clean buffers re-read from disk while dirty ones are left
+  alone. Only one git write runs at a time.
+- **Scoped project search.** "files to include" / "files to exclude" boxes behind
+  a `...` toggle in the search sidebar, taking VS Code-style comma-separated
+  globs; `i` and `x` jump straight to them. The scope is tested before a file is
+  opened, so an out-of-scope file costs one string match instead of a stat and a
+  whole-file read: on this repository a full-scan query goes 15.8 ms unscoped →
+  9.5 ms with `--include=*.cpp` → 7.4 ms with `--include=src/**`. Replace-all
+  honours the scope too — its whole-catalog fallback previously ignored it, and
+  would have rewritten exactly the files the search excluded.
+- **Column/box selection with the mouse.** Shift+Alt+drag (and Shift+Alt
+  off-column click) makes a rectangular selection: every line in the row span
+  gets a per-line selection between the two box columns, the target line holding
+  the primary selection and the rest becoming ranged secondary carets. Lines
+  shorter than both columns collapse to a zero-width end-of-line caret, as in
+  VSCode. This was the last documented multi-caret gap.
+- **Workspace edits can create, rename and delete files.** A server-driven rename
+  or extract refactor now applies `documentChanges` resource operations, not just
+  text edits: every op is validated against a simulated existence overlay
+  (project-root containment, collisions, missing sources, non-empty directories)
+  before anything is mutated, then applied with rollback-safe staging, with open
+  tabs, diagnostics and plugin decorations reconciled after. Edits are
+  version-aware.
+- **Find File and project search say when the index is incomplete**, and why —
+  "project too large", "tree too deep", "some folders unreadable". The scanner
+  used to return a prefix of the tree on hitting its entry budget or depth limit
+  and present it as an authoritative complete file set; an unreadable folder was
+  swallowed entirely rather than reported.
+- **The bottom panel's plugin surface is interactive**: wheel scrolling, a
+  grabbable scrollbar, and left-click dispatch on hit regions. It painted before
+  but was mouse-dead in every respect, because the panel's visibility predicate
+  said "terminal or output" while the layout said "content is not none".
 
 - **Double-click a resize divider to restore its default size.** Works on all
   six — sidebar, right/debug pane, editor split, bottom panel, and the compare
@@ -154,6 +234,67 @@ public API or persisted-format changes.
 
 ### Fixed
 
+- **Text is no longer painted as solid blocks under the software renderer.**
+  Glyph surfaces store *coverage*, and coverage lives entirely in the alpha
+  channel — a blended glyph is the text colour at every pixel with the shape
+  carried by per-pixel alpha. Since glyph composites started being built in the
+  renderer's own preferred texture format (a real speedup), a renderer
+  advertising `XRGB8888` first — which has no alpha — got the shape discarded and
+  an opaque rectangle blitted in its place. The tell was that only strings
+  containing a non-ASCII byte came out right, because those skip the glyph atlas
+  for the whole-string path: the editor body was blocks while `UTF-8 · LF` in the
+  status bar was readable. The format is now chosen by walking the renderer's own
+  preference order and taking the first entry that can hold alpha.
+- **Status-bar segments that promise an action perform it.** Four segments
+  carried tooltips written as commands — "Go to Line", "Open Problems", "Open
+  Source Control", "Change indent settings" — for controls that did nothing at
+  all: the `clickable` flag driving the pointer cursor and hover highlight was
+  never set by any segment, and no mouse-down path anywhere looked at the status
+  bar. The affordance existed in three places and the action in none. `clickable`
+  is now derived from the segment's command, so the two cannot drift apart again.
+  Language, Encoding and LSP stay read-only; their tooltips describe rather than
+  instruct.
+- **Inline blame stops re-spawning git every frame.** Scrolling a compare view in
+  a long-lived process could reach a state where blame re-ran its whole git probe
+  chain per frame and never once wrote a cache entry — 45 spawns and 264 ms of
+  subprocess wait per iteration, against 2 spawns and 5 ms for the same work in a
+  fresh process. Three post-subprocess steps were gated on "is my window still the
+  newest one", which under a moving viewport it never is, so the file-level
+  verdict was never stamped, so the throttle had nothing to hit, so the next frame
+  re-probed. None of those steps depend on the window: a span's attributions are a
+  pure function of file, head, stamp and line range.
+- **The curved toolbar glyphs are drawn as strokes.** SDL's line renderer is 1px
+  and unantialiased, so a curve assembled from a handful of long chords shows its
+  facets at icon size: Step Over was a ten-chord half-circle that read as a
+  scribble, Restart a visibly lumpy sixteen-sided polygon, and the boolean
+  checkmark two hairlines with mixed fractional and absolute geometry, so it sat
+  thin and lopsided. Arcs are now sampled at two samples per pixel of arc length,
+  snapped to the pixel grid, at the same 1px weight as the straight-line glyphs
+  beside them.
+- **The debug toolbar's tooltip appears when you hover, not when something else
+  repaints.** It was the one tooltip in the shell not resolved through the shared
+  hover surface: the motion handler invalidated the toolbar *card*, while the
+  tooltip is anchored below it, so nothing ever invalidated the region the tooltip
+  occupies and it reached the screen only when an unrelated repaint — usually the
+  caret blink — happened to cover it. Hover for less than a blink period and no
+  tooltip appeared at all.
+- **An empty picker says "no matches" once.** Making the count line read "No
+  matching files" put it directly above the list's own "No matching files". The
+  count row is blank when there is nothing to count and the message lives in the
+  list area alone, where the eye goes when a list is empty. That also uncovered a
+  hardcoded `0 of 0` fallback that substituted a fake count whenever a picker had
+  no summary at all.
+- **A failed LSP request no longer reports an authoritative empty answer.**
+  Go-to-definition, references, type definition, implementation, declaration,
+  workspace symbol, rename and formatting said "No X found" when the request had
+  actually timed out or errored — the two were indistinguishable in the callback.
+  Every request now carries an explicit outcome, and a transport failure surfaces
+  "Language server did not respond" instead.
+- **Plugin-provided strings are bounded per field.** A single hostile or buggy
+  plugin field could hand the host a multi-hundred-megabyte string to copy,
+  retain, measure and render. Every scalar provider field now passes a 4 MiB
+  central backstop on a UTF-8 boundary, with tighter 32 KiB caps on the plugin
+  diagnostic message and the hover title/content.
 - **Key hints spell themselves one way.** The git sidebar's action line and the
   compare review header joined their segments with `|` while every other hint in
   the app used `·` — including the overlay hint whose helper documents `·` as the
@@ -374,8 +515,66 @@ public API or persisted-format changes.
 - **Reference snippets from large files** (Assist) returned extra unrelated lines
   and read the whole file instead of stopping at the requested range.
 
-### Changed
+### Performance
 
+Seven measurement passes on the reference runner, each one gated by a scenario
+before it was optimized. Every number below is measured on that runner; the
+per-pass write-ups, including the changes that were measured and **rejected**,
+are in `dev-docs/performance/performance-findings.md`.
+
+- **Typing in a large file is roughly 2.4x faster.** Mid-file edit latency on a
+  50k-line file went 245 → 102 ms across the campaign, and editing line 0 — the
+  worst case, because the bracket resume has nothing to resume from — went 277.9
+  → 169.1 ms with shell-thread allocations dropping 57,123 → 19,147. The fixes
+  were mostly things being redone that did not need redoing: editing line 0
+  rebuilt every line's visual width and cleared two 50k-entry vectors that were
+  about to be refilled; the indent fold scan re-derived "is this line blank" for
+  every line, on a check that could never fire; the width update heap-allocated a
+  vector per keystroke; the indent measure counted leading whitespace one byte at
+  a time (2.30 → 0.63 ms); and the "incremental" bracket resume walked the whole
+  document anyway.
+- **Syntax highlighting is ~1.9x faster** — 24.5 → 12.9 ms per 4000 C++ lines,
+  11.5 → 5.8 ms on Python. `PCRE2_UCP` costs about half the match time and
+  `PCRE2_UTF` another sixth, but both only change behaviour at code points ≥
+  0x80, so each rule is compiled twice and an all-ASCII line takes the byte-mode
+  copy — verified across all 1906 built-in rule literals, both compilations,
+  20k fixture lines, zero divergences. The match-data cache was a hash probe per
+  rule per line and is now an array index, and matching dispatches straight to
+  the PCRE2 JIT where that is safe. It had no scenario of its own before this
+  cycle, which is why a 2x change in it had been invisible.
+- **The fold recompute is ~1.5x faster per keystroke** (4.8 → 3.1 ms on 50k
+  lines): the bracket scan skips eight bytes at a time, the per-line syntax-token
+  probe is deferred until a line is known to hold a bracket, and the merge buckets
+  by opener line instead of comparison-sorting tens of thousands of ranges per
+  keystroke (0.75 → 0.06 ms).
+- **The editor view model was built twice per frame** whenever sticky scroll was
+  on, which is the default: the band's height decides the visible row count, and
+  the band's line list came out of the view-model build, so the pane built the
+  whole model against a zero-height band just to read a count.
+- **Scrolling a large file no longer leaves a second copy of it resident.** The
+  render row loop read line text through the copying accessor — six heap copies
+  per row, into an unbounded cache cleared only on mutation. Allocations across
+  the full-document scroll workout fell 29%.
+- **Opening a file is faster**: newlines are indexed with `memchr` instead of byte
+  by byte (8.2M iterations down to one scan for the 50k-line fixture, 2.64 → 0.34
+  ms), line endings and encoding are classified in fewer passes over the bytes,
+  and a fold model attaching no longer wipes every layout cache it is about to
+  rebuild.
+- **Every subprocess spawn stopped sleeping up to 5 ms** after its output had
+  already been read; the child is now waited on as an event. This is paid by git,
+  LSP, DAP and every plugin-launched tool.
+- **Indent guides are computed without sorting** — 46 → 4.2 µs per frame.
+- **The file watcher stopped doing its slow work on the shell thread.**
+  `close()` on an inotify descriptor blocks for milliseconds at random, and
+  watches were being removed one syscall at a time before the close.
+- **Workspace state writes moved off the shell thread**, and a state file that
+  already holds the bytes about to be written is not rewritten at all. Opening a
+  file no longer pays a durable disk write for the recents list.
+- **Git status refresh stops re-deriving normalized paths**, the sidebar resolves
+  tree badges by prefix strip rather than path algebra, and blame stops
+  re-spawning git per frame for files it has already determined it cannot answer.
+- **JSON objects are a sorted flat vector rather than a hash map**, which is
+  faster to build and to walk for the small objects LSP and DAP traffic in.
 - **Hover cards stop re-wrapping their text every frame.** Wrapping normalizes,
   tokenizes and measures the whole string, and ran several times per frame for as
   long as a card was on screen. It is now memoized on (text, width, line cap,
