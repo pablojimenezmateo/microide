@@ -1,5 +1,6 @@
 #include "editor/TextViewport.h"
 #include "editor/PathKey.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewportInternal.h"
 
 #include <algorithm>
@@ -45,6 +46,12 @@ TextViewport::TextViewport(const TextViewport& other)
       save_ensure_final_newline_(other.save_ensure_final_newline_),
       save_line_ending_override_(other.save_line_ending_override_),
       lc_view_(other.lc_view_),
+      language_id_(other.language_id_),
+      language_id_document_(other.language_id_document_),
+      language_id_path_(other.language_id_path_),
+      language_id_content_revision_(other.language_id_content_revision_),
+      language_id_registry_revision_(other.language_id_registry_revision_),
+      language_id_valid_(other.language_id_valid_),
       secondary_carets_(other.secondary_carets_),
       secondary_caret_positions_cache_(other.secondary_caret_positions_cache_),
       layout_cache_(other.layout_cache_),
@@ -99,6 +106,12 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       save_ensure_final_newline_(other.save_ensure_final_newline_),
       save_line_ending_override_(other.save_line_ending_override_),
       lc_view_(std::move(other.lc_view_)),
+      language_id_(std::move(other.language_id_)),
+      language_id_document_(other.language_id_document_),
+      language_id_path_(std::move(other.language_id_path_)),
+      language_id_content_revision_(other.language_id_content_revision_),
+      language_id_registry_revision_(other.language_id_registry_revision_),
+      language_id_valid_(other.language_id_valid_),
       secondary_carets_(std::move(other.secondary_carets_)),
       secondary_caret_positions_cache_(std::move(other.secondary_caret_positions_cache_)),
       layout_cache_(std::move(other.layout_cache_)),
@@ -150,6 +163,12 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   save_ensure_final_newline_ = other.save_ensure_final_newline_;
   save_line_ending_override_ = other.save_line_ending_override_;
   lc_view_ = std::move(other.lc_view_);
+  language_id_ = std::move(other.language_id_);
+  language_id_document_ = other.language_id_document_;
+  language_id_path_ = std::move(other.language_id_path_);
+  language_id_content_revision_ = other.language_id_content_revision_;
+  language_id_registry_revision_ = other.language_id_registry_revision_;
+  language_id_valid_ = other.language_id_valid_;
   secondary_carets_ = std::move(other.secondary_carets_);
   secondary_caret_positions_cache_ = std::move(other.secondary_caret_positions_cache_);
   layout_cache_ = std::move(other.layout_cache_);
@@ -178,6 +197,33 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   other.undo_history_ = TextViewportUndoHistory{};
   InvalidateVisualColumnCache();
   return *this;
+}
+
+const std::string& TextViewport::language_id() const {
+  util::AddPerformanceCounter(util::PerfCounterId::EditorFiletypeMemoQueries);
+  const void* document = document_.get();
+  const std::uint64_t revision = content_revision();
+  const std::size_t registry_revision = runtime_syntax::RegistryRevision();
+  if (language_id_valid_ && language_id_document_ == document &&
+      language_id_content_revision_ == revision &&
+      language_id_registry_revision_ == registry_revision &&
+      (document == nullptr || language_id_path_ == document_->path)) {
+    util::AddPerformanceCounter(util::PerfCounterId::EditorFiletypeMemoHits);
+    return language_id_;
+  }
+  if (document == nullptr) {
+    language_id_.clear();
+  } else {
+    // Bounded head scan only -- LineSpan reads through the live buffer, so this
+    // never materializes the document.
+    language_id_ = runtime_syntax::DetectFiletype(document_->path, LineSpan(document_->lines));
+    language_id_path_ = document_->path;
+  }
+  language_id_document_ = document;
+  language_id_content_revision_ = revision;
+  language_id_registry_revision_ = registry_revision;
+  language_id_valid_ = true;
+  return language_id_;
 }
 
 void TextViewport::SetPlaceholderText(std::string text) {

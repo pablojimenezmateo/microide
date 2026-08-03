@@ -5,7 +5,9 @@
 #include <unordered_map>
 
 #include "plugin/PluginHost.h"
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
+#include "util/TransparentStringHash.h"
 
 namespace microide::workspace {
 
@@ -177,6 +179,17 @@ std::unordered_map<std::string, LanguageContract> BuildDefaults() {
 
 struct WorkspaceLanguageContract::Impl {
   std::unordered_map<std::string, LanguageContract> table;
+
+  // Memo behind ResolveEditorView. Mutable because resolution is a pure query;
+  // `views_revision == 0` means "never populated", which is distinguishable
+  // because WorkspaceLanguageContract's revision starts at 1.
+  mutable std::unordered_map<std::string, std::shared_ptr<const editor::LanguageContractView>,
+                             util::TransparentStringHash, std::equal_to<>>
+      editor_views;
+  mutable std::size_t editor_views_revision = 0;
+  mutable bool editor_views_auto_close = false;
+  mutable bool editor_views_surround = false;
+  mutable bool editor_views_smart_indent = false;
 };
 
 WorkspaceLanguageContract::WorkspaceLanguageContract() : impl_(std::make_unique<Impl>()) {
@@ -415,6 +428,57 @@ LanguageContractView WorkspaceLanguageContract::ResolveView(std::string_view lan
   view.language_id = language_id;
   view.contract = Find(language_id);
   return view;
+}
+
+std::shared_ptr<const editor::LanguageContractView> WorkspaceLanguageContract::ResolveEditorView(
+    std::string_view language_id,
+    bool auto_close_enabled,
+    bool surround_enabled,
+    bool smart_indent_enabled) const {
+  util::AddPerformanceCounter(util::PerfCounterId::LanguageContractViewQueries);
+  if (impl_->editor_views_revision != revision_ ||
+      impl_->editor_views_auto_close != auto_close_enabled ||
+      impl_->editor_views_surround != surround_enabled ||
+      impl_->editor_views_smart_indent != smart_indent_enabled) {
+    // The toggles are baked into the view, so a toggle change invalidates every
+    // cached view -- clear rather than try to patch them in place.
+    impl_->editor_views.clear();
+    impl_->editor_views_revision = revision_;
+    impl_->editor_views_auto_close = auto_close_enabled;
+    impl_->editor_views_surround = surround_enabled;
+    impl_->editor_views_smart_indent = smart_indent_enabled;
+  } else if (const auto it = impl_->editor_views.find(language_id);
+             it != impl_->editor_views.end()) {
+    return it->second;
+  }
+
+  util::AddPerformanceCounter(util::PerfCounterId::LanguageContractViewBuilds);
+  auto view = std::make_shared<editor::LanguageContractView>();
+  if (const LanguageContract* contract = Find(language_id); contract != nullptr) {
+    view->auto_close_pairs.reserve(contract->auto_close_pairs.size());
+    for (const auto& pair : contract->auto_close_pairs) {
+      view->auto_close_pairs.push_back(editor::LanguagePair{pair.open, pair.close});
+    }
+    view->surround_pairs.reserve(contract->surround_pairs.size());
+    for (const auto& pair : contract->surround_pairs) {
+      view->surround_pairs.push_back(editor::LanguagePair{pair.open, pair.close});
+    }
+    view->indent_after_open_patterns = contract->indent_after_open_patterns;
+    view->dedent_on_close_chars = contract->dedent_on_close_chars;
+    view->line_comment = contract->line_comment;
+    view->block_comment_open = contract->block_comment.open;
+    view->block_comment_close = contract->block_comment.close;
+    view->inhibit_pairs_in_strings = contract->inhibit_pairs_in_strings;
+    view->inhibit_pairs_in_comments = contract->inhibit_pairs_in_comments;
+  }
+  view->auto_close_enabled = auto_close_enabled;
+  view->surround_enabled = surround_enabled;
+  view->smart_indent_enabled = smart_indent_enabled;
+  // Keyed by the raw detected id, not the canonical contract key: two ids that
+  // alias to one contract ("c++" and "cpp") get one entry each, which is a
+  // duplicate view but keeps the lookup a single hash with no normalization
+  // allocation on the hot path.
+  return impl_->editor_views.emplace(std::string(language_id), std::move(view)).first->second;
 }
 
 }  // namespace microide::workspace

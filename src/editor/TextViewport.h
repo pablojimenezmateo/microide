@@ -100,8 +100,49 @@ class TextViewport {
   // Per-tab language contract for auto-close, surround, smart indent, etc.
   // Default-constructed view disables every per-language behavior; pushing in
   // a populated view is how the workspace turns these features on.
-  void SetLanguageContractView(LanguageContractView view) { lc_view_ = std::move(view); }
-  const LanguageContractView& language_contract_view() const { return lc_view_; }
+  //
+  // The view is held by shared_ptr because every tab of the same language wants
+  // the *same* view: the workspace builds one per (language, toggle set) and
+  // hands the same instance to all of them, so a settings change no longer
+  // deep-copies four vectors and three strings into every open tab
+  // (TD-2026-08-03-110). Null means "no contract" and reads back as a static
+  // default-constructed view.
+  void SetLanguageContractView(std::shared_ptr<const LanguageContractView> view) {
+    lc_view_ = std::move(view);
+  }
+  // Convenience overload for callers that own a one-off view (tests, and any
+  // caller with no shared table behind it). Allocates; the shared overload does
+  // not.
+  void SetLanguageContractView(LanguageContractView view) {
+    lc_view_ = std::make_shared<const LanguageContractView>(std::move(view));
+  }
+  // Inline (not out-of-line in the .cpp): the per-keystroke language-behavior
+  // paths consult this several times per typed character, and a non-LTO build
+  // would otherwise pay a cross-TU call for a pointer deref.
+  const LanguageContractView& language_contract_view() const {
+    return lc_view_ != nullptr ? *lc_view_ : kNoLanguageContractView;
+  }
+
+  // Memoized filetype id for this buffer ("c++", "python", … ; empty when the
+  // syntax registry has no match).
+  //
+  // Detection is cheap per call but not free: it materializes the
+  // signature-scan head of the buffer into a vector<std::string>, runs the
+  // filename / header / signature regexes, and returns an owned std::string.
+  // Callers ask constantly and almost always about an unchanged buffer -- every
+  // prepared frame (fold refresh, status bar), every LSP/assist request, and
+  // once per open tab on every settings change.
+  //
+  // The answer is a pure function of (document identity, content revision, path,
+  // syntax-registry revision), so the memo keys on exactly those and is
+  // self-invalidating. This supersedes the per-caller `runtime_syntax::
+  // FiletypeMemo` instances that the status bar and the per-tab fold state each
+  // used to carry.
+  //
+  // The reference is into the memo, so it stays valid only until the next
+  // resolve *on this viewport*. Callers that hold it across an edit, a path
+  // change, or an unrelated call that might re-resolve should copy it.
+  const std::string& language_id() const;
   void LoadContent(std::string_view content,
                    const std::filesystem::path& path = {},
                    std::optional<LineEnding> line_ending = std::nullopt);
@@ -653,7 +694,17 @@ class TextViewport {
   bool save_trim_trailing_whitespace_ = false;
   bool save_ensure_final_newline_ = false;
   std::optional<LineEnding> save_line_ending_override_;
-  LanguageContractView lc_view_;
+  // Shared, not owned: see SetLanguageContractView. Null ⇒ no contract.
+  std::shared_ptr<const LanguageContractView> lc_view_;
+  // language_id() memo. Keyed on document identity + content revision + path +
+  // syntax-registry revision; `language_id_valid_` is the "never resolved yet"
+  // flag, since an empty filetype is a legitimate cached answer.
+  mutable std::string language_id_;
+  mutable const void* language_id_document_ = nullptr;
+  mutable std::filesystem::path language_id_path_;
+  mutable std::uint64_t language_id_content_revision_ = 0;
+  mutable std::size_t language_id_registry_revision_ = 0;
+  mutable bool language_id_valid_ = false;
   std::vector<SecondaryCaret> secondary_carets_;
   // Cache for secondary_caret_positions(): mirrors `secondary_carets_.position` and is rebuilt
   // lazily when sizes differ or any element changed. Capacity persists across rebuilds.

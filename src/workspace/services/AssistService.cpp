@@ -15,7 +15,6 @@
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/FileUri.h"
-#include "workspace/LanguageDetection.h"
 #include "workspace/lsp/LspWorkspaceEditOps.h"
 #include "workspace/lsp/LspPositionEncoding.h"
 #include "workspace/lsp/LspViewportPositions.h"
@@ -114,7 +113,7 @@ bool AssistService::ShowCompletionOverlay(std::string* error_message) {
     return false;
   }
 
-  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
 
   // Open the overlay in a loading state immediately, then query the plugin worker
@@ -366,7 +365,7 @@ bool AssistService::ShowInsertSnippetOverlay(std::string* error_message) {
     }
     return false;
   }
-  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::string language_id = viewport->language_id();
   const LanguageContract* contract = language_contract_->Find(language_id);
   if (contract == nullptr || contract->snippets.empty()) {
     if (error_message != nullptr) {
@@ -419,7 +418,7 @@ bool AssistService::TrySnippetTabInEditor(bool shift_tab) {
 
 bool AssistService::TrySnippetPrefixExpansion(TabEntry::EditorTabState& tab,
                                               editor::TextViewport& viewport) {
-  const std::string language_id = DetectViewportLanguageId(viewport);
+  const std::string language_id = viewport.language_id();
   const LanguageContract* contract = language_contract_->Find(language_id);
   if (contract == nullptr || contract->snippets.empty()) {
     return false;
@@ -568,7 +567,7 @@ bool AssistService::ShowCodeActionsOverlay(std::string* error_message,
     return false;
   }
 
-  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
   const std::optional<editor::SelectionRange> selection = viewport->selection_range();
   const editor::SelectionRange range =
@@ -847,7 +846,7 @@ bool AssistService::GoToLspDefinition(std::string* error_message) {
   // navigation waits for its answer and uses the plugin result only if the
   // server comes back empty, so a slower LSP reply can't be pre-empted by a
   // stale plugin hit.
-  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
   const std::size_t request_line = viewport->cursor_line();
   const std::size_t request_column = viewport->cursor_column();
@@ -1025,7 +1024,7 @@ bool AssistService::FindLspReferences(std::string* error_message) {
   // Query the plugin provider and the language server CONCURRENTLY, then render
   // the de-duplicated union once both have resolved (LSP-first for served
   // languages). A single output-channel rebuild avoids mid-flight flicker.
-  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
   const std::size_t request_line = viewport->cursor_line();
   const std::size_t request_column = viewport->cursor_column();
@@ -1458,7 +1457,7 @@ void AssistService::PrepareRenameForCursor(std::function<void(bool, std::string)
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   const LspClient::Position position = ByteColumnToLspPosition(
       *viewport, viewport->cursor_line(), viewport->cursor_column(), encoding);
-  std::string language_id = DetectViewportLanguageId(*viewport);
+  std::string language_id = viewport->language_id();
   operations_.ensure_lsp_document_open(*viewport, *client, language_id);
   client->RequestPrepareRenameAsync(
       FileUriForPath(request_path), position,
@@ -1670,7 +1669,7 @@ bool AssistService::ShowSignatureHelp(std::string* error_message) {
   // popup waits for its answer and uses the plugin result only if the server
   // comes back empty. The lookups run on the worker / I/O thread so neither
   // blocks the UI; the popup is chosen and shown from the mailbox drain.
-  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
   const std::size_t request_line = viewport->cursor_line();
   const std::size_t request_column = viewport->cursor_column();

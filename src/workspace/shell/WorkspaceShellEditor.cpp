@@ -16,41 +16,6 @@
 
 namespace microide::workspace {
 
-namespace {
-
-editor::LanguageContractView BuildEditorLanguageContractView(
-    const WorkspaceLanguageContract& contracts,
-    std::string_view language_id,
-    bool auto_close_enabled,
-    bool surround_enabled,
-    bool smart_indent_enabled) {
-  editor::LanguageContractView view;
-  const auto resolved = contracts.ResolveView(language_id);
-  if (const LanguageContract* contract = resolved.contract; contract != nullptr) {
-    view.auto_close_pairs.reserve(contract->auto_close_pairs.size());
-    for (const auto& pair : contract->auto_close_pairs) {
-      view.auto_close_pairs.push_back(editor::LanguagePair{pair.open, pair.close});
-    }
-    view.surround_pairs.reserve(contract->surround_pairs.size());
-    for (const auto& pair : contract->surround_pairs) {
-      view.surround_pairs.push_back(editor::LanguagePair{pair.open, pair.close});
-    }
-    view.indent_after_open_patterns = contract->indent_after_open_patterns;
-    view.dedent_on_close_chars = contract->dedent_on_close_chars;
-    view.line_comment = contract->line_comment;
-    view.block_comment_open = contract->block_comment.open;
-    view.block_comment_close = contract->block_comment.close;
-    view.inhibit_pairs_in_strings = contract->inhibit_pairs_in_strings;
-    view.inhibit_pairs_in_comments = contract->inhibit_pairs_in_comments;
-  }
-  view.auto_close_enabled = auto_close_enabled;
-  view.surround_enabled = surround_enabled;
-  view.smart_indent_enabled = smart_indent_enabled;
-  return view;
-}
-
-}  // namespace
-
 void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const {
   static const project::EditorConfigProperties kNoEditorConfig;
   const project::EditorConfigProperties* editor_config = &kNoEditorConfig;
@@ -110,17 +75,17 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
                                  ? editor_config->line_ending
                                  : settings.save_line_ending);
 
-  // The expensive per-tab work: a bounded head-scan filetype detection plus a
-  // language-contract build. Skipped when no contract-affecting toggle changed — see
-  // the family split in ApplyLiveSettings (TD-2026-07-17A-103).
+  // The per-tab contract work, skipped when no contract-affecting toggle changed —
+  // see the family split in ApplyLiveSettings (TD-2026-07-17A-103). Both halves are
+  // memoized now (TD-2026-08-03-110): the filetype behind the viewport's own
+  // memo (nothing about the buffer changed, so a settings walk re-detects
+  // nothing), and the view behind the contract table's shared cache, so 40 tabs
+  // of one language share one view instead of owning 40 copies of it.
   if (!include_contract) {
     return;
   }
-  const std::string language_id =
-      editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
-  viewport.SetLanguageContractView(BuildEditorLanguageContractView(
-      language_contract_, language_id, settings.auto_close, settings.surround,
-      settings.smart_indent));
+  viewport.SetLanguageContractView(language_contract_.ResolveEditorView(
+      viewport.language_id(), settings.auto_close, settings.surround, settings.smart_indent));
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts) {
@@ -228,10 +193,7 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
   const LanguageContract* contract = nullptr;
   {
     util::PerformanceTrace::Scope s("WorkspaceShell::EnsureFoldingModelFreshForTab::Language");
-    const std::string& language_id = editor_tab->filetype_memo.Resolve(
-        active_viewport, active_viewport->path(), active_viewport->content_revision(),
-        active_viewport->lines());
-    contract = language_contract_.ResolveView(language_id).contract;
+    contract = language_contract_.ResolveView(active_viewport->language_id()).contract;
   }
   {
     util::PerformanceTrace::Scope s("WorkspaceShell::EnsureFoldingModelFreshForTab::EnsureFresh");

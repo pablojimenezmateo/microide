@@ -1399,23 +1399,6 @@ std::string DetectFiletype(const std::filesystem::path& path) {
   return definition == nullptr ? std::string{} : definition->filetype;
 }
 
-const std::string& FiletypeMemo::Resolve(const void* owner,
-                                         const std::filesystem::path& path,
-                                         std::uint64_t content_revision,
-                                         LineSpan lines) {
-  const std::size_t registry_revision = RegistryRevision();
-  if (owner_ == owner && owner != nullptr && content_revision_ == content_revision &&
-      registry_revision_ == registry_revision && path_ == path) {
-    return filetype_;
-  }
-  filetype_ = DetectFiletype(path, lines);
-  owner_ = owner;
-  path_ = path;
-  content_revision_ = content_revision;
-  registry_revision_ = registry_revision;
-  return filetype_;
-}
-
 void CompileDefinition(std::uint32_t definition_id) {
   // Idempotent (std::call_once) and bounds-checked inside EnsureDefinitionCompiled;
   // a no-op for id 0, an out-of-range id, or an eager/already-compiled definition.

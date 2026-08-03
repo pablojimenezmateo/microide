@@ -9,6 +9,8 @@
 #include <unordered_map>
 #include <vector>
 
+#include "editor/LanguageContractView.h"
+
 namespace microide::plugin {
 class PluginHost;
 }  // namespace microide::plugin
@@ -93,6 +95,25 @@ class WorkspaceLanguageContract {
 
   // Always returns a view; `view.contract` is null when no entry exists.
   LanguageContractView ResolveView(std::string_view language_id) const;
+
+  // The editor-facing projection of a contract: the pairs/patterns/comment
+  // tokens the `TextViewport` needs, plus the three global behavior toggles.
+  //
+  // Shared and memoized, because the caller is `ApplyEditorPreferences` walking
+  // every open tab: 40 `.cpp` tabs used to each build — and each *own* — a
+  // byte-identical view, copying four vectors and three strings per tab on every
+  // settings change, project activation, and session restore
+  // (TD-2026-08-03-110). The cache is keyed by language id and dropped whole
+  // when the contract table (`revision()`) or any of the three toggles changes,
+  // so a stale view is not representable.
+  //
+  // Never null. Callers push the result straight into
+  // `TextViewport::SetLanguageContractView`.
+  std::shared_ptr<const editor::LanguageContractView> ResolveEditorView(
+      std::string_view language_id,
+      bool auto_close_enabled,
+      bool surround_enabled,
+      bool smart_indent_enabled) const;
 
   // Monotonically increasing on every successful Refresh; consumers cache
   // their derived state keyed on this counter.

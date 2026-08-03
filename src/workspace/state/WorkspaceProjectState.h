@@ -500,11 +500,6 @@ struct LspUiState {
   int request_in_flight_count = 0;
   Uint64 request_started_ticks = 0;
   Uint64 request_timeout_ticks = 0;
-  // Single-slot memo for active-viewport language detection, keyed by path, so the
-  // per-frame status-bar/provider/sync callers don't re-run filetype detection.
-  // mutable so const provider queries can refresh it.
-  mutable std::filesystem::path language_cache_path;
-  mutable std::string language_cache_id;
 };
 
 struct PanelState {

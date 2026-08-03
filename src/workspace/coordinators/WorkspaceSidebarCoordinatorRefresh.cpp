@@ -8,7 +8,6 @@
 
 #include "editor/TextViewport.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
-#include "workspace/LanguageDetection.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
@@ -338,7 +337,7 @@ bool SidebarCoordinator::RefreshOutline() {
     return false;
   }
 
-  const std::string language_id = DetectViewportLanguageId(*viewport);
+  const std::string language_id = viewport->language_id();
   const std::filesystem::path request_path = viewport->path();
   // Show the loading state immediately; document symbols are queried on the worker
   // and flattened in on the drain without blocking the UI.

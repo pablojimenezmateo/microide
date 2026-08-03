@@ -39,6 +39,10 @@ namespace microide::util {
   X(EditorPresentationRevisionBumps, "editor.presentation_revision_bumps")                      \
   X(EditorEnsureWrappedRowLayoutsRebuilds, "editor.ensure_wrapped_row_layouts_rebuilds")        \
   X(EditorEnsureWrappedRowLayoutsLineVisits, "editor.ensure_wrapped_row_layouts_line_visits")   \
+  X(EditorFiletypeMemoQueries, "editor.filetype_memo_queries")                                  \
+  X(EditorFiletypeMemoHits, "editor.filetype_memo_hits")                                        \
+  X(LanguageContractViewQueries, "language_contract.view_queries")                              \
+  X(LanguageContractViewBuilds, "language_contract.view_builds")                                \
   X(TerminalSnapshotLineRangeIfChangedCalls, "terminal.snapshot_line_range_if_changed_calls")   \
   X(TerminalSnapshotLineRangeIfChangedCopiedLines,                                              \
     "terminal.snapshot_line_range_if_changed_copied_lines")                                     \

@@ -904,10 +904,8 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
   std::unordered_set<std::string_view> changed_language_set(changed_languages.begin(),
                                                              changed_languages.end());
   const auto should_invalidate_viewport = [&changed_language_set](const editor::TextViewport& viewport) {
-    const std::string language =
-        editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
-    return !language.empty() &&
-           changed_language_set.contains(std::string_view(language));
+    const std::string_view language = viewport.language_id();
+    return !language.empty() && changed_language_set.contains(language);
   };
 
   if (editor::TextViewport* viewport = ActiveEditorViewport();
@@ -926,9 +924,8 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
 
     if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
         !tab.compare->right_viewport.path().empty()) {
-      const std::string language = editor::runtime_syntax::DetectFiletype(
-          tab.compare->right_viewport.path(), tab.compare->right_viewport.lines());
-      if (language.empty() || !changed_language_set.contains(std::string_view(language))) {
+      const std::string_view language = tab.compare->right_viewport.language_id();
+      if (language.empty() || !changed_language_set.contains(language)) {
         continue;
       }
       RefreshCompareTabDerivedState(*tab.compare);
@@ -937,10 +934,8 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
 
     if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
       auto& merge_tab = *tab.merge;
-      const std::string language =
-          editor::runtime_syntax::DetectFiletype(merge_tab.result_viewport.path(),
-                                                 merge_tab.result_viewport.lines());
-      if (language.empty() || !changed_language_set.contains(std::string_view(language))) {
+      const std::string_view language = merge_tab.result_viewport.language_id();
+      if (language.empty() || !changed_language_set.contains(language)) {
         continue;
       }
       merge_tab.incoming_initial_syntax_state =
@@ -1038,7 +1033,10 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
   if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
     return;
   }
-  const std::string language_id = editor::runtime_syntax::DetectFiletype(viewport->path(), viewport->lines());
+  // Copied, not bound by reference: this is held across EnsureLspDocumentOpen and
+  // the callback install below, and language_id() hands back a reference into a
+  // memo that any intervening re-resolve on this viewport would overwrite.
+  const std::string language_id = viewport->language_id();
   if (language_id.empty()) {
     return;
   }

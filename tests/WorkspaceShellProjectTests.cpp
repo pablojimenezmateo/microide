@@ -2215,6 +2215,53 @@ void TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts() {
          "background tab contract is also refreshed by the all-tabs contract rebuild");
 }
 
+// TD-2026-08-03-110: tabs of the same language share ONE contract view instead of
+// each owning a byte-identical copy of it. Address identity is the assertion —
+// forty `.cpp` tabs used to mean forty deep copies of four vectors and three
+// strings on every settings change, project activation and session restore.
+void TestWorkspaceShellSameLanguageTabsShareOneContractView() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path first = root / "first.cpp";
+  const std::filesystem::path second = root / "second.cpp";
+  const std::filesystem::path other = root / "script.py";
+  WriteFile(first, "int a() { return 0; }\n");
+  WriteFile(second, "int b() { return 1; }\n");
+  WriteFile(other, "value = 1\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+  WorkspaceShellTestAccess::OpenFile(shell, other);
+  WorkspaceShellTestAccess::ApplyEditorPreferencesToAllTabs(shell);
+
+  const auto& cpp_first = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0)
+                              .language_contract_view();
+  const auto& cpp_second = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1)
+                               .language_contract_view();
+  const auto& python = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 2)
+                           .language_contract_view();
+  Expect(&cpp_first == &cpp_second,
+         "two .cpp tabs must reference the same shared contract view, not two copies");
+  Expect(&cpp_first != &python, "a different language must resolve to a different view");
+  Expect(!cpp_first.auto_close_pairs.empty(), "the shared C++ view still carries its pairs");
+
+  // A contract-affecting toggle is baked into the view, so it must produce a new
+  // shared view rather than mutating the one every tab points at.
+  Expect(cpp_first.auto_close_enabled, "auto-close starts enabled");
+  Expect(ExecuteCommand(shell, "toggle-editor-auto-close"),
+         "toggle-editor-auto-close should execute");
+  const auto& cpp_first_after = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0)
+                                    .language_contract_view();
+  const auto& cpp_second_after = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 1)
+                                     .language_contract_view();
+  Expect(!cpp_first_after.auto_close_enabled, "the toggle reaches the first tab");
+  Expect(!cpp_second_after.auto_close_enabled, "the toggle reaches the second tab");
+  Expect(&cpp_first_after == &cpp_second_after,
+         "both .cpp tabs still share one view after the toggle rebuild");
+}
+
 // A non-contract preference change (tab size) still applies its cheap runtime setter
 // to every open tab even though the language-contract rebuild is skipped.
 void TestWorkspaceShellTabSizeChangeAppliesToAllTabsWithoutContractRebuild() {
@@ -5009,6 +5056,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAutoCloseToggleUpdatesViewportContract);
   AddTest(tests, "WorkspaceShell/AutoCloseToggleUpdatesAllTabContracts",
           TestWorkspaceShellAutoCloseToggleUpdatesAllTabContracts);
+  AddTest(tests, "WorkspaceShell/SameLanguageTabsShareOneContractView",
+          TestWorkspaceShellSameLanguageTabsShareOneContractView);
   AddTest(tests, "WorkspaceShell/TabSizeChangeAppliesToAllTabsWithoutContractRebuild",
           TestWorkspaceShellTabSizeChangeAppliesToAllTabsWithoutContractRebuild);
   AddTest(tests, "WorkspaceShell/TabKeyIndentsMultiLineSelection",

@@ -22,7 +22,6 @@
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
-#include "workspace/LanguageDetection.h"
 #include "workspace/lsp/LspClientTrace.h"
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/lsp/LspPositionEncoding.h"
@@ -70,19 +69,6 @@ editor::TextPosition AdjustPositionForReplace(editor::TextPosition p,
                                 p.column};
   }
   return new_end;
-}
-
-// Memoized language detection for the active viewport. The result is stable while
-// the active file is unchanged, so this collapses the repeated per-frame filetype
-// detection (status bar + provider checks + sync) into a single regex pass.
-std::string DetectActiveLanguageIdCached(const editor::TextViewport& viewport,
-                                         const LspUiState& lsp) {
-  if (!lsp.language_cache_path.empty() && viewport.path() == lsp.language_cache_path) {
-    return lsp.language_cache_id;
-  }
-  lsp.language_cache_path = viewport.path();
-  lsp.language_cache_id = DetectViewportLanguageId(viewport);
-  return lsp.language_cache_id;
 }
 
 std::string SerializeViewportText(const editor::TextViewport& viewport) {
@@ -343,7 +329,7 @@ std::string LspService::ActiveLanguageIdForProvider() const {
   if (viewport == nullptr || viewport->path().empty()) {
     return {};
   }
-  return DetectActiveLanguageIdCached(*viewport, CurrentProjectState().lsp);
+  return viewport->language_id();
 }
 
 bool LspService::HasActiveCompletionProvider() const {
@@ -382,8 +368,7 @@ LspClient::ReadinessSnapshot LspService::ActiveLspReadinessSnapshot(bool ensure_
     return snapshot;
   }
 
-  const std::string language_id =
-      DetectActiveLanguageIdCached(*viewport, CurrentProjectState().lsp);
+  const std::string& language_id = viewport->language_id();
   if (language_id.empty()) {
     return snapshot;
   }
@@ -578,12 +563,14 @@ LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport
     }
     return nullptr;
   }
-  const LspUiState& lsp_ui = CurrentProjectState().lsp;
+  // The viewport owns the memo, so this is a hash-free field compare on a
+  // settled buffer -- no per-frame re-detection, and (unlike the path-keyed
+  // cache this replaced) it re-detects when the buffer's content actually
+  // changes, so an edited shebang no longer pins the stale language.
+  const std::string& detected_language = viewport.language_id();
   if (language_id != nullptr) {
-    *language_id = DetectActiveLanguageIdCached(viewport, lsp_ui);
+    *language_id = detected_language;
   }
-  const std::string detected_language =
-      language_id != nullptr ? *language_id : DetectActiveLanguageIdCached(viewport, lsp_ui);
   if (detected_language.empty()) {
     return nullptr;
   }
@@ -923,8 +910,7 @@ void LspService::RequestLspCodeLenses(const editor::TextViewport& viewport, LspC
   }
   ProjectWorkspaceState* const project = &CurrentProjectState();
   std::string uri = FileUriForPath(viewport.path());
-  std::string language_id = editor::runtime_syntax::DetectFiletype(viewport.path(),
-                                                                   viewport.lines());
+  std::string language_id = viewport.language_id();
   const std::uint64_t generation = NextOverlayGeneration(code_lens_generation_, uri);
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(client);
   const bool can_resolve = client.SupportsCodeLensResolve();

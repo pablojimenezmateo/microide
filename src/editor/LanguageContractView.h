@@ -41,4 +41,10 @@ struct LanguageContractView {
   bool inhibit_pairs_in_comments = true;
 };
 
+// The "no contract" answer, shared so a viewport without one reads back a
+// reference rather than paying for an owned empty view. Dynamically initialized
+// at load (the vectors/strings are non-trivial), so reading it costs no
+// thread-safe-static guard on the per-keystroke paths that consult it.
+inline const LanguageContractView kNoLanguageContractView;
+
 }  // namespace microide::editor

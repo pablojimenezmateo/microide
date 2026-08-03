@@ -87,10 +87,6 @@ class StatusBarModelService {
     std::filesystem::path normalized_viewport_path;
   };
 
-  // Shared memo (see runtime_syntax::FiletypeMemo). This was a hand-rolled
-  // four-field cache here while the fold refresh -- the other per-frame caller --
-  // had none at all; one implementation now serves both.
-  editor::runtime_syntax::FiletypeMemo language_memo_;
   ProjectSegmentCache project_segment_cache_;
   EditorSegmentsCache editor_segments_cache_;
 };

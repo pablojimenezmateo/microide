@@ -8,8 +8,8 @@ namespace microide::workspace {
 
 namespace {
 
-std::string DetectActiveLanguageId(const editor::TextViewport& viewport) {
-  return editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
+const std::string& DetectActiveLanguageId(const editor::TextViewport& viewport) {
+  return viewport.language_id();
 }
 
 }  // namespace

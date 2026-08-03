@@ -2087,6 +2087,66 @@ void TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists() {
          "CMakeLists.txt should still resolve to the CMake syntax definition");
 }
 
+void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
+  namespace perf = microide::tests::perf;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("int main() { return 0; }\n", "/tmp/memo-settled.cpp");
+
+  // First resolve is the cold one (head scan + owned string).
+  Expect(viewport.language_id() == "c++", "cold resolve should detect the C++ definition");
+
+  // Every later ask about an unchanged buffer must be a pure field compare.
+  // Before the memo moved onto the viewport, ApplyEditorPreferences re-detected
+  // the filetype of every open tab on every settings change (TD-2026-08-03-110).
+  const auto before = perf::Allocations::Snapshot();
+  for (int i = 0; i < 64; ++i) {
+    Expect(viewport.language_id() == "c++", "warm resolve should return the memoized filetype");
+  }
+  const auto delta = perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0, "a memo hit must not allocate");
+}
+
+void TestTextViewportLanguageIdMemoInvalidatesOnContentChange() {
+  using microide::editor::runtime_syntax::DetectFiletype;
+  // No extension, so detection depends entirely on the shebang line. The memo
+  // this replaced (LspUiState::language_cache_*) was keyed on the path alone, so
+  // it pinned the first answer forever and an edited shebang kept reporting the
+  // stale language to every LSP/provider caller.
+  const std::filesystem::path path = "/tmp/memo-shebang";
+  const std::vector<std::string> shell_lines = {"#!/bin/sh", "echo hi"};
+  const std::vector<std::string> python_lines = {"#!/usr/bin/env python3", "print('hi')"};
+  const std::string shell_id = DetectFiletype(path, shell_lines);
+  const std::string python_id = DetectFiletype(path, python_lines);
+  // Guard the guard: if shebang detection ever stops distinguishing these, the
+  // rest of the test would pass vacuously.
+  Expect(!shell_id.empty() && shell_id != python_id,
+         "the two shebangs must detect as different languages for this test to mean anything");
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("#!/bin/sh\necho hi\n", path);
+  Expect(viewport.language_id() == shell_id, "shebang should drive the initial detection");
+
+  viewport.LoadContent("#!/usr/bin/env python3\nprint('hi')\n", path);
+  Expect(viewport.language_id() == python_id,
+         "a content change must re-detect; a path-keyed cache would pin the first answer");
+}
+
+void TestTextViewportLanguageIdMemoInvalidatesOnPathChange() {
+  using microide::editor::runtime_syntax::DetectFiletype;
+  const std::vector<std::string> lines = {"value = 1"};
+  const std::string python_id = DetectFiletype("/tmp/memo-rename.py", lines);
+  const std::string lua_id = DetectFiletype("/tmp/memo-rename.lua", lines);
+  Expect(!python_id.empty() && python_id != lua_id,
+         "the two extensions must detect as different languages for this test to mean anything");
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("value = 1\n", "/tmp/memo-rename.py");
+  Expect(viewport.language_id() == python_id, "extension should drive the initial detection");
+
+  viewport.SetPath("/tmp/memo-rename.lua");
+  Expect(viewport.language_id() == lua_id, "a rename must re-detect from the new extension");
+}
+
 void TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent() {
   using microide::editor::SyntaxHighlighter;
   using microide::editor::TextBuffer;
@@ -3909,6 +3969,12 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeKeepsCMakeLists",
           TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
+  AddTest(tests, "TextViewport/LanguageIdMemoIsAllocationFreeOnASettledBuffer",
+          TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer);
+  AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnContentChange",
+          TestTextViewportLanguageIdMemoInvalidatesOnContentChange);
+  AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnPathChange",
+          TestTextViewportLanguageIdMemoInvalidatesOnPathChange);
   AddTest(tests, "TextViewport/RuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent",
           TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",

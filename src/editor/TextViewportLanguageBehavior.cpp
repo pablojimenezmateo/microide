@@ -144,7 +144,7 @@ std::string TextViewport::AutoIndentForNewline(std::size_t line, std::size_t col
     base_indent.assign(current_line, 0, indent_columns);
   }
 
-  if (!lc_view_.smart_indent_enabled || lc_view_.indent_after_open_patterns.empty()) {
+  if (!language_contract_view().smart_indent_enabled || language_contract_view().indent_after_open_patterns.empty()) {
     return base_indent;
   }
 
@@ -152,7 +152,7 @@ std::string TextViewport::AutoIndentForNewline(std::size_t line, std::size_t col
   if (clamped_column < trimmed.size()) {
     return base_indent;
   }
-  for (const std::string& pattern : lc_view_.indent_after_open_patterns) {
+  for (const std::string& pattern : language_contract_view().indent_after_open_patterns) {
     if (pattern.empty()) {
       continue;
     }
@@ -172,10 +172,10 @@ std::string TextViewport::IndentUnit() const {
 }
 
 bool TextViewport::TryAutoCloseInsert(char ch) {
-  if (!lc_view_.auto_close_enabled || has_selection()) {
+  if (!language_contract_view().auto_close_enabled || has_selection()) {
     return false;
   }
-  const auto* pair = FindAutoCloseOpener(lc_view_, ch);
+  const auto* pair = FindAutoCloseOpener(language_contract_view(), ch);
   if (pair == nullptr || pair->close.empty()) {
     return false;
   }
@@ -187,7 +187,7 @@ bool TextViewport::TryAutoCloseInsert(char ch) {
   if (InInsertionSuppressedScope(cursor_line_, clamped_column)) {
     return false;
   }
-  if (!ShouldAutoCloseAtNext(current_line, clamped_column, lc_view_)) {
+  if (!ShouldAutoCloseAtNext(current_line, clamped_column, language_contract_view())) {
     return false;
   }
   // Same-character pairs (quotes): avoid stacking when the previous char is
@@ -216,14 +216,14 @@ bool TextViewport::TryAutoCloseInsert(char ch) {
 }
 
 bool TextViewport::TrySurroundInsert(char ch) {
-  if (!lc_view_.surround_enabled) {
+  if (!language_contract_view().surround_enabled) {
     return false;
   }
   const auto sel = selection_range();
   if (!sel.has_value()) {
     return false;
   }
-  const auto* pair = FindSurroundOpener(lc_view_, ch);
+  const auto* pair = FindSurroundOpener(language_contract_view(), ch);
   if (pair == nullptr || pair->open.empty() || pair->close.empty()) {
     return false;
   }
@@ -281,7 +281,7 @@ bool TextViewport::TrySurroundInsert(char ch) {
 }
 
 bool TextViewport::TrySkipOverClose(char ch) {
-  if (!lc_view_.auto_close_enabled || has_selection()) {
+  if (!language_contract_view().auto_close_enabled || has_selection()) {
     return false;
   }
   if (cursor_line_ >= document_->lines.size()) {
@@ -295,7 +295,7 @@ bool TextViewport::TrySkipOverClose(char ch) {
   if (current_line[clamped_column] != ch) {
     return false;
   }
-  if (FindAutoCloseCloser(lc_view_, ch) == nullptr) {
+  if (FindAutoCloseCloser(language_contract_view(), ch) == nullptr) {
     return false;
   }
   cursor_column_ = clamped_column + 1;
@@ -306,13 +306,13 @@ bool TextViewport::TrySkipOverClose(char ch) {
 }
 
 bool TextViewport::MaybeDedentOnClose(char ch) {
-  if (!lc_view_.smart_indent_enabled) {
+  if (!language_contract_view().smart_indent_enabled) {
     return false;
   }
   if (has_selection()) {
     return false;
   }
-  if (!DedentOnCloseTokenMatches(lc_view_, ch)) {
+  if (!DedentOnCloseTokenMatches(language_contract_view(), ch)) {
     return false;
   }
   if (cursor_line_ >= document_->lines.size()) {
@@ -341,7 +341,7 @@ bool TextViewport::MaybeDedentOnClose(char ch) {
 
 std::optional<TextViewport::NewlineBraceSplit> TextViewport::ComputeNewlineBraceSplit(
     std::size_t line, std::size_t column) const {
-  if (!lc_view_.auto_close_enabled) {
+  if (!language_contract_view().auto_close_enabled) {
     return std::nullopt;
   }
   if (line >= document_->lines.size()) {
@@ -353,7 +353,7 @@ std::optional<TextViewport::NewlineBraceSplit> TextViewport::ComputeNewlineBrace
   }
   const char prev = current_line[column - 1];
   const char next = current_line[column];
-  const auto* opener = FindAutoCloseOpener(lc_view_, prev);
+  const auto* opener = FindAutoCloseOpener(language_contract_view(), prev);
   if (opener == nullptr || opener->close.size() != 1 || opener->close[0] != next) {
     return std::nullopt;
   }
@@ -399,7 +399,7 @@ bool TextViewport::TryInsertNewlineSplitBraces() {
 }
 
 bool TextViewport::InInsertionSuppressedScope(std::size_t line, std::size_t column) const {
-  if ((!lc_view_.inhibit_pairs_in_strings && !lc_view_.inhibit_pairs_in_comments) ||
+  if ((!language_contract_view().inhibit_pairs_in_strings && !language_contract_view().inhibit_pairs_in_comments) ||
       line >= document_->lines.size()) {
     return false;
   }
@@ -414,10 +414,10 @@ bool TextViewport::InInsertionSuppressedScope(std::size_t line, std::size_t colu
   const std::size_t clamped_column = TextLayout::ClampTextColumn(text, column);
   const std::size_t token_index = clamped_column == 0 ? 0 : std::min(clamped_column - 1, tokens.size() - 1);
   const SyntaxTokenKind kind = tokens[token_index];
-  if (lc_view_.inhibit_pairs_in_strings && kind == SyntaxTokenKind::String) {
+  if (language_contract_view().inhibit_pairs_in_strings && kind == SyntaxTokenKind::String) {
     return true;
   }
-  if (lc_view_.inhibit_pairs_in_comments && kind == SyntaxTokenKind::Comment) {
+  if (language_contract_view().inhibit_pairs_in_comments && kind == SyntaxTokenKind::Comment) {
     return true;
   }
   return false;
@@ -542,7 +542,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
       }
 
       const auto* sur_pair =
-          lc_view_.surround_enabled ? FindSurroundOpener(lc_view_, ch) : nullptr;
+          language_contract_view().surround_enabled ? FindSurroundOpener(language_contract_view(), ch) : nullptr;
       if (sur_pair != nullptr && !sur_pair->open.empty() && !sur_pair->close.empty() &&
           !InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
         const std::string inner = detail::TextBetweenLines(document_->lines, norm);
@@ -587,7 +587,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
       continue;
     }
 
-    const auto* close_pair = lc_view_.auto_close_enabled ? FindAutoCloseCloser(lc_view_, ch) : nullptr;
+    const auto* close_pair = language_contract_view().auto_close_enabled ? FindAutoCloseCloser(language_contract_view(), ch) : nullptr;
     if (close_pair != nullptr && column < current_line.size() && current_line[column] == ch) {
       caret_changed = true;
       sites[slot_index] =
@@ -596,9 +596,9 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     }
 
     std::string replacement(1, ch);
-    const auto* open_pair = lc_view_.auto_close_enabled ? FindAutoCloseOpener(lc_view_, ch) : nullptr;
+    const auto* open_pair = language_contract_view().auto_close_enabled ? FindAutoCloseOpener(language_contract_view(), ch) : nullptr;
     if (open_pair != nullptr && !open_pair->close.empty() && !InInsertionSuppressedScope(line, column) &&
-        ShouldAutoCloseAtNext(current_line, column, lc_view_)) {
+        ShouldAutoCloseAtNext(current_line, column, language_contract_view())) {
       if (!(open_pair->open == open_pair->close && column > 0 && current_line[column - 1] == ch)) {
         replacement = open_pair->open + open_pair->close;
       }
