@@ -52,8 +52,14 @@ editor::LanguageContractView BuildEditorLanguageContractView(
 }  // namespace
 
 void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const {
+  static const project::EditorConfigProperties kNoEditorConfig;
+  const bool editorconfig_enabled =
+      SettingFlagEnabled(GetSettingValue("editor.editorconfig.enabled"), true);
   ApplyDetectedIndentAfterPreferences(
-      viewport, [this](std::string_view id) { return GetSettingValue(id); });
+      viewport, [this](std::string_view id) { return GetSettingValue(id); },
+      editorconfig_enabled && !viewport.path().empty()
+          ? context_.current_project_state.editor_config.Resolve(viewport.path())
+          : kNoEditorConfig);
 }
 
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
@@ -62,22 +68,39 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
     return SettingFlagEnabled(GetSettingValue(id), default_value);
   };
 
+  // A `.editorconfig` in the repository is the project author's statement of how
+  // its files are formatted, so it wins over our own settings for the properties
+  // it names — matching VSCode, where EditorConfig overrides both the configured
+  // indent and detectIndentation. Properties it does not name fall through to the
+  // user/project setting untouched. Resolution is memoized per path; a project
+  // with no `.editorconfig` costs one hash lookup here.
+  static const project::EditorConfigProperties kNoEditorConfig;
+  const project::EditorConfigProperties& editor_config =
+      setting_enabled("editor.editorconfig.enabled", true) && !viewport.path().empty()
+          ? context_.current_project_state.editor_config.Resolve(viewport.path())
+          : kNoEditorConfig;
+
+  const EditorPreferences& preferences = context_.current_project_state.editor_preferences;
   // Cheap per-viewport setters, always applied.
-  viewport.SetTabSize(context_.current_project_state.editor_preferences.tab_size);
-  viewport.SetIndentWidth(context_.current_project_state.editor_preferences.indent_width);
-  viewport.SetSoftTabs(context_.current_project_state.editor_preferences.soft_tabs);
-  viewport.SetSoftWrap(context_.current_project_state.editor_preferences.soft_wrap);
-  viewport.SetSaveTrimTrailingWhitespace(
-      setting_enabled("editor.save.trim_trailing_whitespace", true));
-  viewport.SetSaveEnsureFinalNewline(
-      setting_enabled("editor.save.ensure_final_newline", true));
+  viewport.SetTabSize(editor_config.tab_size.value_or(preferences.tab_size));
+  viewport.SetIndentWidth(editor_config.indent_width.value_or(preferences.indent_width));
+  viewport.SetSoftTabs(editor_config.soft_tabs.value_or(preferences.soft_tabs));
+  viewport.SetSoftWrap(preferences.soft_wrap);
+  viewport.SetSaveTrimTrailingWhitespace(editor_config.trim_trailing_whitespace.value_or(
+      setting_enabled("editor.save.trim_trailing_whitespace", true)));
+  viewport.SetSaveEnsureFinalNewline(editor_config.insert_final_newline.value_or(
+      setting_enabled("editor.save.ensure_final_newline", true)));
   // editor.line_endings: "auto" keeps the file's detected ending; lf/crlf force it.
-  const std::string line_endings = GetSettingValue("editor.line_endings").value_or("auto");
   std::optional<util::LineEnding> save_ending;
-  if (line_endings == "lf") {
-    save_ending = util::LineEnding::LF;
-  } else if (line_endings == "crlf") {
-    save_ending = util::LineEnding::CRLF;
+  if (editor_config.line_ending.has_value()) {
+    save_ending = editor_config.line_ending;
+  } else {
+    const std::string line_endings = GetSettingValue("editor.line_endings").value_or("auto");
+    if (line_endings == "lf") {
+      save_ending = util::LineEnding::LF;
+    } else if (line_endings == "crlf") {
+      save_ending = util::LineEnding::CRLF;
+    }
   }
   viewport.SetSaveLineEnding(save_ending);
 

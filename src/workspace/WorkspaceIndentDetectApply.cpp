@@ -8,8 +8,20 @@ namespace microide::workspace {
 
 void ApplyDetectedIndentAfterPreferences(
     editor::TextViewport& viewport,
-    const std::function<std::optional<std::string>(std::string_view)>& get_setting) {
+    const std::function<std::optional<std::string>(std::string_view)>& get_setting,
+    const project::EditorConfigProperties& editor_config) {
   if (viewport.path().empty()) {
+    return;
+  }
+
+  // EditorConfig answered every question detection could: skip the scan entirely.
+  // This is the speed case that matters — a repo with `indent_style` and
+  // `indent_size` set (the overwhelmingly common pair) never pays for a head-scan
+  // of the buffer on open.
+  const bool pins_style = editor_config.soft_tabs.has_value();
+  const bool pins_width = editor_config.indent_width.has_value();
+  const bool pins_tab_size = editor_config.tab_size.has_value();
+  if (pins_style && pins_width && pins_tab_size) {
     return;
   }
 
@@ -25,9 +37,15 @@ void ApplyDetectedIndentAfterPreferences(
     return;
   }
 
-  viewport.SetSoftTabs(detected.soft_tabs);
-  viewport.SetIndentWidth(detected.indent_width);
-  viewport.SetTabSize(detected.indent_width);
+  if (!pins_style) {
+    viewport.SetSoftTabs(detected.soft_tabs);
+  }
+  if (!pins_width) {
+    viewport.SetIndentWidth(detected.indent_width);
+  }
+  if (!pins_tab_size) {
+    viewport.SetTabSize(detected.indent_width);
+  }
 }
 
 }  // namespace microide::workspace

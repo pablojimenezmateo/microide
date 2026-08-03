@@ -316,6 +316,7 @@ set(MICROIDE_CORE_SOURCES
   src/project/GitCompareService.cpp
   src/project/GitCommandUtil.cpp
   src/project/FileFinder.cpp
+  src/project/EditorConfig.cpp
   src/project/FileIndex.cpp
   src/project/GitBlameParser.cpp
   src/project/GitBlameService.cpp
@@ -832,6 +833,7 @@ add_executable(microide_tests
   tests/CommitWorkflowTests.cpp
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
+  tests/EditorConfigTests.cpp
   tests/LspFileWatchTests.cpp
   tests/LspProtocolTests.cpp
   tests/LspResourceOpsTests.cpp

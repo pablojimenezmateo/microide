@@ -62,6 +62,10 @@ for what is actually measured, and what is not.
 - Durable writes with a save-time conflict guard and non-blocking external-change banner
 - Git blame shadow text — asynchronous, viewport-scoped, caret-local annotations with hover commit details
 - Project-local colorscheme, tab size, indent width, and soft-tabs preferences
+- `.editorconfig` support: `indent_style`, `indent_size`, `tab_width`, `end_of_line`,
+  `trim_trailing_whitespace`, and `insert_final_newline` are honored per file, with nearest-file
+  and `root = true` precedence. It overrides both the configured indent and auto-detection, as in
+  VSCode. Toggle with `editor.editorconfig.enabled`
 - Session restore across restarts
 
 ### Diff & Merge

@@ -15,10 +15,28 @@ namespace microide::project {
 // zero directories. Implemented in-tree because MinGW/UCRT does not ship
 // <fnmatch.h>.
 //
-// Shared primitive: `IgnoreMatcher` evaluates gitignore rules with it and `GlobSet`
-// evaluates search scope filters with it, so both surfaces agree on what a pattern
-// means instead of drifting apart behind two private copies.
-bool GlobMatches(std::string_view pattern, std::string_view text);
+// Shared primitive: `IgnoreMatcher` evaluates gitignore rules with it, `GlobSet`
+// evaluates search scope filters with it, and the EditorConfig resolver evaluates
+// section headers with it, so all three surfaces agree on what a pattern means
+// instead of drifting apart behind private copies.
+//
+// `double_star` selects between the two conventions for `**` that these callers
+// need. They genuinely differ: gitignore/VSCode only treat `**` as crossing '/'
+// when it forms a whole path segment, so "lib/**.c" is an ordinary '*' there;
+// EditorConfig defines `**` as "any string of characters" unconditionally, so the
+// same pattern matches "lib/deep/x.c". Matching an EditorConfig section with the
+// gitignore rule silently under-matches.
+enum class GlobDoubleStar {
+  // '**' crosses '/' only when segment-anchored (pattern start, pattern end, or
+  // bounded by '/' on both sides). A '**/' prefix/segment may match zero
+  // directories. This is git's and VSCode's rule.
+  SegmentAnchored,
+  // Every '**' crosses '/' wherever it appears. This is EditorConfig's rule.
+  Always,
+};
+
+bool GlobMatches(std::string_view pattern, std::string_view text,
+                 GlobDoubleStar double_star = GlobDoubleStar::SegmentAnchored);
 
 // Upper bound on how many patterns one entry may expand to. Brace alternation is
 // multiplicative ("{a,b}/{c,d}/{e,f}" is 8), so a pathological entry could

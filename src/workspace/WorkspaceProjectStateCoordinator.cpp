@@ -443,6 +443,10 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
 
   StopProjectSearch();
   context_.current_project_state.root = absolute_root.lexically_normal();
+  // Bounds the `.editorconfig` upward walk and drops any cache from the previous
+  // project (no-op when the root is unchanged).
+  context_.current_project_state.editor_config.SetProjectRoot(
+      context_.current_project_state.root);
   const bool follow_out_of_root_symlinks =
       SettingFlagEnabled(GetSettingValue("project.follow_out_of_root_symlinks"), false);
   context_.current_project_state.directory_tree.SetFollowOutOfRootSymlinks(

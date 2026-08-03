@@ -52,8 +52,15 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
 
   std::set<std::filesystem::path> dirty_external_paths;
   std::set<std::filesystem::path> refresh_compare_paths;
+  // A `.editorconfig` write changes how every buffer under it is formatted, so the
+  // memoized resolution has to be dropped and preferences re-pushed. Checked with a
+  // filename compare inside the loop we already run rather than a second pass.
+  bool editor_config_changed = false;
   for (const project::ProjectFileChange& change : batch.file_changes) {
     const std::filesystem::path normalized_path = change.absolute_path.lexically_normal();
+    if (normalized_path.filename() == ".editorconfig") {
+      editor_config_changed = true;
+    }
     switch (change.kind) {
       case project::ProjectFileChangeKind::Deleted:
         InvalidateEditorBlamePath(normalized_path);
@@ -90,6 +97,14 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
         break;
       }
     }
+  }
+
+  if (editor_config_changed) {
+    context_.current_project_state.editor_config.Invalidate();
+    // Re-push the cheap per-viewport setters only: `.editorconfig` drives indent,
+    // line ending, and save normalization, none of which affect the language
+    // contract, so the O(tabs) filetype-detect + contract rebuild is skipped.
+    ApplyEditorPreferencesToAllTabs(/*refresh_language_contracts=*/false);
   }
 
   for (const std::filesystem::path& path : refresh_compare_paths) {

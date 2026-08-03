@@ -22,6 +22,7 @@
 #include "workspace/WorkspaceFileIconRegistry.h"
 #include "project/DirectoryTree.h"
 #include "project/FileFinder.h"
+#include "project/EditorConfig.h"
 #include "project/FileIndex.h"
 #include "project/GitCompareService.h"
 #include "compare/BranchReviewStateService.h"
@@ -630,6 +631,10 @@ struct ProjectWorkspaceState {
   mutable FileIconRenderCache file_icon_cache;
   project::FileIndex file_index;
   project::FileFinder file_finder;
+  // Per-file EditorConfig overrides, memoized. Resolution is a const query with a
+  // cache behind it, so ApplyEditorPreferences (const, and called for every tab in
+  // every group on any settings change) does no filesystem work once warm.
+  project::EditorConfigResolver editor_config;
   // Editor groups: always 1 or 2. Group 0 is the primary. `focused_group_index`
   // selects which group owns keyboard focus / receives newly opened files.
   std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);

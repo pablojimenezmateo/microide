@@ -120,9 +120,38 @@ void TestGlobSetBoundsBraceExpansion() {
   Expect(!bounded.empty(), "a capped expansion should still yield usable patterns");
 }
 
+// The two '**' conventions the matcher has to serve. gitignore/VSCode only let
+// '**' cross '/' when it forms a whole path segment; EditorConfig defines it as
+// "any string of characters" wherever it appears. Getting this wrong is silent —
+// the EditorConfig section simply never matches — so pin both directions.
+void TestGlobMatchesDoubleStarConventions() {
+  using microide::project::GlobDoubleStar;
+
+  // Segment-anchored (the default): a non-segment '**' degrades to a single '*'.
+  Expect(!GlobMatches("lib/**.c", "lib/deep/x.c"),
+         "a non-segment '**' must not cross '/' under the gitignore rule");
+  Expect(GlobMatches("lib/**.c", "lib/x.c"),
+         "a non-segment '**' still matches within one segment");
+  Expect(GlobMatches("lib/**/*.c", "lib/deep/x.c"),
+         "a segment-anchored '**' crosses '/' under the gitignore rule");
+
+  // EditorConfig: every '**' crosses.
+  Expect(GlobMatches("lib/**.c", "lib/deep/x.c", GlobDoubleStar::Always),
+         "EditorConfig's '**' crosses '/' wherever it appears");
+  Expect(GlobMatches("lib/**.c", "lib/x.c", GlobDoubleStar::Always),
+         "EditorConfig's '**' also matches zero directories deep");
+  Expect(!GlobMatches("lib/**.c", "other/deep/x.c", GlobDoubleStar::Always),
+         "a crossing '**' must still respect the anchored prefix");
+
+  // A single '*' is unaffected by the convention.
+  Expect(!GlobMatches("*.c", "src/x.c", GlobDoubleStar::Always),
+         "a single '*' must not cross '/' under either convention");
+}
+
 }  // namespace
 
 void RegisterGlobMatchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "GlobMatch/DoubleStarConventions", TestGlobMatchesDoubleStarConventions);
   AddTest(tests, "GlobMatch/PathnameSemantics", TestGlobMatchesPathnameSemantics);
   AddTest(tests, "GlobSet/FloatsBareNamesAndAnchorsPaths",
           TestGlobSetFloatsBareNamesAndAnchorsPaths);

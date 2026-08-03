@@ -682,6 +682,17 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → Essentials → Pair And Indent",
       },
       SettingSpec{
+          .id = "editor.editorconfig.enabled",
+          .label = "Honor .editorconfig",
+          .description = "Let a project's .editorconfig override indent, line-ending, and save-normalization settings.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Editor → Essentials → Shaping And Save",
+      },
+      SettingSpec{
           .id = "editor.indent.detect_on_open",
           .label = "Auto-Detect Indent",
           .description = "Inspect the first lines of an opened file to choose tabs vs. spaces and indent width.",

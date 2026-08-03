@@ -5,7 +5,9 @@
 
 namespace microide::project {
 
-bool GlobMatches(std::string_view pattern, std::string_view text) {
+bool GlobMatches(std::string_view pattern, std::string_view text,
+                 GlobDoubleStar double_star) {
+  const bool double_star_always_crosses = double_star == GlobDoubleStar::Always;
   const std::size_t plen = pattern.size();
   const std::size_t tlen = text.size();
   std::size_t pi = 0;
@@ -34,7 +36,8 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
         }
         const bool before_ok = star_start == 0 || pattern[star_start - 1] == '/';
         const bool after_ok = pi == plen || pattern[pi] == '/';
-        const bool segment_doublestar = star_count >= 2 && before_ok && after_ok;
+        const bool segment_doublestar =
+            star_count >= 2 && (double_star_always_crosses || (before_ok && after_ok));
         if (segment_doublestar && pi < plen && pattern[pi] == '/') {
           // '**/' can match zero directories: fold the following '/' into the
           // wildcard so the pattern can resume with nothing consumed from text.
