@@ -1,0 +1,1 @@
+{"metrics":{"max_wall_ms":23.540447,"p50_wall_ms":22.183579,"p95_wall_ms":23.43864475,"max_allocations":8363,"p50_allocations":8207,"p95_allocations":8277.2},"scenario":"syntax_highlight_cpp_lines","tolerances":{"max_percent":400,"p50_percent":100,"p95_percent":250,"alloc_max_percent":50,"alloc_p50_percent":10,"alloc_p95_percent":20}}
