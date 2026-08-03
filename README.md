@@ -28,6 +28,7 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 - [Release status](#release-status)
 - [Current UI preview](#current-ui-preview)
 - [What works today](#what-works-today)
+- [Agent control channel](#agent-control-channel)
 - [Build or package locally](#build)
 - [Known limitations](#known-limitations)
 - [Plugin trust warning](#security--trust-model)
@@ -134,6 +135,53 @@ for what is actually measured, and what is not.
   (decorations), `plugins/surface-preview` (content surfaces), `plugins/presentation-demo`
   (themes/icons/status), `plugins/language-tools` (language providers), `plugins/todo-highlight`
   (decorations)
+
+## Agent Control Channel
+
+microide can be driven from outside the window. An external process — typically an LLM agent —
+gets the same control surface a person has, because the channel routes through the *same command
+chokepoint* as the command palette rather than adding a parallel path. It is designed in, not
+retrofitted through an extension API.
+
+```bash
+# Drive an instance and stream every response and event as JSONL on stdout.
+microide --control --control-spec debug.spec.json
+
+# Or talk to an already-running instance, one request at a time.
+microide control-send "breakpoint-set src/main.cpp 42"
+microide control-send debug-launch --wait stopped
+microide control-send review-branch origin/main
+```
+
+The window stays open and fully interactive the whole time — an agent and a human can work the
+same instance.
+
+**What it can do**
+
+- **Debug.** Set/remove/enable/disable breakpoints, conditions, hit counts, logpoints, and
+  function breakpoints by symbol name; launch a named config or an ad-hoc program; step, continue,
+  pause; query threads, frames, scopes, and variables.
+- **Review.** `review-conflicts` opens one three-way merge tab per conflicted file;
+  `review-branch [ref]` opens a compare tab per file differing from a ref; `review-commit [commit]`
+  opens the diff of any commit. Each dedupes against open tabs and closes stale clean review tabs
+  from the previous run. These are *non-mutating* — they open the tabs, they never run `git merge`.
+- **Observe.** Query verbs (`debug-state`, `breakpoints`, `tabs`, `projects`, `status`,
+  `launch-configs`, `adapters`) and pushed events (`stopped`, `terminated`, `output`).
+- **Start ready.** `--control-spec` opens a project with breakpoints already set, files revealed,
+  and a session started *before* the window is interactive.
+- **Configure without side effects.** `--set <id> <value>` applies a setting live for the session
+  but never writes it to the user's config, so a headless run cannot clobber someone's settings.
+
+**Two details that matter when writing an agent against it**
+
+`stopped` fires **twice** per stop, disambiguated by `framesPending`. The first lands the instant
+the adapter halts, so an agent knows it stopped within milliseconds even while a slow adapter is
+still indexing DWARF; the second carries the resolved `file`/`line`/`frames`. And `terminated`
+fires for *every* end — including an adapter that crashes without sending a DAP event — so an
+observer is never stranded waiting on a message that will not come.
+
+Full protocol, spec format, security model, and the headless runbook:
+[`dev-docs/control/control-channel.md`](dev-docs/control/control-channel.md).
 
 ## Scope
 
