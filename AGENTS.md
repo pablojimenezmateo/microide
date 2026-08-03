@@ -216,6 +216,9 @@ durable invariant moves.
 - Redraw comparison tests under SDL dummy video should run serially.
 - Use focused fixtures for git, search, compare, merge, and plugin-adjacent workflows.
 - If a change is hard to test, treat that as a design smell and improve the seam.
+- CI (`.github/workflows/checks.yml`) runs the same `tools/run-checks.sh` targets on every push and pull request: `tests`, `perf-tests`, `asan`, `ubsan`, `tsan`, and a build-and-smoke `fuzz` pass. Because every job shells out to the wrapper, a green local `run-checks.sh all` predicts a green CI run and a red CI run reproduces with the command in its uploaded log. Keep new validation behind `run-checks.sh` rather than adding a bespoke CI step, or the two paths drift and the local run stops meaning anything.
+- The `fuzz-smoke` job exists specifically because fuzz targets list explicit sources instead of linking `microide_core`: adding a dependency to a shared `.cpp` breaks their link, and no default build flow compiles them, so that break is otherwise silent.
+- Perf baselines are absolute timings from the pinned `perf-runner-v1` machine, so CI deliberately does not re-measure them (a hosted runner would fail all 92). What CI does enforce is `tools/check_perf_baseline_tag.sh`: a PR that edits a baseline JSON must carry a `perf-baseline:` line saying why. Rebaselining stays a local, deliberate act.
 
 ## Documentation Rules
 

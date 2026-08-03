@@ -1,0 +1,200 @@
+# Build + validate microide.
+#
+# Triggers are event-driven only (push / pull_request / workflow_dispatch), per
+# openspec/specs/ci-workflow-reliability/spec.md, which forbids cron schedules.
+#
+# Every job drives tools/run-checks.sh rather than open-coding cmake+ctest, so a
+# failing CI run reproduces locally with the exact command in the log header, and
+# so the two paths cannot drift. run-checks.sh tees full build+test output to
+# $MICROIDE_LOG_DIR; each job uploads that log, which is what makes a red run
+# actionable without a local repro guess.
+name: checks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  # A new push to the same ref supersedes the in-flight run. main is excluded so
+  # the record of what passed on the release branch is never cancelled away.
+  group: checks-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  MICROIDE_LOG_DIR: ${{ github.workspace }}/ci-logs
+  # ccache needs this to cache PCH-using translation units; run-checks.sh exports
+  # it too, but the SDL3 build below runs outside that script.
+  CCACHE_SLOPPINESS: pch_defines,time_macros
+
+jobs:
+  tests:
+    name: tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev
+
+      # Ubuntu 24.04 ships no SDL3 packages, so it is built from source. The
+      # whole tree is cached on the tag pair: a hit makes the install step a
+      # no-op rebuild plus a copy.
+      - name: Cache SDL3 build
+        id: sdl-cache
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-tests-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-tests-${{ runner.os }}-
+
+      # This runs the architecture-invariant lint too: it is a registered test
+      # (tests/ArchitectureInvariantsTests.cpp), not a separate tool.
+      - name: Build and run tests
+        run: tools/run-checks.sh tests
+
+      # Allocation-counting assertions compile to nothing in the default `tests`
+      # build (MICROIDE_PERF_HARNESS_BUILD is OFF there), so the "must not
+      # allocate" contracts in the render/view-model/presentation hot paths are
+      # unchecked unless this second pass runs.
+      - name: Run allocation-gated tests
+        run: tools/run-checks.sh perf-tests
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-tests
+          path: ${{ env.MICROIDE_LOG_DIR }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  sanitizers:
+    name: ${{ matrix.sanitizer }}
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        sanitizer: [asan, ubsan, tsan]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev
+
+      - name: Cache SDL3 build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-${{ matrix.sanitizer }}-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-${{ matrix.sanitizer }}-${{ runner.os }}-
+
+      # run-checks.sh tsan already wraps ctest in `setarch -R` and exports the
+      # suppression file, so TSAN needs no privileged sysctl here.
+      - name: Run ${{ matrix.sanitizer }}
+        run: tools/run-checks.sh ${{ matrix.sanitizer }}
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ matrix.sanitizer }}
+          path: ${{ env.MICROIDE_LOG_DIR }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  fuzz-smoke:
+    name: fuzz-smoke
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git clang \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev
+
+      - name: Cache SDL3 build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      # The fuzz targets list explicit sources rather than linking microide_core,
+      # so adding a dependency to a shared .cpp breaks their link -- and no
+      # default build flow compiles them, so that break is SILENT. This job is
+      # what makes it loud. Short per-target runs against the committed corpora;
+      # this is a build-and-smoke gate, not a fuzzing campaign.
+      - name: Build and smoke fuzz targets
+        env:
+          MICROIDE_FUZZ_SECONDS: 20
+        run: tools/run-checks.sh fuzz
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-fuzz
+          path: ${{ env.MICROIDE_LOG_DIR }}
+          if-no-files-found: ignore
+          retention-days: 7
+
+  perf-baseline-tag:
+    name: perf-baseline-tag
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # check_perf_baseline_tag.sh diffs BASE...HEAD, so it needs both.
+          fetch-depth: 0
+
+      # Perf baselines are absolute timings recorded on one pinned reference
+      # machine, so CI cannot re-measure them. What it CAN enforce is that a
+      # baseline was moved deliberately: a changed baseline JSON requires an
+      # explicit `perf-baseline:` line saying why.
+      - name: Require a perf-baseline justification
+        env:
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          commits="$(git log --format=%B "origin/${{ github.base_ref }}..HEAD")"
+          tools/check_perf_baseline_tag.sh \
+            "origin/${{ github.base_ref }}" HEAD "${PR_BODY}" "${commits}"

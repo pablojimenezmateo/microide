@@ -160,6 +160,14 @@ Current validation flow is still intentionally narrow and practical:
 - A screenshot gallery and a hero demo video ship on the [project site](https://pablojimenezmateo.github.io/microide/).
   They are generated straight from the running app (`tools/capture-media.sh`) and regenerated every
   release, so they never drift from the current UI.
+- Every push and pull request runs the full validation set in CI
+  ([`.github/workflows/checks.yml`](.github/workflows/checks.yml)): the test suite plus the
+  architecture lint, the allocation-gated pass, ASan / UBSan / TSan, and a build-and-smoke run of
+  the twelve fuzz targets. Each job drives `tools/run-checks.sh`, so a red run reproduces locally
+  with the command named in its log. Perf baselines are *not* re-measured in CI — they are absolute
+  timings from one pinned reference machine — but a changed baseline must carry a
+  `perf-baseline:` justification, which CI does enforce. Release signing stays local: the
+  maintainer key never enters CI.
 
 ### Verifying releases
 
