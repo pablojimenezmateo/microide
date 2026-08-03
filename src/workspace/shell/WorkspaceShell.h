@@ -38,6 +38,7 @@
 #include "render/Theme.h"
 #include "terminal/TerminalSession.h"
 #include "workspace/CompareInput.h"
+#include "workspace/EditorPreferenceSettings.h"
 #include "workspace/HoverTooltip.h"
 #include "workspace/ProjectReplaceOutcome.h"
 #include "workspace/render/SingleLineViewMetrics.h"

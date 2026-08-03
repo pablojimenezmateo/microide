@@ -484,6 +484,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/services/CompareMergeService.cpp
   src/workspace/git/MergeResolverContext.cpp
   src/workspace/git/MergeResultValidation.cpp
+  src/workspace/EditorPreferenceSettings.cpp
   src/workspace/FileUri.cpp
   src/workspace/render/CompareMergeRender.cpp
   src/workspace/services/ProjectCatalogService.cpp

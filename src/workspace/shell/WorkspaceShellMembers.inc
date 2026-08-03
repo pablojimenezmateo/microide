@@ -1347,6 +1347,10 @@
   // size, indent, soft tabs/wrap, save normalization) and skips the expensive
   // bounded-head-scan filetype detection + language-contract build (TD-2026-07-17A-103).
   void ApplyEditorPreferences(editor::TextViewport& viewport, bool include_contract = true) const;
+  // Overload taking a pre-resolved settings snapshot, so the all-tabs walk
+  // resolves the shell-global settings once instead of once per viewport.
+  void ApplyEditorPreferences(editor::TextViewport& viewport, bool include_contract,
+                              const EditorPreferenceSettings& settings) const;
   void ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const;
   // refresh_language_contracts=false skips the O(tabs) filetype-detect + contract
   // rebuild, applying only the cheap runtime setters. Full callers (project

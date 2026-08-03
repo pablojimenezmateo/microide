@@ -66,10 +66,16 @@ void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) c
 
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
                                             bool include_contract) const {
-  const auto setting_enabled = [this](std::string_view id, bool default_value) {
-    return SettingFlagEnabled(GetSettingValue(id), default_value);
-  };
+  // Single-viewport entry point: resolve the shared snapshot for this one call.
+  // The all-tabs path resolves once and calls the overload below directly.
+  ApplyEditorPreferences(viewport, include_contract,
+                         ResolveEditorPreferenceSettings(
+                             [this](std::string_view id) { return GetSettingValue(id); }));
+}
 
+void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
+                                            bool include_contract,
+                                            const EditorPreferenceSettings& settings) const {
   // A `.editorconfig` in the repository is the project author's statement of how
   // its files are formatted, so it wins over our own settings for the properties
   // it names — matching VSCode, where EditorConfig overrides both the configured
@@ -78,7 +84,7 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
   // with no `.editorconfig` costs one hash lookup here.
   static const project::EditorConfigProperties kNoEditorConfig;
   const project::EditorConfigProperties* editor_config = &kNoEditorConfig;
-  if (setting_enabled("editor.editorconfig.enabled", true) && !viewport.path().empty()) {
+  if (settings.editorconfig_enabled && !viewport.path().empty()) {
     // Point the resolver at the active root before asking. A project-catalog slot
     // that was reset carries its root but a fresh resolver, and an unset root
     // resolves to "no opinion" silently — this is a path compare in the common
@@ -94,23 +100,15 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
   viewport.SetIndentWidth(editor_config->indent_width.value_or(preferences.indent_width));
   viewport.SetSoftTabs(editor_config->soft_tabs.value_or(preferences.soft_tabs));
   viewport.SetSoftWrap(preferences.soft_wrap);
-  viewport.SetSaveTrimTrailingWhitespace(editor_config->trim_trailing_whitespace.value_or(
-      setting_enabled("editor.save.trim_trailing_whitespace", true)));
-  viewport.SetSaveEnsureFinalNewline(editor_config->insert_final_newline.value_or(
-      setting_enabled("editor.save.ensure_final_newline", true)));
+  viewport.SetSaveTrimTrailingWhitespace(
+      editor_config->trim_trailing_whitespace.value_or(settings.trim_trailing_whitespace));
+  viewport.SetSaveEnsureFinalNewline(
+      editor_config->insert_final_newline.value_or(settings.ensure_final_newline));
   // editor.line_endings: "auto" keeps the file's detected ending; lf/crlf force it.
-  std::optional<util::LineEnding> save_ending;
-  if (editor_config->line_ending.has_value()) {
-    save_ending = editor_config->line_ending;
-  } else {
-    const std::string line_endings = GetSettingValue("editor.line_endings").value_or("auto");
-    if (line_endings == "lf") {
-      save_ending = util::LineEnding::LF;
-    } else if (line_endings == "crlf") {
-      save_ending = util::LineEnding::CRLF;
-    }
-  }
-  viewport.SetSaveLineEnding(save_ending);
+  // `.editorconfig`'s end_of_line still wins where it names one.
+  viewport.SetSaveLineEnding(editor_config->line_ending.has_value()
+                                 ? editor_config->line_ending
+                                 : settings.save_line_ending);
 
   // The expensive per-tab work: a bounded head-scan filetype detection plus a
   // language-contract build. Skipped when no contract-affecting toggle changed — see
@@ -121,11 +119,8 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
   const std::string language_id =
       editor::runtime_syntax::DetectFiletype(viewport.path(), viewport.lines());
   viewport.SetLanguageContractView(BuildEditorLanguageContractView(
-      language_contract_,
-      language_id,
-      setting_enabled("editor.brackets.auto_close.enabled", true),
-      setting_enabled("editor.brackets.surround.enabled", true),
-      setting_enabled("editor.indent.smart.enabled", true)));
+      language_contract_, language_id, settings.auto_close, settings.surround,
+      settings.smart_indent));
 }
 
 void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contracts) {
@@ -154,13 +149,19 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contr
   // rebuild is skipped when no contract-affecting toggle changed. A project with
   // thousands of restored tabs no longer rebuilds every tab's contract for a
   // font-size / save-flag / wrap checkbox change (TD-2026-07-17A-103).
+  // Resolve the shared settings ONCE for the whole walk. They are shell-global,
+  // so reading them per viewport made this O(tabs x settings) in lookups -- and
+  // since each lookup returns std::optional<std::string> by value, O(tabs x
+  // settings) in allocations too. Gated by `settings_change_many_tabs`.
+  const EditorPreferenceSettings settings = ResolveEditorPreferenceSettings(
+      [this](std::string_view id) { return GetSettingValue(id); });
   for (auto& group : context_.current_project_state.editor_groups) {
-    ApplyEditorPreferences(group.welcome_surface.viewport, refresh_language_contracts);
+    ApplyEditorPreferences(group.welcome_surface.viewport, refresh_language_contracts, settings);
     for (auto& tab : group.open_tabs) {
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
         continue;
       }
-      ApplyEditorPreferences(tab.editor_state->viewport, refresh_language_contracts);
+      ApplyEditorPreferences(tab.editor_state->viewport, refresh_language_contracts, settings);
     }
   }
 }
