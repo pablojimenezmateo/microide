@@ -25,6 +25,126 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-03 measurement pass, seventh round (perf-runner-v1)
+
+Seven fixes across the highlighter, the fold recompute, the render row loop
+and the file-open path, plus three flaky allocation gates repaired. Every
+number below is perf-runner-v1.
+
+### The highlighter: 24.5 -> 12.9 ms per 4000 C++ lines
+
+`RuntimeSyntaxRegistry::HighlightLine` is the top main-thread scope of any
+scroll through fresh content -- each newly exposed line is a token-cache
+miss the render path resolves synchronously, because the off-thread
+prefetch cannot land inside the frame that scrolled. It had **no scenario
+of its own**; the interactive scenarios that reach it also pay open,
+layout, render and present, so a 2x change in it moved them a few percent.
+`syntax_highlight_cpp_lines`, `syntax_highlight_python_lines` and
+`syntax_advance_state_cpp_lines` now gate it directly. Add the gate before
+optimizing something -- two of the three fixes below would have been
+unmeasurable otherwise.
+
+- **PCRE2_UCP costs ~50% of the match time, PCRE2_UTF another ~17%.** The
+  syntax rules need those flags for `\b`/`\w` around accented identifiers,
+  but both flags only change behaviour at code points >= 0x80 and real
+  source is overwhelmingly ASCII. Each rule regex is now compiled twice and
+  the line picks the byte-mode one when it holds no byte >= 0x80. Verified
+  before relying on it: all 1906 distinct built-in rule literals, both
+  compilations, 20k ASCII fixture lines, zero divergences. **21.7 -> 12.9 ms.**
+- **The match-data cache was a hash probe per rule per line.** `ReusableMatchData`
+  keyed a `thread_local unordered_map` on the CompiledRegex address; every
+  regex the hot path can reach already sits at a known index in
+  `registry.rules`, so the slot is arithmetic and the lookup an array read.
+  **22.6 -> 21.7 ms** on C++ (48 rules), but **11.5 -> 5.8 ms** on Python and
+  **2.7 -> 1.1 ms** on the state-only replay, whose per-line work the probe
+  dominated.
+- **`pcre2_jit_match` skips `pcre2_match`'s per-call validation.** Gated on
+  the JIT having compiled and on the pattern being byte-oriented or
+  PCRE2_MATCH_INVALID_UTF, since skipping the UTF check is only safe when
+  there is nothing to check. **24.5 -> 22.6 ms**, and search/replace share
+  the dispatch.
+
+### The fold recompute: 4.8 -> 3.1 ms per keystroke on 50k lines
+
+Still the dominant cost of typing in a large file (a mid-file edit resumes
+at the anchor and rescans everything after it), but three constant factors
+came out of it. None changes the ranges produced.
+
+- **The bracket scan skips eight bytes at a time** (`NextBracketCandidate`,
+  has-zero-byte filter per distinct bracket byte, exact table only inside a
+  flagged word). **ScanBracketRangesTail 2.84 -> 1.96 ms.**
+- **The per-line syntax-token probe is deferred** until the line is known to
+  hold a bracket; it is a hash lookup and was paid for every visited line.
+- **The merge buckets instead of sorting.** Ordering every range in the
+  document by opener line and dropping duplicate openers was a comparison
+  sort over tens of thousands of ranges per keystroke; the key is a line
+  index, so slotting by opener and compacting is O(n + line_count).
+  **MergeRanges 0.75 -> 0.06 ms.**
+
+`mid_file_edit_latency_large_file` 143 -> 102 ms.
+
+### The render path
+
+- **The editor view model was built twice per frame** whenever sticky scroll
+  was on (the default): the band's height decides `visible_rows`, and the
+  band's line list came out of the view-model build, so the pane built the
+  whole model against a zero-height band just to read `sticky_lines.size()`.
+  `StickyScrollLines` exposes the already-memoized band on its own.
+  `render.build_editor_view_model_calls` 2 -> 1 per frame;
+  `editor_sticky_scroll_scroll` 114.6 -> 107.4 ms.
+- **The row loop read line text through the copying accessor.**
+  `TextBuffer::operator[]` materializes a heap copy into an unbounded cache
+  cleared only on mutation, and its header says so and exposes
+  `materialized_line_count()` for a test to pin the rule. Nothing called
+  that accessor and the render path was the violator (six reads per row),
+  so scrolling a large file end to end left a second copy of the document
+  resident. `RowDecorationInput::text` is a `std::string_view` now and the
+  whole path uses `LineView`. `editor_moby_dick_workout` allocations
+  **138602 -> 97976 (-29%)**.
+
+### The open path
+
+- **`PieceTree::RebuildFromOriginal` indexed newlines byte at a time** --
+  8.2M iterations for the 50k-line fixture, growing the index from empty.
+  memchr plus a reserve: `OpenFile::ResetStateFromText` **2.64 -> 0.34 ms**.
+
+### Three allocation gates were measuring the wrong thing
+
+`typing_large_file`, `scroll_large_file`, `multi_tab_cycle`,
+`large_file_open_first_paint`, `large_file_open_lf_first_paint` and
+`large_file_restore_deep_scroll_first_paint` all open a project and measure
+a small amount of work on top of it. Only the first iteration on a fresh
+driver pays the cold open (file-index build, initial watch batch, session
+write) -- `typing_large_file` ran 5691, 392, 391, 390, ... -- and that one
+sample governed p95/max. The committed baselines recorded it: p50 390
+against p95 3305. A percentile that far from the steady state tracks which
+iteration index the cold pass landed on, not the tail of the measured work,
+and the gates flapped between runs of an unchanged binary. All six now set
+`warmup_iterations = 1`; the rebaselined p95s sit within 1% of their p50s.
+`cold_startup_large_project` is the scenario that measures the open on
+purpose.
+
+### Still open
+
+- **The fold model still rescans the whole document per keystroke.**
+  `ScanIndentRanges::Measure` is 0.74 ms of it and is now the largest single
+  piece; it needs the scan to stop being whole-document, not a faster inner
+  loop. The bracket tail is the same shape. The real fix is VSCode's
+  incremental bracket-pair tree (reuse unchanged subtrees across an edit),
+  which is a rewrite of `FoldingModel`, not a constant-factor change.
+- **`persistence::WriteFile::DurableWrite` is still the largest main-thread
+  scope in the smoke suite** (108 ms). Unchanged from the sixth round: the
+  cost is the fsync, and deferring it needs the `SaveX() == "bytes are on
+  disk"` contract changed deliberately. See that round's entry.
+- **`TextLayoutCache::BuildVisualLineColumns`** is 1.4 ms per open of the
+  50k fixture (it measures every line's visual width to find the longest
+  one, for the horizontal scrollbar extent). Incremental after an edit,
+  whole-document on open.
+- **Compiling a definition's rules now costs ~1.3 ms** instead of ~0.7 ms,
+  because of the ASCII twins. It is once per filetype per session, inside
+  the first frame that highlights such a file. Making the *Unicode* copy the
+  lazy one would recover it but needs a second per-definition `once_flag`.
+
 ## 2026-08-01 measurement pass, sixth round (perf-runner-v1)
 
 Two findings and one rejected change. The rejected one is the more useful entry.

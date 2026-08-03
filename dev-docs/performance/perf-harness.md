@@ -123,6 +123,7 @@ coverage and a clear owner.
 | Idle and long soak | `idle_soak_30s`, `long_soak_8h`, `switch_and_idle` | wake-up count, wall time, allocation counts | event loop, scheduled wake handling, watchers |
 | Debugger / DAP | `debug_value_tree_expand_large`, `debug_value_tree_rebuild`, `debug_value_tree_paging`, `dap_protocol_encode_decode`, `debug_breakpoints_model_rebuild`, `debug_pane_hittest_geometry`, `debug_session_stop_to_variables` | p50/p95/max wall time, allocation counts | `DebugValueTree`, `DapProtocol`, `DebugBreakpointsModel`, debug pane geometry, `DebugService`/`DebugSession` |
 | LSP / language server | `lsp_semantic_tokens_decode`, `lsp_publish_diagnostics_parse`, `lsp_document_symbols_parse`, `lsp_message_framing` | p50/p95/max wall time, allocation counts | `lsp_protocol` decode helpers, `LspMessageFramer` transport framing |
+| Syntax highlighting | `syntax_highlight_cpp_lines`, `syntax_highlight_python_lines`, `syntax_advance_state_cpp_lines` | p50/p95/max wall time, allocation counts | `runtime_syntax::HighlightLine` / `AdvanceState` -- the per-line token path every cold scroll and file open pays synchronously |
 | Tech-debt hot-path coverage | `assist_ranked_union_merge`, `plugin_status_item_update`, `settings_rows_rebuild`, `reference_snippet_file_window`, `multi_caret_remap_burst`, `snippet_many_mirror_edit`, `user_config_record_decode`, `branch_review_presentation_markers` | p50/p95/max wall time, allocation counts (tight, decoupled from wall) | the TD-2026-07-17A rewritten hot paths — `assist_merge::RankedUnion`, `registry_interop::ApplyStatusItemUpdate`, `SettingsOverlayService::RebuildSettingsRows`, `util::ReadFileLineWindow`, `detail::ResolveMultiCaretRemapSites`, snippet mirror shifts, user-config decode, `ApplyBranchReviewPresentationMarkers` |
 | Plugin contribution-cap budgets | `plugin_status_items_resolve_at_cap`, `plugin_keybindings_resolve_at_cap` | p50/p95/max wall time, allocation counts | the resolve seams whose measured cost derives the caps in `plugin/PluginContributionLimits.h` (TD-2026-07-17-019): `ResolveStatusItems` at `kMaxPluginStatusItems`, `ResolveKeybindings` at `kMaxPluginContributionsPerKind`. Re-measure these before raising either cap. |
 
@@ -169,6 +170,26 @@ chatty `Content-Length`-delimited stream fed in partial chunks — the transport
 surface). The completion-item decode path is not yet covered here because it is an inline lambda in
 `WorkspaceLspClientRequests.cpp` rather than a shared `lsp_protocol` helper; extract it before adding
 a scenario.
+
+### Syntax-highlight scenarios
+
+Live in `tests/perf/SyntaxHighlightPerfScenarios.cpp`. Three pure-unit
+micro-benchmarks over `runtime_syntax::HighlightLine` / `AdvanceState`, reading a
+committed 50k fixture once and threading `SyntaxState` line to line exactly as
+`TextViewport`'s per-line cache does on a cold scroll. Gated, with the tech-debt
+coverage set's decoupled tolerances (loose wall, tight allocations).
+
+They exist because the highlighter is the top main-thread scope of any scroll
+through fresh content -- every newly exposed line is a token-cache miss the
+render path resolves synchronously, since the off-thread prefetch cannot land
+inside the frame that scrolled -- and it had no scenario of its own. The
+interactive scenarios that reach it also pay file open, layout, render and
+present, so even a 2x change in the highlighter moved them a few percent, well
+inside their wall envelopes.
+
+`syntax_advance_state_cpp_lines` covers the `want_tokens = false` replay the
+checkpoint chain runs. It must stay far cheaper than the token path; a
+regression that made it re-run pattern rules would be invisible in the other two.
 
 ### Tech-debt hot-path coverage scenarios
 
@@ -324,7 +345,14 @@ Before trusting results from a scenario run:
 9. use `Scenario::warmup_iterations` for scenarios whose first passes do one-time cold work the rest
    reuse (initial index build, background-subsystem settling). Discarded warmup passes bring the reused
    driver to steady state so every measured iteration is uniform; the whole run shares one process, and
-   the allocation counter is process-**global** (counts every thread), so background work counts too
+   the allocation counter is process-**global** (counts every thread), so background work counts too.
+   **A baseline whose p95 is several times its own p50 is the symptom.** Six gates carried that shape
+   until 2026-08-03: any scenario that opens a project and then measures a small amount of work pays
+   the cold open (file-index build, initial watch batch, session write) in iteration 0 and nowhere
+   else -- `typing_large_file` ran 5691, 392, 391, 390, ... -- so p95/max tracked which iteration index
+   the cold pass landed on rather than the tail of the measured work, and flapped between runs of an
+   unchanged binary. Check the per-iteration allocation counts in a `--report-json` before trusting a
+   wide percentile spread; the fix is a warmup pass, never a wider envelope
 10. the harness pins project search to a single worker (`MICROIDE_SEARCH_WORKER_LIMIT=1`, set in
     `PerfMain`): with a global allocation counter, N parallel search workers make measured allocations
     non-deterministic. A scenario whose steady-state median is deterministic but whose flat baseline
