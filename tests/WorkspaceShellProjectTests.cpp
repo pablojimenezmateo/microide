@@ -1552,6 +1552,15 @@ void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "project fixture should open");
+  // The finder can only match what the background scan has indexed, and this test
+  // asserts a match OPENS — so it has to wait for the target to be there. Without
+  // this the assertion is a race the CI runner loses: the finder finds nothing,
+  // Enter opens nothing, and the failure reads as a file-finder regression.
+  // (The sibling finder tests below assert focus/surface behaviour, which does not
+  // depend on the index, so they legitimately do not wait.)
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("src/target-match.cpp"), true,
+                              std::chrono::milliseconds(5000)),
+         "file index should contain the target before the finder is asked to match it");
   Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell),
          "files shortcut should open the file finder overlay");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "target-match"),
