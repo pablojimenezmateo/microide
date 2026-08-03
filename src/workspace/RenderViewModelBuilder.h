@@ -488,6 +488,19 @@ class RenderViewModelBuilder {
   TextInputSurfaceViewModel BuildTextInputSurface() const;
   SidebarSurfaceViewModel BuildSidebarSurface() const;
   DebugPaneSurfaceViewModel BuildDebugPaneSurface() const;
+  /// The sticky band's opener lines for this viewport, memoized on (viewport,
+  /// scroll line, fold revision, settings) and independent of the editor
+  /// metrics. Resolve it BEFORE `ComputeMetrics` so the band's height can size
+  /// the metrics in one pass: the alternative is to build the whole view model
+  /// against a zero-height band just to read this count and then build it again.
+  /// The returned span aliases the same builder-owned cache
+  /// `BuildEditorViewModelInto` fills, so it stays valid until the next call on
+  /// this thread.
+  static std::span<const std::size_t> StickyScrollLines(const editor::TextViewport& viewport,
+                                                        const editor::FoldingModel* folding_model,
+                                                        bool sticky_scroll_enabled,
+                                                        int sticky_max_depth);
+
   /// Populates `out` with clear()+push_back / assign patterns so vector capacities are reused
   /// when the workspace render path retains the same `EditorViewModel` object across frames.
   void BuildEditorViewModelInto(editor::EditorViewModel& out,

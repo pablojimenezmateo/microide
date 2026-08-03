@@ -780,22 +780,23 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             fold_enabled ? GroupFoldingModelPtr(group) : nullptr;
         const bool sticky_active =
             fold_enabled && sticky_scroll_setting_enabled && welcome_fold != nullptr;
+        // Size the metrics against the sticky band before building, not after:
+        // the band's height is resolvable on its own (see StickyScrollLines) and
+        // the view model is the expensive part.
+        const std::size_t welcome_sticky_rows =
+            RenderViewModelBuilder::StickyScrollLines(*viewport, welcome_fold, sticky_active,
+                                                      sticky_scroll_max_depth)
+                .size();
+        if (welcome_sticky_rows != 0) {
+          metrics = editor::EditorViewRenderer::ComputeMetrics(
+              text_renderer_, *viewport, pane.rect, welcome_sticky_rows, line_numbers_enabled);
+          viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+        }
         editor_render_builder.BuildEditorViewModelInto(
             tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
             sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
             debug_execution);
-        if (!tls_editor_surface_vm.sticky_lines.empty()) {
-          metrics = editor::EditorViewRenderer::ComputeMetrics(
-              text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size(),
-              line_numbers_enabled);
-          viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-          editor_render_builder.BuildEditorViewModelInto(
-              tls_editor_surface_vm, *viewport, metrics.visible_rows, welcome_fold,
-              occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
-              sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
-              debug_execution);
-        }
         thread_local editor::WelcomeViewModel tls_welcome_vm;
         tls_welcome_vm = editor_render_builder.BuildWelcomeView(recents_service_);
         editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
@@ -816,22 +817,25 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
           fold_enabled && sticky_scroll_setting_enabled && folding_for_vm != nullptr;
       const bool occurrences_for_pane =
           occurrences_highlight_enabled_global && pane.active;
+      // Resolve the sticky band first so the metrics are sized once. Building the
+      // view model to discover the band's height meant building it twice per
+      // frame -- fold gutter marks, breakpoints, whitespace runs, occurrence
+      // scan and inset gaps all recomputed -- for every pane with sticky scroll
+      // on, which is the default.
+      const std::size_t sticky_rows =
+          RenderViewModelBuilder::StickyScrollLines(*viewport, folding_for_vm, sticky_active,
+                                                    sticky_scroll_max_depth)
+              .size();
+      if (sticky_rows != 0) {
+        metrics = editor::EditorViewRenderer::ComputeMetrics(
+            text_renderer_, *viewport, pane.rect, sticky_rows, line_numbers_enabled);
+        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
+      }
       editor_render_builder.BuildEditorViewModelInto(
           tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
           occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
           render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution,
           inset_flags, metrics.line_height);
-      if (!tls_editor_surface_vm.sticky_lines.empty()) {
-        metrics = editor::EditorViewRenderer::ComputeMetrics(
-            text_renderer_, *viewport, pane.rect, tls_editor_surface_vm.sticky_lines.size(),
-            line_numbers_enabled);
-        viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
-        editor_render_builder.BuildEditorViewModelInto(
-            tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
-            occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
-            render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution,
-            inset_flags, metrics.line_height);
-      }
       tls_pane_scroll_metrics[pane_index] = metrics;
       tls_pane_scroll_metrics_valid[pane_index] = 1;
       const auto blame_overlay =
