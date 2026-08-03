@@ -492,6 +492,15 @@
   static bool ProjectSearchIndexIncomplete(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.index_incomplete;
   }
+  // The candidate-set size pinned at search start. This is what a search-scale
+  // assertion ("more matches than the display cap") actually depends on, so a
+  // test asserting one should say what the search was given to work with.
+  static std::size_t ProjectSearchTotalFiles(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.total_files;
+  }
+  static bool FileIndexScanIncomplete(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.file_index.truncated();
+  }
   static const std::string& ProjectSearchError(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.error;
   }

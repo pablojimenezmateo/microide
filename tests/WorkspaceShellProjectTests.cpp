@@ -79,12 +79,17 @@ bool WaitForFileIndexPath(WorkspaceShell& shell,
 // test happens to name can be indexed first and the wait returns with the rest of
 // the tree still missing. Tests whose assertion depends on the *whole* fixture
 // being indexed must wait on the count instead.
+//
+// The count alone is also not enough: the initial scan can return a prefix and
+// report itself incomplete, and a search dispatched against that prefix silently
+// works from a short candidate set. Require both.
 bool WaitForFileIndexSize(WorkspaceShell& shell,
                           std::size_t minimum_entries,
                           std::chrono::milliseconds timeout) {
   return WaitUntil(
       [&shell, minimum_entries]() {
-        return WorkspaceShellTestAccess::FileIndexSize(shell) >= minimum_entries;
+        return WorkspaceShellTestAccess::FileIndexSize(shell) >= minimum_entries &&
+               !WorkspaceShellTestAccess::FileIndexScanIncomplete(shell);
       },
       timeout, std::chrono::milliseconds(10));
 }
@@ -4499,8 +4504,22 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
   Expect(WaitForProjectSearchResults(shell, revision_before, std::chrono::milliseconds(15000)),
          "truncated replace-all fixture should complete the search");
+  // Assert the PRECONDITION separately, and say the number. "must mark the results
+  // truncated" on its own cannot distinguish "truncation is broken" from "the
+  // search only ever saw 40 of the 210 files", which is what actually went wrong
+  // here twice -- once diagnosed as a TSAN race, once as an index-size wait.
+  const std::size_t candidate_files = WorkspaceShellTestAccess::ProjectSearchTotalFiles(shell);
+  const std::size_t indexed_files = WorkspaceShellTestAccess::FileIndexSize(shell);
+  Expect(candidate_files >= static_cast<std::size_t>(kMatchFiles),
+         "the search must have been given every match file as a candidate (candidates=" +
+             std::to_string(candidate_files) + ", indexed=" + std::to_string(indexed_files) +
+             ", wanted>=" + std::to_string(kMatchFiles) +
+             ", index_incomplete=" +
+             (WorkspaceShellTestAccess::ProjectSearchIndexIncomplete(shell) ? "yes" : "no") + ")");
   Expect(WorkspaceShellTestAccess::ProjectSearchTruncated(shell),
-         "more matches than the display cap must mark the results truncated");
+         "more matches than the display cap must mark the results truncated (candidates=" +
+             std::to_string(candidate_files) + ", results=" +
+             std::to_string(WorkspaceShellTestAccess::ProjectSearchResults(shell).size()) + ")");
 
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
 
