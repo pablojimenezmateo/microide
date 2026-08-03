@@ -40,6 +40,15 @@ std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset);
 // a fraction of a byte-at-a-time loop.
 std::size_t FirstNonAsciiOrByte(std::string_view text, char also_match);
 
+// True when every byte of `text` is ASCII (< 0x80). Same eight-bytes-at-a-time
+// scan as above with no second byte to look for.
+//
+// The syntax highlighter asks this once per line: on an all-ASCII line, a
+// byte-oriented regex and a PCRE2_UTF|PCRE2_UCP one are provably identical
+// (UTF and UCP only change behaviour at code points >= 0x80), and the byte-mode
+// one is roughly twice as fast.
+[[nodiscard]] bool IsAllAscii(std::string_view text);
+
 // Length of the run of bytes equal to `byte` at the start of `text`;
 // `text.size()` when every byte matches.
 //

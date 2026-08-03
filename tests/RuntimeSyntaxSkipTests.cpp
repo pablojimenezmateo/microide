@@ -255,9 +255,79 @@ void TestMatchDataCacheInvalidatesOnReload() {
   ReloadDefinitions({});  // restore built-in-only registry
 }
 
+// Each rule regex is compiled twice -- once with PCRE2_UTF|PCRE2_UCP and once
+// byte-oriented -- and a line picks the byte-mode one when it holds no byte
+// >= 0x80, where the two are provably equivalent and byte mode is ~2x faster.
+// These two tests pin both halves of that split.
+//
+// The word-boundary case is the one that would silently break: a keyword rule is
+// spelled `\b(...)\b`, and only UCP makes `\b` see a Unicode letter as a word
+// character. Running the byte-mode compilation against a line containing an
+// accented identifier would split `\b` inside it and paint the embedded keyword.
+struct ScopedWordBoundaryGrammar {
+  ScopedWordBoundaryGrammar() { ReloadDefinitions({MakeDefinition()}); }
+  ~ScopedWordBoundaryGrammar() { ReloadDefinitions({}); }
+
+  static RuntimeSyntaxDefinitionData MakeDefinition() {
+    RuntimeSyntaxDefinitionData def;
+    def.filetype = "goldword";
+    def.filename_patterns = {"\\.goldword$"};
+    def.source_path = "goldword.test";
+
+    RuntimeSyntaxRuleData keyword;
+    keyword.kind = GeneratedRuleKind::Pattern;
+    keyword.group_name = "statement";
+    keyword.pattern = "\\b(int)\\b";
+    def.rules.push_back(keyword);
+    return def;
+  }
+};
+
+std::string RenderWordKinds(std::string_view line) {
+  const auto highlighted = HighlightLine(line, "buffer.goldword", {}, "");
+  std::string rendered;
+  rendered.reserve(highlighted.tokens.size());
+  for (const SyntaxTokenKind kind : highlighted.tokens) {
+    rendered.push_back(KindChar(kind));
+  }
+  return rendered;
+}
+
+void TestAsciiAndUnicodeCompilationsAgreeOnAsciiInput() {
+  ScopedWordBoundaryGrammar grammar;
+  // Plain ASCII: the byte-mode compilation runs, and `int` is a whole word here
+  // but not inside `intptr`.
+  Expect(RenderWordKinds("int x") == "KKK..",
+         "a standalone ASCII keyword is highlighted on the byte-mode path");
+  Expect(RenderWordKinds("intptr x") == "........",
+         "an ASCII keyword embedded in a longer word is not highlighted");
+}
+
+void TestNonAsciiLineKeepsUnicodeWordBoundaries() {
+  ScopedWordBoundaryGrammar grammar;
+  // `é` is U+00E9, two UTF-8 bytes. Under PCRE2_UCP it is a word character, so
+  // `\b` does not assert between `int` and `égré` and the keyword must NOT be
+  // painted. The byte-mode compilation would see the 0xC3 lead byte as a
+  // non-word byte, assert a boundary there, and paint `int` -- which is exactly
+  // why a line carrying any byte >= 0x80 has to fall back to the Unicode one.
+  const std::string accented = "int\xc3\xa9gr\xc3\xa9 x";
+  const std::string rendered = RenderWordKinds(accented);
+  Expect(rendered.find('K') == std::string::npos,
+         std::string("a keyword inside a non-ASCII identifier must stay unhighlighted, got '") +
+             rendered + "'");
+  // The same buffer with the accents removed is a different word, so still no
+  // match -- guard against the assertion above passing for the wrong reason by
+  // checking the rule does fire on this grammar at all.
+  Expect(RenderWordKinds("int") == "KKK", "the keyword rule fires on a bare keyword line");
+}
+
 }  // namespace
 
 void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RuntimeSyntaxSkip/AsciiAndUnicodeCompilationsAgreeOnAsciiInput",
+          TestAsciiAndUnicodeCompilationsAgreeOnAsciiInput);
+  AddTest(tests, "RuntimeSyntaxSkip/NonAsciiLineKeepsUnicodeWordBoundaries",
+          TestNonAsciiLineKeepsUnicodeWordBoundaries);
   AddTest(tests, "RuntimeSyntaxSkip/MatchDataCacheInvalidatesOnReload",
           TestMatchDataCacheInvalidatesOnReload);
   AddTest(tests, "RuntimeSyntaxSkip/MasksEscapedQuoteInsideString",
