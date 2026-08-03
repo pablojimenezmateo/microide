@@ -127,13 +127,27 @@ class EditorConfigResolver {
     EditorConfigFile config;
   };
 
+  // Heterogeneous lookup, so a memo hit never materializes the key. Resolve()
+  // runs once per open tab on every preference application, and building a
+  // std::string from the path just to hash it put an allocation on that path for
+  // every tab of every settings change. With `is_transparent` the lookup takes a
+  // string_view straight off the path's native storage; only an insert allocates.
+  struct TransparentStringHash {
+    using is_transparent = void;
+    std::size_t operator()(std::string_view text) const noexcept {
+      return std::hash<std::string_view>{}(text);
+    }
+  };
+
   const DirectoryEntry& EntryForDirectory(const std::filesystem::path& directory) const;
 
   mutable std::filesystem::path project_root_;
   // Mutable because resolution is a pure query with a memo behind it: callers
   // (ApplyEditorPreferences) are const and should not have to care.
   mutable std::unordered_map<std::string, DirectoryEntry> directories_;
-  mutable std::unordered_map<std::string, EditorConfigProperties> resolved_;
+  mutable std::unordered_map<std::string, EditorConfigProperties, TransparentStringHash,
+                             std::equal_to<>>
+      resolved_;
   mutable bool found_any_config_ = false;
 };
 

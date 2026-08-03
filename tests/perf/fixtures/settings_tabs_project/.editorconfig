@@ -1,0 +1,13 @@
+# Exercises per-tab EditorConfig resolution on the settings-change perf path.
+# Both indent properties are set so the measured phases hit the resolver's
+# memo rather than its cold directory walk -- the memo is what keeps this off
+# the shell-thread budget, so a regression there shows up in this scenario.
+root = true
+
+[*]
+indent_style = space
+indent_size = 2
+
+[*.cpp]
+trim_trailing_whitespace = true
+insert_final_newline = true

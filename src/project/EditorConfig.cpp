@@ -290,7 +290,17 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
   }
 
   util::AddPerformanceCounter(util::PerfCounterId::EditorConfigResolveQueries);
-  const std::string path_key = absolute_path.generic_string();
+  // POSIX path::native() IS the std::string, so this is a view over storage the
+  // path already owns — no allocation on a memo hit, which is the whole point of
+  // the memo. The generic (forward-slash) form is identical there; Windows would
+  // need a materialized conversion, which is why this is guarded rather than
+  // unconditional.
+#if defined(_WIN32)
+  const std::string key_storage = absolute_path.generic_string();
+  const std::string_view path_key{key_storage};
+#else
+  const std::string_view path_key{absolute_path.native()};
+#endif
   if (const auto it = resolved_.find(path_key); it != resolved_.end()) {
     return it->second;
   }

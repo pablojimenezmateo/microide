@@ -5,6 +5,7 @@
 #include "WorkspaceShellEventHelpers.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
+#include <cstdio>
 #include <fstream>
 #include <iostream>
 #include <optional>
@@ -402,6 +403,96 @@ void RunEditorSaveNormalization(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
+// Gates `ApplyEditorPreferencesToAllTabs`, which is O(open tabs) and runs on the
+// shell thread on every live setting change, project activation, and session
+// restore. TD-2026-07-17A-103 split that work into families precisely so a
+// project with many restored tabs would not rebuild every tab's language
+// contract for a checkbox — but nothing measured it, so the win had no gate and
+// anything added to the per-tab path was invisible. The harness even carried an
+// unused `ScenarioContext::ApplyEditorPreferencesToAllTabs()` helper for it.
+//
+// Two measured phases, because the two setting families cost very differently
+// and a regression in either is a distinct bug:
+//   - cheap family: a save-normalization toggle touches only the per-viewport
+//     setters. This phase must NOT scale with contract-rebuild cost.
+//   - contract family: an auto-close toggle forces the filetype detect plus
+//     language-contract build for every tab. This is the expensive path TD-103
+//     bounded, and the one a careless change re-triggers for the cheap family.
+//
+// A `.editorconfig` sits in the fixture so per-tab EditorConfig resolution is on
+// the measured path too. Its memo is what keeps that resolution off this budget,
+// so an allocation regression there (e.g. re-materializing the lookup key on a
+// memo hit) shows up here as rising per-iteration allocations.
+void RunSettingsChangeManyTabs(ScenarioContext& context) {
+  // A dedicated fixture rather than large_project: dropping a `.editorconfig`
+  // into a shared fixture would silently move multi_tab_cycle,
+  // cold_startup_large_project and multi_project_switch off their baselines.
+  const std::filesystem::path project = "tests/perf/fixtures/settings_tabs_project";
+  if (!PathExistsNoThrow(project)) {
+    std::cerr << "settings_change_many_tabs: missing fixture " << project << "\n";
+    return;
+  }
+  (void)context.Open(project);
+  context.PumpFrames(2);
+
+  // 40 tabs: enough that per-tab cost dominates the fixed overhead, small enough
+  // that the scenario stays well inside the per-iteration budget. `.cpp` so
+  // filetype detection resolves a real language contract -- the expensive half.
+  constexpr int kTabCount = 40;
+  int opened = 0;
+  for (int index = 1; index <= kTabCount; ++index) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "unit_%02d.cpp", index);
+    const std::filesystem::path file = project / "src" / name;
+    if (!PathExistsNoThrow(file)) {
+      continue;
+    }
+    context.OpenTab(file);
+    ++opened;
+  }
+  if (opened == 0) {
+    std::cerr << "settings_change_many_tabs: no fixture files opened\n";
+    return;
+  }
+  context.PumpFrames(2);
+
+  // Pass count is set by what makes the scenario-level allocation gate able to
+  // FAIL, not by realism. Opening the tabs costs ~1.1k allocations each, so at a
+  // handful of passes the setup is >80% of the iteration and a per-tab
+  // regression drowns in it: the 10% default allocation tolerance would sit at
+  // ~5.4k, an order of magnitude above the ~440 (one per resolve) that this
+  // scenario was written to catch. At 24 passes the measured work is the
+  // majority of the iteration and the same regression is ~2.5% -- catchable with
+  // the tightened tolerance below. Allocations here are deterministic (the
+  // counter is shell-thread only), so a tight envelope is safe; the observed
+  // p50/max spread is ~0.5%.
+  constexpr int kPasses = 24;
+
+  // Cheap family: per-viewport setters only. Toggled rather than re-set to the
+  // same value so the setting genuinely changes each pass.
+  bool trim = false;
+  context.Measure("settings.apply_cheap_family_all_tabs", [&] {
+    for (int pass = 0; pass < kPasses; ++pass) {
+      trim = !trim;
+      context.SetSetting("editor.save.trim_trailing_whitespace", trim ? "true" : "false");
+    }
+  });
+
+  // Contract family: forces the filetype detect + language-contract rebuild per
+  // tab. Measured separately so the two costs can never hide inside one number --
+  // TD-2026-07-17A-103's whole win was keeping the cheap family off this path,
+  // and one merged metric would let that regress invisibly.
+  bool auto_close = false;
+  context.Measure("settings.apply_contract_family_all_tabs", [&] {
+    for (int pass = 0; pass < kPasses; ++pass) {
+      auto_close = !auto_close;
+      context.SetSetting("editor.brackets.auto_close.enabled", auto_close ? "true" : "false");
+    }
+  });
+
+  context.PumpFrames(1);
+}
+
 void RunEditorIndentDetectOpen(ScenarioContext& context) {
   const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
   if (!PathExistsNoThrow(file)) {
@@ -759,6 +850,26 @@ const ScenarioRegistration g_perf_first_line_edit_latency_large_file({Scenario{
     .name = "first_line_edit_latency_large_file",
     .smoke = false,
     .run = RunFirstLineEditLatencyLargeFile,
+}});
+const ScenarioRegistration g_perf_settings_change_many_tabs({Scenario{
+    .name = "settings_change_many_tabs",
+    .smoke = false,
+    .baseline_gated = true,
+    // warmup: the first pass pays the project's cold open (background file-index
+    // build, initial watch batch) plus every tab's first syntax/layout build,
+    // which dwarfs the measured re-apply. Left un-warmed it lands in one measured
+    // iteration and governs p95/max, exactly as it did for multi_tab_cycle.
+    .warmup_iterations = 1,
+    // Allocations on this path are deterministic (shell-thread counter only), so
+    // the default 10% envelope is far looser than the signal warrants -- it would
+    // pass a regression that adds an allocation per tab per settings change,
+    // which is exactly what this scenario exists to catch. Observed spread is
+    // 0.24% (p50 104,803 / max 105,052), so 1% is 4x the noise while still
+    // failing on the ~2k regression this was written to catch (+1.95%) -- which
+    // 2% would have let through by a hair. This follows the policy stated on
+    // Scenario itself: allocations are the oracle, keep it tight.
+    .tolerance_alloc_p50_percent = 1.0,
+    .run = RunSettingsChangeManyTabs,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",
