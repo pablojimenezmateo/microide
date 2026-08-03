@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
 #include <filesystem>
 #include <mutex>
 #include <sstream>
@@ -544,14 +545,33 @@ void TestGitBlameServiceLatestRequestSupersedesPendingWindow() {
 
   const auto latest_snapshot = WaitForSnapshot(service, latest_request);
   const auto early_snapshot = service.Snapshot(early_request);
-  service.Stop();
 
   Expect(latest_snapshot.eligible && !latest_snapshot.loading,
          "latest blame request should complete after superseding an older pending window");
   Expect(!latest_snapshot.lines.empty() && latest_snapshot.lines.front().line >= 500,
          "latest blame snapshot should keep the most recent requested window");
-  Expect(early_snapshot.lines.empty(),
-         "superseded older blame windows should not be applied to the cache");
+  // A superseded window's blame is still *banked*. Attributions are a pure
+  // function of (file, head_id, stamp, line range) -- the viewport is not an
+  // input -- so the only thing that can invalidate them is a generation change
+  // (Invalidate/Clear, covered by their own tests). Throwing them away instead
+  // meant a viewport that kept moving never wrote a cache entry at all, so the
+  // re-validation throttle had nothing to hit and every frame re-spawned the
+  // probe chain.
+  Expect(!early_snapshot.lines.empty(),
+         "a superseded window's completed blame should still land in the cache");
+
+  // ...and the point of banking it: the early window is now answered from cache
+  // without touching git again. Before the fix this re-probed, which is the
+  // whole spawn storm in miniature.
+  const std::uint64_t probes_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
+  service.Request(early_request);
+  const std::uint64_t probes_after =
+      util::ReadPerformanceCounter(util::PerfCounterId::GitBlameValidationProbes);
+  service.Stop();
+  const std::uint64_t probe_delta = probes_after - probes_before;
+  Expect(probe_delta == 0,
+         "re-requesting a banked window should be answered from cache, not re-probed");
 }
 
 }  // namespace

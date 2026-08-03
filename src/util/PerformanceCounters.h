@@ -93,6 +93,10 @@ namespace microide::util {
   /* processes at frame rate.                                                     */            \
   X(GitBlameValidationProbes, "git.blame_validation_probes")                                    \
   X(GitBlameValidationSkips, "git.blame_validation_skips")                                      \
+  /* Blame line-ranges actually merged into the per-file cache. Probes without   */             \
+  /* loads is the pathological shape: work is being paid for and thrown away, so */             \
+  /* loaded_spans never grows and the throttle above never gets to fire.         */             \
+  X(GitBlameSpansLoaded, "git.blame_spans_loaded")                                              \
   X(GitDiffLoads, "git.diff_loads")                                                             \
   X(GitDiffBytesRead, "git.diff_bytes_read")                                                    \
   /* --- compare / merge diff pipeline ------------------------------------ */                 \

@@ -613,6 +613,9 @@ struct GitBlameService::Impl {
     }
 
     for (const Span& span : missing_spans) {
+      // Gate on the newest window only *before* paying for a span: there is no
+      // point spawning `git blame` for a viewport nobody is looking at any more.
+      // Everything after the spawn is gated on generations instead -- see below.
       if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
         return;
       }
@@ -628,7 +631,21 @@ struct GitBlameService::Impl {
       arguments.push_back(request.relative_path.generic_string());
       const auto output =
           gitutil::ReadGitCommandOutput(request.request.root, std::move(arguments));
-      if (token.IsCancellationRequested() || !RequestStillCurrent(request)) {
+      // Bank the span even if a newer window superseded this request while the
+      // subprocess ran. A span's attributions are a pure function of (file,
+      // head_id, stamp, line range) -- the viewport is not an input -- so the
+      // only thing that can invalidate them is a generation change. Discarding
+      // them on supersession is what let a continuous scroll run forever without
+      // ever writing a cache entry: every completed blame was thrown away, so
+      // `loaded_spans` stayed empty, so the re-validation throttle had nothing to
+      // hit, so the next frame re-spawned the whole probe chain. Measured on
+      // `compare_scroll_selection` in a full-suite process (where a larger
+      // address space makes each spawn dear enough that blame never catches up
+      // with the scroll): 45 git spawns and 264 ms of subprocess wait *per
+      // iteration*, against 2 spawns when the same scenario ran alone and blame
+      // did manage to win the race once. The same shape reached the earlier
+      // eligibility fix below; this is the window-data half of it.
+      if (token.IsCancellationRequested() || !GenerationsStillCurrent(request)) {
         return;
       }
       if (!output.success()) {
@@ -644,9 +661,10 @@ struct GitBlameService::Impl {
           ParseGitBlameIncrementalOutput(output.output);
       RunBeforeCacheApplyHook();  // no-op unless a test installed a hook
       std::lock_guard lock(mutex);
-      if (token.IsCancellationRequested() || !RequestStillCurrentLocked(request)) {
+      if (token.IsCancellationRequested() || !GenerationsStillCurrentLocked(request)) {
         return;
       }
+      util::AddPerformanceCounter(util::PerfCounterId::GitBlameSpansLoaded);
       auto& cache = file_caches[request.file_key];
       for (const GitBlameAttribution& attribution : attributions) {
         for (std::size_t offset = 0; offset < attribution.line_count; ++offset) {
@@ -666,7 +684,13 @@ struct GitBlameService::Impl {
 
     {
       std::lock_guard lock(mutex);
-      if (!RequestStillCurrentLocked(request)) {
+      // Generations only, for the same reason as the span merge above: this
+      // stamps the file-level verdict (eligible, head_id, stamp) and the
+      // re-validation timer, none of which depend on the window. A cache that
+      // does not yet cover the newest window still will not answer for it --
+      // `cache_answers_request` requires SpansCoverWindow for an eligible file --
+      // so marking it validated cannot mask a missing span.
+      if (!GenerationsStillCurrentLocked(request)) {
         return;
       }
       // Re-validate only if the entry survived EnforceCacheBudgets() in the span loop
