@@ -32,6 +32,21 @@ namespace microide::util {
 inline constexpr std::uint32_t kRegexMatchLimit = 1'000'000;
 inline constexpr std::uint32_t kRegexDepthLimit = 10'000;
 
+// PCRE2_MATCH_INVALID_UTF only exists from PCRE2 10.34; spell it as a local
+// constant so the JIT gate below compiles (and simply stays off) on older
+// headers rather than needing an #ifdef at each use.
+#ifdef PCRE2_MATCH_INVALID_UTF
+inline constexpr std::uint32_t kMatchInvalidUtf = PCRE2_MATCH_INVALID_UTF;
+#else
+inline constexpr std::uint32_t kMatchInvalidUtf = 0;
+#endif
+
+// Match-time options pcre2_jit_match accepts (pcre2api "THE JIT-SPECIFIC
+// MATCHING FUNCTION"). Anything else must go through pcre2_match.
+inline constexpr std::uint32_t kJitMatchOptions = PCRE2_NOTBOL | PCRE2_NOTEOL | PCRE2_NOTEMPTY |
+                                                  PCRE2_NOTEMPTY_ATSTART | PCRE2_PARTIAL_SOFT |
+                                                  PCRE2_PARTIAL_HARD;
+
 struct RegexMatchRange {
   std::size_t start = 0;
   std::size_t end = 0;
@@ -141,6 +156,22 @@ class CompiledRegex {
                        jit_rc);
         }
       }
+      // pcre2_jit_match skips pcre2_match's per-call argument/option validation
+      // and its UTF subject check, dispatching straight into the compiled code.
+      // That preamble is a fixed cost per call, and the syntax highlighter makes
+      // ~40 calls per line (one per pattern rule) over subjects of a hundred-odd
+      // bytes, so it is a real fraction of the highlight path rather than noise.
+      //
+      // Two conditions gate it, because "skips the UTF check" is only safe when
+      // nothing needs checking:
+      //   * JIT actually compiled (otherwise pcre2_jit_match returns
+      //     PCRE2_ERROR_JIT_BADOPTION and matches nothing), and
+      //   * the pattern is either byte-oriented (no PCRE2_UTF) or was compiled
+      //     with PCRE2_MATCH_INVALID_UTF, where the JIT handles malformed
+      //     sequences itself (PCRE2 >= 10.34) instead of relying on a prior
+      //     validity check. Subjects here are arbitrary file bytes, so a plain
+      //     PCRE2_UTF pattern must keep the checked pcre2_match path.
+      jit_fast_path_ = jit_rc == 0 && (!utf_mode_ || (options & kMatchInvalidUtf) != 0);
       code_ = std::shared_ptr<pcre2_code>(code, pcre2_code_free);
 
       // Match context carrying the backtracking caps. It is not modified by
@@ -175,6 +206,13 @@ class CompiledRegex {
             uint32_t options = 0) const {
     if (!valid() || !match_data.valid()) {
       return PCRE2_ERROR_BADOPTION;
+    }
+    // The JIT accepts only a subset of match-time options; anything outside it
+    // falls back to pcre2_match rather than failing. The highlighter only ever
+    // passes 0 or PCRE2_NOTBOL, both of which are in the subset.
+    if (jit_fast_path_ && (options & ~kJitMatchOptions) == 0) {
+      return pcre2_jit_match(code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(),
+                             offset, options, match_data.get(), match_context_.get());
     }
     return pcre2_match(code_.get(), reinterpret_cast<PCRE2_SPTR>(text.data()), text.size(), offset,
                        options, match_data.get(), match_context_.get());
@@ -270,6 +308,7 @@ class CompiledRegex {
 
  private:
   bool utf_mode_ = false;
+  bool jit_fast_path_ = false;
   std::shared_ptr<pcre2_code> code_;
   std::shared_ptr<pcre2_match_context> match_context_;
   std::string error_prefix_;
