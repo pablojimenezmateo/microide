@@ -1,9 +1,11 @@
 #include "workspace/lsp/LspFileWatchRegistry.h"
 
+#include <cstdint>
 #include <system_error>
 #include <utility>
 
 #include "project/GlobMatch.h"
+#include "util/PerformanceCounters.h"
 #include "workspace/FileUri.h"
 
 namespace microide::workspace {
@@ -177,22 +179,38 @@ bool LspFileWatchRegistry::WantsChange(std::string_view relative_path,
                                        std::string_view absolute_path,
                                        LspFileChangeType change) const {
   const int wanted = WatchKindMaskFor(change);
+  // Glob tests are the per-file cost of this feature and a branch switch is a
+  // burst of them, so count them: tests/changes is the ratio that says whether a
+  // server's registration is pathological long before it shows up as frame time.
+  std::uint64_t glob_tests = 0;
+  bool matched = false;
   for (const Registration& entry : registrations_) {
     if ((entry.kind & wanted) == 0) {
       continue;
     }
     for (const std::string& pattern : entry.relative_patterns) {
+      ++glob_tests;
       if (project::GlobMatches(pattern, relative_path)) {
-        return true;
+        matched = true;
+        break;
       }
+    }
+    if (matched) {
+      break;
     }
     for (const std::string& pattern : entry.absolute_patterns) {
+      ++glob_tests;
       if (project::GlobMatches(pattern, absolute_path)) {
-        return true;
+        matched = true;
+        break;
       }
     }
+    if (matched) {
+      break;
+    }
   }
-  return false;
+  util::AddPerformanceCounter(util::PerfCounterId::LspWatchedFileGlobTests, glob_tests);
+  return matched;
 }
 
 std::size_t LspFileWatchRegistry::PatternCountForTesting() const {

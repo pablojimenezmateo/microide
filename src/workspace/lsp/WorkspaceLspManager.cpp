@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/CommandSummary.h"
@@ -208,13 +209,17 @@ std::size_t LspManager::NotifyWatchedFileChanges(
           .type = change.type,
       });
     }
+    util::AddPerformanceCounter(util::PerfCounterId::LspWatchedFileChangesConsidered,
+                                changes.size());
     if (wanted.empty()) {
       continue;
     }
     if (client->DidChangeWatchedFiles(wanted)) {
       ++notified;
+      util::AddPerformanceCounter(util::PerfCounterId::LspWatchedFileEventsSent, wanted.size());
     }
   }
+  util::AddPerformanceCounter(util::PerfCounterId::LspWatchedFileNotifiedServers, notified);
   return notified;
 }
 

@@ -5,6 +5,7 @@
 
 #include "project/GlobMatch.h"
 #include "util/Parse.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/TextFileIO.h"
 
@@ -238,6 +239,7 @@ void EditorConfigResolver::SetProjectRoot(std::filesystem::path project_root) {
 }
 
 void EditorConfigResolver::Invalidate() const {
+  util::AddPerformanceCounter(util::PerfCounterId::EditorConfigInvalidations);
   directories_.clear();
   resolved_.clear();
   found_any_config_ = false;
@@ -250,6 +252,10 @@ const EditorConfigResolver::DirectoryEntry& EditorConfigResolver::EntryForDirect
     return it->second;
   }
 
+  // A miss here is the expensive case: a stat, and possibly a read + parse.
+  // Counted so a regression that defeats the cache shows up as a rising ratio
+  // against EditorConfigResolveQueries rather than as unexplained frame time.
+  util::AddPerformanceCounter(util::PerfCounterId::EditorConfigDirectoryReads);
   DirectoryEntry entry;
   const std::filesystem::path config_path = directory / ".editorconfig";
   std::error_code error;
@@ -274,11 +280,16 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
     return kEmpty;
   }
 
+  util::AddPerformanceCounter(util::PerfCounterId::EditorConfigResolveQueries);
   const std::string path_key = absolute_path.generic_string();
   if (const auto it = resolved_.find(path_key); it != resolved_.end()) {
     return it->second;
   }
 
+  // Everything below is the cold path: ApplyEditorPreferences runs for every tab
+  // in every group on any settings change, so the warm ratio here is what keeps
+  // this off the frame budget. queries/misses makes that ratio observable.
+  util::AddPerformanceCounter(util::PerfCounterId::EditorConfigResolveMisses);
   util::PerformanceTrace::Scope perf_scope("EditorConfigResolver::Resolve");
 
   // Only files inside the project participate: the upward walk stops at the root,

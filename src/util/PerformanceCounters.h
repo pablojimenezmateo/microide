@@ -74,6 +74,15 @@ namespace microide::util {
   X(RenderGlyphAtlasRuns, "render.glyph_atlas_runs")                                            \
   X(RenderGlyphAtlasGlyphs, "render.glyph_atlas_glyphs")                                        \
   X(RenderGlyphAtlasFallbacks, "render.glyph_atlas_fallbacks")                                  \
+  /* --- project-change fan-out (shell thread; a branch switch is a burst) - */                 \
+  X(EditorConfigResolveQueries, "editorconfig.resolve_queries")                                 \
+  X(EditorConfigResolveMisses, "editorconfig.resolve_misses")                                   \
+  X(EditorConfigDirectoryReads, "editorconfig.directory_reads")                                 \
+  X(EditorConfigInvalidations, "editorconfig.invalidations")                                    \
+  X(LspWatchedFileChangesConsidered, "lsp.watched_file_changes_considered")                     \
+  X(LspWatchedFileGlobTests, "lsp.watched_file_glob_tests")                                     \
+  X(LspWatchedFileEventsSent, "lsp.watched_file_events_sent")                                   \
+  X(LspWatchedFileNotifiedServers, "lsp.watched_file_notified_servers")                         \
   /* --- subprocess / external tools ------------------------------------- */                  \
   X(SubprocessSpawns, "subprocess.spawns")                                                      \
   X(SubprocessWaitMs, "subprocess.wait_ms")                                                     \
