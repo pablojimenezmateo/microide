@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstring>
 #include <limits>
 #include <utility>
 
@@ -65,8 +66,21 @@ void PieceTree::RebuildFromOriginal() {
   if (original_.size() > std::numeric_limits<std::uint32_t>::max()) {
     original_.clear();
   }
-  for (std::size_t i = 0; i < original_.size(); ++i) {
-    if (original_[i] == '\n') original_newlines_.push_back(static_cast<std::uint32_t>(i));
+  // Newline index for the whole original buffer. This is the dominant cost of
+  // opening a file (a 5 MB buffer is 5M iterations of a byte-at-a-time loop), so
+  // scan with memchr -- the libc implementation is vectorized -- and reserve
+  // from a line-length estimate so the index does not grow by reallocation. The
+  // estimate is a hint only; a wrong guess costs a normal geometric growth.
+  original_newlines_.reserve(original_.size() / 48 + 16);
+  for (const char* cursor = original_.data(), *const end = cursor + original_.size();
+       cursor != end;) {
+    const char* newline = static_cast<const char*>(
+        std::memchr(cursor, '\n', static_cast<std::size_t>(end - cursor)));
+    if (newline == nullptr) {
+      break;
+    }
+    original_newlines_.push_back(static_cast<std::uint32_t>(newline - original_.data()));
+    cursor = newline + 1;
   }
   nodes_.resize(1);  // keep only the sentinel
   free_list_.clear();
@@ -98,8 +112,16 @@ std::uint32_t PieceTree::NthNewlineOffset(std::uint8_t buffer, std::uint32_t fro
 std::uint32_t PieceTree::AppendToAdd(std::string_view text) {
   const std::uint32_t start = static_cast<std::uint32_t>(add_.size());
   add_.append(text);
-  for (std::uint32_t i = 0; i < text.size(); ++i) {
-    if (text[i] == '\n') add_newlines_.push_back(start + i);
+  // Same memchr scan as RebuildFromOriginal: a paste appends its whole payload
+  // here, so this is O(pasted bytes) on the edit path.
+  for (const char* cursor = text.data(), *const end = cursor + text.size(); cursor != end;) {
+    const char* newline = static_cast<const char*>(
+        std::memchr(cursor, '\n', static_cast<std::size_t>(end - cursor)));
+    if (newline == nullptr) {
+      break;
+    }
+    add_newlines_.push_back(start + static_cast<std::uint32_t>(newline - text.data()));
+    cursor = newline + 1;
   }
   return start;
 }

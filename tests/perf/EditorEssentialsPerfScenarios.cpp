@@ -694,6 +694,12 @@ const ScenarioRegistration g_perf_editor_indent_detect_open({Scenario{
 const ScenarioRegistration g_perf_large_file_restore_deep_scroll_first_paint({Scenario{
     .name = "large_file_restore_deep_scroll_first_paint",
     .smoke = false,
+    // warmup: the first pass on a fresh driver also pays the project's cold
+    // open (background file-index build, initial watch batch, session write),
+    // which no later iteration repeats -- 5.6k allocations against a 1.8k
+    // steady state. Discarding it keeps p95/max describing the tail of the
+    // measured work instead of which iteration index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunLargeFileRestoreDeepScrollFirstPaint,
 }});
 const ScenarioRegistration g_perf_mid_file_edit_latency_large_file({Scenario{

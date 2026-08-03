@@ -567,6 +567,12 @@ const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    // warmup: the first pass on a fresh driver also pays the project's cold
+    // open (background file-index build, initial watch batch, session write),
+    // which no later iteration repeats -- 5.6k allocations against a 1.8k
+    // steady state. Discarding it keeps p95/max describing the tail of the
+    // measured work instead of which iteration index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunLargeFileOpenFirstPaint,
 }});
 const ScenarioRegistration g_perf_large_file_open_lf_first_paint({Scenario{
@@ -574,6 +580,12 @@ const ScenarioRegistration g_perf_large_file_open_lf_first_paint({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    // warmup: the first pass on a fresh driver also pays the project's cold
+    // open (background file-index build, initial watch batch, session write),
+    // which no later iteration repeats -- 5.6k allocations against a 1.8k
+    // steady state. Discarding it keeps p95/max describing the tail of the
+    // measured work instead of which iteration index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunLargeFileOpenLfFirstPaint,
 }});
 const ScenarioRegistration g_perf_editor_buffer_find_incremental({Scenario{
