@@ -2,6 +2,7 @@
 
 #include "platform/AsyncSubprocess.h"
 #include "util/JsonValue.h"
+#include "workspace/LspFileWatchRegistry.h"
 
 #include <SDL3/SDL.h>
 
@@ -9,6 +10,7 @@
 #include <charconv>
 #include <chrono>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
 #include <optional>
 #include <string>
@@ -461,6 +463,33 @@ class LspClient {
 
   // Send textDocument/didClose.
   bool DidClose(const std::string& uri);
+
+  // One on-disk change to report through workspace/didChangeWatchedFiles.
+  struct WatchedFileChange {
+    std::string uri;
+    LspFileChangeType type = LspFileChangeType::Changed;
+  };
+
+  // True when this server registered at least one file watcher. Lock-free; the
+  // fan-out uses it to skip a server entirely before building any URI.
+  bool WantsWatchedFiles() const;
+
+  // True when a registered watcher matches this change. `relative_path` must be
+  // forward-slash and project-root-relative. Cheap enough to call per changed
+  // file, and gated by WantsWatchedFiles() above.
+  bool WantsWatchedFileChange(std::string_view relative_path,
+                              std::string_view absolute_path,
+                              LspFileChangeType type) const;
+
+  // Send workspace/didChangeWatchedFiles. No-op (returns false) for an empty
+  // change list. This is how the server learns about edits the editor did not
+  // make — a branch switch, a pull, a generated file — for every path the user
+  // does not have open.
+  bool DidChangeWatchedFiles(const std::vector<WatchedFileChange>& changes);
+
+  // Test seam: install file watchers as if the server had registered them.
+  void RegisterFileWatchersForTesting(const util::JsonValue& registration,
+                                      const std::filesystem::path& project_root);
 
   // Async textDocument/hover.
   void RequestHoverAsync(std::string uri, Position pos, HoverCallback callback);

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "editor/TextViewport.h"
+#include "project/ProjectChangeTypes.h"
 #include "workspace/LspPositionEncoding.h"
 #include "workspace/WorkspaceCodeActionRegistry.h"
 #include "workspace/WorkspaceCompletionRegistry.h"
@@ -167,6 +168,15 @@ class LspService {
   void ScheduleBufferOpen(const std::filesystem::path& path);
   bool ConsumeDeferredBufferOpen();
   bool HasPendingBufferOpen() const { return pending_buffer_open_.has_value(); }
+
+  // Report on-disk changes the editor did not make (a branch switch, a pull, a
+  // generated file) to every running server that registered a matching watcher.
+  // Returns the number of servers notified.
+  //
+  // Called from the project-change fan-out, so it must stay cheap when no server
+  // is running or none registered watchers: it returns before allocating anything
+  // in that case.
+  std::size_t NotifyWatchedFileChanges(const std::vector<project::ProjectFileChange>& changes);
 
   // Document lifecycle / synchronization.
   LspClient* LspClientForViewport(const editor::TextViewport& viewport, std::string* language_id);

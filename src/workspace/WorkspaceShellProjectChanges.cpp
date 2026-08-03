@@ -126,6 +126,24 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
     }
   }
 
+  // Tell the language servers about the on-disk changes. This is the only path by
+  // which a server learns about an edit the editor did not make — a `git switch`,
+  // a `pull`, a `stash pop`, a generated header — for every file the user does not
+  // have open. Without it the server keeps answering from a pre-change index:
+  // go-to-definition lands on stale lines and diagnostics name deleted symbols
+  // until the file happens to be opened.
+  //
+  // Every change in the batch is reported, including the watcher's echo of our own
+  // save that the loop above skips for buffer purposes. Filtering those out would
+  // save one event on a save and nothing at all on the case that matters (a branch
+  // switch is hundreds of paths, none of them echoes), while costing a filtered
+  // copy of the list every time. It is also safe: per LSP, once didOpen is sent the
+  // client owns that document's content until didClose, so a server must not
+  // re-read an open document from disk on the strength of a watched-file event.
+  if (!batch.file_changes.empty()) {
+    lsp_service_.NotifyWatchedFileChanges(batch.file_changes);
+  }
+
   if (repository_changed || !batch.file_changes.empty() || batch.tree_rescan_requested) {
     RequestAutomaticGitSidebarRefresh();
   }

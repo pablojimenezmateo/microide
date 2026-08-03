@@ -152,12 +152,6 @@ bool GlobMatches(std::string_view pattern, std::string_view text) {
 
 namespace {
 
-// Upper bound on how many patterns one scope box may expand to. Brace alternation
-// is multiplicative ("{a,b}/{c,d}/{e,f}" is 8), so a pasted pathological entry
-// could otherwise expand without bound. 256 is far above any hand-written filter;
-// past it the remaining alternatives are dropped rather than allocated.
-constexpr std::size_t kMaxExpandedPatterns = 256;
-
 // Longest single pattern we keep. Scope globs are short by nature; anything longer
 // is paste noise that would only slow the per-file match loop.
 constexpr std::size_t kMaxPatternBytes = 1024;
@@ -186,11 +180,10 @@ bool HasWildcard(std::string_view text) {
   return false;
 }
 
-// Expand `{a,b}` alternation into concrete patterns. Braces are matched with
-// nesting awareness and '\\' escapes are respected, so "a\\{b" is a literal brace.
-// Appends to `out`, stopping once kMaxExpandedPatterns is reached.
-void ExpandBraces(std::string pattern, std::vector<std::string>& out) {
-  if (out.size() >= kMaxExpandedPatterns) {
+}  // namespace
+
+void ExpandGlobBraces(std::string pattern, std::vector<std::string>& out) {
+  if (out.size() >= kMaxExpandedGlobPatterns) {
     return;
   }
 
@@ -244,16 +237,18 @@ void ExpandBraces(std::string pattern, std::vector<std::string>& out) {
   std::size_t alt_start = open + 1;
   commas.push_back(close);
   for (const std::size_t alt_end : commas) {
-    if (out.size() >= kMaxExpandedPatterns) {
+    if (out.size() >= kMaxExpandedGlobPatterns) {
       return;
     }
     std::string expanded = prefix;
     expanded.append(pattern, alt_start, alt_end - alt_start);
     expanded.append(suffix);
     alt_start = alt_end + 1;
-    ExpandBraces(std::move(expanded), out);
+    ExpandGlobBraces(std::move(expanded), out);
   }
 }
+
+namespace {
 
 // Turn one user-typed entry into the zero, one, or two patterns it means. A
 // wildcard-free entry names a file OR a subtree, so it yields both "p" and "p/**".
@@ -284,13 +279,13 @@ void AppendNormalized(std::string_view entry, std::vector<std::string>& out) {
   if (base.find('/') == std::string::npos && !base.starts_with("**")) {
     base.insert(0, "**/");
   }
-  if (out.size() < kMaxExpandedPatterns) {
-    ExpandBraces(base, out);
+  if (out.size() < kMaxExpandedGlobPatterns) {
+    ExpandGlobBraces(base, out);
   }
-  if (subtree && out.size() < kMaxExpandedPatterns) {
+  if (subtree && out.size() < kMaxExpandedGlobPatterns) {
     // "src/util" also means everything under src/util, matching how selecting a
     // folder in VSCode's explorer fills the include box with that folder path.
-    ExpandBraces(base + "/**", out);
+    ExpandGlobBraces(base + "/**", out);
   }
 }
 

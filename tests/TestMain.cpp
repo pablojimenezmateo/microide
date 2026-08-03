@@ -67,6 +67,7 @@ void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests);
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests);
 void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests);
+void RegisterLspFileWatchTests(std::vector<TestCase>& tests);
 void RegisterLspProtocolTests(std::vector<TestCase>& tests);
 void RegisterLspResourceOpsTests(std::vector<TestCase>& tests);
 void RegisterLspPositionEncodingTests(std::vector<TestCase>& tests);
@@ -516,6 +517,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterCommitWorkflowTests(tests);
   microide::tests::RegisterGitSidebarCommandCenterTests(tests);
   microide::tests::RegisterWorkspaceLspClientTests(tests);
+  microide::tests::RegisterLspFileWatchTests(tests);
   microide::tests::RegisterLspProtocolTests(tests);
   microide::tests::RegisterLspResourceOpsTests(tests);
   microide::tests::RegisterLspPositionEncodingTests(tests);

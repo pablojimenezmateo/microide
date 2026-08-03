@@ -1,5 +1,6 @@
 #include "workspace/WorkspaceLspClient.h"
 
+#include "workspace/FileUri.h"
 #include "workspace/WorkspaceLspClientInternal.h"
 
 namespace microide::workspace {
@@ -48,6 +49,9 @@ bool LspClient::Start(const std::vector<std::string>& command, const std::string
   TraceLspLifecycle(language_id, impl_->proc.pid(), "process-started");
 
   impl_->root_uri = root_uri;
+  // Decode once here rather than per registration: RelativePattern base URIs are
+  // resolved against it, and a restart re-derives it from the new root.
+  impl_->root_path = PathFromFileUri(root_uri).value_or(std::filesystem::path{});
   impl_->language_id = language_id;
   impl_->shutdown_started.store(false, std::memory_order_release);
   impl_->shutdown_complete.store(false, std::memory_order_release);
@@ -288,6 +292,49 @@ bool LspClient::DidSave(const std::string& uri) {
   params["textDocument"] = JsonValue(std::move(text_doc));
   return impl_->SendMessageAfterInitialize(
       impl_->MakeNotification("textDocument/didSave", JsonValue(std::move(params))));
+}
+
+bool LspClient::WantsWatchedFiles() const {
+  return impl_->has_file_watchers.load(std::memory_order_acquire);
+}
+
+bool LspClient::WantsWatchedFileChange(std::string_view relative_path,
+                                       std::string_view absolute_path,
+                                       LspFileChangeType type) const {
+  // Re-check the lock-free gate so a caller that skipped WantsWatchedFiles() still
+  // avoids the lock when nothing is registered.
+  if (!impl_->has_file_watchers.load(std::memory_order_acquire)) {
+    return false;
+  }
+  std::lock_guard lock(impl_->mutex);
+  return impl_->file_watch_registry.WantsChange(relative_path, absolute_path, type);
+}
+
+bool LspClient::DidChangeWatchedFiles(const std::vector<WatchedFileChange>& changes) {
+  using namespace util;
+  if (changes.empty()) {
+    return false;
+  }
+  JsonArray change_array;
+  change_array.reserve(changes.size());
+  for (const WatchedFileChange& change : changes) {
+    JsonObject entry;
+    entry["uri"] = JsonValue(change.uri);
+    entry["type"] = JsonValue(static_cast<std::int64_t>(change.type));
+    change_array.push_back(JsonValue(std::move(entry)));
+  }
+  JsonObject params;
+  params["changes"] = JsonValue(std::move(change_array));
+  return impl_->SendMessageAfterInitialize(
+      impl_->MakeNotification("workspace/didChangeWatchedFiles", JsonValue(std::move(params))));
+}
+
+void LspClient::RegisterFileWatchersForTesting(const util::JsonValue& registration,
+                                               const std::filesystem::path& project_root) {
+  std::lock_guard lock(impl_->mutex);
+  impl_->file_watch_registry.Register(registration, project_root);
+  impl_->has_file_watchers.store(!impl_->file_watch_registry.empty(),
+                                 std::memory_order_release);
 }
 
 bool LspClient::DidClose(const std::string& uri) {

@@ -517,6 +517,50 @@ const LspManager& LspService::CurrentLspManager() const {
   return const_cast<LspService*>(this)->CurrentLspManager();
 }
 
+std::size_t LspService::NotifyWatchedFileChanges(
+    const std::vector<project::ProjectFileChange>& changes) {
+  if (changes.empty() || context_ == nullptr) {
+    return 0;
+  }
+  // Ordered cheapest-first: a project with the master switch off, or with no
+  // language server registered at all, must not pay for path or URI work. Note
+  // this deliberately does NOT call EnsureProjectLspManager — allocating a manager
+  // for a project that has none would be pure cost on every change batch.
+  if (operations_.get_setting_value && !LspMasterEnabled(operations_.get_setting_value)) {
+    return 0;
+  }
+  ProjectWorkspaceState& state = CurrentProjectState();
+  if (state.lsp_manager == nullptr || !state.lsp_manager->HasRegisteredServers()) {
+    return 0;
+  }
+
+  util::PerformanceTrace::Scope perf_scope("LspService::NotifyWatchedFileChanges");
+
+  std::vector<LspManager::WatchedFileChange> events;
+  events.reserve(changes.size());
+  for (const project::ProjectFileChange& change : changes) {
+    LspManager::WatchedFileChange event;
+    switch (change.kind) {
+      case project::ProjectFileChangeKind::Created:
+        event.type = LspFileChangeType::Created;
+        break;
+      case project::ProjectFileChangeKind::Deleted:
+        event.type = LspFileChangeType::Deleted;
+        break;
+      case project::ProjectFileChangeKind::Modified:
+        event.type = LspFileChangeType::Changed;
+        break;
+    }
+    // The normalizer already produced a project-relative path; use it rather than
+    // recomputing a relative() per file (which stats the filesystem).
+    event.relative_path = change.relative_path.generic_string();
+    event.absolute_path = change.absolute_path.generic_string();
+    event.uri = FileUriForPath(change.absolute_path);
+    events.push_back(std::move(event));
+  }
+  return state.lsp_manager->NotifyWatchedFileChanges(events);
+}
+
 LspClient* LspService::LspClientForViewport(const editor::TextViewport& viewport,
                                             std::string* language_id) {
   // Master switch off: no client, so no DidOpen, no requests, and no lazy server

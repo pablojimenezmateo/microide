@@ -1,6 +1,7 @@
 #pragma once
 
 #include "workspace/WorkspaceLspClient.h"
+#include "workspace/LspFileWatchRegistry.h"
 #include "workspace/LspProtocol.h"
 #include "workspace/StdioClientQueue.h"
 #include "util/MainThreadMailbox.h"
@@ -15,6 +16,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <filesystem>
 #include <limits>
 #include <deque>
 #include <memory>
@@ -150,6 +152,15 @@ struct LspClient::Impl {
   // Server advertised a callHierarchyProvider (captured at initialize).
   std::atomic<bool> supports_call_hierarchy{false};
 
+  // File watchers the server registered via client/registerCapability for
+  // workspace/didChangeWatchedFiles. Written on the I/O thread (registrations
+  // arrive as server requests), read on the shell thread (one query per changed
+  // file). Guarded by `mutex`; `has_file_watchers` is the lock-free gate so the
+  // overwhelmingly common "server registered nothing" case costs one relaxed load
+  // per batch instead of a lock per file.
+  LspFileWatchRegistry file_watch_registry;
+  std::atomic<bool> has_file_watchers{false};
+
   // Negotiated position encoding (LSP `capabilities.positionEncoding`), captured at
   // initialize. Guarded by `mutex`. We advertise utf-8 first, so a conformant server
   // that supports it reports "utf-8" and our editor byte offsets are then exact LSP
@@ -176,6 +187,9 @@ struct LspClient::Impl {
   bool outbound_overflow_logged_ = false;
   int next_id = 1;
   std::string root_uri;
+  // root_uri decoded once at Start(), so the didChangeWatchedFiles registration
+  // path can resolve RelativePattern base URIs without re-parsing per call.
+  std::filesystem::path root_path;
   std::string language_id;
   util::JsonValue initialization_options;  // LSP initializationOptions (object or Null)
   util::JsonValue settings;                // answers workspace/configuration (object or Null)

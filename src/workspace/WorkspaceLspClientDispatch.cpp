@@ -102,10 +102,53 @@ void LspClient::Impl::HandleServerRequest(const util::JsonValue& id, const std::
     SendResponseResult(id, JsonValue(std::move(result)));
     return;
   }
-  // Capabilities are treated as static; accept dynamic (un)registration and
-  // progress-token creation with an empty result.
-  if (method == "client/registerCapability" || method == "client/unregisterCapability" ||
-      method == "window/workDoneProgress/create" || method == "window/showMessageRequest" ||
+  // Every capability except file watching is treated as static. File watching is
+  // the one the server MUST be able to register dynamically: it is how the server
+  // tells us which globs it wants on-disk change notifications for, and without
+  // honoring it we would either notify nothing (stale index after a branch switch)
+  // or notify everything (a burst of thousands of paths per `git switch`).
+  if (method == "client/registerCapability") {
+    const JsonValue& registrations = params["registrations"];
+    if (registrations.IsArray()) {
+      bool changed = false;
+      {
+        std::lock_guard lock(mutex);
+        for (const JsonValue& registration : registrations.AsArray()) {
+          if (registration["method"].AsString() != "workspace/didChangeWatchedFiles") {
+            continue;
+          }
+          changed |= file_watch_registry.Register(registration, root_path);
+        }
+        if (changed) {
+          has_file_watchers.store(!file_watch_registry.empty(), std::memory_order_release);
+        }
+      }
+    }
+    SendResponseResult(id, JsonValue(nullptr));
+    return;
+  }
+  if (method == "client/unregisterCapability") {
+    // The LSP spec spells this key "unregisterations"; accept the correct spelling
+    // too so a server that fixed its typo still unregisters.
+    const JsonValue& unregistrations = params["unregisterations"].IsArray()
+                                           ? params["unregisterations"]
+                                           : params["unregistrations"];
+    if (unregistrations.IsArray()) {
+      std::lock_guard lock(mutex);
+      for (const JsonValue& unregistration : unregistrations.AsArray()) {
+        if (unregistration["method"].AsString() != "workspace/didChangeWatchedFiles") {
+          continue;
+        }
+        file_watch_registry.Unregister(unregistration["id"].AsString());
+      }
+      has_file_watchers.store(!file_watch_registry.empty(), std::memory_order_release);
+    }
+    SendResponseResult(id, JsonValue(nullptr));
+    return;
+  }
+  // Remaining capabilities are static; accept progress-token creation and the
+  // window requests with an empty result.
+  if (method == "window/workDoneProgress/create" || method == "window/showMessageRequest" ||
       method == "window/showDocument") {
     SendResponseResult(id, JsonValue(nullptr));
     return;

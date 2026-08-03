@@ -6,7 +6,7 @@ Git state, editor buffers, compare tabs, and related surfaces without stale snap
 ## Requirements
 
 ### Requirement: External Changes Fan Out Through Typed Events
-MicroIDE SHALL normalize native file-watch and repository-change signals into typed project-relative events before updating Git state, editor buffers, compare tabs, merge tabs, file tree, search index, diagnostics, blame, or commit draft state.
+MicroIDE SHALL normalize native file-watch and repository-change signals into typed project-relative events before updating Git state, editor buffers, compare tabs, merge tabs, file tree, search index, diagnostics, blame, commit draft state, or language-server document state.
 
 #### Scenario: File changed outside app
 - **WHEN** a watched project file is modified by another process
@@ -15,6 +15,23 @@ MicroIDE SHALL normalize native file-watch and repository-change signals into ty
 #### Scenario: Branch changed outside app
 - **WHEN** `.git/HEAD` or equivalent repository metadata changes outside MicroIDE
 - **THEN** MicroIDE SHALL mark the repository snapshot stale and schedule an asynchronous refresh
+
+### Requirement: Language Servers Are Told About On-Disk Changes
+MicroIDE SHALL notify running language servers of project file changes it did not itself write, through `workspace/didChangeWatchedFiles`, so that a server's index does not diverge from disk for files the user has not opened. MicroIDE SHALL advertise `workspace.didChangeWatchedFiles.dynamicRegistration` and SHALL deliver only the changes matching the globs a server registered, rather than broadcasting every change to every server.
+
+A file that is open in an editor buffer is synchronized through the `textDocument/did*` notifications and its content is client-owned until `textDocument/didClose`; the watched-file event is additive and SHALL NOT be treated as authority over an open document's content.
+
+#### Scenario: Branch switch changes files that are not open
+- **WHEN** a Git operation (switch, pull, stash pop, discard) rewrites project files that no editor tab has open
+- **THEN** MicroIDE SHALL send `workspace/didChangeWatchedFiles` to every running server whose registered globs match those paths, so the server re-reads them instead of answering from a pre-change index
+
+#### Scenario: Server registered no watchers
+- **WHEN** a project file changes and no running language server has registered a file watcher
+- **THEN** MicroIDE SHALL send no watched-file notification and SHALL NOT perform per-file URI or glob work for that batch
+
+#### Scenario: Server registration is bounded
+- **WHEN** a language server registers file watchers whose glob patterns expand without practical bound
+- **THEN** MicroIDE SHALL cap the retained registrations and per-registration patterns rather than admit an unbounded per-file match cost on the shell thread
 
 ### Requirement: Dirty Buffers Are Protected
 External file changes SHALL NOT silently overwrite dirty editor, compare-right, or merge-result buffers. Clean buffers MAY reload automatically according to configuration, but dirty buffers SHALL show a conflict prompt or stale state until the user chooses an action.

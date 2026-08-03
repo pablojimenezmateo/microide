@@ -2,6 +2,7 @@
 
 #include <utility>
 
+#include "util/PerformanceTrace.h"
 #include "util/StartupTrace.h"
 #include "workspace/CommandSummary.h"
 
@@ -176,6 +177,45 @@ bool LspManager::HasServer(const std::string& language_id) const {
 
 bool LspManager::HasRegisteredServers() const {
   return !servers_.empty();
+}
+
+std::size_t LspManager::NotifyWatchedFileChanges(
+    const std::vector<WatchedFileChange>& changes) {
+  if (changes.empty()) {
+    return 0;
+  }
+  util::PerformanceTrace::Scope perf_scope("LspManager::NotifyWatchedFileChanges");
+  std::size_t notified = 0;
+  // Reused across servers so a project with several language servers does not
+  // reallocate the per-server list once per server.
+  std::vector<LspClient::WatchedFileChange> wanted;
+  for (auto& [_, entry] : servers_) {
+    LspClient* const client = entry.client.get();
+    // Skip a server that registered nothing (one relaxed atomic load) before
+    // touching any string. Retiring clients are deliberately excluded: they are
+    // shutting down and a notification would only race their exit.
+    if (client == nullptr || !client->WantsWatchedFiles()) {
+      continue;
+    }
+    wanted.clear();
+    for (const WatchedFileChange& change : changes) {
+      if (!client->WantsWatchedFileChange(change.relative_path, change.absolute_path,
+                                          change.type)) {
+        continue;
+      }
+      wanted.push_back(LspClient::WatchedFileChange{
+          .uri = change.uri,
+          .type = change.type,
+      });
+    }
+    if (wanted.empty()) {
+      continue;
+    }
+    if (client->DidChangeWatchedFiles(wanted)) {
+      ++notified;
+    }
+  }
+  return notified;
 }
 
 void LspManager::DrainCallbacks() {

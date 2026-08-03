@@ -1,5 +1,6 @@
 #pragma once
 
+#include <cstddef>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -18,6 +19,22 @@ namespace microide::project {
 // evaluates search scope filters with it, so both surfaces agree on what a pattern
 // means instead of drifting apart behind two private copies.
 bool GlobMatches(std::string_view pattern, std::string_view text);
+
+// Upper bound on how many patterns one entry may expand to. Brace alternation is
+// multiplicative ("{a,b}/{c,d}/{e,f}" is 8), so a pathological entry could
+// otherwise expand without bound. Past it the remaining alternatives are dropped.
+inline constexpr std::size_t kMaxExpandedGlobPatterns = 256;
+
+// Expand `{a,b}` alternation into concrete patterns, appending to `out` and
+// stopping once `out` reaches kMaxExpandedGlobPatterns. Braces are matched with
+// nesting awareness and '\\' escapes are respected, so "a\\{b" is a literal brace;
+// an unbalanced '{' is kept as literal text rather than dropping the pattern.
+//
+// `GlobMatches` itself has no brace support, so every caller that accepts
+// brace syntax must run its patterns through here first. Shared because the
+// search scope box and the LSP `didChangeWatchedFiles` watcher registry both
+// take VSCode-style globs and must agree on what `{a,b}` means.
+void ExpandGlobBraces(std::string pattern, std::vector<std::string>& out);
 
 // A parsed, VSCode-style "files to include" / "files to exclude" filter: a
 // comma-separated list of globs matched against forward-slash, root-relative paths.

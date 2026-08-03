@@ -54,6 +54,23 @@ class LspManager {
   // Call from main thread each frame to dispatch pending LSP callbacks.
   void DrainCallbacks();
 
+  // One on-disk change to fan out to every started server that registered a
+  // matching watcher. Paths are precomputed by the caller because the same change
+  // is tested against every server.
+  struct WatchedFileChange {
+    // Forward-slash, project-root-relative (what servers' `**/*.ext` globs match).
+    std::string relative_path;
+    std::string absolute_path;
+    std::string uri;
+    LspFileChangeType type = LspFileChangeType::Changed;
+  };
+
+  // Deliver `changes` to every running server whose registered globs want them.
+  // Returns the number of servers actually notified. No-op when no server
+  // registered a watcher, which is the case until one does — the cost of calling
+  // this on every project change batch is then one atomic load per server.
+  std::size_t NotifyWatchedFileChanges(const std::vector<WatchedFileChange>& changes);
+
   // Begin background shutdown for all active servers without blocking the caller.
   void BeginShutdownAll();
 

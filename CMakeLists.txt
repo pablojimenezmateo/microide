@@ -558,6 +558,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceFileIconRegistry.cpp
   src/workspace/LspClientTrace.cpp
   src/workspace/JsonRpcMessageFraming.cpp
+  src/workspace/LspFileWatchRegistry.cpp
   src/workspace/LspPositionEncoding.cpp
   src/workspace/LspProtocol.cpp
   src/workspace/LspService.cpp
@@ -831,6 +832,7 @@ add_executable(microide_tests
   tests/CommitWorkflowTests.cpp
   tests/GitSidebarCommandCenterTests.cpp
   tests/WorkspaceLspClientTests.cpp
+  tests/LspFileWatchTests.cpp
   tests/LspProtocolTests.cpp
   tests/LspResourceOpsTests.cpp
   tests/LspPositionEncodingTests.cpp

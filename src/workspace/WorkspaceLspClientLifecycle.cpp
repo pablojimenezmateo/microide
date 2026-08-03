@@ -232,6 +232,23 @@ void LspClient::Impl::DoInitializeBlocking() {
     did_change_config["dynamicRegistration"] = JsonValue(false);
     workspace_caps["didChangeConfiguration"] = JsonValue(std::move(did_change_config));
   }
+  {
+    // On-disk changes the editor did not make (a `git switch`, a `pull`, a
+    // generated header) reach the server only through this notification. Without
+    // it every file the user has not opened keeps its pre-change index, so
+    // go-to-definition lands on stale lines and diagnostics name deleted symbols
+    // until the file happens to be opened.
+    //
+    // dynamicRegistration is true because that is the only way a server can tell
+    // us which globs it cares about, and a branch switch in a large repository is
+    // thousands of paths — filtering by the server's own registration is what
+    // keeps the fan-out cheap. relativePatternSupport lets a server anchor a
+    // pattern to a base URI instead of spelling an absolute glob.
+    JsonObject did_change_watched_files;
+    did_change_watched_files["dynamicRegistration"] = JsonValue(true);
+    did_change_watched_files["relativePatternSupport"] = JsonValue(true);
+    workspace_caps["didChangeWatchedFiles"] = JsonValue(std::move(did_change_watched_files));
+  }
 
   JsonObject window_caps;
   window_caps["workDoneProgress"] = JsonValue(true);
