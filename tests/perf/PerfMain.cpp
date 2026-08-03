@@ -429,6 +429,15 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "multi_tab_cycle",
       .smoke = true,
+      // warmup: the first pass on a fresh driver pays the project's cold open --
+      // the background file-index build, the initial watch batch, the session
+      // write -- which is ~15x the steady-state cost of the measured work here.
+      // Left un-warmed it landed in exactly one measured iteration and governed
+      // p95/max, so the committed baseline held a p95 several times its own p50
+      // and the allocation gate flapped between runs on nothing but which
+      // percentile the cold pass fell into. `cold_startup_large_project` is the
+      // scenario that measures that open on purpose.
+      .warmup_iterations = 1,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
@@ -470,6 +479,15 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "typing_large_file",
       .smoke = true,
+      // warmup: the first pass on a fresh driver pays the project's cold open --
+      // the background file-index build, the initial watch batch, the session
+      // write -- which is ~15x the steady-state cost of the measured work here.
+      // Left un-warmed it landed in exactly one measured iteration and governed
+      // p95/max, so the committed baseline held a p95 several times its own p50
+      // and the allocation gate flapped between runs on nothing but which
+      // percentile the cold pass fell into. `cold_startup_large_project` is the
+      // scenario that measures that open on purpose.
+      .warmup_iterations = 1,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
@@ -487,6 +505,15 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "scroll_large_file",
       .smoke = true,
+      // warmup: the first pass on a fresh driver pays the project's cold open --
+      // the background file-index build, the initial watch batch, the session
+      // write -- which is ~15x the steady-state cost of the measured work here.
+      // Left un-warmed it landed in exactly one measured iteration and governed
+      // p95/max, so the committed baseline held a p95 several times its own p50
+      // and the allocation gate flapped between runs on nothing but which
+      // percentile the cold pass fell into. `cold_startup_large_project` is the
+      // scenario that measures that open on purpose.
+      .warmup_iterations = 1,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
       .run =
