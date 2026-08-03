@@ -1,4 +1,5 @@
 #include "perf/Baseline.h"
+#include "perf/PerfCpuAffinity.h"
 #include "perf/PerfHarness.h"
 
 #include "editor/BracketScanner.h"
@@ -58,6 +59,9 @@ struct CliOptions {
   // "dummy" keeps the baseline-gated reference lane, and the harness sets it
   // itself so a bare `microide_perf` reproduces the gate.
   std::string video_driver = "dummy";
+  // CPU set to measure on (see PerfCpuAffinity.h). "auto" pins to the fastest
+  // cluster on a heterogeneous machine and is a no-op elsewhere.
+  std::string pin_cores = "auto";
 };
 
 // Set by main() after CLI parse so scenario lambdas registered at static-init
@@ -275,6 +279,13 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
     if (arg.rfind("--video=", 0) == 0) {
       options.video_driver = arg.substr(std::string("--video=").size());
       if (options.video_driver.empty()) {
+        return std::nullopt;
+      }
+      continue;
+    }
+    if (arg.rfind("--pin-cores=", 0) == 0) {
+      options.pin_cores = arg.substr(std::string("--pin-cores=").size());
+      if (options.pin_cores.empty()) {
         return std::nullopt;
       }
       continue;
@@ -1436,11 +1447,27 @@ int main(int argc, char** argv) {
                  "[--reference-runner=name] "
                  "[--layout-mode=auto|regular|compact] "
                  "[--renderer=software|auto|<sdl-driver>] "
-                 "[--video=dummy|auto|<sdl-driver>]\n";
+                 "[--video=dummy|auto|<sdl-driver>] "
+                 "[--pin-cores=auto|off|<cpu-list>]\n";
     return 1;
   }
 
   g_require_fixtures = options->require_fixtures;
+
+  // Before anything is measured: settle which CPUs this process runs on. On a
+  // hybrid machine the scheduler's choice is worth up to 2.4x on a small
+  // scenario, which is larger than most of the gates -- see PerfCpuAffinity.h.
+  const CpuAffinityPlan affinity = ApplyPerfCpuAffinity(options->pin_cores);
+  std::cerr << "[perf] cpu affinity: " << affinity.description << '\n';
+  // A run that declined the harness's own CPU set is measuring a different
+  // machine than the baselines describe, same as a windowed video lane.
+  const bool unpinned_lane = options->pin_cores != "auto";
+  if (unpinned_lane && options->update_baseline) {
+    std::cerr << "--update-baseline is only valid with --pin-cores=auto; measuring on a "
+                 "hand-picked CPU set (--pin-cores=" << options->pin_cores
+              << ") is advisory\n";
+    return 1;
+  }
 
   PerfHarness::RunOptions run_options;
   run_options.scenario_names = options->scenarios;
@@ -1698,8 +1725,9 @@ int main(int argc, char** argv) {
   // The GPU and windowed lanes are always advisory regardless of
   // --reference-runner: only the software-renderer + dummy-video reference lane
   // can be authoritative.
+  metadata.cpu_affinity = affinity.description;
   metadata.provenance =
-      !gpu_lane && !windowed_lane && options->reference_runner.has_value() &&
+      !gpu_lane && !windowed_lane && !unpinned_lane && options->reference_runner.has_value() &&
               *options->reference_runner == std::string("perf-runner-v1")
           ? std::string("reference")
           : std::string("advisory");
@@ -1745,6 +1773,7 @@ int main(int argc, char** argv) {
   if (metadata.provenance == "advisory") {
     std::cerr << "[perf] advisory run (runner_class=" << metadata.runner_class
               << ", video=" << metadata.sdl_video_driver
+              << ", cpus=" << metadata.cpu_affinity
               << "); not authoritative for baseline updates\n";
   }
 
@@ -1760,7 +1789,8 @@ int main(int argc, char** argv) {
           << " layout_mode=" << (metadata.layout_mode.empty() ? "(default)"
                                                               : metadata.layout_mode)
           << "\n";
-      out << "isolated_app_root=" << metadata.isolated_app_root << "\n";
+      out << "cpu_affinity=" << metadata.cpu_affinity << "\n";
+    out << "isolated_app_root=" << metadata.isolated_app_root << "\n";
       out << "scenarios=";
       for (std::size_t i = 0; i < metadata.scenarios.size(); ++i) {
         if (i != 0) {
@@ -1805,6 +1835,7 @@ int main(int argc, char** argv) {
         {"provenance", metadata.provenance},
         {"sdl_video_driver", metadata.sdl_video_driver},
         {"sdl_renderer_driver", metadata.sdl_renderer_driver},
+        {"cpu_affinity", metadata.cpu_affinity},
         {"iterations", static_cast<std::int64_t>(metadata.iterations)},
         {"layout_mode", metadata.layout_mode},
         {"seed", static_cast<std::int64_t>(metadata.seed)},

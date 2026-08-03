@@ -614,9 +614,19 @@ No `xvfb-run`, no exported `SDL_VIDEODRIVER`. The harness sets its own lane befo
 | --- | --- | --- | --- |
 | renderer | `software` | `--renderer=auto\|<driver>` | GPU numbers are not cross-machine portable |
 | video | `dummy` | `--video=auto\|<driver>` | a real window system charges present cost the baselines never recorded |
+| CPU set | `auto` (fastest cluster) | `--pin-cores=off\|<cpu-list>` | on a hybrid CPU the scheduler's choice is worth up to 2.4x |
 
-Both overrides mark the run advisory, refuse `--update-baseline`, and are recorded in the report
-metadata (`sdl_video_driver` is now read back from SDL, so it names the lane actually measured).
+All three overrides mark the run advisory, refuse `--update-baseline`, and are recorded in the
+report metadata (`sdl_video_driver` and `cpu_affinity` name what was actually measured, read back
+from SDL and from the applied affinity mask rather than from what was requested).
+
+`--pin-cores=auto` groups the online CPUs by `cpuinfo_max_freq` and pins the process to the fastest
+group; on a homogeneous machine (or one with no cpufreq data) it does nothing. perf-runner-v1 is a
+Ryzen AI 9 HX 370 — 8 threads at 5.16 GHz on cpu 0-3/12-15, 16 at 3.29 GHz on the rest — where
+`debug_value_tree_paging` measured **3.18-4.31 ms** pinned to the fast cluster and **7.63-7.76 ms**
+pinned to the dense one, with byte-identical allocation counts. Unpinned it wandered across both and
+failed a baseline recorded from the same binary minutes earlier. Every wall gate was carrying that
+2x as unbounded noise.
 
 **Do not wrap the gate in `xvfb-run`.** It was documented that way, and it silently invalidates
 every wall gate. Measured 2026-08-03 on perf-runner-v1, same commit, same binary, dummy lane vs

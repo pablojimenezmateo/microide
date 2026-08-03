@@ -86,6 +86,7 @@ struct ReportMetadata {
   std::uint64_t seed = 0;
   std::string provenance;             // "reference" | "advisory"
   std::string isolated_app_root;      // path to the per-run sandbox, if any
+  std::string cpu_affinity;           // e.g. "0-3,12-15 (8 cpus @ 5157 MHz)", "off"
 };
 
 

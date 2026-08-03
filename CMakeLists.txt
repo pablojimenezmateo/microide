@@ -1193,6 +1193,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     $<TARGET_OBJECTS:microide_runtime_syntax_generated>
     $<TARGET_OBJECTS:microide_core>
     tests/perf/AllocationCounter.cpp
+    tests/perf/PerfCpuAffinity.cpp
     tests/perf/PerfHarness.cpp
     tests/perf/PerfHarnessIsolation.cpp
     tests/perf/Baseline.cpp
