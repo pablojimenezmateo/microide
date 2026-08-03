@@ -478,10 +478,18 @@ void RunSettingsChangeManyTabs(ScenarioContext& context) {
     }
   });
 
-  // Contract family: forces the filetype detect + language-contract rebuild per
-  // tab. Measured separately so the two costs can never hide inside one number --
+  // Contract family: the filetype detect + language-contract application per tab.
+  // Measured separately so the two costs can never hide inside one number --
   // TD-2026-07-17A-103's whole win was keeping the cheap family off this path,
   // and one merged metric would let that regress invisibly.
+  //
+  // As of TD-2026-08-03-110 NEITHER family allocates per tab: both memoize, so
+  // running this scenario at kTabCount 10 instead of 40 leaves the cheap family
+  // byte-identical (10,564) and the contract family within 2 allocations
+  // (10,752 vs 10,754). What each phase measures now is the fixed per-settings-
+  // change overhead, so a regression that reintroduces per-tab allocation shows
+  // up as a large jump here rather than as a few percent -- and re-running at a
+  // different kTabCount is the cheap way to confirm that is what happened.
   bool auto_close = false;
   context.Measure("settings.apply_contract_family_all_tabs", [&] {
     for (int pass = 0; pass < kPasses; ++pass) {

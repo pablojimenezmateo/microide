@@ -91,6 +91,11 @@ Measured on `settings_change_many_tabs` (reference runner): the contract-family
 phase went 50,020 → 10,752 allocations and 2.640 → 0.410 ms, i.e. down to what
 the cheap family costs; whole scenario 104,799 → 63,771 allocations.
 
+The per-tab allocation is *gone*, not reduced: re-running the scenario with
+`kTabCount` at 10 instead of 40 leaves the cheap family byte-identical (10,564)
+and the contract family within 2 allocations (10,752 vs 10,754). What both
+phases measure now is the fixed per-settings-change overhead.
+
 ### Deferred from the 2026-07-10 cross-subsystem bug-hunt pass (TD-2026-07-10-*)
 
 Relocated here from `active-work.md` on 2026-08-03: these are open debt items, which
