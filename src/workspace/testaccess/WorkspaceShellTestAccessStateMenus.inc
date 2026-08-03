@@ -602,6 +602,9 @@
     }
     return false;
   }
+  static std::size_t FileIndexSize(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.file_index.Snapshot().size();
+  }
   static bool TextInputSurfaceIsPromptInput(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::PromptInput;
   }

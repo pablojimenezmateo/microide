@@ -74,6 +74,21 @@ bool WaitForFileIndexPath(WorkspaceShell& shell,
       timeout, std::chrono::milliseconds(10));
 }
 
+// Waiting on one named path is NOT a wait for a complete index: the background
+// scan walks the directory in filesystem order, not creation order, so the path a
+// test happens to name can be indexed first and the wait returns with the rest of
+// the tree still missing. Tests whose assertion depends on the *whole* fixture
+// being indexed must wait on the count instead.
+bool WaitForFileIndexSize(WorkspaceShell& shell,
+                          std::size_t minimum_entries,
+                          std::chrono::milliseconds timeout) {
+  return WaitUntil(
+      [&shell, minimum_entries]() {
+        return WorkspaceShellTestAccess::FileIndexSize(shell) >= minimum_entries;
+      },
+      timeout, std::chrono::milliseconds(10));
+}
+
 bool WaitForProjectSearchCompletion(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
   return WaitUntil(
       [&shell]() { return !WorkspaceShellTestAccess::ProjectSearchRunning(shell); },
@@ -4392,15 +4407,12 @@ void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
          "replace-all matched-only fixture should open the project");
   // Wait for the whole tree to be indexed so both the trailing refresh and the
   // control refresh below pin an identical candidate set (the read-count subtraction
-  // relies on the two "needle" scans reading exactly the same files).
-  Expect(WaitForFileIndexPath(shell, std::filesystem::path("match_b.txt"), true,
+  // relies on the two "needle" scans reading exactly the same files). Waiting on two
+  // named paths did not establish that -- the scan visits the directory in
+  // filesystem order, so both could land while the rest was still missing.
+  Expect(WaitForFileIndexSize(shell, static_cast<std::size_t>(kDecoyCount) + 2,
                               std::chrono::milliseconds(1500)),
-         "replace-all matched-only fixture should index the matched files");
-  Expect(WaitForFileIndexPath(shell,
-                              std::filesystem::path("decoy_" + std::to_string(kDecoyCount - 1) +
-                                                    ".txt"),
-                              true, std::chrono::milliseconds(1500)),
-         "replace-all matched-only fixture should index the whole decoy set");
+         "replace-all matched-only fixture should index the whole tree");
 
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "needle", false);
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
@@ -4472,9 +4484,14 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "truncated replace-all fixture should open the project");
-  Expect(WaitForFileIndexPath(shell,
-                              std::filesystem::path("m_" + std::to_string(kMatchFiles - 1) + ".txt"),
-                              true, std::chrono::milliseconds(10000)),
+  // Wait on the COUNT, not on one named path: the assertion below is "the search
+  // found more than the display cap", which only holds once every match file is
+  // indexed. Waiting for m_209.txt proved nothing — the scan visits the directory
+  // in filesystem order, so that file could land first and leave the search to run
+  // against a partial index and legitimately not truncate. That is exactly how
+  // this failed under TSAN in CI.
+  Expect(WaitForFileIndexSize(shell, static_cast<std::size_t>(kMatchFiles),
+                              std::chrono::milliseconds(10000)),
          "truncated replace-all fixture should index the whole match set");
 
   const std::uint64_t revision_before =
@@ -4839,9 +4856,10 @@ void TestWorkspaceShellRegexReplaceAllAcrossFiles() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "regex replace-all fixture should open the project");
-  Expect(WaitForFileIndexPath(shell, std::filesystem::path("a.txt"), true,
-                              std::chrono::milliseconds(1000)),
-         "regex replace-all fixture should wait for file index initialization");
+  // All three files, not just a.txt: the assertions below require b.txt to have
+  // been rewritten too, which only happens if it was indexed when the search ran.
+  Expect(WaitForFileIndexSize(shell, 3, std::chrono::milliseconds(1000)),
+         "regex replace-all fixture should wait for the whole tree to be indexed");
 
   WorkspaceShellTestAccess::SetProjectSearchPatternModeRegex(shell, true);
   WorkspaceShellTestAccess::ShowSearchSidebar(shell, "foo_(\\w+)", false);
