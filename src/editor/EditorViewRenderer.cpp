@@ -485,7 +485,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     } else {
       const std::size_t caret_indent =
           cursor_line < lines.size()
-              ? LeadingVisualIndent(lines[cursor_line], viewport.tab_size())
+              ? LeadingVisualIndent(lines.LineView(cursor_line), viewport.tab_size())
               : 0;
       auto same_viewport_it = std::find_if(
           indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),
@@ -560,7 +560,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       sticky_input.line_height = metrics.line_height;
       sticky_input.row_visual_start = row_meta.visual_start;
       sticky_input.row_visual_end = row_meta.visual_end;
-      sticky_input.text = &lines[line_index];
+      sticky_input.text = lines.LineView(line_index);
       sticky_input.tokens = sticky_tokens;
       sticky_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
       sticky_input.layout = &row_layout;
@@ -722,7 +722,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const SelectionRange* it = std::lower_bound(
           frag_begin, frag_end, line_index,
           [](const SelectionRange& r, std::size_t l) { return r.start.line < l; });
-      const std::size_t row_len = lines[line_index].size();
+      const std::size_t row_len = lines.LineLength(line_index);
       for (; it != frag_end && it->start.line == line_index; ++it) {
         const bool is_active_match = active_search_match.has_value() &&
                                      active_search_match->start.line == it->start.line &&
@@ -760,7 +760,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       };
       auto cache_it = search_match_cache_.find(cache_key_view);
       if (cache_it == search_match_cache_.end()) {
-        const std::string& src = lines[line_index];
+        const std::string_view src = lines.LineView(line_index);
         util::ToLowerAsciiInto(src, lowered_line_scratch);
         std::vector<std::pair<std::size_t, std::size_t>> matches;
         std::size_t match_offset = lowered_line_scratch.find(lowered_search_query);
@@ -838,7 +838,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const std::size_t line_start =
           line_index == selection->start.line ? selection->start.column : 0;
       const std::size_t line_end =
-          line_index == selection->end.line ? selection->end.column : lines[line_index].size();
+          line_index == selection->end.line ? selection->end.column : lines.LineLength(line_index);
       column_fill_scratch_.push_back(RowFillSpan{
           .start_column = line_start,
           .end_column = line_end,
@@ -850,7 +850,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (bracket_match_pair.has_value()) {
       const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
         if (bracket_line != line_index) return;
-        if (bracket_column >= lines[line_index].size()) return;
+        if (bracket_column >= lines.LineLength(line_index)) return;
         column_fill_scratch_.push_back(RowFillSpan{
             .start_column = bracket_column,
             .end_column = bracket_column + 1,
@@ -911,7 +911,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                cell_w, y, metrics.line_height, theme.text_disabled);
         }
       } else {
-        const std::string& line_text = lines[line_index];
+        const std::string_view line_text = lines.LineView(line_index);
         const std::size_t tab_size = viewport.tab_size();
         std::size_t visual_col = 0;
         // Advance one visual cell per codepoint (tabs expand): stepping per byte
@@ -954,7 +954,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.line_height = metrics.line_height;
     row_input.row_visual_start = row_visual_origin;
     row_input.row_visual_end = row_meta.visual_end;
-    row_input.text = &lines[line_index];
+    row_input.text = lines.LineView(line_index);
     row_input.tokens = token_kinds;
     row_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
     row_input.layout = &row_layout;

@@ -147,13 +147,13 @@ void AppendChangedSpanUnderlinesGrid(DecoratedTextRow& row, const RowDecorationI
 // Append underline / strikethrough lines for plugin text-style decorations,
 // clipped to the visible byte window (same geometry as diagnostic underlines).
 void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& in) {
-  if (in.text_styles.empty() || in.text == nullptr || in.text_renderer == nullptr) {
+  if (in.text_styles.empty() || in.text.empty() || in.text_renderer == nullptr) {
     return;
   }
   const std::size_t visible_columns =
       in.row_visual_end > in.row_visual_start ? in.row_visual_end - in.row_visual_start : 0;
   const VisibleTextWindow window =
-      SliceVisibleColumns(*in.text, in.row_visual_start, visible_columns);
+      SliceVisibleColumns(in.text, in.row_visual_start, visible_columns);
   if (window.text.empty()) {
     return;
   }
@@ -166,7 +166,7 @@ void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& 
     }
     const bool whole = (ts.flags & kDecorationWholeLine) != 0;
     const std::size_t start = whole ? 0 : ts.start_column;
-    const std::size_t end = whole ? in.text->size() : ts.end_column;
+    const std::size_t end = whole ? in.text.size() : ts.end_column;
     if (end <= start || end <= window.byte_offset || start >= window_end) {
       continue;
     }
@@ -225,7 +225,7 @@ void AppendTextStyleUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInp
     }
     const bool whole = (ts.flags & kDecorationWholeLine) != 0;
     const std::size_t start_col = whole ? 0 : ts.start_column;
-    const std::size_t end_col = whole ? (in.text != nullptr ? in.text->size() : 0) : ts.end_column;
+    const std::size_t end_col = whole ? in.text.size() : ts.end_column;
     if (end_col <= start_col) {
       continue;
     }
@@ -287,7 +287,7 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
     const bool whole = (ts.flags & kDecorationWholeLine) != 0;
     RowFillSpan span{
         .start_column = whole ? 0 : ts.start_column,
-        .end_column = whole ? (in.text != nullptr ? in.text->size() : 0) : ts.end_column,
+        .end_column = whole ? in.text.size() : ts.end_column,
         .color = ts.background,
         .geometry = RowFillSpan::Geometry::kRange,
     };
@@ -296,8 +296,7 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
     }
   }
 
-  const std::string_view text_view = in.text != nullptr ? std::string_view(*in.text)
-                                                        : std::string_view{};
+  const std::string_view text_view = in.text;
   static const std::vector<SyntaxTokenKind> kNoTokens;
   const std::vector<SyntaxTokenKind>& tokens = in.tokens != nullptr ? *in.tokens : kNoTokens;
   if (in.text_renderer != nullptr && in.theme != nullptr) {
@@ -330,9 +329,9 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
       }
     }
 
-    if (!in.diagnostics.empty() && in.text != nullptr) {
+    if (!in.diagnostics.empty() && !in.text.empty()) {
       AppendDiagnosticUnderlines(row, *in.text_renderer, *in.theme, in.text_x, in.y, in.line_height,
-                                 *in.text, in.diagnostic_line_index, in.diagnostic_horizontal_scroll,
+                                 in.text, in.diagnostic_line_index, in.diagnostic_horizontal_scroll,
                                  in.diagnostic_visible_columns, in.tab_size, in.diagnostics);
     }
 

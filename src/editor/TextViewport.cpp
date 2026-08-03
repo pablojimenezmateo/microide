@@ -196,7 +196,7 @@ TextViewport::LineCaret TextViewport::CaretForLine(std::size_t line_index) const
     return {};
   }
   const std::size_t caret_visual = TextLayout::VisualColumnForTextColumn(
-      document_->lines[line_index], cursor_column_, tab_size_);
+      document_->lines.LineView(line_index), cursor_column_, tab_size_);
   if (caret_visual >= horizontal_scroll_ &&
       caret_visual <= horizontal_scroll_ + visible_columns_) {
     return LineCaret{true, caret_visual - horizontal_scroll_};
@@ -258,7 +258,7 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index,
   const std::size_t row_columns =
       row.visual_end > row.visual_start ? row.visual_end - row.visual_start : 0;
   LayoutLine layout = TextLayout::BuildVisibleLine(
-      document_->lines[row.line_index], row.visual_start,
+      document_->lines.LineView(row.line_index), row.visual_start,
       std::min(visible_columns_, row_columns), tab_size_);
   if (row.line_index == cursor_line_ && visual_row_index == cursor_visual_row) {
     const std::size_t caret_visual = cursor_visual_column();
@@ -306,7 +306,7 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
   const std::size_t target_visual = layout.visual_start + clamped_local;
   return LogicalPosition{
       .line = layout.line_index,
-      .column = TextLayout::TextColumnForVisualColumn(document_->lines[layout.line_index],
+      .column = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(layout.line_index),
                                                        target_visual, tab_size_),
   };
 }
@@ -397,7 +397,7 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   }
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
   const std::size_t clamped_column =
-      TextLayout::ClampTextColumn(document_->lines[clamped_line], column);
+      TextLayout::ClampTextColumn(document_->lines.LineView(clamped_line), column);
   const TextPosition position{clamped_line, clamped_column};
   if (position == TextPosition{cursor_line_, cursor_column_}) {
     return;
@@ -443,9 +443,9 @@ void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
     std::swap(anchor, cursor_end);
   }
   const std::size_t clamped_line = std::min(cursor_end.line, document_->lines.size() - 1);
-  cursor_end.column = TextLayout::ClampTextColumn(document_->lines[clamped_line], cursor_end.column);
+  cursor_end.column = TextLayout::ClampTextColumn(document_->lines.LineView(clamped_line), cursor_end.column);
   anchor.line = std::min(anchor.line, document_->lines.size() - 1);
-  anchor.column = TextLayout::ClampTextColumn(document_->lines[anchor.line], anchor.column);
+  anchor.column = TextLayout::ClampTextColumn(document_->lines.LineView(anchor.line), anchor.column);
 
   if (cursor_end == TextPosition{cursor_line_, cursor_column_}) {
     return;
@@ -607,7 +607,7 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
     if (line == caret.line) {
       continue;
     }
-    const std::size_t line_len = document_->lines[line].size();
+    const std::size_t line_len = document_->lines.LineLength(line);
     const std::size_t a = std::min(anchor_column, line_len);
     const std::size_t c = std::min(caret_column, line_len);
     ranges.push_back(SelectionRange{TextPosition{line, a}, TextPosition{line, c}});
@@ -616,7 +616,7 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   // Primary caret+selection on the caret line: land on the anchor column (clearing
   // any prior selection), then extend to the caret column so the primary row spans
   // the box. Equal columns leave an empty selection -> a plain column caret.
-  const std::size_t caret_line_len = document_->lines[caret.line].size();
+  const std::size_t caret_line_len = document_->lines.LineLength(caret.line);
   MoveCursorTo(caret.line, std::min(anchor_column, caret_line_len), false);
   MoveCursorTo(caret.line, std::min(caret_column, caret_line_len), true);
   SetSecondaryCaretsWithRanges(std::move(ranges));
@@ -646,24 +646,25 @@ std::string TextViewport::TextInRange(const SelectionRange& range) const {
   const auto& start = range.start;
   const auto& end = range.end;
   if (start.line == end.line) {
-    return document_->lines[start.line].substr(start.column, end.column - start.column);
+    return std::string(
+        document_->lines.LineView(start.line).substr(start.column, end.column - start.column));
   }
 
-  std::size_t total_bytes = document_->lines[start.line].size() - start.column;
+  std::size_t total_bytes = document_->lines.LineLength(start.line) - start.column;
   for (std::size_t line = start.line + 1; line < end.line; ++line) {
-    total_bytes += 1 + document_->lines[line].size();
+    total_bytes += 1 + document_->lines.LineLength(line);
   }
   total_bytes += 1 + end.column;
 
   std::string text;
   text.reserve(total_bytes);
-  text += document_->lines[start.line].substr(start.column);
+  text += document_->lines.LineView(start.line).substr(start.column);
   text.push_back('\n');
   for (std::size_t line = start.line + 1; line < end.line; ++line) {
-    text += document_->lines[line];
+    text += document_->lines.LineView(line);
     text.push_back('\n');
   }
-  text += document_->lines[end.line].substr(0, end.column);
+  text += document_->lines.LineView(end.line).substr(0, end.column);
   return text;
 }
 
@@ -681,8 +682,8 @@ std::string TextViewport::CurrentLineTextForClipboard() const {
   }
 
   std::string text;
-  text.reserve(document_->lines[cursor_line_].size() + 1);
-  text += document_->lines[cursor_line_];
+  text.reserve(document_->lines.LineLength(cursor_line_) + 1);
+  text += document_->lines.LineView(cursor_line_);
   text.push_back('\n');
   return text;
 }
@@ -759,7 +760,7 @@ bool TextViewport::DeleteCurrentLine() {
   if (document_->lines.size() == 1) {
     return ApplyRangeEdit(SelectionRange{
                               .start = TextPosition{0, 0},
-                              .end = TextPosition{0, document_->lines[0].size()},
+                              .end = TextPosition{0, document_->lines.LineLength(0)},
                           },
                           "", true);
   }
@@ -776,9 +777,9 @@ bool TextViewport::DeleteCurrentLine() {
   return ApplyRangeEdit(SelectionRange{
                             .start = TextPosition{
                                 previous_line,
-                                document_->lines[previous_line].size(),
+                                document_->lines.LineLength(previous_line),
                             },
-                            .end = TextPosition{cursor_line_, document_->lines[cursor_line_].size()},
+                            .end = TextPosition{cursor_line_, document_->lines.LineLength(cursor_line_)},
                         },
                         "", true);
 }
@@ -803,7 +804,7 @@ void TextViewport::SelectWordAtCursor() {
   if (document_->lines.empty()) {
     return;
   }
-  const std::string& line = document_->lines[cursor_line_];
+  const std::string_view line = document_->lines.LineView(cursor_line_);
   const std::size_t col = std::min(cursor_column_, line.size());
   std::size_t start = col;
   std::size_t end = col;
@@ -846,7 +847,7 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
   }
 
   const std::size_t line_index = cursor_line_;
-  const std::string& line = document_->lines[line_index];
+  const std::string_view line = document_->lines.LineView(line_index);
   const std::size_t col = std::min(cursor_column_, line.size());
   std::size_t anchor_col = col;
   if (col < line.size() && IsIdentifierByte(line[col])) {
@@ -876,7 +877,7 @@ void TextViewport::SelectLineAtCursor() {
     return;
   }
   selection_anchor_ = TextPosition{cursor_line_, 0};
-  cursor_column_ = document_->lines[cursor_line_].size();
+  cursor_column_ = document_->lines.LineLength(cursor_line_);
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }

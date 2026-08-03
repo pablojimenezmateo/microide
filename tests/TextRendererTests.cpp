@@ -900,6 +900,44 @@ void TestEditorViewRendererPaintsSelectedRowsAndInlineHighlightsThroughDecorated
   SDL_DestroySurface(pixels);
 }
 
+// The editor render path must read lines through the piece tree's zero-copy
+// `LineView`, never through the `operator[]` compatibility accessor.
+//
+// `operator[]` materializes a heap copy of the line into TextBuffer's line cache
+// and keeps it until the next mutation, so a render path that used it left a
+// second copy of every line it ever painted resident -- scrolling a large file
+// end to end duplicated the whole document. The accessor
+// `materialized_line_count()` exists for exactly this assertion and had no
+// caller, so nothing noticed that the hottest per-line path in the app was the
+// one violating the rule.
+void TestEditorViewRendererReadsLinesWithoutMaterializingThem() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 240);
+  microide::render::TextRenderer text_renderer;
+  TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+  const microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "int value_" + std::to_string(i) + " = compute(" + std::to_string(i) + ");\n";
+  }
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/editor-render-zero-copy.cpp");
+
+  microide::editor::EditorViewRenderer renderer;
+  // Paint several windows, scrolling between them, exactly as a wheel scroll does.
+  for (std::size_t top = 0; top < 300; top += 20) {
+    viewport.SetScrollLine(top);
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport,
+                    SDL_FRect{0.0f, 0.0f, 320.0f, 240.0f}, false, "", std::nullopt);
+  }
+
+  Expect(viewport.lines().materialized_line_count() == 0,
+         "the editor render path must read lines through LineView, not the copying "
+         "operator[] accessor (materialized " +
+             std::to_string(viewport.lines().materialized_line_count()) + " lines)");
+}
+
 void TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(84, 90);
@@ -2318,6 +2356,8 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view uses wrapped rows and suppresses continuation gutter numbers",
           TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers);
+  AddTest(tests, "TextRenderer/EditorViewRendererReadsLinesWithoutMaterializingThem",
+          TestEditorViewRendererReadsLinesWithoutMaterializingThem);
   AddTest(tests,
           "TextRenderer editor view search highlights track horizontal scroll",
           TestEditorViewRendererSearchHighlightsTrackHorizontalScroll);

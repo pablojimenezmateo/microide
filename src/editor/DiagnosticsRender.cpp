@@ -111,7 +111,7 @@ namespace {
 // to the code-point start, whereas `VisualColumnForTextColumn` counts the code
 // point containing the column; snapping up makes the cached lookup byte-identical
 // to the uncached walk for every input.
-std::size_t SnapUpToCodePointBoundary(const std::string& text, std::size_t column) {
+std::size_t SnapUpToCodePointBoundary(std::string_view text, std::size_t column) {
   while (column < text.size() &&
          (static_cast<unsigned char>(text[column]) & 0xC0u) == 0x80u) {
     ++column;
@@ -121,7 +121,7 @@ std::size_t SnapUpToCodePointBoundary(const std::string& text, std::size_t colum
 
 // Visual column for `clamped_column`, via the precomputed per-line map when
 // present (O(log N)), else the direct O(column) tab-stop walk.
-std::size_t VisualColumnFor(const std::string& text, std::size_t clamped_column,
+std::size_t VisualColumnFor(std::string_view text, std::size_t clamped_column,
                             std::size_t tab_size,
                             const TextLayout::LineVisualColumnMap* visual_map) {
   if (visual_map != nullptr) {
@@ -136,7 +136,7 @@ std::size_t VisualColumnFor(const std::string& text, std::size_t clamped_column,
 // O(column + diagnostics * log column) for a line with many diagnostics.
 std::optional<SDL_FRect> DiagnosticUnderlineRectWithMap(
     const render::TextRenderer& text_renderer, float text_x, float y, float line_height,
-    const std::string& text, std::size_t line_index, std::size_t horizontal_scroll,
+    std::string_view text, std::size_t line_index, std::size_t horizontal_scroll,
     std::size_t visible_columns, std::size_t tab_size, const PublishedDiagnostic& diagnostic,
     const TextLayout::LineVisualColumnMap* visual_map) {
   if (line_height <= 0.0f || visible_columns == 0 ||
@@ -183,7 +183,7 @@ std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& tex
                                                  float text_x,
                                                  float y,
                                                  float line_height,
-                                                 const std::string& text,
+                                                 std::string_view text,
                                                  std::size_t line_index,
                                                  std::size_t horizontal_scroll,
                                                  std::size_t visible_columns,
@@ -200,7 +200,7 @@ void AppendDiagnosticUnderlines(DecoratedTextRow& row,
                                 float text_x,
                                 float y,
                                 float line_height,
-                                const std::string& text,
+                                std::string_view text,
                                 std::size_t line_index,
                                 std::size_t horizontal_scroll,
                                 std::size_t visible_columns,

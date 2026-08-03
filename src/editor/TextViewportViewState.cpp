@@ -236,7 +236,7 @@ void TextViewport::MoveCursorLineEnd(bool extend_selection) {
   PlacePrimaryCaret(cursor_line_, CurrentLineLength());
   for (SecondaryCaret& caret : secondary_carets_) {
     if (caret.position.line < document_->lines.size()) {
-      caret.position.column = document_->lines[caret.position.line].size();
+      caret.position.column = document_->lines.LineLength(caret.position.line);
     }
     caret.preferred_column = PreferredColumnForCaret(caret.position);
   }
@@ -256,9 +256,9 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
   undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
-  const std::size_t line_length = document_->lines[clamped_line].size();
+  const std::size_t line_length = document_->lines.LineLength(clamped_line);
   const std::size_t clamped_column = TextLayout::ClampTextColumn(
-      document_->lines[clamped_line], std::min(column, line_length));
+      document_->lines.LineView(clamped_line), std::min(column, line_length));
   PlacePrimaryCaret(clamped_line, clamped_column);
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position);
@@ -275,7 +275,7 @@ void TextViewport::MoveCursorToVisualColumn(std::size_t line,
 
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
   const std::size_t text_column = TextLayout::TextColumnForVisualColumn(
-      document_->lines[clamped_line], visual_column, tab_size_);
+      document_->lines.LineView(clamped_line), visual_column, tab_size_);
   MoveCursorTo(clamped_line, text_column, extend_selection);
 }
 
@@ -302,7 +302,7 @@ std::size_t TextViewport::cursor_visual_column() const {
   if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
     return 0;
   }
-  return TextLayout::VisualColumnForTextColumn(document_->lines[cursor_line_], cursor_column_,
+  return TextLayout::VisualColumnForTextColumn(document_->lines.LineView(cursor_line_), cursor_column_,
                                                tab_size_);
 }
 
@@ -310,7 +310,7 @@ std::size_t TextViewport::CurrentLineLength() const {
   if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
     return 0;
   }
-  return document_->lines[cursor_line_].size();
+  return document_->lines.LineLength(cursor_line_);
 }
 
 void TextViewport::ClampCursorColumn() {
@@ -327,12 +327,12 @@ void TextViewport::ClampCursorColumn() {
     // absolute visual column for the caret's current row first (mirrors
     // AdvanceCaretVertical).
     const std::size_t target_visual = ResolveSoftWrapCursorColumnForTargetRow(CursorVisualRow());
-    cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines[cursor_line_],
+    cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(cursor_line_),
                                                            target_visual, tab_size_);
     return;
   }
 
-  cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines[cursor_line_],
+  cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(cursor_line_),
                                                          preferred_column_, tab_size_);
 }
 
@@ -420,7 +420,7 @@ std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) con
     return 0;
   }
   const std::size_t visual =
-      TextLayout::VisualColumnForTextColumn(document_->lines[caret.line], caret.column, tab_size_);
+      TextLayout::VisualColumnForTextColumn(document_->lines.LineView(caret.line), caret.column, tab_size_);
   if (!soft_wrap_) {
     return visual;
   }
@@ -456,7 +456,7 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) con
   // non-uniform — integer division by the wrap width would land on the wrong
   // row whenever a line breaks before its column limit.
   const std::size_t caret_visual =
-      TextLayout::VisualColumnForTextColumn(document_->lines[caret.line], caret.column, tab_size_);
+      TextLayout::VisualColumnForTextColumn(document_->lines.LineView(caret.line), caret.column, tab_size_);
   const auto [first_row, last_row] =
       layout_cache_.WrappedRowRangeForLine(caret.line, document_->lines.size());
   for (std::size_t row = first_row; row < last_row; ++row) {
@@ -503,7 +503,7 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
   if (caret.line >= document_->lines.size()) {
     caret.line = document_->lines.size() - 1;
   }
-  caret.column = std::min(caret.column, document_->lines[caret.line].size());
+  caret.column = std::min(caret.column, document_->lines.LineLength(caret.line));
   if (delta < 0) {
     for (int i = delta; i < 0; ++i) {
       if (caret.column == 0) {
@@ -513,14 +513,14 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
           break;
         }
         --caret.line;
-        caret.column = document_->lines[caret.line].size();
+        caret.column = document_->lines.LineLength(caret.line);
         continue;
       }
-      caret.column = TextLayout::PreviousTextColumn(document_->lines[caret.line], caret.column);
+      caret.column = TextLayout::PreviousTextColumn(document_->lines.LineView(caret.line), caret.column);
     }
   } else {
     for (int i = 0; i < delta; ++i) {
-      const std::string& line = document_->lines[caret.line];
+      const std::string_view line = document_->lines.LineView(caret.line);
       if (caret.column >= line.size()) {
         // At the end of a line, step forward to the start of the next line.
         // Stop only at the very end of the document.
@@ -569,7 +569,7 @@ void TextViewport::AdvanceCaretVertical(TextPosition& caret,
   const std::size_t target_visual_column =
       ResolveSoftWrapCursorColumnForTargetRow(caret, preferred_column, target_row);
   caret.line = target.line_index;
-  caret.column = TextLayout::TextColumnForVisualColumn(document_->lines[target.line_index],
+  caret.column = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(target.line_index),
                                                        target_visual_column, tab_size_);
 }
 

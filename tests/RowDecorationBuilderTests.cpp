@@ -163,7 +163,7 @@ void ExpectLayoutRowMatches(const render::TextRenderer& text_renderer, const Lin
   input.line_height = kLineHeight;
   input.row_visual_start = row_start;
   input.row_visual_end = row_end;
-  input.text = &line_case.text;
+  input.text = line_case.text;
   input.tokens = &tokens;
   input.plain_color = plain_color;
   input.layout = &layout;
@@ -242,7 +242,7 @@ void ExpectVisibleRowMatches(const render::TextRenderer& text_renderer, const Li
   input.line_height = kLineHeight;
   input.row_visual_start = row_start;
   input.row_visual_end = row_end;
-  input.text = &line_case.text;
+  input.text = line_case.text;
   input.tokens = &tokens;
   input.plain_color = plain_color;
   input.layout = nullptr;
@@ -337,7 +337,7 @@ void TestChangedSpanUnderlinesUseGridWhenLayoutSet() {
   input.line_height = 16.0f;
   input.row_visual_start = 0;
   input.row_visual_end = 40;
-  input.text = &text;
+  input.text = text;
   input.tokens = &tokens;
   input.plain_color = theme.text_secondary;
   input.layout = &layout;  // grid path
@@ -393,7 +393,7 @@ void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
   input.line_height = 16.0f;
   input.row_visual_start = 0;
   input.row_visual_end = 40;
-  input.text = &text;
+  input.text = text;
   input.tokens = &tokens;
   input.plain_color = theme.text_secondary;
   input.layout = &layout;  // grid path
@@ -465,7 +465,7 @@ void TestInlayHintsShiftRunsAndDrawGlyph() {
   input.line_height = 16.0f;
   input.row_visual_start = 0;
   input.row_visual_end = 40;
-  input.text = &text;
+  input.text = text;
   input.tokens = &tokens;
   input.plain_color = theme.text_secondary;
   input.layout = &layout;

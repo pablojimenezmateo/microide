@@ -379,7 +379,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       incoming_input.line_height = surface.line_height;
       incoming_input.row_visual_start = merge_tab->horizontal_scroll;
       incoming_input.row_visual_end = merge_tab->horizontal_scroll + surface.visible_columns;
-      incoming_input.text = &merge_tab->model.incoming_lines[line_index];
+      incoming_input.text = merge_tab->model.incoming_lines[line_index];
       incoming_input.tokens = &tokens;
       incoming_input.plain_color =
           selected_incoming ? theme_.text_primary : theme_.text_secondary;
@@ -418,7 +418,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       current_input.line_height = surface.line_height;
       current_input.row_visual_start = merge_tab->horizontal_scroll;
       current_input.row_visual_end = merge_tab->horizontal_scroll + surface.visible_columns;
-      current_input.text = &merge_tab->model.current_lines[line_index];
+      current_input.text = merge_tab->model.current_lines[line_index];
       current_input.tokens = &tokens;
       current_input.plain_color =
           selected_current ? theme_.text_primary : theme_.text_secondary;
@@ -550,7 +550,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           preview_input.row_visual_start = merge_tab->horizontal_scroll;
           preview_input.row_visual_end =
               merge_tab->horizontal_scroll + interaction.result.metrics.visible_columns;
-          preview_input.text = &preview_text;
+          preview_input.text = preview_text;
           preview_input.tokens = &kEmptyTokens;
           preview_input.plain_color = theme_.text_primary;
           preview_input.layout = &preview_layout;

@@ -66,10 +66,12 @@ struct RowDecorationInput {
   std::size_t row_visual_start = 0;
   std::size_t row_visual_end = 0;
 
-  // Canonical line text. Drives the visible-syntax / changed-span string_view
-  // and the diagnostic underline pass (which needs a std::string). May be null
-  // for an empty row.
-  const std::string* text = nullptr;
+  // Canonical line text, as a view. A `const std::string*` here forced every
+  // caller to hand over an owned string, and the editor's per-row path got one
+  // from TextBuffer's `operator[]` -- which materializes a heap copy of the line
+  // and keeps it until the next mutation, so painting a large file left a second
+  // copy of it resident. Everything downstream only ever read bytes.
+  std::string_view text;
   const std::vector<SyntaxTokenKind>* tokens = nullptr;
   SDL_Color plain_color{};
 
