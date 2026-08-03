@@ -72,37 +72,24 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
-### Per-tab language-contract rebuild in ApplyEditorPreferences (TD-2026-08-03-110)
+### RESOLVED 2026-08-03 — Per-tab language-contract rebuild (TD-2026-08-03-110)
 
-Filed 2026-08-03 alongside the settings-hoist (3698b8f8), deliberately not fixed
-in it. **Gated**: `settings_change_many_tabs` measures it as the
-`settings.apply_contract_family_all_tabs` phase, so the win is measurable before
-and after.
+Filed alongside the settings hoist (3698b8f8); fixed in a7c913b6. Kept here as a
+short record because the fix changed a `TextViewport` ownership rule.
 
-The contract family of `ApplyEditorPreferences` costs roughly **50 allocations
-per viewport** — 50,018 for ~984 viewport-applications in the scenario, versus
-10,564 for the cheap family. Two separable sources, both O(open tabs):
+Both O(open tabs) sources are memoized now. Filetype detection moved onto the
+viewport as `TextViewport::language_id()`, keyed on (document identity, content
+revision, path, syntax-registry revision) — which also retired the three other
+filetype caches that had accreted (`runtime_syntax::FiletypeMemo` and its two
+instances, plus `LspUiState::language_cache_*`, whose path-only key was silently
+pinning a stale language for content-detected buffers). The contract view is
+built and cached by `WorkspaceLanguageContract::ResolveEditorView` and held by
+`shared_ptr<const>`, so same-language tabs share one view instead of each owning
+a copy — this is the ownership change the original entry said would be needed.
 
-1. `editor::runtime_syntax::DetectFiletype(path, lines)` runs per viewport, doing
-   a bounded head-scan of the buffer. For a settings change nothing about the
-   buffer changed, so 40 tabs re-detect 40 unchanged filetypes. Cacheable on the
-   tab, invalidated on path change and on content revision bump.
-2. `BuildEditorLanguageContractView` builds a fresh `editor::LanguageContractView`
-   per viewport: it copies `auto_close_pairs` and `surround_pairs` pair-by-pair,
-   plus `indent_after_open_patterns`, `dedent_on_close_chars`, and three strings.
-   40 `.cpp` tabs build 40 identical views.
-
-Note the obvious fix is only half a fix. `WorkspaceLanguageContract::ResolveView`
-is already cheap (a lookup returning a pointer), so memoizing the *build* by
-`(language_id, auto_close, surround, smart_indent)` saves the loop but **not** the
-copy: `TextViewport::SetLanguageContractView` takes the view by value and moves
-it into a per-viewport member, so each tab still owns its own vectors. Removing
-the copy needs viewports to reference a host-owned shared view instead of owning
-one — a `TextViewport` ownership change, which is why this is filed rather than
-bundled into a perf tweak.
-
-Do (1) first: it is self-contained, needs no ownership change, and is plausibly
-the larger share.
+Measured on `settings_change_many_tabs` (reference runner): the contract-family
+phase went 50,020 → 10,752 allocations and 2.640 → 0.410 ms, i.e. down to what
+the cheap family costs; whole scenario 104,799 → 63,771 allocations.
 
 ### Deferred from the 2026-07-10 cross-subsystem bug-hunt pass (TD-2026-07-10-*)
 
