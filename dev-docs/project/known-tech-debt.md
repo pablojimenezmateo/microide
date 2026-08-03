@@ -72,6 +72,48 @@ backlog) is archived at
 `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`, and per-item
 detail lives in the `Deferred backlog sweep — Batch A…I` commits.
 
+### Deferred from the 2026-07-10 cross-subsystem bug-hunt pass (TD-2026-07-10-*)
+
+Relocated here from `active-work.md` on 2026-08-03: these are open debt items, which
+is what this ledger is for. Not fixed in that pass — low value or hard to reach/test.
+
+- `CommitWorkflowService::DispatchCommit` captures `&state` into the background
+  task; if the owning project state is destroyed while a commit is in flight the
+  main-thread completion touches freed memory. Pre-existing (the old worker-thread
+  path had the same capture); the generation guard only covers a newer dispatch,
+  not teardown. Would need the mailbox cleared / the operation cancelled on
+  project close.
+- `TerminalSession` has three near-duplicate reset blocks (`Start`,
+  `StartPlaceholderForTesting`, `Stop`) plus `TestAccess::Reset`; they were kept in
+  lockstep but should be factored into one `ResetSessionStateLocked` to prevent
+  future drift.
+- `SurfaceTextureCache` eviction/null-renderer fixes lack direct unit coverage:
+  `Upload` needs a live SDL renderer (`SDL_CreateTexture`), unavailable headless.
+  They mirror the already-tested sibling text-texture cache guard.
+- The single-line-input view-metrics OOB fix (`WorkspaceShellRenderTextInput` /
+  `WorkspaceShellSingleLineInputMouse`: `view_start_idx == size()` when no glyph
+  left of the caret fits a sub-glyph-width field) lacks a direct regression test —
+  both functions are `WorkspaceShell` members needing a live `text_renderer_` and
+  the narrow-field trigger (debug variables inline editor). Fix verified by
+  inspection; ASAN covers it if a shell-level test ever drives that path.
+- Terminal minor spec deviations (not user-visible in normal use): a combining
+  mark following a double-width glyph attaches to the wide-trailing spacer and is
+  dropped; multi-byte charset designations (`ESC ( " ?`) mis-parse; DECSTBM on the
+  alternate screen with origin mode homes to screen-top rather than region-top.
+- `MergeConflictKind` may label a both-modified conflict `LineEndingHeavy` when
+  only one side is line-ending-only; cosmetic (summary text), behavior unchanged.
+- LSP diagnostics version gate after close→reopen (`WorkspaceLspClientDispatch`):
+  `DidClose` erases the URI's tracked version and `DidOpen` resets it to 1, so a
+  late `publishDiagnostics` from the previous open (version > 1) is not dropped and
+  can paint briefly on the reopened buffer until the next republish. Narrow race,
+  self-healing; low severity. Fix would require an open-generation token or a
+  version that never resets across reopen.
+- **WON'T DO** — Windows `FileIndexWatcher` (`ReadDirectoryChangesW`) backend gaps:
+  a tracked directory rename leaves ghost index entries + an unindexed subtree (no
+  recursive delete / no subtree walk), and a change-buffer overflow
+  (`bytes_transferred==0`) drops notifications with no full-rescan resync. Non-Linux
+  host backends are not built; Linux inotify handles both cases correctly.
+
 ### [RESOLVED 2026-07-31] `debug-toggle-enabled` could never disable the debugger (TD-2026-07-31-102)
 
 Filed as a breakpoint-gutter lead; the gutter was innocent. Over the control

@@ -1,45 +1,23 @@
 # MicroIDE Active Work
 
-Reviewed on 2026-07-05 (v2.6.5 shipped — shared overview-ruler lane: a single primitive painted
-left of the vertical scrollbar across the editor, compare, and merge surfaces to show diff/merge
-changes, search matches, diagnostics, and the caret at a glance, gated by
-`editor.view.overview_ruler.enabled` (default on), with an allocation-free live-caret marker,
-colorscheme-switch cache invalidation, and deterministic equal-priority marker tie-breaks.
-Prior: v2.6.4 correctness & hardening release — a broad batch of
-user-visible bug fixes across editor, compare/merge, git, LSP/DAP, and plugin surfaces (fold gutter,
-compare cell-grid alignment + row-layout cache, multi-caret paste desync, git rename data-loss, LSP
-shutdown deadlock, merge "Mark Resolved" CRLF), VSCode-aligned default keybindings + a Go to Line
-modal, a tenth-round defensive-caps sweep, and LSP/DAP JSON + render hot-path perf work.
-Prior: v2.6.3 resilience-hardening release — a multi-round white-box pentest sweep bounding
-adversarial/pathological inputs across terminal, editor, compare/merge, git, filesystem-watch,
-LSP/DAP, and plugin surfaces with allocation caps, recursion-depth guards, and list-length limits,
-plus one new opt-in terminal-clipboard (OSC 52) setting, off by default.
-Prior: v2.6.2 workspace-chrome release — project tab strip polish. Prior: v2.6.1 font-picker polish
-on top of 2.6.0: scrollable
-font-family dropdown with real scrollbar + mouse-wheel, weight/style-deduped family names,
-fontconfig enabled by default, and a `ResolveFamilyToFile` correctness fix. Prior: v2.6.0
-settings & tabs cycle — full settings overhaul with live-applied values and set-as-default,
-installed-font picker with native file dialog + portable font resolution, autosave-delay +
-terminal-font settings, and Chrome-like sliding tab reordering.
-Prior: v2.5.x performance & internals cycle — allocation-free compare/merge + sidebar render, LTO
-`.deb`, lazy syntax-rule compilation, `ProviderRegistry<Spec>`; v2.4.0 performance & correctness
-cycle — piece-tree document model, GPU-gated glyph atlas, first-class debugger, `--version` flag).
+Reviewed 2026-08-03. Shipped baseline: **v2.8.0**.
 
-This is the single source of truth for:
+This file answers one question: **what should be worked on next, and what is
+deliberately not being built.**
 
-- the shipped baseline that matters for ongoing work
-- the current priority stack
-- accepted scope cuts and deferred work
+It is not a changelog and not a shipped-feature inventory. Those exist:
 
-Current validation emphasis is still the native diff/merge/git workstation flow:
-open repo -> inspect changes -> diff files -> resolve merge conflict -> stage/commit.
-
-Use subsystem design docs for deep dives. Use this file to decide what is active, what is already
-good enough, and what is deliberately not being built.
+| you want | read |
+| --- | --- |
+| what shipped, when | `CHANGELOG.md` |
+| what the product *is* | `README.md` § Highlights |
+| why a subsystem is shaped as it is | `dev-docs/project/implementation-guide.md` |
+| durable behavioural contracts | `openspec/specs/` |
+| per-change proposals and specs | `openspec/changes/archive/` |
+| open, actionable debt | `dev-docs/project/known-tech-debt.md` |
+| UI rules that were each broken once | `dev-docs/project/ui-invariants.md` |
 
 ## Priority Order
-
-Engineering decisions should follow this order:
 
 1. speed
 2. correctness
@@ -48,827 +26,144 @@ Engineering decisions should follow this order:
 5. architectural clarity
 6. compatibility only when explicitly required
 
-Speed leads because latency is the product. Correctness still outranks CPU, memory, and
-clarity, so it is never traded for those — but a pathological input may be bounded with a
-declared cap or fallback to keep the common path fast. `AGENTS.md` § Priority Order and
-`openspec/specs/product-vision/spec.md` carry the authoritative wording.
+Speed leads because latency is the product. Correctness still outranks CPU,
+memory, and clarity, so it is never traded for those — but a pathological input
+may be bounded with a declared cap or fallback to keep the common path fast.
+`AGENTS.md` § Priority Order and `openspec/specs/product-vision/spec.md` carry
+the authoritative wording.
 
-Broad refactors are acceptable when they improve the result. Do not preserve stale boundaries,
-legacy helpers, or accidental compatibility if they block speed or correctness.
+Broad refactors are acceptable when they improve the result. Do not preserve
+stale boundaries, legacy helpers, or accidental compatibility if they block
+speed or correctness.
 
-## Shipped Baseline
+## Validation Focus
 
-These are implemented and should not be treated as open migration work:
+The native diff/merge/git workstation flow is what gets exercised end to end:
 
-- SDL3/CMake desktop shell with an event-driven render loop
-- retained scene redraw path with shell-owned invalidation, coalesced dirty regions, partial-to-full promotion, and resize-safe full-redraw fallbacks for outer-layout drags
-- mouse-cursor resolution is derived from that same invalidation rather than a hand-maintained input allowlist: a single `cursor_hit_generation_` is bumped by every cursor-relevant redraw (all `Request*` redraw helpers, plus the Application apply seam for full-redraw `EventResult` literals), and the per-frame `UpdateMouseCursor` fast-path recomputes whenever the pointer moved or that generation changed. Because the cursor hit-test only runs inside a rendered frame and every cursor-relevant frame bumps the generation (idle caret-blink intentionally does not), the cursor cannot go stale under a stationary pointer; platform-stomp events (resize/move/restore/maximize/focus, pointer-enter) additionally `ForceCursorReassert`. The pointer position used for cursor/hover is event-sourced only — the render path (`PrepareFrameOnce`) never polls the live OS pointer (`SDL_GetMouseState`), which kept retained-vs-full redraws deterministic; resize/move reseed the position at event time via `SeedPointerPosition` (renderer-owned coordinate conversion). The cursor hit-test (`CursorKindForPosition`) mirrors the click handlers' geometry per-group (split editor tab strips, git commit workflow, breadcrumb status items). On Wayland the cursor shape only becomes visible once the compositor recomposites (it rides a hardware cursor plane), so an event-time cursor change must be followed by a present: `UpdateMouseCursor` calls `RequestCursorPresent` on a real apply (the render-path call passes `during_frame_prepare=true` and skips it, since it already presents), and `WorkspaceEventDispatcher::finish()` treats any pending redraw as handled so the app loop does not drop it — `HandleMouseMotion` returns false for a cursor-only change, and the loop ignores `result.redraw` when `handled` is false. Without both halves the shape stays stale on an idle compositor — visible only once the caret-blink frames stop or on a caret-less welcome screen (see `dev-docs/platform/wayland-stale-cursor.md`). Do not reintroduce a per-field cursor fingerprint, a live-pointer poll on the render path, or an event-time cursor change that skips the present, and do not re-gate the app loop's use of `result.redraw` on `result.handled` without keeping `finish()`'s pending-redraw rule
-- custom menu bar, project tabs, file tabs, breadcrumbs, persistent sidebar, overlays, and docked terminal-and-command pane
-- shell cards, compact tooltips, framed text inputs, buttons, selectable-list backgrounds,
-  popup-menu rows, strip tabs, and common shell glyphs now route through shared workspace render
-  primitives instead of staying fully surface-local
-- **one quick-open surface** (2026-07-30 UI/UX pass): the file finder, project search, command
-  palette, and the git commit/launch pickers share `ComputeQuickOpenOverlaySurfaceRect`, one header
-  block (title, query field, result summary, `↑↓ select · Enter choose · Esc cancel` hint), and one
-  set of row offsets — `OverlayQueryRowOffset` / `OverlaySummaryRowOffset` / `OverlayListStartOffset`,
-  read by both the view-model builder and the click hit-test so a field cannot be painted off its own
-  hit target. They previously split across two card geometries in three sizes, and the two most-used
-  ones carried neither a result count nor a key hint. Do not reintroduce a per-mode overlay rect.
-- **a painted frame is fully opaque** (2026-07-31): the scene is rendered into a
-  retained RGBA texture that is blitted whole to a window that is never cleared, so
-  a translucent pixel left in that texture re-composites against its own previous
-  output on every present until the region goes flat. Translucent fills therefore
-  have to *composite*, never overwrite: `render::SetDrawColor` picks the blend mode
-  from the colour's alpha and every shell draw primitive routes through it (do not
-  call `SDL_SetRenderDrawColor` directly from a render TU), and the scene texture
-  presents with `SDL_BLENDMODE_NONE`. Guarded by
-  `WorkspaceShell/RenderedFrameIsFullyOpaque`
-- **derived chrome asks for its own repaint** (same date): the status bar is built
-  from state owned by other surfaces, so no `Request*Redraw` helper covered it and
-  it simply never repainted on a partial frame. `StatusBarService` tracks whether a
-  *painted* value changed and frame prep requests the strip when one did. Redraws
-  requested from the render path are also no longer stranded — the event loop does
-  not block with one pending, and `HandleScheduledWake` merges them in
-- **empty list groups are hidden, unless the header owns a control** (2026-07-31):
-  the git sidebar used to stamp a `(0)` header plus a "No …" placeholder for all
-  five workflow groups, so a clean checkout — the common case — was ten rows of
-  prose saying nothing. `ShouldShowSection` drops an empty group and one headerless
-  line covers the whole-panel states ("No changes", "Not a git repository"), as in
-  VSCode. The exception is load-bearing and general: `Outgoing` is always shown
-  because its *header row* carries the base-branch button, so hiding the group
-  would remove the only control that could make it non-empty. Before hiding any
-  empty group, check whether its header is also a control surface
-- **an empty list says so once, in the list** (2026-07-31): the count row sits
-  directly above the list area, so a count that spells out the empty state prints
-  the same sentence twice. `BuildFilteredCountSummary` returns empty at zero
-  matches and every surface pairs it with its own list-area label; there is no
-  "0 of N" and no synthetic count. This has regressed twice (the search panel in
-  5d091f9e, the file finder plus a hardcoded `"0 of 0"` fallback right after),
-  which is why `RenderViewModelBuilder/EmptyPickerStatesAreNotStatedTwice` walks
-  every picker mode rather than trusting per-surface tests
-- **a view with no tab still needs a way in** (same date): the sidebar rail draws
-  three primary tabs and pushes everything else — Problems, Tests, Outline, plugin
-  views — into the overflow menu, and lights the overflow button whenever the
-  active view lives behind it. Filtering a view out of *both* the row and the menu
-  (as a stale retired-surface exclusion list did) leaves it reachable only by
-  command, with nothing on screen saying which view is showing
-- **every filtered surface reports its own filter** (same date): Settings and
-  Help/About carry the quick-open footer — `N of M` on the left, key hint on the
-  right — and a zero-match query puts a line in the list area instead of leaving a
-  blank card. Hints are per-surface, not copied: Help/About is read-only, so it
-  says `↑↓ scroll · Esc close` rather than the picker's `Enter choose`
-- **text that does not fit is truncated or wrapped, never sheared** (same pass): notification toasts
-  scale their width with the window and ellipsize through `TruncateToWidthEphemeralView`; narrow-rail
-  empty states (sidebar placeholders, every debug-pane mode) word-wrap through
-  `DrawWrappedPlaceholder` / `ForEachWrappedLabelLine` in the shared render primitives; the project
-  search sidebar's status line is status only, with its key cheat-sheet moved to Help/About beside
-  the git sidebar's. Hint lists join on `" · "` everywhere (`JoinHintSegments`)
-- inline git blame annotates the caret line only (`kCaretBlameRadius = 0`), matching VSCode/GitLens;
-  the regex toggle reads `.*` in both the find bars and the search sidebar; the status bar names the
-  branch from `<gitdir>/HEAD` before the first `git status` snapshot rather than reporting `no-scm`
-  for a real checkout, and reports UTF-8 for ASCII files; Help/About opens filter-focused
-- project-local workspace state plus app-level restore of open project tabs
-- normal editor tabs, compare tabs, and merge tabs, with deferred-commit tab drag (ghost preview) consistent across all three tab types
-- first-class editor groups (`EditorGroup`): split right/down from tab and tree context menus, per-group layout/render/tab-strips, group-aware keyboard input, split/focus/close commands, and session persistence/restore (this supersedes the older nested in-tab shared-buffer split model, collapsed in v2.1.0)
-- searchable command palette overlay (Ctrl+Shift+P) that doubles as the command line: typing a verb plus arguments (e.g. `colorscheme dark`) or any unmatched query runs through the shared command executor, and Tab completes command/path tokens. This is now the *only* command surface — the separate Ctrl+E bottom-panel command prompt (and per-session command history) was retired and folded in
-- recent projects/files (MRU) surfaced in the file finder, and a state-aware welcome/home surface: a cold-start variant (Open Folder + recent projects) when no project is open, and a project-home variant (project name, recent files in the project, New File / Open File / Find in Project) when a project is open with no editor tab. Plus a built-in light theme
-- decorated-row assembly is unified across editor, compare, and merge surfaces (shared intra-line underline and conflict-marker helpers), keeping the three diff/merge surfaces convergent
-- plugin rendering surface (shipped v2.3.0): plugins run on a dedicated worker thread and contribute editor decorations, content surfaces, ghost text, host-owned buffer edits, reactive editor events, language providers, presentation contributions (themes/file-icons/status), and tree sidebars under a strict host-renders-data model — validated zero-cost when unused
-- release artifacts are GPG-signed: the published `.deb` carries a detached `.asc` signature and SHA256 checksum, the public key ships as `microide-signing-key.asc`, and release tags are signed (see `dev-docs/project/release-checklist.md`)
-- multi-caret editing with position remap across edits, region-stack highlighting, and copy-with-context
-- editor open/save/reopen, selection, clipboard, undo/redo, line numbers, **word wrap (soft-wrap)** with wrap-aware caret motion and hit-testing, horizontal scrolling when wrap is off, dirty tracking, IME hooks, and project-local preferences (this supersedes any older roadmap note that listed soft wrap as out of scope)
-- syntax-highlight state now uses coarse document checkpoints plus per-line memoized replay, so
-  far jumps in large files do not have to rebuild highlight state from file start
-- UTF-8 boundary logic, line-ending decode or serialize, and text splitting now route through one
-  shared `util/StringUtil.*` layer across viewport, renderer, terminal, and workspace helpers
-- single-line shell text inputs now share one insertion, caret, composition, and tail-truncation path across prompts, command input, overlays, and sidebar search fields, while read-only viewport-backed text surfaces still participate in shared selection and copy actions
-- editor undo and redo now store changed line ranges plus view state instead of full-buffer snapshots, and editor file open/save now reuses the shared text-file helper instead of inline stream assembly
-- document saves are durable (temp-file `fsync` via shared `util/DurableFile`, matching the persisted-state writer) and guarded against silent clobbering: each open buffer records an on-disk signature (mtime+size) at load/save, and a save whose file changed underneath it is refused and surfaced as a non-blocking external-change banner (Reload / Overwrite / Keep) instead of the old blocking modal; clean buffers reload silently with a passive "reloaded from disk" notice, and the watcher's echo of the editor's own write is suppressed by signature
-- filesystem tree with `.gitignore` handling, git markers (async after first paint on project
-  open), refresh, and trash-backed create/rename/delete flows
-- host-owned app-directory, trash or recycle-bin, open-URL, reveal-path, and bundled-asset
-  services for Linux, macOS, and Windows policy, with runtime assets copied into desktop-build
-  and macOS-bundle layouts
-- file finder overlay plus async project search with literal or regex mode, case controls, hidden-file controls, replace-in-project in both literal and regex modes (regex expands $1/$2 capture groups), capped-result feedback, and a standalone benchmark tool. Search is scopeable with VS Code-style include/exclude globs (comma-separated, brace alternation, bare names float to any depth and cover their subtree) behind the panel's `...` toggle; the filter is applied in the worker loop *before* the file is opened, so a scoped query skips the read entirely, and replace-all honours the same scope
-- git sidebar with compare, merge, stage, unstage, discard, outgoing-file views, bulk stage-all, and confirmed discard-all
-- git write operations: switch/create branch (filterable picker plus a sidebar branch row), fetch, pull, push, publish-branch, sync (pull-then-push, annotated with ahead/behind counts), and stash push/pop. They run on the background executor one at a time and report a classified outcome (`GitOperationOutcome`) instead of raw porcelain; every git invocation in the tree sets `GIT_TERMINAL_PROMPT=0`/`GCM_INTERACTIVE=never` so a credential prompt fails fast rather than blocking invisibly until the subprocess cap
-- PTY-backed terminal tabs with scrollback, selection, copy/paste, alternate screen, title updates, OSC 52 clipboard copy, focus notifications, bracketed paste, cursor-key mode, origin mode, autowrap control, and the common ANSI scroll-region paths currently needed by real tools
-- terminal find-in-scrollback (Ctrl+F over a focused terminal, or `terminal-find [query]`): a floating bar reusing the in-file find widget's card, all hits highlighted in the grid, `n/m` counter, Enter / Shift+Enter navigation starting at the newest hit, case and whole-word toggles. Matching walks grid cells (no materialized transcript) and rescans incrementally — only the visible grid can still be rewritten, so a streaming terminal re-walks a screenful per frame rather than the whole retained scrollback
-- runtime syntax highlighting from the in-tree generated syntax snapshot plus plugin `syntax/*.lua` contributions loaded into the host tokenizer at startup and `plugins-reload`
-- manual Lua plugin loading from the user config directory only, lifecycle hooks, plugin commands, plugin sidebars, project-relative file helpers, active-buffer metadata, argv-based process helpers, repo-owned dogfood plugins (installed under user config), and `plugins-reload`
-- plugin-published diagnostics with host-owned storage, theme-backed underline rendering, severity gutter markers, host-owned blame/diagnostic/plugin hover popups in editor surfaces, plugin hover providers, and host rename/delete cleanup for stale diagnostic paths
-- targeted regression coverage across compare, merge, git services, file operations, retained redraw, workspace chrome, and plugin-adjacent registries
-- large-project open no longer stalls: the file-index scan and inotify registration share `project/ProjectTraversalFilter` (extracted from `WorkspaceProjectFileMonitor`), which honors nested `.gitignore` plus built-in default ignores (VCS metadata `.git`/`.svn`/`.hg`/`.bzr`, dependency/cache dirs, and build-output dirs `build`/`builds`/`out`/`dist`/`target`/`cmake-build-*`/`bin`/`obj`) and a user `project.files_exclude` setting. Excluded dirs render **grayed** in the tree (still expandable), not hidden, and are pruned from indexing/watching; `FileIndexWatcher::BuildInitialBatch` is now entry-budgeted (`IndexUpdateBatch::truncated`) and applies file-level ignores. This fixed multi-minute "LSP init" stalls on a 47 GB / no-`.gitignore` SVN checkout that were actually the watcher walking `.svn/` + `builds/`. clangd also gets host-side `compile_commands.json` discovery (`project/CompileCommandsLocator`, `--compile-commands-dir` for non-standard build dirs) and host-side `ContributedLanguageServer::eager_start` support (cpp-lsp keeps it off; lazy start is fine now). The load-bearing LSP fix is that opening/viewing a file now engages the language server — `WorkspaceShell::NotifyPluginBufferOpen` starts a lazily-registered server and sends `textDocument/didOpen` (+ semantic tokens/diagnostics) on open, mirroring the save path. Previously the LSP only woke on the first *edit* or an explicit action (go-to-definition), so a freshly opened file sat at "LSP: Starting..." (lazy server never started) or painted no diagnostics/colors (server up but doc never opened) until the user interacted
+> open repo → inspect changes → diff files → resolve merge conflict → stage/commit
 
-## Active Phases
+A change that degrades that path is a regression regardless of what else it
+improves.
 
-The chronological log of shipped-and-archived changes that used to live here has been removed — that
-history is recorded faithfully in `CHANGELOG.md` (user-facing) and `openspec/changes/archive/`
-(per-change proposal/spec/tasks). The durable scope decisions those entries carried (hosted CI and a
-self-hosted perf-runner are descoped; non-Linux host backends are not being built) are recorded under
-**Deferred Or Out Of Scope** below. This section now describes only what is genuinely active.
+## Active Work
 
-### 0. Debugger / DAP Support — shipped in v2.0.0 (2026-06-20)
+Everything below is *open*. A phase disappears from this file when it closes —
+its record lives in `CHANGELOG.md` and `openspec/changes/archive/`.
 
-Full interactive debugging via the Debug Adapter Protocol, host-owned (mirroring the
-LSP client), behind a master "Enable debugger" toggle. **Phases 0–10 are complete and
-shipped in the v2.0.0 release**: protocol client core, session lifecycle, breakpoints
-(conditional / hit-count / logpoint / function / exception filters), execution control
-(including capability-gated reverse execution), Variables/Scopes, hover-to-inspect,
-watches, multi-session debugging, the right-side debug pane, and console REPL — with a
-bundled `gdb-dap` plugin for gdb 17.2 and an external control channel for headless /
-agent-driven operation. The full roadmap and status live in
-`dev-docs/debugger/dap-integration.md`; future hardening and additional adapters continue
-from there.
+### 1. Validate the shipped runtimes against real tools
 
-### 1. Plugin Platform Expansion
+The LSP, DAP, task, test, and SCM runtimes are all in the tree and all
+covered by end-to-end *fake*-server tests. The remaining work is real-tool
+validation, because that is where the contracts actually get tested.
 
-This is the dominant current phase and will be large.
+- exercise at least one real integration per platform surface before claiming
+  broader support; `gdb-dap` and clangd are the current real ones
+- confirm callback delivery, wake routing, cancellation, shutdown, and project
+  switching stay correct under repeated concurrent activity
+- no runtime request may stall render or input handling
+- add regression coverage for whatever proves fragile during validation
 
-Current state:
+### 2. Plugin platform: keep the seams narrow
 
-- manual Lua plugin loading is shipped
-- command and sidebar registries exist
-- workspace action ids and specs plus built-in menu-bar and tree-context definitions now live in
-  dedicated `WorkspaceActionTypes*` and `WorkspaceMenuRegistry*` modules instead of staying
-  embedded directly in `WorkspaceShell`
-- the host already exposes narrow file, workspace, process, diagnostics, and hover extension points
-- host-owned app-directory, subprocess, output-channel, task-executor, and persistence-format
-  services now back plugin, search, blame, and workspace state flows instead of keeping that work
-  tangled in `WorkspaceShell` or `WorkspaceShellShared.*`, including argv-based plugin subprocess
-  execution with cwd, stdin, and environment override support
-- host-owned filesystem helpers and a host-owned tree watcher now back plugin discovery, runtime
-  syntax loading, theme enumeration, and automatic plugin reload, with Linux native file-watch
-  wakeups plus snapshot fallback where native coverage is not available
-- plugin host lifecycle, runtime syntax reload bookkeeping, asset watching, and plugin output
-  channels now run through a dedicated `WorkspacePluginRuntime*` service instead of living
-  directly on `WorkspaceShell`
-- workspace layout, scroll geometry, compare-or-merge marker math, and terminal-selection helpers
-  now live in dedicated `WorkspaceLayout*` and `WorkspaceTerminalSelection*` modules instead of
-  staying bundled into `WorkspaceShellShared.*`
-- workspace UTF-8 helpers, line serialization, whitespace normalization, and literal-search
-  helpers now live in dedicated `WorkspaceTextSearch*` modules instead of staying bundled into
-  `WorkspaceShellShared.*`
-- workspace command-line parsing, completion, ui-scale text parsing, and path-prefix helpers now
-  live in dedicated `WorkspaceCommandParsing*` and `WorkspacePathUtils*` modules instead of
-  staying bundled into `WorkspaceShellShared.*`
-- workspace project-state naming, tab-and-breadcrumb labels, and project accent-color helpers now
-  live in dedicated `WorkspaceProjectPresentation*` modules instead of staying bundled into
-  `WorkspaceShellShared.*`
-- workspace git-sidebar line or entry presentation and project-search result line-map helpers now
-  live in dedicated `WorkspaceGitSidebarPresentation*` and
-  `WorkspaceProjectSearchPresentation*` modules instead of staying bundled into
-  `WorkspaceShellShared.*`
-- plugin syntax contributions now load from host-owned plugin data directories and invalidate editor, compare, and merge syntax caches on reload
-- workspace colorscheme, config, and session persistence now run through a dedicated persistence
-  coordinator instead of keeping those flows embedded in `WorkspaceShell`
-- command prompt history, completion, and command-line execution now run through a dedicated
-  command-prompt coordinator instead of living directly on `WorkspaceShell`
-- action dispatch for project, sidebar, search, tab, edit, and global commands now runs through a
-  dedicated action coordinator instead of living in `WorkspaceShellActions.cpp`
-- action request parsing now lives in `WorkspaceActionRequests*`, and the project, sidebar,
-  search, tab, edit, and global action-domain implementations now live in dedicated
-  `Workspace*ActionExecutor.cpp` translation units instead of one monolithic
-  `WorkspaceActionCoordinator.cpp`
-- the top-level action coordinator now routes project, sidebar, search, tab, edit, and global
-  execution through a dedicated `WorkspaceActionContext*` facade instead of keeping action
-  behavior on a nested shell-owned `WorkspaceShell::ActionCoordinator` with broad private access
-- `WorkspaceActionCoordinator` now executes from a value `WorkspaceActionContext` instead of
-  taking `WorkspaceShell&`
-- project-catalog mutation, project or workspace session persistence, command-prompt feedback,
-  and menu-surface transitions now use top-level `WorkspaceProjectCatalogCoordinator`,
-  `WorkspacePersistenceCoordinator`, `WorkspaceCommandPromptCoordinator`, and
-  `WorkspaceMenuCoordinator` types instead of nested shell-owned coordinator classes
-- built-in Tree, Search, Problems, and Git sidebar views plus plugin sidebar providers now share
-  one `WorkspaceSidebarRegistry*` path for ids, menu wiring, command parsing or completion, and
-  project-scoped active-view persistence instead of keeping plugin sidebars as a special-case
-  shell path
-- sidebar surface state now treats the stable active `view_id` as the source of truth and derives
-  built-in versus plugin behavior through the sidebar registry instead of duplicating both enum
-  mode and view id on `WorkspaceShell`
-- sidebar enum and state models now live in dedicated `WorkspaceSidebarState*` ownership instead
-  of staying defined as nested `WorkspaceShell` types
-- menu-bar, anchored-menu, and tree-context-menu state transitions now run through a dedicated
-  menu coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
-- menu-bar, anchored-menu, and tree-context-menu popup state now lives in a dedicated
-  `MenuSurfaceState` on the shell instead of staying flattened into the generic `SurfaceState`
-- SDL keydown dispatch and per-surface keyboard handling now run through a dedicated key-input
-  coordinator, with modal or menu, surface, and editor-domain handling split across dedicated
-  `WorkspaceKeyInputCoordinator.cpp`, `WorkspaceKeyInputCoordinatorModal.cpp`,
-  `WorkspaceKeyInputCoordinatorSurfaces.cpp`, and `WorkspaceKeyInputCoordinatorEditor.cpp`
-  units instead of one monolithic coordinator translation unit
-- keydown and text-input coordination now use top-level `WorkspaceKeyInputCoordinator` and
-  `WorkspaceTextInputCoordinator` types instead of nested shell-owned coordinator classes
-- dirty-save confirmation flow, compare or merge interaction commands, and chrome or editor or
-  compare or merge or tab or sidebar or panel mouse routing now use top-level
-  `WorkspaceDirtyPromptCoordinator`, `WorkspaceCompareInteractionCoordinator`, and
-  `Workspace*MouseCoordinator` types instead of nested shell-owned coordinator classes
-- compare-tab open or refresh flow and sidebar mode or refresh or action handling now use
-  top-level `WorkspaceDiffTabCoordinator` and `WorkspaceSidebarCoordinator` types instead of
-  nested shell-owned coordinator classes
-- tab save, reopen, dirty-state, retarget, and project-local dirty-tab enumeration plus
-  lifecycle init or shutdown sequencing and prompt-driven path mutation now use top-level
-  `WorkspaceTabCoordinator`, `WorkspacePathMutationCoordinator`, and
-  `WorkspaceLifecycleCoordinator` types instead of nested shell-owned coordinator classes
-- sidebar mode transitions, refresh logic, and git or problem or plugin entry actions now run
-  through a dedicated sidebar coordinator split across `WorkspaceSidebarCoordinator.cpp`,
-  `WorkspaceSidebarCoordinatorRefresh.cpp`, and `WorkspaceSidebarCoordinatorActions.cpp`
-  instead of one monolithic coordinator translation unit
-- sidebar mouse input now routes through per-surface button handlers plus dedicated scroll logic
-  in `WorkspaceSidebarMouseCoordinator.cpp` and
-  `WorkspaceSidebarMouseCoordinatorScroll.cpp` instead of one catch-all mouse coordinator file
-- top-level shell mouse routing now splits button-up or button-down handling from motion or wheel
-  handling across `WorkspaceShellMouse.cpp` and `WorkspaceShellMouseMotion.cpp` instead of one
-  catch-all shell mouse unit
-- workspace persistence now splits config/theme state, per-project session state, and
-  workspace-session state across `WorkspacePersistenceCoordinator.cpp`,
-  `WorkspacePersistenceCoordinatorConfig.cpp`,
-  `WorkspacePersistenceCoordinatorSession.cpp`, and
-  `WorkspacePersistenceCoordinatorWorkspaceSession.cpp` instead of one large coordinator file
-- overlay lifecycle, project-search sidebar flow, and buffer-search actions now live across
-  `WorkspaceShellOverlay.cpp`, `WorkspaceShellProjectSearch.cpp`, and
-  `WorkspaceShellBufferSearch.cpp` instead of one catch-all overlay/search file
-- text composition, typed-input routing, and terminal text entry now run through a dedicated
-  text-input coordinator instead of keeping those flows embedded directly on `WorkspaceShell`
-- shell redraw invalidation, caret timing, clipboard or text-input-surface routing,
-  cursor or hit-testing, and breadcrumb or project-tab presentation now live in dedicated
-  `WorkspaceShellRedraw.cpp`, `WorkspaceShellInteraction.cpp`,
-  `WorkspaceShellCursor.cpp`, and `WorkspaceShellPresentation.cpp` units instead of staying
-  bundled into `WorkspaceShell.cpp`
-- editor tab activation or restore flow, close or reload lifecycle, and split-tree or pane-layout
-  logic now live across `WorkspaceShellEditor.cpp` and
-  `WorkspaceShellEditorSplits.cpp` instead of one catch-all editor translation unit
-- project state capture or restore, project-root initialization, and native project-picker flow
-  now live across `WorkspaceShellProjects.cpp`, `WorkspaceProjectStateCoordinator.cpp`, and
-  `WorkspaceProjectDialogCoordinator.cpp` instead of one catch-all project translation unit
-- the active workspace now reuses the same `ProjectWorkspaceState` container shape as project
-  catalog entries, so project switching and persistence no longer hand-maintain duplicated move or
-  reset lists for tabs, tree or index state, terminals, overlays, diagnostics, command history,
-  colorscheme, or editor preferences
-- project-tab, compare-or-merge-tab, terminal-tab, project-workspace, prompt, menu, and
-  interaction state models now live in dedicated `Workspace*State.h` headers instead of staying
-  nested inside `WorkspaceShell.h`; ownership migration is still incomplete, but the shell no
-  longer defines those models inline
-- `WorkspaceContext` now owns the project catalog, active project state, prompt state, menu state,
-  and transient interaction state, and `WorkspaceShell` now reaches that state directly instead of
-  keeping its old active-project reference-alias member block
-- project-catalog mutation is the first controller path moved off `WorkspaceShell&`: the
-  top-level `WorkspaceProjectCatalogCoordinator` now depends on `WorkspaceContext` plus explicit
-  shell callbacks for project activation, persistence saves, plugin-host shutdown, redraw, and
-  welcome-state fallback instead of reaching into shell-private fields directly
-- completion, snippet-session, code-action, go-to-definition, and find-references coordination now
-  route through `AssistService`; shell action, key-input, overlay, text-input, and test-access
-  call sites now bind that service directly instead of keeping a shell-specific assist facade
-  (`AssistService::Operations` remains a transitional seam and should shrink into smaller explicit
-  assist ports over time, not grow into a shell callback bag)
-- bottom-panel tab-strip geometry queries now bind `TabStripService` directly from render,
-  cursor, tab-mouse, and test-access paths instead of routing through shell-owned
-  `ComputeVisibleBottomPanelTabs` / `ComputeVisibleTerminalTabs` wrappers
-- `TextViewport` now has a dedicated `TextViewportViewState.cpp` translation unit for viewport
-  sizing, scroll clamping, wrap/fold toggles, cursor movement, wrapped-row cursor mapping, and
-  caret-advance helpers; the next meaningful refactor seam is undo/history ownership, not more
-  helper sharding
-- lifecycle init, shutdown, quit-request handling, wake-event registration, and cursor teardown now
-  run through a `WorkspaceLifecycleCoordinator` that depends on `WorkspaceContext`, a quit flag,
-  and explicit lifecycle callbacks instead of `WorkspaceShell&`
-- project-local config, session, and workspace-session persistence now run through a
-  `WorkspacePersistenceCoordinator` that depends on `WorkspaceContext`, theme or ui-scale state,
-  and explicit callbacks for editor preference application, compare or merge tab reconstruction,
-  project-root resolution, and project-catalog restoration instead of `WorkspaceShell&`
-- dirty-save confirmation now runs through a `WorkspaceDirtyPromptCoordinator` that depends on
-  `WorkspaceContext`, the quit-request flag, and explicit callbacks for path-mutation resolution,
-  tab saves, project switching, and tab or project closure instead of `WorkspaceShell&`
-- menu-bar, anchored-menu, submenu, and tree-context-menu transitions now run through a
-  `WorkspaceMenuCoordinator` that depends on `MenuSurfaceState` plus explicit callbacks for menu
-  item resolution, popup geometry, action dispatch, and chrome redraw instead of
-  `WorkspaceShell&`
-- command-prompt input, history, completion, and command execution now run through a
-  `WorkspaceCommandPromptCoordinator` that depends on project command state plus explicit
-  callbacks for action dispatch, plugin command execution, sidebar-view enumeration, and bottom-panel redraw instead of `WorkspaceShell&`
-- compare-tab reuse or merge-tab reuse plus working-tree, branch-head, and conflict-open flows now
-  run through a `WorkspaceDiffTabCoordinator` that depends on project tab or overlay state plus
-  explicit callbacks for compare or merge tab construction, active-tab synchronization, overlay
-  dismissal, and redraw instead of `WorkspaceShell&`
-- compare-picker, compare selection, compare scrolling, merge selection, merge scrolling, and
-  merge-choice application now run through a `WorkspaceCompareInteractionCoordinator` that depends
-  on project compare-picker or compare-tab or merge-tab state plus explicit callbacks for overlay,
-  compare, merge, editor-open, and redraw behavior instead of `WorkspaceShell&`
-- prompt-driven create, rename, delete, dirty-path resolution, tab retargeting, and
-  diagnostic-refresh flows now run through a `WorkspacePathMutationCoordinator` that depends on
-  workspace prompt state plus project tab or diagnostics state and explicit callbacks for prompt
-  dismissal, editor-tab helpers, compare or merge tab rebuilds, and redraw instead of
-  `WorkspaceShell&`
-- sidebar mode, refresh, and git or problem or plugin entry actions now run through a
-  `WorkspaceSidebarCoordinator` that depends on project workspace state plus explicit callbacks
-  for project-open, search, compare, prompt, and redraw behavior instead of `WorkspaceShell&`
-- keydown and text-input routing now run through `WorkspaceKeyInputCoordinator` and
-  `WorkspaceTextInputCoordinator` that depend on project or prompt or menu or text-input state
-  plus explicit callbacks for action dispatch, menu transitions, command prompt, compare or merge
-  editing, terminal I/O, and redraw behavior instead of `WorkspaceShell&`
-- `WorkspaceShell` still acts as the app-facing facade, but the shell-breakdown plan is now
-  implemented: event routing, wake routing, action enablement, render composition, and test hooks
-  all live behind explicit seams instead of direct shell-owned monoliths
-- worker-thread execution + rendering surface (on `feat/plugin-rendering`): all `lua_State` touches
-  now run on a dedicated plugin worker thread with a UI-owned snapshot/mailbox boundary, and plugins
-  gained a host-renders-data presentation surface (`ctx.decorations`, `ctx.surface`,
-  `ctx.editor.apply_edits`, `ctx.editor.set_ghost_text`) plus async language queries and reactive
-  editor events. The old detached async-process subsystem was deleted; `ctx.process.run_async` now
-  runs on the worker
-- sandbox re-review (2026-06-26): the widened surface stays sound — render contributions are
-  validated, size-capped data the host draws (display-list op/point/text/image caps, 256 MiB
-  `SurfaceTextureCache` budget, `stb_image` decode bounded to 64 MiB / 8192² and fuzzed); capability
-  containment, path checks, and the per-call watchdog are intact. One correctness gap was found and
-  fixed: the `ctx.process.run_async` completion callback inherited the enclosing call's already-spent
-  750ms watchdog deadline (so a subprocess outlasting the budget got its healthy callback aborted on
-  the first instruction); it now runs under `LuaRuntime::PCallNested` with a fresh deadline. Authoritative
-  detail lives in `guidelines/plugin-trust-model.md`
+The registries, the worker-thread boundary, and the host-renders-data
+presentation surface are shipped and validated zero-cost when unused. The
+standing rules, not a task list:
 
-### 2. Cross-Platform Host Support
+- never expose `WorkspaceShell` wholesale; add a narrow registry or service
+- editing, compare, merge, search, git, and terminal stay built-in product
+  features even though plugins can extend around them
+- keep completion and code-action overlays host-owned and minimal; do not fork
+  the command prompt into a second editor interaction model
+- add async/background plugin task surfaces only when a real plugin workload
+  needs one
+- `AssistService::Operations` is a transitional seam. It should shrink into
+  smaller explicit assist ports over time, not grow into a shell callback bag
 
-Current state:
+### 3. Terminal hardening
 
-- app-directory policy, trash or recycle-bin behavior, external URL handling, and runtime asset
-  discovery now route through dedicated `src/platform/*` services instead of Linux-first callers
-- sync and async subprocess execution now route through a dedicated `platform/ProcessBackend`
-  service seam instead of embedding POSIX process launch directly in the public facades
-- terminal lifecycle now routes through `platform/TerminalBackend`, so `TerminalSession` keeps the
-  screen model and escape handling while host launch/resize/shutdown behavior sits behind a host
-  service boundary
-- CMake now supports macOS bundle output, Windows desktop output, and non-`pkg-config` package
-  discovery for PCRE2
-- local bring-up now exists for Linux, macOS, and Windows host-facing build or test paths
+The emulator covers the full-screen and shell workflows exercised so far.
 
-Descoped (2026-06-17): Linux is the supported host. The `src/platform/*` seams
-(`ProcessBackend`, `TerminalBackend`, `FileIndexWatcher`, app-directory / trash / URL services)
-stay in place because they keep the host boundary clean and testable, but native Windows and
-macOS subprocess, terminal, and file-watcher backends are **no longer a project objective**. On
-non-Linux hosts the poll/snapshot watcher fallback is the accepted permanent baseline, and
-host-platform CI is not being pursued. See **Deferred Or Out Of Scope**.
+- broaden validation with actual terminal programs rather than extending escape
+  coverage from guesswork
+- fill remaining ANSI gaps only where real usage justifies them
+- keep resize, redraw, scrollback, and wake behaviour robust under long-running
+  output
 
-Additional current state (shell decomposition, recorded here historically):
-
-- chrome, sidebar, and panel mouse routing now run through `WorkspaceChromeMouseCoordinator`,
-  `WorkspaceSidebarMouseCoordinator`, and `WorkspacePanelMouseCoordinator` that depend on
-  project or menu or interaction state plus explicit callbacks for menus, overlay hit-testing,
-  terminal selection, tree context menus, and redraw behavior instead of `WorkspaceShell&`
-- action-context dispatch, tab save or reopen or retarget flow, and editor or compare or merge
-  or tab-strip mouse routing now run through `WorkspaceActionContext`, `WorkspaceTabCoordinator`,
-  `WorkspaceEditorMouseCoordinator`, `WorkspaceCompareMouseCoordinator`,
-  `WorkspaceMergeMouseCoordinator`, and `WorkspaceTabMouseCoordinator` with explicit state plus
-  callback dependencies instead of `WorkspaceShell&`
-- production `WorkspaceShell` friend-class access is now gone, and the old
-  `WorkspaceShellTestAccess` friend path is gone too; shell tests now use the public
-  `MICROIDE_TESTING`-gated `WorkspaceShell::TestAccess` API from
-  `workspace/WorkspaceShellTesting.h`
-- the active shell now aliases the `ProjectSurfaceState` stored in the current
-  `ProjectWorkspaceState`, and project-scoped sidebar, overlay, and panel state now live in
-  dedicated `SidebarState`, `OverlayState`, and `PanelState` models instead of one generic
-  surface bag, so project switching no longer hand-copy duplicated sidebar, overlay,
-  command-prompt, focus, width, height, or scroll fields between active and persisted UI state
-  models
-- native project-picker launch, pending-result, and callback bookkeeping now live in a dedicated
-  `WorkspaceProjectDialogState` model instead of more flattened dialog state on `WorkspaceShell`
-- shell-global text-input surface and composition state now live in a dedicated
-  `WorkspaceTextInputState` on `WorkspaceContext`, so IME and typed-input routing no longer keep
-  that state flattened directly on `WorkspaceShell`
-- transient drag, mouse-selection, and window-focus interaction state now lives outside
-  `ProjectSurfaceState`, so project switches clear in-flight gestures instead of leaking stale
-  interaction state across projects
-- editor blame, diagnostic, or plugin hover targeting now lives apart from popup layout or hover
-  lifetime across `WorkspaceShellHoverTargets.cpp` and `WorkspaceShellHoverPopup.cpp` instead of
-  one catch-all hover translation unit
-- terminal tab open or close, focus-event sync, wake-event consumption, and exited-tab reaping
-  now live across `WorkspaceShellTerminal.cpp` and `WorkspaceShellTerminalTabs.cpp` instead of
-  one catch-all terminal translation unit
-- compare-tab rebuild, compare viewport sync, merge conflict tracking, and merge-tab rebuild now
-  live across `WorkspaceShellCompare.cpp` and `WorkspaceShellMergeState.cpp` instead of one mixed
-  compare-or-merge state translation unit
-- dirty-path detection or save resolution and rename-or-delete tab retargeting now live across
-  `WorkspacePathMutationCoordinator.cpp`, `WorkspacePathMutationCoordinatorDirty.cpp`, and
-  `WorkspacePathMutationCoordinatorTabs.cpp` instead of one catch-all path-mutation coordinator
-- top-level render orchestration now runs through explicit frame, active-surface, window-chrome,
-  sidebar, overlay, bottom-panel, menu, prompt, and text-input phase methods backed by dedicated
-  `WorkspaceShellRenderFrame.cpp`, `WorkspaceShellRenderChrome.cpp`,
-  `WorkspaceShellRenderSidebar.cpp`, `WorkspaceShellRenderOverlay.cpp`,
-  `WorkspaceShellRenderBottomPanel.cpp`, `WorkspaceShellRenderMenus.cpp`,
-  `WorkspaceShellRenderPrompts.cpp`, and `WorkspaceShellRenderTextInput.cpp` units instead of one
-  monolithic `WorkspaceShellRender.cpp`
-- top-level `ActionId` enablement now runs through a dedicated `WorkspaceActionAvailability`
-  helper backed by `WorkspaceContext` and read-only editor or compare or terminal callbacks instead
-  of `WorkspaceShell::IsActionEnabled`
-- top-level event routing now runs through `WorkspaceEventDispatcher`, scheduled wake handling now
-  runs through `WorkspaceWakeController`, and the shell's action, render, and event seams are
-  wired by a dedicated `WorkspaceShell::Bootstrapper` composition root
-- `WorkspaceShell` render entry points now delegate the ordered frame composition path to
-  `WorkspaceRootView`, which now composes dedicated active-surface, chrome, sidebar, overlay,
-  panel, menu, and prompt views instead of acting as a single minimal placeholder seam
-- repo-owned dogfood plugins now cover a session-scoped ESLint diagnostics flow plus formatter and LSP integrations
-
-- Phase 2 contribution and override model is now shipped:
-  - `WorkspaceKeybindingRegistry*` defines named built-in keybinding specs with stable IDs,
-    context awareness (global / editor / sidebar / terminal), and `ResolveKeybindings` that merges
-    built-ins with plugin contributions and applies user disable overrides
-  - `WorkspaceSettingsRegistry*` defines built-in setting specs with typed defaults (bool, int,
-    float, string, enum), and merges with plugin-declared settings via `AllSettingInfos`
-  - `WorkspaceStatusRegistry*` resolves plugin-contributed status bar items sorted by alignment
-    and priority
-  - `WorkspaceMenuRegistry*` exposes `ContributedMenuItems` to surface plugin menu entries for
-    any `MenuId`, alongside the static built-in menu specs
-  - `WorkspaceSidebarRegistry*` now exposes `OrderedSidebarViews` and `SidebarViewPolicy` so
-    the host can hide or reorder sidebar views based on user-persisted policy
-  - `PluginHost` exposes four new Lua tables: `ctx.settings` (declare / get), `ctx.menus` (add),
-    `ctx.keybindings` (add), and `ctx.status` (add / update); corresponding C++ accessors
-    `ContributedSettings`, `ContributedMenuEntries`, `ContributedKeybindings`, and
-    `ContributedStatusItems` plus `UpdateStatusItem` are available to workspace coordinators
-  - `PluginHost::Callbacks` gains `get_setting` and `request_status_redraw` for the workspace
-    layer to supply setting values and receive status-update redraw signals
-  - `PersistedUserConfigState` now carries `settings` (id→value pairs) and
-    `disabled_keybinding_ids`; `PersistedProjectConfigState` now carries `settings` and
-    `sidebar_policies`; all fields round-trip through the existing line-based serialisation format
-  - `WorkspaceKeyInputCoordinator` now resolves contributed and user-disabled keybindings at
-    runtime instead of using a hardcoded shortcut path
-  - `WorkspaceMenuCoordinator` and the shell chrome now surface contributed menu items,
-    ordered sidebar views, and compact status items on the live UI path
-  - persistence and plugin callback wiring now restore setting values, sidebar policy, and
-    status redraw behavior end to end
-  - all new registries have full test coverage in `tests/ContributionRegistryTests.cpp`
-
-Open work:
-
-- keep plugin APIs narrow and host-owned; never expose `WorkspaceShell` wholesale
-- the Linux-backed asset watcher is the supported baseline; broader native file-watch coverage on
-  non-Linux hosts is descoped (see **Deferred Or Out Of Scope**), and the snapshot fallback is the
-  accepted permanent baseline elsewhere
-- add async or background plugin task surfaces only if real plugin workloads require them
-- preserve the rule that editing, compare, merge, search, git, and terminal remain built-in
-  product features even when plugins can extend around them
-
-- Phase 3 async service platform is now shipped:
-  - `platform/AsyncSubprocess.*` provides a POSIX-backed async subprocess interface with
-    bidirectional pipes, poll-based non-blocking reads, and SIGTERM/SIGKILL shutdown
-  - `util/JsonValue.*` implements a recursive JSON parser and serializer for LSP communication
-  - `workspace/WorkspaceLspClient.*` implements an async JSON-RPC 2.0 client with initialize,
-    didOpen, didChange, didSave, didClose notifications and textDocument/hover,
-    textDocument/completion, textDocument/codeAction, textDocument/formatting,
-    textDocument/definition, and textDocument/references requests delivered back to the host
-    through SDL wake events
-  - `workspace/WorkspaceLspManager.*` manages multiple LSP servers, one per language_id
-  - `workspace/WorkspaceFormatterRegistry.*` stores declarative formatter specs (language_id,
-    command, label)
-  - `workspace/WorkspaceSaveParticipants.*` stores save-participant specs for Lua callbacks
-  - `workspace/WorkspaceCompletionRegistry.*` stores language-specific completion-provider specs
-  - `workspace/WorkspaceCodeActionRegistry.*` stores language-specific code-action-provider specs
-  - `workspace/WorkspaceTaskRegistry.*` stores runnable task specs with subprocess command,
-    label, group, and working directory
-  - `workspace/WorkspaceToolRegistry.*` stores downloadable tool specs with platform,
-    download URL, and SHA256 checksum
-  - `workspace/WorkspaceToolDownloader.*` provides caching and download orchestration for tools
-  - `workspace/WorkspaceTestController.*` manages test discovery and execution results
-  - `workspace/WorkspaceOutputChannels.*` (already shipped from Phase 2) provides named log
-    channels for tool output
-  - `PluginHost` gains seven new Lua tables: `ctx.formatters` (add), `ctx.save_participants` (add),
-    `ctx.completion` (add), `ctx.code_actions` (add), `ctx.tasks` (add), `ctx.tools` (add),
-    `ctx.tests` (add); corresponding C++ accessors are available to workspace coordinators
-  - `PluginHost` now exposes runtime query or execution paths for save participants, completion
-    providers, code-action providers, and test providers
-  - `workspace/WorkspaceLspClient.*` now supports `textDocument/formatting`
-  - the editor save path now runs save participants before formatter execution and writes the
-    transformed buffer back into the viewport before disk save
-  - `WorkspaceToolDownloader::Download(...)` is no longer a stub and now validates cached or
-    local file installs
-  - built-in commands, menus, and keybindings now surface completion, code actions, tasks, test
-    discovery or execution, and output channels through live shell state
-  - completion and code actions now render through dedicated host-owned editor overlays, while
-    task and test flows reuse the bottom panel and Tests sidebar instead of inventing parallel UI
-  - runtime and shell wiring are covered in `tests/PluginHostTests.cpp` and
-    `tests/WorkspaceShellPluginTests.cpp`, in addition to `tests/Phase3Tests.cpp`
-  - Phase 5 validation now exercises plugin-declared language servers end to end for diagnostics,
-    completion, code actions, go-to-definition, references, and editable merge-buffer lifecycle
-    in `tests/Phase5Tests.cpp`
-
-Open work:
-
-- keep validating real LSP server communication beyond the shipped end-to-end fake-server
-  coverage before promising broader language-server coverage
-- keep the completion and code-action overlays host-owned and minimal; do not fork the command
-  prompt into a second editor interaction model
-- extend test UX only after real controller state exists for richer tree, gutter, and per-test
-  run workflows
-- add remote tool-download transports only when a real workflow needs them; the shipped path is
-  cache-backed local install plus SHA validation
-
-- Phase 4 SCM, review, and advanced provider surfaces now shipped:
-  - `workspace/WorkspaceScmRegistry.*` manages source control provider registrations
-  - `workspace/WorkspaceAnnotationRegistry.*` manages blame, decoration, and margin annotation
-    providers per language
-  - `workspace/WorkspaceVirtualDocument.*` provides virtual document support for diff views,
-    merge views, and generated content
-  - the authentication-provider and host-managed secret-storage surfaces (`WorkspaceAuthProvider.*`,
-    `WorkspaceSecretStorage.*`) have been retired alongside the Phase 5 AI scope
-  - `PluginHost` gains two new Lua tables: `ctx.scm` (add) and `ctx.annotations` (add); virtual
-    documents and review comments are host-managed
-  - `WorkspaceShell` rebuilds SCM and annotation registries from plugin contributions on
-    reload, and virtual documents now open and refresh in the live tab model
-  - the Git sidebar now shows SCM summary lines and review comments render as gutter markers
-    in editor and virtual-document views
-  - direct coverage now exists in `tests/WorkspaceShellPluginTests.cpp` and
-    `tests/Phase4Tests.cpp`
-
-Open work:
-
-- keep the built-in Git compare and stage flows host-owned until a cohesive provider-driven source
-  control design is ready
-- extend review UX from gutter markers to richer thread panels, compose, edit, and resolve only
-  after location mapping and persistence rules are stable
-- validate GitLens-like and GitHub-review-like workflows against the current provider seams before
-  broadening them
-
-- Phase 5 AI and LLM runtime surfaces are retired from the product scope.
-
-### 6. Deferred Work And Throughput Pass (2026-05-02)
-
-This phase addresses background-thread isolation, event-driven file watching, search throughput,
-and adaptive idle rendering. The infrastructure layer **and** the workspace wiring are now shipped
-(verified 2026-06-11; the items previously listed under "Open work" all landed).
-
-Shipped:
-
-- `platform/FileIndexWatcher.*` platform abstraction with Linux `inotify`, macOS `FSEvents`,
-  Windows `ReadDirectoryChangesW`, and a poll-fallback backend; callback fires on the watcher
-  thread with an `IndexUpdateBatch` (created/deleted/renamed entries with path + mtime)
-- `project/ProjectBackgroundExecutor.*` single-thread per-project executor with `Post`,
-  `PostLatest` (debounce by key), `Cancel`, and `Shutdown(deadline)` for background subprocess
-  dispatch
-- `project/PatternCache.*` PCRE2 pattern cache with LRU eviction at 64 entries; thread-safe with
-  `std::mutex`; eliminates repeated compile + JIT on repeated searches
-- `app/BackgroundTaskCounter.*` global atomic counter wired into search dispatch and
-  `ProjectBackgroundExecutor`; `IncrementBackgroundTaskCount` / `DecrementBackgroundTaskCountAndWake`
-  keep the event loop awake during in-flight background work
-- PCRE2 JIT compilation added to `util/RegexUtil.h` immediately after `pcre2_compile`; JIT
-  unavailability emits a one-time `SDL_Log` and falls back to interpreted mode
-- Architecture lint rules in `tests/ArchitectureInvariantsTests.cpp`:
-  `CheckNoSynchronousSubprocessWaitInWorkspace` (hard-fail on `Subprocess::Wait` / `waitpid` /
-  `WaitForSingleObject` in workspace TUs) and `CheckLspDidOpenIsNonBlocking` (policy rule)
-- Perf fixture: 10 000-file flat project under `tests/perf/fixtures/file_finder_large/`
-- Perf fixture: pre-seeded 1 000-file git repository under `tests/perf/fixtures/git_status_project/`
-- Perf baselines committed: `file_finder_cold.json`, `git_sidebar_activate.json`,
-  `search_first_result.json` under `tests/perf/baselines/`; `idle_soak_30s` scenario extended with
-  wakeup-rate assertion
-- Full unit test coverage for `BackgroundTaskCounter`, `FileIndexWatcher`, and `PatternCache`
-
-Workspace wiring (was "Open work"; all landed and verified in tree on 2026-06-11):
-
-- `FileIndexWatcher` is wired to project open/close in
-  `WorkspaceProjectStateCoordinator` (`StartFileIndexWatcherForCurrentProject` /
-  `StopFileIndexWatcher`), and the file finder/search consume `state.file_index` snapshots
-- git `Status` dispatches through `ProjectBackgroundExecutor::PostLatest`
-  (`GitRepositoryService`), blame runs on its own background `TaskExecutor`
-  (`GitBlameService`), and sidebar refresh is async with a `refreshing` flag
-- `ComputeLayout` is guarded by `layout_dirty_` in `WorkspaceShellRenderFrame.cpp`
-  (set via `MarkLayoutDirty()`), and `visible_line_range` is plumbed into `FrameToken`
-- incremental search streaming publishes `kBatchSize` batches with progress wake events
-  (`ProjectSearchService`); the runtime appends cumulatively
-- the `IdleHint`-driven event loop is live in `Application.cpp`
-  (`Full` → `SDL_PollEvent`, `CaretOnly` → `SDL_WaitEventTimeout`, `Idle` → `SDL_WaitEvent`),
-  fed by `CurrentIdleWaitState()`; the caret-blink delay freezes after
-  `kCaretBlinkIdleStopMs`, so a focused-but-idle editor still reaches a full blocking wait
-
-Idle-CPU note (2026-06-11): a proposal to suppress the project file-monitor poll delay
-whenever a native watcher is configured was investigated and rejected. On a healthy Linux
-host the native inotify backend already sets `polling_required_ = false`, so
-`FileTreeWatcher::NextPollDelay()` returns `nullopt` and the loop blocks fully; the poll
-delay is only non-null when native arming fails (missing root, unreadable subtree, or
-inotify watch exhaustion on very large repos), where polling is the *only* way to detect
-changes. Forcing it off there would silently miss filesystem changes — a correctness
-regression — so the current behavior is correct as-is.
-
-Follow-up (2026-06-18): the polling fallback above could itself freeze the UI. Opening a
-project with a very large, unpruned tree (e.g. tens of thousands of dirs with no root
-`.gitignore`) exhausts inotify, drops to polling, and then re-walked the whole tree twice
-(`CaptureTreeSnapshot` + `CollectRecursiveWatchPaths`) **on the shell thread** every poll
-interval — pinning a core at ~100%. Fixed by: (1) bounding every recursive walk with
-`platform::kTreeTraversalEntryBudget` (50k entries) and reporting truncation; (2) when a
-tree exceeds the budget, `FileTreeWatcher` enters a "too large" mode where it skips native
-arming, never snapshot-diffs a truncated (order-unstable) walk, and returns `nullopt` from
-`NextPollDelay()` so periodic polling is suppressed entirely; (3) moving the remaining
-polling walks off the shell thread via `WorkspaceProjectFileMonitor::SetBackgroundPoster`
-(`ProjectBackgroundExecutor::PostLatest`), delivering results through the existing wake
-event; and (4) surfacing a one-time "Project too large for live file watching" notification
-(`ConsumeTreeTooLargeNotice`). Net: live watching still works for normal/large-but-pruned
-projects (directory `.gitignore` entries are skipped without descending, so they don't count
-against the budget); only pathologically large trees degrade to refresh-on-demand.
-
-### 2. Terminal Hardening
-
-Current state:
-
-- the embedded terminal is useful and already covers the important full-screen and shell workflows we have exercised so far
-
-Open work:
-
-- broaden real-world validation with actual terminal programs instead of extending escape coverage from guesswork
-- fill the remaining ANSI or control-sequence gaps only where real usage justifies them
-- keep resize, redraw, scrollback, and wake-event behavior robust under long-running output
-
-### 3. Editor Correctness And Scale
-
-Current state:
-
-- the editor is functionally strong; the piece-tree text model stores raw UTF-8 bytes over 32-bit byte offsets, with UTF-8 correctness enforced at codepoint boundaries for cursor movement and IME
-- large-file mode, blame shadow text, and retained redraw are shipped
-- undo and redo now store line-range patches plus cursor and scroll state instead of full
-  document snapshots, which removes the worst buffer-history memory blow-up on large files
-- file open and save now run through the shared text-file helper, so the viewport no longer does
-  its own stream-buffer file I/O
-
-Open work:
+### 4. Editor correctness and scale
 
 - continue UTF-8 and IME hardening over the piece tree's byte-offset storage
-- validate large-file thresholds on larger repositories and adjust only from measured behavior
-- validate blame shadow text on real repositories and keep it asynchronous, viewport-scoped, and cheap enough to preserve typing and scrolling latency
-- expand compare and merge workflow coverage where editor-side regressions are still too easy to miss
+  (32-bit offsets, ~4 GiB per-file ceiling)
+- validate large-file thresholds on larger repositories; adjust from measured
+  behaviour, not guesswork
+- keep blame shadow text asynchronous, viewport-scoped, and cheap enough to
+  preserve typing and scrolling latency
+- expand compare/merge coverage — editor-side regressions there are still too
+  easy to miss
 
-### 4. Project And Git Service Hardening
-
-Current state:
-
-- search is already behind a built-in service boundary
-- file operations, blame, compare, and git state already have service seams
-- search and blame now share a cancellable background task executor instead of bespoke worker-thread ownership
-- plugin and syntax asset reload now flow through a host-owned tree watcher instead of only a
-  manual reload command
-- subprocess fd ownership is now RAII-backed inside `platform/Subprocess.*` instead of depending
-  on repeated manual close paths
-
-Open work:
+### 5. Project and git service hardening
 
 - keep external tool usage behind `src/project/*` service boundaries
-- keep tightening subprocess error reporting and higher-level git command behavior around the
-  system `git` path
+- keep tightening subprocess error reporting and git command behaviour around
+  the system `git` path
 - move avoidable filesystem and git refresh work off latency-sensitive UI paths
-- keep new plugin-facing capabilities layered on structured services rather than letting UI code or plugin glue parse command output directly
+- layer new plugin-facing capabilities on structured services rather than
+  letting UI code or plugin glue parse command output directly
 
-### 5. Testing And Performance Discipline
+### 6. Testing and performance discipline
 
-Current state:
-
-- retained redraw has comparison coverage against clean full redraws
-- search, tab ordering, context-copy flows, and many workspace mutations already have direct regression tests
-- a 2026-04-23 deep-dive identified several untracked render-path bottlenecks; all nine actionable
-  findings from that pass are now confirmed fixed; see `dev-docs/performance/performance-findings.md`
-  (Deep-Dive Findings section) for the full record
-- a 2026-04-23 second static pass confirmed all previous fixes and found four new bottlenecks;
-  the review-comment marker, terminal snapshot generation, editor-pane-layout, and terminal cursor
-  lock items from that pass are now fixed;
-  see `dev-docs/performance/performance-findings.md` (Second Performance Pass section) and
-  `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` (§8–§11) for the record
-
-Open work:
-
-- add regression tests whenever a bug is fixed; do not rely on “should be covered already”
-- keep retained redraw comparison tests serial under SDL dummy video because they share global SDL state
-- keep profiling startup, redraw, typing, scrolling, and idle behavior with the tracing docs in
-  this directory
-- LTO in perf/release builds is acceptable and currently useful, but it is not a substitute for
-  profiling render hot paths; if `editor_sticky_scroll_scroll` still regresses, profile the
-  residual cost directly and either fix it or explicitly accept it with data
-- preserve the current redraw architecture unless profiling shows a new hotspot; the remaining
-  work is policy tuning and regression coverage, not a wholesale redraw rewrite
-- prefer targeted app-level burst tests only when shell-level retained-redraw tests stop catching
-  the right bugs
-- the highest-priority remaining follow-ups from the performance passes are:
-  1. cold syntax-definition reload: only promote disk caching or parallel plugin syntax parsing if
-     profiling shows plugin Lua parsing or plugin regex compilation as material startup cost after
-     the generated-registry reuse landed
-  2. keep adding focused perf regressions when new hot paths are fixed, especially where cache or
-     redraw locality can silently regress without changing user-visible behavior
-- measure these with `MICROIDE_PERF_TRACE=1` before and after any fix; do not rely on code
-  review alone to confirm impact
+- add regression coverage with every bug fix; never rely on "should be covered
+  already"
+- keep retained-redraw comparison tests serial under SDL dummy video — they
+  share global SDL state
+- measure with `MICROIDE_PERF_TRACE=1` before and after; code review does not
+  confirm performance impact
+- LTO is useful but is not a substitute for profiling a render hot path
+- preserve the current redraw architecture unless profiling shows a new
+  hotspot; what remains is policy tuning and coverage, not a redraw rewrite
+- promote disk caching or parallel plugin syntax parsing only if profiling
+  shows plugin Lua parsing / regex compilation as material startup cost
 
 ## Deferred Or Out Of Scope
 
-These are not current project work unless deliberately promoted into their own phase:
+Not current work unless deliberately promoted into its own phase.
 
-- plugin marketplaces, remote install flows, and Micro-plugin compatibility
-- plugin sandboxing, marketplace trust, and project-local plugin loading (ships
-  `--disable-plugins` / `--safe-mode` only; see `dev-docs/project/git-workstation.md`)
-- cloud or collaboration features
-- recent-project and recent-file affordances
-- diagnostics as an implicit requirement; diagnostics only if a dedicated diagnostics phase is started
-- native Windows/macOS host backends (subprocess, terminal, file-watcher) — Linux is the supported
-  host; the `src/platform/*` seams remain but non-Linux backends are not being built, and the
-  poll/snapshot watcher fallback is the accepted permanent baseline for non-Linux hosts
-- hosted CI and a self-hosted `perf-runner-v1` captured-baseline perf gate — local
-  `tools/run-checks.sh` (`tests`/`asan`/`ubsan`/`tsan`) plus the manual fuzz/perf targets are the
-  supported validation path
-- Settings overlay follow-ups (deferred from the 2026-07-10 tab-reveal + settings-cohesion pass):
-  section subtitles are a static table in `RenderViewModelBuilder` keyed by category label, so
-  plugin-contributed categories render a title with no subtitle; there is no per-category
-  collapse/expand (VSCode's settings tree) — the left rail is a flat scrollable category list;
-  and the section header band is fixed (does not scroll with rows). Shipped scope is the
-  scrollable category rail, fixed section header (title + subtitle), and subsection sub-headers.
-
-### Deferred items from the 2026-07-10 cross-subsystem bug-hunt pass
-
-Fixed this pass (with regression tests unless noted): FoldingModel indent-fold
-budget starvation + truncated-block suppression; JSON over-range float parse
-abort; TerminalBackend PTY/wake-pipe CLOEXEC leak; PersistedRecord::ReadVector
-reserve over-allocation; GitCommandUtil throwing `exists`; LSP/DAP framer
-oversized-frame desync on split header; CompareTabReview dead review markers;
-PatchGenerator corrupt hunk header for zero-context pure insertions/deletions;
-CommitWorkflowService worker-thread state race (now marshaled to the main thread);
-terminal ED Background-Color-Erase; terminal ESC/CAN/SUB mid-CSI abort; terminal
-`Start`/`Stop` negotiated-state reset gaps; SurfaceTextureCache lone-over-budget
-eviction churn + null-renderer permanent-blacklist.
-
-Deferred (not fixed, low value or hard to reach/test):
-
-- `CommitWorkflowService::DispatchCommit` captures `&state` into the background
-  task; if the owning project state is destroyed while a commit is in flight the
-  main-thread completion touches freed memory. Pre-existing (the old worker-thread
-  path had the same capture); the generation guard only covers a newer dispatch,
-  not teardown. Would need the mailbox cleared / the operation cancelled on
-  project close.
-- `TerminalSession` has three near-duplicate reset blocks (`Start`,
-  `StartPlaceholderForTesting`, `Stop`) plus `TestAccess::Reset`; they were kept in
-  lockstep this pass but should be factored into one `ResetSessionStateLocked` to
-  prevent future drift.
-- `SurfaceTextureCache` eviction/null-renderer fixes lack direct unit coverage:
-  `Upload` needs a live SDL renderer (`SDL_CreateTexture`), unavailable headless.
-  They mirror the already-tested sibling text-texture cache guard.
-- The single-line-input view-metrics OOB fix (`WorkspaceShellRenderTextInput` /
-  `WorkspaceShellSingleLineInputMouse`: `view_start_idx == size()` when no glyph
-  left of the caret fits a sub-glyph-width field) lacks a direct regression test —
-  both functions are `WorkspaceShell` members needing a live `text_renderer_` and
-  the narrow-field trigger (debug variables inline editor). Fix verified by
-  inspection; ASAN covers it if a shell-level test ever drives that path.
-- Terminal minor spec deviations (not user-visible in normal use): a combining
-  mark following a double-width glyph attaches to the wide-trailing spacer and is
-  dropped; multi-byte charset designations (`ESC ( " ?`) mis-parse; DECSTBM on the
-  alternate screen with origin mode homes to screen-top rather than region-top.
-- `MergeConflictKind` may label a both-modified conflict `LineEndingHeavy` when
-  only one side is line-ending-only; cosmetic (summary text), behavior unchanged.
-- LSP diagnostics version gate after close→reopen (`WorkspaceLspClientDispatch`):
-  `DidClose` erases the URI's tracked version and `DidOpen` resets it to 1, so a
-  late `publishDiagnostics` from the previous open (version > 1) is not dropped and
-  can paint briefly on the reopened buffer until the next republish. Narrow race,
-  self-healing; low severity. Fix would require an open-generation token or a
-  version that never resets across reopen.
-- Windows `FileIndexWatcher` (`ReadDirectoryChangesW`) backend gaps: a tracked
-  directory rename leaves ghost index entries + an unindexed subtree (no recursive
-  delete / no subtree walk), and a change-buffer overflow (`bytes_transferred==0`)
-  drops notifications with no full-rescan resync. Out of scope: non-Linux host
-  backends are not built (see the non-Linux note above); Linux inotify handles
-  both cases correctly.
-
-## Commit Pre-Check Warnings (2026-07-27)
-
-`CommitPreCheckSeverity::Warning` is genuinely advisory and genuinely distinct from
-`Blocking`. `RequestCommit` handles the three cases separately:
-
-- a `Blocking` check refuses outright, every time, and nothing acknowledges it;
-- nothing staged refuses with `Nothing staged`;
-- unacknowledged `Warning` checks raise a `ConfirmCommitWarnings` prompt listing
-  them. Confirming records the acknowledgements and dispatches the operation the
-  user originally asked for; cancelling acknowledges nothing, so the next attempt
-  asks again. `Open()` and a successful commit both clear the set.
-
-Before this, `acknowledged_warning_ids` had no reachable writer, so every Warning
-behaved exactly like Blocking — a repository with any untracked file could not be
-committed at all. Do not re-merge the Blocking and Warning arms of `RequestCommit`,
-and do not add a Warning-severity pre-check expecting it to hard-block: use
-`Blocking` for that.
-
-## Git Workstation
-
-The workstation release scope, safe startup flags, release checklist, and trust documentation are
-captured in the docs below (the `prepare-git-workstation-preview` OpenSpec change that originally
-defined this scope has shipped and is no longer a live change):
-
-- `dev-docs/project/git-workstation.md` — supported / unsupported workflows
-- `dev-docs/project/release-checklist.md` — tag, artifacts, tested-workflows matrix
-- `SECURITY.md` — trust model, safe mode, reporting
+- **Non-Linux host backends.** Linux is the supported host. The `src/platform/*`
+  seams stay because they keep the boundary testable, but native Windows/macOS
+  subprocess, terminal, and file-watcher backends are not being built, and the
+  poll/snapshot watcher fallback is the accepted permanent baseline elsewhere.
+- **Hosted perf gating.** Perf baselines are absolute timings from the pinned
+  `perf-runner-v1` machine, so CI cannot re-measure them. CI *does* enforce that
+  a changed baseline carries a `perf-baseline:` justification. Rebaselining
+  stays a local, deliberate act. (General CI is no longer descoped — see
+  `.github/workflows/checks.yml`.)
+- **Plugin marketplace, remote install, signed-plugin verification, project-local
+  plugin loading, Micro-plugin compatibility.** Ships `--disable-plugins` /
+  `--safe-mode` only.
+- **Cloud and collaboration features.**
+- **AI/LLM runtime surfaces.** Retired from product scope; the
+  authentication-provider and secret-storage surfaces went with them.
+- **Settings overlay follow-ups.** Section subtitles are a static table keyed by
+  category label, so a plugin-contributed category renders a title with no
+  subtitle; there is no per-category collapse/expand; the section header band is
+  fixed. Shipped scope is the scrollable category rail, fixed section header, and
+  subsection sub-headers.
+- **Multi-window.** Single-window is a product decision
+  (`openspec/specs/product-vision/spec.md`), not a gap.
 
 ## Companion Docs
 
-Keep these when you need deeper design context:
-
-- `openspec/specs/product-vision/spec.md`: authoritative product thesis and non-goals
-- `openspec/specs/diff-merge-editor/spec.md`: durable compare and merge behavioral contract
-- `openspec/specs/performance-budgets/spec.md`: durable performance budget policy
-- `AGENTS.md`: repo-level engineering policy, iteration loop, and agent expectations
-- `dev-docs/project/implementation-guide.md`: durable product direction
-- `dev-docs/plugins/plugin-runtime-research.md`: deeper plugin architecture notes and external references
-- `dev-docs/project/known-tech-debt.md`: concrete open debt still worth preserving
-- `dev-docs/design/text-surface-unification.md`: durable text-input and navigable-text interaction contract
-- `dev-docs/performance/performance-findings.md`: concrete shipped performance wins worth preserving
-- `dev-docs/performance/startup-tracing.md`: startup profiling workflow
-- `dev-docs/performance/runtime-profiling.md`: runtime and redraw profiling workflow
-- `dev-docs/project/editor-essentials.md`: shipped editor language contract, folding, presentation toggles, shaping, save normalization
-
-Archived (shipped or superseded):
-- `dev-docs/archive/plugin-platform-expansion-plan.md`: plugin platform planning — shipped across Phases 1–5
-- `dev-docs/archive/production-tech-debt-review.md`: 2026-04-20 structural debt review — major items resolved by the shell-breakdown pass
-- `dev-docs/archive/responsive-shell-layout.md`: ASCII layout reference — contract in `openspec/specs/responsive-shell-layout/spec.md`
-- `dev-docs/archive/workspace-shell-testaccess-audit.md`: TestAccess cleanup audit (2026-04-29 pass)
-- `dev-docs/archive/vscode-extension-compatibility-plan.md`: explicit out-of-scope decision
+- `openspec/specs/product-vision/spec.md` — product thesis, priority order, non-goals
+- `openspec/specs/diff-merge-editor/spec.md` — compare/merge behavioural contract
+- `openspec/specs/performance-budgets/spec.md` — performance budget policy
+- `AGENTS.md` — engineering policy, iteration loop, do-not-regress patterns
+- `dev-docs/project/implementation-guide.md` — durable product and subsystem map
+- `dev-docs/project/ui-invariants.md` — surface rules that were each broken once
+- `dev-docs/project/known-tech-debt.md` — open, actionable debt
+- `dev-docs/project/git-workstation.md` — supported / unsupported workflows
+- `dev-docs/project/release-checklist.md` — tag, artifacts, tested-workflows matrix
+- `dev-docs/project/editor-essentials.md` — language contract, folding, shaping, save normalization
+- `dev-docs/performance/performance-findings.md` — shipped performance wins worth preserving
+- `dev-docs/performance/startup-tracing.md`, `runtime-profiling.md` — profiling workflows
+- `dev-docs/plugins/plugin-runtime-research.md` — plugin architecture notes
+- `dev-docs/design/text-surface-unification.md` — text-input interaction contract
+- `SECURITY.md` — trust model, safe mode, reporting
