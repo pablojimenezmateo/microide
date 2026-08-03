@@ -634,6 +634,14 @@ void RunMobyDickWorkout(ScenarioContext& context) {
 const ScenarioRegistration g_perf_editor_occurrences_scan({Scenario{
     .name = "editor_occurrences_scan",
     .smoke = false,
+    // Iteration 0 does one-time cold work every later iteration reuses (font and
+    // glyph-atlas fill, the project's initial file-index build, the first session
+    // write), and this scenario is short enough that the cold pass dominates the
+    // percentiles: measured at 13907 allocations on iteration 0 against a ~4.6k
+    // steady state, with every other iteration at or below baseline. Discarding
+    // it makes p95/max describe the measured work instead of which iteration
+    // index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunEditorOccurrencesScan,
 }});
 const ScenarioRegistration g_perf_editor_add_cursor_next_match({Scenario{
@@ -654,16 +662,40 @@ const ScenarioRegistration g_perf_editor_toggle_comment_large({Scenario{
 const ScenarioRegistration g_perf_editor_mouse_selection_drag({Scenario{
     .name = "editor_mouse_selection_drag",
     .smoke = false,
+    // Iteration 0 does one-time cold work every later iteration reuses (font and
+    // glyph-atlas fill, the project's initial file-index build, the first session
+    // write), and this scenario is short enough that the cold pass dominates the
+    // percentiles: measured at 13065 allocations on iteration 0 against a ~5k
+    // steady state, with every other iteration at or below baseline. Discarding
+    // it makes p95/max describe the measured work instead of which iteration
+    // index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunEditorMouseSelectionDrag,
 }});
 const ScenarioRegistration g_perf_menu_hover_switch({Scenario{
     .name = "menu_hover_switch",
     .smoke = false,
+    // Iteration 0 does one-time cold work every later iteration reuses (font and
+    // glyph-atlas fill, the project's initial file-index build, the first session
+    // write), and this scenario is short enough that the cold pass dominates the
+    // percentiles: measured at 16648 allocations on iteration 0 against a ~8.9k
+    // steady state, with every other iteration at or below baseline. Discarding
+    // it makes p95/max describe the measured work instead of which iteration
+    // index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunMenuHoverSwitch,
 }});
 const ScenarioRegistration g_perf_menu_popup_hover_rows({Scenario{
     .name = "menu_popup_hover_rows",
     .smoke = false,
+    // Iteration 0 does one-time cold work every later iteration reuses (font and
+    // glyph-atlas fill, the project's initial file-index build, the first session
+    // write), and this scenario is short enough that the cold pass dominates the
+    // percentiles: measured at 10694 allocations on iteration 0 against a ~3k
+    // steady state, with every other iteration at or below baseline. Discarding
+    // it makes p95/max describe the measured work instead of which iteration
+    // index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunMenuPopupHoverRows,
 }});
 const ScenarioRegistration g_perf_editor_sort_lines_large({Scenario{
@@ -674,11 +706,27 @@ const ScenarioRegistration g_perf_editor_sort_lines_large({Scenario{
 const ScenarioRegistration g_perf_editor_snippet_expand({Scenario{
     .name = "editor_snippet_expand",
     .smoke = false,
+    // Iteration 0 does one-time cold work every later iteration reuses (font and
+    // glyph-atlas fill, the project's initial file-index build, the first session
+    // write), and this scenario is short enough that the cold pass dominates the
+    // percentiles: measured at 9958 allocations on iteration 0 against a ~850
+    // steady state, with every other iteration at or below baseline. Discarding
+    // it makes p95/max describe the measured work instead of which iteration
+    // index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunEditorSnippetExpand,
 }});
 const ScenarioRegistration g_perf_editor_snippet_placeholder_edit({Scenario{
     .name = "editor_snippet_placeholder_edit",
     .smoke = false,
+    // Iteration 0 does one-time cold work every later iteration reuses (font and
+    // glyph-atlas fill, the project's initial file-index build, the first session
+    // write), and this scenario is short enough that the cold pass dominates the
+    // percentiles: measured at 11411 allocations on iteration 0 against a ~2.3k
+    // steady state, with every other iteration at or below baseline. Discarding
+    // it makes p95/max describe the measured work instead of which iteration
+    // index the cold pass landed on.
+    .warmup_iterations = 1,
     .run = RunEditorSnippetPlaceholderEdit,
 }});
 const ScenarioRegistration g_perf_editor_save_normalization({Scenario{
