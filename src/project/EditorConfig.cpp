@@ -238,6 +238,15 @@ void EditorConfigResolver::SetProjectRoot(std::filesystem::path project_root) {
   Invalidate();
 }
 
+void EditorConfigResolver::EnsureProjectRoot(
+    const std::filesystem::path& normalized_project_root) const {
+  if (project_root_ == normalized_project_root) {
+    return;
+  }
+  project_root_ = normalized_project_root;
+  Invalidate();
+}
+
 void EditorConfigResolver::Invalidate() const {
   util::AddPerformanceCounter(util::PerfCounterId::EditorConfigInvalidations);
   directories_.clear();

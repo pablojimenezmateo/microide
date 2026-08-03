@@ -97,6 +97,13 @@ class EditorConfigResolver {
   void SetProjectRoot(std::filesystem::path project_root);
   const std::filesystem::path& project_root() const { return project_root_; }
 
+  // Self-heal for callers that hold an already-normalized project root and cannot
+  // be sure this resolver was ever pointed at it — a project-catalog slot that was
+  // reset to a fresh state carries its root but a default-constructed resolver, and
+  // an unset root resolves to "no opinion" *silently*. Allocation-free on the hot
+  // path: it is a path compare, and only a genuine mismatch does any work.
+  void EnsureProjectRoot(const std::filesystem::path& normalized_project_root) const;
+
   // Resolve for an absolute file path. Returns an all-empty property set when no
   // `.editorconfig` applies, which is the common case and costs one hash lookup
   // once warm.
@@ -122,7 +129,7 @@ class EditorConfigResolver {
 
   const DirectoryEntry& EntryForDirectory(const std::filesystem::path& directory) const;
 
-  std::filesystem::path project_root_;
+  mutable std::filesystem::path project_root_;
   // Mutable because resolution is a pure query with a memo behind it: callers
   // (ApplyEditorPreferences) are const and should not have to care.
   mutable std::unordered_map<std::string, DirectoryEntry> directories_;

@@ -53,13 +53,15 @@ editor::LanguageContractView BuildEditorLanguageContractView(
 
 void WorkspaceShell::ApplyDetectedIndentOnOpen(editor::TextViewport& viewport) const {
   static const project::EditorConfigProperties kNoEditorConfig;
-  const bool editorconfig_enabled =
-      SettingFlagEnabled(GetSettingValue("editor.editorconfig.enabled"), true);
+  const project::EditorConfigProperties* editor_config = &kNoEditorConfig;
+  if (SettingFlagEnabled(GetSettingValue("editor.editorconfig.enabled"), true) &&
+      !viewport.path().empty()) {
+    context_.current_project_state.editor_config.EnsureProjectRoot(
+        context_.current_project_state.root);
+    editor_config = &context_.current_project_state.editor_config.Resolve(viewport.path());
+  }
   ApplyDetectedIndentAfterPreferences(
-      viewport, [this](std::string_view id) { return GetSettingValue(id); },
-      editorconfig_enabled && !viewport.path().empty()
-          ? context_.current_project_state.editor_config.Resolve(viewport.path())
-          : kNoEditorConfig);
+      viewport, [this](std::string_view id) { return GetSettingValue(id); }, *editor_config);
 }
 
 void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
@@ -75,25 +77,31 @@ void WorkspaceShell::ApplyEditorPreferences(editor::TextViewport& viewport,
   // user/project setting untouched. Resolution is memoized per path; a project
   // with no `.editorconfig` costs one hash lookup here.
   static const project::EditorConfigProperties kNoEditorConfig;
-  const project::EditorConfigProperties& editor_config =
-      setting_enabled("editor.editorconfig.enabled", true) && !viewport.path().empty()
-          ? context_.current_project_state.editor_config.Resolve(viewport.path())
-          : kNoEditorConfig;
+  const project::EditorConfigProperties* editor_config = &kNoEditorConfig;
+  if (setting_enabled("editor.editorconfig.enabled", true) && !viewport.path().empty()) {
+    // Point the resolver at the active root before asking. A project-catalog slot
+    // that was reset carries its root but a fresh resolver, and an unset root
+    // resolves to "no opinion" silently — this is a path compare in the common
+    // case, and cheap next to the filetype detection below.
+    context_.current_project_state.editor_config.EnsureProjectRoot(
+        context_.current_project_state.root);
+    editor_config = &context_.current_project_state.editor_config.Resolve(viewport.path());
+  }
 
   const EditorPreferences& preferences = context_.current_project_state.editor_preferences;
   // Cheap per-viewport setters, always applied.
-  viewport.SetTabSize(editor_config.tab_size.value_or(preferences.tab_size));
-  viewport.SetIndentWidth(editor_config.indent_width.value_or(preferences.indent_width));
-  viewport.SetSoftTabs(editor_config.soft_tabs.value_or(preferences.soft_tabs));
+  viewport.SetTabSize(editor_config->tab_size.value_or(preferences.tab_size));
+  viewport.SetIndentWidth(editor_config->indent_width.value_or(preferences.indent_width));
+  viewport.SetSoftTabs(editor_config->soft_tabs.value_or(preferences.soft_tabs));
   viewport.SetSoftWrap(preferences.soft_wrap);
-  viewport.SetSaveTrimTrailingWhitespace(editor_config.trim_trailing_whitespace.value_or(
+  viewport.SetSaveTrimTrailingWhitespace(editor_config->trim_trailing_whitespace.value_or(
       setting_enabled("editor.save.trim_trailing_whitespace", true)));
-  viewport.SetSaveEnsureFinalNewline(editor_config.insert_final_newline.value_or(
+  viewport.SetSaveEnsureFinalNewline(editor_config->insert_final_newline.value_or(
       setting_enabled("editor.save.ensure_final_newline", true)));
   // editor.line_endings: "auto" keeps the file's detected ending; lf/crlf force it.
   std::optional<util::LineEnding> save_ending;
-  if (editor_config.line_ending.has_value()) {
-    save_ending = editor_config.line_ending;
+  if (editor_config->line_ending.has_value()) {
+    save_ending = editor_config->line_ending;
   } else {
     const std::string line_endings = GetSettingValue("editor.line_endings").value_or("auto");
     if (line_endings == "lf") {
