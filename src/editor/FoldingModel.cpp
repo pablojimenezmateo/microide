@@ -7,6 +7,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <span>
 #include <utility>
@@ -64,13 +65,68 @@ using StackEntry = FoldingModel::BracketStackEntry;
 // byte is not a bracket character at all. The bracket-scan inner loop runs once per source byte, so
 // the previous std::vector<std::pair<char,char>> linear scan was paid for every byte. The lookup
 // makes the per-byte check a single load + compare.
+// Distinct bracket bytes the SWAR skip below can filter on. Real inputs ship
+// 3-4 pairs (6-8 bytes); past this the skip falls back to the scalar loop, which
+// is correct for any set, just slower.
+constexpr std::size_t kMaxSwarBracketBytes = 8;
+
+// `byte` replicated into all eight lanes of a 64-bit word.
+constexpr std::uint64_t kLowOnesForByte(unsigned char byte) {
+  return 0x0101010101010101ULL * static_cast<std::uint64_t>(byte);
+}
+
 struct BracketLookupTable {
   // For each input byte: 0 = not a bracket, otherwise index+1 into the source `pairs` vector.
   std::array<std::uint8_t, 256> kind_for_byte{};
   // Cached `(open, close)` for each used kind. Index 0 is unused.
   std::array<std::pair<char, char>, 32> pair_for_kind{};
+  // `byte * 0x0101010101010101` for each distinct bracket byte, for the
+  // eight-bytes-at-a-time skip in NextBracketCandidateWord.
+  std::array<std::uint64_t, kMaxSwarBracketBytes> match_words{};
+  std::size_t match_word_count = 0;
+  bool swar_covers_all_bytes = false;
   bool any_bracket = false;
 };
+
+// Index of the first byte at/after `from` that could be a bracket, or
+// `line.size()`.
+//
+// The bracket scan is the dominant cost of recomputing folds on a large file --
+// a mid-file keystroke rescans every line after the edit, ~4 MB on the 50k-line
+// fixture -- and it ran one 256-entry table lookup per byte. Source is almost
+// entirely non-bracket bytes, so filter eight at a time with the has-zero-byte
+// trick against each distinct bracket byte, then resolve inside a flagged word
+// with the exact table. The word test can flag a word with no real bracket in it
+// (borrow across byte lanes); it can never miss one, and a false flag costs only
+// the scalar re-scan of those eight bytes.
+std::size_t NextBracketCandidate(const BracketLookupTable& table,
+                                 std::string_view line,
+                                 std::size_t from) {
+  constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
+  constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
+  std::size_t index = from;
+  if (table.swar_covers_all_bytes) {
+    while (index + sizeof(std::uint64_t) <= line.size()) {
+      std::uint64_t word = 0;
+      std::memcpy(&word, line.data() + index, sizeof(word));
+      std::uint64_t hits = 0;
+      for (std::size_t k = 0; k < table.match_word_count; ++k) {
+        const std::uint64_t marks = word ^ table.match_words[k];
+        hits |= (marks - kLowOnes) & ~marks & kHighBits;
+      }
+      if (hits != 0) {
+        break;
+      }
+      index += sizeof(std::uint64_t);
+    }
+  }
+  for (; index < line.size(); ++index) {
+    if (table.kind_for_byte[static_cast<unsigned char>(line[index])] != 0) {
+      return index;
+    }
+  }
+  return line.size();
+}
 
 BracketLookupTable BuildBracketLookupTable(const std::vector<std::pair<char, char>>& pairs) {
   BracketLookupTable table;
@@ -89,6 +145,20 @@ BracketLookupTable BuildBracketLookupTable(const std::vector<std::pair<char, cha
     }
     table.pair_for_kind[kind] = pair;
     table.any_bracket = true;
+  }
+  // Collect the distinct bracket bytes for the SWAR filter. `swar_covers_all_bytes`
+  // gates it: the filter is only sound when every bracket byte is represented, so
+  // an oversized set disables the fast skip rather than dropping brackets.
+  table.swar_covers_all_bytes = table.any_bracket;
+  for (std::size_t byte = 0; byte < table.kind_for_byte.size(); ++byte) {
+    if (table.kind_for_byte[byte] == 0) {
+      continue;
+    }
+    if (table.match_word_count >= kMaxSwarBracketBytes) {
+      table.swar_covers_all_bytes = false;
+      break;
+    }
+    table.match_words[table.match_word_count++] = kLowOnesForByte(static_cast<unsigned char>(byte));
   }
   return table;
 }
@@ -133,17 +203,22 @@ bool BuildBracketStackPrefix(LineSpan lines,
     }
     lines_visited++;
     const std::string_view line = lines[line_index];
-    // Hoist the syntax-highlight token lookup out of the per-byte loop and use
-    // the non-forcing accessor. Empty span = uncached → no suppression. See
+    // The syntax-highlight token lookup stays out of the per-byte loop (it is a
+    // hash probe) and is now also deferred until this line is known to hold a
+    // bracket: a whole-document scan visits every line but only some carry one,
+    // and once the byte scan itself got cheap the probe was the largest
+    // remaining per-line cost. Empty span = uncached -> no suppression. See
     // IsSuppressedBracketAt and perf round-4 Finding 1.
-    const std::span<const SyntaxTokenKind> tokens =
-        syntax_viewport != nullptr
-            ? syntax_viewport->HighlightedLineTokensIfCached(line_index)
-            : std::span<const SyntaxTokenKind>{};
-    for (std::size_t column = 0; column < line.size(); ++column) {
+    std::span<const SyntaxTokenKind> tokens;
+    bool tokens_resolved = syntax_viewport == nullptr;
+    for (std::size_t column = NextBracketCandidate(table, line, 0); column < line.size();
+         column = NextBracketCandidate(table, line, column + 1)) {
       const auto byte = static_cast<unsigned char>(line[column]);
       const std::uint8_t kind = table.kind_for_byte[byte];
-      if (kind == 0) continue;
+      if (!tokens_resolved) {
+        tokens = syntax_viewport->HighlightedLineTokensIfCached(line_index);
+        tokens_resolved = true;
+      }
       if (!tokens.empty() && IsSuppressedBracketAt(tokens, column)) {
         continue;
       }
@@ -180,14 +255,17 @@ void ScanBracketRangesTail(LineSpan lines,
     }
     lines_visited++;
     const std::string_view line = lines[line_index];
-    const std::span<const SyntaxTokenKind> tokens =
-        syntax_viewport != nullptr
-            ? syntax_viewport->HighlightedLineTokensIfCached(line_index)
-            : std::span<const SyntaxTokenKind>{};
-    for (std::size_t column = 0; column < line.size(); ++column) {
+    // Deferred token probe; see the note in BuildBracketStackPrefix.
+    std::span<const SyntaxTokenKind> tokens;
+    bool tokens_resolved = syntax_viewport == nullptr;
+    for (std::size_t column = NextBracketCandidate(table, line, 0); column < line.size();
+         column = NextBracketCandidate(table, line, column + 1)) {
       const auto byte = static_cast<unsigned char>(line[column]);
       const std::uint8_t kind = table.kind_for_byte[byte];
-      if (kind == 0) continue;
+      if (!tokens_resolved) {
+        tokens = syntax_viewport->HighlightedLineTokensIfCached(line_index);
+        tokens_resolved = true;
+      }
       if (!tokens.empty() && IsSuppressedBracketAt(tokens, column)) {
         continue;
       }
@@ -391,21 +469,75 @@ void RemapCollapsedFlags(const std::vector<FoldRange>& previous_ranges,
   }
 }
 
-void SortDedupeRangesByOpener(std::vector<FoldRange>& ranges) {
-  std::sort(ranges.begin(), ranges.end(), [](const FoldRange& a, const FoldRange& b) {
-    if (a.opener_line != b.opener_line) {
-      return a.opener_line < b.opener_line;
+// Orders `ranges` ascending by opener line and keeps exactly one range per
+// opener: the one with the lowest source, and among those the widest.
+//
+// This was a comparison sort plus std::unique. Every fold recompute runs it over
+// every range in the document -- tens of thousands on a large file, on every
+// keystroke -- and the key is a line index bounded by the document, so the sort
+// was doing O(n log n) comparisons to order values that can be bucketed. Placing
+// each range in a slot indexed by its opener and then compacting in slot order
+// produces the identical sequence in O(n + line_count), and `scratch` is owned by
+// the model so the document-sized slot array is allocated once rather than per
+// keystroke.
+constexpr std::uint32_t kNoRangeIndex = std::numeric_limits<std::uint32_t>::max();
+
+// True when `candidate` beats `incumbent` for the same opener line: lower source
+// first, then the wider range. Mirrors the old comparator's tie-breaks exactly.
+bool RangeWinsForOpener(const FoldRange& candidate, const FoldRange& incumbent) {
+  if (candidate.source != incumbent.source) {
+    return static_cast<int>(candidate.source) < static_cast<int>(incumbent.source);
+  }
+  return candidate.closer_line > incumbent.closer_line;
+}
+
+void SortDedupeRangesByOpener(std::vector<FoldRange>& ranges,
+                              std::vector<std::uint32_t>& scratch,
+                              std::vector<FoldRange>& compact_scratch) {
+  if (ranges.empty()) {
+    return;
+  }
+  std::size_t max_opener = 0;
+  for (const FoldRange& range : ranges) {
+    max_opener = std::max(max_opener, range.opener_line);
+  }
+  // A range count that cannot be indexed by uint32 (or an opener line past what
+  // a slot array can address) falls back to the comparison sort. Neither is
+  // reachable from a real document, but the bucket path must not silently
+  // truncate if one ever is.
+  if (ranges.size() > kNoRangeIndex || max_opener >= kNoRangeIndex) {
+    std::sort(ranges.begin(), ranges.end(), [](const FoldRange& a, const FoldRange& b) {
+      if (a.opener_line != b.opener_line) {
+        return a.opener_line < b.opener_line;
+      }
+      if (a.source != b.source) {
+        return static_cast<int>(a.source) < static_cast<int>(b.source);
+      }
+      return a.closer_line > b.closer_line;
+    });
+    ranges.erase(std::unique(ranges.begin(), ranges.end(),
+                             [](const FoldRange& a, const FoldRange& b) {
+                               return a.opener_line == b.opener_line;
+                             }),
+                 ranges.end());
+    return;
+  }
+
+  scratch.assign(max_opener + 1, kNoRangeIndex);
+  for (std::size_t i = 0; i < ranges.size(); ++i) {
+    std::uint32_t& slot = scratch[ranges[i].opener_line];
+    if (slot == kNoRangeIndex || RangeWinsForOpener(ranges[i], ranges[slot])) {
+      slot = static_cast<std::uint32_t>(i);
     }
-    if (a.source != b.source) {
-      return static_cast<int>(a.source) < static_cast<int>(b.source);
+  }
+  compact_scratch.clear();
+  compact_scratch.reserve(ranges.size());
+  for (const std::uint32_t index : scratch) {
+    if (index != kNoRangeIndex) {
+      compact_scratch.push_back(ranges[index]);
     }
-    return a.closer_line > b.closer_line;
-  });
-  ranges.erase(std::unique(ranges.begin(), ranges.end(),
-                           [](const FoldRange& a, const FoldRange& b) {
-                             return a.opener_line == b.opener_line;
-                           }),
-               ranges.end());
+  }
+  ranges.swap(compact_scratch);
 }
 
 }  // namespace
@@ -476,7 +608,7 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
     ranges_.reserve(bracket_ranges.size() + indent_ranges.size());
     ranges_.insert(ranges_.end(), bracket_ranges.begin(), bracket_ranges.end());
     ranges_.insert(ranges_.end(), indent_ranges.begin(), indent_ranges.end());
-    SortDedupeRangesByOpener(ranges_);
+    SortDedupeRangesByOpener(ranges_, merge_by_opener_scratch_, merge_compact_scratch_);
     if (previous_collapsed_count > 0) {
       RemapCollapsedFlags(previous_ranges, previous_collapsed, previous_collapsed_count,
                           ranges_, collapsed_, collapsed_count_, collapse_edit_anchor,

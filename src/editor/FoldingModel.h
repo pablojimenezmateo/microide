@@ -185,6 +185,14 @@ class FoldingModel {
   bool prefix_stack_valid_ = false;
 
   std::vector<FoldRange> ranges_;
+  // Reused across recomputes: opener_line -> index of the winning range, used by
+  // the bucket dedupe that replaced the O(n log n) sort. Held on the model so a
+  // per-keystroke recompute does not reallocate a document-sized scratch.
+  std::vector<std::uint32_t> merge_by_opener_scratch_;
+  // Destination buffer for that compaction. Swapped with `ranges_` rather than
+  // assigned, so the two buffers alternate and neither reallocates in steady
+  // state.
+  std::vector<FoldRange> merge_compact_scratch_;
   std::vector<bool> collapsed_;  // parallel to ranges_
   // Maintained alongside `collapsed_` so `has_any_collapsed_fold()` is O(1).
   std::size_t collapsed_count_ = 0;
