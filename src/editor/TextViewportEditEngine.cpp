@@ -549,8 +549,12 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   // Incremental, upgrade-only: scan just the inserted lines instead of
   // re-detecting the whole document's encoding on every keystroke.
   UpgradeEncodingForInsertedLines(inserted_lines);
-  // Undo/redo replays a content delta starting at start_line.
-  InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line);
+  // Undo/redo replays a content delta starting at start_line. This is the only
+  // edit path that knows the exact extent, so it is the only one that lets the
+  // folding model's per-line caches resync instead of rebuilding.
+  InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line,
+                          ContentSplice{.removed = removed_count,
+                                        .inserted = inserted_lines.size()});
   UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines);
   // Keep the wrapped-row table in sync incrementally so soft-wrap editing does
   // not force a full O(document) re-wrap per keystroke.

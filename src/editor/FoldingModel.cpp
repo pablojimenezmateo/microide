@@ -23,6 +23,14 @@ namespace {
 // nothing else can produce it, so callers must not re-derive that separately.
 constexpr std::size_t kSentinelIndent = static_cast<std::size_t>(-1);
 
+// Cache slots for `line_indent_`. `kBlankIndent` is the stored form of
+// `kSentinelIndent`; `kUnmeasuredIndent` marks a line whose width has not been
+// measured since an edit touched it, so a read measures it then. Both sit above
+// any width a real line can produce (a width is bounded by the line's byte
+// count times the tab size, and lines are 32-bit-addressed).
+constexpr std::uint32_t kBlankIndent = std::numeric_limits<std::uint32_t>::max();
+constexpr std::uint32_t kUnmeasuredIndent = kBlankIndent - 1;
+
 std::size_t MeasureIndent(std::string_view line, std::size_t tab_size) {
   if (tab_size == 0) tab_size = 1;
   // Count the leading spaces a word at a time. This runs for every line of the
@@ -305,6 +313,7 @@ void ScanIndentRanges(LineSpan lines,
                       std::size_t tab_size,
                       const std::vector<FoldRange>& bracket_ranges,
                       std::size_t max_lines,
+                      std::vector<std::uint32_t>& indent_cache,
                       std::vector<FoldRange>& out_ranges,
                       bool& complete) {
   const std::size_t scan_end = std::min(end_line_exclusive, lines.size());
@@ -320,26 +329,42 @@ void ScanIndentRanges(LineSpan lines,
     }
   }
 
-  // Precompute indent for every line (sentinel for blank lines) within budget.
-  // Sized to the scan window, not the whole document: every read below is bounded
-  // by scan_end (matching bracket_opener above), so the tail would only be
-  // zero-inited and never touched on a budgeted recompute of a big file.
-  std::vector<std::size_t> indents(scan_end, kSentinelIndent);
+  // Measure the lines whose cached width an edit invalidated. `indent_cache` is
+  // kept in sync with the document by SyncLineIndentCache, so in the steady state
+  // of typing this loop touches only the edited lines instead of remeasuring the
+  // whole scan window (it was the second-largest cost of a keystroke on a large
+  // file). The budget now counts real measurements rather than iterations, so a
+  // warm cache also lets a budgeted recompute reach further than a cold one.
   std::size_t scanned = 0;
   {
-    // Split from the emission pass below: this one is a pure per-line measure over
-    // the whole scan window and the other is the range walk, and they have very
-    // different fixes if either dominates.
+    // Split from the emission pass below: this one is a pure per-line measure and
+    // the other is the range walk, and they have very different fixes if either
+    // dominates.
     util::PerformanceTrace::Scope perf_scope("FoldingModel::ScanIndentRanges::Measure");
     for (std::size_t i = 0; i < scan_end; ++i) {
+      if (indent_cache[i] != kUnmeasuredIndent) {
+        continue;
+      }
       if (max_lines != 0 && scanned >= max_lines) {
         complete = false;
         break;
       }
       ++scanned;
-      indents[i] = MeasureIndent(lines[i], tab_size);
+      const std::size_t measured = MeasureIndent(lines[i], tab_size);
+      // Clamp so a pathological width can never collide with a reserved slot.
+      indent_cache[i] = measured == kSentinelIndent
+                            ? kBlankIndent
+                            : static_cast<std::uint32_t>(
+                                  std::min<std::size_t>(measured, kUnmeasuredIndent - 1));
     }
   }
+  // A line left unmeasured (the budget ran out before reaching it) reads as
+  // blank, exactly as the old zero-initialized scratch array did.
+  const auto indent_at = [&](std::size_t i) -> std::size_t {
+    const std::uint32_t slot = indent_cache[i];
+    return (slot == kBlankIndent || slot == kUnmeasuredIndent) ? kSentinelIndent
+                                                               : static_cast<std::size_t>(slot);
+  };
 
   // The emission pass only reads the precomputed `indents[]` array; it must not
   // share the measurement loop's budget counter. Because callers pass
@@ -356,7 +381,7 @@ void ScanIndentRanges(LineSpan lines,
     }
     ++scanned;
     if (bracket_opener[i]) continue;
-    const std::size_t opener_indent = indents[i];
+    const std::size_t opener_indent = indent_at(i);
     // `kSentinelIndent` IS "blank or indent only": MeasureIndent returns it
     // exactly when every byte of the line is a space or a tab, which is the same
     // predicate LineIsBlankOrIndentOnly computes. Re-asking cost a piece-tree
@@ -366,17 +391,17 @@ void ScanIndentRanges(LineSpan lines,
     if (opener_indent == kSentinelIndent) continue;
     // Find the next non-blank line to determine if a deeper-indented body starts.
     std::size_t body_start = i + 1;
-    while (body_start < scan_end && indents[body_start] == kSentinelIndent) {
+    while (body_start < scan_end && indent_at(body_start) == kSentinelIndent) {
       ++body_start;
     }
     if (body_start >= scan_end) break;
-    if (indents[body_start] <= opener_indent) continue;
+    if (indent_at(body_start) <= opener_indent) continue;
     // Walk forward until a genuine dedent (indent <= opener_indent) or the window
     // boundary.
     std::size_t closer = body_start;
     bool found_dedent = false;
     while (closer + 1 < scan_end) {
-      const std::size_t next_indent = indents[closer + 1];
+      const std::size_t next_indent = indent_at(closer + 1);
       if (next_indent != kSentinelIndent && next_indent <= opener_indent) {
         found_dedent = true;
         break;
@@ -542,22 +567,74 @@ void SortDedupeRangesByOpener(std::vector<FoldRange>& ranges,
 
 }  // namespace
 
+void FoldingModel::SyncLineIndentCache(std::size_t line_count, std::size_t tab_size,
+                                       const LineEditSpan& edit_span) {
+  util::PerformanceTrace::Scope perf_scope("FoldingModel::SyncLineIndentCache");
+  const std::size_t effective_tab_size = tab_size == 0 ? 1 : tab_size;
+  // Widths are measured against a tab size, so a change invalidates all of them.
+  const bool tab_size_changed = line_indent_tab_size_ != effective_tab_size;
+  line_indent_tab_size_ = effective_tab_size;
+
+  const std::size_t cached_end = edit_span.ResolvedCachedEnd(line_indent_.size());
+  const std::size_t current_end = edit_span.ResolvedCurrentEnd(line_count);
+  const std::size_t begin = edit_span.begin();
+
+  // The span claims cache[cached_end, cache_size) and document[current_end,
+  // line_count) are the same lines, so those two suffixes must be the same
+  // length. If they are not, an edit reached the document without being reported
+  // and nothing cached can be trusted -- rebuild rather than splice onto a lie.
+  const bool splice_is_sound =
+      !tab_size_changed && !edit_span.empty() && begin <= cached_end && begin <= line_indent_.size() &&
+      line_indent_.size() - cached_end == line_count - current_end;
+
+  if (edit_span.empty() && !tab_size_changed && line_indent_.size() == line_count) {
+    return;  // nothing changed since the last sync
+  }
+  if (!splice_is_sound) {
+    line_indent_.assign(line_count, kUnmeasuredIndent);
+    return;
+  }
+
+  const std::size_t removed = cached_end - begin;
+  const std::size_t inserted = current_end - begin;
+  if (removed == inserted) {
+    // In-line edit: no suffix entry moves, so overwrite in place rather than
+    // memmoving the tail twice. This is the dominant keystroke.
+    std::fill(line_indent_.begin() + static_cast<std::ptrdiff_t>(begin),
+              line_indent_.begin() + static_cast<std::ptrdiff_t>(cached_end), kUnmeasuredIndent);
+  } else {
+    line_indent_.erase(line_indent_.begin() + static_cast<std::ptrdiff_t>(begin),
+                       line_indent_.begin() + static_cast<std::ptrdiff_t>(cached_end));
+    line_indent_.insert(line_indent_.begin() + static_cast<std::ptrdiff_t>(begin), inserted,
+                        kUnmeasuredIndent);
+  }
+}
+
 bool FoldingModel::Compute(LineSpan lines,
                            const ComputeOptions& options) {
-  return ComputeWithBudget(lines, options, /*max_lines=*/0,
-                           std::numeric_limits<std::size_t>::max(),
-                           std::numeric_limits<std::size_t>::max(),
-                           nullptr);
+  return ComputeWithBudget(lines, options, /*max_lines=*/0, LineEditSpan::FullRebuild(),
+                           std::numeric_limits<std::size_t>::max(), nullptr);
 }
 
 bool FoldingModel::ComputeWithBudget(LineSpan lines,
                                      const ComputeOptions& options,
                                      std::size_t max_lines,
-                                     std::size_t incremental_resume_line,
+                                     const LineEditSpan& edit_span,
                                      std::size_t target_end_exclusive,
                                      const TextViewport* syntax_viewport) {
   const std::size_t line_count = lines.size();
   constexpr std::size_t kNoResume = std::numeric_limits<std::size_t>::max();
+
+  // Resync the per-line indent widths before anything reads them; this is what
+  // turns the indent pass from a whole-document remeasure into an edited-lines
+  // remeasure.
+  SyncLineIndentCache(line_count, options.tab_size, edit_span);
+
+  // The bracket reuse works off the first changed line. An empty span means no
+  // edit landed since the last compute (a scroll-driven extension), which reuses
+  // everything before the scan window rather than nothing.
+  const std::size_t incremental_resume_line =
+      edit_span.empty() ? kNoResume : edit_span.begin();
 
   // The incremental-resume path reuses the pre-edit bracket ranges whose closer is
   // before the edit anchor, then rescans the tail — cheap for a localized edit on a
@@ -601,7 +678,7 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
     if (options.use_indent_source) {
       util::PerformanceTrace::Scope si("FoldingModel::ScanIndentRanges");
       ScanIndentRanges(lines, scan_end, options.tab_size, bracket_ranges, max_lines,
-                       indent_ranges, complete_);
+                       line_indent_, indent_ranges, complete_);
     }
 
     util::PerformanceTrace::Scope sm("FoldingModel::MergeRanges");
@@ -723,7 +800,7 @@ bool FoldingModel::EnsureFoldsForVisibleRange(
     std::size_t visible_start_line,
     std::size_t visible_end_line,
     std::size_t max_lines,
-    std::size_t incremental_resume_line,
+    const LineEditSpan& edit_span,
     const TextViewport* syntax_viewport) {
   const std::size_t line_count = lines.size();
   if (line_count == 0) {
@@ -770,8 +847,7 @@ bool FoldingModel::EnsureFoldsForVisibleRange(
   const std::size_t scan_end =
       std::min(line_count, std::max({target_end, budget, doubled_prefix}));
   const std::size_t work_budget = max_lines == 0 ? line_count : std::max(max_lines, scan_end);
-  ComputeWithBudget(lines, options, work_budget, incremental_resume_line, scan_end,
-                    syntax_viewport);
+  ComputeWithBudget(lines, options, work_budget, edit_span, scan_end, syntax_viewport);
   dirty_ = false;
   return true;
 }
@@ -974,6 +1050,8 @@ bool FoldingModel::IsCollapsedAtOpener(std::size_t line) const {
 }
 
 void FoldingModel::Clear() {
+  line_indent_.clear();
+  line_indent_tab_size_ = 0;
   ranges_.clear();
   collapsed_.clear();
   prefix_stack_.clear();

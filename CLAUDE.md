@@ -15,15 +15,6 @@ Purpose: first-stop operating guide for agents working in this repository.
 
 `microide` is a compact single-window desktop editor and IDE shell. The codebase currently centers on built-in editor, compare, merge, search, git, terminal, and plugin workflows.
 
-- Language: C++20
-- Build system: CMake
-- Windowing and input: SDL3
-- Optional text backend: SDL3_ttf
-- Search engine: PCRE2
-- Plugin runtime: Lua 5.4
-- Terminal model: PTY-backed terminal sessions
-- Test runner: CTest with the in-tree `microide_tests` binary
-
 ## Source Of Truth
 
 When guidance conflicts, use this order:

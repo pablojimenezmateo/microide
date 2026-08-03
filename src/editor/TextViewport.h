@@ -2,7 +2,6 @@
 
 #include <deque>
 #include <filesystem>
-#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -14,6 +13,7 @@
 #include "editor/EditTypes.h"
 #include "editor/HighlightPrefetch.h"
 #include "editor/LanguageContractView.h"
+#include "editor/LineEditSpan.h"
 #include "editor/FoldingModel.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextBuffer.h"
@@ -57,6 +57,14 @@ class TextViewport {
     SyntaxConfig,
     LayoutShape,
     Presentation,
+  };
+
+  // Exact extent of one content edit: lines [start, start + removed) were
+  // replaced by `inserted` lines. Reported only by the edit path that applies a
+  // history entry, which is the one place the counts are known.
+  struct ContentSplice {
+    std::size_t removed = 0;
+    std::size_t inserted = 0;
   };
 
   struct WrappedVisualRow {
@@ -234,10 +242,12 @@ class TextViewport {
   std::uint64_t presentation_revision() const {
     return document_ != nullptr ? document_->presentation_revision : 0;
   }
-  // Minimum line index affected by the last layout invalidation (used by the
-  // folding model to preserve stable bracket folds above the edit). Reset by
-  // `ConsumeFoldEditAnchorLine()` after the host reads it for a recompute.
-  std::size_t ConsumeFoldEditAnchorLine();
+  // The line range that has changed since the folding model last looked, as a
+  // common-prefix/common-suffix window (see LineEditSpan). The model resyncs its
+  // per-line indent and bracket caches across it instead of rescanning the
+  // document. Reading it resets the accumulator, so there is exactly one
+  // consumer: the fold refresh.
+  LineEditSpan ConsumeFoldEditSpan();
   std::size_t tab_size() const { return tab_size_; }
   std::size_t max_visual_columns() const { return MaxVisualColumns(); }
   std::size_t indent_width() const { return indent_width_; }
@@ -575,7 +585,12 @@ class TextViewport {
   bool InInsertionSuppressedScope(std::size_t line, std::size_t column) const;
   bool TryMultiCaretPairInsert(char ch);
   void InvalidateDerivedCaches(InvalidationReason reason);
-  void InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line);
+  // `splice` reports the exact line range an edit replaced, for the derived
+  // caches that can resync incrementally instead of rebuilding. std::nullopt --
+  // the default -- means the extent was not reported, which degrades to "nothing
+  // from `start_line` on is reusable"; only ApplyHistoryEntry knows the splice.
+  void InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line,
+                               std::optional<ContentSplice> splice = std::nullopt);
   void InvalidateVisualColumnCache();
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
@@ -610,7 +625,9 @@ class TextViewport {
   static TextEncoding DetectEncoding(LineSpan lines);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
-  std::size_t fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();
+  // Lines that have changed since the folding model last resynced. Consumed (and
+  // reset) by `ConsumeFoldEditSpan`.
+  LineEditSpan fold_edit_span_;
   std::shared_ptr<DocumentState> document_;
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;

@@ -12,6 +12,7 @@ namespace {
 using microide::editor::FoldingModel;
 using microide::editor::FoldRange;
 using microide::editor::FoldSource;
+using microide::editor::LineEditSpan;
 using microide::editor::TextViewport;
 
 FoldingModel::ComputeOptions DefaultCStyleOptions() {
@@ -206,7 +207,7 @@ void TestBracketFoldSkipsStringAndCommentRegions() {
 
   FoldingModel model;
   Expect(model.ComputeWithBudget(viewport.lines().Snapshot(), DefaultCStyleOptions(), /*max_lines=*/0,
-                                 std::numeric_limits<std::size_t>::max(),
+                                 LineEditSpan::FullRebuild(),
                                  std::numeric_limits<std::size_t>::max(), &viewport),
          "syntax-aware fold compute should complete");
   Expect(model.ranges().size() == 1,
@@ -264,7 +265,8 @@ void TestIncrementalBracketScanReusesPrefixAndCollapseState() {
   Expect(model.Collapse(0), "outer fold should accept collapse");
   Expect(model.IsCollapsedAtOpener(0), "outer fold should be collapsed");
 
-  Expect(model.ComputeWithBudget(lines, DefaultCStyleOptions(), /*max_lines=*/0, /*resume=*/5),
+  Expect(model.ComputeWithBudget(lines, DefaultCStyleOptions(), /*max_lines=*/0,
+                                 LineEditSpan::SuffixReplacedFrom(5)),
          "incremental refresh should complete");
   const auto outer = Find(model.ranges(), 0);
   Expect(outer.closer_line == 4 && outer.source == FoldSource::Bracket,
@@ -301,9 +303,11 @@ void TestCollapsedFoldSurvivesInsertionAbove() {
       "  body();",      // 5
       "}",              // 6
   };
-  // Edit anchor at line 0 (top); the net +2 line delta is inferred from the change
-  // in line count since the previous compute.
-  Expect(model.ComputeWithBudget(after, DefaultCStyleOptions(), /*max_lines=*/0, /*resume=*/0),
+  // Two lines inserted at the top; the net +2 line delta is inferred from the
+  // change in line count since the previous compute.
+  LineEditSpan inserted_at_top;
+  inserted_at_top.NoteSplice(/*start=*/0, /*removed=*/0, /*inserted=*/2);
+  Expect(model.ComputeWithBudget(after, DefaultCStyleOptions(), /*max_lines=*/0, inserted_at_top),
          "recompute after the insertion should finish");
   Expect(!model.IsCollapsedAtOpener(2), "nothing is collapsed at the old opener line any more");
   Expect(model.IsCollapsedAtOpener(4),

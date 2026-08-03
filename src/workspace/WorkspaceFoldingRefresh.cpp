@@ -65,9 +65,9 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
     }
   }
 
-  const std::size_t fold_resume_line = viewport.ConsumeFoldEditAnchorLine();
+  const editor::LineEditSpan fold_edit_span = viewport.ConsumeFoldEditSpan();
   model.EnsureFoldsForVisibleRange(viewport.lines(), options, visible_start, visible_end,
-                                   kFoldingModelComputeBudget, fold_resume_line, &viewport);
+                                   kFoldingModelComputeBudget, fold_edit_span, &viewport);
   model.SetFingerprint(fingerprint);
 }
 

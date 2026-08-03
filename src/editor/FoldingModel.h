@@ -8,6 +8,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/LineEditSpan.h"
 #include "editor/LineSpan.h"
 
 namespace microide::editor {
@@ -62,15 +63,16 @@ class FoldingModel {
   // returned ranges are partial and `complete()` will report `false`. This is
   // the budgeted recompute described in the spec; the fold gutter renderer
   // paints whatever is resolved.
-  // `incremental_resume_line` anchors bracket rescans after localized edits:
-  // bracket folds with `closer_line < incremental_resume_line` are reused when
-  // they match the previous model, and bracket balance is seeded from lines
-  // `[0, incremental_resume_line)`. `std::numeric_limits<std::size_t>::max()`
-  // forces a whole-file bracket scan.
+  // `edit_span` reports which lines have changed since the last compute (see
+  // LineEditSpan). It drives two things: bracket folds whose closer sits before
+  // `edit_span.begin()` are reused rather than rescanned, and the per-line
+  // indent cache is resynced across the window instead of being remeasured for
+  // the whole document. A default-constructed (empty) span means "nothing has
+  // changed"; `LineEditSpan::FullRebuild()` forces a whole-file rescan.
   bool ComputeWithBudget(LineSpan lines,
                          const ComputeOptions& options,
                          std::size_t max_lines,
-                         std::size_t incremental_resume_line = std::numeric_limits<std::size_t>::max(),
+                         const LineEditSpan& edit_span = LineEditSpan::FullRebuild(),
                          std::size_t target_end_exclusive = std::numeric_limits<std::size_t>::max(),
                          const TextViewport* syntax_viewport = nullptr);
 
@@ -83,7 +85,7 @@ class FoldingModel {
       std::size_t visible_start_line,
       std::size_t visible_end_line,
       std::size_t max_lines,
-      std::size_t incremental_resume_line = std::numeric_limits<std::size_t>::max(),
+      const LineEditSpan& edit_span = LineEditSpan::FullRebuild(),
       const TextViewport* syntax_viewport = nullptr);
 
   // Toggle the collapsed state of the fold range whose opener matches
@@ -162,6 +164,13 @@ class FoldingModel {
     std::size_t hi = 0;  // last hidden line (closer, inclusive)
   };
 
+  // Bring `line_indent_` in sync with a document of `line_count` lines, given the
+  // lines that changed. Falls back to a full reset when the span cannot describe
+  // the difference (a mismatched common-suffix length means an edit went
+  // unreported, so nothing cached can be trusted).
+  void SyncLineIndentCache(std::size_t line_count, std::size_t tab_size,
+                           const LineEditSpan& edit_span);
+
   // Build the revision-keyed lookup tables: sorted collapsed-interval list with
   // prefix `hi` running-max, plus a per-range prefix running-max of `closer_line`
   // for InnermostFoldContaining. Cheap when ranges_/collapsed_ are unchanged.
@@ -183,6 +192,19 @@ class FoldingModel {
   std::vector<BracketStackEntry> prefix_stack_;
   std::size_t prefix_stack_line_ = 0;
   bool prefix_stack_valid_ = false;
+
+  // Per-line leading-indent width, memoized across recomputes.
+  //
+  // Measuring it for the whole document was the second-largest cost of typing in
+  // a large file (ScanIndentRanges::Measure, 141 ms of the 759 ms
+  // mid_file_edit_latency_large_file scenario) -- and a line's indent depends on
+  // that line's bytes and nothing else, so an edit invalidates only the lines it
+  // touched. The reported LineEditSpan splices this array; entries inside the
+  // window are reset to `kUnmeasuredIndent` and remeasured on first read, which
+  // also keeps a budgeted first paint from measuring past its scan window.
+  std::vector<std::uint32_t> line_indent_;
+  // Tab size the cached widths were measured against; a change invalidates all.
+  std::size_t line_indent_tab_size_ = 0;
 
   std::vector<FoldRange> ranges_;
   // Reused across recomputes: opener_line -> index of the winning range, used by

@@ -6,7 +6,6 @@
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspaceTabState.h"
 
-#include <limits>
 #include <string>
 #include <vector>
 
@@ -105,8 +104,10 @@ void TestFoldingIncrementalResumeMatchesFullRecompute() {
 
   for (const auto& [line, text] : edits) {
     lines[line] = text;
-    // Resume exactly at the edited line, which is what the viewport publishes.
-    incremental.ComputeWithBudget(lines, options, /*max_lines=*/0, line);
+    // The exact one-line in-place splice a viewport publishes for this edit.
+    editor::LineEditSpan edited;
+    edited.NoteSplice(/*start=*/line, /*removed=*/1, /*inserted=*/1);
+    incremental.ComputeWithBudget(lines, options, /*max_lines=*/0, edited);
 
     FoldingModel fresh;
     Expect(fresh.Compute(lines, options), "reference compute should complete");
@@ -155,14 +156,16 @@ void TestFoldingPrefixMemoDoesNotSurviveAFullRecompute() {
   Expect(model.Compute(deep, options), "seed compute on the deep document");
   // Populate the memo for line 7 against the deep document.
   deep[7] = "    body(); more();";
-  model.ComputeWithBudget(deep, options, /*max_lines=*/0, /*incremental_resume_line=*/7);
+  model.ComputeWithBudget(deep, options, /*max_lines=*/0,
+                          editor::LineEditSpan::SuffixReplacedFrom(7));
 
   // A full recompute on entirely different content — what a document load does.
   Expect(model.Compute(flat, options), "full recompute on the flat document");
 
   // Now resume at the same line on the new content.
   flat[7] = "  body(); more();";
-  model.ComputeWithBudget(flat, options, /*max_lines=*/0, /*incremental_resume_line=*/7);
+  model.ComputeWithBudget(flat, options, /*max_lines=*/0,
+                          editor::LineEditSpan::SuffixReplacedFrom(7));
 
   FoldingModel fresh;
   Expect(fresh.Compute(flat, options), "reference compute on the flat document");
@@ -417,13 +420,21 @@ void TestMarkdownProseParensDoNotFold() {
 void TestViewportEditExposesFoldAnchorLineForIncrementalRefresh() {
   TextViewport viewport;
   viewport.LoadContent("aa\nbb\ncc\ndd\n", "/tmp/fold-anchor.cpp");
+  // A load replaces every line, so it reports a full rebuild -- the fold model's
+  // per-line caches hold the *previous* document until something resyncs them.
+  // Consume it the way the first frame after a load does, so what follows
+  // measures the edit alone.
+  Expect(viewport.ConsumeFoldEditSpan().begin() == 0u,
+         "loading a document should invalidate the whole fold span");
   viewport.MoveCursorTo(2, 0);
   viewport.InsertText("Z");
 
-  Expect(viewport.ConsumeFoldEditAnchorLine() == 2u,
-         "fold anchor should match the first edited logical line");
-  Expect(viewport.ConsumeFoldEditAnchorLine() == std::numeric_limits<std::size_t>::max(),
-         "fold anchor should reset to the idle sentinel after consume");
+  const editor::LineEditSpan span = viewport.ConsumeFoldEditSpan();
+  Expect(span.begin() == 2u, "fold edit span should start at the first edited logical line");
+  Expect(span.ResolvedCurrentEnd(4) == 3u,
+         "a one-line in-place insert should report a one-line window, not the whole tail");
+  Expect(viewport.ConsumeFoldEditSpan().empty(),
+         "the fold edit span should be empty again after consume");
 }
 
 }  // namespace

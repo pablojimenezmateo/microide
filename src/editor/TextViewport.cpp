@@ -3,7 +3,6 @@
 #include "editor/TextViewportInternal.h"
 
 #include <algorithm>
-#include <limits>
 
 #include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
@@ -28,7 +27,7 @@ TextViewport::TextViewport() {
 }
 
 TextViewport::TextViewport(const TextViewport& other)
-    : fold_edit_anchor_line_(other.fold_edit_anchor_line_),
+    : fold_edit_span_(other.fold_edit_span_),
       document_(other.document_),
       cursor_line_(other.cursor_line_),
       cursor_column_(other.cursor_column_),
@@ -82,7 +81,7 @@ TextViewport& TextViewport::operator=(const TextViewport& other) {
 }
 
 TextViewport::TextViewport(TextViewport&& other) noexcept
-    : fold_edit_anchor_line_(other.fold_edit_anchor_line_),
+    : fold_edit_span_(other.fold_edit_span_),
       document_(other.document_),
       cursor_line_(other.cursor_line_),
       cursor_column_(other.cursor_column_),
@@ -133,7 +132,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   if (this == &other) {
     return *this;
   }
-  fold_edit_anchor_line_ = other.fold_edit_anchor_line_;
+  fold_edit_span_ = other.fold_edit_span_;
   document_ = other.document_;
   cursor_line_ = other.cursor_line_;
   cursor_column_ = other.cursor_column_;
@@ -938,11 +937,12 @@ void TextViewport::ResetMetadataAfterContent(const std::filesystem::path& path,
   InvalidateVisualColumnCache();
   // ResetState replaces every line; classify as a content edit so the
   // content tier reflects the change and dependent caches are dropped.
+  // ResetState replaces every line, so the invalidation above already marked the
+  // whole fold span dirty -- which is what the model's per-line caches need. The
+  // old code reset the fold anchor to its idle sentinel here; with a real cache
+  // downstream that would claim a freshly loaded document matches the previous
+  // document's cached lines.
   InvalidateDerivedCaches(InvalidationReason::ContentEdit, 0);
-  // ResetState is a fresh load, not an in-place edit; clear the fold edit
-  // anchor to the idle sentinel so the next user edit publishes its own
-  // first-touched line instead of being masked by the wholesale reset.
-  fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();
   EnsureCursorVisible();
 }
 
@@ -950,7 +950,8 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason) {
   InvalidateDerivedCaches(reason, 0);
 }
 
-void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line) {
+void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line,
+                                           std::optional<ContentSplice> splice) {
   EnsureDocument();
   // Tier fan-out: each reason bumps exactly the tiers it implies. Every
   // reason bumps presentation_revision because any cause of invalidation
@@ -994,14 +995,13 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   util::AddPerformanceCounter(util::PerfCounterId::EditorInvalidateDerivedCachesLines,
                               document_->lines.size() - safe_start);
 
-  // Folding incremental scan anchors at lines >= fold_edit_anchor_line_. Zero
-  // forces a bracket rescan without prefix reuse; SIZE_MAX sentinel means idle.
-  if (safe_start == 0) {
-    fold_edit_anchor_line_ = 0;
-  } else if (safe_start >= document_->lines.size()) {
-    fold_edit_anchor_line_ = document_->lines.size();
+  // Accumulate what the folding model has to resync. A reported splice gives it
+  // an exact window, so its per-line indent/bracket caches keep everything
+  // outside that window; without one, nothing from `safe_start` on is reusable.
+  if (splice.has_value()) {
+    fold_edit_span_.NoteSplice(safe_start, splice->removed, splice->inserted);
   } else {
-    fold_edit_anchor_line_ = std::min(fold_edit_anchor_line_, safe_start);
+    fold_edit_span_.NoteSuffixReplaced(safe_start);
   }
 
   if (safe_start == 0) {
@@ -1080,10 +1080,10 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   highlight_state_syntax_revision_ = document_->syntax_revision;
 }
 
-std::size_t TextViewport::ConsumeFoldEditAnchorLine() {
-  const std::size_t v = fold_edit_anchor_line_;
-  fold_edit_anchor_line_ = std::numeric_limits<std::size_t>::max();
-  return v;
+LineEditSpan TextViewport::ConsumeFoldEditSpan() {
+  const LineEditSpan span = fold_edit_span_;
+  fold_edit_span_.Clear();
+  return span;
 }
 
 void TextViewport::InvalidateVisualColumnCache() { layout_cache_.InvalidateAll(); }

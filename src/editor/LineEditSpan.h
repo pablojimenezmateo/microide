@@ -87,6 +87,15 @@ class LineEditSpan {
   // Nothing of the cache is reusable.
   void MarkFullRebuild() noexcept { NoteSuffixReplaced(0); }
 
+  // "Everything from `start` on may differ" as a value, for callers that know
+  // only where a change began.
+  static LineEditSpan SuffixReplacedFrom(std::size_t start) noexcept {
+    LineEditSpan span;
+    span.NoteSuffixReplaced(start);
+    return span;
+  }
+  static LineEditSpan FullRebuild() noexcept { return SuffixReplacedFrom(0); }
+
   // Resolve `cached_end()` against a cache holding `cache_line_count` entries.
   std::size_t ResolvedCachedEnd(std::size_t cache_line_count) const noexcept {
     return cached_end_ == kToEnd ? cache_line_count : std::min(cached_end_, cache_line_count);
