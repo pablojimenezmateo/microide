@@ -187,127 +187,113 @@ inline bool IsSuppressedBracketAt(std::span<const SyntaxTokenKind> tokens, std::
   return kind == SyntaxTokenKind::String || kind == SyntaxTokenKind::Comment;
 }
 
-// Silent bracket walk used to seed the bracket stack at `resume_line`.
-bool BuildBracketStackPrefix(LineSpan lines,
-                             const BracketLookupTable& table,
-                             std::size_t prefix_end_exclusive,
-                             std::size_t max_line_visits,
-                             std::size_t& lines_visited,
-                             std::vector<StackEntry>& stack,
-                             bool& complete,
-                             const TextViewport* syntax_viewport) {
-  if (!table.any_bracket || prefix_end_exclusive == 0) {
-    stack.clear();
-    return true;
-  }
-  stack.clear();
-  stack.reserve(64);
-  for (std::size_t line_index = 0; line_index < prefix_end_exclusive &&
-                                  line_index < lines.size();
-       ++line_index) {
-    if (max_line_visits != 0 && lines_visited >= max_line_visits) {
-      complete = false;
-      return false;
+// Resolves "is the bracket at this column inside a string or comment?" without a
+// hash probe per line.
+//
+// Only lines in the syntax highlighter's LRU (<= 256 entries) can be suppressed
+// at all, and the scan walks lines in increasing order, so a sorted list of those
+// line indices plus a cursor answers it in O(1) amortized. The probe used to be a
+// map lookup for every line carrying a bracket, which is most lines in C-like
+// source and was the largest per-line cost left once the byte scan got cheap.
+class SuppressionCursor {
+ public:
+  SuppressionCursor(const TextViewport* viewport, const std::vector<std::size_t>& sorted_lines)
+      : viewport_(viewport), lines_(sorted_lines) {}
+
+  // Tokens for `line_index` if it is one of the cached lines, else empty. Must be
+  // called with non-decreasing `line_index`.
+  std::span<const SyntaxTokenKind> TokensFor(std::size_t line_index) {
+    if (viewport_ == nullptr) {
+      return {};
     }
-    lines_visited++;
-    const std::string_view line = lines[line_index];
-    // The syntax-highlight token lookup stays out of the per-byte loop (it is a
-    // hash probe) and is now also deferred until this line is known to hold a
-    // bracket: a whole-document scan visits every line but only some carry one,
-    // and once the byte scan itself got cheap the probe was the largest
-    // remaining per-line cost. Empty span = uncached -> no suppression. See
-    // IsSuppressedBracketAt and perf round-4 Finding 1.
-    std::span<const SyntaxTokenKind> tokens;
-    bool tokens_resolved = syntax_viewport == nullptr;
-    for (std::size_t column = NextBracketCandidate(table, line, 0); column < line.size();
-         column = NextBracketCandidate(table, line, column + 1)) {
-      const auto byte = static_cast<unsigned char>(line[column]);
-      const std::uint8_t kind = table.kind_for_byte[byte];
-      if (!tokens_resolved) {
-        tokens = syntax_viewport->HighlightedLineTokensIfCached(line_index);
-        tokens_resolved = true;
-      }
-      if (!tokens.empty() && IsSuppressedBracketAt(tokens, column)) {
-        continue;
-      }
-      const auto& pair = table.pair_for_kind[kind];
-      if (pair.first == pair.second) continue;
-      const char c = static_cast<char>(byte);
-      if (c == pair.first) {
-        stack.push_back({pair.first, pair.second, line_index});
-      } else if (c == pair.second && !stack.empty() && stack.back().close == c) {
-        stack.pop_back();
-      }
+    while (cursor_ < lines_.size() && lines_[cursor_] < line_index) {
+      ++cursor_;
     }
+    if (cursor_ >= lines_.size() || lines_[cursor_] != line_index) {
+      return {};
+    }
+    return viewport_->HighlightedLineTokensIfCached(line_index);
   }
-  return true;
+
+  void Rewind() { cursor_ = 0; }
+
+ private:
+  const TextViewport* viewport_ = nullptr;
+  const std::vector<std::size_t>& lines_;
+  std::size_t cursor_ = 0;
+};
+
+using CachedBracket = FoldingModel::CachedBracket;
+
+// Append every bracket byte on `line` to `out`.
+void ScanLineBrackets(const BracketLookupTable& table, std::string_view line,
+                      std::vector<CachedBracket>& out) {
+  for (std::size_t column = NextBracketCandidate(table, line, 0); column < line.size();
+       column = NextBracketCandidate(table, line, column + 1)) {
+    out.push_back(CachedBracket{static_cast<std::uint32_t>(column), line[column]});
+  }
 }
 
-// Lines `[begin_line, size)` with emission; honours `stack` seed from prefix walk.
-void ScanBracketRangesTail(LineSpan lines,
-                           const BracketLookupTable& table,
-                           std::size_t begin_line,
-                           std::size_t end_line_exclusive,
-                           std::vector<StackEntry> stack,
-                           std::size_t max_line_visits,
-                           std::size_t& lines_visited,
-                           std::vector<FoldRange>& out_ranges,
-                           bool& complete,
-                           const TextViewport* syntax_viewport) {
-  if (!table.any_bracket) return;
-  const std::size_t scan_end = std::min(end_line_exclusive, lines.size());
+// Walk cached events for lines [begin_line, end_line_exclusive), maintaining the
+// bracket stack and (when `out_ranges` is non-null) emitting a fold range for
+// every pair that spans more than one line.
+//
+// `event_index` must be the flat-array index of the first event on `begin_line`.
+void MatchBracketEvents(const std::vector<CachedBracket>& events,
+                        const std::vector<std::uint32_t>& counts,
+                        std::size_t event_index,
+                        const BracketLookupTable& table,
+                        std::size_t begin_line,
+                        std::size_t end_line_exclusive,
+                        std::vector<StackEntry>& stack,
+                        std::vector<FoldRange>* out_ranges,
+                        SuppressionCursor& suppression) {
+  const std::size_t scan_end = std::min(end_line_exclusive, counts.size());
   for (std::size_t line_index = begin_line; line_index < scan_end; ++line_index) {
-    if (max_line_visits != 0 && lines_visited >= max_line_visits) {
-      complete = false;
-      return;
+    const std::size_t count = counts[line_index];
+    if (count == 0) {
+      continue;
     }
-    lines_visited++;
-    const std::string_view line = lines[line_index];
-    // Deferred token probe; see the note in BuildBracketStackPrefix.
-    std::span<const SyntaxTokenKind> tokens;
-    bool tokens_resolved = syntax_viewport == nullptr;
-    for (std::size_t column = NextBracketCandidate(table, line, 0); column < line.size();
-         column = NextBracketCandidate(table, line, column + 1)) {
-      const auto byte = static_cast<unsigned char>(line[column]);
+    // Deferred exactly as the byte scan deferred it: only a line that actually
+    // carries a bracket can be suppressed, so only those consult the tokens.
+    const std::span<const SyntaxTokenKind> tokens = suppression.TokensFor(line_index);
+    for (std::size_t i = 0; i < count; ++i) {
+      const CachedBracket& event = events[event_index + i];
+      const auto byte = static_cast<unsigned char>(event.byte);
       const std::uint8_t kind = table.kind_for_byte[byte];
-      if (!tokens_resolved) {
-        tokens = syntax_viewport->HighlightedLineTokensIfCached(line_index);
-        tokens_resolved = true;
+      if (kind == 0) {
+        continue;  // not a bracket under the current pair set
       }
-      if (!tokens.empty() && IsSuppressedBracketAt(tokens, column)) {
+      if (!tokens.empty() && IsSuppressedBracketAt(tokens, event.column)) {
         continue;
       }
       const auto& pair = table.pair_for_kind[kind];
       if (pair.first == pair.second) continue;
-      const char c = static_cast<char>(byte);
+      const char c = event.byte;
       if (c == pair.first) {
         stack.push_back({pair.first, pair.second, line_index});
       } else if (c == pair.second && !stack.empty() && stack.back().close == c) {
         const StackEntry top = stack.back();
         stack.pop_back();
-        if (line_index > top.line) {
-          out_ranges.push_back(FoldRange{top.line, line_index, FoldSource::Bracket});
+        if (out_ranges != nullptr && line_index > top.line) {
+          out_ranges->push_back(FoldRange{top.line, line_index, FoldSource::Bracket});
         }
       }
     }
+    event_index += count;
   }
 }
 
-void ScanBracketRanges(LineSpan lines,
-                       const std::vector<std::pair<char, char>>& pairs,
-                       std::size_t end_line_exclusive,
-                       std::size_t max_line_visits,
-                       std::vector<FoldRange>& out_ranges,
-                       bool& complete,
-                       const TextViewport* syntax_viewport) {
-  if (pairs.empty()) {
-    return;
+// Flat-array index of the first event on `line`.
+std::size_t EventIndexForLine(const std::vector<std::uint32_t>& counts, std::size_t line) {
+  const std::size_t end = std::min(line, counts.size());
+  std::size_t index = 0;
+  for (std::size_t i = 0; i < end; ++i) {
+    index += counts[i];
   }
-  const BracketLookupTable table = BuildBracketLookupTable(pairs);
-  std::size_t lines_visited = 0;
-  ScanBracketRangesTail(lines, table, 0, end_line_exclusive, /*stack=*/{}, max_line_visits,
-                        lines_visited, out_ranges, complete, syntax_viewport);
+  return index;
 }
+
 void ScanIndentRanges(LineSpan lines,
                       std::size_t end_line_exclusive,
                       std::size_t tab_size,
@@ -718,80 +704,148 @@ bool FoldingModel::ComputeWithBudget(LineSpan lines,
   }
 
   std::vector<FoldRange> bracket_ranges;
-  if (!resume_valid || !kept_prefix_exists) {
-    // Full rescan. Drop the prefix-stack memo: this is the path a freshly loaded
-    // or reset document takes, and the memo says nothing about which document it
-    // was computed for -- only which line. Without this, a later edit that
-    // happened to resume at the same line as some previous document's would
-    // reuse that document's stack.
-    prefix_stack_valid_ = false;
+  bool bracket_scan_complete = true;
+  if (!options.bracket_pairs.empty()) {
+    const BracketLookupTable bracket_table = BuildBracketLookupTable(options.bracket_pairs);
     {
-      util::PerformanceTrace::Scope sb("FoldingModel::ScanBracketRanges");
-      ScanBracketRanges(lines, options.bracket_pairs, scan_end, max_lines, bracket_ranges, complete_,
-                        syntax_viewport);
+      util::PerformanceTrace::Scope sc("FoldingModel::SyncLineBracketCache");
+      SyncLineBracketCache(lines, options.bracket_pairs, edit_span, scan_end, max_lines,
+                           bracket_scan_complete);
     }
-    return merge_indent_and_finish(std::move(bracket_ranges), complete_);
-  }
 
-  bool prefix_lines_complete = true;
-  std::size_t lines_visited = 0;
-  std::vector<StackEntry> prefix_stack;
-  // Build the bracket lookup table once and share it between the prefix walk and
-  // the tail scan (the two consumers on this incremental-resume path).
-  const BracketLookupTable bracket_table = BuildBracketLookupTable(options.bracket_pairs);
-  bool prefix_ok = false;
-  if (prefix_stack_valid_ && prefix_stack_line_ == incremental_resume_line) {
-    // Same resume line as the last recompute, so every byte before it is
-    // byte-for-byte what it was then (the resume line is the minimum line
-    // touched since, so an earlier edit would have lowered it). The stack it
-    // produced is still the stack.
-    prefix_stack = prefix_stack_;
-    prefix_ok = true;
-  } else {
-    // The incremental-resume path avoids EMITTING ranges for the prefix, but it
-    // still walks every byte before the edit anchor to rebuild the bracket stack.
-    // Scoped because that is the half of a mid-file recompute nothing measured.
-    util::PerformanceTrace::Scope scope("FoldingModel::BuildBracketStackPrefix");
-    prefix_ok = BuildBracketStackPrefix(lines, bracket_table, incremental_resume_line, max_lines,
-                                        lines_visited, prefix_stack, prefix_lines_complete,
-                                        syntax_viewport);
-    if (prefix_ok && prefix_lines_complete) {
-      prefix_stack_ = prefix_stack;
-      prefix_stack_line_ = incremental_resume_line;
-      prefix_stack_valid_ = true;
+    // The lines whose highlight tokens are cached, once per recompute, so the
+    // match walk resolves string/comment suppression with a cursor instead of a
+    // hash probe per bracket-carrying line.
+    suppression_lines_scratch_.clear();
+    if (syntax_viewport != nullptr) {
+      syntax_viewport->AppendCachedHighlightedLines(suppression_lines_scratch_);
+    }
+    SuppressionCursor suppression(syntax_viewport, suppression_lines_scratch_);
+
+    const std::size_t match_end = std::min(scan_end, bracket_cache_valid_through_);
+    std::vector<StackEntry> stack;
+    std::size_t match_begin = 0;
+
+    if (resume_valid && kept_prefix_exists && incremental_resume_line <= match_end) {
+      // Reuse the pre-edit bracket folds that close before the edit, and seed the
+      // stack at the edit rather than re-deriving it from line 0.
+      if (prefix_stack_valid_ && prefix_stack_line_ == incremental_resume_line) {
+        // Same resume line as the last recompute, so every line before it is what
+        // it was then (the span's start is the minimum line touched since, so an
+        // earlier edit would have lowered it). The stack it produced still holds.
+        stack = prefix_stack_;
+      } else {
+        util::PerformanceTrace::Scope sp("FoldingModel::MatchBracketPrefix");
+        MatchBracketEvents(line_brackets_, line_bracket_count_, 0, bracket_table, 0,
+                           incremental_resume_line, stack, /*out_ranges=*/nullptr, suppression);
+        prefix_stack_ = stack;
+        prefix_stack_line_ = incremental_resume_line;
+        prefix_stack_valid_ = true;
+      }
+      for (const FoldRange& r : previous_ranges) {
+        if (r.source == FoldSource::Bracket && r.closer_line < incremental_resume_line) {
+          bracket_ranges.push_back(r);
+        }
+      }
+      match_begin = incremental_resume_line;
     } else {
+      // Whole-window match. Drop the prefix-stack memo: this is the path a freshly
+      // loaded or reset document takes, and the memo records which LINE it was
+      // built for, not which document.
       prefix_stack_valid_ = false;
     }
+
+    {
+      util::PerformanceTrace::Scope st("FoldingModel::MatchBracketRanges");
+      MatchBracketEvents(line_brackets_, line_bracket_count_,
+                         EventIndexForLine(line_bracket_count_, match_begin), bracket_table,
+                         match_begin, match_end, stack, &bracket_ranges, suppression);
+    }
   }
-  if (!prefix_ok) {
-    bracket_ranges.clear();
-    complete_ = true;
-    ScanBracketRanges(lines, options.bracket_pairs, scan_end, max_lines, bracket_ranges, complete_,
-                      syntax_viewport);
-    return merge_indent_and_finish(std::move(bracket_ranges), complete_);
+  return merge_indent_and_finish(std::move(bracket_ranges), bracket_scan_complete);
+}
+
+std::size_t FoldingModel::SyncLineBracketCache(LineSpan lines,
+                                               const std::vector<std::pair<char, char>>& pairs,
+                                               const LineEditSpan& edit_span,
+                                               std::size_t needed_end,
+                                               std::size_t max_new_line_scans,
+                                               bool& complete) {
+  const BracketLookupTable table = BuildBracketLookupTable(pairs);
+  const std::size_t line_count = lines.size();
+
+  // A pair-set change (a language switch) changes which bytes are recorded, so
+  // every cached column becomes suspect.
+  if (bracket_cache_pairs_ != pairs) {
+    bracket_cache_pairs_ = pairs;
+    line_brackets_.clear();
+    line_bracket_count_.clear();
+    bracket_cache_valid_through_ = 0;
+  }
+  if (bracket_cache_valid_through_ > line_count) {
+    TruncateLineBracketCache(line_count);
   }
 
-  std::vector<FoldRange> kept_brackets;
-  kept_brackets.reserve(previous_ranges.size());
-  for (const FoldRange& r : previous_ranges) {
-    if (r.source == FoldSource::Bracket && r.closer_line < incremental_resume_line) {
-      kept_brackets.push_back(r);
+  const std::size_t begin = edit_span.begin();
+  if (!edit_span.empty() && begin < bracket_cache_valid_through_) {
+    const std::size_t cached_end = edit_span.cached_end();
+    const std::size_t current_end = edit_span.current_end();
+    if (cached_end == LineEditSpan::kToEnd || current_end == LineEditSpan::kToEnd ||
+        cached_end > bracket_cache_valid_through_ || current_end > line_count) {
+      // The changed window reaches past what is cached (or has no describable
+      // end), so nothing below the edit can be carried across. Keep the prefix.
+      TruncateLineBracketCache(begin);
+    } else {
+      // Rescan just the replaced lines and splice both arrays. Counts + a flat
+      // event array means this is two memmoves and no offset fixup.
+      const std::size_t first_event = EventIndexForLine(line_bracket_count_, begin);
+      const std::size_t last_event = EventIndexForLine(line_bracket_count_, cached_end);
+      bracket_event_scratch_.clear();
+      bracket_count_scratch_.clear();
+      for (std::size_t line = begin; line < current_end; ++line) {
+        const std::size_t before = bracket_event_scratch_.size();
+        ScanLineBrackets(table, lines[line], bracket_event_scratch_);
+        bracket_count_scratch_.push_back(
+            static_cast<std::uint32_t>(bracket_event_scratch_.size() - before));
+      }
+      line_brackets_.erase(line_brackets_.begin() + static_cast<std::ptrdiff_t>(first_event),
+                           line_brackets_.begin() + static_cast<std::ptrdiff_t>(last_event));
+      line_brackets_.insert(line_brackets_.begin() + static_cast<std::ptrdiff_t>(first_event),
+                            bracket_event_scratch_.begin(), bracket_event_scratch_.end());
+      line_bracket_count_.erase(
+          line_bracket_count_.begin() + static_cast<std::ptrdiff_t>(begin),
+          line_bracket_count_.begin() + static_cast<std::ptrdiff_t>(cached_end));
+      line_bracket_count_.insert(
+          line_bracket_count_.begin() + static_cast<std::ptrdiff_t>(begin),
+          bracket_count_scratch_.begin(), bracket_count_scratch_.end());
+      bracket_cache_valid_through_ = line_bracket_count_.size();
     }
   }
 
-  std::vector<FoldRange> tail_brackets;
-  bool tail_complete = prefix_lines_complete;
-  {
-    util::PerformanceTrace::Scope scope("FoldingModel::ScanBracketRangesTail");
-    ScanBracketRangesTail(lines, bracket_table, incremental_resume_line, scan_end,
-                          std::move(prefix_stack), max_lines, lines_visited,
-                          tail_brackets, tail_complete, syntax_viewport);
+  // Extend the cached prefix to cover the scan window, scanning only what is
+  // missing and stopping at the budget rather than pretending to be complete.
+  std::size_t scanned = 0;
+  const std::size_t target = std::min(needed_end, line_count);
+  while (bracket_cache_valid_through_ < target) {
+    if (max_new_line_scans != 0 && scanned >= max_new_line_scans) {
+      complete = false;
+      break;
+    }
+    const std::size_t before = line_brackets_.size();
+    ScanLineBrackets(table, lines[bracket_cache_valid_through_], line_brackets_);
+    line_bracket_count_.push_back(static_cast<std::uint32_t>(line_brackets_.size() - before));
+    ++bracket_cache_valid_through_;
+    ++scanned;
   }
+  return bracket_cache_valid_through_;
+}
 
-  bracket_ranges.reserve(kept_brackets.size() + tail_brackets.size());
-  bracket_ranges.insert(bracket_ranges.end(), kept_brackets.begin(), kept_brackets.end());
-  bracket_ranges.insert(bracket_ranges.end(), tail_brackets.begin(), tail_brackets.end());
-  return merge_indent_and_finish(std::move(bracket_ranges), tail_complete);
+void FoldingModel::TruncateLineBracketCache(std::size_t line_count) {
+  const std::size_t keep = std::min(line_count, line_bracket_count_.size());
+  const std::size_t events = EventIndexForLine(line_bracket_count_, keep);
+  line_bracket_count_.resize(keep);
+  line_brackets_.resize(events);
+  bracket_cache_valid_through_ = keep;
 }
 
 bool FoldingModel::EnsureFoldsForVisibleRange(
@@ -1050,6 +1104,10 @@ bool FoldingModel::IsCollapsedAtOpener(std::size_t line) const {
 }
 
 void FoldingModel::Clear() {
+  line_brackets_.clear();
+  line_bracket_count_.clear();
+  bracket_cache_valid_through_ = 0;
+  bracket_cache_pairs_.clear();
   line_indent_.clear();
   line_indent_tab_size_ = 0;
   ranges_.clear();

@@ -158,6 +158,21 @@ class FoldingModel {
     std::size_t line = 0;
   };
 
+  // One bracket byte found on a line, cached so a recompute re-MATCHES events
+  // instead of re-SCANNING bytes. Public for the same reason as the stack entry:
+  // the scanners live in the .cpp.
+  //
+  // Deliberately records the raw byte and not the resolved pair index, so the
+  // cache is a pure function of the line's bytes -- the pair set can change
+  // (a language switch) without the recorded columns becoming wrong, and the
+  // suppression decision (is this bracket inside a string or comment?) stays at
+  // match time where it belongs, since the highlight cache it depends on changes
+  // as the user scrolls rather than as the document is edited.
+  struct CachedBracket {
+    std::uint32_t column = 0;
+    char byte = 0;
+  };
+
  private:
   struct CollapsedInterval {
     std::size_t lo = 0;  // first hidden line (opener + 1)
@@ -170,6 +185,18 @@ class FoldingModel {
   // unreported, so nothing cached can be trusted).
   void SyncLineIndentCache(std::size_t line_count, std::size_t tab_size,
                            const LineEditSpan& edit_span);
+
+  // Splice the bracket cache across `edit_span`, then scan whatever lines below
+  // `needed_end` are still uncached (bounded by `max_new_line_scans`; clears
+  // `complete` when the budget cuts it short). Returns the number of lines the
+  // cache now covers.
+  std::size_t SyncLineBracketCache(LineSpan lines,
+                                   const std::vector<std::pair<char, char>>& pairs,
+                                   const LineEditSpan& edit_span, std::size_t needed_end,
+                                   std::size_t max_new_line_scans, bool& complete);
+
+  // Drop cached bracket events for lines at/after `line_count`.
+  void TruncateLineBracketCache(std::size_t line_count);
 
   // Build the revision-keyed lookup tables: sorted collapsed-interval list with
   // prefix `hi` running-max, plus a per-range prefix running-max of `closer_line`
@@ -192,6 +219,30 @@ class FoldingModel {
   std::vector<BracketStackEntry> prefix_stack_;
   std::size_t prefix_stack_line_ = 0;
   bool prefix_stack_valid_ = false;
+
+  // Per-line bracket bytes for lines [0, bracket_cache_valid_through_).
+  //
+  // The bracket scan was the single largest cost of typing in a large file (404 ms
+  // of the 613 ms mid_file_edit_latency_large_file scenario): a mid-file keystroke
+  // re-scanned every byte from the edit to the end of the scan window, ~2 MB on the
+  // 50k-line fixture, purely to rediscover bracket positions that had not moved.
+  // Caching them turns that byte scan into a walk over a few events per line.
+  //
+  // Layout is counts + one flat event array rather than per-line offsets, so an
+  // edit splices both with plain memmoves and the match walk consumes them in
+  // lockstep -- no offset fixup pass. The cache covers a PREFIX of the document so
+  // a budgeted first paint still only scans its own window.
+  std::vector<CachedBracket> line_brackets_;
+  std::vector<std::uint32_t> line_bracket_count_;
+  std::size_t bracket_cache_valid_through_ = 0;
+  // Bracket pair set the cache was filled against; a change invalidates it.
+  std::vector<std::pair<char, char>> bracket_cache_pairs_;
+  // Reused splice buffers so a per-keystroke resync does not reallocate.
+  std::vector<CachedBracket> bracket_event_scratch_;
+  std::vector<std::uint32_t> bracket_count_scratch_;
+  // Sorted line indices whose highlight tokens are currently cached, rebuilt per
+  // recompute. Walking a cursor through this replaces a hash probe per line.
+  std::vector<std::size_t> suppression_lines_scratch_;
 
   // Per-line leading-indent width, memoized across recomputes.
   //

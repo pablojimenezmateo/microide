@@ -6,6 +6,7 @@
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspaceTabState.h"
 
+#include <functional>
 #include <string>
 #include <vector>
 
@@ -417,6 +418,82 @@ void TestMarkdownProseParensDoNotFold() {
   }
 }
 
+// End-to-end guard for the incremental fold caches. The per-line indent and
+// bracket caches are spliced against the LineEditSpan the viewport reports, so a
+// wrong splice shows up as wrong FOLDS, not a crash -- and the existing resume
+// test only ever rewrites a line in place, which exercises the splice's easy case
+// (removed == inserted) and never moves a cached entry.
+//
+// Drive real viewport edits that change the line count in both directions
+// (newline splits, backspace joins, multi-line paste, selection delete) and diff
+// the incrementally maintained model against a from-scratch compute after every
+// one. The span comes from the real edit path, so this covers the whole chain:
+// edit -> reported splice -> cache resync -> event match.
+void TestFoldingIncrementalCachesSurviveLineCountChanges() {
+  std::vector<std::string> seed;
+  for (int block = 0; block < 10; ++block) {
+    seed.push_back("void f" + std::to_string(block) + "() {");
+    seed.push_back("  if (x) {");
+    seed.push_back("    body();");
+    seed.push_back("  }");
+    seed.push_back("}");
+  }
+
+  TextViewport viewport;
+  viewport.LoadContent(JoinLinesWithTrailingNewline(seed), "/tmp/fold-splice.cpp");
+  const auto options = DefaultCStyleOptions();
+
+  FoldingModel incremental;
+  Expect(incremental.ComputeWithBudget(viewport.lines().Snapshot(), options, /*max_lines=*/0,
+                                       viewport.ConsumeFoldEditSpan()),
+         "seed compute should complete");
+
+  // Each step mutates the buffer in a way that moves the lines below it.
+  const std::vector<std::pair<const char*, std::function<void(TextViewport&)>>> steps = {
+      {"split a mid-file body line",
+       [](TextViewport& v) { v.MoveCursorTo(22, 8); v.InsertNewline(); }},
+      {"join it back",
+       [](TextViewport& v) { v.MoveCursorTo(23, 0); v.Backspace(); }},
+      {"paste a nested block above the middle",
+       [](TextViewport& v) {
+         v.MoveCursorTo(10, 0);
+         v.InsertText("void extra() {\n  while (y) {\n    step();\n  }\n}\n");
+       }},
+      {"open a brace near the top",
+       [](TextViewport& v) { v.MoveCursorTo(2, 0); v.InsertText("  {\n"); }},
+      {"delete a whole line low in the file",
+       [](TextViewport& v) {
+         v.MoveCursorTo(40, 0);
+         v.MoveCursorTo(41, 0, /*extend_selection=*/true);
+         v.InsertText("");  // replaces the selected range with nothing
+       }},
+      {"insert a closer that rebalances the top brace",
+       [](TextViewport& v) { v.MoveCursorTo(6, 0); v.InsertText("  }\n"); }},
+      {"edit a line in place after all the shifting",
+       [](TextViewport& v) { v.MoveCursorTo(30, 0); v.InsertText("// note "); }},
+  };
+
+  for (const auto& [label, apply] : steps) {
+    apply(viewport);
+    const std::vector<std::string> snapshot = viewport.lines().Snapshot();
+    incremental.ComputeWithBudget(snapshot, options, /*max_lines=*/0,
+                                  viewport.ConsumeFoldEditSpan());
+
+    FoldingModel fresh;
+    Expect(fresh.Compute(snapshot, options), "reference compute should complete");
+
+    const std::string context = std::string("after ") + label;
+    Expect(incremental.ranges().size() == fresh.ranges().size(),
+           context + ": incremental fold count must match a full recompute");
+    for (std::size_t i = 0; i < fresh.ranges().size() && i < incremental.ranges().size(); ++i) {
+      Expect(incremental.ranges()[i].opener_line == fresh.ranges()[i].opener_line &&
+                 incremental.ranges()[i].closer_line == fresh.ranges()[i].closer_line &&
+                 incremental.ranges()[i].source == fresh.ranges()[i].source,
+             context + ": a spliced per-line cache must yield identical fold ranges");
+    }
+  }
+}
+
 void TestViewportEditExposesFoldAnchorLineForIncrementalRefresh() {
   TextViewport viewport;
   viewport.LoadContent("aa\nbb\ncc\ndd\n", "/tmp/fold-anchor.cpp");
@@ -452,6 +529,8 @@ void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
           TestFoldingPrefixMemoDoesNotSurviveAFullRecompute);
   AddTest(tests, "EditorFolding/IncrementalResumeMatchesFullRecompute",
           TestFoldingIncrementalResumeMatchesFullRecompute);
+  AddTest(tests, "EditorFolding/IncrementalCachesSurviveLineCountChanges",
+          TestFoldingIncrementalCachesSurviveLineCountChanges);
   AddTest(tests, "EditorFolding/WhitespaceOnlyLinesAreNeitherOpenersNorDedents",
           TestFoldingWhitespaceOnlyLinesAreNeitherOpenersNorDedents);
   AddTest(tests, "EditorFolding/Viewport/AttachModelKeepsWidthCaches",
