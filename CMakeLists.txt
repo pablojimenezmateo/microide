@@ -901,6 +901,7 @@ add_executable(microide_tests
   tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp
+  tests/LineEditSpanTests.cpp
   tests/SyntaxDefinitionLoaderTests.cpp
   tests/Sha256Tests.cpp
   tests/StringUtilTests.cpp
