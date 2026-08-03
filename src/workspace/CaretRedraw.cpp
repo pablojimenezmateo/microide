@@ -1,4 +1,4 @@
-#include "workspace/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
 #include <cstdint>

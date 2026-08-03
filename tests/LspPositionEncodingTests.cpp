@@ -1,8 +1,8 @@
 #include "TestSupport.h"
 
 #include "editor/TextViewport.h"
-#include "workspace/LspPositionEncoding.h"
-#include "workspace/LspViewportPositions.h"
+#include "workspace/lsp/LspPositionEncoding.h"
+#include "workspace/lsp/LspViewportPositions.h"
 
 #include <limits>
 

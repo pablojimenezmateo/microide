@@ -3,9 +3,9 @@
 #include "compare/CompareModel.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareSemanticMetadata.h"
-#include "workspace/CompareMergeRender.h"
-#include "workspace/LayoutModeService.h"
-#include "workspace/OverviewRuler.h"
+#include "workspace/render/CompareMergeRender.h"
+#include "workspace/services/LayoutModeService.h"
+#include "workspace/render/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
 
 #include <cmath>

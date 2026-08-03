@@ -2,7 +2,7 @@
 
 #include "persistence/PersistedRecordDump.h"
 #include "persistence/PersistedRecordWriter.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
 
 #include <cstddef>
 #include <filesystem>

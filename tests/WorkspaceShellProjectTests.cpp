@@ -4,7 +4,7 @@
 #include "util/TextFileIO.h"
 #include "workspace/ListSelection.h"
 #include "workspace/TabReorder.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "platform/FileIndexWatcher.h"
 
 #include <algorithm>

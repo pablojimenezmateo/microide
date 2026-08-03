@@ -3,7 +3,7 @@
 #include "editor/IndentDetect.h"
 #include "editor/TextViewport.h"
 #include "WorkspaceShellEventHelpers.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <fstream>
 #include <iostream>

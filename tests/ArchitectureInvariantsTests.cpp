@@ -64,14 +64,14 @@ void TestArchitectureFileSizes() {
   };
 
   run_rule("CheckShellFileSize(WorkspaceShell.h)", [&](const std::filesystem::path& root) {
-    return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShell.h", 400);
+    return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShell.h", 400);
   });
   run_rule("CheckShellFileSize(WorkspaceShell.cpp)", [&](const std::filesystem::path& root) {
-    return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShell.cpp", 600);
+    return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShell.cpp", 600);
   });
   run_rule("CheckShellFileSize(WorkspaceShellTestAccess.h)",
            [&](const std::filesystem::path& root) {
-             return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellTestAccess.h",
+             return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellTestAccess.h",
                                                      600);
            });
   run_rule("CheckShellFileSize(WorkspaceShellMembers.inc)",
@@ -209,7 +209,7 @@ void TestArchitectureFileSizes() {
              // resource_ops field (the confirm prompt must stash the file ops with the
              // edits). The apply logic itself lives in LspService, not the shell.
              // 1699: net -3 for TD-2026-07-17-084/083: the SingleLineViewMetrics struct
-             // moved to workspace/SingleLineViewMetrics.h (-4, replaced by a using alias)
+             // moved to workspace/render/SingleLineViewMetrics.h (-4, replaced by a using alias)
              // and the frame-prep PrepareCommitBodyViewportForFrame entry point (+1)
              // that sizes/clamps the commit-draft body viewport before paint.
              // Tightened from 1699: the project-search panel's five rect accessors
@@ -219,7 +219,7 @@ void TestArchitectureFileSizes() {
              // (InitializeGitOperationService / DispatchGitOperationAction; the
              // service itself lives in workspace/GitOperationService, not the shell),
              // then -5 as the git sidebar header's five rect accessors moved out to
-             // workspace/GitSidebarHeaderLayout.h as free functions.
+             // workspace/git/GitSidebarHeaderLayout.h as free functions.
              // +3 for the terminal find bar: the service member plus its two input
              // entry points, which must run ahead of the terminal's own key/mouse
              // handling. Its state, scan cache, and display strings all live in
@@ -232,7 +232,7 @@ void TestArchitectureFileSizes() {
              // member. It mirrors the project picker exactly; File > Open File…,
              // Ctrl+O and the welcome screen's Open File action all needed a real
              // dialog instead of the "open requires a path" rejection they hit.
-             return architecture::CheckShellFileSize(root, "src/workspace/WorkspaceShellMembers.inc",
+             return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
                                                      1694);
            });
 
@@ -292,7 +292,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
 
   WriteFile(root / "src/workspace/NeedsExecutor.cpp",
             "void F(){ platform::RunSubprocess({\"echo\"}, {}); }\n");
-  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderSidebar.cpp",
             "std::string F(){ return std::string(\"search> \") + std::string(\"x\"); }\n");
   WriteFile(root / "src/workspace/WorkspaceLanguageContract.cpp", "// lang contract fixture\n");
   WriteFile(root / "src/editor/IndentGuides.cpp", "// indent guides fixture\n");
@@ -340,7 +340,7 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
             "void F(State& s){ s.overlay.visible = false; }\n");
   Expect(!architecture::CheckOverlayDismissalIsCentralized(root).violations.empty(),
          "overlay-dismissal rule should catch a bare overlay.visible = false");
-  WriteFile(root / "src/workspace/WorkspaceShellOverlay.cpp",
+  WriteFile(root / "src/workspace/shell/WorkspaceShellOverlay.cpp",
             "void F(State& s){ s.overlay.visible = false; }\n");
   WriteFile(root / "src/workspace/SomeCoordinator.cpp",
             "void F(State& s){ HideOverlay(s); }\n");
@@ -410,11 +410,11 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
              .violations.empty(),
          "apply-pipeline rule should accept bounded SliceLines/ReplaceLineRange edits");
 
-  WriteFile(root / "src/workspace/RenderViewModelBuilder.cpp",
+  WriteFile(root / "src/workspace/render/RenderViewModelBuilder.cpp",
             "int Parse() { return static_cast<int>(std::stol(\"3\")); }\n");
   Expect(!architecture::CheckNoStdStoInRenderOrBuilderTus(root).violations.empty(),
          "std::sto* rule should catch std::stol in RenderViewModelBuilder.cpp");
-  WriteFile(root / "src/workspace/RenderViewModelBuilder.cpp",
+  WriteFile(root / "src/workspace/render/RenderViewModelBuilder.cpp",
             "int Parse() { return util::ParseInt(\"3\").value_or(3); }\n");
   Expect(architecture::CheckNoStdStoInRenderOrBuilderTus(root).violations.empty(),
          "std::sto* rule should accept the util::ParseInt rewrite");
@@ -422,37 +422,37 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   // Status-bar async rule: re-anchored to the TUs that actually host the
   // frame-path refresh (the retired WorkspaceShellChrome.cpp target made it
   // silently vacuous), with the missing-target case failing loudly.
-  WriteFile(root / "src/workspace/WorkspaceShellPresentation.cpp",
+  WriteFile(root / "src/workspace/shell/WorkspaceShellPresentation.cpp",
             "std::string F(const Repo& repo) { return repo.Execute({\"symbolic-ref\"}).output; }\n");
-  WriteFile(root / "src/workspace/StatusBarModelService.cpp", "// clean model-build fixture\n");
+  WriteFile(root / "src/workspace/services/StatusBarModelService.cpp", "// clean model-build fixture\n");
   Expect(!architecture::CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
          "status-bar rule should catch synchronous repo.Execute in the frame-path TU");
-  WriteFile(root / "src/workspace/WorkspaceShellPresentation.cpp",
+  WriteFile(root / "src/workspace/shell/WorkspaceShellPresentation.cpp",
             "std::string F() { return std::string(\"async-only\"); }\n");
   Expect(architecture::CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
          "status-bar rule should pass on async-only fixtures for both target TUs");
-  std::filesystem::remove(root / "src/workspace/StatusBarModelService.cpp");
+  std::filesystem::remove(root / "src/workspace/services/StatusBarModelService.cpp");
   Expect(!architecture::CheckStatusBarRefreshIsAsyncOnly(root).violations.empty(),
          "a moved/renamed status-bar rule target must fail loudly, not pass vacuously");
-  WriteFile(root / "src/workspace/StatusBarModelService.cpp", "// clean model-build fixture\n");
+  WriteFile(root / "src/workspace/services/StatusBarModelService.cpp", "// clean model-build fixture\n");
 
-  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+  WriteFile(root / "src/workspace/render/RenderViewModelBuilder.h",
             "struct SidebarSurfaceViewModel { std::string query_fallback_text; "
             "std::string replace_fallback_text; };\n");
   Expect(!architecture::CheckSidebarSurfaceFallbackUsesStringView(root).violations.empty(),
          "sidebar-fallback rule should catch std::string fallback fields");
-  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+  WriteFile(root / "src/workspace/render/RenderViewModelBuilder.h",
             "struct SidebarSurfaceViewModel { std::string_view query_fallback_text; "
             "std::string_view replace_fallback_text; };\n");
   Expect(architecture::CheckSidebarSurfaceFallbackUsesStringView(root).violations.empty(),
          "sidebar-fallback rule should pass on the string_view fixture");
 
-  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderSidebar.cpp",
             "void F(char m, const std::string& s){ auto x = std::string(1, m); "
             "auto y = std::string(\"foo: \") + s; (void)x; (void)y; }\n");
   Expect(!architecture::CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "render-string rule should catch single-char std::string and literal+ident concat");
-  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderSidebar.cpp",
             "void F(char m, const std::string& s){ std::string_view x(&m, 1); (void)x; (void)s; }\n");
   Expect(architecture::CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "render-string rule should pass on the string_view rewrite fixture");
@@ -461,11 +461,11 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   // string-literal quote. BuildCodeMask flags that quote as non-code, so the
   // all-in-code predicate could never match it -- this rule was silently dead
   // until the trailing-anchored helper landed. Guard the live behavior here.
-  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderSidebar.cpp",
             "void F(const std::string& q){ auto s = \"search> \" + q; (void)s; }\n");
   Expect(!architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
          "render fallback rule should catch the bare \"search> \" + ident concat form");
-  WriteFile(root / "src/workspace/WorkspaceShellRenderSidebar.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderSidebar.cpp",
             "void F(std::string_view fallback){ DrawText(fallback); }\n");
   Expect(architecture::CheckRenderTuDoesNotMaterializeStrings(root).violations.empty(),
          "render fallback rule should pass when the fallback uses a precomputed view");
@@ -495,29 +495,29 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
   // banned outright in the view-model header, ProjectWorkspaceState is allowed only
   // inside the two documented escape-hatch structs, and the converted render TUs
   // must not name either broad state type.
-  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+  WriteFile(root / "src/workspace/render/RenderViewModelBuilder.h",
             "struct OverlaySurfaceViewModel { const OverlayState* state = nullptr; "
             "ProjectWorkspaceState* project_state = nullptr; };\n");
   Expect(architecture::CheckRenderViewModelsOwnProjectState(root).violations.size() == 2,
          "view-model state rule should catch both the OverlayState pointer and the "
          "non-allowlisted ProjectWorkspaceState pointer");
-  WriteFile(root / "src/workspace/WorkspaceShellRenderOverlay.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderOverlay.cpp",
             "void F(const ProjectWorkspaceState& s){ (void)s; }\n");
-  WriteFile(root / "src/workspace/DebugPaneRender.cpp",
+  WriteFile(root / "src/workspace/render/DebugPaneRender.cpp",
             "void G(const OverlayState& s){ (void)s; }\n");
   Expect(architecture::CheckRenderViewModelsOwnProjectState(root).violations.size() == 4,
          "view-model state rule should catch broad state type names in converted render TUs");
   // Positive control: the allowlisted structs may carry the pointer, everything
   // else owned — zero violations (kills the vacuous-pass mode).
-  WriteFile(root / "src/workspace/RenderViewModelBuilder.h",
+  WriteFile(root / "src/workspace/render/RenderViewModelBuilder.h",
             "struct FrameSurfaceViewModel { ProjectWorkspaceState* project_state = nullptr; };\n"
             "struct SidebarSurfaceViewModel { std::string_view query_fallback_text; "
             "std::string_view replace_fallback_text; "
             "ProjectWorkspaceState* project_state = nullptr; };\n"
             "struct OverlaySurfaceViewModel { std::string label_storage; };\n");
-  WriteFile(root / "src/workspace/WorkspaceShellRenderOverlay.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellRenderOverlay.cpp",
             "void F(const OverlaySurfaceViewModel& vm){ (void)vm; }\n");
-  WriteFile(root / "src/workspace/DebugPaneRender.cpp",
+  WriteFile(root / "src/workspace/render/DebugPaneRender.cpp",
             "void G(const DebugPaneSurfaceViewModel& vm){ (void)vm; }\n");
   Expect(architecture::CheckRenderViewModelsOwnProjectState(root).violations.empty(),
          "view-model state rule should pass on the owned-model + allowlisted-structs fixture");
@@ -531,25 +531,25 @@ void TestArchitectureInvariantTargetedScannerFixtures() {
          "persistence I/O rule should catch a raw ofstream in a non-allowlisted workspace TU");
   WriteFile(root / "src/workspace/SomeStateSaver.cpp",
             "void Save(persistence::PersistedRecordWriter& writer){ writer.Commit(); }\n");
-  WriteFile(root / "src/workspace/PersistenceService.cpp",
+  WriteFile(root / "src/workspace/persistence/PersistenceService.cpp",
             "void G(const std::filesystem::path& p){ std::ifstream in(p); (void)in; }\n");
   Expect(architecture::CheckPersistenceFileIoBoundary(root).violations.empty(),
          "persistence I/O rule should accept the record-writer rewrite and the sanctioned "
          "PersistenceService TU");
 
   // Reactivation must refresh, not reload, plugins (TD-2026-07-17-037).
-  WriteFile(root / "src/workspace/ProjectCatalogService.cpp",
+  WriteFile(root / "src/workspace/services/ProjectCatalogService.cpp",
             "void Reactivate(){ ReloadPluginsForCurrentProject(); }\n");
   Expect(!architecture::CheckReactivationDoesNotReloadPlugins(root).violations.empty(),
          "reactivation rule should catch a plugin reload in the reactivation TU");
-  WriteFile(root / "src/workspace/ProjectCatalogService.cpp",
+  WriteFile(root / "src/workspace/services/ProjectCatalogService.cpp",
             "void Reactivate(){ operations_.refresh_plugin_surfaces_for_reactivation(); }\n");
   Expect(architecture::CheckReactivationDoesNotReloadPlugins(root).violations.empty(),
          "reactivation rule should accept the refresh-seam rewrite");
-  std::filesystem::remove(root / "src/workspace/ProjectCatalogService.cpp");
+  std::filesystem::remove(root / "src/workspace/services/ProjectCatalogService.cpp");
   Expect(!architecture::CheckReactivationDoesNotReloadPlugins(root).violations.empty(),
          "a moved reactivation TU must fail loudly, not pass vacuously");
-  WriteFile(root / "src/workspace/ProjectCatalogService.cpp",
+  WriteFile(root / "src/workspace/services/ProjectCatalogService.cpp",
             "void Reactivate(){ operations_.refresh_plugin_surfaces_for_reactivation(); }\n");
 
   // Fallback editor-viewport symbol ban (TD-2026-07-17-037).

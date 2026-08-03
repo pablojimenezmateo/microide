@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "platform/FileIndexWatcher.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <chrono>

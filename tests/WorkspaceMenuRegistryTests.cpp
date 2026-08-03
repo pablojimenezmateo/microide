@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/WorkspaceCommandRegistry.h"
-#include "workspace/WorkspaceMenuRegistry.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/registries/WorkspaceMenuRegistry.h"
 
 #include <algorithm>
 #include <array>

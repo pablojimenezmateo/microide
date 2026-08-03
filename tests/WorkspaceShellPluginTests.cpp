@@ -6,9 +6,9 @@
 #include "util/StringUtil.h"
 #include "workspace/FileUri.h"
 #include "workspace/PluginEditorEventTracker.h"
-#include "workspace/WorkspaceLspClient.h"
-#include "workspace/WorkspaceLspManager.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/lsp/WorkspaceLspClient.h"
+#include "workspace/lsp/WorkspaceLspManager.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <memory>
 

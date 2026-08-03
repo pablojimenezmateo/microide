@@ -3,7 +3,7 @@
 This documents the terminal emulator's supported escape sequences, keyboard
 protocols, and the performance posture of the grid model. The emulator lives in
 `src/terminal/` (the host-owned renderer is in
-`src/workspace/WorkspaceShellRenderBottomPanel.cpp`).
+`src/workspace/render/WorkspaceShellRenderBottomPanel.cpp`).
 
 The driving goal is to run modern interactive TUI applications (Claude CLI,
 Codex CLI, vim, less, tmux) correctly while staying fast and low-footprint.

@@ -10,9 +10,9 @@
 #include <string_view>
 #include <vector>
 
-#include "workspace/TabStripService.h"
+#include "workspace/services/TabStripService.h"
 #include "workspace/WorkspaceOutputChannels.h"
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::workspace {
 

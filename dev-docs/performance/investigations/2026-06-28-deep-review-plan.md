@@ -59,7 +59,7 @@ exists (Git sidebar, FileFinder, review comments, terminal, blame).
 
 ### ✅ A4. Hoist the review-comment URI and kill per-row URI map lookups
 - Tier: **memory/cpu** (editor render, code-review context)
-- Files: `src/workspace/WorkspaceShellRenderFrame.cpp:351-386`, `src/workspace/WorkspaceReviewComments.h`
+- Files: `src/workspace/render/WorkspaceShellRenderFrame.cpp:351-386`, `src/workspace/WorkspaceReviewComments.h`
 - Change: resolve the URI index once per pane (not `IndexForUri(uri)` twice per visible row);
   prefer resolving in `RenderViewModelBuilder` and threading down (WorkspaceShellRenderFrame is
   a lint-covered render TU — `generic_string()` slips the textual lint but violates its spirit).
@@ -80,7 +80,7 @@ exists (Git sidebar, FileFinder, review comments, terminal, blame).
 
 ### ✅ B1. Guard + memoize the Git sidebar view model
 - Tier: **cpu** (per-frame, Git-sidebar users)
-- Files: `src/workspace/RenderViewModelBuilder.cpp:459-498`, `WorkspaceShellRenderFrame.cpp:88-89`, `GitSidebarCommandCenter.cpp:408-497`
+- Files: `src/workspace/render/RenderViewModelBuilder.cpp:459-498`, `WorkspaceShellRenderFrame.cpp:88-89`, `GitSidebarCommandCenter.cpp:408-497`
 - Change: (1) only build when `sidebar.visible`; (2) memoize keyed on `snapshot_generation`,
   commit-workflow state, `selected_index`, `collapsed_directory_keys`, `branch_review` revision.
   Build stays in `RenderViewModelBuilder` (the layer allowed to read `current_project_state`).
@@ -121,7 +121,7 @@ exists (Git sidebar, FileFinder, review comments, terminal, blame).
 
 ### ✅ B5. Git blame `Snapshot` — return only the caret window
 - Tier: **memory** (per-frame when inline blame eligible)
-- Files: `src/project/GitBlameService.cpp:367,396-401`, `src/workspace/EditorBlameOverlayService.cpp`
+- Files: `src/project/GitBlameService.cpp:367,396-401`, `src/workspace/services/EditorBlameOverlayService.cpp`
 - Change: pass caret line range; add `result_start_line`/`result_line_count` (keep wider
   `visible_*` for prefetch/cache), or `SnapshotLines(file_key,start,end)`. Cache stays keyed
   on the visible window; only the returned vector shrinks to caret±`kCaretBlameRadius`.
@@ -130,7 +130,7 @@ exists (Git sidebar, FileFinder, review comments, terminal, blame).
 
 ### ✅ B7. `UpdateMergeMaxVisualColumns` — take a span, drop the owned copy
 - Tier: **cpu** (per merge-result keystroke)
-- File: `src/workspace/WorkspaceShellMergeState.cpp:19-25,413-423`
+- File: `src/workspace/shell/WorkspaceShellMergeState.cpp:19-25,413-423`
 - Change: `MaxVisualColumnsForLines` takes `std::span<const std::string>`; drop `owned_lines`.
   Optionally span the changed range at the :544 callsite too.
 - Effect: removes a per-keystroke copy over the changed line range. Clean signature improvement.
@@ -149,7 +149,7 @@ exists (Git sidebar, FileFinder, review comments, terminal, blame).
 
 ### ✅ C1. De-duplicate the compare right-line → model-row lookup
 - Tier: **tech-debt/dedup** (+ real speed rider on the blame path)
-- Files: `src/workspace/WorkspaceShellCompare.cpp:477`, `CompareTabReview.cpp:231`
+- Files: `src/workspace/shell/WorkspaceShellCompare.cpp:477`, `CompareTabReview.cpp:231`
 - Change: drop the byte-identical `WorkspaceShell::CompareRowIndexForRightLine`; delegate to the
   free `CompareTabModelRowForRightLine`. Optionally back with a right-line→model-row table cached
   on `CompareTabState`, rebuilt on `model_revision` (binary search is unsafe: `right_line==0`

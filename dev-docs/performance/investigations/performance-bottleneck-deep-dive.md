@@ -111,10 +111,10 @@ using allocation totals to judge individual interactions.
 
 Relevant code paths:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp`
-- `src/workspace/WorkspaceShellSettingsOverlay.cpp`
-- `src/workspace/WorkspaceShellEditor.cpp`
-- `src/workspace/RenderViewModelBuilder.cpp`
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp`
+- `src/workspace/shell/WorkspaceShellSettingsOverlay.cpp`
+- `src/workspace/shell/WorkspaceShellEditor.cpp`
+- `src/workspace/render/RenderViewModelBuilder.cpp`
 
 `PrepareFrameOnce()` calls `ApplyLiveSettings()` every frame. `ApplyLiveSettings()` calls
 `ApplyEditorPreferencesToAllTabs()`, which iterates the welcome surface and every editor tab. For
@@ -240,8 +240,8 @@ Expected result:
 
 Relevant code paths:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp`
-- `src/workspace/RenderViewModelBuilder.cpp`
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp`
+- `src/workspace/render/RenderViewModelBuilder.cpp`
 - `src/editor/EditorViewRenderer.cpp`
 
 The active editor render path currently builds editor presentation state in multiple passes. It
@@ -281,7 +281,7 @@ Expected result:
 
 Relevant code paths:
 
-- `src/workspace/RenderViewModelBuilder.cpp`
+- `src/workspace/render/RenderViewModelBuilder.cpp`
 - `src/editor/EditorViewRenderer.cpp`
 - `src/editor/DecoratedTextGridRenderer.cpp`
 - `src/render/TextRenderer.cpp`
@@ -329,7 +329,7 @@ Expected result:
 Relevant code paths:
 
 - `src/terminal/TerminalSession.cpp`
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp`
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp`
 
 `terminal_scroll_long_output` measured about 2.09M p50 allocations locally. Some of the wall time
 includes fixed scenario waits, but the allocation count is still too high.
@@ -404,8 +404,8 @@ Expected result:
 Relevant code paths:
 
 - `src/workspace/WorkspaceShellChrome.cpp`
-- `src/workspace/WorkspaceSidebarCoordinator.cpp`
-- `src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp`
+- `src/workspace/coordinators/WorkspaceSidebarCoordinator.cpp`
+- `src/workspace/coordinators/WorkspaceSidebarCoordinatorRefresh.cpp`
 - `src/project/GitRepository.cpp`
 
 `RefreshStatusBar()` runs during frame preparation. It builds strings and reads editor/project/git
@@ -473,8 +473,8 @@ Expected result:
 
 Relevant code paths:
 
-- `src/workspace/WorkspaceShellHoverTargets.cpp`
-- `src/workspace/WorkspaceShellHoverPopup.cpp`
+- `src/workspace/render/WorkspaceShellHoverTargets.cpp`
+- `src/workspace/render/WorkspaceShellHoverPopup.cpp`
 - `src/plugin/*`
 
 Plugin hover queries are made from the hover target path and currently build line strings before

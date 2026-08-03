@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "workspace/SettingsStore.h"
+#include "workspace/persistence/SettingsStore.h"
 
 #include <string>
 

@@ -3,11 +3,11 @@
 // changes. State lives on ProjectWorkspaceState::editor_banners; rendering is in
 // WorkspaceShellRenderFrame.cpp and hit-testing in WorkspaceEditorMouseCoordinator.
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
 
-#include "workspace/EditorTabService.h"
+#include "workspace/services/EditorTabService.h"
 
 namespace microide::workspace {
 

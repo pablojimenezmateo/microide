@@ -26,7 +26,7 @@ Agent coverage note:
 Status: confirmed by code inspection.
 
 When there is no debug state to persist, `PersistenceCoordinator::SaveDebugState` removes only the
-primary `debug` file and returns (`src/workspace/WorkspacePersistenceCoordinatorSession.cpp:79`).
+primary `debug` file and returns (`src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp:79`).
 `PersistedRecordReader::ReadFile` falls back to `PersistedRecordWriter::BackupPathFor(path)` when
 the primary file is missing (`src/persistence/PersistedRecordReader.cpp:149`). If a previous save
 created `debug.bak`, clearing all debug state can make the next restore load stale breakpoints,
@@ -41,11 +41,11 @@ state returns.
 Status: confirmed by code inspection.
 
 `BuildPersistedCompareTabState` fills `compare_review_mode` and `compare_staging_view`
-(`src/workspace/WorkspacePersistenceCoordinatorSession.cpp:620`), and restore has parsing logic for
-those fields (`src/workspace/WorkspacePersistenceCoordinatorSession.cpp:255`). The binary tab tag
-schema has no tags for either field (`src/workspace/WorkspacePersistenceBinaryInternal.h:182`), and
+(`src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp:620`), and restore has parsing logic for
+those fields (`src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp:255`). The binary tab tag
+schema has no tags for either field (`src/workspace/persistence/WorkspacePersistenceBinaryInternal.h:182`), and
 `EncodeEditorTab` / `DecodeEditorTab` never write or read them
-(`src/workspace/WorkspacePersistenceBinaryInternal.h:578`).
+(`src/workspace/persistence/WorkspacePersistenceBinaryInternal.h:578`).
 
 Impact: staged/unstaged/combined working-tree review tabs and branch/commit/conflict review modes
 can restore with default semantics even though the in-memory persisted structure suggests otherwise.
@@ -58,9 +58,9 @@ records. Add a session round-trip test for staged and branch compare tabs.
 Status: confirmed by code inspection.
 
 Restore parses `compare_review_mode` and `compare_staging_view` into a local compare state
-(`src/workspace/WorkspacePersistenceCoordinatorSession.cpp:255`), but the actual compare-tab rebuild
-path has separate construction defaults (`src/workspace/WorkspaceShellCompare.cpp:119`,
-`src/workspace/WorkspaceShellCompare.cpp:477`). The persistence code needs a regression that proves
+(`src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp:255`), but the actual compare-tab rebuild
+path has separate construction defaults (`src/workspace/shell/WorkspaceShellCompare.cpp:119`,
+`src/workspace/shell/WorkspaceShellCompare.cpp:477`). The persistence code needs a regression that proves
 the rebuilt tab, not just the intermediate state, preserves review mode and staging view.
 
 Recommended fix: make restored compare tab construction consume the persisted compare state as the
@@ -73,9 +73,9 @@ Status: confirmed by code inspection and architecture-lint gap.
 The intended contract says `textDocument/didOpen` and `didChange` must not be sent synchronously on
 the `ActivateTab` path. The lint scans narrowly for direct `didOpen` / `didChange` dispatch in the
 tab coordinator (`tests/architecture/WorkspaceCoordinatorArchitectureRules.cpp:34`), but activation
-still reaches buffer-open hooks (`src/workspace/WorkspaceTabCoordinator.cpp:367`) and then plugin/LSP
-open notification code (`src/workspace/WorkspaceShellPlugins.cpp:905`). The LSP service serializes
-the document for open notifications (`src/workspace/LspService.cpp:799`).
+still reaches buffer-open hooks (`src/workspace/coordinators/WorkspaceTabCoordinator.cpp:367`) and then plugin/LSP
+open notification code (`src/workspace/shell/WorkspaceShellPlugins.cpp:905`). The LSP service serializes
+the document for open notifications (`src/workspace/lsp/LspService.cpp:799`).
 
 Impact: activating a large restored tab can still pay full-buffer serialization / JSON construction
 on the shell path, and the current invariant can miss it because the call is indirect.
@@ -91,10 +91,10 @@ method strings.
 Status: confirmed by explorer review and spot-checked in code.
 
 `SelectGitConflictBlock` falls through to `Base` when the current and incoming marker sections both
-match the merge model and the base section also matches (`src/workspace/WorkspaceShellMergeState.cpp:66`,
+match the merge model and the base section also matches (`src/workspace/shell/WorkspaceShellMergeState.cpp:66`,
 `:89`). That selected choice is then accepted as a valid hint
-(`src/workspace/WorkspaceShellMergeState.cpp:359`) and stored as resolved
-(`src/workspace/WorkspaceShellMergeState.cpp:409`).
+(`src/workspace/shell/WorkspaceShellMergeState.cpp:359`) and stored as resolved
+(`src/workspace/shell/WorkspaceShellMergeState.cpp:409`).
 
 Impact: opening an unedited raw Git conflict block can silently collapse the result to base content
 and mark the conflict resolved. That is a data-loss-class merge bug.
@@ -108,9 +108,9 @@ resolved.
 
 Status: confirmed by explorer review and spot-checked in code.
 
-`FindSequence` returns `start` for an empty needle (`src/workspace/WorkspaceShellMergeState.cpp:149`).
+`FindSequence` returns `start` for an empty needle (`src/workspace/shell/WorkspaceShellMergeState.cpp:149`).
 `RefreshMergeTabDerivedState` uses that helper to infer committed result spans when a hunk does not
-match a known choice (`src/workspace/WorkspaceShellMergeState.cpp:387`). For the last conflict or
+match a known choice (`src/workspace/shell/WorkspaceShellMergeState.cpp:387`). For the last conflict or
 adjacent hunks with no base context between them, the empty post-context can produce a zero-length
 span, infer a choice, and mark the conflict valid/resolved while dropping unmatched manual result
 text from conflict tracking.
@@ -124,10 +124,10 @@ context.
 Status: confirmed by explorer review and spot-checked in code.
 
 `MarkMergeResolved` infers existence from `!merge_tab->result_viewport.lines().empty()`
-(`src/workspace/WorkspaceCompareInteractionCoordinator.cpp:581`). Text buffers are normalized to at
+(`src/workspace/coordinators/WorkspaceCompareInteractionCoordinator.cpp:581`). Text buffers are normalized to at
 least one line, so `requires_existence_choice` conflicts cannot naturally produce
 `result_should_exist = false`. Validation then compares the expected existence with the filesystem
-state (`src/workspace/MergeResultValidation.cpp:91`).
+state (`src/workspace/git/MergeResultValidation.cpp:91`).
 
 Impact: delete-side resolutions for modify/delete conflicts can be blocked or misclassified unless
 the user manipulates the file outside the normalized editor buffer.
@@ -141,7 +141,7 @@ the merge UI.
 Status: confirmed by explorer review.
 
 Source accept-button Y positions are based on `interaction.result.text.scroll_line`
-(`src/workspace/WorkspaceShellMerge.cpp:368`, `src/workspace/WorkspaceLayout.cpp:559`), while source
+(`src/workspace/shell/WorkspaceShellMerge.cpp:368`, `src/workspace/WorkspaceLayout.cpp:559`), while source
 panes render from `merge_tab.scroll_row`. If the source panes have more rows than the result pane,
 the result viewport scroll can be clamped lower than the source scroll, so buttons and hover targets
 can land on the wrong source rows.
@@ -167,8 +167,8 @@ hit-testing and decoration.
 Status: confirmed by explorer review.
 
 `ToggleMergeRawMarkers` flips `merge_tab->show_raw_markers`
-(`src/workspace/WorkspaceCompareInteractionCoordinator.cpp:532`), and the field exists on
-`MergeTabState` (`src/workspace/WorkspaceTabState.h:159`), but the explorer found no render, save,
+(`src/workspace/coordinators/WorkspaceCompareInteractionCoordinator.cpp:532`), and the field exists on
+`MergeTabState` (`src/workspace/state/WorkspaceTabState.h:159`), but the explorer found no render, save,
 validation, or rebuild consumer. The command therefore appears to redraw without changing what the
 user sees or saves.
 
@@ -182,21 +182,21 @@ The render-path invariant says `WorkspaceShellRender*.cpp` should consume render
 avoid string assembly in per-frame rendering. Several render files still build strings or path
 strings directly:
 
-- `src/workspace/WorkspaceShellRenderOverlay.cpp:145` builds a command fallback label.
-- `src/workspace/WorkspaceShellRenderOverlay.cpp:183` and `:192` build project-search fallback and
+- `src/workspace/render/WorkspaceShellRenderOverlay.cpp:145` builds a command fallback label.
+- `src/workspace/render/WorkspaceShellRenderOverlay.cpp:183` and `:192` build project-search fallback and
   progress strings.
-- `src/workspace/WorkspaceShellRenderOverlay.cpp:214` builds per-row project-search labels and
+- `src/workspace/render/WorkspaceShellRenderOverlay.cpp:214` builds per-row project-search labels and
   `:224` calls `relative_path.string()`.
-- `src/workspace/WorkspaceShellRenderOverlay.cpp:241` builds picker row vectors each render.
-- `src/workspace/WorkspaceShellRenderOverlay.cpp:288` concatenates completion labels.
-- `src/workspace/WorkspaceShellRenderOverlay.cpp:413` builds buffer-search count strings.
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:41` has a render-local label builder.
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:336` calls `relative_path.string()` for search
+- `src/workspace/render/WorkspaceShellRenderOverlay.cpp:241` builds picker row vectors each render.
+- `src/workspace/render/WorkspaceShellRenderOverlay.cpp:288` concatenates completion labels.
+- `src/workspace/render/WorkspaceShellRenderOverlay.cpp:413` builds buffer-search count strings.
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:41` has a render-local label builder.
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:336` calls `relative_path.string()` for search
   results.
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:591` and `:692` build git row labels.
-- `src/workspace/WorkspaceShellRenderFrame.cpp:556` builds a URI from
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:591` and `:692` build git row labels.
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp:556` builds a URI from
   `viewport.path().generic_string()` while rendering review comment markers.
-- `src/workspace/WorkspaceShellRenderMerge.cpp:497` materializes merge preview lines while
+- `src/workspace/render/WorkspaceShellRenderMerge.cpp:497` materializes merge preview lines while
   rendering.
 
 The existing render lint checks only a few patterns such as `std::to_string`, `std::format`, and
@@ -217,12 +217,12 @@ Status: confirmed by code inspection.
 Ordinary `TextViewport` edit paths are mostly range-scoped, but merge result side-effect tracking
 still takes whole-document snapshots before common edits:
 
-- typing into a merge result: `src/workspace/WorkspaceTextInputCoordinator.cpp:338`
-- key edits in a merge result: `src/workspace/WorkspaceKeyInputCoordinatorEditor.cpp:277`
-- undo/redo/cut/insert flows: `src/workspace/WorkspaceActionServices.cpp:625`,
-  `src/workspace/WorkspaceActionServices.cpp:698`, `src/workspace/WorkspaceActionServices.cpp:796`,
-  `src/workspace/WorkspaceActionServices.cpp:864`
-- assist/snippet edits: `src/workspace/AssistService.cpp:257`
+- typing into a merge result: `src/workspace/coordinators/WorkspaceTextInputCoordinator.cpp:338`
+- key edits in a merge result: `src/workspace/coordinators/WorkspaceKeyInputCoordinatorEditor.cpp:277`
+- undo/redo/cut/insert flows: `src/workspace/actions/WorkspaceActionServices.cpp:625`,
+  `src/workspace/actions/WorkspaceActionServices.cpp:698`, `src/workspace/actions/WorkspaceActionServices.cpp:796`,
+  `src/workspace/actions/WorkspaceActionServices.cpp:864`
+- assist/snippet edits: `src/workspace/services/AssistService.cpp:257`
 
 Impact: editing a large merge result can copy the whole buffer on keystrokes or common commands,
 which violates the spirit of the range-based edit invariant even if it does not copy
@@ -248,7 +248,7 @@ buffer owned outside the render TU.
 Status: confirmed by explorer review.
 
 Merge rendering and source-hit lookup repeatedly scan conflict spans for visible rows
-(`src/workspace/WorkspaceShellRenderMerge.cpp:233`,
+(`src/workspace/render/WorkspaceShellRenderMerge.cpp:233`,
 `src/workspace/WorkspaceLayoutMergeAndChrome.cpp:202`,
 `src/workspace/WorkspaceLayoutMergeAndChrome.cpp:217`). With many conflicts, scrolling and redraw
 work becomes `visible_rows * conflict_count`.
@@ -261,7 +261,7 @@ visible-row map.
 Status: confirmed by explorer review.
 
 `PopulateMergeSyntaxTokensForWindow` advances tokenization in 256-line chunks from the previous
-tokenized prefix (`src/workspace/WorkspaceShellMergeState.cpp:460`, `:467`, `:483`). Jumping deep
+tokenized prefix (`src/workspace/shell/WorkspaceShellMergeState.cpp:460`, `:467`, `:483`). Jumping deep
 into a large merge file can spend many frames tokenizing off-screen prefix rows while visible rows
 remain untokenized.
 
@@ -273,7 +273,7 @@ deep jumps prioritize visible rows.
 Status: confirmed by explorer review.
 
 Result-span inference materializes candidate choice lines and post-context vectors while searching
-for matching spans (`src/workspace/WorkspaceShellMergeState.cpp:365`, `:371`, `:387`). In large
+for matching spans (`src/workspace/shell/WorkspaceShellMergeState.cpp:365`, `:371`, `:387`). In large
 merge outputs with many conflicts and ambiguous context, this can approach quadratic behavior.
 
 Recommended fix: avoid vector copies for candidate and context comparisons, and pre-index stable
@@ -378,8 +378,8 @@ Status: confirmed by explorer review.
 
 Commit compare uses `git diff-tree --name-only -r` and parses the output by line
 (`src/project/GitCompareService.cpp:335`). Workspace review paths consume those file lists
-(`src/workspace/WorkspaceDiffTabCoordinator.cpp:129`,
-`src/workspace/ReviewSessionCoordinator.cpp:185`). Git paths may contain newlines, while nearby
+(`src/workspace/coordinators/WorkspaceDiffTabCoordinator.cpp:129`,
+`src/workspace/git/ReviewSessionCoordinator.cpp:185`). Git paths may contain newlines, while nearby
 working-tree code already uses `-z`.
 
 Impact: commit review sessions can split one file into bogus entries and then open/diff/stage the
@@ -429,9 +429,9 @@ token across unlocked calls.
 Status: confirmed by code inspection.
 
 `ReplaceAllProjectSearchMatches` validates and buffers matching files before writing, including
-aggregate-size protection (`src/workspace/WorkspaceShellProjectSearch.cpp:371`). Once writes begin,
-each file is opened with truncation (`src/workspace/WorkspaceShellProjectSearch.cpp:428`). If opening
-or writing a later file fails, the function returns immediately (`src/workspace/WorkspaceShellProjectSearch.cpp:429`,
+aggregate-size protection (`src/workspace/shell/WorkspaceShellProjectSearch.cpp:371`). Once writes begin,
+each file is opened with truncation (`src/workspace/shell/WorkspaceShellProjectSearch.cpp:428`). If opening
+or writing a later file fails, the function returns immediately (`src/workspace/shell/WorkspaceShellProjectSearch.cpp:429`,
 `:433`) after earlier files were already overwritten. It does not set an error message before
 returning and does not refresh search state.
 
@@ -451,7 +451,7 @@ The architecture lint rejects direct `platform::RunSubprocess(` in `src/workspac
 block by calling the project wrapper:
 
 - format-on-save calls `project::RunSubprocess` from
-  `src/workspace/WorkspaceTabCoordinatorShellBridge.cpp:261`
+  `src/workspace/coordinators/WorkspaceTabCoordinatorShellBridge.cpp:261`
 - tool SHA256 verification calls `project::RunSubprocess` from
   `src/workspace/WorkspaceToolDownloader.cpp:96`, `:102`, and `:108`
 
@@ -498,10 +498,10 @@ worker job and assert teardown waits or cancels safely.
 Status: confirmed by explorer review.
 
 `ReloadPluginsForCurrentProject` uses `reload_plugins_invocation_count_` as the only staleness guard
-for async reload completions (`src/workspace/WorkspaceShellPlugins.cpp:669`, `:679`, `:682`).
+for async reload completions (`src/workspace/shell/WorkspaceShellPlugins.cpp:669`, `:679`, `:682`).
 Project switching or reactivating an already initialized project does not necessarily increment that
 counter, and reactivation intentionally avoids plugin reload
-(`src/workspace/WorkspaceShellPlugins.cpp:761`). A delayed completion from the previous project can
+(`src/workspace/shell/WorkspaceShellPlugins.cpp:761`). A delayed completion from the previous project can
 therefore pass the generation check and run reload consumption against the newly active project.
 
 Impact: plugin registry snapshots, sidebars, language servers, syntax state, or redraw work can be
@@ -516,7 +516,7 @@ Status: confirmed by explorer review.
 
 Most posted plugin callbacks mutate `context_.current_project_state` without checking that the
 originating project is still active. Examples include diagnostics/decorations/surfaces in
-`src/workspace/WorkspaceShellPlugins.cpp:389` and `:416`, and callback posting in
+`src/workspace/shell/WorkspaceShellPlugins.cpp:389` and `:416`, and callback posting in
 `src/plugin/PluginHostCallbacks.cpp:48`, `:70`, and `:94`. The edit path has a staleness guard
 (`src/plugin/PluginHostCallbacks.cpp:130`), but the other mutation paths do not.
 
@@ -819,12 +819,12 @@ split-brain documentation and should be resolved before relying on "tests green"
 
 Several files are still broad enough to hide cross-subsystem coupling:
 
-- `src/workspace/WorkspaceShellPlugins.cpp` is over 1,600 lines.
-- `src/workspace/RenderViewModelBuilder.cpp` is over 1,500 lines.
-- `src/workspace/AssistService.cpp` is over 1,500 lines.
-- `src/workspace/WorkspaceShellCursor.cpp` is over 1,300 lines.
-- `src/workspace/WorkspaceShellRedraw.cpp` is over 1,100 lines.
-- `src/workspace/WorkspaceSettingsRegistry.cpp` is over 1,100 lines.
+- `src/workspace/shell/WorkspaceShellPlugins.cpp` is over 1,600 lines.
+- `src/workspace/render/RenderViewModelBuilder.cpp` is over 1,500 lines.
+- `src/workspace/services/AssistService.cpp` is over 1,500 lines.
+- `src/workspace/shell/WorkspaceShellCursor.cpp` is over 1,300 lines.
+- `src/workspace/shell/WorkspaceShellRedraw.cpp` is over 1,100 lines.
+- `src/workspace/registries/WorkspaceSettingsRegistry.cpp` is over 1,100 lines.
 - `src/workspace/WorkspaceLayout.cpp` is over 1,000 lines.
 
 These are not bugs by themselves, but they are the files most likely to re-grow hidden state and

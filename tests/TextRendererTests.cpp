@@ -17,7 +17,7 @@
 #include "render/PixelAlign.h"
 #include "render/TextRenderer.h"
 #include "render/Theme.h"
-#include "workspace/RenderViewModelBuilder.h"
+#include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceContext.h"
 
 #include <SDL3/SDL.h>

@@ -5,7 +5,7 @@
 #include "project/GitPorcelainParser.h"
 #include "project/GitRepository.h"
 #include "project/GitStatusService.h"
-#include "workspace/WorkspaceGitOutgoingBase.h"
+#include "workspace/git/WorkspaceGitOutgoingBase.h"
 
 #include <algorithm>
 #include <filesystem>

@@ -18,16 +18,16 @@
 // companion-count cap and out of the render-surface lint glob, so it may read
 // state for the hit test, exactly like DebugToolbarSurface.cpp.
 
-#include "workspace/WorkspaceShellRenderPrimitives.h"
+#include "workspace/render/WorkspaceShellRenderPrimitives.h"
 
 #include <algorithm>
 #include <string_view>
 
-#include "workspace/GitSidebarHeaderLayout.h"
+#include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/ProjectSearchPanelLayout.h"
-#include "workspace/RenderViewModelBuilder.h"
-#include "workspace/StatusBarService.h"
-#include "workspace/WorkspaceSidebarRegistry.h"
+#include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/services/StatusBarService.h"
+#include "workspace/registries/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
 

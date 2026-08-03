@@ -43,13 +43,13 @@ Findings are grouped by load-bearing impact rather than file location.
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp:69-71`, `154`, `225`, `227`
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:37`
-- `src/workspace/WorkspaceShellRenderTextInput.cpp:149-152`
-- `src/workspace/WorkspaceShellRenderOverlay.cpp:12`
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp:35`
-- `src/workspace/WorkspaceShellHoverTargets.cpp:165, 396`
-- `src/workspace/RenderViewModelBuilder.cpp:412-447`
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp:69-71`, `154`, `225`, `227`
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:37`
+- `src/workspace/render/WorkspaceShellRenderTextInput.cpp:149-152`
+- `src/workspace/render/WorkspaceShellRenderOverlay.cpp:12`
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp:35`
+- `src/workspace/render/WorkspaceShellHoverTargets.cpp:165, 396`
+- `src/workspace/render/RenderViewModelBuilder.cpp:412-447`
 
 Each `Build…Surface` constructor was meant to be the single, frame-stable boundary between shell
 state and render TUs. In practice, several surfaces are rebuilt multiple times per frame:
@@ -173,7 +173,7 @@ workspace `.cpp` units; dispatch through `ProjectBackgroundExecutor`."*
 
 Relevant code:
 
-- `src/workspace/RenderViewModelBuilder.cpp:297-314`
+- `src/workspace/render/RenderViewModelBuilder.cpp:297-314`
 
 ```cpp
 try {
@@ -289,17 +289,17 @@ runs ~4×10⁸ comparisons. `FindPair` is called once per source byte during the
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:20-31` (`BuildProjectSearchResultLabel`)
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:337` (`std::string(1, git_marker)`)
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:479` (same pattern)
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp:140-153` (per-run `std::string run_text`)
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp:191-200` (`std::string header_label = "Command"` rebuilt per frame)
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp:207` (`ActiveLspStatusText(...)` returns `std::string` each frame)
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp:365` (`std::string(display_text)` for cursor cell)
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp:383-396` (`status_text`, `panel_fallback` rebuilt per frame)
-- `src/workspace/WorkspaceShellRenderTextInput.cpp:78` (`std::string full_text = std::string(prefix) + state.text();`)
-- `src/workspace/WorkspaceShellRenderTextInput.cpp:140` (returns `std::string displayed_text`)
-- `src/workspace/WorkspaceShellRenderMenus.cpp:64` (`spec ? std::string(spec->label) : std::string{}`)
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:20-31` (`BuildProjectSearchResultLabel`)
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:337` (`std::string(1, git_marker)`)
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:479` (same pattern)
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp:140-153` (per-run `std::string run_text`)
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp:191-200` (`std::string header_label = "Command"` rebuilt per frame)
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp:207` (`ActiveLspStatusText(...)` returns `std::string` each frame)
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp:365` (`std::string(display_text)` for cursor cell)
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp:383-396` (`status_text`, `panel_fallback` rebuilt per frame)
+- `src/workspace/render/WorkspaceShellRenderTextInput.cpp:78` (`std::string full_text = std::string(prefix) + state.text();`)
+- `src/workspace/render/WorkspaceShellRenderTextInput.cpp:140` (returns `std::string displayed_text`)
+- `src/workspace/render/WorkspaceShellRenderMenus.cpp:64` (`spec ? std::string(spec->label) : std::string{}`)
 - `src/editor/EditorViewRenderer.cpp:245` (`"text renderer: " + std::string(text_renderer.BackendName())`)
 - `src/editor/EditorViewRenderer.cpp:52-58` (`ToLower(...)` allocates per call)
 
@@ -425,7 +425,7 @@ Relevant code:
 - `src/editor/EditorViewRenderer.cpp:368` (binds to a returned-by-value temporary)
 - `src/editor/ShapingActions.cpp:39, 171`
 - `src/editor/SnippetEngine.cpp:230`
-- `src/workspace/WorkspaceEditActionExecutor.cpp:259`
+- `src/workspace/actions/WorkspaceEditActionExecutor.cpp:259`
 
 `TextViewport::secondary_carets()` returns `std::vector<TextPosition>` by value. The render path
 binds it to `const auto& secondary_carets = …`, which extends the temporary's lifetime but still
@@ -450,8 +450,8 @@ allocates a fresh vector every frame.
 
 Relevant code:
 
-- `src/workspace/RenderViewModelBuilder.cpp:511`
-- `src/workspace/RenderViewModelBuilder.cpp:556-557`
+- `src/workspace/render/RenderViewModelBuilder.cpp:511`
+- `src/workspace/render/RenderViewModelBuilder.cpp:556-557`
 
 ```cpp
 out.sticky_lines.assign(g_sticky_scroll_cache.lines.begin(),
@@ -483,7 +483,7 @@ of matches, that is a fresh vector allocation each frame.
 
 Relevant code:
 
-- `src/workspace/RenderViewModelBuilder.cpp:150-160`
+- `src/workspace/render/RenderViewModelBuilder.cpp:150-160`
 
 ```cpp
 std::unordered_set<std::size_t> visible_line_indices;
@@ -657,8 +657,8 @@ parameter at all; it's an unconditional clear.
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderTextInput.cpp:88-95` (`std::vector<CharEntry> before_cursor`)
-- `src/workspace/WorkspaceShellRenderSidebar.cpp:69-82` (`BuildVisibleStripTabs` returns a fresh
+- `src/workspace/render/WorkspaceShellRenderTextInput.cpp:88-95` (`std::vector<CharEntry> before_cursor`)
+- `src/workspace/render/WorkspaceShellRenderSidebar.cpp:69-82` (`BuildVisibleStripTabs` returns a fresh
   vector — already in `WorkspaceShellChrome.cpp:69`)
 - `src/editor/TextViewport.cpp:780-790` (`std::vector<std::string> before_changed_lines` for
   replace-all — accepted, since it is structural)
@@ -691,7 +691,7 @@ even when the tab strip is stable across frames.
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp:55-147`
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp:55-147`
 
 `PrepareFrameOnce` runs in this order each frame:
 

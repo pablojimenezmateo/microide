@@ -57,7 +57,7 @@ RuleResult CheckCoordinatorShellConstructors(const std::filesystem::path& repo_r
   result.label = "coordinator constructors taking WorkspaceShell";
   result.hard_fail = true;
   for (const auto& entry :
-       std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+       std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".h") {
       continue;
     }
@@ -121,7 +121,7 @@ RuleResult CheckDapTransportUsesCheckedResponseSeqNarrowing(
   // wraps and can collide with a live pending request or forge an initialize match. All
   // inbound seq narrowing routes through DapResponseSeqInRange. (TD-2026-07-16-44.)
   const std::filesystem::path target =
-      repo_root / "src/workspace/WorkspaceDapClientInternal.h";
+      repo_root / "src/workspace/debug/WorkspaceDapClientInternal.h";
   if (!RequireRuleTarget(result, target)) {
     return result;
   }
@@ -199,9 +199,9 @@ RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
   static constexpr std::array<const char*, 5> kProducerFiles = {
       "src/project/GitBlameService.cpp",
       "src/platform/ControlSocketServer.cpp",
-      "src/workspace/WorkspaceProjectDialogCoordinator.cpp",
+      "src/workspace/coordinators/WorkspaceProjectDialogCoordinator.cpp",
       "src/app/BackgroundTaskCounter.cpp",
-      "src/workspace/WorkspaceLifecycleCoordinator.cpp",
+      "src/workspace/coordinators/WorkspaceLifecycleCoordinator.cpp",
   };
   const std::regex bare_push(R"(\bSDL_PushEvent\s*\()");
   for (const char* rel : kProducerFiles) {
@@ -252,7 +252,7 @@ RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root)
   result.hard_fail = true;
 
   std::vector<std::filesystem::path> render_files;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -261,9 +261,9 @@ RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root)
       render_files.push_back(entry.path());
     }
   }
-  render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp");
-  render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverTargets.cpp");
-  render_files.push_back(repo_root / "src/workspace/DebugPaneRender.cpp");
+  render_files.push_back(repo_root / "src/workspace/render/WorkspaceShellHoverPopup.cpp");
+  render_files.push_back(repo_root / "src/workspace/render/WorkspaceShellHoverTargets.cpp");
+  render_files.push_back(repo_root / "src/workspace/render/DebugPaneRender.cpp");
 
   const std::regex direct_state_pattern(R"(context_\.current_project_state)");
   const std::regex current_surface_pattern(R"(\bCurrentTextInputSurface\s*\()");
@@ -284,13 +284,13 @@ RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_ro
   result.hard_fail = true;
 
   const std::array<std::string_view, 7> render_tus = {
-      "src/workspace/WorkspaceShellRenderOverlay.cpp",
-      "src/workspace/WorkspaceShellRenderTextInput.cpp",
-      "src/workspace/WorkspaceShellRenderSidebar.cpp",
-      "src/workspace/WorkspaceShellRenderBottomPanel.cpp",
-      "src/workspace/WorkspaceShellHoverPopup.cpp",
-      "src/workspace/WorkspaceShellHoverTargets.cpp",
-      "src/workspace/DebugPaneRender.cpp",
+      "src/workspace/render/WorkspaceShellRenderOverlay.cpp",
+      "src/workspace/render/WorkspaceShellRenderTextInput.cpp",
+      "src/workspace/render/WorkspaceShellRenderSidebar.cpp",
+      "src/workspace/render/WorkspaceShellRenderBottomPanel.cpp",
+      "src/workspace/render/WorkspaceShellHoverPopup.cpp",
+      "src/workspace/render/WorkspaceShellHoverTargets.cpp",
+      "src/workspace/render/DebugPaneRender.cpp",
   };
   const std::regex compute_layout_pattern(R"(\bComputeLayout\s*\()");
   const std::regex direct_window_size_pattern(R"(context_\.window_size\b)");
@@ -321,7 +321,7 @@ RuleResult CheckPerClipRenderPathDoesNotRunFramePrep(const std::filesystem::path
   result.hard_fail = true;
 
   const std::filesystem::path app_cpp = repo_root / "src/app/Application.cpp";
-  const std::filesystem::path shell_render_cpp = repo_root / "src/workspace/WorkspaceShellRender.cpp";
+  const std::filesystem::path shell_render_cpp = repo_root / "src/workspace/render/WorkspaceShellRender.cpp";
   const std::string app_text = ReadRuleTarget(result, app_cpp);
   const std::string shell_render_text = ReadRuleTarget(result, shell_render_cpp);
   const std::vector<bool> app_is_code = BuildCodeMask(app_text);
@@ -448,9 +448,9 @@ RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root
   // - LspService.cpp: server-requested WorkspaceEdit resource-op file creation
   //   (project source files, not state).
   constexpr std::array<std::string_view, 3> kAllowedFiles = {
-      "src/workspace/PersistenceService.cpp",
-      "src/workspace/ControlChannelService.cpp",
-      "src/workspace/LspService.cpp",
+      "src/workspace/persistence/PersistenceService.cpp",
+      "src/workspace/control/ControlChannelService.cpp",
+      "src/workspace/lsp/LspService.cpp",
   };
   const std::regex io_pattern(R"(\b(?:std::)?(?:ifstream|ofstream|fstream|fopen)\b)");
 
@@ -510,7 +510,7 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
   result.label = "every ActionId is reachable from some user-facing surface";
   result.hard_fail = true;
 
-  const std::filesystem::path types_header = repo_root / "src/workspace/WorkspaceActionTypes.h";
+  const std::filesystem::path types_header = repo_root / "src/workspace/actions/WorkspaceActionTypes.h";
   const std::string types_text = ReadRuleTarget(result, types_header);
   const std::size_t enum_at = types_text.find("enum class ActionId");
   const std::size_t open_brace =

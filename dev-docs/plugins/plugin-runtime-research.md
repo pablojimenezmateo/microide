@@ -140,7 +140,7 @@ The biggest blockers are:
 1. `WorkspaceShell` still owns too much.
 
    - `dev-docs/archive/production-tech-debt-review.md` already called this out as the highest-impact remaining debt.
-   - `src/workspace/WorkspaceShell.h` still carries sidebar state, action metadata, prompts, projects, tabs, terminal state, hover state, and render helpers in one class.
+   - `src/workspace/shell/WorkspaceShell.h` still carries sidebar state, action metadata, prompts, projects, tabs, terminal state, hover state, and render helpers in one class.
 
 2. Sidebar modes are hardcoded product state, not registered contributions.
 
@@ -600,10 +600,10 @@ Without this, ESLint integration will end up reusing unrelated colors such as di
 
    Files most directly affected:
 
-   - `src/workspace/WorkspaceShell.h`
-   - `src/workspace/WorkspaceShellRender.cpp`
-   - `src/workspace/WorkspaceShellSidebar.cpp`
-   - `src/workspace/WorkspaceSidebarCoordinator.cpp`
+   - `src/workspace/shell/WorkspaceShell.h`
+   - `src/workspace/render/WorkspaceShellRender.cpp`
+   - `src/workspace/shell/WorkspaceShellSidebar.cpp`
+   - `src/workspace/coordinators/WorkspaceSidebarCoordinator.cpp`
    - `src/workspace/WorkspaceShellActions.cpp`
 
 2. Keep command and menu registration behind registries independent of `WorkspaceShell`.

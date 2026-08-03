@@ -28,8 +28,8 @@ Measurements below mix **implemented counter evidence** (local `microide-perf` r
 Relevant code (historical / remaining clip-loop context):
 
 - `src/app/Application.cpp` — partial path loops `merged_clip_rects` and calls `workspace_shell_.RenderClip(...)` once **per** clip (`Application::WorkspaceRender(partial-loop …)`).
-- `src/workspace/WorkspaceShellRender.cpp` — `RenderClip` always calls `RenderFrameBase`, then conditional passes.
-- `src/workspace/WorkspaceShellRenderFrame.cpp` — `RenderFrameBase` / `RenderActiveWorkspaceSurface` / `RenderOverlaySurface` consume cached view models built in `EnsureClipFrameAndOverlayViewModels` (see `WorkspaceShellRender.cpp`); per clip, `BuildFrameSurface` / `BuildOverlaySurface` run at most when the layout key changes.
+- `src/workspace/render/WorkspaceShellRender.cpp` — `RenderClip` always calls `RenderFrameBase`, then conditional passes.
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp` — `RenderFrameBase` / `RenderActiveWorkspaceSurface` / `RenderOverlaySurface` consume cached view models built in `EnsureClipFrameAndOverlayViewModels` (see `WorkspaceShellRender.cpp`); per clip, `BuildFrameSurface` / `BuildOverlaySurface` run at most when the layout key changes.
 
 **Cost model (before the cache):** For a frame with `C` coalesced clips where the dirty region still intersects the editor surface, a single user-visible frame could execute:
 
@@ -58,7 +58,7 @@ This directly fights the goal of cheap menu-hover / partial updates (historical 
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp` — `PrepareFrameOnce` builds `SidebarSurfaceViewModel` and `BottomPanelSurfaceViewModel` primarily to reach `project_state` for `ClampSidebarWidth` / `ClampBottomPanelHeight`.
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp` — `PrepareFrameOnce` builds `SidebarSurfaceViewModel` and `BottomPanelSurfaceViewModel` primarily to reach `project_state` for `ClampSidebarWidth` / `ClampBottomPanelHeight`.
 
 Even when nothing in the sidebar or panel **semantic** state changed, the builder runs. Round 2 narrowed some **string** allocations inside `BuildSidebarSurface`, but the structural issue remains: **layout clamping is coupled to full view-model construction**.
 
@@ -77,7 +77,7 @@ Even when nothing in the sidebar or panel **semantic** state changed, the builde
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp:225-227` — second `BuildFrameSurface` + `BuildOverlaySurface` in the same `RenderClip` invocation.
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp:225-227` — second `BuildFrameSurface` + `BuildOverlaySurface` in the same `RenderClip` invocation.
 
 `RenderFrameBase` already computed `FrameSurfaceViewModel` for chrome rectangles. The editor/compare/merge branch recomputes overlapping data. Even on **full** frames this duplicates work; on **partial** frames it duplicates per clip (Finding 1).
 
@@ -92,9 +92,9 @@ Relevant code:
 
 Relevant code:
 
-- `src/workspace/WorkspaceRootView.cpp` — `RenderPrepared` calls `compute_layout(width,height)` after `prepare_render_frame`.
-- `src/workspace/WorkspaceShellBootstrapper.cpp` — `compute_layout` lambda calls `ComputeLayout(...)` directly from shell project state.
-- Production `Application` uses `PrepareFrameOnce` + `RenderClip` with `prepared_frame_layout_` (`src/workspace/WorkspaceShellRender.cpp`).
+- `src/workspace/shell/WorkspaceRootView.cpp` — `RenderPrepared` calls `compute_layout(width,height)` after `prepare_render_frame`.
+- `src/workspace/shell/WorkspaceShellBootstrapper.cpp` — `compute_layout` lambda calls `ComputeLayout(...)` directly from shell project state.
+- Production `Application` uses `PrepareFrameOnce` + `RenderClip` with `prepared_frame_layout_` (`src/workspace/render/WorkspaceShellRender.cpp`).
 
 The **Application** path is consistent. Any code path still calling `WorkspaceRootView::Render` / `RenderPrepared` (tests, tools, future refactors) risks **double layout** and subtle divergence from clamped sidebar/panel widths applied during `PrepareFrameOnce`.
 
@@ -128,7 +128,7 @@ Round 2 moved search/selection/occurrence/bracket columns onto `VisualColumnFrom
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellLsp.cpp:308-321` — `SerializeViewportText(viewport)` then `client.DidOpen(...)`.
+- `src/workspace/shell/WorkspaceShellLsp.cpp:308-321` — `SerializeViewportText(viewport)` then `client.DidOpen(...)`.
 - Callers include assist / plugin / sync paths (`WorkspaceShellAssist.cpp`, `WorkspaceShellPlugins.cpp`, `SyncLspForActiveEditable*`).
 
 `AGENTS.md` (2026-05-02 invariant) requires **`textDocument/didOpen` / `didChange` not on the `ActivateTab` call path**; even if tab activation itself no longer calls this directly, **first interaction** on a large buffer can still block the shell thread on **full-document serialization + JSON construction**.
@@ -225,7 +225,7 @@ Round 1 Finding 10 / round 2 “not covered” — still valid. Pointer-driven w
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp:142-145` — `UpdateMouseCursor(mouse_x, mouse_y, …)` with `PerformanceTrace::Scope`.
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp:142-145` — `UpdateMouseCursor(mouse_x, mouse_y, …)` with `PerformanceTrace::Scope`.
 
 Even when the pointer did not move and no surface changed cursor policy, the shell pays the full cursor resolution path.
 

@@ -4,7 +4,7 @@
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
 #include "workspace/WorkspaceLanguageContract.h"
-#include "workspace/WorkspaceTabState.h"
+#include "workspace/state/WorkspaceTabState.h"
 
 #include <functional>
 #include <string>

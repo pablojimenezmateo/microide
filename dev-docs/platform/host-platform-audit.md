@@ -11,7 +11,7 @@ should own them.
 | --- | --- | --- | --- | --- |
 | App directories | `src/platform/AppDirectories.*` | non-Windows hosts fell back to XDG roots | `AppDirectories` + `HostPlatform` | landed |
 | Trash / recycle bin | `src/project/FileOperationService.cpp` | Linux and macOS trash logic lived in project code | `platform/Trash.*` | landed |
-| Host actions | `src/workspace/WorkspaceShellTerminal.cpp` | external URL open fell back directly to `SDL_OpenURL` | `platform/HostIntegration.*` | landed |
+| Host actions | `src/workspace/shell/WorkspaceShellTerminal.cpp` | external URL open fell back directly to `SDL_OpenURL` | `platform/HostIntegration.*` | landed |
 | Runtime assets | `src/render/Theme.cpp`, `src/render/SdlTtfTextBackend.cpp` | assets were discovered through Linux-style relative paths | `platform/RuntimePaths.*` | landed |
 | Sync subprocess | `src/platform/Subprocess.cpp` | `fork`/`execvp`, pipes, and `waitpid` used to define the whole API | explicit process service split | landed |
 | Async subprocess | `src/platform/AsyncSubprocess.cpp` | long-lived child I/O used to be POSIX-only | explicit process service split | landed |

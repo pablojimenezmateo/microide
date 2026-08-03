@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "app/AppStartupOptions.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <vector>
 

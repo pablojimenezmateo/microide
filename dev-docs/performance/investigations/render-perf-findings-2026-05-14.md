@@ -116,7 +116,7 @@ presentation state and only re-publish it when a window event invalidates it.
 
 ## P0 — Mouse wheel scroll is chunky on smooth-scroll devices
 
-`src/workspace/WorkspaceEditorMouseCoordinator.cpp:445-466`
+`src/workspace/coordinators/WorkspaceEditorMouseCoordinator.cpp:445-466`
 
 ```cpp
 viewport->ScrollVertical(-vertical_ticks * 3);
@@ -209,7 +209,7 @@ visible fills would close the gap.
 
 ## P1 — Per-frame layout/state churn in `PrepareFrameOnce`
 
-`src/workspace/WorkspaceShellRenderFrame.cpp:54-136`
+`src/workspace/render/WorkspaceShellRenderFrame.cpp:54-136`
 
 Each `PrepareFrameOnce` does, *unconditionally*, in this order:
 
@@ -241,7 +241,7 @@ on a `last_panel_rect` compare.
 
 ## P1 — Mouse motion path is allocation-heavy
 
-`src/workspace/WorkspaceShellMouseMotion.cpp:280-413`
+`src/workspace/shell/WorkspaceShellMouseMotion.cpp:280-413`
 
 A single mouse-motion event triggers, per event:
 

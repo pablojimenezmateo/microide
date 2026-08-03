@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/NotificationLayout.h"
-#include "workspace/NotificationService.h"
+#include "workspace/render/NotificationLayout.h"
+#include "workspace/services/NotificationService.h"
 
 #include <limits>
 #include <vector>

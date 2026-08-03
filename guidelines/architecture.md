@@ -82,7 +82,7 @@ These are checked by the `ArchitectureInvariants/SoftChecks` test in `microide_t
 - New numeric parsing in `src/` must use `src/util/Parse.{h,cpp}`. Do not add `try`/`catch` wrappers around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, `std::stod`, or similar APIs.
 - Workspace source under `src/workspace/*` must not add `friend class` or `friend struct` declarations.
 - Coordinator headers matching `src/workspace/Workspace*Coordinator*.h` must not take `WorkspaceShell&` or `WorkspaceShell*` in constructors. Inject the narrow service or callback dependency instead.
-- `src/workspace/WorkspaceShell.h` stays at or below 400 lines and `src/workspace/WorkspaceShell.cpp` at or below 600 lines.
+- `src/workspace/shell/WorkspaceShell.h` stays at or below 400 lines and `src/workspace/shell/WorkspaceShell.cpp` at or below 600 lines.
 - The render translation units listed in `CheckRenderSurfaceStateAccess` (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`, `WorkspaceShellRenderSidebar`, `WorkspaceShellRenderBottomPanel`, `WorkspaceShellHoverPopup`, `WorkspaceShellHoverTargets`) must not read `context_.current_project_state` or call `CurrentTextInputSurface(...)`. They consume view models built by `RenderViewModelBuilder`.
 - No single `src/plugin/*.cpp` translation unit may exceed 800 lines (hard-fail).
 - Workspace coordinator translation units matching `src/workspace/Workspace*Coordinator*.cpp` are capped at 800 lines; split by ownership seam instead of extending monoliths.

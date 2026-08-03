@@ -18,7 +18,7 @@
 
 #include "perf/AllocationCounter.h"
 #include "platform/Subprocess.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
 namespace {

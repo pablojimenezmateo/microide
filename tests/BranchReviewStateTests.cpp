@@ -3,9 +3,9 @@
 #include "compare/BranchReviewStateService.h"
 #include "compare/BranchReviewStateTypes.h"
 #include "compare/CompareModel.h"
-#include "workspace/BranchReviewPersistence.h"
-#include "workspace/BranchReviewStateBridge.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/git/BranchReviewPersistence.h"
+#include "workspace/git/BranchReviewStateBridge.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
 
 namespace microide::tests {
 

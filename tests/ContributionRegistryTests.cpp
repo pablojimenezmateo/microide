@@ -10,14 +10,14 @@
 #include <unordered_map>
 
 #include <variant>
-#include "workspace/WorkspaceFileIconRegistry.h"
-#include "workspace/WorkspaceKeybindingRegistry.h"
-#include "workspace/WorkspaceMenuRegistry.h"
-#include "workspace/WorkspacePersistenceFormat.h"
-#include "workspace/WorkspaceSettingsRegistry.h"
-#include "workspace/WorkspaceSidebarRegistry.h"
-#include "workspace/WorkspaceStatusRegistry.h"
-#include "workspace/WorkspaceThemeRegistry.h"
+#include "workspace/registries/WorkspaceFileIconRegistry.h"
+#include "workspace/registries/WorkspaceKeybindingRegistry.h"
+#include "workspace/registries/WorkspaceMenuRegistry.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
+#include "workspace/registries/WorkspaceSettingsRegistry.h"
+#include "workspace/registries/WorkspaceSidebarRegistry.h"
+#include "workspace/registries/WorkspaceStatusRegistry.h"
+#include "workspace/registries/WorkspaceThemeRegistry.h"
 
 #include <algorithm>
 #include <filesystem>

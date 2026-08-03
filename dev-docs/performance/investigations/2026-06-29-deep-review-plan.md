@@ -86,7 +86,7 @@ measurement pass".
 
 ### ✅ A6. Persistence primitive cleanups
 - Tier: **speed** (startup/save). Files: `src/persistence/PersistedRecord.cpp`,
-  `src/workspace/WorkspacePersistenceBinaryInternal.h`.
+  `src/workspace/persistence/WorkspacePersistenceBinaryInternal.h`.
 - `ReadString` → single `value->assign(reinterpret_cast<const char*>(input_.data())+offset_, size)`
   (bounds already checked); `WriteString` → bulk `out_->insert(...)` instead of per-byte
   `push_back`. `ParseRecordStream`'s callback is now a deduced template param (mirroring the
@@ -118,7 +118,7 @@ measurement pass".
   the three public functions are now one-line forwarders carrying their fraction/pad constants.
 
 ### ✅ C-Guard. Drop the provably-dead `|| ActiveTabIsCompare()` term
-- Tier: **tech-debt** (cold). File: `src/workspace/WorkspaceShellRedraw.cpp` (both overloads).
+- Tier: **tech-debt** (cold). File: `src/workspace/shell/WorkspaceShellRedraw.cpp` (both overloads).
 - Compare is fully handled by the early return above; the second check was dead and misleading.
 
 ---
@@ -142,13 +142,13 @@ measurement pass".
   row/hunk parity against `CompareModelTests` first.**
 
 ### ☐ A4-dedup. Compute the LSP document URI once per keystroke
-- **speed**, per-keystroke. `src/workspace/LspService.cpp` ~:305 / ~:454.
+- **speed**, per-keystroke. `src/workspace/lsp/LspService.cpp` ~:305 / ~:454.
 - `SyncLspForActiveEditableLastChange` should compute the URI once and pass it into
   `EnsureLspDocumentOpen` instead of re-normalizing+encoding twice. Small flow change; pair with
   a quick re-read of the open/change call paths.
 
 ### ☐ B-Dirty. Dirty-tab session restore round-trips lines through join + re-split
-- **speed**, startup (dirty tabs only). `src/workspace/WorkspacePersistenceCoordinatorSession.cpp:379`.
+- **speed**, startup (dirty tabs only). `src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp:379`.
 - Add `TextViewport::LoadLines(std::vector<std::string>, path, line_ending)` (→ `ResetState(std::move,...)`)
   and use it instead of `SerializeLines(...) → LoadContent(...)`, which joins already-split lines
   then re-splits them (two extra full passes). Best case `std::move` the discarded
@@ -175,7 +175,7 @@ measurement pass".
 - Test: `Compare/IgnoreWhitespaceInteriorHunkLine`.
 
 ### ✅ B-Enc. LSP position encoding — common case fixed; utf-16 conversion remains
-- `src/workspace/WorkspaceLspClientInternal.h`, `WorkspaceLspClient.{h,cpp}`. Commit: "fix(lsp):
+- `src/workspace/lsp/WorkspaceLspClientInternal.h`, `WorkspaceLspClient.{h,cpp}`. Commit: "fix(lsp):
   negotiate utf-8 position encoding".
 - Now advertises `general.positionEncodings = ["utf-8","utf-16"]` (utf-8 first). UTF-8 LSP positions
   are byte offsets == the editor's columns, so a server that honors it (clangd/rust-analyzer/gopls/

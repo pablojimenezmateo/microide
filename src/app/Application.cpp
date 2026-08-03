@@ -27,7 +27,7 @@
 #include "platform/SubprocessSandbox.h"
 #include "render/RasterDecode.h"
 #include "render/RendererInfo.h"
-#include "workspace/ControlSpec.h"
+#include "workspace/control/ControlSpec.h"
 #include "util/StartupTrace.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"

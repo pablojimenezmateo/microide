@@ -9,9 +9,9 @@
 #include "plugin/PluginHostRuntimeTypes.h"
 #include "plugin/PluginPresentationRegistrationParsers.h"
 #include "project/DirectoryTree.h"
-#include "workspace/WorkspaceFileIconRegistry.h"
-#include "workspace/WorkspaceProjectState.h"
-#include "workspace/WorkspaceStatusRegistry.h"
+#include "workspace/registries/WorkspaceFileIconRegistry.h"
+#include "workspace/state/WorkspaceProjectState.h"
+#include "workspace/registries/WorkspaceStatusRegistry.h"
 
 #include <cstdint>
 #include <filesystem>

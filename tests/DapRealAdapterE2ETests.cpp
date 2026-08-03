@@ -15,7 +15,7 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
-#include "workspace/WorkspaceDapClient.h"
+#include "workspace/debug/WorkspaceDapClient.h"
 
 #include <chrono>
 #include <cstdio>

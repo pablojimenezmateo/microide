@@ -3,8 +3,8 @@
 #include <string>
 #include <vector>
 
-#include "workspace/ControlProtocol.h"
-#include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/control/ControlProtocol.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 
 namespace microide::workspace {
 

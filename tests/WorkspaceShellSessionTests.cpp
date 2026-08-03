@@ -2,10 +2,10 @@
 
 #include "platform/AppDirectories.h"
 #include "persistence/PersistedRecordWriter.h"
-#include "workspace/DiffDividerGeometry.h"
-#include "workspace/WorkspaceShellTestAccess.h"
-#include "workspace/WorkspacePersistenceCoordinator.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/render/DiffDividerGeometry.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
+#include "workspace/persistence/WorkspacePersistenceCoordinator.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 #include "project/GitCompareService.h"
 

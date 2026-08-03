@@ -1,8 +1,8 @@
 #include "TestSupport.h"
 
 #include "plugin/PluginHost.h"
-#include "workspace/SettingsOverlayService.h"
-#include "workspace/WorkspaceSettingsRegistry.h"
+#include "workspace/services/SettingsOverlayService.h"
+#include "workspace/registries/WorkspaceSettingsRegistry.h"
 
 #include <algorithm>
 #include <array>

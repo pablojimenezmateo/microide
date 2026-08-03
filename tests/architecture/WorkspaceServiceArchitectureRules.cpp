@@ -15,7 +15,7 @@ RuleResult CheckRenderTuDoesNotMaterializeStrings(const std::filesystem::path& r
   RuleResult result;
   result.label = "render translation units do not materialize search fallback strings";
   result.hard_fail = true;
-  const std::filesystem::path sidebar_path = repo_root / "src/workspace/WorkspaceShellRenderSidebar.cpp";
+  const std::filesystem::path sidebar_path = repo_root / "src/workspace/render/WorkspaceShellRenderSidebar.cpp";
   const std::string text = ReadRuleTarget(result, sidebar_path);
   AppendViolations(
       result, sidebar_path, text, std::regex(R"(std::string\s*\(\s*"search>\s*"\s*\)\s*\+)"),
@@ -43,7 +43,7 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
   result.hard_fail = true;
 
   std::vector<std::filesystem::path> render_files;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -52,12 +52,12 @@ RuleResult CheckRenderTuDoesNotCallToStringOrFormat(const std::filesystem::path&
       render_files.push_back(entry.path());
     }
   }
-  render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverPopup.cpp");
-  render_files.push_back(repo_root / "src/workspace/WorkspaceShellHoverTargets.cpp");
+  render_files.push_back(repo_root / "src/workspace/render/WorkspaceShellHoverPopup.cpp");
+  render_files.push_back(repo_root / "src/workspace/render/WorkspaceShellHoverTargets.cpp");
   // The debug pane's bottom-panel render TU is view-model-only like the editor
   // render TUs: it draws prebuilt row strings (DebugVariableRowView /
   // DebugBreakpointRowView) and must never format on the render hot path.
-  render_files.push_back(repo_root / "src/workspace/DebugPaneRender.cpp");
+  render_files.push_back(repo_root / "src/workspace/render/DebugPaneRender.cpp");
 
   const std::regex to_string_pattern(R"(\bstd::to_string\s*\()");
   const std::regex std_format_pattern(R"(\bstd::format\s*\()");
@@ -246,7 +246,7 @@ RuleResult CheckWorkspaceShellRenderFrameAvoidsEphemeralEditorViewModelStrings(
   RuleResult result;
   result.label = "WorkspaceShellRenderFrame editor VM path avoids std::string assembly";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellRenderFrame.cpp";
+  const std::filesystem::path path = repo_root / "src/workspace/render/WorkspaceShellRenderFrame.cpp";
   if (!RequireRuleTarget(result, path)) {
     return result;
   }
@@ -377,9 +377,9 @@ RuleResult CheckCompareMergeRenderUsesScratchRows(const std::filesystem::path& r
     std::array<std::string_view, 2> scratch_members;
   };
   const std::array<Target, 2> targets = {
-      Target{repo_root / "src/workspace/WorkspaceShellRenderCompare.cpp",
+      Target{repo_root / "src/workspace/render/WorkspaceShellRenderCompare.cpp",
              {"compare_left_scratch_row_", "compare_right_scratch_row_"}},
-      Target{repo_root / "src/workspace/WorkspaceShellRenderMerge.cpp",
+      Target{repo_root / "src/workspace/render/WorkspaceShellRenderMerge.cpp",
              {"merge_incoming_scratch_row_", "merge_current_scratch_row_"}},
   };
   for (const auto& target : targets) {
@@ -438,7 +438,7 @@ RuleResult CheckMouseWheelUsesFractionalAccumulator(const std::filesystem::path&
   RuleResult result;
   result.label = "HandleMouseWheel must use the fractional wheel accumulator";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellMouseMotion.cpp";
+  const std::filesystem::path path = repo_root / "src/workspace/shell/WorkspaceShellMouseMotion.cpp";
   if (!RequireRuleTarget(result, path)) {
     return result;
   }
@@ -470,7 +470,7 @@ RuleResult CheckBottomPanelTerminalRectCache(const std::filesystem::path& repo_r
   RuleResult result;
   result.label = "PrepareFrameOnce must cache the last terminal panel rect";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/workspace/WorkspaceShellRenderFrame.cpp";
+  const std::filesystem::path path = repo_root / "src/workspace/render/WorkspaceShellRenderFrame.cpp";
   if (!RequireRuleTarget(result, path)) {
     return result;
   }
@@ -496,7 +496,7 @@ RuleResult CheckNoStdStoInRenderOrBuilderTus(const std::filesystem::path& repo_r
   const std::regex pattern(R"(\bstd::(stol|stoi|stoul|stoll|stod|stof|stold)\s*\()");
 
   std::vector<std::filesystem::path> targets;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -539,8 +539,8 @@ RuleResult CheckStatusBarRefreshIsAsyncOnly(const std::filesystem::path& repo_ro
   // missing target is now a violation so a future rename fails loudly instead of
   // going vacuous (the 022 fixture-path-drift lesson).
   const std::array<std::string_view, 2> targets = {
-      "src/workspace/WorkspaceShellPresentation.cpp",
-      "src/workspace/StatusBarModelService.cpp",
+      "src/workspace/shell/WorkspaceShellPresentation.cpp",
+      "src/workspace/services/StatusBarModelService.cpp",
   };
   // Block any `repo.Execute(` or `git symbolic-ref` mention in the files. The IsValid() probe is
   // still allowed because it is a filesystem-only check cached by the model service.
@@ -592,7 +592,7 @@ RuleResult CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(
   result.hard_fail = true;
 
   std::vector<std::filesystem::path> render_files;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -681,7 +681,7 @@ RuleResult CheckPaintedScrollbarsAreGrabbable(const std::filesystem::path& repo_
   const std::regex pattern(R"(DrawScrollbar\s*\((?:[^();]|\([^()]*\))*\bfalse\s*\))");
 
   std::vector<std::filesystem::path> targets;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -723,7 +723,7 @@ RuleResult CheckWheelHandlersDoNotMoveFocus(const std::filesystem::path& repo_ro
   const std::regex focus_write(R"(surface\.focus\s*=[^=])");
 
   std::vector<std::filesystem::path> scanned;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -783,7 +783,7 @@ RuleResult CheckDebugSubsystemThreadingBehindDapClient(const std::filesystem::pa
   result.label = "debug subsystem threading stays behind WorkspaceDapClient";
   result.hard_fail = true;
   const std::regex pattern(R"(\bstd::(thread|jthread|async)\b)");
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }

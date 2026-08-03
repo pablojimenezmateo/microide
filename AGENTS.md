@@ -109,7 +109,7 @@ Hard-fail invariants (lint will reject the change):
 - No `try`/`catch` around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, or `std::stod`.
   Use the non-throwing `util/Parse.h` helpers (`ParseInt`, `ParseInt64`, `ParseSize`,
   `ParseFloat`) and handle `std::optional` directly.
-- `src/workspace/WorkspaceShell.h` ≤ 400 lines and `src/workspace/WorkspaceShell.cpp` ≤ 600 lines.
+- `src/workspace/shell/WorkspaceShell.h` ≤ 400 lines and `src/workspace/shell/WorkspaceShell.cpp` ≤ 600 lines.
   Add behavior to a service, not the shell.
 - The render translation units covered by `CheckRenderSurfaceStateAccess`
   (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`,

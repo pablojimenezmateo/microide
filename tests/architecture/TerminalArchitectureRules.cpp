@@ -485,7 +485,7 @@ RuleResult CheckSettingDefaultsMatchRegistry(const std::filesystem::path& repo_r
   result.hard_fail = true;
 
   const std::filesystem::path registry_path =
-      repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
+      repo_root / "src/workspace/registries/WorkspaceSettingsRegistry.cpp";
   const std::string registry_text = ReadRuleTarget(result, registry_path);
   if (registry_text.empty()) {
     result.violations.push_back(Violation{
@@ -607,7 +607,7 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
   result.hard_fail = true;
 
   const std::filesystem::path registry_path =
-      repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
+      repo_root / "src/workspace/registries/WorkspaceSettingsRegistry.cpp";
   const std::string registry_text = ReadRuleTarget(result, registry_path);
   if (registry_text.empty()) {
     result.violations.push_back(Violation{
@@ -741,7 +741,7 @@ RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root
   result.label = "declared settings must be read by something";
   result.hard_fail = true;
 
-  const std::filesystem::path registry = repo_root / "src/workspace/WorkspaceSettingsRegistry.cpp";
+  const std::filesystem::path registry = repo_root / "src/workspace/registries/WorkspaceSettingsRegistry.cpp";
   const std::string registry_text = ReadRuleTarget(result, registry);
   const std::vector<bool> registry_is_code = BuildCodeMask(registry_text);
   // Custom delimiter: the pattern itself contains `)"`.

@@ -4,10 +4,10 @@
 #include <utility>
 #include <vector>
 
-#include "workspace/LayoutModeService.h"
+#include "workspace/services/LayoutModeService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectPresentation.h"
-#include "workspace/WorkspaceTabCoordinator.h"
+#include "workspace/coordinators/WorkspaceTabCoordinator.h"
 
 namespace {
 

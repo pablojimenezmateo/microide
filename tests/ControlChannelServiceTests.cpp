@@ -10,8 +10,8 @@
 #include <vector>
 
 #include "util/JsonValue.h"
-#include "workspace/ControlChannelService.h"
-#include "workspace/LaunchConfig.h"
+#include "workspace/control/ControlChannelService.h"
+#include "workspace/debug/LaunchConfig.h"
 #include "workspace/WorkspaceContext.h"
 
 #if defined(__unix__) || defined(__APPLE__)

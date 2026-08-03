@@ -1,4 +1,4 @@
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
 
 #include <cstddef>
 #include <cstdint>

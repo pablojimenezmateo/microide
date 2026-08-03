@@ -154,7 +154,7 @@ and a dedicated `WorkspaceShell::Bootstrapper` owns the shell's action, render, 
 composition. The shell's `Render` or `RenderPrepared` entry points now delegate the ordered frame
 composition path to `WorkspaceRootView`, which composes dedicated active-surface, chrome, sidebar,
 overlay, panel, menu, and prompt views. Shell tests use the `MICROIDE_TESTING`-gated public
-`WorkspaceShell::TestAccess` API from `workspace/WorkspaceShellTestAccess.h`. The 2026-04-29
+`WorkspaceShell::TestAccess` API from `workspace/shell/WorkspaceShellTestAccess.h`. The 2026-04-29
 `comprehensive-tech-debt-cleanup` change locked the workspace into a service-oriented model:
 coordinators consume narrow service interfaces (`EditorTabService`, `ProjectCatalogService`,
 `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`,

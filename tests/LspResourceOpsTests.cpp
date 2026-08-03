@@ -1,10 +1,10 @@
 #include "TestSupport.h"
 
-#include "workspace/LspService.h"
-#include "workspace/WorkspaceCodeActionRegistry.h"
-#include "workspace/WorkspaceCompletionRegistry.h"
+#include "workspace/lsp/LspService.h"
+#include "workspace/registries/WorkspaceCodeActionRegistry.h"
+#include "workspace/registries/WorkspaceCompletionRegistry.h"
 #include "workspace/WorkspaceContext.h"
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 #include <filesystem>
 #include <fstream>

@@ -1,8 +1,8 @@
 #include "TestSupport.h"
 
 #include "project/GitCompareService.h"
-#include "workspace/LaunchConfig.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/debug/LaunchConfig.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <chrono>

@@ -8,7 +8,7 @@
 #include "app/AppStartupOptions.h"
 #include "app/RedrawTraceAccumulator.h"
 #include "app/SceneTexturePresenter.h"
-#include "workspace/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::tests {
 // Narrow headless-lifecycle test seam (see tests/ApplicationTests.cpp). Lets the

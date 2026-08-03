@@ -4,11 +4,11 @@
 #include "platform/HostPlatform.h"
 #include "util/DebugTrace.h"
 #include "util/TraceChannel.h"
-#include "workspace/ControlChannelService.h"
-#include "workspace/ControlClient.h"
-#include "workspace/ControlProtocol.h"
+#include "workspace/control/ControlChannelService.h"
+#include "workspace/control/ControlClient.h"
+#include "workspace/control/ControlProtocol.h"
 #include "workspace/ManPage.h"
-#include "workspace/WorkspaceCommandRegistry.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 
 #include <filesystem>
 #include <iostream>

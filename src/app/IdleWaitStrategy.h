@@ -4,7 +4,7 @@
 
 #include <algorithm>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::app {
 

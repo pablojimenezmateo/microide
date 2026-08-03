@@ -5,7 +5,7 @@
 #include <algorithm>
 #include <vector>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::tests {
 

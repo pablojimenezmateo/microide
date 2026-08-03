@@ -12,7 +12,7 @@
 #include "platform/AppDirectories.h"
 #include "util/Hex.h"
 #include "util/StringUtil.h"
-#include "workspace/PersistenceService.h"
+#include "workspace/persistence/PersistenceService.h"
 #include "workspace/WorkspacePathUtils.h"
 
 namespace microide::workspace {

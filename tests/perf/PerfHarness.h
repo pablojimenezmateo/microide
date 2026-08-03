@@ -12,7 +12,7 @@
 #include <string_view>
 #include <vector>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShell.h"
 #include "workspace/WorkspaceVirtualDocument.h"
 
 #include "compare/MergeModel.h"

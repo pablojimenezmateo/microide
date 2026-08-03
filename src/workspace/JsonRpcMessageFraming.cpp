@@ -5,7 +5,7 @@
 #include <string_view>
 #include <system_error>
 
-#include "workspace/LspClientTrace.h"
+#include "workspace/lsp/LspClientTrace.h"
 
 namespace microide::workspace {
 

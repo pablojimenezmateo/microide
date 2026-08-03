@@ -3,8 +3,8 @@
 #include "util/JsonValue.h"
 #include "workspace/FileUri.h"
 #include "workspace/JsonRpcMessageFraming.h"
-#include "workspace/WorkspaceLspClient.h"
-#include "workspace/WorkspaceLspManager.h"
+#include "workspace/lsp/WorkspaceLspClient.h"
+#include "workspace/lsp/WorkspaceLspManager.h"
 
 #include <algorithm>
 #include <atomic>

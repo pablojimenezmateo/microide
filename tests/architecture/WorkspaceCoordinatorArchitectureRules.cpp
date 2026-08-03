@@ -48,7 +48,7 @@ RuleResult CheckLspDidOpenIsNonBlocking(const std::filesystem::path& repo_root) 
   result.hard_fail = true;
   // Scan Activate() in TabCoordinator for direct LSP didOpen/didChange dispatch.
   // Activation should only hydrate UI state and schedule async work.
-  const std::filesystem::path target_path = repo_root / "src/workspace/WorkspaceTabCoordinator.cpp";
+  const std::filesystem::path target_path = repo_root / "src/workspace/coordinators/WorkspaceTabCoordinator.cpp";
   if (!RequireRuleTarget(result, target_path)) {
     return result;
   }
@@ -173,7 +173,7 @@ RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& re
   RuleResult result;
   result.label = "project reactivation must refresh, not reload, plugins";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/workspace/ProjectCatalogService.cpp";
+  const std::filesystem::path path = repo_root / "src/workspace/services/ProjectCatalogService.cpp";
   if (!std::filesystem::exists(path)) {
     result.violations.push_back(Violation{
         .path = path,

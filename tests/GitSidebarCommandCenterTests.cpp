@@ -4,8 +4,8 @@
 #include <functional>
 #include <string>
 
-#include "workspace/GitSidebarCommandCenter.h"
-#include "workspace/WorkspaceGitSidebarPresentation.h"
+#include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/git/WorkspaceGitSidebarPresentation.h"
 
 namespace microide::tests {
 namespace {

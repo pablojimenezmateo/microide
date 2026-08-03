@@ -7,10 +7,10 @@
 #include "project/PatchGenerator.h"
 #include "project/PatchApplyTypes.h"
 #include "project/ProjectBackgroundExecutor.h"
-#include "workspace/CompareTabReview.h"
-#include "workspace/GitRepositoryService.h"
-#include "workspace/PatchApplyService.h"
-#include "workspace/WorkspaceTabState.h"
+#include "workspace/git/CompareTabReview.h"
+#include "workspace/git/GitRepositoryService.h"
+#include "workspace/git/PatchApplyService.h"
+#include "workspace/state/WorkspaceTabState.h"
 
 #include <cstddef>
 #include <filesystem>

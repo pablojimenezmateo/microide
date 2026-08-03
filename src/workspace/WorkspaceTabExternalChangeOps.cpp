@@ -2,7 +2,7 @@
 // self-write signature comparison. Split out of WorkspaceTabCoordinator.cpp to
 // keep that coordinator translation unit focused (and within its size budget).
 
-#include "workspace/WorkspaceTabCoordinator.h"
+#include "workspace/coordinators/WorkspaceTabCoordinator.h"
 
 namespace microide::workspace {
 

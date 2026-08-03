@@ -1,11 +1,11 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
-#include "workspace/WorkspaceFormatterRegistry.h"
+#include "workspace/registries/WorkspaceFormatterRegistry.h"
 #include "workspace/WorkspaceSaveParticipants.h"
-#include "workspace/WorkspaceCompletionRegistry.h"
-#include "workspace/WorkspaceCodeActionRegistry.h"
-#include "workspace/WorkspaceToolRegistry.h"
+#include "workspace/registries/WorkspaceCompletionRegistry.h"
+#include "workspace/registries/WorkspaceCodeActionRegistry.h"
+#include "workspace/registries/WorkspaceToolRegistry.h"
 
 namespace microide::tests {
 

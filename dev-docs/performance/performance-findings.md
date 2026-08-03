@@ -1408,7 +1408,7 @@ Relevant code:
 - `src/terminal/TerminalSession.h` — `TerminalLineRangeSnapshot`,
   `SnapshotLineRangeIfChanged`
 - `src/terminal/TerminalSession.cpp` — `snapshot_generation_`, writer invalidation
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — cached visible terminal lines
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp` — cached visible terminal lines
 
 ### New finding 1: `WorkspaceReviewComments` O(visible_lines × comments) per-frame scan (HIGH)
 
@@ -1435,7 +1435,7 @@ Implemented:
 Relevant code:
 
 - `src/workspace/WorkspaceReviewComments.cpp` — `GetThreads`, `GetComments`
-- `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
 - `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §8
 
 ### New finding 2: `ComputeEditorPaneLayouts` called twice per render frame (MEDIUM)
@@ -1452,7 +1452,7 @@ No caching infrastructure was needed.
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp` — two separate `ComputeEditorPaneLayouts` calls
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp` — two separate `ComputeEditorPaneLayouts` calls
 - `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §9
 
 ### New finding 3: Terminal cursor state acquired under three separate mutex locks per frame (MEDIUM)
@@ -1471,7 +1471,7 @@ submission now use that snapshot instead of separate cursor accessors.
 Relevant code:
 
 - `src/terminal/TerminalSession.h` — `cursor_row()`, `cursor_column()`, `cursor_visible()`
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — terminal cursor render path
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp` — terminal cursor render path
 - `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §10
 
 ### New finding 4: `std::find` on `marked_lines` vector in `draw_review_comment_markers` (MEDIUM)
@@ -1497,7 +1497,7 @@ Implemented:
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
+- `src/workspace/render/WorkspaceShellRenderFrame.cpp` — `draw_review_comment_markers` lambda
 - `guidelines/tech-debt/archive/2026-05-01-render-and-layout-perf-batch.md` — §11
 
 ## Deep-Dive Findings (2026-04-23)
@@ -1604,7 +1604,7 @@ allocation-free.
 Relevant code:
 
 - `src/terminal/TerminalSession.cpp` — `SnapshotLineRange`, line 705
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — line 269
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp` — line 269
 
 ### 7. Output panel calls `HighlightLine` on every visible line every frame (HIGH — output panel)
 
@@ -1621,7 +1621,7 @@ is only recomputed when the snippet has not been highlighted yet or the resolved
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — line 314
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp` — line 314
 - `src/workspace/WorkspaceOutputChannels.*`
 
 ### 8. Terminal foreground rendering is per-cell rather than per-run (MEDIUM — terminal render)
@@ -1638,7 +1638,7 @@ predominantly one color.
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — `draw_terminal_line` lambda, line 156–194
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp` — `draw_terminal_line` lambda, line 156–194
 
 ### 9. Buffer search lowercases every visible line every frame (MEDIUM — editor render)
 
@@ -1713,7 +1713,7 @@ This allocates a temporary string every time an output line is checked for a num
 
 Relevant code:
 
-- `src/workspace/WorkspaceShellRenderBottomPanel.cpp` — `ParseUnsignedStrict`, line 35
+- `src/workspace/render/WorkspaceShellRenderBottomPanel.cpp` — `ParseUnsignedStrict`, line 35
 
 ## Still Worth Doing
 
@@ -1747,11 +1747,11 @@ work is now:
 
 Relevant code:
 
-- `src/workspace/WorkspaceShell.cpp`
+- `src/workspace/shell/WorkspaceShell.cpp`
 - `src/workspace/WorkspaceShellInput.cpp`
-- `src/workspace/WorkspaceTabCoordinator.cpp`
-- `src/workspace/WorkspaceSidebarCoordinator.cpp`
-- `src/workspace/WorkspaceCompareInteractionCoordinator.cpp`
+- `src/workspace/coordinators/WorkspaceTabCoordinator.cpp`
+- `src/workspace/coordinators/WorkspaceSidebarCoordinator.cpp`
+- `src/workspace/coordinators/WorkspaceCompareInteractionCoordinator.cpp`
 
 ### Lower-cost text rendering backend
 
@@ -1804,8 +1804,8 @@ Impact:
 
 Relevant code:
 
-- `src/workspace/WorkspaceLspClient.cpp` - async initialization and query synchronization
-- `src/workspace/WorkspaceLspManager.cpp` - server lifecycle management
+- `src/workspace/lsp/WorkspaceLspClient.cpp` - async initialization and query synchronization
+- `src/workspace/lsp/WorkspaceLspManager.cpp` - server lifecycle management
 - `src/workspace/WorkspaceShellTooling.cpp` - LSP query methods
 
 ## Throughput Bottleneck Performance Pass (2026-05-13)

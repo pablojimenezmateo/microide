@@ -122,7 +122,7 @@ void RunDirectGitRepositoryRuleFixtures() {
   // The sanctioned service TU is allowlisted, and neither a reference/pointer
   // parameter, a qualified static call, nor a differently-named type is a
   // construction.
-  WriteFile(root / "src/workspace/GitRepositoryService.cpp",
+  WriteFile(root / "src/workspace/git/GitRepositoryService.cpp",
             "void S(const Path& p){ const project::GitRepository repo(p); (void)repo; }\n");
   WriteFile(root / "src/workspace/SomeCoordinator.cpp",
             "void A(project::GitRepository& repo){ (void)repo; }\n"
@@ -153,7 +153,7 @@ void RunActionIdReachabilityRuleFixtures() {
       "  ContextMenuOnly,\n"
       "  Commented,  // Orphan is named here in a comment only\n"
       "};\n";
-  WriteFile(root / "src/workspace/WorkspaceActionTypes.h", kEnum);
+  WriteFile(root / "src/workspace/actions/WorkspaceActionTypes.h", kEnum);
   // Too few enumerators: the parse-shape guard must fire rather than silently
   // reporting every action reachable.
   Expect(!CheckEveryActionIdIsReachable(root).violations.empty(),
@@ -165,7 +165,7 @@ void RunActionIdReachabilityRuleFixtures() {
     enum_text += "  Padding" + std::to_string(i) + ",\n";
   }
   enum_text += "};\n";
-  WriteFile(root / "src/workspace/WorkspaceActionTypes.h", enum_text);
+  WriteFile(root / "src/workspace/actions/WorkspaceActionTypes.h", enum_text);
 
   std::string uses =
       "void Menu(){ MenuItem(ActionId::Reachable); }\n"
@@ -209,7 +209,7 @@ void RunRegisteredSettingsAreReadRuleFixtures() {
     registry += "  SettingSpec{ .id = \"group" + std::to_string(i) + ".used_key\" },\n";
   }
   registry += "  SettingSpec{ .id = \"group.orphan_key\" },\n};\n";
-  WriteFile(root / "src/workspace/WorkspaceSettingsRegistry.cpp", registry);
+  WriteFile(root / "src/workspace/registries/WorkspaceSettingsRegistry.cpp", registry);
 
   std::string reader;
   for (int i = 0; i < 24; ++i) {
@@ -230,7 +230,7 @@ void RunRegisteredSettingsAreReadRuleFixtures() {
          "a setting with any consumer passes");
 
   // Vacuity guard: too few parsed ids means the declaration shape moved.
-  WriteFile(root / "src/workspace/WorkspaceSettingsRegistry.cpp",
+  WriteFile(root / "src/workspace/registries/WorkspaceSettingsRegistry.cpp",
             "std::span<const SettingSpec> BuiltinSettingSpecs() { return {}; }\n");
   Expect(!CheckRegisteredSettingsAreRead(root).violations.empty(),
          "a registry the scan cannot parse must fail loudly, not pass vacuously");
@@ -349,12 +349,12 @@ void RunRenderTuTextCompositionRuleFixtures() {
   for (const char* name : {"WorkspaceShellRenderSidebar.cpp", "WorkspaceShellRenderCompare.cpp",
                            "WorkspaceShellRenderMerge.cpp", "WorkspaceShellHoverPopup.cpp",
                            "WorkspaceShellHoverTargets.cpp", "DebugPaneRender.cpp"}) {
-    WriteFile(root / "src/workspace" / name, "// clean render TU fixture\n");
+    WriteFile(root / "src/workspace/render" / name, "// clean render TU fixture\n");
   }
   WriteFile(root / "src/editor/EditorViewRenderer.cpp", "// clean render TU fixture\n");
   WriteFile(root / "src/editor/DecoratedTextGridRenderer.cpp", "// clean render TU fixture\n");
 
-  const std::filesystem::path sidebar = root / "src/workspace/WorkspaceShellRenderSidebar.cpp";
+  const std::filesystem::path sidebar = root / "src/workspace/render/WorkspaceShellRenderSidebar.cpp";
 
   WriteFile(sidebar, "void F(){ Draw(FormatEmptyState(\"matches\")); }\n");
   Expect(!CheckRenderTuDoesNotCallToStringOrFormat(root).violations.empty(),
@@ -383,11 +383,11 @@ void RunRenderTuTextCompositionRuleFixtures() {
   // No carve-outs: the hover popup was the last render TU that concatenated
   // (its word wrapper), and it now builds candidates in a reused scratch buffer.
   // A regression there must fail like anywhere else.
-  WriteFile(root / "src/workspace/WorkspaceShellHoverPopup.cpp",
+  WriteFile(root / "src/workspace/render/WorkspaceShellHoverPopup.cpp",
             "void F(const std::string& a, const std::string& b){ auto s = a + \" \" + b; (void)s; }\n");
   Expect(!CheckRenderTuDoesNotMaterializeSingleCharOrPrefixStrings(root).violations.empty(),
          "the hover popup is no longer exempt from the concat rule");
-  WriteFile(root / "src/workspace/WorkspaceShellHoverPopup.cpp", "// clean render TU fixture\n");
+  WriteFile(root / "src/workspace/render/WorkspaceShellHoverPopup.cpp", "// clean render TU fixture\n");
 
   // TruncateToWidth hides an allocation behind a helper name, so none of the
   // patterns above see it. The Settings overlay called it once per label per

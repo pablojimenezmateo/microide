@@ -1,8 +1,8 @@
 #include "TestSupport.h"
 
-#include "workspace/TabStripService.h"
+#include "workspace/services/TabStripService.h"
 #include "workspace/WorkspaceOutputChannels.h"
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 #include <string>
 #include <vector>

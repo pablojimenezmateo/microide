@@ -13,7 +13,7 @@ The `WorkspaceShell` type SHALL act as a thin orchestrator that owns service ins
 
 #### Scenario: Shell size invariant
 - **WHEN** the source tree is built
-- **THEN** `src/workspace/WorkspaceShell.h` SHALL be no larger than 400 lines and `src/workspace/WorkspaceShell.cpp` SHALL be no larger than 600 lines, enforced by an architectural-lint test in `microide_tests`
+- **THEN** `src/workspace/shell/WorkspaceShell.h` SHALL be no larger than 400 lines and `src/workspace/shell/WorkspaceShell.cpp` SHALL be no larger than 600 lines, enforced by an architectural-lint test in `microide_tests`
 
 #### Scenario: No friend access
 - **WHEN** any file under `src/workspace/` is parsed

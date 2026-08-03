@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/ReviewSessionCoordinator.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/git/ReviewSessionCoordinator.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <cstddef>
 #include <filesystem>

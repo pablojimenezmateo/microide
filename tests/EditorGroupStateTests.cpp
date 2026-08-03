@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 #include <vector>
 

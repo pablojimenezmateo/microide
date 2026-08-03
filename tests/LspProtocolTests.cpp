@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
-#include "workspace/LspProtocol.h"
+#include "workspace/lsp/LspProtocol.h"
 
 #include <optional>
 

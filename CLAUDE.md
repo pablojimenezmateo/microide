@@ -15,6 +15,30 @@ Purpose: first-stop operating guide for agents working in this repository.
 
 `microide` is a compact single-window desktop editor and IDE shell. The codebase currently centers on built-in editor, compare, merge, search, git, terminal, and plugin workflows.
 
+### Where things live in `src/workspace/`
+
+`src/workspace` is the largest subsystem (~58% of the tree). It is split by what a
+file *is*, first match wins — subsystem beats role, role beats catch-all:
+
+| directory | holds |
+| --- | --- |
+| `shell/` | `WorkspaceShell` + its companion TUs (the thin orchestrator and its per-area entry points) |
+| `render/` | every `WorkspaceShellRender*` TU, `RenderViewModelBuilder`, and the other view-model-only paint units (`DebugPaneRender`, the hover TUs) |
+| `coordinators/` | `Workspace*Coordinator*` — including a coordinator's continuation TUs |
+| `services/` | `*Service` host-owned service boundaries |
+| `registries/` | `*Registry` contribution/lookup tables |
+| `actions/` | `ActionId` types, requests, executors, dispatch |
+| `state/` | `Workspace*State` models |
+| `lsp/`, `debug/`, `git/`, `persistence/`, `control/` | subsystem-owned clients, protocols, models, and presentation |
+| top level | shared workspace vocabulary every bucket includes (`WorkspaceContext`, `WorkspaceLayout`, `WorkspaceUiText`, `FileUri`, …) |
+
+Put a new file in the directory that matches what it is. The architecture lint
+iterates `src/workspace` **recursively** and selects files by filename, so a
+correctly-named file is covered wherever it sits — but a rule that names an
+explicit path must be repointed when a file moves, and `RequireRuleTarget` /
+`ReadRuleTarget` will hard-fail the run if you forget rather than going quietly
+green. Use those helpers for any new path-named rule.
+
 ## Source Of Truth
 
 When guidance conflicts, use this order:
@@ -146,7 +170,7 @@ Several patterns were intentionally removed by the 2026-04-29 `comprehensive-tec
 - Workspace coordinator constructors take service-interface references, never `WorkspaceShell&` or `WorkspaceShell*`. Services live alongside the shell (`EditorTabService`, `ProjectCatalogService`, `PromptSurfaceService`, `SidebarService`, `CompareMergeService`, `TerminalPanelService`, `PluginRuntimeService`, `PersistenceService`).
 - No `friend class`/`friend struct` in `src/workspace/*`, except the sanctioned `WorkspaceShell::TestAccess` backdoor (now declared unconditionally so the shared `microide_core` object library compiles an ODR-identical `WorkspaceShell` for the production and test binaries; the lint exempts friends naming a `*TestAccess` type).
 - Numeric token parsing uses `util/Parse.h` (`ParseInt`, `ParseInt64`, `ParseSize`, `ParseFloat`). No `try`/`catch` around `std::sto*`.
-- The shell stays a thin orchestrator: `src/workspace/WorkspaceShell.h` ≤ 400 lines, `src/workspace/WorkspaceShell.cpp` ≤ 600 lines.
+- The shell stays a thin orchestrator: `src/workspace/shell/WorkspaceShell.h` ≤ 400 lines, `src/workspace/shell/WorkspaceShell.cpp` ≤ 600 lines.
 - Workspace-state persistence (project state, user config, session restore) routes through `PersistenceService` plus `PersistedRecordReader`/`PersistedRecordWriter`. Do not hand-roll a new text format or open these files directly elsewhere.
 - Single-line input surfaces consume `editor/SingleLineEditor` plus `editor/SingleLineKeyHandler`.
 - The active editor viewport is owned by the active editor tab; resolve it through `EditorTabService::ActiveViewport()`. Do not reintroduce a shell-level or project-level viewport fallback under any name.

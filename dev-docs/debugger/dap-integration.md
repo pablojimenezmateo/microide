@@ -84,16 +84,16 @@ The LSP subsystem is the template at every layer. Concrete anchors:
 | Wire-type mapping | `src/workspace/LspProtocol.{h,cpp}` | `src/workspace/DapProtocol.{h,cpp}` (Phase 0 ✔) |
 | Async subprocess transport | `src/platform/AsyncSubprocess.h` (poll + stdout_fd) | reused as-is |
 | JSON codec | `src/util/JsonValue.h` | reused as-is |
-| Service wired into shell | `src/workspace/LspService.h` (`Configure(ctx, Operations)`, `SetWakeEventType`, `ConsumeLspCallbacks()` drained per frame) | `DebugService` (Phase 1) |
+| Service wired into shell | `src/workspace/lsp/LspService.h` (`Configure(ctx, Operations)`, `SetWakeEventType`, `ConsumeLspCallbacks()` drained per frame) | `DebugService` (Phase 1) |
 | Per-language/adapter manager | `src/workspace/WorkspaceLspManager.{h,cpp}` | `WorkspaceDapManager` (Phase 1) |
 | Plugin contribution | `ctx.lsp.add` → `ContributedLanguageServer` in `src/plugin/PluginHost.h`, parsed in `PluginProviderRegistrationParsers.cpp` | `ctx.debug.add` → `ContributedDebugAdapter` (Phase 1) |
-| Gutter click | fold-marker click sub-region in `src/workspace/WorkspaceEditorMouseCoordinator.cpp`; `WorkspaceLayout::VisibleTextGridLineAtY()` | breakpoint toggle (Phase 2) |
+| Gutter click | fold-marker click sub-region in `src/workspace/coordinators/WorkspaceEditorMouseCoordinator.cpp`; `WorkspaceLayout::VisibleTextGridLineAtY()` | breakpoint toggle (Phase 2) |
 | Gutter marker render | `src/editor/DiagnosticsRender.cpp` `DiagnosticGutterMarkerRect` | breakpoint dots (Phase 2) |
 | Line decoration / fill | `src/editor/RowDecorationBuilder.h` (`RowFillSpan`), `DecoratedTextGridRenderer.h` | execution-line highlight (Phase 3) |
 | Per-frame editor view model | `src/editor/EditorViewModel.h`, built by `RenderViewModelBuilder` | breakpoint marks + execution line (Phase 2/3) |
-| Hover | `src/workspace/WorkspaceShellHoverTargets.cpp` / `WorkspaceShellHoverPopup.cpp` (`QueryHover`) | hover-to-inspect (Phase 5) |
-| Bottom panel | `PanelContentKind`/`PanelState` in `src/workspace/WorkspaceProjectState.h`; `TerminalPanelService`; `WorkspaceShellRenderBottomPanel.cpp` | debug panels (Phase 1/3/4/6) |
-| Persistence | `src/workspace/WorkspacePersistenceFormat.h` (`EncodeProjectSessionRecord`), `PersistenceService` | `PersistedDebugState` (Phase 2) |
+| Hover | `src/workspace/render/WorkspaceShellHoverTargets.cpp` / `WorkspaceShellHoverPopup.cpp` (`QueryHover`) | hover-to-inspect (Phase 5) |
+| Bottom panel | `PanelContentKind`/`PanelState` in `src/workspace/state/WorkspaceProjectState.h`; `TerminalPanelService`; `WorkspaceShellRenderBottomPanel.cpp` | debug panels (Phase 1/3/4/6) |
+| Persistence | `src/workspace/persistence/WorkspacePersistenceFormat.h` (`EncodeProjectSessionRecord`), `PersistenceService` | `PersistedDebugState` (Phase 2) |
 
 ## Driving a debug session from an agent
 
@@ -227,7 +227,7 @@ step out / pause) gate on `debug.enabled` + session state.
 
 Original plan, retained for reference:
 
-- New: `src/workspace/DebugViewModel.h`, `DebugCommands.{h,cpp}` (`debug.continue/
+- New: `src/workspace/debug/DebugViewModel.h`, `DebugCommands.{h,cpp}` (`debug.continue/
   stepOver/stepIn/stepOut/pause/stop/restart`, bindable).
 - On `stopped`: `threads`→`stackTrace`→focus top frame; full-width execution-line
   fill via `RowDecorationBuilder` + gutter arrow; clear on `continued`.
@@ -450,16 +450,16 @@ handled. `invalidated` is still not handled.
 
 Files added:
 
-- `src/workspace/DapProtocol.h` / `DapProtocol.cpp` — DAP envelope encode
+- `src/workspace/debug/DapProtocol.h` / `DapProtocol.cpp` — DAP envelope encode
   (`MakeRequest`/`MakeResponse`), `ParseResponse`, `ParseCapabilities`, and parsers
   for stopped/output events, threads, stack frames + source, scopes, variables,
   breakpoints, evaluate results. Pure functions; one TU owns the wire mapping.
-- `src/workspace/WorkspaceDapClient.h` — public `DapClient`: `SetWakeEventType`,
+- `src/workspace/debug/WorkspaceDapClient.h` — public `DapClient`: `SetWakeEventType`,
   `SetEventCallback`, `Start(command, adapter_id, cwd, sandbox)`, `IsRunning/
   IsInitializing/IsInitialized`, `Capabilities()`, `LastError()`, `DrainCallbacks()`,
   `SendRequestAsync(command, args, callback)`, `BeginShutdown/Shutdown`, plus a test
   stub mode (`EnableTestStubMode`, `SetTestRequestHandler`, `InjectTestEvent`).
-- `src/workspace/WorkspaceDapClientInternal.h` — `DapClient::Impl`. Mirrors
+- `src/workspace/debug/WorkspaceDapClientInternal.h` — `DapClient::Impl`. Mirrors
   `LspClient::Impl`: dedicated I/O thread blocked in `poll()` over stdout + a
   self-pipe wake (`DapReadBuf` buffer with compaction), outbound queue, deferred
   pre-initialize queue, `seq`-keyed `pending_requests`, `ready_callbacks` drained on
@@ -468,7 +468,7 @@ Files added:
   `request_seq`; initialize handshake parses capabilities and starts the I/O thread;
   adapter-initiated reverse requests get a "not supported" response; shutdown sends
   `disconnect` and waits for its response.
-- `src/workspace/WorkspaceDapClient.cpp` — public method implementations.
+- `src/workspace/debug/WorkspaceDapClient.cpp` — public method implementations.
 
 Key DAP-vs-LSP differences encoded in the client:
 
@@ -496,7 +496,7 @@ Architecture change: retired `CheckNoDebuggerDapSurface` and its fixture/test
 
 Files added:
 
-- `src/workspace/LaunchConfig.h` — native launch/attach config (`name`, `type`,
+- `src/workspace/debug/LaunchConfig.h` — native launch/attach config (`name`, `type`,
   `request`, verbatim `arguments`). No `.vscode/launch.json` import.
 - `src/workspace/DebugSession.{h,cpp}` — lifecycle state machine
   (`Inactive→Initializing→Configuring→Running→Stopped→Terminated/Failed`) on top of
@@ -560,7 +560,7 @@ Files added:
   via horizontal spans; solid `theme.breakpoint` when verified, dimmed
   `theme.breakpoint_unverified` otherwise). Distinct from the diagnostic bar
   (`gutter_x + 2`) and the right-edge fold marker.
-- `src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp` — `Encode/
+- `src/workspace/persistence/WorkspacePersistenceBinaryFormatDebug.cpp` — `Encode/
   DecodeDebugStateRecord` for `PersistedDebugState` (breakpoints + launch configs
   + selected index), schema-tag/version gated like the session record.
 - `tests/BreakpointStoreTests.cpp` (7), `tests/fuzz/DebugStateRecordFuzz.cpp`.
@@ -647,7 +647,7 @@ setBreakpoints shape, `PluginHost/LaunchConfig*` (2), `DebugStateRecordFuzz`.
 
 Files added:
 
-- `src/workspace/DebugViewModel.h` — host-owned, transient `DebugExecutionView`
+- `src/workspace/debug/DebugViewModel.h` — host-owned, transient `DebugExecutionView`
   (`stopped`, `thread_id`, `stop_reason`, `frames`, `focused_frame_index`) +
   `DebugStackFrameView` (frame id, normalized `source_path`, 0-based `line`, and
   **prebuilt** `display_primary`/`display_secondary` so render TUs never build
@@ -788,7 +788,7 @@ Tests added (`tests/DebugServiceTests.cpp`, `tests/DapProtocolTests.cpp`):
 
 Files added:
 
-- `src/workspace/DebugViewModel.h` gained `DebugHoverModel` — the transient
+- `src/workspace/debug/DebugViewModel.h` gained `DebugHoverModel` — the transient
   hover-to-inspect cache for the focused frame's most recent
   `evaluate(context:"hover")`. Keyed by `(frame_id, expression)`; a monotonic
   `generation` (bumped on `Begin`/`Clear`) lets a completion that lands after a frame
@@ -1041,7 +1041,7 @@ Files changed (no new files; the design reused existing seams):
 - `src/workspace/DebugSession.{h,cpp}` — added `Reactivate()`: re-resolves the
   retained `last_stop_`'s stack + threads (re-fires `on_stopped`/`on_threads`) so a
   session switch rebuilds the shared view from the picked session's current stop.
-- `src/workspace/DebugViewModel.h` — `DebugExecutionView` gained
+- `src/workspace/debug/DebugViewModel.h` — `DebugExecutionView` gained
   `DebugSessionView`/`sessions`/`focused_session_id`; `PanelRowRef::Kind` grew a
   `Session` variant; `PanelRowAt`/`PanelRowCount` lay rows out **sessions → threads
   → frames**. `Clear()` **preserves** the session selector (sourced from

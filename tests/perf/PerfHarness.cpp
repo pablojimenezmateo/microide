@@ -18,7 +18,7 @@
 #include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
 namespace {

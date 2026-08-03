@@ -383,213 +383,213 @@ set(MICROIDE_CORE_SOURCES
   src/util/TaskExecutor.cpp
   src/util/TextFileIO.cpp
   src/util/WindowPresentation.cpp
-  src/workspace/WorkspaceShellCompare.cpp
-  src/workspace/WorkspaceShellCompareMerge.cpp
-  src/workspace/CompareVisibleLayoutCache.cpp
-  src/workspace/WorkspaceShellRenderCompare.cpp
-  src/workspace/ReviewSessionCoordinator.cpp
-  src/workspace/ReviewTabPlan.cpp
-  src/workspace/StatusBarModelService.cpp
-  src/workspace/TabStripService.cpp
-  src/workspace/TabStripAnimation.cpp
+  src/workspace/shell/WorkspaceShellCompare.cpp
+  src/workspace/shell/WorkspaceShellCompareMerge.cpp
+  src/workspace/render/CompareVisibleLayoutCache.cpp
+  src/workspace/render/WorkspaceShellRenderCompare.cpp
+  src/workspace/git/ReviewSessionCoordinator.cpp
+  src/workspace/git/ReviewTabPlan.cpp
+  src/workspace/services/StatusBarModelService.cpp
+  src/workspace/services/TabStripService.cpp
+  src/workspace/render/TabStripAnimation.cpp
   src/workspace/WorkspaceTabStripChrome.cpp
-  src/workspace/WorkspaceChromeMouseCoordinator.cpp
-  src/workspace/WorkspaceCompareInteractionCoordinator.cpp
-  src/workspace/WorkspaceCompareMouseCoordinator.cpp
-  src/workspace/WorkspaceActionCoordinator.cpp
-  src/workspace/WorkspaceActionAvailability.cpp
-  src/workspace/WorkspaceActionServices.cpp
-  src/workspace/WorkspaceActionServicesContextFactory.cpp
-  src/workspace/WorkspaceActionRequests.cpp
+  src/workspace/coordinators/WorkspaceChromeMouseCoordinator.cpp
+  src/workspace/coordinators/WorkspaceCompareInteractionCoordinator.cpp
+  src/workspace/coordinators/WorkspaceCompareMouseCoordinator.cpp
+  src/workspace/actions/WorkspaceActionCoordinator.cpp
+  src/workspace/actions/WorkspaceActionAvailability.cpp
+  src/workspace/actions/WorkspaceActionServices.cpp
+  src/workspace/actions/WorkspaceActionServicesContextFactory.cpp
+  src/workspace/actions/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
-  src/workspace/ControlChannelService.cpp
-  src/workspace/ControlClient.cpp
-  src/workspace/ControlProtocol.cpp
-  src/workspace/ControlSpec.cpp
+  src/workspace/control/ControlChannelService.cpp
+  src/workspace/control/ControlClient.cpp
+  src/workspace/control/ControlProtocol.cpp
+  src/workspace/control/ControlSpec.cpp
   src/workspace/ManPage.cpp
-  src/workspace/WorkspaceCommandRegistry.cpp
-  src/workspace/WorkspaceCommandLineCoordinator.cpp
-  src/workspace/WorkspaceEditActionExecutor.cpp
-  src/workspace/WorkspaceEditorMouseCoordinator.cpp
+  src/workspace/registries/WorkspaceCommandRegistry.cpp
+  src/workspace/coordinators/WorkspaceCommandLineCoordinator.cpp
+  src/workspace/actions/WorkspaceEditActionExecutor.cpp
+  src/workspace/coordinators/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceEventOrchestrator.cpp
-  src/workspace/WorkspaceGlobalActionExecutor.cpp
+  src/workspace/actions/WorkspaceGlobalActionExecutor.cpp
   src/workspace/WorkspaceIndentDetectApply.cpp
-  src/workspace/WorkspaceKeyInputCoordinator.cpp
-  src/workspace/WorkspaceKeyInputCoordinatorModal.cpp
-  src/workspace/WorkspaceKeyInputCoordinatorSurfaces.cpp
-  src/workspace/WorkspaceKeyInputCoordinatorSettings.cpp
-  src/workspace/WorkspaceKeyInputCoordinatorSidebar.cpp
-  src/workspace/WorkspaceKeyInputCoordinatorEditor.cpp
-  src/workspace/WorkspaceMergeMouseCoordinator.cpp
-  src/workspace/WorkspaceMenuCoordinator.cpp
-  src/workspace/WorkspaceMenuRegistry.cpp
-  src/workspace/WorkspacePanelMouseCoordinator.cpp
-  src/workspace/WorkspaceProjectActionExecutor.cpp
-  src/workspace/WorkspaceSearchActionExecutor.cpp
-  src/workspace/WorkspaceSidebarActionExecutor.cpp
-  src/workspace/WorkspaceTextInputCoordinator.cpp
-  src/workspace/WorkspaceTextInputCoordinatorTerminal.cpp
-  src/workspace/WorkspaceTabActionExecutor.cpp
-  src/workspace/EditorBlameOverlayService.cpp
-  src/workspace/WorkspaceShellCursor.cpp
-  src/workspace/WorkspaceDiffTabCoordinator.cpp
-  src/workspace/WorkspaceDirtyPromptCoordinator.cpp
-  src/workspace/PromptSurfaceService.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinator.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinatorModal.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinatorSurfaces.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinatorSettings.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinatorSidebar.cpp
+  src/workspace/coordinators/WorkspaceKeyInputCoordinatorEditor.cpp
+  src/workspace/coordinators/WorkspaceMergeMouseCoordinator.cpp
+  src/workspace/coordinators/WorkspaceMenuCoordinator.cpp
+  src/workspace/registries/WorkspaceMenuRegistry.cpp
+  src/workspace/coordinators/WorkspacePanelMouseCoordinator.cpp
+  src/workspace/actions/WorkspaceProjectActionExecutor.cpp
+  src/workspace/actions/WorkspaceSearchActionExecutor.cpp
+  src/workspace/actions/WorkspaceSidebarActionExecutor.cpp
+  src/workspace/coordinators/WorkspaceTextInputCoordinator.cpp
+  src/workspace/coordinators/WorkspaceTextInputCoordinatorTerminal.cpp
+  src/workspace/actions/WorkspaceTabActionExecutor.cpp
+  src/workspace/services/EditorBlameOverlayService.cpp
+  src/workspace/shell/WorkspaceShellCursor.cpp
+  src/workspace/coordinators/WorkspaceDiffTabCoordinator.cpp
+  src/workspace/coordinators/WorkspaceDirtyPromptCoordinator.cpp
+  src/workspace/services/PromptSurfaceService.cpp
   src/workspace/WorkspaceEditorBanner.cpp
-  src/workspace/WorkspaceShellEditor.cpp
-  src/workspace/WorkspaceShellEditorSplits.cpp
+  src/workspace/shell/WorkspaceShellEditor.cpp
+  src/workspace/shell/WorkspaceShellEditorSplits.cpp
   src/workspace/WorkspaceTabExternalChangeOps.cpp
-  src/workspace/WorkspaceShellInteraction.cpp
-  src/workspace/WorkspaceShellMenu.cpp
-  src/workspace/WorkspaceShellMouse.cpp
-  src/workspace/WorkspaceShellMouseMotion.cpp
-  src/workspace/WorkspaceShellOverlay.cpp
-  src/workspace/WorkspaceShellProjectSearch.cpp
-  src/workspace/WorkspaceShellProjectChanges.cpp
-  src/workspace/WorkspaceShellBufferSearch.cpp
-  src/workspace/WorkspaceShellPresentation.cpp
+  src/workspace/shell/WorkspaceShellInteraction.cpp
+  src/workspace/shell/WorkspaceShellMenu.cpp
+  src/workspace/shell/WorkspaceShellMouse.cpp
+  src/workspace/shell/WorkspaceShellMouseMotion.cpp
+  src/workspace/shell/WorkspaceShellOverlay.cpp
+  src/workspace/shell/WorkspaceShellProjectSearch.cpp
+  src/workspace/shell/WorkspaceShellProjectChanges.cpp
+  src/workspace/shell/WorkspaceShellBufferSearch.cpp
+  src/workspace/shell/WorkspaceShellPresentation.cpp
   src/workspace/CaretRedraw.cpp
-  src/workspace/WorkspaceShellRedraw.cpp
-  src/workspace/WorkspaceShellRenderFrame.cpp
-  src/workspace/WorkspaceShellRenderSidebar.cpp
-  src/workspace/WorkspaceShellRenderOverlay.cpp
-  src/workspace/WorkspaceShellRenderBottomPanel.cpp
-  src/workspace/WorkspaceShellRenderMenus.cpp
-  src/workspace/WorkspaceShellRenderPrompts.cpp
-  src/workspace/WorkspaceShellRenderChrome.cpp
-  src/workspace/WorkspaceShellRenderStatusBar.cpp
-  src/workspace/WorkspaceShellRenderSettingsOverlay.cpp
-  src/workspace/WorkspaceShellRenderTextInput.cpp
-  src/workspace/SingleLineViewMetrics.cpp
-  src/workspace/RenderViewModelBuilder.cpp
-  src/workspace/WorkspaceShellHoverPopup.cpp
-  src/workspace/WorkspaceShellHoverTargets.cpp
-  src/workspace/WorkspacePersistenceCoordinator.cpp
-  src/workspace/WorkspaceShellPlugins.cpp
+  src/workspace/shell/WorkspaceShellRedraw.cpp
+  src/workspace/render/WorkspaceShellRenderFrame.cpp
+  src/workspace/render/WorkspaceShellRenderSidebar.cpp
+  src/workspace/render/WorkspaceShellRenderOverlay.cpp
+  src/workspace/render/WorkspaceShellRenderBottomPanel.cpp
+  src/workspace/render/WorkspaceShellRenderMenus.cpp
+  src/workspace/render/WorkspaceShellRenderPrompts.cpp
+  src/workspace/render/WorkspaceShellRenderChrome.cpp
+  src/workspace/render/WorkspaceShellRenderStatusBar.cpp
+  src/workspace/render/WorkspaceShellRenderSettingsOverlay.cpp
+  src/workspace/render/WorkspaceShellRenderTextInput.cpp
+  src/workspace/render/SingleLineViewMetrics.cpp
+  src/workspace/render/RenderViewModelBuilder.cpp
+  src/workspace/render/WorkspaceShellHoverPopup.cpp
+  src/workspace/render/WorkspaceShellHoverTargets.cpp
+  src/workspace/persistence/WorkspacePersistenceCoordinator.cpp
+  src/workspace/shell/WorkspaceShellPlugins.cpp
   src/workspace/PluginEditorEventTracker.cpp
-  src/workspace/DebugToolbarSurface.cpp
-  src/workspace/WorkspaceShellLsp.cpp
-  src/workspace/WorkspaceShellTestAccess.cpp
-  src/workspace/WorkspaceShellOutput.cpp
-  src/workspace/WorkspaceShellSettingsOverlay.cpp
-  src/workspace/WorkspaceShellProjects.cpp
+  src/workspace/debug/DebugToolbarSurface.cpp
+  src/workspace/shell/WorkspaceShellLsp.cpp
+  src/workspace/shell/WorkspaceShellTestAccess.cpp
+  src/workspace/shell/WorkspaceShellOutput.cpp
+  src/workspace/shell/WorkspaceShellSettingsOverlay.cpp
+  src/workspace/shell/WorkspaceShellProjects.cpp
   src/workspace/WorkspacePathUtils.cpp
-  src/workspace/WorkspacePathMutationCoordinator.cpp
+  src/workspace/coordinators/WorkspacePathMutationCoordinator.cpp
   src/workspace/WorkspaceProjectSearchPresentation.cpp
   src/workspace/WorkspaceProjectPresentation.cpp
-  src/workspace/WorkspaceProjectCatalogCoordinator.cpp
-  src/workspace/AssistService.cpp
-  src/workspace/CompareTabReview.cpp
-  src/workspace/BranchReviewStateBridge.cpp
-  src/workspace/CompareMergeService.cpp
-  src/workspace/MergeResolverContext.cpp
-  src/workspace/MergeResultValidation.cpp
+  src/workspace/coordinators/WorkspaceProjectCatalogCoordinator.cpp
+  src/workspace/services/AssistService.cpp
+  src/workspace/git/CompareTabReview.cpp
+  src/workspace/git/BranchReviewStateBridge.cpp
+  src/workspace/services/CompareMergeService.cpp
+  src/workspace/git/MergeResolverContext.cpp
+  src/workspace/git/MergeResultValidation.cpp
   src/workspace/FileUri.cpp
-  src/workspace/CompareMergeRender.cpp
-  src/workspace/ProjectCatalogService.cpp
-  src/workspace/GitOperationService.cpp
-  src/workspace/GitSidebarHeaderLayout.cpp
+  src/workspace/render/CompareMergeRender.cpp
+  src/workspace/services/ProjectCatalogService.cpp
+  src/workspace/git/GitOperationService.cpp
+  src/workspace/git/GitSidebarHeaderLayout.cpp
   src/workspace/HoverTooltipSurface.cpp
   src/workspace/ProjectSearchPanelLayout.cpp
-  src/workspace/WorkspacePathMutationCoordinatorDirty.cpp
-  src/workspace/WorkspacePathMutationCoordinatorTabs.cpp
-  src/workspace/WorkspaceLifecycleCoordinator.cpp
+  src/workspace/coordinators/WorkspacePathMutationCoordinatorDirty.cpp
+  src/workspace/coordinators/WorkspacePathMutationCoordinatorTabs.cpp
+  src/workspace/coordinators/WorkspaceLifecycleCoordinator.cpp
   src/workspace/WorkspaceLayout.cpp
-  src/workspace/OverviewRuler.cpp
+  src/workspace/render/OverviewRuler.cpp
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp
   src/workspace/WorkspaceOutputChannels.cpp
-  src/workspace/TerminalPanelService.cpp
-  src/workspace/TerminalFindService.cpp
-  src/workspace/WorkspacePersistenceBinaryFormat.cpp
-  src/workspace/WorkspacePersistenceBinaryFormatSessions.cpp
-  src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp
-  src/workspace/WorkspacePersistenceBinaryFormatMru.cpp
-  src/workspace/GitRepositoryService.cpp
-  src/workspace/PatchApplyService.cpp
-  src/workspace/PersistenceService.cpp
-  src/workspace/RecentsService.cpp
+  src/workspace/services/TerminalPanelService.cpp
+  src/workspace/services/TerminalFindService.cpp
+  src/workspace/persistence/WorkspacePersistenceBinaryFormat.cpp
+  src/workspace/persistence/WorkspacePersistenceBinaryFormatSessions.cpp
+  src/workspace/persistence/WorkspacePersistenceBinaryFormatDebug.cpp
+  src/workspace/persistence/WorkspacePersistenceBinaryFormatMru.cpp
+  src/workspace/git/GitRepositoryService.cpp
+  src/workspace/git/PatchApplyService.cpp
+  src/workspace/persistence/PersistenceService.cpp
+  src/workspace/persistence/RecentsService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
   src/workspace/WorkspaceProjectFileMonitor.cpp
-  src/workspace/WorkspacePersistenceCoordinatorConfig.cpp
-  src/workspace/WorkspacePersistenceCoordinatorSession.cpp
-  src/workspace/WorkspacePersistenceCoordinatorWorkspaceSession.cpp
-  src/workspace/WorkspaceProjectDialogCoordinator.cpp
-  src/workspace/WorkspaceShellPrompts.cpp
-  src/workspace/WorkspaceShellMerge.cpp
-  src/workspace/WorkspaceShellMergeState.cpp
-  src/workspace/WorkspaceShellRenderMerge.cpp
-  src/workspace/NotificationService.cpp
-  src/workspace/WorkspaceSidebarCoordinator.cpp
-  src/workspace/SidebarService.cpp
-  src/workspace/WorkspaceSidebarCoordinatorRefresh.cpp
-  src/workspace/WorkspaceSidebarCoordinatorActions.cpp
-  src/workspace/WorkspaceSidebarMouseCoordinator.cpp
-  src/workspace/WorkspaceSidebarMouseCoordinatorScroll.cpp
-  src/workspace/WorkspaceTabMouseCoordinator.cpp
-  src/workspace/EditorTabService.cpp
-  src/workspace/WorkspaceTabCoordinator.cpp
-  src/workspace/WorkspaceTabCoordinatorSplits.cpp
-  src/workspace/WorkspaceTabCoordinatorShellBridge.cpp
+  src/workspace/persistence/WorkspacePersistenceCoordinatorConfig.cpp
+  src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp
+  src/workspace/persistence/WorkspacePersistenceCoordinatorWorkspaceSession.cpp
+  src/workspace/coordinators/WorkspaceProjectDialogCoordinator.cpp
+  src/workspace/shell/WorkspaceShellPrompts.cpp
+  src/workspace/shell/WorkspaceShellMerge.cpp
+  src/workspace/shell/WorkspaceShellMergeState.cpp
+  src/workspace/render/WorkspaceShellRenderMerge.cpp
+  src/workspace/services/NotificationService.cpp
+  src/workspace/coordinators/WorkspaceSidebarCoordinator.cpp
+  src/workspace/services/SidebarService.cpp
+  src/workspace/coordinators/WorkspaceSidebarCoordinatorRefresh.cpp
+  src/workspace/coordinators/WorkspaceSidebarCoordinatorActions.cpp
+  src/workspace/coordinators/WorkspaceSidebarMouseCoordinator.cpp
+  src/workspace/coordinators/WorkspaceSidebarMouseCoordinatorScroll.cpp
+  src/workspace/coordinators/WorkspaceTabMouseCoordinator.cpp
+  src/workspace/services/EditorTabService.cpp
+  src/workspace/coordinators/WorkspaceTabCoordinator.cpp
+  src/workspace/coordinators/WorkspaceTabCoordinatorSplits.cpp
+  src/workspace/coordinators/WorkspaceTabCoordinatorShellBridge.cpp
   src/workspace/WorkspaceProjectSearchRuntime.cpp
-  src/workspace/WorkspaceProjectStateCoordinator.cpp
-  src/workspace/WorkspaceGitOutgoingBase.cpp
-  src/workspace/GitSidebarCommandCenter.cpp
-  src/workspace/WorkspaceGitSidebarPresentation.cpp
-  src/workspace/WorkspaceRootView.cpp
-  src/workspace/WorkspaceShellBootstrapper.cpp
-  src/workspace/WorkspaceShellRender.cpp
-  src/workspace/WorkspaceShellSidebar.cpp
-  src/workspace/WorkspaceShellCommitWorkflow.cpp
-  src/workspace/CommitWorkflowState.cpp
-  src/workspace/CommitWorkflowService.cpp
-  src/workspace/WorkspaceShellSidebarMouse.cpp
-  src/workspace/WorkspaceShellSingleLineInputMouse.cpp
-  src/workspace/WorkspaceShellTerminal.cpp
-  src/workspace/WorkspaceShellTerminalTabs.cpp
-  src/workspace/WorkspaceKeybindingRegistry.cpp
+  src/workspace/coordinators/WorkspaceProjectStateCoordinator.cpp
+  src/workspace/git/WorkspaceGitOutgoingBase.cpp
+  src/workspace/git/GitSidebarCommandCenter.cpp
+  src/workspace/git/WorkspaceGitSidebarPresentation.cpp
+  src/workspace/shell/WorkspaceRootView.cpp
+  src/workspace/shell/WorkspaceShellBootstrapper.cpp
+  src/workspace/render/WorkspaceShellRender.cpp
+  src/workspace/shell/WorkspaceShellSidebar.cpp
+  src/workspace/shell/WorkspaceShellCommitWorkflow.cpp
+  src/workspace/git/CommitWorkflowState.cpp
+  src/workspace/git/CommitWorkflowService.cpp
+  src/workspace/shell/WorkspaceShellSidebarMouse.cpp
+  src/workspace/shell/WorkspaceShellSingleLineInputMouse.cpp
+  src/workspace/shell/WorkspaceShellTerminal.cpp
+  src/workspace/shell/WorkspaceShellTerminalTabs.cpp
+  src/workspace/registries/WorkspaceKeybindingRegistry.cpp
   src/workspace/WorkspaceLanguageContract.cpp
   src/workspace/WorkspaceFoldingRefresh.cpp
-  src/workspace/WorkspaceSettingsRegistry.cpp
-  src/workspace/SettingsStore.cpp
-  src/workspace/SettingsOverlayService.cpp
-  src/workspace/WorkspaceStatusRegistry.cpp
-  src/workspace/WorkspaceSidebarRegistry.cpp
-  src/workspace/WorkspaceThemeRegistry.cpp
-  src/workspace/WorkspaceFileIconRegistry.cpp
-  src/workspace/LspClientTrace.cpp
+  src/workspace/registries/WorkspaceSettingsRegistry.cpp
+  src/workspace/persistence/SettingsStore.cpp
+  src/workspace/services/SettingsOverlayService.cpp
+  src/workspace/registries/WorkspaceStatusRegistry.cpp
+  src/workspace/registries/WorkspaceSidebarRegistry.cpp
+  src/workspace/registries/WorkspaceThemeRegistry.cpp
+  src/workspace/registries/WorkspaceFileIconRegistry.cpp
+  src/workspace/lsp/LspClientTrace.cpp
   src/workspace/JsonRpcMessageFraming.cpp
-  src/workspace/LspFileWatchRegistry.cpp
-  src/workspace/LspPositionEncoding.cpp
-  src/workspace/LspProtocol.cpp
-  src/workspace/LspService.cpp
-  src/workspace/LspWorkspaceEditOps.cpp
-  src/workspace/WorkspaceLspClient.cpp
-  src/workspace/WorkspaceLspClientRequests.cpp
-  src/workspace/WorkspaceLspClientTransport.cpp
-  src/workspace/WorkspaceLspClientDispatch.cpp
-  src/workspace/WorkspaceLspClientLifecycle.cpp
-  src/workspace/WorkspaceLspManager.cpp
-  src/workspace/DapProtocol.cpp
-  src/workspace/WorkspaceDapClient.cpp
-  src/workspace/WorkspaceDapManager.cpp
-  src/workspace/DebugSession.cpp
-  src/workspace/DebugSessionBreakpoints.cpp
-  src/workspace/DebugSessionExecution.cpp
-  src/workspace/DebugService.cpp
-  src/workspace/DebugServiceBreakpoints.cpp
-  src/workspace/DebugServiceCallbacks.cpp
-  src/workspace/DebugServiceVariables.cpp
-  src/workspace/DebugBreakpointsModel.cpp
-  src/workspace/DebugValueTree.cpp
-  src/workspace/DebugVariablesModel.cpp
-  src/workspace/DebugWatchModel.cpp
-  src/workspace/DebugPaneRegistry.cpp
-  src/workspace/DebugPaneLayout.cpp
-  src/workspace/DebugPaneRender.cpp
-  src/workspace/DiffDividerGeometry.cpp
-  src/workspace/DebugPaneService.cpp
-  src/workspace/DebugPaneMouseCoordinator.cpp
+  src/workspace/lsp/LspFileWatchRegistry.cpp
+  src/workspace/lsp/LspPositionEncoding.cpp
+  src/workspace/lsp/LspProtocol.cpp
+  src/workspace/lsp/LspService.cpp
+  src/workspace/lsp/LspWorkspaceEditOps.cpp
+  src/workspace/lsp/WorkspaceLspClient.cpp
+  src/workspace/lsp/WorkspaceLspClientRequests.cpp
+  src/workspace/lsp/WorkspaceLspClientTransport.cpp
+  src/workspace/lsp/WorkspaceLspClientDispatch.cpp
+  src/workspace/lsp/WorkspaceLspClientLifecycle.cpp
+  src/workspace/lsp/WorkspaceLspManager.cpp
+  src/workspace/debug/DapProtocol.cpp
+  src/workspace/debug/WorkspaceDapClient.cpp
+  src/workspace/debug/WorkspaceDapManager.cpp
+  src/workspace/debug/DebugSession.cpp
+  src/workspace/debug/DebugSessionBreakpoints.cpp
+  src/workspace/debug/DebugSessionExecution.cpp
+  src/workspace/debug/DebugService.cpp
+  src/workspace/debug/DebugServiceBreakpoints.cpp
+  src/workspace/debug/DebugServiceCallbacks.cpp
+  src/workspace/debug/DebugServiceVariables.cpp
+  src/workspace/debug/DebugBreakpointsModel.cpp
+  src/workspace/debug/DebugValueTree.cpp
+  src/workspace/debug/DebugVariablesModel.cpp
+  src/workspace/debug/DebugWatchModel.cpp
+  src/workspace/debug/DebugPaneRegistry.cpp
+  src/workspace/debug/DebugPaneLayout.cpp
+  src/workspace/render/DebugPaneRender.cpp
+  src/workspace/render/DiffDividerGeometry.cpp
+  src/workspace/debug/DebugPaneService.cpp
+  src/workspace/debug/DebugPaneMouseCoordinator.cpp
   # Provider registries (completion/code-action/formatter/annotation/tool/scm/
   # save-participant) are header-only ProviderRegistry<Spec> aliases; no .cpp.
   src/workspace/WorkspaceToolDownloader.cpp
@@ -598,7 +598,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
   src/workspace/WorkspaceViewTree.cpp
-  src/workspace/WorkspaceShell.cpp
+  src/workspace/shell/WorkspaceShell.cpp
 )
 
 # Precompiled-header set shared by the heavyweight C++ targets (microide,
@@ -1054,7 +1054,7 @@ if(MICROIDE_FUZZ)
 
   add_executable(DebugStateRecordFuzz
     src/persistence/PersistedRecord.cpp
-    src/workspace/WorkspacePersistenceBinaryFormatDebug.cpp
+    src/workspace/persistence/WorkspacePersistenceBinaryFormatDebug.cpp
     tests/fuzz/DebugStateRecordFuzz.cpp
   )
   microide_configure_fuzz_target(DebugStateRecordFuzz)
@@ -1123,7 +1123,7 @@ if(MICROIDE_FUZZ)
     src/util/Parse.cpp
     src/util/StringUtil.cpp
     src/workspace/JsonRpcMessageFraming.cpp
-    src/workspace/LspClientTrace.cpp
+    src/workspace/lsp/LspClientTrace.cpp
     tests/fuzz/JsonRpcMessageFramingFuzz.cpp
   )
   microide_configure_fuzz_target(JsonRpcMessageFramingFuzz)

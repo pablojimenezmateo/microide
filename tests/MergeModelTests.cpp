@@ -2,8 +2,8 @@
 
 #include "compare/MergeModel.h"
 #include "editor/TextLayout.h"
-#include "workspace/MergeResolverContext.h"
-#include "workspace/WorkspaceTabState.h"
+#include "workspace/git/MergeResolverContext.h"
+#include "workspace/state/WorkspaceTabState.h"
 
 #include <span>
 #include <string>

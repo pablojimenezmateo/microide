@@ -14,8 +14,8 @@
 #include "workspace/WorkspaceFoldingRefresh.h"
 #include "workspace/WorkspaceIndentDetectApply.h"
 #include "workspace/WorkspaceLanguageContract.h"
-#include "workspace/WorkspaceTabState.h"
-#include "workspace/RenderViewModelBuilder.h"
+#include "workspace/state/WorkspaceTabState.h"
+#include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceContext.h"
 
 #include <algorithm>

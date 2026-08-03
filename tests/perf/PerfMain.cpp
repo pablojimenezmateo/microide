@@ -5,8 +5,8 @@
 #include "editor/BracketScanner.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
-#include "workspace/WorkspaceLspClient.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/lsp/WorkspaceLspClient.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "terminal/TerminalSession.h"
 
 #include <algorithm>

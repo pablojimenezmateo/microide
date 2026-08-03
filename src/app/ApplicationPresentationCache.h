@@ -3,7 +3,7 @@
 #include <cmath>
 #include <optional>
 
-#include "workspace/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShell.h"
 
 namespace microide::app {
 

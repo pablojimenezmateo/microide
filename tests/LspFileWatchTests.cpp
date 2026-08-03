@@ -2,9 +2,9 @@
 
 #include "util/JsonValue.h"
 #include "workspace/FileUri.h"
-#include "workspace/LspFileWatchRegistry.h"
-#include "workspace/WorkspaceLspClient.h"
-#include "workspace/WorkspaceLspManager.h"
+#include "workspace/lsp/LspFileWatchRegistry.h"
+#include "workspace/lsp/WorkspaceLspClient.h"
+#include "workspace/lsp/WorkspaceLspManager.h"
 
 #include <filesystem>
 #include <memory>

@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/RecentsService.h"
-#include "workspace/PersistenceService.h"
+#include "workspace/persistence/RecentsService.h"
+#include "workspace/persistence/PersistenceService.h"
 #include "util/PerformanceCounters.h"
 
 #include <cstddef>

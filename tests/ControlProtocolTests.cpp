@@ -3,8 +3,8 @@
 #include <string>
 
 #include "util/JsonValue.h"
-#include "workspace/ControlProtocol.h"
-#include "workspace/ControlSpec.h"
+#include "workspace/control/ControlProtocol.h"
+#include "workspace/control/ControlSpec.h"
 #include "workspace/ManPage.h"
 
 namespace microide::tests {

@@ -74,7 +74,7 @@ RuleResult CheckCompareRenderStructuralGate(const std::filesystem::path& repo_ro
   const std::regex active_compare_pattern(R"(\bActiveTabIsCompare\s*\()");
   const std::regex direct_state_pattern(R"(context_\.current_project_state)");
 
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -105,7 +105,7 @@ RuleResult CheckBuildEditorViewModelUsesIncrementalVectorWrites(
   RuleResult result;
   result.label = "BuildEditorViewModel clears and appends view-model vectors";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/workspace/RenderViewModelBuilder.cpp";
+  const std::filesystem::path path = repo_root / "src/workspace/render/RenderViewModelBuilder.cpp";
   const std::string text = ReadRuleTarget(result, path);
   const auto body_with_offset = ExtractMemberFunctionBodyWithOffset(
       text, "editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel");
@@ -159,7 +159,7 @@ RuleResult CheckSidebarSurfaceFallbackUsesStringView(const std::filesystem::path
   RuleResult result;
   result.label = "SidebarSurfaceViewModel fallback fields stay as std::string_view";
   result.hard_fail = true;
-  const std::filesystem::path path = repo_root / "src/workspace/RenderViewModelBuilder.h";
+  const std::filesystem::path path = repo_root / "src/workspace/render/RenderViewModelBuilder.h";
   if (!RequireRuleTarget(result, path)) {
     return result;
   }
@@ -196,7 +196,7 @@ RuleResult CheckMenuItemTextResolutionIsAllocationFree(const std::filesystem::pa
   RuleResult result;
   result.label = "menu label/accelerator resolution returns borrowed views";
   result.hard_fail = true;
-  const std::filesystem::path members = repo_root / "src/workspace/WorkspaceShellMembers.inc";
+  const std::filesystem::path members = repo_root / "src/workspace/shell/WorkspaceShellMembers.inc";
   if (!RequireRuleTarget(result, members)) {
     return result;
   }
@@ -230,7 +230,7 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
   result.label = "render view models own their state (no OverlayState/ProjectWorkspaceState)";
   result.hard_fail = true;
 
-  const std::filesystem::path header = repo_root / "src/workspace/RenderViewModelBuilder.h";
+  const std::filesystem::path header = repo_root / "src/workspace/render/RenderViewModelBuilder.h";
   if (std::filesystem::exists(header)) {
     const std::string text = ReadRuleTarget(result, header);
     // OverlayState must not appear anywhere in the view-model header: the overlay
@@ -289,12 +289,12 @@ RuleResult CheckRenderViewModelsOwnProjectState(const std::filesystem::path& rep
 
   // Converted render TUs: no broad state type names at all.
   const std::array<std::string_view, 6> converted_tus = {
-      "src/workspace/WorkspaceShellRenderOverlay.cpp",
-      "src/workspace/WorkspaceShellRenderBottomPanel.cpp",
-      "src/workspace/WorkspaceShellRenderTextInput.cpp",
-      "src/workspace/WorkspaceShellHoverPopup.cpp",
-      "src/workspace/WorkspaceShellHoverTargets.cpp",
-      "src/workspace/DebugPaneRender.cpp",
+      "src/workspace/render/WorkspaceShellRenderOverlay.cpp",
+      "src/workspace/render/WorkspaceShellRenderBottomPanel.cpp",
+      "src/workspace/render/WorkspaceShellRenderTextInput.cpp",
+      "src/workspace/render/WorkspaceShellHoverPopup.cpp",
+      "src/workspace/render/WorkspaceShellHoverTargets.cpp",
+      "src/workspace/render/DebugPaneRender.cpp",
   };
   const std::regex broad_state(R"(\b(ProjectWorkspaceState|OverlayState)\b)");
   for (const std::string_view relative : converted_tus) {

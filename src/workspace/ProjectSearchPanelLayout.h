@@ -4,8 +4,8 @@
 
 #include <array>
 
-#include "workspace/WorkspaceProjectState.h"
-#include "workspace/WorkspaceTextInputState.h"
+#include "workspace/state/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceTextInputState.h"
 
 // Geometry for the search sidebar's header: the toggle-button row, the query and
 // replace fields, the optional include/exclude scope fields, and the vertical

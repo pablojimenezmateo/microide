@@ -118,8 +118,8 @@ the compositor recomposite and re-latch the cursor plane.
 ## References
 
 - `src/workspace/WorkspaceEventOrchestrator.cpp` — `finish()`
-- `src/workspace/WorkspaceShellCursor.cpp` — `UpdateMouseCursor`
-- `src/workspace/WorkspaceShellRedraw.cpp` — `RequestCursorPresent`
-- `src/workspace/WorkspaceShellMouseMotion.cpp` — `HandleMouseMotion` return value
+- `src/workspace/shell/WorkspaceShellCursor.cpp` — `UpdateMouseCursor`
+- `src/workspace/shell/WorkspaceShellRedraw.cpp` — `RequestCursorPresent`
+- `src/workspace/shell/WorkspaceShellMouseMotion.cpp` — `HandleMouseMotion` return value
 - `tests/WorkspaceShellCursorTests.cpp` — `CursorChangeRequestsPresent`
 - Inspiration: <https://gist.github.com/retroplasma/ec21767d0a8380c7ea9c2fbee1c7d6bf>

@@ -1,8 +1,8 @@
 #include "TestSupport.h"
 
 #include "editor/TextBuffer.h"
-#include "workspace/GitSidebarCommandCenter.h"
-#include "workspace/WorkspaceGitSidebarPresentation.h"
+#include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/git/WorkspaceGitSidebarPresentation.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/WorkspaceTextSearch.h"
 

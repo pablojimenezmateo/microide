@@ -3,10 +3,10 @@
 #include "persistence/PersistedRecord.h"
 #include "persistence/PersistedRecordReader.h"
 #include "persistence/PersistedRecordWriter.h"
-#include "workspace/PersistenceService.h"
-#include "workspace/RecentsService.h"
-#include "workspace/WorkspacePersistenceFormat.h"
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/persistence/PersistenceService.h"
+#include "workspace/persistence/RecentsService.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 #include <cmath>
 #include <cstddef>

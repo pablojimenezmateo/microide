@@ -13,7 +13,7 @@
 #include "platform/ControlSocketClient.h"
 #include "platform/ControlSocketServer.h"
 #include "util/JsonValue.h"
-#include "workspace/ControlClient.h"
+#include "workspace/control/ControlClient.h"
 #include "workspace/WorkspaceCommandParsing.h"
 
 #if defined(__unix__) || defined(__APPLE__)

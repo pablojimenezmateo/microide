@@ -3,7 +3,7 @@
 #include <filesystem>
 #include <vector>
 
-#include "workspace/ReviewTabPlan.h"
+#include "workspace/git/ReviewTabPlan.h"
 
 namespace microide::tests {
 namespace {

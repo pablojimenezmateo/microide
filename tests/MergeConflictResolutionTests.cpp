@@ -4,8 +4,8 @@
 #include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
 #include "util/GitConflictMarkers.h"
-#include "workspace/MergeResultValidation.h"
-#include "workspace/WorkspaceCompareInteractionCoordinator.h"
+#include "workspace/git/MergeResultValidation.h"
+#include "workspace/coordinators/WorkspaceCompareInteractionCoordinator.h"
 
 #include <filesystem>
 #include <optional>

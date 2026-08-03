@@ -107,7 +107,7 @@ Source Control view listed `Conflicts (0)`, `Staged (0)`, `Unstaged (0)`,
 / "No staged changes" / … placeholder. Ten rows that said nothing, in a 288px
 rail. VSCode hides an empty group entirely.
 
-`BuildGitSidebarViewModel` (`src/workspace/GitSidebarCommandCenter.cpp`) walked a
+`BuildGitSidebarViewModel` (`src/workspace/git/GitSidebarCommandCenter.cpp`) walked a
 fixed `section_order` array and pushed a section view model for every entry
 unconditionally. It now consults `ShouldShowSection` and skips the empty ones,
 which also skips composing their two labels. A clean tree renders three lines
@@ -264,8 +264,8 @@ nobody invokes compiles, wires, reads as part of the contract, and does nothing.
   behavior is live, but only from `WorkspaceShellSidebarMouse`. VSCode binds
   Alt+R / Alt+C / Alt+H (and Alt+W for whole-word) inside the search box. Adding
   them is a new keybinding, not a dead wire, so it was deliberately kept out of
-  the removal commit. Files: `src/workspace/WorkspaceShellProjectSearch.cpp`,
-  `src/workspace/WorkspaceKeybindingRegistry.cpp`.
+  the removal commit. Files: `src/workspace/shell/WorkspaceShellProjectSearch.cpp`,
+  `src/workspace/registries/WorkspaceKeybindingRegistry.cpp`.
 
 ### Producer-side reachability sweep (TD-2026-07-27-*)
 
@@ -304,8 +304,8 @@ shell's registries answered no. One was deleted; the other is filed below.
   from a test would need a callbacks accessor on `PluginHost`, which would widen
   a deliberately narrow boundary for a log line.
   Files: `src/workspace/WorkspaceVirtualDocument.*`,
-  `src/workspace/WorkspaceShellPlugins.cpp`,
-  `src/workspace/WorkspaceTabCoordinatorShellBridge.cpp`.
+  `src/workspace/shell/WorkspaceShellPlugins.cpp`,
+  `src/workspace/coordinators/WorkspaceTabCoordinatorShellBridge.cpp`.
 
 - **[FIXED 2026-07-27] `ReviewCommentsRegistry` was unreachable and is removed.**
   Same sweep, opposite verdict — see the superseded TD-2026-07-17A-063 entry
@@ -2820,8 +2820,8 @@ speed-path items first, then the correctness/lifecycle cleanups.
   and tests assert the marker survives malformed and clean output streams
   (`tests/WorkspaceShellTerminalTests.cpp:1092-1116`). But the workspace update loop calls
   `ReapExitedTerminalTabs` on every terminal wake, and that helper immediately closes any tab whose
-  session reports `!running()` (`src/workspace/WorkspaceShellTerminalTabs.cpp:145-152`,
-  `src/workspace/WorkspaceShellTerminalTabs.cpp:158-194`). For short-lived commands launched through
+  session reports `!running()` (`src/workspace/shell/WorkspaceShellTerminalTabs.cpp:145-152`,
+  `src/workspace/shell/WorkspaceShellTerminalTabs.cpp:158-194`). For short-lived commands launched through
   `term <cmd>` or a crashed shell, the tab can disappear in the same update that records the marker,
   making the retained-output path effectively unreachable in normal UI use. Keep exited terminal tabs
   until explicit close (or until a user-visible grace/retention policy expires) so command output and
@@ -5523,7 +5523,7 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   request/dispatch paths.
 - `src/workspace/WorkspaceDapClient*.cpp`, `WorkspaceDapManager.cpp`, `DebugSession*.cpp`,
   `DebugService*.cpp`, and debug persistence records.
-- `src/workspace/PersistenceService.cpp`,
+- `src/workspace/persistence/PersistenceService.cpp`,
   `WorkspacePersistenceBinaryFormat{,Sessions,Debug}.cpp`, and workspace-session restore/save.
 - `src/project/GitRepository*.cpp`, `GitStatusService.cpp`, `GitCompareService.cpp`,
   `GitCommitExecutor.cpp`, `GitPatchApply.cpp`, `ProjectSearchService.cpp`,

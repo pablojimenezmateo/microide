@@ -13,7 +13,7 @@
 
 #include "util/JsonValue.h"
 #include "workspace/FileUri.h"
-#include "workspace/WorkspaceLspClient.h"
+#include "workspace/lsp/WorkspaceLspClient.h"
 
 #include <chrono>
 #include <cstdio>

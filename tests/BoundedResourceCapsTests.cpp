@@ -10,10 +10,10 @@
 #include <vector>
 
 #include "plugin/PluginLifecycleLoadInterop.h"
-#include "workspace/DapProtocol.h"
-#include "workspace/DebugValueTree.h"
+#include "workspace/debug/DapProtocol.h"
+#include "workspace/debug/DebugValueTree.h"
 #include "workspace/SettingFlags.h"
-#include "workspace/WorkspaceActionServices.h"
+#include "workspace/actions/WorkspaceActionServices.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/WorkspaceTextSearch.h"
 

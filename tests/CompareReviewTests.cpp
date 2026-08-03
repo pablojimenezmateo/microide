@@ -5,11 +5,11 @@
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
 #include "compare/CompareSemanticMetadata.h"
-#include "workspace/CompareTabReview.h"
-#include "workspace/WorkspaceActionCoordinator.h"
-#include "workspace/WorkspaceActionServices.h"
-#include "workspace/WorkspaceActionTypes.h"
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/git/CompareTabReview.h"
+#include "workspace/actions/WorkspaceActionCoordinator.h"
+#include "workspace/actions/WorkspaceActionServices.h"
+#include "workspace/actions/WorkspaceActionTypes.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 #include <algorithm>
 #include <filesystem>

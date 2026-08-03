@@ -18,8 +18,8 @@
 
 #include "util/JsonValue.h"
 #include "workspace/JsonRpcMessageFraming.h"
-#include "workspace/LspProtocol.h"
-#include "workspace/WorkspaceLspClient.h"
+#include "workspace/lsp/LspProtocol.h"
+#include "workspace/lsp/WorkspaceLspClient.h"
 
 #include <cstdint>
 #include <string>

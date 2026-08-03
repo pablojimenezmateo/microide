@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/WorkspaceSettingsRegistry.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/registries/WorkspaceSettingsRegistry.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <filesystem>

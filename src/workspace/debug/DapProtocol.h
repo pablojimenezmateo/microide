@@ -1,0 +1,271 @@
+#pragma once
+
+#include <cstdint>
+#include <optional>
+#include <string>
+#include <utility>
+#include <vector>
+
+#include "util/JsonValue.h"
+
+// Single home for the JSON <-> Debug Adapter Protocol wire-type mapping. Every
+// place that builds or parses DAP request/response/event payloads routes through
+// these helpers so the encoding lives in exactly one translation unit (mirrors
+// workspace/lsp/LspProtocol.h for the LSP client).
+//
+// DAP framing reuses the LSP `Content-Length` header; the difference is the
+// message envelope: messages carry a monotonic `seq`, a `type`
+// ("request"/"response"/"event"), and responses reference the originating
+// request via `request_seq`.
+namespace microide::workspace::dap_protocol {
+
+// One exception-breakpoint filter advertised by the adapter in its initialize
+// response (`capabilities.exceptionBreakpointFilters`). `filter` is the id sent
+// back in `setExceptionBreakpoints`; `label` is the human-readable toggle text.
+struct DapExceptionFilter {
+  std::string filter;
+  std::string label;
+  std::string description;
+  bool default_enabled = false;
+  bool supports_condition = false;
+};
+
+// ---- Adapter capabilities (subset we act on) ------------------------------
+struct DapCapabilities {
+  bool supports_configuration_done_request = false;
+  bool supports_conditional_breakpoints = false;
+  bool supports_hit_conditional_breakpoints = false;
+  bool supports_log_points = false;
+  bool supports_function_breakpoints = false;
+  bool supports_set_variable = false;
+  bool supports_evaluate_for_hovers = false;
+  bool supports_terminate_request = false;
+  bool supports_restart_request = false;
+  bool supports_step_back = false;
+  bool supports_exception_filter_options = false;
+  // The adapter's advertised exception-breakpoint filters (Phase 7). Empty when
+  // the adapter does not support exception breakpoints.
+  std::vector<DapExceptionFilter> exception_filters;
+};
+
+// ---- Response / event envelopes -------------------------------------------
+struct DapResponse {
+  bool success = false;
+  std::string command;
+  std::string message;   // populated when !success
+  util::JsonValue body;  // result payload (object/array/Null)
+};
+
+// ---- Body payload structs --------------------------------------------------
+struct DapSource {
+  std::string name;
+  std::string path;
+  int source_reference = 0;
+};
+
+struct DapThread {
+  int id = 0;
+  std::string name;
+};
+
+struct DapStackFrame {
+  int id = 0;
+  std::string name;
+  DapSource source;
+  int line = 0;
+  int column = 0;
+  std::string presentation_hint;
+};
+
+struct DapScope {
+  std::string name;
+  int variables_reference = 0;
+  bool expensive = false;
+  std::string presentation_hint;
+  // Adapter-reported child counts (gdb populates namedVariables for scopes). Used
+  // to clamp the variables fetch count: gdb's DAP throws "list index out of range"
+  // when a request asks for more children than the scope actually has.
+  int named_variables = 0;
+  int indexed_variables = 0;
+  // Whether the adapter actually reported a count (namedVariables/indexedVariables
+  // are optional in DAP). Distinguishes a true 0 (empty) from "unknown": only when
+  // reported may we clamp/treat-as-empty; otherwise we use a bounded page fetch.
+  bool count_reported = false;
+};
+
+struct DapVariable {
+  std::string name;
+  std::string value;
+  std::string type;
+  std::string evaluate_name;
+  int variables_reference = 0;  // > 0 means structured/expandable
+  int named_variables = 0;
+  int indexed_variables = 0;
+  // Whether the adapter reported a child count (optional in DAP); see DapScope.
+  bool count_reported = false;
+};
+
+struct DapBreakpoint {
+  int id = 0;
+  bool verified = false;
+  std::string message;
+  int line = 0;
+  int column = 0;
+};
+
+struct DapStoppedEvent {
+  std::string reason;       // breakpoint, step, pause, exception, ...
+  std::string description;
+  std::string text;
+  // DAP makes `threadId` OPTIONAL on `stopped` (e.g. an all-threads-stopped halt
+  // may omit it). `nullopt` means "no focused thread was named" — the session must
+  // resolve one (query threads) rather than send `threadId:0` on the mandatory-
+  // threadId stackTrace/continue requests.
+  std::optional<int> thread_id;
+  bool all_threads_stopped = false;
+  std::vector<int> hit_breakpoint_ids;
+};
+
+// A DAP `continued` event: which thread resumed, and whether ALL threads did.
+// `all_threads_continued` distinguishes a full resume (tear down the shared
+// stopped view) from a single-thread continue (leave the focused stop intact).
+// A missing `allThreadsContinued` is treated as NOT-all (the conservative choice:
+// the next `stopped`/full `continued` re-syncs) — see HandleEvent.
+struct DapContinuedEvent {
+  std::optional<int> thread_id;
+  bool all_threads_continued = false;
+};
+
+struct DapOutputEvent {
+  std::string category;  // stdout, stderr, console, telemetry, important
+  std::string output;
+  int variables_reference = 0;
+};
+
+struct DapEvaluateResult {
+  std::string result;
+  std::string type;
+  int variables_reference = 0;
+};
+
+// `setVariable` response body. The adapter echoes the (possibly normalized) new
+// value and may change the type / structure reference (e.g. a scalar becomes a
+// container), so all three are reflected back into the variables tree.
+struct DapSetVariableResult {
+  std::string value;
+  std::string type;
+  int variables_reference = 0;
+  int named_variables = 0;
+  int indexed_variables = 0;
+};
+
+// ---- setBreakpoints request arguments -------------------------------------
+// One source-line breakpoint to send. `line` is the 1-based DAP line (callers
+// convert from their 0-based buffer index). `condition`/`hit_condition`/
+// `log_message` are emitted only when non-empty (Phase 6 fields).
+struct SetBreakpointInput {
+  int line = 0;
+  std::string condition;
+  std::string hit_condition;
+  std::string log_message;
+};
+
+// Build the `setBreakpoints` arguments object:
+//   {"source":{"path":...},"breakpoints":[{"line":N,"condition":...},...]}
+util::JsonValue MakeSetBreakpointsArguments(const std::string& source_path,
+                                            const std::vector<SetBreakpointInput>& breakpoints);
+
+// Build the `setExceptionBreakpoints` arguments object (Phase 7):
+//   {"filters":["filterId", ...]}
+util::JsonValue MakeSetExceptionBreakpointsArguments(const std::vector<std::string>& filter_ids);
+
+// Build the `setExceptionBreakpoints` arguments object with per-filter conditions
+// (`supportsExceptionFilterOptions`): plain (unconditioned) ids go in `filters`,
+// conditioned ones in `filterOptions`:
+//   {"filters":["id",...],"filterOptions":[{"filterId":"id","condition":"expr"},...]}
+// gdb 17.2 accepts this split. Callers gate the `filter_options` argument on the
+// adapter's `supports_exception_filter_options` capability; without it they use the
+// plain overload above.
+util::JsonValue MakeSetExceptionBreakpointsArguments(
+    const std::vector<std::string>& plain_filter_ids,
+    const std::vector<std::pair<std::string, std::string>>& filter_options);
+
+// ---- setFunctionBreakpoints request arguments -----------------------------
+// One function (symbol) breakpoint to send. `condition`/`hit_condition` are
+// emitted only when non-empty (mirrors SetBreakpointInput). Gated by the adapter's
+// `supportsFunctionBreakpoints` capability at the call site.
+struct SetFunctionBreakpointInput {
+  std::string name;
+  std::string condition;
+  std::string hit_condition;
+};
+
+// Build the `setFunctionBreakpoints` arguments object:
+//   {"breakpoints":[{"name":...,"condition":...,"hitCondition":...},...]}
+// The response body reuses ParseBreakpoints (positional to the request).
+util::JsonValue MakeSetFunctionBreakpointsArguments(
+    const std::vector<SetFunctionBreakpointInput>& breakpoints);
+
+// ---- Variables / scopes / setVariable request arguments (Phase 4) ----------
+// Build `stackTrace` arguments: {"threadId":N,"startFrame":S,"levels":L}. `levels`
+// 0 means "all frames" per the DAP spec.
+util::JsonValue MakeStackTraceArguments(int thread_id, int start_frame, int levels);
+// Build `scopes` arguments: {"frameId":N}.
+util::JsonValue MakeScopesArguments(int frame_id);
+// Build `variables` arguments: {"variablesReference":N[,"start":S][,"count":C]}.
+// `start`/`count` are emitted only when nonzero (paging; 0/0 fetches the whole set).
+util::JsonValue MakeVariablesArguments(int variables_reference, int start, int count);
+
+struct SetVariableInput {
+  int variables_reference = 0;  // the container the named child lives in
+  std::string name;
+  std::string value;
+};
+// Build `setVariable` arguments:
+//   {"variablesReference":N,"name":...,"value":...}
+util::JsonValue MakeSetVariableArguments(const SetVariableInput& input);
+
+// ---- evaluate request arguments (Phase 5: hover-to-inspect) ----------------
+// Build `evaluate` arguments: {"expression":...,"frameId":N,"context":...}.
+// `context` is "hover" for hover-to-inspect (also "watch"/"repl" in later phases).
+// `frameId` scopes the expression to a stack frame's lexical scope; omitted when 0.
+util::JsonValue MakeEvaluateArguments(const std::string& expression, int frame_id,
+                                      const std::string& context);
+
+// ---- Encode (structs -> wire JSON) ----------------------------------------
+util::JsonValue MakeRequest(int seq, const std::string& command,
+                            const util::JsonValue& arguments);
+util::JsonValue MakeResponse(int seq, int request_seq, const std::string& command, bool success,
+                             const std::string& message, util::JsonValue body);
+
+// ---- Decode (wire JSON -> structs) ----------------------------------------
+// `msg` is the full response envelope.
+DapResponse ParseResponse(const util::JsonValue& msg);
+// `body` is the `capabilities` body of an initialize response (or any object
+// carrying the supports* flags, e.g. the `capabilities` event body).
+DapCapabilities ParseCapabilities(const util::JsonValue& body);
+
+// Overlay a (possibly partial) capabilities object onto `caps`, touching only the
+// fields the body actually carries. Used for the DAP `capabilities` event, whose
+// body is a *partial* Capabilities object: re-running ParseCapabilities would
+// default every absent flag back to false and clobber what initialize advertised.
+void MergeCapabilities(DapCapabilities& caps, const util::JsonValue& body);
+
+DapSource ParseSource(const util::JsonValue& value);
+DapThread ParseThread(const util::JsonValue& value);
+std::vector<DapThread> ParseThreads(const util::JsonValue& body);
+DapStackFrame ParseStackFrame(const util::JsonValue& value);
+std::vector<DapStackFrame> ParseStackFrames(const util::JsonValue& body);
+DapScope ParseScope(const util::JsonValue& value);
+std::vector<DapScope> ParseScopes(const util::JsonValue& body);
+DapVariable ParseVariable(const util::JsonValue& value);
+std::vector<DapVariable> ParseVariables(const util::JsonValue& body);
+DapBreakpoint ParseBreakpoint(const util::JsonValue& value);
+std::vector<DapBreakpoint> ParseBreakpoints(const util::JsonValue& body);
+DapStoppedEvent ParseStoppedEvent(const util::JsonValue& body);
+DapContinuedEvent ParseContinuedEvent(const util::JsonValue& body);
+DapOutputEvent ParseOutputEvent(const util::JsonValue& body);
+DapEvaluateResult ParseEvaluateResult(const util::JsonValue& body);
+DapSetVariableResult ParseSetVariableResult(const util::JsonValue& body);
+
+}  // namespace microide::workspace::dap_protocol

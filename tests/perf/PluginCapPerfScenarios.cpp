@@ -20,8 +20,8 @@
 
 #include "plugin/PluginContributionLimits.h"
 #include "plugin/PluginHost.h"
-#include "workspace/WorkspaceKeybindingRegistry.h"
-#include "workspace/WorkspaceStatusRegistry.h"
+#include "workspace/registries/WorkspaceKeybindingRegistry.h"
+#include "workspace/registries/WorkspaceStatusRegistry.h"
 
 namespace microide::tests::perf {
 namespace {

@@ -4,7 +4,7 @@
 #include <string>
 #include <vector>
 
-#include "workspace/ControlSpec.h"
+#include "workspace/control/ControlSpec.h"
 
 namespace microide::tests {
 namespace {

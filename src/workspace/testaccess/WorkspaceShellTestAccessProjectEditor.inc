@@ -337,7 +337,7 @@
     const auto toolbar = shell.ComputeMergeToolbarLayout(layout.editor_surface, surface);
     return {toolbar.prev_rect, toolbar.next_rect};
   }
-  // The divider grab rects themselves come from workspace/DiffDividerGeometry.h,
+  // The divider grab rects themselves come from workspace/render/DiffDividerGeometry.h,
   // which tests include directly: it takes WorkspaceShell by name, so it cannot be
   // reached from inside the class body this file is textually part of.
 

@@ -103,7 +103,7 @@ client ──JSONL──▶ ControlSocketServer (platform, 1 I/O thread)
 - `src/workspace/ControlSpec.{h,cpp}` — parse the cold-start spec (incl. the
   `settings` key) and translate it to command lines (`QuoteCommandArg` keeps
   arguments `ParseCommandLine`-safe).
-- `src/workspace/WorkspaceShellLsp.cpp` — thin shell forwarders, plus
+- `src/workspace/shell/WorkspaceShellLsp.cpp` — thin shell forwarders, plus
   `ApplyControlSpec` (applies transient settings + auto-enable + emits `applied`
   lines), `ForceStartControlChannel`, and `ApplyStartupSettingOverrides`. The
   stdout sink (`emit_jsonl`) and `adapter_types` are wired in
@@ -199,7 +199,7 @@ reply `feedback` summarizes counts and lists the opened files, e.g.
 
 The orchestration lives in `ReviewSessionCoordinator` (host-owned tab lifecycle +
 Source Control switch injected as callbacks); the pure open/reuse/close
-reconciliation is `ComputeReviewTabPlan` (`src/workspace/ReviewTabPlan.h`). File
+reconciliation is `ComputeReviewTabPlan` (`src/workspace/git/ReviewTabPlan.h`). File
 enumeration reuses `project::CollectGitWorkingTreeEntries` (conflicts),
 `CollectGitWorkingTreeDiffFiles` (branch), and `CollectGitCommitChangedFiles`
 (commit); tab opening reuses `CompareMergeService` (which dedupes internally).

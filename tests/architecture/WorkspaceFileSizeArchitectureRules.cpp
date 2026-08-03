@@ -15,7 +15,7 @@ RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo
   result.hard_fail = true;
   constexpr std::size_t kCap = 47;
   std::size_t count = 0;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -42,7 +42,7 @@ RuleResult CheckCoordinatorTuSize(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "workspace coordinator translation unit size";
   result.hard_fail = true;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }
@@ -76,7 +76,7 @@ RuleResult CheckDebugTuSize(const std::filesystem::path& repo_root) {
   result.label = "debug translation unit size";
   result.hard_fail = true;
   constexpr std::size_t kCap = 530;
-  for (const auto& entry : std::filesystem::directory_iterator(repo_root / "src/workspace")) {
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
     if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
       continue;
     }

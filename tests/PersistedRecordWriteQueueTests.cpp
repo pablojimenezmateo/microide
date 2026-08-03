@@ -8,8 +8,8 @@
 #include "persistence/PersistedRecordReader.h"
 #include "persistence/PersistedRecordWriteQueue.h"
 #include "persistence/PersistedRecordWriter.h"
-#include "workspace/PersistenceService.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/persistence/PersistenceService.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
 
 // Persisted workspace state (session, config, recents) is written on a background
 // worker so saving never stalls the shell. That trades a synchronous guarantee

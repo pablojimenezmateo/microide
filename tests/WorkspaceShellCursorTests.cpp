@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 #include "WorkspaceShellEventHelpers.h"
 #include "workspace/WorkspaceLayout.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <chrono>
 #include <filesystem>

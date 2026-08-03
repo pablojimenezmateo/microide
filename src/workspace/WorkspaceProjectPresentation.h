@@ -7,7 +7,7 @@
 #include <string>
 #include <string_view>
 
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceProjectState.h"
 #include "render/Theme.h"
 
 namespace microide::workspace {

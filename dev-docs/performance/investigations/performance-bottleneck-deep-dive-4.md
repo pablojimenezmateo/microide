@@ -220,7 +220,7 @@ presentation). Scrolling should bump nothing in the layout/content tiers.
 
 ## Finding 5: `idle_soak_30s` runs 51 `PrepareFrameOnce` calls during a 27-second idle window
 
-**Code:** `src/workspace/WorkspaceShellRenderFrame.cpp:55-147`.
+**Code:** `src/workspace/render/WorkspaceShellRenderFrame.cpp:55-147`.
 
 Counters per 30-second iteration:
 

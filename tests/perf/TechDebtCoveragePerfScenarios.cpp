@@ -37,11 +37,11 @@
 #include "plugin/PluginRegistryInterop.h"
 #include "util/TextFileIO.h"
 #include "workspace/AssistProviderMerge.h"
-#include "workspace/SettingsOverlayService.h"
-#include "workspace/CompareTabReview.h"
-#include "workspace/WorkspacePersistenceFormat.h"
-#include "workspace/WorkspaceSettingsRegistry.h"
-#include "workspace/WorkspaceTabState.h"
+#include "workspace/services/SettingsOverlayService.h"
+#include "workspace/git/CompareTabReview.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
+#include "workspace/registries/WorkspaceSettingsRegistry.h"
+#include "workspace/state/WorkspaceTabState.h"
 
 namespace microide::tests::perf {
 namespace {

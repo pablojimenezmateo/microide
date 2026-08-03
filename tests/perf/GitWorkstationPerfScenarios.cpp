@@ -10,7 +10,7 @@
 #include "compare/MergeModel.h"
 #include "platform/Subprocess.h"
 #include "project/GitStatusService.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
 namespace {

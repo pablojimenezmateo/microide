@@ -288,7 +288,7 @@ EditorViewMetrics EditorViewRenderer::ComputeMetrics(const render::TextRenderer&
       static_cast<std::size_t>(std::max(1, max_total_rows - static_cast<int>(sticky_clamped)));
   // Right reserve = 12px inset past the gutter (mirrors text_x) + a 21px right gutter that
   // covers the vertical scrollbar (kScrollbarThickness 10 + inset 2) AND the overview-ruler
-  // lane painted just left of it (workspace/OverviewRuler.h: kLaneGap 3 + kLaneWidth 6), so
+  // lane painted just left of it (workspace/render/OverviewRuler.h: kLaneGap 3 + kLaneWidth 6), so
   // a long line's trailing glyphs never lay out under the lane. Kept unconditional (not
   // gated on the overview-ruler setting) so the text width is identical across the render
   // path and every hit-test/scroll ComputeMetrics caller — a gated reserve would desync

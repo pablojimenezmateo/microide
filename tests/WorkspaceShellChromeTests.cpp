@@ -5,7 +5,7 @@
 #include "TerminalSessionTestAccess.h"
 #include "render/Theme.h"
 #include "util/PerformanceCounters.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <chrono>

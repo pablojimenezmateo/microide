@@ -4,7 +4,7 @@
 
 #include "TerminalSessionTestAccess.h"
 #include "workspace/ListSelection.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
 #include "render/TextRenderer.h"

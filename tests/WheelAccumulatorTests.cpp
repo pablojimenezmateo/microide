@@ -3,7 +3,7 @@
 #include <cmath>
 #include <limits>
 
-#include "workspace/WorkspaceInteractionState.h"
+#include "workspace/state/WorkspaceInteractionState.h"
 
 namespace microide::tests {
 namespace {

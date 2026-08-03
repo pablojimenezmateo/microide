@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
-#include "workspace/WorkspaceShell.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShell.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include "editor/TextBuffer.h"
 

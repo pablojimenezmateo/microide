@@ -13,8 +13,8 @@
 
 #include "app/BackgroundTaskCounter.h"
 #include "project/ProjectBackgroundExecutor.h"
-#include "workspace/GitRepositoryService.h"
-#include "workspace/GitSidebarCommandCenter.h"
+#include "workspace/git/GitRepositoryService.h"
+#include "workspace/git/GitSidebarCommandCenter.h"
 
 namespace microide::tests {
 namespace {

@@ -13,9 +13,9 @@
 #include "project/GitRepository.h"
 #include "project/GitRepositoryState.h"
 #include "project/ProjectBackgroundExecutor.h"
-#include "workspace/CommitWorkflowService.h"
-#include "workspace/GitRepositoryService.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/git/CommitWorkflowService.h"
+#include "workspace/git/GitRepositoryService.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
 
 namespace microide::tests {
 namespace {

@@ -1,0 +1,872 @@
+#include "workspace/render/WorkspaceShellRenderPrimitives.h"
+
+#include <algorithm>
+#include <array>
+#include <optional>
+#include <sstream>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "editor/DiagnosticsRender.h"
+#include "util/PerformanceTrace.h"
+#include "util/StringUtil.h"
+#include "workspace/FileUri.h"
+#include "workspace/lsp/LspFeatureFlags.h"
+#include "workspace/lsp/LspProtocol.h"
+#include "workspace/lsp/LspViewportPositions.h"
+#include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/WorkspaceLayout.h"
+
+namespace microide::workspace {
+
+using namespace detail;
+
+namespace {
+
+// Hover title/content come from an external language server or plugin and are
+// otherwise unbounded. The popup only ever shows a handful of lines, but the
+// layout path measures/normalizes/word-splits the WHOLE string on the UI thread,
+// several times per frame while the popup is considered. Truncate at ingestion so
+// a server returning megabytes of hover text cannot stall the shell. Trimmed back
+// to a UTF-8 boundary so a multibyte codepoint is never split.
+constexpr std::size_t kMaxHoverTextBytes = 8192;
+
+void TruncateHoverText(std::string& text) {
+  if (text.size() > kMaxHoverTextBytes) {
+    text.resize(util::PreviousUtf8Boundary(text, kMaxHoverTextBytes));
+  }
+}
+
+constexpr float kEditorHoverPopupPadding = 12.0f;
+constexpr float kEditorHoverPopupGap = 6.0f;
+constexpr float kEditorHoverPopupMinWidth = 280.0f;
+constexpr float kEditorHoverPopupMaxWidth = 640.0f;
+constexpr float kEditorHoverPopupHoverMargin = 4.0f;
+constexpr float kEditorHoverPopupLineGap = 2.0f;
+constexpr float kEditorHoverPopupSectionGap = 8.0f;
+constexpr std::size_t kEditorHoverPopupMaxSummaryLines = 4;
+constexpr std::size_t kEditorHoverPopupMaxDiagnosticLines = 6;
+constexpr std::size_t kEditorHoverPopupMaxPluginTitleLines = 2;
+constexpr std::size_t kEditorHoverPopupMaxPluginContentLines = 6;
+constexpr float kEditorHoverPopupPrimaryActionHitPaddingX = 12.0f;
+constexpr float kEditorHoverPopupPrimaryActionHitPaddingY = 6.0f;
+// Shortcut shown next to the diagnostic "Quick Fix" button (matches ActionId::CodeActions).
+constexpr std::string_view kQuickFixShortcutHint = "Ctrl+.";
+
+SDL_FRect HoverPopupHoverZoneRect(const SDL_FRect& anchor_rect, const SDL_FRect& popup_rect) {
+  const float left = std::min(anchor_rect.x, popup_rect.x) - kEditorHoverPopupHoverMargin;
+  const float top = std::min(anchor_rect.y, popup_rect.y) - kEditorHoverPopupHoverMargin;
+  const float right =
+      std::max(anchor_rect.x + anchor_rect.w, popup_rect.x + popup_rect.w) +
+      kEditorHoverPopupHoverMargin;
+  const float bottom =
+      std::max(anchor_rect.y + anchor_rect.h, popup_rect.y + popup_rect.h) +
+      kEditorHoverPopupHoverMargin;
+  return MakeRect(left, top, std::max(0.0f, right - left), std::max(0.0f, bottom - top));
+}
+
+std::string NormalizeHoverPopupText(std::string_view text) {
+  std::string normalized;
+  normalized.reserve(text.size());
+  bool last_was_space = true;
+  for (char c : text) {
+    const bool space = c == ' ' || c == '\t' || c == '\n' || c == '\r';
+    if (space) {
+      if (!last_was_space) {
+        normalized.push_back(' ');
+      }
+      last_was_space = true;
+      continue;
+    }
+    normalized.push_back(c);
+    last_was_space = false;
+  }
+  while (!normalized.empty() && normalized.back() == ' ') {
+    normalized.pop_back();
+  }
+  return normalized;
+}
+
+float ClampPopupWidth(float preferred_width, float minimum_width, float max_width) {
+  const float clamped_max = std::max(1.0f, max_width);
+  const float clamped_min = std::min(minimum_width, clamped_max);
+  return std::max(clamped_min, std::min(preferred_width, clamped_max));
+}
+
+SDL_FRect PositionHoverPopup(const SDL_FRect& anchor_rect,
+                             float card_width,
+                             float card_height,
+                             const SDL_FRect& editor_surface) {
+  float x = anchor_rect.x;
+  float y = anchor_rect.y + anchor_rect.h + kEditorHoverPopupGap;
+  if (x + card_width > editor_surface.x + editor_surface.w - 8.0f) {
+    x = editor_surface.x + editor_surface.w - card_width - 8.0f;
+  }
+  if (y + card_height > editor_surface.y + editor_surface.h - 8.0f) {
+    y = anchor_rect.y - card_height - kEditorHoverPopupGap;
+  }
+  x = std::max(editor_surface.x + 8.0f, x);
+  y = std::max(editor_surface.y + 8.0f, y);
+  return MakeRect(x, y, card_width, card_height);
+}
+
+void DrawHoverPopupLines(const render::TextRenderer& text_renderer,
+                        SDL_Renderer* renderer,
+                        float x,
+                        float* y,
+                        SDL_Color foreground,
+                        SDL_Color background,
+                        const std::vector<std::string>& lines,
+                        float line_gap = kEditorHoverPopupLineGap) {
+  if (y == nullptr) {
+    return;
+  }
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    text_renderer.DrawStringOn(renderer, x, *y, foreground, background, lines[i]);
+    *y += text_renderer.LineHeight();
+    if (i + 1 < lines.size()) {
+      *y += line_gap;
+    }
+  }
+}
+
+}  // namespace
+
+std::optional<WorkspaceShell::EditorHoverPopupLayout> WorkspaceShell::ActiveEditorHoverPopupLayout()
+    const {
+  if (MenuSurfaceCapturingMouse()) {
+    return std::nullopt;
+  }
+  const HoverPopupViewModel hover_popup_vm =
+      RenderViewModelBuilder(context_).BuildHoverPopup(active_editor_hover_target_.has_value());
+  if (!hover_popup_vm.visible || !hover_popup_vm.has_active_target ||
+      !active_editor_hover_target_.has_value()) {
+    return std::nullopt;
+  }
+
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return std::nullopt;
+  }
+  const WorkspaceLayout layout = *layout_state;
+  const float available_width = std::max(220.0f, layout.editor_surface.w - 16.0f);
+  const float max_card_width = std::min(kEditorHoverPopupMaxWidth, available_width);
+  const float line_height = text_renderer_.LineHeight();
+
+  if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::Blame) {
+    const editor::EditorBlameLine* blame_line =
+        editor_blame_overlay_service_.VisibleLine(active_editor_hover_target_->blame_line_index);
+    if (blame_line == nullptr || !blame_line->interactive) {
+      return std::nullopt;
+    }
+
+    const float copy_width = std::max(84.0f, text_renderer_.MeasureWidth("Copy SHA") + 18.0f);
+    const float base_content_width = std::max(
+        {text_renderer_.MeasureWidth(blame_line->author), text_renderer_.MeasureWidth(blame_line->date),
+         copy_width});
+    const float summary_content_width =
+        std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+                 text_renderer_.MeasureWidth(blame_line->summary));
+    const float preferred_width = std::max(
+        kEditorHoverPopupMinWidth,
+        std::max(base_content_width, summary_content_width) + kEditorHoverPopupPadding * 2.0f);
+    const float card_width = ClampPopupWidth(
+        preferred_width, base_content_width + kEditorHoverPopupPadding * 2.0f, max_card_width);
+    const auto summary_lines = WrapEditorHoverPopupText(
+        blame_line->summary, std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f),
+        kEditorHoverPopupMaxSummaryLines);
+    const float button_height = line_height + 8.0f;
+    const float summary_height =
+        static_cast<float>(summary_lines.size()) * line_height +
+        (summary_lines.empty() ? 0.0f
+                               : static_cast<float>(summary_lines.size() - 1) *
+                                     kEditorHoverPopupLineGap);
+    const float card_height =
+        kEditorHoverPopupPadding * 2.0f + line_height * 2.0f + kEditorHoverPopupLineGap +
+        (summary_lines.empty() ? 0.0f : kEditorHoverPopupSectionGap + summary_height) +
+        kEditorHoverPopupSectionGap + button_height;
+    const SDL_FRect card_rect = PositionHoverPopup(active_editor_hover_target_->anchor_rect,
+                                                   card_width, card_height, layout.editor_surface);
+    const SDL_FRect action_rect = MakeRect(
+        card_rect.x + kEditorHoverPopupPadding,
+        card_rect.y + card_rect.h - button_height - kEditorHoverPopupPadding, copy_width,
+        button_height);
+    return EditorHoverPopupLayout{
+        .kind = EditorHoverTarget::Kind::Blame,
+        .anchor_rect = active_editor_hover_target_->anchor_rect,
+        .rect = card_rect,
+        .blame_line_index = blame_line->line_index,
+        .diagnostic = std::nullopt,
+        .plugin_hover = std::nullopt,
+        .primary_action_rect = action_rect,
+    };
+  }
+
+  if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::Plugin) {
+    if (!active_editor_hover_target_->plugin_hover.has_value()) {
+      return std::nullopt;
+    }
+    const plugin::PluginHost::HoverResult& hover = *active_editor_hover_target_->plugin_hover;
+    return EditorHoverPopupLayout{
+        .kind = EditorHoverTarget::Kind::Plugin,
+        .anchor_rect = active_editor_hover_target_->anchor_rect,
+        .rect = ComputeTwoBlockHoverCardRect(
+            hover.title, hover.content, kEditorHoverPopupMaxPluginTitleLines,
+            kEditorHoverPopupMaxPluginContentLines, active_editor_hover_target_->anchor_rect,
+            layout.editor_surface),
+        .blame_line_index = 0,
+        .diagnostic = std::nullopt,
+        .plugin_hover = hover,
+        .debug_value = std::nullopt,
+        .primary_action_rect = std::nullopt,
+    };
+  }
+
+  if (active_editor_hover_target_->kind == EditorHoverTarget::Kind::DebugValue) {
+    if (!active_editor_hover_target_->debug_value.has_value()) {
+      return std::nullopt;
+    }
+    const DebugHoverValue& debug_value = *active_editor_hover_target_->debug_value;
+    if (debug_value.value.empty() && debug_value.type.empty()) {
+      return std::nullopt;
+    }
+    // The value is the primary content; the type (when present) is the muted title.
+    return EditorHoverPopupLayout{
+        .kind = EditorHoverTarget::Kind::DebugValue,
+        .anchor_rect = active_editor_hover_target_->anchor_rect,
+        .rect = ComputeTwoBlockHoverCardRect(
+            debug_value.type, debug_value.value, kEditorHoverPopupMaxPluginTitleLines,
+            kEditorHoverPopupMaxPluginContentLines, active_editor_hover_target_->anchor_rect,
+            layout.editor_surface),
+        .blame_line_index = 0,
+        .diagnostic = std::nullopt,
+        .plugin_hover = std::nullopt,
+        .debug_value = debug_value,
+        .primary_action_rect = std::nullopt,
+    };
+  }
+
+  if (!active_editor_hover_target_->diagnostic.has_value()) {
+    return std::nullopt;
+  }
+  const editor::PublishedDiagnostic& diagnostic = *active_editor_hover_target_->diagnostic;
+  // Language-server diagnostics may carry code actions (e.g. clangd's "remove
+  // unused #include"). Offer a "Quick Fix" affordance that opens the code-action
+  // menu at the diagnostic's range; plugin/other diagnostics have no such path.
+  const bool offer_quick_fix = diagnostic.owner == "lsp";
+  const float button_height = line_height + 8.0f;
+  const float quick_fix_width =
+      offer_quick_fix ? std::max(96.0f, text_renderer_.MeasureWidth("Quick Fix") + 18.0f) : 0.0f;
+  const float quick_fix_hint_width =
+      offer_quick_fix ? text_renderer_.MeasureWidth(kQuickFixShortcutHint) : 0.0f;
+  // Button on the left, the muted shortcut hint to its right, share the button row.
+  const float button_row_width =
+      offer_quick_fix ? quick_fix_width + kEditorHoverPopupGap + quick_fix_hint_width : 0.0f;
+  const std::string_view severity = DiagnosticSeverityLabel(diagnostic.severity);
+  const float severity_width = text_renderer_.MeasureWidth(severity);
+  const float message_width =
+      std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+               text_renderer_.MeasureWidth(diagnostic.message));
+  const float preferred_width = std::max(
+      kEditorHoverPopupMinWidth,
+      std::max({severity_width, message_width, button_row_width}) + kEditorHoverPopupPadding * 2.0f);
+  const float card_width = ClampPopupWidth(
+      preferred_width,
+      std::max(severity_width, button_row_width) + kEditorHoverPopupPadding * 2.0f, max_card_width);
+  const auto message_lines = WrapEditorHoverPopupText(
+      diagnostic.message, std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f),
+      kEditorHoverPopupMaxDiagnosticLines);
+  const float message_height =
+      static_cast<float>(message_lines.size()) * line_height +
+      (message_lines.empty() ? 0.0f
+                             : static_cast<float>(message_lines.size() - 1) *
+                                   kEditorHoverPopupLineGap);
+  const float card_height = kEditorHoverPopupPadding * 2.0f + line_height +
+                            (message_lines.empty() ? 0.0f
+                                                   : kEditorHoverPopupSectionGap + message_height) +
+                            (offer_quick_fix ? kEditorHoverPopupSectionGap + button_height : 0.0f);
+  const SDL_FRect card_rect = PositionHoverPopup(active_editor_hover_target_->anchor_rect,
+                                                 card_width, card_height, layout.editor_surface);
+  std::optional<SDL_FRect> action_rect;
+  if (offer_quick_fix) {
+    action_rect = MakeRect(card_rect.x + kEditorHoverPopupPadding,
+                           card_rect.y + card_rect.h - button_height - kEditorHoverPopupPadding,
+                           quick_fix_width, button_height);
+  }
+  return EditorHoverPopupLayout{
+      .kind = EditorHoverTarget::Kind::Diagnostic,
+      .anchor_rect = active_editor_hover_target_->anchor_rect,
+      .rect = card_rect,
+      .blame_line_index = 0,
+      .diagnostic = diagnostic,
+      .plugin_hover = std::nullopt,
+      .primary_action_rect = action_rect,
+  };
+}
+
+SDL_FRect WorkspaceShell::EditorHoverPopupPrimaryActionHitRect(
+    const EditorHoverPopupLayout& popup) const {
+  if (!popup.primary_action_rect.has_value()) {
+    return {};
+  }
+
+  return MakeRect(
+      popup.primary_action_rect->x - kEditorHoverPopupPrimaryActionHitPaddingX,
+      popup.primary_action_rect->y - kEditorHoverPopupPrimaryActionHitPaddingY,
+      popup.primary_action_rect->w + kEditorHoverPopupPrimaryActionHitPaddingX * 2.0f,
+      popup.primary_action_rect->h + kEditorHoverPopupPrimaryActionHitPaddingY * 2.0f);
+}
+
+bool WorkspaceShell::EditorHoverPopupPrimaryActionHovered(float x, float y) const {
+  const auto popup = ActiveEditorHoverPopupLayout();
+  return popup.has_value() && popup->primary_action_rect.has_value() &&
+         Contains(EditorHoverPopupPrimaryActionHitRect(*popup), x, y);
+}
+
+std::vector<std::string> WorkspaceShell::WrapEditorHoverPopupText(std::string_view text,
+                                                                  float max_width,
+                                                                  std::size_t max_lines) const {
+  // Wrapping is pure in (text, width, line cap, font metrics) but expensive: a
+  // normalize copy, an istringstream tokenize into a vector<string>, then a
+  // MeasureWidth per candidate line. The layout path calls it several times per
+  // frame (title, content, blame summary, diagnostic message) for as long as the
+  // card is on screen — i.e. for as long as the user is reading it. A card shows a
+  // handful of distinct strings, so a small memo turns every frame after the first
+  // into a lookup. Metrics generation is part of the key: a font-size or UI-scale
+  // change re-wraps at the new width.
+  //
+  // The memo is per-thread, not per-shell, and the key does not name the shell.
+  // That is safe because a process runs one WorkspaceShell; the several shells a
+  // test process builds all measure through a backend-less TextRenderer (a fixed
+  // advance per byte), so a cross-instance hit returns exactly what that instance
+  // would have computed. Give the key a renderer identity before letting two
+  // shells with different fonts coexist.
+  struct WrapMemoEntry {
+    std::string text;
+    float max_width = 0.0f;
+    std::size_t max_lines = 0;
+    std::size_t metrics_generation = 0;
+    std::vector<std::string> lines;
+    bool valid = false;
+  };
+  static thread_local std::array<WrapMemoEntry, 4> memo;
+  static thread_local std::size_t memo_next = 0;
+
+  std::vector<std::string> lines;
+  if (max_lines == 0 || max_width <= 0.0f) {
+    return lines;
+  }
+
+  // Keyed on the caller's text, captured BEFORE the byte clamp below reassigns
+  // `text` — otherwise a stored key would be the clamped prefix and never match
+  // the lookup that produced it.
+  const std::string_view key_text = text;
+  const std::size_t metrics_generation = text_renderer_.MetricsGeneration();
+  for (const WrapMemoEntry& entry : memo) {
+    if (entry.valid && entry.max_width == max_width && entry.max_lines == max_lines &&
+        entry.metrics_generation == metrics_generation && entry.text == key_text) {
+      return entry.lines;
+    }
+  }
+
+  const auto remember = [&](std::vector<std::string> wrapped) {
+    WrapMemoEntry& slot = memo[memo_next];
+    memo_next = (memo_next + 1) % memo.size();
+    slot.text.assign(key_text);
+    slot.max_width = max_width;
+    slot.max_lines = max_lines;
+    slot.metrics_generation = metrics_generation;
+    slot.lines = std::move(wrapped);
+    slot.valid = true;
+    return slot.lines;
+  };
+
+  // Bound the input before any full-length pass (the normalize copy, MeasureWidth,
+  // and the word tokenize below). Every hover string funnels through here — plugin
+  // title/content, a diagnostic message, a DAP evaluate value, blame, signature —
+  // and a language server / debug adapter can make any of them megabytes. The
+  // popup only ever renders a few wrapped lines, so a UTF-8-boundary-clamped prefix
+  // is sufficient and keeps this off the per-frame O(n) attacker-length path.
+  if (text.size() > kMaxHoverTextBytes) {
+    text = text.substr(0, util::PreviousUtf8Boundary(text, kMaxHoverTextBytes));
+  }
+
+  const std::string normalized = NormalizeHoverPopupText(text);
+  if (normalized.empty()) {
+    return remember(std::move(lines));
+  }
+  if (text_renderer_.MeasureWidth(normalized) <= max_width) {
+    lines.push_back(normalized);
+    return remember(std::move(lines));
+  }
+
+  std::istringstream stream(normalized);
+  std::vector<std::string> words;
+  for (std::string word; stream >> word;) {
+    words.push_back(std::move(word));
+  }
+  if (words.empty()) {
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(normalized, max_width)));
+    return remember(std::move(lines));
+  }
+
+  std::size_t index = 0;
+  // Reused across every candidate: the old `line + " " + words[index]` allocated a
+  // fresh string per word tried, and only the ones that fit were kept.
+  std::string line;
+  std::string candidate;
+  while (index < words.size() && lines.size() + 1 < max_lines) {
+    line.assign(words[index]);
+    ++index;
+    while (index < words.size()) {
+      candidate.assign(line);
+      candidate += ' ';
+      candidate += words[index];
+      if (text_renderer_.MeasureWidth(candidate) > max_width) {
+        break;
+      }
+      line.swap(candidate);
+      ++index;
+    }
+    // A single word wider than the wrap width (a long mangled/template type name, a
+    // URL) is taken unconditionally above; truncate it to the card width so it never
+    // paints past the card edge (hover cards draw with no clip). Truncation returns
+    // the input unchanged when the line already fits, so multi-word lines are
+    // unaffected. Mirrors the empty-words and trailing-`remaining` paths. These four
+    // are the only truncations in a render TU that legitimately own their result —
+    // they are memoized, not drawn — so the allocation is spelled out rather than
+    // hidden inside TruncateToWidth.
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(line, max_width)));
+  }
+
+  std::string remaining;
+  while (index < words.size()) {
+    if (!remaining.empty()) {
+      remaining += ' ';
+    }
+    remaining += words[index];
+    ++index;
+  }
+  if (!remaining.empty() && lines.size() < max_lines) {
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(remaining, max_width)));
+  }
+  if (lines.empty()) {
+    lines.push_back(
+        std::string(text_renderer_.TruncateToWidthEphemeralView(normalized, max_width)));
+  }
+  return remember(std::move(lines));
+}
+
+SDL_FRect WorkspaceShell::ComputeTwoBlockHoverCardRect(std::string_view title,
+                                                       std::string_view content,
+                                                       std::size_t max_title_lines,
+                                                       std::size_t max_content_lines,
+                                                       const SDL_FRect& anchor_rect,
+                                                       const SDL_FRect& editor_surface) const {
+  const float available_width = std::max(220.0f, editor_surface.w - 16.0f);
+  const float max_card_width = std::min(kEditorHoverPopupMaxWidth, available_width);
+  const float line_height = text_renderer_.LineHeight();
+  const float title_width =
+      title.empty() ? 0.0f
+                    : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+                               text_renderer_.MeasureWidth(title));
+  const float content_width =
+      content.empty() ? 0.0f
+                      : std::min(max_card_width - kEditorHoverPopupPadding * 2.0f,
+                                 text_renderer_.MeasureWidth(content));
+  const float minimum_width =
+      std::max(title_width, content_width) + kEditorHoverPopupPadding * 2.0f;
+  const float preferred_width = std::max(kEditorHoverPopupMinWidth, minimum_width);
+  const float card_width = ClampPopupWidth(preferred_width, minimum_width, max_card_width);
+  const float wrap_width = std::max(0.0f, card_width - kEditorHoverPopupPadding * 2.0f);
+  const auto title_lines = title.empty()
+                               ? std::vector<std::string>{}
+                               : WrapEditorHoverPopupText(title, wrap_width, max_title_lines);
+  const auto content_lines = content.empty()
+                                 ? std::vector<std::string>{}
+                                 : WrapEditorHoverPopupText(content, wrap_width, max_content_lines);
+  const auto block_height = [line_height](const std::vector<std::string>& lines) {
+    return static_cast<float>(lines.size()) * line_height +
+           (lines.empty() ? 0.0f
+                          : static_cast<float>(lines.size() - 1) * kEditorHoverPopupLineGap);
+  };
+  const float card_height =
+      kEditorHoverPopupPadding * 2.0f + block_height(title_lines) +
+      (title_lines.empty() || content_lines.empty() ? 0.0f : kEditorHoverPopupSectionGap) +
+      block_height(content_lines);
+  return PositionHoverPopup(anchor_rect, card_width, card_height, editor_surface);
+}
+
+void WorkspaceShell::DrawTwoBlockHoverCard(SDL_Renderer* renderer,
+                                           const SDL_FRect& card_rect,
+                                           std::string_view title,
+                                           std::string_view content,
+                                           std::size_t max_title_lines,
+                                           std::size_t max_content_lines) const {
+  const float text_x = card_rect.x + kEditorHoverPopupPadding;
+  const float text_width = std::max(0.0f, card_rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = card_rect.y + kEditorHoverPopupPadding;
+  const auto title_lines = title.empty()
+                               ? std::vector<std::string>{}
+                               : WrapEditorHoverPopupText(title, text_width, max_title_lines);
+  const auto content_lines = content.empty()
+                                 ? std::vector<std::string>{}
+                                 : WrapEditorHoverPopupText(content, text_width, max_content_lines);
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
+                      theme_.overlay_background, title_lines);
+  if (!title_lines.empty() && !content_lines.empty()) {
+    text_y += kEditorHoverPopupSectionGap;
+  }
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                      theme_.overlay_background, content_lines);
+}
+
+void WorkspaceShell::RenderEditorHoverPopup(SDL_Renderer* renderer) const {
+  const auto popup = ActiveEditorHoverPopupLayout();
+  if (!popup.has_value()) {
+    return;
+  }
+
+  DrawCardFrame(renderer, theme_, popup->rect, CardStyle::Overlay);
+  const float text_x = popup->rect.x + kEditorHoverPopupPadding;
+  const float text_width =
+      std::max(0.0f, popup->rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = popup->rect.y + kEditorHoverPopupPadding;
+
+  if (popup->kind == EditorHoverTarget::Kind::Blame) {
+    const editor::EditorBlameLine* blame_line =
+        editor_blame_overlay_service_.VisibleLine(popup->blame_line_index);
+    if (blame_line != nullptr) {
+      const auto summary_lines =
+          WrapEditorHoverPopupText(blame_line->summary, text_width, kEditorHoverPopupMaxSummaryLines);
+      text_renderer_.DrawStringOn(
+          renderer, text_x, text_y, theme_.text_primary, theme_.overlay_background,
+          text_renderer_.TruncateToWidthEphemeralView(blame_line->author, text_width));
+      text_y += text_renderer_.LineHeight() + kEditorHoverPopupLineGap;
+      text_renderer_.DrawStringOn(
+          renderer, text_x, text_y, theme_.text_secondary, theme_.overlay_background,
+          text_renderer_.TruncateToWidthEphemeralView(blame_line->date, text_width));
+      if (!summary_lines.empty()) {
+        text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
+        DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                            theme_.overlay_background, summary_lines);
+      }
+    }
+  } else if (popup->kind == EditorHoverTarget::Kind::Plugin && popup->plugin_hover.has_value()) {
+    DrawTwoBlockHoverCard(renderer, popup->rect, popup->plugin_hover->title,
+                          popup->plugin_hover->content, kEditorHoverPopupMaxPluginTitleLines,
+                          kEditorHoverPopupMaxPluginContentLines);
+  } else if (popup->kind == EditorHoverTarget::Kind::DebugValue &&
+             popup->debug_value.has_value()) {
+    DrawTwoBlockHoverCard(renderer, popup->rect, popup->debug_value->type,
+                          popup->debug_value->value, kEditorHoverPopupMaxPluginTitleLines,
+                          kEditorHoverPopupMaxPluginContentLines);
+  } else if (popup->diagnostic.has_value()) {
+    const SDL_Color severity_color =
+        editor::DiagnosticSeverityColor(theme_, popup->diagnostic->severity);
+    const auto message_lines = WrapEditorHoverPopupText(
+        popup->diagnostic->message, text_width, kEditorHoverPopupMaxDiagnosticLines);
+    text_renderer_.DrawStringOn(
+        renderer, text_x, text_y, severity_color, theme_.overlay_background,
+        text_renderer_.TruncateToWidthEphemeralView(
+            DiagnosticSeverityLabel(popup->diagnostic->severity), text_width));
+    if (!message_lines.empty()) {
+      text_y += text_renderer_.LineHeight() + kEditorHoverPopupSectionGap;
+      DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                          theme_.overlay_background, message_lines);
+    }
+  }
+
+  if (popup->primary_action_rect.has_value()) {
+    const bool action_hovered = last_mouse_position_valid_ &&
+                                EditorHoverPopupPrimaryActionHovered(last_mouse_x_, last_mouse_y_);
+    const char* action_label =
+        popup->kind == EditorHoverTarget::Kind::Diagnostic ? "Quick Fix" : "Copy SHA";
+    DrawButtonCentered(text_renderer_, renderer, theme_, *popup->primary_action_rect, action_label,
+                       ButtonTone::Accent,
+                       ButtonVisualState{
+                           .enabled = true,
+                           .hovered = action_hovered,
+                           .active = false,
+                       });
+    if (popup->kind == EditorHoverTarget::Kind::Diagnostic) {
+      const float hint_x =
+          popup->primary_action_rect->x + popup->primary_action_rect->w + kEditorHoverPopupGap;
+      const float hint_y = popup->primary_action_rect->y +
+                           (popup->primary_action_rect->h - text_renderer_.LineHeight()) * 0.5f;
+      text_renderer_.DrawStringOn(renderer, hint_x, hint_y, theme_.text_secondary,
+                                  theme_.overlay_background, kQuickFixShortcutHint);
+    }
+  }
+}
+
+void WorkspaceShell::UpdateEditorHover(float x, float y) {
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::UpdateEditorHover");
+  if (MenuSurfaceCapturingMouse()) {
+    active_editor_hover_target_.reset();
+    editor_hover_refresh_pending_ = false;
+    return;
+  }
+  const std::optional<EditorHoverTarget> previous_target = active_editor_hover_target_;
+  // The (const) resolver records a debug-value cache miss here; clear it first so a
+  // stale request from a previous position is not re-issued.
+  pending_hover_eval_.valid = false;
+  auto target = [&]() -> std::optional<EditorHoverTarget> {
+    util::PerformanceTrace::Scope scope("WorkspaceShell::UpdateEditorHover::TargetAtPosition");
+    return EditorHoverTargetAtPosition(x, y);
+  }();
+  // Cache miss for a debug-value hover: kick off the async evaluate. Its completion
+  // requests an editor redraw, re-running this resolution into a cache hit.
+  if (pending_hover_eval_.valid) {
+    debug_service_.EvaluateHover(pending_hover_eval_.frame_id, pending_hover_eval_.expression);
+    pending_hover_eval_.valid = false;
+  }
+  // Cache miss for a plugin hover: dispatch the worker query. Its completion stores
+  // the result and re-drives this resolution into a cache hit (popup), all without
+  // blocking the UI on the plugin's hover provider.
+  if (plugin_hover_cache_.state == PluginHoverCache::State::Kickoff) {
+    KickOffPluginHover(plugin_hover_cache_.path, plugin_hover_cache_.line,
+                       plugin_hover_cache_.column);
+    // When no worker is wired (the query ran inline), the cache already holds the
+    // result; re-resolve so the popup appears this frame instead of the next one.
+    if (plugin_hover_cache_.state != PluginHoverCache::State::Pending) {
+      target = EditorHoverTargetAtPosition(x, y);
+    }
+  }
+  if (target.has_value()) {
+    // Sticky hover for the diagnostic "Quick Fix" card: when it is showing and the
+    // pointer is over it (or the bridge zone), keep it rather than letting a target
+    // underneath the card (a squiggle on the line beneath the popup) steal focus
+    // while the user reaches for the button. Scoped to Diagnostic popups so the
+    // blame popup's own hover/redraw behavior is unaffected; the gap between anchor
+    // and card is already handled by the retention check below (target null there).
+    if (previous_target.has_value() && *previous_target != *target &&
+        previous_target->kind == EditorHoverTarget::Kind::Diagnostic) {
+      if (const auto sticky = ActiveEditorHoverPopupLayout();
+          sticky.has_value() && sticky->primary_action_rect.has_value() &&
+          (Contains(sticky->rect, x, y) ||
+           Contains(HoverPopupHoverZoneRect(sticky->anchor_rect, sticky->rect), x, y))) {
+        return;
+      }
+    }
+    if (!previous_target.has_value() || *previous_target != *target) {
+      ++editor_hover_target_generation_;
+    }
+    active_editor_hover_target_ = *target;
+    return;
+  }
+
+  if (const auto popup = ActiveEditorHoverPopupLayout(); popup.has_value()) {
+    if (Contains(popup->rect, x, y) ||
+        Contains(HoverPopupHoverZoneRect(popup->anchor_rect, popup->rect), x, y)) {
+      return;
+    }
+  }
+
+  if (previous_target.has_value()) {
+    ++editor_hover_target_generation_;
+  }
+  active_editor_hover_target_.reset();
+}
+
+void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::size_t line,
+                                        std::size_t column) {
+  // Mark the cell in flight so the const resolver does not re-kick while we wait.
+  plugin_hover_cache_.state = PluginHoverCache::State::Pending;
+  plugin_runtime_.Host().QueryHoverAsync(
+      path, line, column,
+      [this, path, line, column](bool ok, plugin::PluginHost::HoverResult result) {
+        // Apply only if we are still waiting on this exact cell (not superseded by
+        // a newer hover position).
+        if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
+            !plugin_hover_cache_.Matches(path, line, column)) {
+          return;
+        }
+        if (ok) {
+          // Bound the untrusted server/plugin text before it reaches the
+          // per-frame measure/normalize/word-split path (see kMaxHoverTextBytes).
+          TruncateHoverText(result.title);
+          TruncateHoverText(result.content);
+          plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
+          plugin_hover_cache_.result = std::move(result);
+          // Re-resolve at the current mouse position on the next frame -> cache hit.
+          QueueEditorHoverRefresh();
+          RequestFocusedEditorRedraw();
+          return;
+        }
+        // No plugin hover for this cell: fall back to the language server. The cell
+        // stays Pending until the LSP result lands (KickOffLspHover finalizes it).
+        KickOffLspHover(path, line, column);
+      });
+}
+
+void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::size_t line,
+                                     std::size_t column) {
+  const auto fail = [&]() {
+    plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+    QueueEditorHoverRefresh();
+    RequestFocusedEditorRedraw();
+  };
+  const auto get_setting = [this](std::string_view id) { return GetSettingValue(id); };
+  if (!LspFeatureEnabled(get_setting, "lsp.hover.enabled")) {
+    fail();
+    return;
+  }
+  editor::TextViewport* viewport = ActiveEditorViewport();
+  if (viewport == nullptr || viewport->path() != path) {
+    fail();
+    return;
+  }
+  std::string language_id;
+  LspClient* client = LspClientForViewport(*viewport, &language_id);
+  if (client == nullptr) {
+    fail();
+    return;
+  }
+  EnsureLspDocumentOpen(*viewport, *client, language_id);
+  // Cache coordinates are 1-based (query_line/query_column); the LSP position is
+  // 0-based with a byte-column -> server-encoding conversion.
+  const std::size_t line0 = line > 0 ? line - 1 : 0;
+  const std::size_t byte_column = column > 0 ? column - 1 : 0;
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+  BeginTrackedLspRequest();
+  client->RequestHoverAsync(
+      FileUriForPath(path), ByteColumnToLspPosition(*viewport, line0, byte_column, encoding),
+      [this, path, line, column](LspResult<util::JsonValue> result) {
+        FinishTrackedLspRequest();
+        if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
+            !plugin_hover_cache_.Matches(path, line, column)) {
+          return;
+        }
+        std::string content =
+            result.has_value() ? lsp_protocol::ParseHoverContents(*result) : std::string{};
+        if (content.empty()) {
+          plugin_hover_cache_.state = PluginHoverCache::State::Failed;
+        } else {
+          plugin::PluginHost::HoverResult hover;
+          hover.content = std::move(content);
+          TruncateHoverText(hover.content);
+          plugin_hover_cache_.result = std::move(hover);
+          plugin_hover_cache_.state = PluginHoverCache::State::Resolved;
+        }
+        QueueEditorHoverRefresh();
+        RequestFocusedEditorRedraw();
+      });
+}
+
+std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEditorBlamePopupLayout()
+    const {
+  const auto popup = ActiveEditorHoverPopupLayout();
+  if (!popup.has_value() || popup->kind != EditorHoverTarget::Kind::Blame ||
+      !popup->primary_action_rect.has_value()) {
+    return std::nullopt;
+  }
+
+  return EditorBlamePopupLayout{
+      .line_index = popup->blame_line_index,
+      .rect = popup->rect,
+      .copy_sha_rect = *popup->primary_action_rect,
+  };
+}
+
+SDL_FRect WorkspaceShell::EditorBlamePopupCopyShaHitRect(
+    const EditorBlamePopupLayout& popup) const {
+  return MakeRect(
+      popup.copy_sha_rect.x - kEditorHoverPopupPrimaryActionHitPaddingX,
+      popup.copy_sha_rect.y - kEditorHoverPopupPrimaryActionHitPaddingY,
+      popup.copy_sha_rect.w + kEditorHoverPopupPrimaryActionHitPaddingX * 2.0f,
+      popup.copy_sha_rect.h + kEditorHoverPopupPrimaryActionHitPaddingY * 2.0f);
+}
+
+bool WorkspaceShell::EditorBlamePopupCopyShaHovered(float x, float y) const {
+  return EditorHoverPopupPrimaryActionHovered(x, y);
+}
+
+std::vector<std::string> WorkspaceShell::WrapEditorBlamePopupText(std::string_view text,
+                                                                  float max_width,
+                                                                  std::size_t max_lines) const {
+  return WrapEditorHoverPopupText(text, max_width, max_lines);
+}
+
+void WorkspaceShell::UpdateEditorBlameHover(float x, float y) {
+  UpdateEditorHover(x, y);
+}
+
+void WorkspaceShell::ShowSignatureHelpPopup(std::string signature, std::string documentation) {
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  if (viewport == nullptr || viewport->path().empty() || signature.empty()) {
+    active_signature_help_.reset();
+    return;
+  }
+  active_signature_help_ = SignatureHelpPopup{
+      .signature = std::move(signature),
+      .documentation = std::move(documentation),
+      .path = viewport->path(),
+      .cursor_line = viewport->cursor_line(),
+      .cursor_column = viewport->cursor_column(),
+  };
+  RequestEditorSurfaceRedraw();
+}
+
+void WorkspaceShell::MaybeExpireSignatureHelp() {
+  if (!active_signature_help_.has_value()) {
+    return;
+  }
+  // The popup is anchored to the caret of the buffer it was requested for; once
+  // the caret moves, the buffer changes, or no editable viewport is focused, the
+  // signature no longer describes what is being typed, so drop it.
+  const editor::TextViewport* viewport = ActiveEditableViewport();
+  const bool still_valid = viewport != nullptr &&
+                           viewport->path() == active_signature_help_->path &&
+                           viewport->cursor_line() == active_signature_help_->cursor_line &&
+                           viewport->cursor_column() == active_signature_help_->cursor_column;
+  if (!still_valid) {
+    active_signature_help_.reset();
+    RequestEditorSurfaceRedraw();
+  }
+}
+
+void WorkspaceShell::RenderSignatureHelpPopup(SDL_Renderer* renderer) const {
+  if (!active_signature_help_.has_value() || MenuSurfaceCapturingMouse()) {
+    return;
+  }
+  const auto layout_state = CurrentWorkspaceLayout();
+  if (!layout_state.has_value()) {
+    return;
+  }
+  const auto caret = ActiveEditorCaretRect(*layout_state);
+  if (!caret.has_value()) {
+    return;
+  }
+
+  const SignatureHelpPopup& popup = *active_signature_help_;
+  const SDL_FRect card_rect = ComputeTwoBlockHoverCardRect(
+      popup.signature, popup.documentation, kEditorHoverPopupMaxPluginTitleLines,
+      kEditorHoverPopupMaxPluginContentLines, *caret, layout_state->editor_surface);
+  DrawCardFrame(renderer, theme_, card_rect, CardStyle::Overlay);
+
+  const float text_x = card_rect.x + kEditorHoverPopupPadding;
+  const float text_width = std::max(0.0f, card_rect.w - kEditorHoverPopupPadding * 2.0f);
+  float text_y = card_rect.y + kEditorHoverPopupPadding;
+  // The signature itself is the primary line; the parameter/doc block is the
+  // muted supporting text below it (inverse of the hover card's title/content).
+  const auto signature_lines =
+      WrapEditorHoverPopupText(popup.signature, text_width, kEditorHoverPopupMaxPluginTitleLines);
+  const auto doc_lines = popup.documentation.empty()
+                             ? std::vector<std::string>{}
+                             : WrapEditorHoverPopupText(popup.documentation, text_width,
+                                                        kEditorHoverPopupMaxPluginContentLines);
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_primary,
+                      theme_.overlay_background, signature_lines);
+  if (!signature_lines.empty() && !doc_lines.empty()) {
+    text_y += kEditorHoverPopupSectionGap;
+  }
+  DrawHoverPopupLines(text_renderer_, renderer, text_x, &text_y, theme_.text_secondary,
+                      theme_.overlay_background, doc_lines);
+}
+
+}  // namespace microide::workspace

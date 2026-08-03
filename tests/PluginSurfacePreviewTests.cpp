@@ -2,7 +2,7 @@
 
 #include "editor/PluginSurfaceStore.h"
 #include "workspace/PluginSurfacePreview.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <string>
 

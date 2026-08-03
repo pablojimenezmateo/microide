@@ -1,9 +1,9 @@
 #include "TestSupport.h"
 
 #include "plugin/PluginHost.h"
-#include "workspace/WorkspaceCommandRegistry.h"
-#include "workspace/WorkspaceKeybindingRegistry.h"
-#include "workspace/WorkspaceMenuRegistry.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
+#include "workspace/registries/WorkspaceKeybindingRegistry.h"
+#include "workspace/registries/WorkspaceMenuRegistry.h"
 
 #include <algorithm>
 #include <span>

@@ -5,11 +5,11 @@
 #include <string>
 
 #include "platform/SubprocessSandbox.h"
-#include "workspace/WorkspaceInteractionState.h"
-#include "workspace/WorkspaceMenuState.h"
-#include "workspace/WorkspaceProjectState.h"
-#include "workspace/WorkspacePromptState.h"
-#include "workspace/WorkspaceTextInputState.h"
+#include "workspace/state/WorkspaceInteractionState.h"
+#include "workspace/state/WorkspaceMenuState.h"
+#include "workspace/state/WorkspaceProjectState.h"
+#include "workspace/state/WorkspacePromptState.h"
+#include "workspace/state/WorkspaceTextInputState.h"
 
 namespace microide::workspace {
 

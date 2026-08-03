@@ -2,9 +2,9 @@
 
 #include "support/SoftwareCanvas.h"
 
-#include "workspace/DiffDividerGeometry.h"
-#include "workspace/CompareTabReview.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/render/DiffDividerGeometry.h"
+#include "workspace/git/CompareTabReview.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "render/Theme.h"
 
 #include <algorithm>

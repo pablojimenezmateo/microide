@@ -1,9 +1,9 @@
 #include "TestSupport.h"
 
 #include "editor/TextViewport.h"
-#include "workspace/RenderViewModelBuilder.h"
-#include "workspace/StatusBarModelService.h"
-#include "workspace/StatusBarService.h"
+#include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/services/StatusBarModelService.h"
+#include "workspace/services/StatusBarService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceLayout.h"
 

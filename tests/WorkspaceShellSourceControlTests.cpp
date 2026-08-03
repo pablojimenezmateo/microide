@@ -2,7 +2,7 @@
 
 #include "editor/TextBuffer.h"
 #include "project/GitCompareService.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <algorithm>
 #include <chrono>

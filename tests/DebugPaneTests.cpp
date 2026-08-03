@@ -3,11 +3,11 @@
 #include "editor/BreakpointRender.h"
 #include "editor/ExecutionLineRender.h"
 #include "editor/GutterMetrics.h"
-#include "workspace/DebugPaneMouseCoordinator.h"
-#include "workspace/DebugPaneRegistry.h"
-#include "workspace/DebugPaneService.h"
+#include "workspace/debug/DebugPaneMouseCoordinator.h"
+#include "workspace/debug/DebugPaneRegistry.h"
+#include "workspace/debug/DebugPaneService.h"
 #include "workspace/WorkspaceLayout.h"
-#include "workspace/WorkspaceProjectState.h"
+#include "workspace/state/WorkspaceProjectState.h"
 
 #include <string>
 #include <vector>

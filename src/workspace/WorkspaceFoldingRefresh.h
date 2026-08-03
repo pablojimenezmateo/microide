@@ -2,7 +2,7 @@
 
 #include <cstddef>
 
-#include "workspace/WorkspaceTabState.h"
+#include "workspace/state/WorkspaceTabState.h"
 
 namespace microide::editor {
 class TextViewport;

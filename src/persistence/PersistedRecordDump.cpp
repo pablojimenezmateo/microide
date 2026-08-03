@@ -2,7 +2,7 @@
 
 #include "persistence/PersistedRecord.h"
 #include "persistence/PersistedRecordReader.h"
-#include "workspace/WorkspacePersistenceFormat.h"
+#include "workspace/persistence/WorkspacePersistenceFormat.h"
 
 #include <cstddef>
 #include <iomanip>

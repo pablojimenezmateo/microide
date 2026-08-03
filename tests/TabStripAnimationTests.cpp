@@ -3,7 +3,7 @@
 #include <cmath>
 #include <vector>
 
-#include "workspace/TabStripAnimation.h"
+#include "workspace/render/TabStripAnimation.h"
 
 namespace microide::tests {
 namespace {

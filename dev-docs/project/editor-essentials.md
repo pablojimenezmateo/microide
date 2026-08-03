@@ -9,13 +9,13 @@ and related settings. It reflects the code as implemented; items called out as
 
 Primary implementation references:
 
-- Settings: `src/workspace/WorkspaceSettingsRegistry.cpp`
-- Toggles and commands: `src/workspace/WorkspaceActionServices.cpp`,
+- Settings: `src/workspace/registries/WorkspaceSettingsRegistry.cpp`
+- Toggles and commands: `src/workspace/actions/WorkspaceActionServices.cpp`,
   `WorkspaceCommandRegistry.cpp`, `WorkspaceMenuRegistry.cpp`,
   `WorkspaceKeybindingRegistry.cpp`
 - Language merge: `src/workspace/WorkspaceLanguageContract.{h,cpp}`
 - Editor render: `src/editor/EditorViewRenderer.cpp`,
-  `src/workspace/RenderViewModelBuilder.cpp`
+  `src/workspace/render/RenderViewModelBuilder.cpp`
 
 ## Language contract
 

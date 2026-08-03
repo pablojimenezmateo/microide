@@ -1,8 +1,8 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
-#include "workspace/DapProtocol.h"
-#include "workspace/WorkspaceDapClient.h"
+#include "workspace/debug/DapProtocol.h"
+#include "workspace/debug/WorkspaceDapClient.h"
 
 #include <algorithm>
 #include <atomic>

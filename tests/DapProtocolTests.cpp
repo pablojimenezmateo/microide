@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "util/JsonValue.h"
-#include "workspace/DapProtocol.h"
+#include "workspace/debug/DapProtocol.h"
 #include "workspace/JsonRpcMessageFraming.h"
 
 #include <cstdint>

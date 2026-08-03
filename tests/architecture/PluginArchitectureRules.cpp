@@ -43,7 +43,7 @@ RuleResult CheckSinglePluginReloadPerActivation(const std::filesystem::path& rep
   RuleResult result;
   result.label = "single plugin reload per ActivateProjectState";
   result.hard_fail = true;
-  const std::filesystem::path service_cpp = repo_root / "src/workspace/ProjectCatalogService.cpp";
+  const std::filesystem::path service_cpp = repo_root / "src/workspace/services/ProjectCatalogService.cpp";
   if (!RequireRuleTarget(result, service_cpp)) {
     return result;
   }

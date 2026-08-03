@@ -1,7 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/TextViewport.h"
-#include "workspace/WorkspaceShellTestAccess.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <filesystem>
 #include <string>

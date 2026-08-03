@@ -6,7 +6,7 @@
 
 #include "editor/TextViewport.h"
 #include "workspace/AssistProviderMerge.h"
-#include "workspace/AssistService.h"
+#include "workspace/services/AssistService.h"
 
 namespace microide::tests {
 
