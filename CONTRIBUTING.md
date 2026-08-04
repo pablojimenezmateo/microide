@@ -50,7 +50,15 @@ tools/run-checks.sh perf-tests   # allocation-counting assertions armed
 tools/run-checks.sh coverage     # line coverage + per-area floors
 tools/run-checks.sh asan         # also: ubsan, tsan
 tools/run-checks.sh fuzz         # build + smoke the 12 fuzz targets
+tools/run-checks.sh clang-build  # whole tree, clang, warnings-as-errors
+tools/run-checks.sh perf-canary  # proves the perf gate can still fail
 ```
+
+`clang-build` is worth running before you push if you added a source file to a
+curated target list (the bench and fuzz binaries name their sources explicitly) or
+touched anything the default `tests` build does not compile — it is the only lane
+that builds `src/app/main.cpp`, `microide_perf` and the benches with clang, and the
+only one where a warning fails the build.
 
 **SDL3 is not packaged by Debian or Ubuntu.** Build it once with
 `scripts/ci/install-sdl3-linux.sh` (the same script CI uses). Everything else comes

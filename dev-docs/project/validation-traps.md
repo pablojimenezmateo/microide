@@ -138,6 +138,46 @@ cp /tmp/probe.bak "$file"
 - When a lint enforces A-implies-B over two lists, ask whether B-implies-A is
   also a bug. For settings it was the worse one — see below.
 
+## Perf-Gate Vacuity
+
+The lint is not the only instrument that can go quietly blind. The perf gate has
+the same shape of problem and, unlike the lint, a track record: this suite's wall
+numbers have been silently wrong twice for purely environmental reasons — an
+xvfb-wrapped video lane inflating frame-pumping scenarios 2-12x, and hybrid-CPU
+placement adding another 2.4x. Both looked exactly like code regressions. Both
+cost real sessions before the lane was identified.
+
+`PerfBaselineTests` covers `CompareToBaseline` with hand-written numbers. That
+proves the comparison arithmetic and nothing about the pipeline feeding it: if
+measurement, aggregation, baseline loading or the process exit code breaks, every
+scenario reports a clean run, and a clean run is indistinguishable from a real
+pass.
+
+### The probe
+
+`tools/run-checks.sh perf-canary` runs `perf_gate_canary`
+(`tests/perf/PerfGateCanaryScenario.cpp`) twice and asserts **both** directions:
+
+| run | expected | what a wrong result means |
+| --- | --- | --- |
+| clean | PASS | a failure means the committed baseline does not describe this machine, so the probe concludes nothing |
+| inflated 4x | **FAIL** | a pass means the gate has stopped gating and every baseline in `tests/perf/baselines/` is unenforced |
+
+The second direction is the entire point, and it is the direction ordinary checks
+never test. Verify the probe itself the same way you verify a lint rule — run it
+with `MICROIDE_PERF_CANARY_FACTOR=1` (inflate by nothing) and confirm it goes red.
+
+### Why the canary's baseline is portable
+
+Real baselines are absolute timings from `perf-runner-v1` and cannot run on a
+hosted runner. The canary can, because its allocation count is fixed by its own
+source (one `std::vector` construction per block — no container growth policy, no
+stdlib version dependence), so inflating by N multiplies it by exactly N against a
+10% tolerance. Its wall/CPU envelopes are set to 100000% on purpose: wall time in a
+synthetic memset loop says nothing about the product, and gating it would only
+manufacture cross-machine flakes. Keep it that way — the canary measures the
+instrument, not the product.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit
