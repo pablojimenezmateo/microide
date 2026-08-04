@@ -225,11 +225,16 @@ delta:
    ran the scenario at **32.8 ms** — faster than the "fast" binary — which
    confirms layout rather than work.
 
-The moral is not that alignment flags are a fix to reach for casually; it is that
-**a wall delta on a scenario the change cannot reach is not evidence of a
-regression**, and the three checks above settle it in minutes. Allocation counts
-do not have this failure mode, which is the reason this suite gates primarily on
-them.
+Step 3 is a diagnostic, not a fix, and it was measured rather than assumed:
+building the whole suite with those flags is a **wash** — mean −0.6%, median
+−0.5% across 93 scenarios, with individual swings from −21% to +10% in both
+directions. Alignment moves this suite around by ±20% at random; it does not make
+it faster.
+
+The moral is that **a wall delta on a scenario the change cannot reach is not
+evidence of a regression**, and the three checks above settle it in minutes.
+Allocation counts do not have this failure mode, which is the reason this suite
+gates primarily on them.
 
 ## Mechanical Sweeps That Found Real Bugs
 
