@@ -803,11 +803,27 @@ const ScenarioRegistration g_perf_editor_add_cursor_next_match({Scenario{
 const ScenarioRegistration g_perf_editor_shaping_multi_caret({Scenario{
     .name = "editor_shaping_multi_caret",
     .smoke = false,
+    // 12 warmup passes so rss_growth_bytes is measured on the flat part of the
+    // curve. This scenario retains ~18,714 net allocations per iteration while a
+    // bounded structure (undo history) fills, then drops to 12 net at iteration
+    // ~11 and settles onto a stable ~1.56 MB/iteration plateau. Measured across
+    // that step, the rss p50 is bimodal and the gate is a coin flip.
+    .warmup_iterations = 12,
     .run = RunEditorShapingMultiCaret,
 }});
 const ScenarioRegistration g_perf_editor_toggle_comment_large({Scenario{
     .name = "editor_toggle_comment_large_selection",
     .smoke = false,
+    // Same reason as editor_shaping_multi_caret: net allocations run at 32,052 per
+    // iteration until iteration ~8, then fall to 12 with resident growth settling
+    // at a stable ~2.8 MB/iteration. The first rebaseline recorded a p50 from the
+    // 9.8 MB pre-step plateau and the very next validation run measured the 2.8 MB
+    // post-step one, failing at +148%. Warm past the step and both are stable.
+    //
+    // The 2.8 MB plateau itself is NOT warmup and NOT a leak -- see
+    // TD-2026-08-04-130. Allocation counts are balanced there; the resident set
+    // grows anyway.
+    .warmup_iterations = 12,
     .run = RunEditorToggleCommentLargeSelection,
 }});
 const ScenarioRegistration g_perf_editor_mouse_selection_drag({Scenario{

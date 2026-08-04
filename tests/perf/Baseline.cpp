@@ -170,10 +170,20 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
               baseline.tolerances.cpu_max_percent);
   }
   if (baseline.has_rss_metrics) {
-    // A scenario that grows the resident set by ~nothing has a near-zero baseline,
-    // where a percentage envelope collapses to nothing and one page of noise reads
-    // as an infinite regression. Below one page there is no signal to gate on.
-    constexpr double kRssNoiseFloorBytes = 4096.0;
+    // Resident growth is quantized to the 4 KiB page, so near zero a PERCENTAGE
+    // envelope is the wrong instrument entirely: one page of jitter on a one-page
+    // baseline is +50%, and no percentage that still catches real growth can absorb
+    // it. multi_project_switch proved this — recorded at 4,096, it measured 6,144 on
+    // the very next run and failed at +50% against a 25% envelope.
+    //
+    // The floor converts the gate to a flat absolute allowance in that regime. At
+    // 64 KiB the allowance is 80 KiB, which absorbs several pages of allocator
+    // jitter while still failing a scenario that newly retains ~80 KiB per
+    // iteration (8 MB over a hundred operations). 90 of 93 baselines record exactly
+    // zero growth, so nearly the whole suite gates on that flat allowance; the two
+    // that genuinely grow (2.75 MB and 1.61 MB per iteration) are 30-40x above it
+    // and gate on the percentage as intended.
+    constexpr double kRssNoiseFloorBytes = 64.0 * 1024.0;
     const auto add_rss = [&](std::string_view name, double expected, double actual,
                              double tolerance_percent) {
       AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual, tolerance_percent);

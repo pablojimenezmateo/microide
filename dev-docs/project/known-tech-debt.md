@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-04. **82 open items.**
+Reviewed 2026-08-04. **83 open items.**
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
@@ -21,6 +21,51 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-04-130 — repeated large multi-line edits grow the resident set ~176 KB each, permanently
+
+Found by the first CPU/RSS sweep, on the day the metric existed. The existing
+allocation oracle structurally cannot see it: the counts are *balanced*.
+
+`editor_toggle_comment_large_selection` performs 16 toggle-line-comment operations
+over a 1000-line selection per iteration. Measured at 20 iterations:
+
+| iteration | allocations | frees | net | rss growth |
+| ---: | ---: | ---: | ---: | ---: |
+| 0 | 189,486 | 156,473 | 33,013 | 22.3 MB |
+| 5 | 185,486 | 153,434 | 32,052 | 9.8 MB |
+| 12 | 185,488 | 185,476 | **12** | **2.81 MB** |
+| 19 | 185,486 | 185,474 | **12** | **2.81 MB** |
+
+The first phase is a bounded structure (undo history) filling to its cap — real
+retention, and it ends. What does not end is the second: from iteration ~8 onward
+allocations and frees are balanced to within 12, and the resident set still grows
+**2.81 MB every iteration, indefinitely**. That is ~176 KB per toggle of 1000 lines.
+
+`editor_shaping_multi_caret` shows the same shape at a stable ~1.56 MB/iteration
+after its own step at iteration ~11, so this is not one scenario's quirk.
+
+Hypothesis, not yet confirmed: heap fragmentation from the undo history's
+insert/evict cycle. Eviction frees the old entry in whatever small pieces it was
+built from while insertion asks for a large contiguous line-range block, so the
+allocator cannot reuse the freed space and extends the arena instead. Balanced
+counts with growing RSS is the signature of exactly that.
+
+Why it matters: a session doing sustained large multi-line editing grows resident
+memory with no upper bound and no way for the user to get it back short of
+restarting. Priority 4 is low memory usage.
+
+What would confirm or kill it:
+- `malloc_stats()` / `malloc_info()` around the loop to separate arena growth from
+  live bytes; if live bytes are flat and arena bytes climb, it is fragmentation.
+- `malloc_trim(0)` after the loop — if RSS returns, it is definitively unreturned
+  free space rather than retention.
+- Whether the undo entry's line-range storage can be made one allocation of a
+  stable size class instead of a variable-size composite.
+
+Do NOT chase this by reading the undo code first. The measurement above is cheap to
+extend and will say which of the three it is.
+
 
 Earlier archives: the 2026-07-12 deferred-backlog sweep (which cleared the pass
 5–24 backlog) is at `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`,
