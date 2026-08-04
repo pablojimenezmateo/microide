@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-04. **83 open items.**
+Reviewed 2026-08-04. **81 open items.**
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
@@ -76,16 +76,6 @@ with per-item detail in the `Deferred backlog sweep — Batch A…I` commits.
 Relocated here from `active-work.md` on 2026-08-03: these are open debt items, which
 is what this ledger is for. Not fixed in that pass — low value or hard to reach/test.
 
-- `CommitWorkflowService::DispatchCommit` captures `&state` into the background
-  task; if the owning project state is destroyed while a commit is in flight the
-  main-thread completion touches freed memory. Pre-existing (the old worker-thread
-  path had the same capture); the generation guard only covers a newer dispatch,
-  not teardown. Would need the mailbox cleared / the operation cancelled on
-  project close.
-- `TerminalSession` has three near-duplicate reset blocks (`Start`,
-  `StartPlaceholderForTesting`, `Stop`) plus `TestAccess::Reset`; they were kept in
-  lockstep but should be factored into one `ResetSessionStateLocked` to prevent
-  future drift.
 - `SurfaceTextureCache` eviction/null-renderer fixes lack direct unit coverage:
   `Upload` needs a live SDL renderer (`SDL_CreateTexture`), unavailable headless.
   They mirror the already-tested sibling text-texture cache guard.

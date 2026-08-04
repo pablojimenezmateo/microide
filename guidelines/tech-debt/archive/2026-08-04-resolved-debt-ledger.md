@@ -5003,3 +5003,29 @@ persistence decode, git refresh/patch/commit workflows, project search, recents,
   `CON`/`NUL`/trailing-dot reserved names are Windows-specific (Linux has none); validating every
   component against Windows reserved-name rules is Windows work not validatable here.
 
+
+## Closed 2026-08-04 (2.8.1 pre-release pass)
+
+Both relocated from the "Deferred from the 2026-07-10 cross-subsystem bug-hunt pass"
+list in `dev-docs/project/known-tech-debt.md`.
+
+- **[RESOLVED 2026-08-04] `CommitWorkflowService::DispatchCommit` captures `&state`
+  into the background task.** The completion now resolves through an RAII
+  `CommitOperationClaim` held by `CommitWorkflowState`; destroying, moving over, or
+  copying the state gives the claim up, which invalidates the operation generation
+  and makes the queued completion drop itself. The investigation widened the item:
+  besides the reported use-after-free on project close, a welcome-screen reset and a
+  catalog-entry erase both move-assign over the state, which published a commit
+  result into a *different* project's panel. Regressions:
+  `CommitWorkflow/{CompletionSurvivesStateDestruction,PublishedCommitDoesNotCancelALaterOne}`,
+  both heap-allocating the state so ASAN sees a freed region.
+- **[RESOLVED 2026-08-04] `TerminalSession` near-duplicate reset blocks.**
+  `ResetEmulationStateLocked` had already collapsed the emulation-state portion;
+  `ReseedForStartLocked` now collapses the rest, which `Start` and
+  `StartPlaceholderForTesting` still spelled out separately (including a duplicated
+  comment about seeding geometry before the reset — the drift warning).
+  `TerminalSessionTestAccess::Reset` was a hand-kept ~35-field copy of the same
+  state and had already drifted: it never cleared `pending_clipboard_text_`, so a
+  fixture could start with a stale OSC-52 clipboard payload attached. It now calls
+  the production reset. The Locked-helper cap moved 42 -> 43 on the "a helper that
+  removes code earns its slot" terms the rule's own comment sets.
