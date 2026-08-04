@@ -25,6 +25,164 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-04 measurement pass, eighth round (perf-runner-v1)
+
+Six fixes, two vacuous gates repaired, one wrong debt hypothesis corrected, and a
+quantified answer to "how much of the gated lane is the software text backend".
+Full-suite result versus the same binary before the pass: **mean p50 wall −2.35%
+over 96 scenarios, 95 PASS / 0 FAIL.**
+
+### `reserve` is not `push_back`: the reused-scratch-buffer trap
+
+`std::vector::reserve(n)` allocates **exactly** n when n exceeds capacity — it
+deliberately does not apply the growth factor `push_back` does. That is wrong for
+a REUSED scratch buffer refilled with a size that grows a little each call:
+`clear(); reserve(n);` with n rising 1..N reallocates and copies on every single
+call, which is exactly the O(N²) the scratch buffer was introduced to avoid, while
+the code reads as the allocation-free version.
+
+A held Ctrl+Shift+Alt+Down gesture is that shape. Four exact reserves sat on it
+(the box range list, the candidate list, `secondary_carets_`, and the
+`secondary_caret_positions()` cache), so the previous commit's scratch members
+bought nothing: the gate measured 1,200 allocations across a 400-step gesture,
+i.e. exactly 3 per keystroke. `util::ReserveGrowing` (`util/ScratchVector.h`)
+reserves `max(n, 2*capacity)`. **1,200 → 30 allocations; scenario p50 4,119 →
+2,949.**
+
+The same shape, one layer up: `TextLayoutCache::VisibleLineLayoutRefCached`
+destroyed the LRU's front entry to make room and built a fresh `LayoutLine`
+(a string plus two vectors, ~3.4 KB for a 200-column window) for the new one.
+`extract` hands the node back with its buffers intact, so rewriting `node.key()`
+and reinserting reuses the map node **and** all three buffers.
+`editor_sticky_scroll_scroll` −5.7% allocations / −8.6% wall,
+`editor_fold_viewport_refresh` −3.3% / −8.2%.
+
+And once more in the terminal: every range-snapshot entry point on
+`TerminalSession` used `clear()`+`assign()`, which destroys each `TerminalLine`
+(freeing its `cells` vector) and copy-constructs a new one. That is the render
+path's per-frame copy and the per-wheel-tick hover copy, so it was one allocation
+**and** one free per visible row per event.
+
+### Two gates were measuring an empty terminal
+
+`terminal_scroll_long_output` and `terminal_alt_screen_toggle` launched a command
+and slept. The harness runs with `SetUsePlaceholderTerminalsForTesting(true)`, so
+no shell is ever spawned: both terminals held exactly one blank line for the whole
+measured window. Neither had ever measured the thing it is named for, and the
+committed baselines recorded that.
+
+They also flapped, for a second reason: the driver is shared across a scenario's
+iterations and neither closed its terminal, so iteration N ran with N terminals
+attached and `terminal_alt_screen_toggle`'s allocations climbed monotonically
+(751, 1030, 1231, 1400, 1965 …) purely from accumulation. That is why its
+committed baseline read p50 995 against max 2805.
+
+Both now feed the emulator through `ScenarioContext::FeedTerminalOutput` (the same
+path the pty reader thread uses) and close their terminals. Byte-identical every
+iteration afterwards.
+
+### Balanced allocation counts with growing RSS means a growing container
+
+TD-2026-08-04-130 was filed as suspected heap fragmentation. It was
+`PieceTree`'s append-only `add_` buffer, which nothing ever reclaimed below the
+4 GiB overflow backstop — so sustained large multi-line editing grew resident
+memory without bound.
+
+Three counters said "no leak" and all three were true about the wrong thing:
+allocation counts stayed balanced (a container doubling is one alloc and one
+free); `mallinfo2` showed a flat arena and flat `uordblks` (a 35 MB block comes
+from mmap, not sbrk); `malloc_trim(0)` returned nothing (the memory was live).
+What found it: `/proc/self/smaps` diffed per iteration named one growing anonymous
+mapping, and `MICROIDE_PERF_BIG_ALLOC_BYTES=16000000` — a backtrace on any
+allocation at or above that size, now kept in `tests/perf/AllocationCounter.cpp` —
+named the line. **Check the mapping and the large-allocation backtrace before
+theorising about the allocator.**
+
+### The merge model copied the changed lines four times
+
+`compare::BuildMergeModel` is one synchronous call on the shell path that opens a
+merge tab, and its own self time — the hunk grouping, not the two diffs — was the
+largest scope in any merge scenario. All of it was copies of `SideChange`, each of
+which owns a `vector<string>`: the side tag, the concatenation, the per-hunk
+partition, and a by-value parameter fed an lvalue. All four are now moves.
+**Total 40.7 → 22.5 ms; grouping self time 21.2 → 3.9 ms.**
+
+Two harness problems fell out of it. The win was **ungated** — every merge
+scenario reuses its already-open tab, so the build lands on iteration 0 and is
+absorbed by the warmup; `merge_model_build_interleaved` now calls it directly.
+And `merge_edit_result_then_scroll`'s fixture ran `current += base` inside its
+build loop, so `current` came out as the quadratic sum of every prefix: 3.3 MB of
+repeated text against a 24 KB base. The scenario measured a 140x-lopsided diff
+rather than the three-way merge it is named for.
+
+### How much of the gated lane is the software text backend
+
+Worth knowing before optimising anything in a render scope. The gated lane pins
+`--renderer=software`, where `SdlTtfTextBackend` composites and uploads one
+texture per unique string; the GPU-gated glyph atlas (shipped 2026-06-28) is off
+there. Measured on the advisory lane, same binary, same scenario:
+
+| lane | `editor_sticky_scroll_scroll` p50 |
+| --- | ---: |
+| `--renderer=software --video=dummy` (gated) | 101.6 ms |
+| `--renderer=auto --video=x11` (opengles2) | **62.8 ms** |
+
+with 98,062 glyphs going out in 23,841 batched runs and only 3,079 string-texture
+hits. So ~40% of these scenarios is text drawing that real users on a GPU do not
+pay, and `render::TextBackend::UploadStringTexture` topping a ranked summary is
+not by itself a reason to act. `editor_scroll_fresh_content_large` is the extreme
+case: 567 ms of upload and 242 ms of rasterize, all of it lane.
+
+### Instrumentation added, and what it immediately said
+
+- `editor.visible_line_layout_{queries,hits,evictions,recycled}` — reported a
+  **99.85% hit rate with zero evictions** in `editor_scroll_fresh_content_large`,
+  the scenario that looked like the obvious candidate for the layout-cache work
+  above. Guessing would have optimised the wrong one.
+- `FoldingModel::EventIndexForLine` + `editor.fold_event_index_lines_walked` — an
+  O(line) prefix sum the fold recompute wanted three times per keystroke,
+  previously hidden inside `SyncLineBracketCache`'s self time. Deriving the
+  splice's end index from its start took it to two (1.8M → 1.2M line counts walked
+  per `mid_file_edit_latency_large_file` iteration).
+- `WorkspaceShell::Render{Merge,Compare}Surface::{Chrome,SideRows}` — both
+  surfaces carried 63–74 µs per frame of unattributed self time, the largest such
+  blocks in the suite. It is essentially all the side panes' row loop (the result
+  pane's `EditorViewRenderer` scopes had been hiding it), and that loop is text
+  draws, i.e. lane again.
+- `document.add_buffer_compactions`, and the big-allocation backtrace above.
+
+### Still open
+
+- **The fold model still rescans the whole document per keystroke.**
+  `ScanIndentRanges` (96 µs), `MatchBracketRanges` (64 µs) and `MergeRanges`
+  (58 µs) are each O(document) by construction and together are ~26% of
+  `mid_file_edit_latency_large_file`. All three are near-optimal for the structure
+  they walk; the fix is VSCode's incremental bracket-pair tree, which is a rewrite
+  of `FoldingModel`, not a constant-factor change. Unchanged from the seventh
+  round.
+- **`persistence::WriteFile::DurableWrite`** is still the largest scope in
+  `linter_on_save` (30 ms) and it is the fsync. Unchanged; needs the
+  `SaveX() == "bytes are on disk"` contract changed deliberately.
+- **`TextLayoutCache::BuildVisualLineColumns`** is ~1 ms per open of the 50k
+  fixture. It is already an ASCII-fast-scan over every line's bytes at roughly
+  memory bandwidth, so the only lever left is not doing it eagerly on open.
+- **`multi_project_switch`'s committed baseline (17.53 ms) no longer holds on this
+  machine, and it is not this pass.** It read 26.0 ms in the final sweep, so it was
+  A/B'd against a worktree build of the pre-pass commit: **25.6 ms there, 26.0 ms
+  here.** The scenario has simply drifted ~45% above a baseline recorded earlier;
+  it still passes the 100% wall gate, and it is the one scenario whose CPU/wall
+  ratio was already 1.54 (concurrent file-index, git and language-server work for
+  the new root). Left unbaselined rather than papered over — rebaselining it would
+  bake in whatever this machine is doing today.
+
+  Two traps worth recording from that A/B. **Perf fixtures are gitignored**, so a
+  fresh worktree fails with a fixture hash mismatch until `tests/perf/fixtures` is
+  symlinked from the main tree. And once symlinked, **allocation counts are not
+  comparable across worktrees**: this scenario walks project trees, the worktree's
+  path prefix is 25 characters shorter, and that alone moves the count by ~600
+  through std::string's small-string threshold. Compare wall across worktrees;
+  compare allocations only within one.
+
 ## 2026-08-03 measurement pass, seventh round (perf-runner-v1)
 
 Seven fixes across the highlighter, the fold recompute, the render row loop

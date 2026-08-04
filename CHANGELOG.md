@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [Unreleased]
+
+### Fixed
+
+- **Sustained large multi-line editing no longer grows memory without bound.**
+  The piece tree's insert buffer is append-only and nothing reclaimed it below a
+  4 GiB backstop that in practice never fires, so a session doing repeated
+  large-selection edits (toggle-comment, multi-caret line moves, formatting) grew
+  its resident set forever with no way to get it back short of restarting.
+  Measured at ~2.7 MB per sixteen 1,000-line toggles. Retained edit history is now
+  bounded relative to the live document.
+
+### Performance
+
+All figures on the project's reference runner. Whole-suite result versus the
+previous release: mean p50 −2.35% across 96 gated scenarios.
+
+- **Held column selection** (`Ctrl+Shift+Alt+Arrow`) no longer reallocates its
+  caret set on every keystroke. A 400-step gesture went from 1,200 allocations to
+  30. The scratch buffers added in v2.8.1 were being refilled through
+  `reserve()`, which allocates exactly what is asked for rather than growing
+  geometrically, so a set that grows by one line per keystroke reallocated every
+  time.
+- **Scrolling a large file** reuses the evicted line-layout entry instead of
+  destroying it and building a fresh one: −5.7% allocations and −8.6% wall on
+  sticky-scroll, −8.2% on fold-viewport refresh, −7.5% on indent-guide paint.
+- **Opening a merge tab** builds its model in roughly half the time (40.7 →
+  22.5 ms on a many-hunk merge); the hunk-grouping phase alone is 5x faster. It
+  was copying every changed line four times over.
+- **The terminal** no longer allocates and frees one buffer per visible row on
+  every frame of output or scrolling.
+
 ## [2.8.1] - 2026-08-04
 
 A packaging fix that matters more than everything else here combined — every

@@ -15,7 +15,6 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::size_t visible_columns,
                                                               std::size_t tab_size) const {
   ++visible_line_queries_;
-  util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutQueries);
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
       .horizontal_scroll = horizontal_scroll,
@@ -24,7 +23,6 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   };
   if (const auto it = visible_line_cache_.find(cache_key); it != visible_line_cache_.end()) {
     ++visible_line_hits_;
-    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutHits);
     return it->second;
   }
   if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
@@ -32,6 +30,11 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     // out by this function. Counted so the "a frame never evicts what it is
     // still reading" invariant is measurable rather than merely asserted.
     ++visible_line_evictions_;
+    // Counted here and NOT on the query/hit path. Those two already exist as plain
+    // non-atomic members behind stats(), and AddPerformanceCounter is a locked
+    // read-modify-write on a shared cache line — not something to put on a
+    // per-visible-row render path. Evictions and recycles are rare, and they are
+    // what this cache's behaviour actually turns on.
     util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutEvictions);
     // Recycle the evicted entry rather than destroying it and building a fresh
     // one. Scrolling through fresh content misses on EVERY row, so this path is
