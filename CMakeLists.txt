@@ -1062,6 +1062,7 @@ add_executable(microide_tests
   tests/WorkspaceShellPluginTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellCompareTests.cpp
+  tests/WorkspaceShellRenderSurfaceTests.cpp
   tests/WorkspaceShellCursorTests.cpp
   tests/WorkspaceShellProjectTests.cpp
   tests/WorkspaceShellSearchTests.cpp
