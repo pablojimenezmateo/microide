@@ -420,6 +420,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::ToggleBlockComment:
       return active_editable_viewport != nullptr &&
              SettingEnabled(operations_, "editor.shaping.toggle_comment.enabled", true);
+    case ActionId::ColumnSelectUp:
+    case ActionId::ColumnSelectDown:
+    case ActionId::ColumnSelectLeft:
+    case ActionId::ColumnSelectRight:
+      // No settings gate: column selection is caret movement, not a shaping edit,
+      // so it follows the plain "is there something to move a caret in" rule.
+      return active_editable_viewport != nullptr;
     case ActionId::MoveLineUp:
     case ActionId::MoveLineDown:
     case ActionId::DuplicateLine:

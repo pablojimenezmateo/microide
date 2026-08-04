@@ -550,6 +550,51 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // Column (box) selection, matching VSCode's Ctrl+Shift+Alt+Arrow. Registered
+      // rather than hardcoded in the key coordinator so the chord is listed in the
+      // keyboard-shortcuts overlay and can be rebound. The mouse form
+      // (Shift+Alt+drag) stays in WorkspaceEditorMouseCoordinator -- drags are not
+      // keybindings.
+      KeybindingSpec{
+          .id = "column-select-up",
+          .action = ActionId::ColumnSelectUp,
+          .key = SDLK_UP,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "column-select-down",
+          .action = ActionId::ColumnSelectDown,
+          .key = SDLK_DOWN,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "column-select-left",
+          .action = ActionId::ColumnSelectLeft,
+          .key = SDLK_LEFT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "column-select-right",
+          .action = ActionId::ColumnSelectRight,
+          .key = SDLK_RIGHT,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "move-line-up",
           .action = ActionId::MoveLineUp,

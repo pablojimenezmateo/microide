@@ -9,8 +9,10 @@
 
 #include "TestSupport.h"
 
+#include "WorkspaceShellEventHelpers.h"
 #include "editor/ColumnSelection.h"
 #include "editor/TextViewport.h"
+#include "workspace/shell/WorkspaceShellTestAccess.h"
 
 #include <string>
 #include <vector>
@@ -23,6 +25,7 @@ using microide::editor::ColumnSelectionState;
 using microide::editor::StepColumnSelection;
 using microide::editor::TextPosition;
 using microide::editor::TextViewport;
+using ShellTestAccess = microide::workspace::WorkspaceShell::TestAccess;
 
 constexpr std::size_t kNoColumnLimit = 1000;
 
@@ -161,6 +164,55 @@ void TestViewportStoresAndClearsColumnSelection() {
          "clearing should end the gesture so the next chord re-anchors");
 }
 
+
+// The chord must actually reach the action through the keybinding registry.
+//
+// The first version of this feature hardcoded Ctrl+Shift+Alt+Arrow in the key
+// coordinator instead of registering it. Everything above still passed, the README
+// documented the shortcut, and the app's own keyboard-shortcuts overlay did not know
+// it existed and it could not be rebound. Unit-testing the state machine cannot
+// catch that; only driving a real key event can.
+void TestColumnSelectChordDispatchesThroughTheRegistry() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  const std::filesystem::path file = root / "ragged.txt";
+  WriteFile(file, "alpha bravo charlie\nde\n\nfoxtrot golf hotel\nix\n");
+
+  microide::workspace::WorkspaceShell shell;
+  ShellTestAccess::SetProjectRoot(shell, root);
+  ShellTestAccess::SetWindowSize(shell, 1280, 720);
+  ShellTestAccess::OpenSingleEditorTab(shell, file);
+
+  auto& viewport = ShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 6, false);
+  Expect(!viewport.column_selection().active, "no gesture should be in progress yet");
+
+  const SDL_Keymod chord =
+      static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT);
+  Expect(SendKeyDown(shell, SDLK_DOWN, chord),
+         "Ctrl+Shift+Alt+Down must be handled -- if this fails the binding is not "
+         "registered and the README documents a shortcut the app does not have");
+
+  Expect(viewport.column_selection().active,
+         "the chord should start a column-selection gesture");
+  Expect(viewport.column_selection().cursor.line == 1,
+         "one Down step should move the moving corner one line down");
+  Expect(viewport.has_multiple_carets(),
+         "a two-line box should place a secondary caret");
+
+  // A second step extends rather than re-anchoring.
+  Expect(SendKeyDown(shell, SDLK_DOWN, chord), "the second chord press should be handled");
+  Expect(viewport.column_selection().anchor.line == 0,
+         "the anchor must stay put across steps");
+  Expect(viewport.column_selection().cursor.line == 2,
+         "the second step should extend the box, not restart it");
+
+  // Any other editor key ends the gesture so the next chord re-anchors.
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "a plain Down should be handled");
+  Expect(!viewport.column_selection().active,
+         "ordinary caret movement must end the column-selection gesture");
+}
+
 }  // namespace
 
 void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
@@ -178,6 +230,8 @@ void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
           TestSteppedStateProducesOneCaretPerSpannedLine);
   AddTest(tests, "ColumnSelection/ViewportStoresAndClears",
           TestViewportStoresAndClearsColumnSelection);
+  AddTest(tests, "ColumnSelection/ChordDispatchesThroughTheRegistry",
+          TestColumnSelectChordDispatchesThroughTheRegistry);
 }
 
 }  // namespace microide::tests

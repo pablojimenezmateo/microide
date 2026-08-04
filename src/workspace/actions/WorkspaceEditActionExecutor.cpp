@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "editor/BracketScanner.h"
+#include "editor/ColumnSelection.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
 #include "util/JsonFormat.h"
@@ -339,6 +340,35 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       } else {
         viewport->MoveCursorTo(match->open_line, match->open_column, false);
       }
+      context_.NotifyEditorCaretMoved();
+      return DispatchResult::Handled;
+    }
+    case ActionId::ColumnSelectUp:
+    case ActionId::ColumnSelectDown:
+    case ActionId::ColumnSelectLeft:
+    case ActionId::ColumnSelectRight: {
+      auto* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr) {
+        return DispatchResult::Handled;
+      }
+      const editor::ColumnSelectDirection direction =
+          id == ActionId::ColumnSelectUp     ? editor::ColumnSelectDirection::Up
+          : id == ActionId::ColumnSelectDown ? editor::ColumnSelectDirection::Down
+          : id == ActionId::ColumnSelectLeft ? editor::ColumnSelectDirection::Left
+                                             : editor::ColumnSelectDirection::Right;
+      const editor::ColumnSelectionState before = viewport->column_selection();
+      const editor::TextPosition caret{viewport->cursor_line(), viewport->cursor_column()};
+      const std::size_t lo =
+          before.active ? std::min(before.anchor.line, before.cursor.line) : caret.line;
+      const std::size_t hi =
+          before.active ? std::max(before.anchor.line, before.cursor.line) : caret.line;
+      // The virtual column may only grow to the longest line the box currently
+      // covers; unbounded growth would let Right run forever over short lines.
+      const editor::ColumnSelectionState after = editor::StepColumnSelection(
+          before, direction, caret, viewport->line_count(),
+          viewport->MaxLineLengthInSpan(lo, hi));
+      viewport->SetColumnSelection(after);
+      viewport->SetBoxSelection(after.anchor, after.cursor);
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;
     }
