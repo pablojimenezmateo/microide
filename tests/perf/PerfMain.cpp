@@ -1650,8 +1650,20 @@ int main(int argc, char** argv) {
                          .alloc_p95_percent = resolve_alloc(scenario.tolerance_alloc_p95_percent,
                                                             scenario.tolerance_p95_percent),
                          .alloc_max_percent = resolve_alloc(scenario.tolerance_alloc_max_percent,
-                                                            scenario.tolerance_max_percent)},
+                                                            scenario.tolerance_max_percent),
+                         // CPU carries the same scheduler jitter as wall, so it
+                         // inherits the scenario's *resolved* wall envelope rather
+                         // than the struct default. Writing the 10/20/50 default
+                         // next to a widened 100/150/200 wall envelope would gate
+                         // CPU ten times tighter than the metric it tracks, and
+                         // every scenario with a widened wall tolerance would flag
+                         // on CPU immediately.
+                         .cpu_p50_percent = scenario.tolerance_p50_percent,
+                         .cpu_p95_percent = scenario.tolerance_p95_percent,
+                         .cpu_max_percent = scenario.tolerance_max_percent},
       };
+      record.has_cpu_metrics = true;
+      record.has_rss_metrics = true;
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
         return 1;

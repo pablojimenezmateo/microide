@@ -1,3 +1,4 @@
+#include "editor/ColumnSelection.h"
 #include "perf/PerfHarness.h"
 
 #include "editor/IndentDetect.h"
@@ -128,6 +129,57 @@ void RunEditorAddCursorNextMatch(ScenarioContext& context) {
       if (!context.ExecuteCommand("add-cursor-next-match")) {
         throw std::runtime_error("add-cursor-next-match command failed");
       }
+    }
+  });
+}
+
+// Keyboard column selection materializes one caret per spanned line on every
+// keystroke, so a long gesture rebuilds a growing caret set repeatedly -- the one
+// shape where a single held-down chord can go quadratic. The 10,000-caret cap in
+// SetBoxSelection bounds the size; nothing bounded the rebuild rate, and no
+// scenario covered box selection at all (keyboard or mouse).
+void RunEditorColumnSelectionBurst(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!PathExistsNoThrow(cpp_50k)) {
+    std::cerr << "editor_column_selection_burst: missing fixture " << cpp_50k << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  vp.ClearSecondaryCarets();
+  vp.ClearColumnSelection();
+  vp.MoveCursorTo(5000, 8, false);
+
+  // 400 Down steps: the caret set grows by one line per step and is rebuilt whole
+  // each time, so allocations here scale with the SUM of the span, not its final
+  // size. That is the number worth watching.
+  context.Measure("column_selection.extend_down", [&] {
+    editor::ColumnSelectionState state = vp.column_selection();
+    for (int i = 0; i < 400; ++i) {
+      const std::size_t lo = state.active ? std::min(state.anchor.line, state.cursor.line) : 5000;
+      const std::size_t hi = state.active ? std::max(state.anchor.line, state.cursor.line) : 5000;
+      state = editor::StepColumnSelection(state, editor::ColumnSelectDirection::Down,
+                                          editor::TextPosition{vp.cursor_line(), vp.cursor_column()},
+                                          vp.line_count(), vp.MaxLineLengthInSpan(lo, hi));
+      vp.SetColumnSelection(state);
+      vp.SetBoxSelection(state.anchor, state.cursor);
+    }
+  });
+
+  // Horizontal extension re-scans the span for the longest line on every step,
+  // which is the cost the keyboard gesture adds over the mouse one.
+  context.Measure("column_selection.extend_right", [&] {
+    editor::ColumnSelectionState state = vp.column_selection();
+    for (int i = 0; i < 64; ++i) {
+      const std::size_t lo = std::min(state.anchor.line, state.cursor.line);
+      const std::size_t hi = std::max(state.anchor.line, state.cursor.line);
+      state = editor::StepColumnSelection(state, editor::ColumnSelectDirection::Right,
+                                          editor::TextPosition{vp.cursor_line(), vp.cursor_column()},
+                                          vp.line_count(), vp.MaxLineLengthInSpan(lo, hi));
+      vp.SetColumnSelection(state);
+      vp.SetBoxSelection(state.anchor, state.cursor);
     }
   });
 }
@@ -878,6 +930,12 @@ const ScenarioRegistration g_perf_settings_change_many_tabs({Scenario{
     // Scenario itself: allocations are the oracle, keep it tight.
     .tolerance_alloc_p50_percent = 1.0,
     .run = RunSettingsChangeManyTabs,
+}});
+const ScenarioRegistration g_perf_editor_column_selection_burst({Scenario{
+    .name = "editor_column_selection_burst",
+    .smoke = false,
+    .baseline_gated = true,
+    .run = RunEditorColumnSelectionBurst,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",

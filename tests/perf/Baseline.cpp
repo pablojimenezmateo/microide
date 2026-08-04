@@ -178,12 +178,14 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
                              double tolerance_percent) {
       AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual, tolerance_percent);
     };
+    // p50 ONLY, deliberately. Resident growth is bursty: the iteration that happens
+    // to trip an allocator arena expansion pays for it and the rest pay nothing, so
+    // p95 and max measure which iteration got unlucky rather than anything about the
+    // code. editor_column_selection_burst records p50 = 10 KiB against p95 = 9 MiB
+    // from exactly that -- gating either would be a permanent coin flip. The p95/max
+    // numbers are still recorded and reported; they are just not a gate.
     add_rss("p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes,
             aggregate.metrics.p50_rss_growth_bytes, baseline.tolerances.rss_p50_percent);
-    add_rss("p95_rss_growth_bytes", baseline.metrics.p95_rss_growth_bytes,
-            aggregate.metrics.p95_rss_growth_bytes, baseline.tolerances.rss_p95_percent);
-    add_rss("max_rss_growth_bytes", baseline.metrics.max_rss_growth_bytes,
-            aggregate.metrics.max_rss_growth_bytes, baseline.tolerances.rss_max_percent);
   }
   return result;
 }

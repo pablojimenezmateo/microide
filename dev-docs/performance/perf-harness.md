@@ -97,6 +97,20 @@ an implicit `0.0` — which would have failed all 93 scenarios the moment the me
 shipped. They start gating when the baseline is next re-recorded on the reference
 runner, which is a deliberate act like any other rebaseline.
 
+Run-to-run stability, measured over four independent runs of one unchanged binary
+on the reference runner (`editor_column_selection_burst`):
+
+| metric | spread |
+| --- | --- |
+| `p50_allocations` | 4,247 every run — the oracle, as documented |
+| `p50_rss_growth_bytes` | 210,944 bytes every run — bit-identical |
+| `p50_cpu_ms` | 15.31 – 20.35 (**33 %**) |
+
+So resident growth is gateable at a tight envelope and CPU is not. CPU inherits the
+scenario's *resolved* wall envelope rather than the tolerance struct's default —
+without that, a scenario with a widened 100 % wall tolerance would carry a 10 % CPU
+tolerance and flag on its own recorded baseline immediately.
+
 First measurements worth knowing (advisory lane, 5 iterations):
 
 | scenario | wall p50 | cpu p50 |

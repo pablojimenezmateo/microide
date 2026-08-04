@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
@@ -623,6 +624,8 @@ std::size_t TextViewport::MaxLineLengthInSpan(std::size_t lo, std::size_t hi) co
   if (lo > hi) {
     std::swap(lo, hi);
   }
+  util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionSpanLinesScanned,
+                              hi - lo + 1);
   std::size_t longest = 0;
   for (std::size_t line = lo; line <= hi; ++line) {
     longest = std::max(longest, document_->lines.LineLength(line));
@@ -631,9 +634,11 @@ std::size_t TextViewport::MaxLineLengthInSpan(std::size_t lo, std::size_t hi) co
 }
 
 void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
+  util::PerformanceTrace::Scope trace_scope("TextViewport::SetBoxSelection");
   if (document_->lines.empty()) {
     return;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionBuilds);
   const std::size_t last_line = document_->lines.size() - 1;
   anchor.line = std::min(anchor.line, last_line);
   caret.line = std::min(caret.line, last_line);
@@ -666,6 +671,7 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   // SetSecondaryCaretsWithRanges) for every line except the primary/caret line.
   // Columns are pre-clamped to each line's length so ValidateRangeColumns accepts
   // them; an anchor==caret range on a line yields a zero-width caret.
+  util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionCaretsPlaced, hi - lo + 1);
   std::vector<SelectionRange> ranges;
   ranges.reserve(hi - lo);
   for (std::size_t line = lo; line <= hi; ++line) {
