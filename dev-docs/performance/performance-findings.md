@@ -29,8 +29,11 @@ top interactive scenarios were confirmed render-bound (see "2026-07-04 measureme
 
 Six fixes, two vacuous gates repaired, one wrong debt hypothesis corrected, and a
 quantified answer to "how much of the gated lane is the software text backend".
-Full-suite result versus the same binary before the pass: **mean p50 wall −2.35%
-over 96 scenarios, 95 PASS / 0 FAIL.**
+Full-suite result versus the same binary before the pass, at 20 iterations:
+**95 PASS / 0 FAIL**, mean p50 wall −1.3% to −2.4% over 96 scenarios across two
+sweeps. Read the per-scenario allocation deltas below rather than that mean — the
+wall spread between two sweeps of the same binary is wider than the mean itself,
+which is the reason this suite gates on allocation counts.
 
 ### `reserve` is not `push_back`: the reused-scratch-buffer trap
 
