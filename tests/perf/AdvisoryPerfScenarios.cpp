@@ -632,6 +632,14 @@ const ScenarioRegistration g_perf_editor_buffer_find_incremental({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    // warmup: opening the fixture and running the first searches settles over
+    // about five iterations (allocations 6,101 / 3,530 / 3,492-and-flat; RSS
+    // growth 19.7 MB / 4.6 / 0 / 5.5 / 8.2 / 0-and-flat) as the allocator reaches
+    // the arena size this file's peak footprint needs. Without a warmup the
+    // `p50_rss_growth_bytes` gate reads 342 KB at 8 iterations (FAIL) and 0 at 12
+    // (PASS) from the same binary -- it was tracking the iteration count, not the
+    // product.
+    .warmup_iterations = 5,
     .run = RunEditorBufferFindIncremental,
 }});
 const ScenarioRegistration g_perf_merge_scroll_large_fixture({Scenario{
