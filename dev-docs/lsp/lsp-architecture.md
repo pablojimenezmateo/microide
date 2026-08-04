@@ -73,6 +73,32 @@ Language servers themselves are contributed by Lua plugins (`plugins/*-lsp/`) vi
   changes O(server's appetite). `RelativePattern` bases and the `WatchKind`
   bitmask (1=Create, 2=Change, 4=Delete; absent means all three) are honoured, so
   a server that asked only about deletions is not woken for edits.
+- **Callbacks carry an outcome, not just an optional.** Every async `LspClient`
+  request callback takes `LspResult<T>` = `{ LspRequestOutcome outcome;
+  std::optional<T> value; }`, computed once in `Impl::DispatchResultRequest`.
+  Outcomes: `kOk`, `kEmpty` (server answered null/absent), `kTimeout` (deadline
+  sweep), `kUnavailable` (server gone / send failed), `kProtocolError`. Before
+  this, a timed-out go-to-definition was shaped identically to "no definition
+  here", so the UI said **"No definition found"** for a transport failure. Any
+  caller emitting a "No X found" message MUST gate it on `answered()`
+  (`kOk || kEmpty`) and surface "Language server did not respond" otherwise —
+  this applies across definition / references / type-def / impl / declaration /
+  workspace-symbol / rename / formatting in `AssistService`. Test seam:
+  `LspClient::SetRequestTimeoutForTesting(ms)`.
+- **The transport is SHARED with DAP — fix bugs once.** Both clients speak the
+  same stdio JSON-RPC wire protocol and used to carry independent copies that
+  drifted, which shipped a bug: the LSP framer parsed `Content-Length`
+  tolerantly (case-insensitive, optional whitespace) with a test pinning it,
+  while the DAP copy required a byte-exact `Content-Length: ` prefix — so an
+  adapter writing `content-length:` had its header dropped, the parser resynced
+  by reading the JSON body as headers, and the session tore down. Now shared:
+  `JsonRpcMessageFraming.{h,cpp}` (the codec, with a per-client
+  `max_message_bytes` ceiling) and `util::WakePipe::PollReadableOrWake`, which
+  carries the load-bearing "re-fetch the stdout fd every poll, never trust the
+  cached number" rule. **Still parallel, so check both when touching either:**
+  shutdown sequencing, `SendMessageImmediate`'s bounded `write_mutex`
+  acquisition, the outbound queue + byte budget, `FailPendingRequests`, the
+  initialize handshake deadline, and `ResetProtocolState`.
 - **didOpen carries current text.** `ResolveOpenDocumentForSync` captures
   `was_open` *before* opening, because a fresh `didOpen` sends the already-edited
   buffer; a following `didChange` would then double-apply and desync the server.
@@ -226,6 +252,25 @@ backstops: bounded message/read-buffer sizes with oversized-frame skip-and-resyn
   full-sync `didChange` serialization is ≈245µs at 5k lines / ≈1.04ms at 20k lines —
   that per-keystroke cost is now off the UI thread for utf-16 servers (utf-8 servers
   use ranged incremental sync, so the payload is tiny either way).
+
+### Stub-mode responses go through the main-thread mailbox
+
+`LspClient::EnableTestStubMode()` + `SetTest*Handler` do **not** invoke the
+handler inline. `DispatchTestStub` marshals through the same main-thread mailbox
+a real response uses, so the handler only runs on `DrainCallbacks()` /
+`WorkspaceShellTestAccess::ConsumeLspCallbacks(shell)`.
+
+So a **chained** request — one issued from inside another's callback — needs one
+drain per hop (`codeLens` → `codeLens/resolve`; `prepareCallHierarchy` →
+`callHierarchy/{incoming,outgoing}Calls`). A single `ConsumeLspCallbacks` after a
+two-hop chain leaves the second response in the mailbox, and the symptom is
+indistinguishable from "the second request was never sent": the stub handler
+simply never ran.
+
+To get two responses **in flight at once**, park the callbacks (a handler that
+pushes `cb` into a vector instead of calling it) and answer them out of order.
+Driving a second pull through the save path does not work from a test, which is
+why `WorkspaceShellTestAccess::RequestCodeLensesForActiveBuffer` exists.
 
 ## Testing
 

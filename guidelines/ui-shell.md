@@ -77,6 +77,36 @@ overlay (`ActionId::InsertSnippet`, `ShowInsertSnippetOverlay`) drive snippet
 sessions. New placeholder visuals should follow the decorated-row discipline and
 sit relative to selection/caret per the editor-essential-capabilities spec.
 
+## Glyph Surface Format: Coverage Lives In Alpha
+
+A blended glyph render is the text colour at **every** pixel — the shape is
+carried entirely by per-pixel alpha. Put one in a surface without an alpha
+channel and the shape is discarded, leaving an opaque rectangle: every character
+paints as a solid coloured block.
+
+This shipped as a real bug. Glyph composites and the ASCII atlas are allocated in
+the renderer's preferred texture format (so uploads do not swizzle), and the
+**software renderer advertises `SDL_PIXELFORMAT_XRGB8888` first**. `opengles2`
+offers `ARGB8888` first, so the shipped app was fine and only the perf harness
+(software renderer) showed it. Fixed by `render/GlyphSurfaceFormat.h`: keep the
+channel order, skip formats without alpha.
+
+Diagnosing "text renders as blocks":
+
+- **The tell:** strings containing a non-ASCII byte render *correctly* while pure
+  ASCII is blocks. Non-ASCII skips the atlas for the whole-string SDL_ttf path, so
+  the asymmetry points at the atlas/composite surface, not the font.
+- `MICROIDE_RENDER_GLYPH_ATLAS=0` forces the composite path, splitting atlas from
+  batched geometry in one run.
+- Log `SDL_GetPixelFormatName(surface->format)` and check `Amask != 0`.
+- **Trap:** dumping the atlas with `SDL_SaveBMP` and viewing it in ImageMagick is
+  misleading — IM reads the 32-bit BMP's 4th channel as alpha and flattens an XRGB
+  dump to all-black, which reads as "nothing was ever written". Do a direct pixel
+  readback instead.
+- A test that builds the atlas with an alpha-capable format proves nothing: the
+  two pre-existing atlas tests both passed `SDL_PIXELFORMAT_RGBA32`, which is
+  exactly the case that cannot fail. Assert on the format-selection helper.
+
 ## Interaction Rules
 
 - Separate event routing from durable state models when possible.

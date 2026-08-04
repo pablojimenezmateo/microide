@@ -124,6 +124,16 @@ red on otherwise-correct code.
 - `WorkspaceLspClient/DidOpenQueuedBeforeInitializeStillDeliversFullText` starts a Python LSP stub with a delayed `initialize` response. The test polls the marker file for up to five seconds and exits early if the client stops running; slow CI hosts may still need a rerun rather than weakening the assertion.
 - `TerminalSession/StopEscalatesToKillForStubbornChild` uses `fork()` and is skipped automatically when the host blocks process creation (common in Cursor agent sandboxes). Run terminal signal tests with full permissions on a normal Linux workstation.
 
+## Not Fooling Yourself
+
+A passing check is only evidence if the check could have failed. `dev-docs/project/validation-traps.md`
+collects the ways that stopped being true here — a failed build leaving ctest at
+100 %, architecture lints that were structurally incapable of firing, fixtures
+that passed vacuously after a file move, and the mechanical sweeps
+(extra warnings, second compiler, hardened stdlib, clone detector, reachability)
+that found real bugs a manual read did not. Read it before trusting a green run
+on anything load-bearing, and before adding a lint rule.
+
 ## Validation Loop
 
 For meaningful work:

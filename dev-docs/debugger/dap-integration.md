@@ -498,6 +498,14 @@ Files added:
 
 - `src/workspace/debug/LaunchConfig.h` — native launch/attach config (`name`, `type`,
   `request`, verbatim `arguments`). No `.vscode/launch.json` import.
+- **Shared with LSP — fix transport bugs once.** The `Content-Length` codec is
+  `src/workspace/JsonRpcMessageFraming.{h,cpp}` and the stdout+wake poll is
+  `util::WakePipe::PollReadableOrWake`; both clients use them. They used to be
+  duplicated and drifted, which shipped a bug: the DAP copy required a byte-exact
+  `Content-Length: ` prefix, so an adapter writing `content-length:` could not be
+  debugged at all. Shutdown sequencing, the outbound queue, `FailPendingRequests`
+  and `ResetProtocolState` are **still parallel** — check both sides when touching
+  either. See `dev-docs/lsp/lsp-architecture.md` § Load-bearing invariants.
 - `src/workspace/debug/DebugSession.{h,cpp}` — lifecycle state machine
   (`Inactive→Initializing→Configuring→Running→Stopped→Terminated/Failed`) on top of
   a `DapClient`. Drives initialize → launch/attach (queued; the client flushes it

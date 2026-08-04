@@ -84,6 +84,14 @@ self-time table would have been wasted work.
 - Push expensive integration work off hot UI paths when that does not compromise correctness.
 - Prefer focused data-flow cleanup over broad cleverness that obscures ownership.
 
+## Reading A Measurement
+
+Most reported regressions are not regressions. Before spending time on a number,
+apply the triage in `dev-docs/performance/perf-harness.md` § Reading A Measurement:
+re-run anything flagged at `ITERATIONS=25`, treat identical allocation counts on
+both sides as proof no extra work is being done, and check the machine was quiet.
+`max_wall_ms`-only movement with a flat p50 is a single sample.
+
 ## Validation
 
 - For changes that can affect startup, typing, scroll, project switch, search, compare/merge, or idle behavior, run targeted perf-harness scenarios and compare baseline deltas.

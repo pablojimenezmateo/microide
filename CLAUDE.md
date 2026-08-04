@@ -211,6 +211,7 @@ The durable contracts live in `openspec/specs/workspace-architecture/spec.md`, `
 - `dev-docs/debugger/dap-integration.md`: debugger/DAP architecture, status, and phased roadmap (shipped on `main` in v2.0.0; Phases 0–10 done)
 - `dev-docs/control/control-channel.md`: external control channel for headless/LLM-driven control. Headless entry point: `microide --control [--set <id> <value>]... [--control-spec <file>]` force-starts the channel and mirrors responses/events/applied lines to stdout as JSONL (live AF_UNIX socket + `--control-spec` cold start also supported)
 - `dev-docs/project/media-generation.md`: how the showcase screenshots + hero video under `docs/media/` are generated (`tools/capture-media.sh`); regenerate them whenever the UI changes. `tools/release.sh` drives the full release (build → tests → media → signed `.deb`)
+- `dev-docs/project/validation-traps.md`: how a green run stops being evidence — stale-binary ctest passes, architecture lints structurally incapable of firing, vacuous fixtures, and the mechanical sweeps (extra warnings, second compiler, hardened stdlib, clone detector, reachability) that found real bugs. Read before trusting a green run or adding a lint rule
 - `dev-docs/project/active-work.md`: current shipped baseline and active phases
 - `dev-docs/project/implementation-guide.md`: durable product and subsystem map
 - `guidelines/architecture.md`: handbook summary of subsystem boundaries

@@ -67,6 +67,119 @@ cancels because both sides pay it.
 Shared tolerance constants live in `tolerance::` in `tests/perf/PerfHarness.h`; prefer
 them over fresh numbers.
 
+## Reading A Measurement
+
+Most "regressions" this harness reports are not regressions. The heuristics below
+came out of chasing ones that were not, and they are cheap to apply before
+spending a session on a number.
+
+### Re-run anything flagged at 25 iterations
+
+`tools/perf-compare.py` defaults to `ITERATIONS=10` — five samples per side. That
+is too few here: many scenarios have a 5-6x p50/p95 spread from a cold first
+iteration, so the median of five swings wildly and the 2σ band does not filter it
+out.
+
+Evidence: in one review pass 8 of 9 flagged "regressions" (+16 % to +54 %)
+dissolved or flipped to improvements at `ITERATIONS=25`; only one survived. In a
+later pass all four flagged scenarios collapsed, two into improvements — one that
+had read as "+75.8 % max_wall" came back **9.5 % faster** across all three
+percentiles.
+
+### Triage heuristics
+
+- **Identical allocation counts on both sides means the same work is being done.**
+  A wall delta there is code layout, inlining, or machine noise — never an
+  algorithmic regression. This is the single most useful discriminator.
+- `max_wall_ms`-only movement with a flat p50 is a single-sample outlier. Ignore
+  it.
+- p50 **and** p95 **and** max all moving the same direction is a real signal.
+- Check whether the change even touches what the scenario exercises:
+  `git diff --stat <base>..HEAD -- src/<subsystem>/`.
+- Compute the mean p50 delta across all scenarios as a bias check. ~0 % with a
+  roughly even slower/faster split means no systematic regression.
+
+`tools/perf-compare.py <commit>` also bisects: pass an intermediate commit to find
+where a delta appeared.
+
+### Measure on a quiet machine
+
+The machine is a lane, exactly like the video and CPU-cluster lanes. A full gate
+run once flagged `external_change_refresh_open_diff` at 67.3 ms against a 28.5 ms
+baseline (+136 %) because it was launched while `perf-compare.py` was tearing down
+two multi-GB worktree builds. The same binary measured 26.5 ms standalone, 25.5 ms
+in the git set, and 29.8 ms in a clean full suite, with allocations flat (~61.5k)
+in all four. A file-I/O + subprocess scenario is where concurrent teardown shows up
+first.
+
+Finish other jobs, confirm nothing is running (`pgrep -x microide_perf`, no
+builds), then measure.
+
+### The scenario may not measure the thread you changed
+
+The allocation counter is **per thread** and most scenarios measure the shell
+thread, so work you moved off it is invisible here by design — but so is work you
+*optimised* off it.
+
+`terminal_scroll_long_output` is the standing example: it is render/scroll-bound,
+while terminal VT parsing (`AppendOutputLocked` → `PutGlyphLocked` /
+`PutAsciiRunLocked`) runs on the reader thread. A ~25x parse-throughput win
+(per-char → bulk-ASCII) moved this scenario by **1.00x**. To measure the parse
+path, microbench `TerminalSessionTestAccess::AppendOutput` directly on a large
+printable-ASCII blob and time it — that is how a 35.5 ms → 1.4 ms per-256 KiB
+result was obtained.
+
+Before using a committed baseline as your "before", check it is not stale: the
+committed `terminal_scroll_long_output` baseline once sat at 29,643 p50
+allocations against a live ~2,221, which fabricates a huge phantom improvement.
+Prefer a same-session A/B against a `main` worktree.
+
+### Standalone vs full-suite gaps are a lead, not a known artifact
+
+Scenarios in one `microide_perf` process share process-global state (SDL, fonts,
+the glyph atlas, the heap), so a scenario can measure differently standalone than
+in the full suite. Two examples:
+
+- `cold_startup_no_project`: 590 p50 allocations standalone vs 165 in-suite (165
+  is its committed baseline). Warm-vs-cold process state.
+- `compare_scroll_selection`: 105 ms / 2 git spawns standalone vs 296 ms / 45 git
+  spawns in-suite. That one was **a real bug**: a larger address space makes each
+  `fork`+`exec` dear enough that inline blame loses the race against the scroll,
+  and `GitBlameService` discarded every result whose viewport had moved — so the
+  cache never got written, the re-validation throttle never had anything to hit,
+  and every frame re-spawned the probe chain. Fixed in `c7d4f71b` (gate
+  `GenerationsStillCurrent`, not `RequestStillCurrent`, for anything already paid
+  for). 296 → 139 ms.
+
+So: **diff the `perf_counters` block between the two runs** — that localised the
+blame storm in one step (`subprocess.spawns` 2 vs 45,
+`git.blame_validation_skips` 99 vs 0). Counters are in every `--report-json` per
+iteration. But confirm the gap **reproduces on a clean run** first: if the only
+movers are small (`subprocess.wait_ms`, a few extra rows) and allocations are
+flat, it was load, not ordering.
+
+An earlier version of this guidance said a `--scenarios=X` number is never
+comparable to a committed baseline. That is too strong and it cost a session —
+most scenarios reproduce their baseline standalone just fine.
+
+### Percentiles land on the cold pass
+
+At `--iterations=8`, p95 lands on iteration 0's cold pass (font/atlas fill,
+initial file-index build, first session write). `cold_startup_no_project`
+p95_allocations was 5373 at 8 iterations and 590 at 25 — equal to its own p50.
+Fix this per scenario with `warmup_iterations = 1`, **not** by widening
+tolerances.
+
+GCC enforces designated-initializer order: `.warmup_iterations` must sit in
+declaration order relative to the tolerance fields, or the scenario will not
+compile.
+
+### After an A/B
+
+`git worktree remove --force` the throwaway checkout. `tools/perf-compare.py`
+invokes the harness **per scenario**, so its numbers are standalone-equivalent —
+it cannot see in-suite effects, and is not a substitute for a full gated run.
+
 ## Rebaselining
 
 `--update-baseline` with no `--scenarios` rewrites every gated baseline, and that is

@@ -71,6 +71,35 @@ The stdout JSONL stream, in order:
    `{"event":"terminated",...}` as the session runs. Each stop emits the `stopped`
    event **twice** (see below).
 
+### Driving a live instance headlessly
+
+To exercise a long-lived `--control` instance (rather than a one-shot spec):
+
+```bash
+xvfb-run -a env SDL_AUDIODRIVER=dummy XDG_RUNTIME_DIR=/run/user/1000 \
+  ./build/microide/microide <project> --control &
+XDG_RUNTIME_DIR=/run/user/1000 ./build/microide/microide control-send <verb> [args]
+```
+
+Three gotchas, each of which cost real time:
+
+- **It must run under `xvfb`.** With `SDL_VIDEODRIVER=dummy` alone (no X display)
+  the app exits right after the sandbox-init log line. xvfb keeps the window alive.
+  (This is the opposite of the perf harness, which wants the dummy driver — see
+  `dev-docs/performance/perf-harness.md`.)
+- **`XDG_RUNTIME_DIR` must be a SHORT path.** The control socket is
+  `$XDG_RUNTIME_DIR/microide/<pid>.sock`, and AF_UNIX caps the path at 108 bytes.
+  A long scratch path silently fails to bind — no socket, no error. Use the real
+  `/run/user/<uid>`.
+- **Kill by PID, never `pkill -f 'build/microide/microide'`** — that pattern
+  matches the invoking shell's own command line. Use
+  `ps -eo pid,args | awk '$2 ~ /\/microide\/microide$/ {print $1}'`.
+
+The channel exposes no buffer-content query, so verify edits by driving `save` and
+reading the file from disk. Watch for cross-command state: `add-cursor-all-matches`
+leaves multiple carets that pollute later single-caret edits, and a buffer right
+after `open` may not have settled — settle before asserting.
+
 Discover names without reading plugin source with the one-shot client:
 `microide control-send --query launch-configs` or `microide control-send --query
 adapters` (see below).
