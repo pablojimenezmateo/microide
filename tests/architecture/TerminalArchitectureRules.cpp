@@ -163,7 +163,15 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   // collapsed three inline ~35-line copies of the session reset (Start,
   // StartPlaceholderForTesting, Stop) that a comment asked readers to keep in
   // lockstep by hand, a net loss of ~90 lines from the .cpp.
-  constexpr std::size_t kCap = 42;
+  // 43: +1 for ReseedForStartLocked, on the same "earns its slot" terms. The
+  // emulation-state reset was factored out but the rest of the start reseed was
+  // not, so Start() and StartPlaceholderForTesting() still carried the same
+  // label/geometry/bookkeeping block — including a duplicated comment explaining
+  // why the geometry has to precede the reset. Folding it also let
+  // TerminalSessionTestAccess::Reset drop its hand-kept ~35-field restatement of
+  // the same state, which had already drifted (it never cleared
+  // pending_clipboard_text_).
+  constexpr std::size_t kCap = 43;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadRuleTarget(result, path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");

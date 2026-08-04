@@ -608,6 +608,22 @@ void TerminalSession::ResetEmulationStateLocked() {
   ResetScrollRegionLocked();
 }
 
+void TerminalSession::ReseedForStartLocked(const std::filesystem::path& working_directory,
+                                           std::string launch_label) {
+  working_directory_ = working_directory;
+  default_launch_label_ = std::move(launch_label);
+  launch_label_ = default_launch_label_;
+  lines_ = {TerminalLine{}};
+  // Geometry BEFORE ResetEmulationStateLocked: it resets the scroll region, whose
+  // bottom margin is derived from rows_. Reset it against the stale pre-restart
+  // height and the region outlives the 24x80 reseed.
+  rows_ = 24;
+  columns_ = 80;
+  ResetEmulationStateLocked();
+  wake_event_pending_ = false;
+  snapshot_generation_ = 1;
+}
+
 void TerminalSession::ResetTabStopsLocked() {
   const std::size_t width = std::max<std::size_t>(1, columns_);
   tab_stops_.assign(width, false);
