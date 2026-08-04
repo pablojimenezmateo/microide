@@ -7,6 +7,7 @@
 
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "util/ScratchVector.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
@@ -444,7 +445,7 @@ std::span<const TextPosition> TextViewport::secondary_caret_positions() const {
                  [](const SecondaryCaret& a, const TextPosition& b) { return a.position == b; });
   if (!in_sync) {
     secondary_caret_positions_cache_.clear();
-    secondary_caret_positions_cache_.reserve(secondary_carets_.size());
+    util::ReserveGrowing(secondary_caret_positions_cache_, secondary_carets_.size());
     for (const SecondaryCaret& caret : secondary_carets_) {
       secondary_caret_positions_cache_.push_back(caret.position);
     }
@@ -578,7 +579,9 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> 
   const TextPosition primary{cursor_line_, cursor_column_};
   std::vector<SecondaryCaret>& candidates = secondary_caret_candidates_scratch_;
   candidates.clear();
-  candidates.reserve(ranges.size());
+  // Geometric, not exact: a held column-select gesture calls this with a span one
+  // line longer each keystroke, and `reserve` allocates exactly what is asked for.
+  util::ReserveGrowing(candidates, ranges.size());
   for (const SelectionRange& range : ranges) {
     const SelectionRange norm = NormalizeRange(range);
     if (!detail::ValidateRangeColumns(document_->lines, norm)) {
@@ -609,7 +612,7 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> 
   if (!std::is_sorted(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess)) {
     std::sort(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess);
   }
-  secondary_carets_.reserve(candidates.size());
+  util::ReserveGrowing(secondary_carets_, candidates.size());
   for (SecondaryCaret& candidate : candidates) {
     if (candidate.position == primary) {
       continue;
@@ -695,7 +698,7 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   // every step, so a fresh vector here is one growing allocation per keystroke.
   std::vector<SelectionRange>& ranges = box_ranges_scratch_;
   ranges.clear();
-  ranges.reserve(hi - lo);
+  util::ReserveGrowing(ranges, hi - lo);
   for (std::size_t line = lo; line <= hi; ++line) {
     if (line == caret.line) {
       continue;

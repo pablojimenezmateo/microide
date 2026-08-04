@@ -718,6 +718,44 @@ void TestSetBoxSelectionEqualColumnsMakesPlainColumnCarets() {
          "equal box columns produce selection-less column carets");
 }
 
+// Regression: a held Ctrl+Shift+Alt+Down gesture rebuilds the whole caret set on
+// every keystroke over a span one line longer than the last, and the scratch
+// buffers that rebuild feeds were sized with `reserve(n)` — which allocates
+// EXACTLY n, so a monotonically growing refill reallocated and copied on every
+// single keystroke. The scratch buffers made the code READ allocation-free while
+// costing three reallocations per step; the perf gate measured 1,200 allocations
+// across a 400-step gesture.
+//
+// Pointer identity of `secondary_caret_positions()` is the observable tell: the
+// span points into the cache buffer, so a reallocation moves it. Geometric growth
+// must settle that pointer in O(log N) moves, not one per step.
+void TestGrowingBoxSelectionStopsReallocatingTheCaretBuffer() {
+  TextViewport viewport;
+  std::string content;
+  constexpr std::size_t kLines = 512;
+  for (std::size_t i = 0; i < kLines; ++i) {
+    content += "abcdefgh\n";
+  }
+  viewport.LoadContent(content, "/tmp/mc-box-grow.txt");
+
+  const TextPosition anchor{0, 2};
+  const void* last = nullptr;
+  std::size_t moves = 0;
+  for (std::size_t line = 1; line < kLines; ++line) {
+    viewport.SetBoxSelection(anchor, TextPosition{line, 6});
+    const auto positions = viewport.secondary_caret_positions();
+    Expect(positions.size() == line, "each step should place one caret per non-primary line");
+    if (positions.data() != last) {
+      ++moves;
+      last = positions.data();
+    }
+  }
+
+  // log2(512) == 9 doublings from empty; allow slack for the first few steps
+  // landing on small capacities. Exact `reserve` produced 511 moves here.
+  Expect(moves <= 16, "a growing box selection must not reallocate its caret buffer per step");
+}
+
 // Regression: a multi-caret edit whose carets straddle a preserved interior line
 // must NOT publish a single contiguous AppliedEdit. The aggregate history entry
 // spans first..last caret line, but the interior line is unchanged; a single
@@ -1082,6 +1120,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestSetBoxSelectionClampsShortLinesToEndOfLine);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionEqualColumnsMakesPlainColumnCarets",
           TestSetBoxSelectionEqualColumnsMakesPlainColumnCarets);
+  AddTest(tests, "EditorMultiCaret/GrowingBoxSelectionStopsReallocatingTheCaretBuffer",
+          TestGrowingBoxSelectionStopsReallocatingTheCaretBuffer);
   AddTest(tests, "EditorMultiCaret/SoftWrapMultiCaretInsertAppliesAtEveryCaret",
           TestSoftWrapMultiCaretInsertAppliesAtEveryCaret);
   AddTest(tests, "EditorMultiCaret/SoftWrapMultiCaretBackspaceErasesAtEveryCaret",
