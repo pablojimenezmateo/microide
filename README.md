@@ -488,15 +488,22 @@ Requirements:
   - Lua 5.4 — the plugin runtime (without it, Lua plugin support is disabled)
   - fontconfig — accurate `editor.font_family` matching (without it, a directory scan is used)
 
-On Debian/Ubuntu, the required and recommended packages are:
+On Debian/Ubuntu, everything except SDL3 comes from the archive:
 
 ```bash
 sudo apt-get install -y cmake ninja-build pkg-config \
-  libsdl3-dev libsdl3-ttf-dev libpcre2-dev liblua5.4-dev libfontconfig-dev
+  libpcre2-dev liblua5.4-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev
 ```
 
-On other distributions, install the equivalent `-dev`/`-devel` packages. More build
-notes are in `dev-docs/platform/linux-build.md`.
+**SDL3 is not packaged by Debian or Ubuntu yet** — there is no `libsdl3-dev` to
+install. Build it from source with `scripts/ci/install-sdl3-linux.sh` (the same
+script CI uses), or follow
+[dev-docs/platform/linux-build.md](dev-docs/platform/linux-build.md).
+
+This affects only *building* microide. The published `.deb` bundles SDL3 and
+SDL3_ttf, so installing it needs nothing beyond the archive.
+
+On other distributions, install the equivalent `-dev`/`-devel` packages.
 
 Default build:
 
@@ -524,6 +531,15 @@ sudo ./scripts/install-deb.sh
 The package installs `microide` into `/usr/bin`, shared assets into
 `/usr/share/microide/assets`, and desktop-launcher metadata into the standard
 XDG application and icon locations.
+
+Because no Debian-family distribution packages SDL3 yet, the `.deb` bundles
+`libSDL3.so.0` and `libSDL3_ttf.so.0` into `/usr/lib/<triplet>/microide` and
+reaches them through an `$ORIGIN`-relative `RUNPATH`; every other dependency is a
+normal `Depends:` entry satisfied from the archive. `scripts/ci/verify-deb-runtime.sh`
+proves that by launching the packaged binary with the loader cache inhibited and
+the library path restricted to stock system directories, and CI additionally
+installs the package into a stock `ubuntu:24.04` container and runs it. Releases
+are refused if either check fails.
 
 Platform-specific setup, dependency install, and bring-up notes live in dedicated docs:
 

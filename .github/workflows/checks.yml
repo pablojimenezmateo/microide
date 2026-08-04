@@ -177,6 +177,69 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  package:
+    name: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev
+
+      - name: Cache SDL3 build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-package-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-package-${{ runner.os }}-
+
+      # The artifact users actually receive was never validated before: the
+      # pipeline built, tested, signed and published a .deb that could not load
+      # libSDL3.so.0 on any machine but the maintainer's, for twenty releases.
+      # Building the package here and launching it under a clean-machine library
+      # path is what makes that class of bug loud instead of silent.
+      - name: Build the .deb
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --target microide -j"$(nproc)"
+          cd build && cpack -G DEB
+
+      - name: Verify the package starts on a clean system
+        run: scripts/ci/verify-deb-runtime.sh build/microide_*_amd64.deb
+
+      # A real install on a stock image, which is the only check that also proves
+      # the declared Depends: are actually satisfiable from the archive.
+      - name: Install into a stock container and launch
+        run: |
+          deb="$(ls build/microide_*_amd64.deb)"
+          docker run --rm -v "$PWD:/w" -w /w ubuntu:24.04 bash -euxc '
+            apt-get update -qq
+            apt-get install -y --no-install-recommends ./'"$deb"'
+            SDL_VIDEODRIVER=dummy microide --version
+          '
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: microide-deb
+          path: build/microide_*_amd64.deb
+          retention-days: 7
+
   perf-baseline-tag:
     name: perf-baseline-tag
     if: github.event_name == 'pull_request'

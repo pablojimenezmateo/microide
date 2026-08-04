@@ -743,6 +743,122 @@ if(UNIX AND NOT APPLE)
     @ONLY
   )
 
+  # --- Runtime library bundling -------------------------------------------
+  #
+  # Every release up to and including v2.8.0 shipped a .deb whose binary had
+  # `NEEDED libSDL3.so.0` and `NEEDED libSDL3_ttf.so.0` but no matching
+  # `Depends:` entry, no RUNPATH, and no bundled library. It could only start on
+  # a machine that had SDL3 hand-installed under /usr/local — i.e. the
+  # maintainer's. `apt install ./microide.deb` satisfied every listed dependency
+  # and the binary then died in the loader.
+  #
+  # The cause is CPACK_DEBIAN_PACKAGE_SHLIBDEPS: it delegates to dpkg-shlibdeps,
+  # which can only emit a dependency for a library owned by an installed .deb. No
+  # Debian-family distro packages SDL3 yet, so it is built from source into
+  # /usr/local, dpkg-shlibdeps maps it to nothing, and silently emits nothing.
+  #
+  # So any linked library that dpkg does not own gets copied into the package
+  # under ${libdir}/microide and reached through an $ORIGIN-relative RUNPATH.
+  # Libraries that *are* dpkg-owned keep going through shlibdeps, which is both
+  # correct and smaller. That makes the package self-sufficient no matter how
+  # SDL3 was located at configure time, and it keeps working unchanged on the day
+  # a distro does start packaging SDL3.
+  set(MICROIDE_BUNDLED_RUNTIME_LIBDIR "${CMAKE_INSTALL_LIBDIR}/microide")
+
+  # Resolve an imported target to the real .so file on disk, following symlinks,
+  # then decide whether dpkg owns it. Returns the resolved path in <out_var> when
+  # it needs bundling and an empty string when it does not.
+  function(microide_resolve_unpackaged_library target out_var)
+    set(${out_var} "" PARENT_SCOPE)
+    if(target STREQUAL "" OR NOT TARGET ${target})
+      return()
+    endif()
+
+    # IMPORTED_LOCATION is set per-config for CMake config packages; pkg-config
+    # imported targets carry no location at all, so fall back to searching the
+    # link interface for an absolute path.
+    set(_lib "")
+    get_target_property(_lib ${target} IMPORTED_LOCATION)
+    if(NOT _lib)
+      foreach(_cfg RELEASE RELWITHDEBINFO MINSIZEREL DEBUG NOCONFIG)
+        get_target_property(_lib_cfg ${target} IMPORTED_LOCATION_${_cfg})
+        if(_lib_cfg)
+          set(_lib "${_lib_cfg}")
+          break()
+        endif()
+      endforeach()
+    endif()
+    if(NOT _lib)
+      get_target_property(_link_libs ${target} INTERFACE_LINK_LIBRARIES)
+      if(_link_libs)
+        foreach(_candidate IN LISTS _link_libs)
+          if(_candidate MATCHES "\\.so(\\.[0-9]+)*$" AND IS_ABSOLUTE "${_candidate}")
+            set(_lib "${_candidate}")
+            break()
+          endif()
+        endforeach()
+      endif()
+    endif()
+    if(NOT _lib OR NOT EXISTS "${_lib}")
+      return()
+    endif()
+
+    get_filename_component(_lib "${_lib}" REALPATH)
+
+    # dpkg-owned means shlibdeps will produce a correct Depends: entry and there
+    # is nothing to bundle. Not owned means bundling is the only way the package
+    # can start on a machine that is not this one.
+    find_program(MICROIDE_DPKG_QUERY dpkg-query)
+    if(MICROIDE_DPKG_QUERY)
+      execute_process(
+        COMMAND "${MICROIDE_DPKG_QUERY}" --search "${_lib}"
+        RESULT_VARIABLE _owned
+        OUTPUT_QUIET
+        ERROR_QUIET)
+      if(_owned EQUAL 0)
+        return()
+      endif()
+    endif()
+
+    set(${out_var} "${_lib}" PARENT_SCOPE)
+  endfunction()
+
+  set(MICROIDE_BUNDLED_LIBRARIES "")
+  foreach(_runtime_target ${MICROIDE_SDL3_TARGET} ${MICROIDE_SDL3_TTF_TARGET})
+    microide_resolve_unpackaged_library("${_runtime_target}" _resolved)
+    if(NOT _resolved STREQUAL "")
+      list(APPEND MICROIDE_BUNDLED_LIBRARIES "${_resolved}")
+    endif()
+  endforeach()
+  list(REMOVE_DUPLICATES MICROIDE_BUNDLED_LIBRARIES)
+
+  if(MICROIDE_BUNDLED_LIBRARIES)
+    # Install under the SONAME, not the realpath basename: the loader resolves
+    # `NEEDED libSDL3.so.0`, and the file on disk is libSDL3.so.0.5.0.
+    foreach(_bundled IN LISTS MICROIDE_BUNDLED_LIBRARIES)
+      execute_process(
+        COMMAND sh -c "objdump -p '${_bundled}' | awk '/SONAME/ {print $2; exit}'"
+        OUTPUT_VARIABLE _soname
+        OUTPUT_STRIP_TRAILING_WHITESPACE
+        ERROR_QUIET)
+      if(_soname STREQUAL "")
+        get_filename_component(_soname "${_bundled}" NAME)
+      endif()
+      message(STATUS "Bundling unpackaged runtime library: ${_soname} (${_bundled})")
+      install(FILES "${_bundled}"
+              DESTINATION "${MICROIDE_BUNDLED_RUNTIME_LIBDIR}"
+              RENAME "${_soname}")
+    endforeach()
+
+    # $ORIGIN is /usr/bin at run time, so this resolves to /usr/lib/<triplet>/microide.
+    # BUILD_RPATH is deliberately left alone: the build tree must keep resolving
+    # against the real install prefix so `cmake --build && ./microide` still works.
+    set_target_properties(microide PROPERTIES
+      INSTALL_RPATH "$ORIGIN/../${MICROIDE_BUNDLED_RUNTIME_LIBDIR}"
+      INSTALL_RPATH_USE_LINK_PATH FALSE
+      BUILD_WITH_INSTALL_RPATH FALSE)
+  endif()
+
   install(TARGETS microide RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
   install(FILES "${CMAKE_CURRENT_SOURCE_DIR}/docs/microide.1"
           DESTINATION "${CMAKE_INSTALL_MANDIR}/man1")
@@ -777,6 +893,14 @@ if(UNIX AND NOT APPLE)
   set(CPACK_DEBIAN_PACKAGE_SECTION "devel")
   set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
   set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+  if(MICROIDE_BUNDLED_LIBRARIES)
+    # Without this, dpkg-shlibdeps walks the packaged binary, cannot resolve the
+    # bundled sonames, and warns; with it, it resolves them against the private
+    # directory and correctly emits Depends: only for the libraries the bundled
+    # ones themselves pull in from the archive.
+    set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS_PRIVATE_DIRS
+        "${CMAKE_INSTALL_PREFIX}/${MICROIDE_BUNDLED_RUNTIME_LIBDIR}")
+  endif()
 
   include(CPack)
 endif()
