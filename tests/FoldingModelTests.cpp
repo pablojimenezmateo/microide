@@ -284,6 +284,11 @@ void TestBudgetedRefreshConvergesGeometrically() {
   }
   lines.push_back("}");
 
+  // A fold that OPENS inside the window and closes within the forward cap, so
+  // the assertion below is about the budget converging and not about the cap.
+  lines[5] = "  void inner() {";
+  lines[6000] = "  }";
+
   FoldingModel model;
   const auto options = DefaultCStyleOptions();
   int refreshes = 0;
@@ -294,9 +299,43 @@ void TestBudgetedRefreshConvergesGeometrically() {
   }
   Expect(refreshes <= 8,
          "a doubling budget must converge in O(log n) refreshes, not O(n / budget)");
+  const auto fold = model.FoldStartingAt(5);
+  Expect(fold.has_value() && fold->closer_line == 6000,
+         "the resolve that completes must carry the folds inside its reach");
+}
+
+// Chasing a closer means reading every byte in between, so a construct spanning
+// more than `kMaxForwardResolveLines` is deliberately left unresolved rather than
+// making the first frame read the whole file. It must resolve once the viewport
+// is near enough -- and hitting the cap must NOT report a partial resolve, or the
+// refresh gate would redo the same bounded walk every frame.
+void TestForwardResolveCapDefersAVeryLongFold() {
+  const std::size_t body = FoldingModel::kMaxForwardResolveLines * 2;
+  std::vector<std::string> lines;
+  lines.reserve(body + 2);
+  lines.push_back("namespace n {");
+  for (std::size_t i = 0; i < body; ++i) {
+    lines.push_back("  int v = 0;");
+  }
+  lines.push_back("}");
+
+  const auto options = DefaultCStyleOptions();
+  FoldingModel model;
+  Expect(model.Refresh(lines, options, /*first_line=*/0, /*last_line=*/40, /*max_lines=*/0,
+                       LineEditSpan{}),
+         "hitting the forward cap is an answer, not a partial resolve");
+  Expect(!model.FoldStartingAt(0).has_value(),
+         "a fold longer than the forward cap must not be chased from the top of the file");
+  Expect(model.IsWindowResolved(0, 40),
+         "and the gate must not keep asking for a window the cap already answered");
+
+  const std::size_t near_closer = lines.size() - 40;
+  Expect(model.Refresh(lines, options, near_closer, lines.size() - 1, /*max_lines=*/0,
+                       LineEditSpan{}),
+         "a window near the closer should resolve");
   const auto fold = model.FoldStartingAt(0);
-  Expect(fold.has_value() && fold->closer_line == 40001,
-         "the resolve that completes must carry the whole-document fold");
+  Expect(fold.has_value() && fold->closer_line == lines.size() - 1,
+         "once the closer is within reach the fold resolves as an ancestor of the window");
 }
 
 void TestToggleFoldHidesInteriorLines() {
@@ -585,12 +624,12 @@ void TestEnsureFoldsResolvesVisibleOpenerWithDistantCloser() {
 // it until the viewport scrolled near the closer.
 void TestDistantCloserResolvesWithoutScrollingToIt() {
   std::vector<std::string> lines;
-  lines.reserve(20200);
+  lines.reserve(6200);
   lines.push_back("namespace n {");  // opener at line 0
-  for (int i = 0; i < 20000; ++i) {
+  for (int i = 0; i < 6000; ++i) {
     lines.push_back("  int v = 0;");
   }
-  lines.push_back("}");  // closer at line 20001
+  lines.push_back("}");  // closer at line 6001
   for (int i = 0; i < 100; ++i) {
     lines.push_back("// tail");
   }
@@ -604,7 +643,7 @@ void TestDistantCloserResolvesWithoutScrollingToIt() {
     Expect(++guard < 40, "budgeted refresh must converge");
   }
   const auto fold = model.FoldStartingAt(0);
-  Expect(fold.has_value() && fold->closer_line == 20001,
+  Expect(fold.has_value() && fold->closer_line == 6001,
          "an opener at the top of a large file must resolve its far closer without scrolling");
 }
 
@@ -863,6 +902,8 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
           TestEnsureFoldsResolvesVisibleOpenerWithDistantCloser);
   AddTest(tests, "EditorFolding/VisibleRange/DistantCloserResolvesWithoutScrolling",
           TestDistantCloserResolvesWithoutScrollingToIt);
+  AddTest(tests, "EditorFolding/VisibleRange/ForwardResolveCapDefersVeryLongFold",
+          TestForwardResolveCapDefersAVeryLongFold);
   AddTest(tests, "EditorFolding/IndexedLookup/CollapsedBeforeAndAfterViewportDoNotHideViewport",
           TestCollapsedFoldsBeforeAndAfterViewportDoNotHideViewportRows);
   AddTest(tests, "EditorFolding/IndexedLookup/CollapsedInsideViewportHidesInterior",

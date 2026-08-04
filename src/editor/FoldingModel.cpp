@@ -581,10 +581,13 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
   util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBlockSummariesBuilt);
   util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBlockSummaryLines, end - start);
 
-  block.bracket_closers.clear();
-  block.bracket_openers.clear();
-  block.indent_dedents.clear();
-  block.indent_openers.clear();
+  // Built into reused scratch and `assign`ed in below, so a block costs one
+  // allocation per non-empty list rather than a push_back growth series -- ~2900
+  // extra allocations across a 50k-line file, which is a perf gate on its own.
+  build_bracket_closers_.clear();
+  build_bracket_openers_.clear();
+  build_indent_dedents_.clear();
+  build_indent_openers_.clear();
   block.last_nonblank = kNoLine;
 
   if (table.any()) {
@@ -625,15 +628,14 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
           // A closer that does not match the top is dropped, exactly as the
           // line-by-line scanner drops it.
         } else {
-          block.bracket_closers.push_back(
-              WordCloser{bracket.byte, rel});
+          build_bracket_closers_.push_back(WordCloser{bracket.byte, rel});
         }
       }
       event += count;
     }
-    block.bracket_openers.reserve(stack.size());
+    build_bracket_openers_.reserve(stack.size());
     for (const StackBracket& entry : stack) {
-      block.bracket_openers.push_back(
+      build_bracket_openers_.push_back(
           WordOpener{entry.close, static_cast<std::uint32_t>(entry.line)});
     }
   }
@@ -656,21 +658,25 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
         stack.pop_back();
       }
       if (stack.empty() && indent < min_threshold) {
-        block.indent_dedents.push_back(WordDedent{indent, last_nonblank_rel});
+        build_indent_dedents_.push_back(WordDedent{indent, last_nonblank_rel});
         min_threshold = indent;
       }
       const auto rel = static_cast<std::uint32_t>(line - start);
       stack.push_back(StackIndent{indent, rel});
       last_nonblank_rel = rel;
     }
-    block.indent_openers.reserve(stack.size());
+    build_indent_openers_.reserve(stack.size());
     for (const StackIndent& entry : stack) {
-      block.indent_openers.push_back(
+      build_indent_openers_.push_back(
           WordIndent{entry.level, static_cast<std::uint32_t>(entry.line)});
     }
     block.last_nonblank = last_nonblank_rel;
   }
 
+  block.bracket_closers.assign(build_bracket_closers_.begin(), build_bracket_closers_.end());
+  block.bracket_openers.assign(build_bracket_openers_.begin(), build_bracket_openers_.end());
+  block.indent_dedents.assign(build_indent_dedents_.begin(), build_indent_dedents_.end());
+  block.indent_openers.assign(build_indent_openers_.begin(), build_indent_openers_.end());
   block.valid = true;
   return true;
 }
@@ -764,7 +770,7 @@ void FoldingModel::ApplyBlockWord(const Block& block, std::size_t block_start, W
     }
     const StackBracket top = state.brackets.back();
     state.brackets.pop_back();
-    state.NoteBracketPop();
+    state.NoteBracketPop(top.line);
     const std::size_t closer_line = block_start + closer.line;
     if (out != nullptr && closer_line > top.line && top.line <= emit_opener_limit) {
       out->push_back(FoldRange{top.line, closer_line, FoldSource::Bracket});
@@ -777,7 +783,7 @@ void FoldingModel::ApplyBlockWord(const Block& block, std::size_t block_start, W
     while (!state.indents.empty() && state.indents.back().level >= dedent.threshold) {
       const StackIndent top = state.indents.back();
       state.indents.pop_back();
-      state.NoteIndentPop();
+      state.NoteIndentPop(top.line);
       if (out != nullptr && closer_line != kNoLineIndex && closer_line > top.line &&
           top.line <= emit_opener_limit) {
         out->push_back(FoldRange{top.line, closer_line, FoldSource::Indent});
@@ -785,10 +791,10 @@ void FoldingModel::ApplyBlockWord(const Block& block, std::size_t block_start, W
     }
   }
   for (const WordOpener& opener : block.bracket_openers) {
-    state.brackets.push_back(StackBracket{opener.close, block_start + opener.line});
+    state.PushBracket(StackBracket{opener.close, block_start + opener.line});
   }
   for (const WordIndent& opener : block.indent_openers) {
-    state.indents.push_back(StackIndent{opener.level, block_start + opener.line});
+    state.PushIndent(StackIndent{opener.level, block_start + opener.line});
   }
   if (block.last_nonblank != kNoLine) {
     state.last_nonblank = block_start + block.last_nonblank;
@@ -831,11 +837,11 @@ void FoldingModel::WalkLines(LineSpan lines, const ComputeOptions& options,
             continue;
           }
           if (bracket.byte == pair.first) {
-            state.brackets.push_back(StackBracket{pair.second, line});
+            state.PushBracket(StackBracket{pair.second, line});
           } else if (!state.brackets.empty() && state.brackets.back().close == bracket.byte) {
             const StackBracket top = state.brackets.back();
             state.brackets.pop_back();
-            state.NoteBracketPop();
+            state.NoteBracketPop(top.line);
             if (out != nullptr && line > top.line && top.line <= emit_opener_limit) {
               out->push_back(FoldRange{top.line, line, FoldSource::Bracket});
             }
@@ -852,13 +858,13 @@ void FoldingModel::WalkLines(LineSpan lines, const ComputeOptions& options,
       while (!state.indents.empty() && state.indents.back().level >= indent) {
         const StackIndent top = state.indents.back();
         state.indents.pop_back();
-        state.NoteIndentPop();
+        state.NoteIndentPop(top.line);
         if (out != nullptr && state.last_nonblank != kNoLineIndex &&
             state.last_nonblank > top.line && top.line <= emit_opener_limit) {
           out->push_back(FoldRange{top.line, state.last_nonblank, FoldSource::Indent});
         }
       }
-      state.indents.push_back(StackIndent{indent, line});
+      state.PushIndent(StackIndent{indent, line});
       state.last_nonblank = line;
     }
   }
@@ -983,19 +989,15 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
   // Every stack entry still open at `window_last` has its opener at or before
   // the window, so it is a fold the window needs. Consuming whole block words
   // rather than lines is what makes a top-level `{` closing 50k lines below cost
-  // ~200 word applications instead of 50k line visits.
-  //
-  // The termination test is a "floor": pops only ever remove from the top of a
-  // stack, so an entry from at or before the window is still there exactly while
-  // the stack has never been shorter than its position. Once both floors reach
-  // zero every fold the window can name is resolved, and anything below is
-  // somebody else's window.
-  walk_.ArmLowWater();
-  const auto window_folds_all_resolved = [this]() {
-    return walk_.bracket_low_water == 0 && walk_.indent_low_water == 0;
-  };
+  // ~200 word applications instead of 50k line visits. The walk stops as soon as
+  // the last of those entries is closed (or falls off the depth cap); anything
+  // still open below that belongs to somebody else's window.
+  walk_.ArmPending(window_last);
   std::size_t line = line_walk_end;
-  if (line < line_count && !window_folds_all_resolved()) {
+  const std::size_t forward_limit =
+      line_count - line_walk_end > kMaxForwardResolveLines ? line_walk_end + kMaxForwardResolveLines
+                                                           : line_count;
+  if (line < line_count && !walk_.pending_resolved()) {
     util::PerformanceTrace::Scope forward_scope("FoldingModel::ForwardWalk");
     std::size_t block_index = BlockIndexForLine(line);
     const std::size_t partial_end =
@@ -1006,7 +1008,7 @@ bool FoldingModel::Refresh(LineSpan lines, const ComputeOptions& options, std::s
                 &range_scratch_, window_last, budget);
       line = partial_end;
       ++block_index;
-      while (line < line_count && !window_folds_all_resolved()) {
+      while (line < forward_limit && !walk_.pending_resolved()) {
         if (!EnsureBlockSummary(lines, options, table, block_index, event_index, budget)) {
           complete_ = false;
           break;

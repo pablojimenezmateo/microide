@@ -2,7 +2,6 @@
 
 #include <cstddef>
 #include <cstdint>
-#include <algorithm>
 #include <limits>
 #include <optional>
 #include <span>
@@ -83,6 +82,35 @@ class FoldingModel {
   // Extra lines resolved on each side of a requested window, so scrolling a few
   // rows reuses the previous resolve instead of redoing it every frame.
   static constexpr std::size_t kWindowPadLines = 96;
+
+  // Declared cap on how many enclosing constructs a walk tracks at once.
+  //
+  // Everything a fold consumer asks for is INNERMOST-first: the gutter wants the
+  // folds opening in the viewport, sticky scroll wants at most eight enclosing
+  // openers, `InnermostFoldContaining` wants one. So the outermost entries of a
+  // very deep nest are resolvable in principle and useful to nobody -- while
+  // carrying them costs a copy per refresh, a memoised state per block, and a
+  // forward walk that cannot stop until the outermost one closes, which for a
+  // construct spanning the file means end-of-document every frame.
+  //
+  // Real source sits under ~50 levels. The 50k-line perf fixture is 8300 braces
+  // deep on purpose, which is what made the cost of not capping visible.
+  static constexpr std::size_t kMaxOpenDepth = 256;
+
+  // Declared cap on how far past its window a resolve chases a closer.
+  //
+  // Knowing where a construct opened above the viewport closes means reading
+  // every byte in between -- there is no summary that can be had for less. That
+  // is cheap for the ordinary case (a function's `}` is tens of lines down) and
+  // it is what lets a top-level construct get a fold marker on the first frame
+  // instead of only once the viewport scrolled near its closer. But a construct
+  // spanning an entire large file would make the first frame read the whole
+  // file, so stop at a bound that covers whole real files and leave anything
+  // longer to resolve when the viewport moves nearer to it.
+  //
+  // Hitting this bound is NOT a partial resolve: it is the answer for this
+  // window, so the refresh gate must not keep asking.
+  static constexpr std::size_t kMaxForwardResolveLines = 8192;
 
   struct Fingerprint {
     std::uint64_t layout_revision = 0;
@@ -313,28 +341,65 @@ class FoldingModel {
     std::vector<StackBracket> brackets;
     std::vector<StackIndent> indents;
     std::size_t last_nonblank = kNoLineIndex;
-    // Smallest size each stack has reached since the low-water marks were armed.
-    // The forward walk is done exactly when every entry from at or before the
-    // window has been popped, and pops happen deep inside a line walk or a block
-    // word -- a stack that pops one entry and pushes another is the same size
-    // between chunks, so sampling the size at chunk boundaries would never see
-    // the dip and the walk would run to end-of-document.
-    std::size_t bracket_low_water = kNoLineIndex;
-    std::size_t indent_low_water = kNoLineIndex;
 
-    void ArmLowWater() {
-      bracket_low_water = brackets.size();
-      indent_low_water = indents.size();
+    // How many entries opened at or before `pending_limit` are still on each
+    // stack. The forward walk past the window is done exactly when both reach
+    // zero: every fold the window can name has found its closer.
+    //
+    // This has to be a COUNT, not "has the stack been empty". Every non-blank
+    // line pushes an indent entry, so the indent stack is never empty after one
+    // -- a size-based test can never fire, and the walk runs to end-of-document
+    // on every frame. Pops are LIFO and forward-walk pushes are all past the
+    // limit, so decrementing on a pop below the limit is exact.
+    std::size_t pending_limit = 0;
+    std::size_t pending_brackets = 0;
+    std::size_t pending_indents = 0;
+
+    void ArmPending(std::size_t limit) {
+      pending_limit = limit;
+      pending_brackets = brackets.size();
+      pending_indents = indents.size();
     }
-    void NoteBracketPop() { bracket_low_water = std::min(bracket_low_water, brackets.size()); }
-    void NoteIndentPop() { indent_low_water = std::min(indent_low_water, indents.size()); }
+
+    // Push, dropping the outermost half when the stack passes twice the cap so
+    // the trim is amortised O(1) rather than a shift per push. Dropped entries
+    // stop being pending: they can no longer be resolved, and the forward walk
+    // must not wait on them.
+    void PushBracket(StackBracket entry) {
+      brackets.push_back(entry);
+      if (brackets.size() > 2 * kMaxOpenDepth) {
+        brackets.erase(brackets.begin(),
+                       brackets.begin() + static_cast<std::ptrdiff_t>(kMaxOpenDepth));
+        pending_brackets = pending_brackets > kMaxOpenDepth ? pending_brackets - kMaxOpenDepth : 0;
+      }
+    }
+    void PushIndent(StackIndent entry) {
+      indents.push_back(entry);
+      if (indents.size() > 2 * kMaxOpenDepth) {
+        indents.erase(indents.begin(),
+                      indents.begin() + static_cast<std::ptrdiff_t>(kMaxOpenDepth));
+        pending_indents = pending_indents > kMaxOpenDepth ? pending_indents - kMaxOpenDepth : 0;
+      }
+    }
+    bool pending_resolved() const { return pending_brackets == 0 && pending_indents == 0; }
+    void NoteBracketPop(std::size_t line) {
+      if (pending_brackets != 0 && line <= pending_limit) {
+        --pending_brackets;
+      }
+    }
+    void NoteIndentPop(std::size_t line) {
+      if (pending_indents != 0 && line <= pending_limit) {
+        --pending_indents;
+      }
+    }
 
     void Clear() {
       brackets.clear();
       indents.clear();
       last_nonblank = kNoLineIndex;
-      bracket_low_water = kNoLineIndex;
-      indent_low_water = kNoLineIndex;
+      pending_limit = 0;
+      pending_brackets = 0;
+      pending_indents = 0;
     }
   };
 
@@ -425,8 +490,17 @@ class FoldingModel {
 
   // ---- scratch -----------------------------------------------------------
   WalkState walk_;
+  // A block's word is built into these and then `assign`ed into the block, so a
+  // block costs at most one allocation per non-empty word list instead of a
+  // push_back growth series. Building every block of a 50k-line file is a
+  // one-off, but it is a one-off per opened document and it showed up as a 21%
+  // allocation regression on the fold perf gate.
   std::vector<StackBracket> build_bracket_stack_;
   std::vector<StackIndent> build_indent_stack_;
+  std::vector<WordCloser> build_bracket_closers_;
+  std::vector<WordOpener> build_bracket_openers_;
+  std::vector<WordDedent> build_indent_dedents_;
+  std::vector<WordIndent> build_indent_openers_;
   std::vector<std::size_t> suppression_lines_scratch_;
 
   Fingerprint fingerprint_;
