@@ -208,7 +208,7 @@ void TestMergeSurfacePaintsAtDegenerateWindowSizes() {
   TemporaryDirectory temp_dir;
   const MergeFixture fixture = MakeMergeFixture(temp_dir.path());
 
-  for (const auto [width, height] : std::vector<std::pair<int, int>>{
+  for (const auto& [width, height] : std::vector<std::pair<int, int>>{
            {320, 240}, {200, 120}, {1280, 200}, {120, 720}}) {
     SoftwareCanvas canvas(width, height);
     WorkspaceShell shell;

@@ -509,7 +509,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
             lines, sel->start.line, a, needle_view, case_sensitive);
         const std::size_t match_count = scan.ranges.size();
         const bool truncated = scan.truncated;
-        viewport->SetSecondaryCaretsWithRanges(std::move(scan.ranges));
+        viewport->SetSecondaryCaretsWithRanges(scan.ranges);
         if (truncated) {
           context_.Notify(
               NotificationService::Tone::Warning,
