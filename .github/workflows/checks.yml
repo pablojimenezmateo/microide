@@ -177,6 +177,55 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  coverage:
+    name: coverage
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config ccache lld git \
+            clang llvm \
+            libpcre2-dev liblua5.4-dev libfreetype-dev libharfbuzz-dev \
+            libfontconfig-dev libx11-dev libxext-dev libwayland-dev \
+            libxkbcommon-dev libegl-dev
+
+      - name: Cache SDL3 build
+        uses: actions/cache@v4
+        with:
+          path: /tmp/microide-sdl3
+          key: sdl3-${{ runner.os }}-${{ hashFiles('scripts/ci/install-sdl3-linux.sh') }}
+
+      - name: Install SDL3
+        run: scripts/ci/install-sdl3-linux.sh
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ccache
+          key: ccache-coverage-${{ runner.os }}-${{ github.sha }}
+          restore-keys: ccache-coverage-${{ runner.os }}-
+
+      # Sanitizers and fuzzers cannot find a defect in code that never executes,
+      # and the architecture lint's rules are structural — satisfiable by code
+      # that would fault on its first real run. Coverage is the check that says
+      # whether a line ran at all. Floors are per-area, because the tree measured
+      # 74% overall while the merge render surface sat at 0%.
+      - name: Line coverage with per-area floors
+        run: tools/run-checks.sh coverage
+
+      - name: Upload logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-coverage
+          path: ${{ env.MICROIDE_LOG_DIR }}
+          if-no-files-found: ignore
+          retention-days: 7
+
   package:
     name: package
     runs-on: ubuntu-24.04
