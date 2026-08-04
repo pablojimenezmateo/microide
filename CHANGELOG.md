@@ -8,11 +8,27 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ## [Unreleased]
 
-Editor-configuration fidelity and a performance pass over the preference walk,
-plus the validation lanes that were written but never actually ran. No public API
-or persisted-format changes.
+A packaging fix that matters more than everything else here combined — every
+release through v2.8.0 shipped a `.deb` that could not start on a machine other
+than the maintainer's — plus editor-configuration fidelity, a performance pass
+over the preference walk, and the validation lanes that were written but never
+actually ran. No public API or persisted-format changes.
 
 ### Added
+
+- **Drag and drop from the desktop.** Dropping a file on the window opens it as a
+  tab; dropping a folder opens it as the project. Dropping a file while no
+  project is open opens its parent folder first, so a drop onto the welcome
+  screen does something. `SDL_EVENT_DROP_FILE` was simply never in the event
+  switch before — the window silently ignored every drop. Non-regular files are
+  rejected rather than handed to the editor, because opening a fifo blocks
+  forever.
+- **Keyboard column (box) selection**, `Ctrl+Shift+Alt+Arrow`, matching VSCode.
+  The mouse form (`Shift+Alt+drag`) already worked; with no pointer there was no
+  way to make a rectangular selection at all. The moving corner keeps a *virtual*
+  column, so dragging a box down across a two-character line and onto a long one
+  restores the full width instead of staying narrow. Registered in the keybinding
+  registry, so it is listed in the keyboard-shortcuts overlay and can be rebound.
 
 - **`.editorconfig` support.** A project's `.editorconfig` now decides
   `indent_style`, `indent_size`, `tab_width`, `end_of_line`,
@@ -40,6 +56,20 @@ or persisted-format changes.
 
 ### Fixed
 
+- **The published `.deb` could not start on any machine but the one that built
+  it.** The packaged binary needed `libSDL3.so.0` and `libSDL3_ttf.so.0`, listed
+  neither in `Depends:`, carried no `RUNPATH`, and bundled no library.
+  `apt install ./microide.deb` satisfied every declared dependency and the binary
+  then died in the loader. `CPACK_DEBIAN_PACKAGE_SHLIBDEPS` delegates to
+  `dpkg-shlibdeps`, which can only emit a dependency for a library owned by an
+  installed `.deb`; no Debian-family distro packages SDL3, so it is built from
+  source into `/usr/local`, maps to no package, and shlibdeps silently emits
+  nothing. Every release from the introduction of SDL3 onward was affected.
+  Linked libraries that dpkg does not own are now bundled into
+  `/usr/lib/<triplet>/microide` behind an `$ORIGIN`-relative `RUNPATH`, and
+  `scripts/ci/verify-deb-runtime.sh` launches the packaged binary with the loader
+  cache inhibited before `release.sh` will sign it. CI additionally installs the
+  package into a stock `ubuntu:24.04` container and runs it.
 - **A stale language, served silently.** The active viewport's language was
   cached by path alone, so a buffer whose language comes from its *content* — a
   shebang with no extension — kept reporting its first-detected language to every
@@ -69,6 +99,32 @@ or persisted-format changes.
 
 ### Internal
 
+- **Line coverage is measured, with per-area floors.** Wall time, allocations,
+  three sanitizers, twelve fuzz targets and a vacuity-probed architecture lint
+  were all gated; nothing measured whether a line ever ran. It found
+  `WorkspaceShellRenderMerge.cpp` — 568 lines, 0 of 11 functions executed by the
+  whole suite, on the surface the product is built around. Sanitizers cannot find
+  a defect in code that never runs, and the lint's rules for that file are
+  structural. Now covered (0.00% → 74%), and `tools/run-checks.sh coverage`
+  enforces a floor per area rather than one global number, which
+  `workspace/registries` at 96% would otherwise satisfy on its own.
+- **The perf harness measures CPU time and resident growth.** The priority order
+  is speed, correctness, low CPU, low memory; all 93 baselines carried only wall
+  time and allocation counts, so priorities 3 and 4 were stated but not gated. A
+  change that held its latency by burning three extra cores read as neutral.
+  `cpu_ms` sums every thread, `rss_growth_bytes` is per-iteration resident delta,
+  and both are now recorded across the suite. The first full sweep came back
+  clean — 92 of 93 scenarios at a CPU/wall ratio ≤ 1.06, 90 recording zero
+  resident growth — and turned up one real defect the allocation oracle cannot
+  see by construction (filed as TD-2026-08-04-130).
+- **The tech-debt ledger is a queue again.** 555 of its 637 entries were resolved
+  or won't-do, including a 215-entry section titled "Still open" in which every
+  entry was closed. 5,979 lines → 1,180, with the closed record archived and the
+  split verified item-by-item. `ROADMAP.md` is retired: last reviewed
+  2026-06-17, absent from the source-of-truth list, and forbidding work that had
+  shipped in v2.0.0.
+- **Contributor onboarding.** `CONTRIBUTING.md` and issue templates, and the
+  repository finally has a description, homepage and topics.
 - **CI actually runs.** `.github/workflows/checks.yml` wires the validation lanes
   that already existed as scripts but had never executed on a push: tests, the
   perf-harness test build (which is what arms the counting `operator new`), ASan,
