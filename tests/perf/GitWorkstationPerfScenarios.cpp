@@ -376,7 +376,18 @@ REGISTER_GIT_WORKSTATION_SCENARIO(git_sidebar_refresh_large_repo, RunGitSidebarR
 REGISTER_GIT_WORKSTATION_SCENARIO(git_sidebar_refresh_many_untracked,
                                  RunGitSidebarRefreshManyUntracked);
 REGISTER_GIT_WORKSTATION_SCENARIO(diff_open_1000_file_changes, RunDiffOpen1000FileChanges);
-REGISTER_GIT_WORKSTATION_SCENARIO(diff_next_hunk_large_file, RunDiffNextHunkLargeFile);
+// Not the macro: same warmup story as the two merge scenarios. Allocations settle
+// by iteration 2 (87,251 then 86,15x flat), RSS growth by iteration 4
+// (12.7 MB / 3.7 / 2.0 / 2.6 / then zero apart from occasional sub-MB arena
+// top-ups). Without a warmup the ramp dominates `p50_rss_growth_bytes`.
+const ScenarioRegistration g_perf_git_workstation_diff_next_hunk_large_file({
+    .name = "diff_next_hunk_large_file",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .warmup_iterations = 5,
+    .run = RunDiffNextHunkLargeFile,
+});
 REGISTER_GIT_WORKSTATION_SCENARIO(diff_stage_hunk_large_patch, RunDiffStageHunkLargePatch);
 REGISTER_GIT_WORKSTATION_SCENARIO(diff_stage_selected_lines, RunDiffStageSelectedLines);
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_open_many_conflicts, RunMergeOpenManyConflicts);

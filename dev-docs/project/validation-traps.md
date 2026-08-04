@@ -204,6 +204,33 @@ below the committed baseline with a head that does not. If the tail is clean, th
 scenario needs a warmup, not a fix — and rebaselining it instead would bake the
 cold pass into the number and hide the next real regression underneath it.
 
+### A scenario can regress 1.9x from a change that cannot reach its code
+
+`reference_snippet_file_window` — which writes a temp file and calls
+`util::ReadFileLineWindow`, touching no editor and no subsystem the change went
+near — went from 35 ms to 65 ms across the 2026-08-04 fold rewrite. Rock solid:
+four runs of each binary spread 34.5–35.8 and 64.9–65.6, order-independent, same
+allocation count to the unit, CPU time equal to wall.
+
+It was code alignment. Check this **before** believing any cross-binary wall
+delta:
+
+1. `md5sum` the object file of the code that got slower in both builds. Here
+   `TextFileIO.cpp.o` was byte-identical — same source, same flags, no LTO — so
+   the machine code was not what changed.
+2. `nm -C <binary> | grep <symbol>` in both. The function sat at a 64-byte
+   boundary in one build and 32 bytes into a cache line in the other, because an
+   unrelated translation unit ahead of it in link order had changed size.
+3. Rebuild with `-falign-functions=64 -falign-loops=32`. The "slow" source then
+   ran the scenario at **32.8 ms** — faster than the "fast" binary — which
+   confirms layout rather than work.
+
+The moral is not that alignment flags are a fix to reach for casually; it is that
+**a wall delta on a scenario the change cannot reach is not evidence of a
+regression**, and the three checks above settle it in minutes. Allocation counts
+do not have this failure mode, which is the reason this suite gates primarily on
+them.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit
