@@ -43,7 +43,9 @@ MicroIDE does **not** target VS Code extension API compatibility. The durable pr
   [`openspec/specs/product-vision/spec.md`](../../openspec/specs/product-vision/spec.md)).
 
 Explicit non-goals include plugin marketplaces, remote install flows, and
-Micro-plugin / VS Code extension compatibility (`ROADMAP.md` → "Not On This Roadmap").
+Micro-plugin / VS Code extension compatibility (a declared non-goal; see
+`dev-docs/project/active-work.md` § Deferred Or Out Of Scope, which absorbed the
+retired `ROADMAP.md`).
 
 ## If This Ever Returns
 

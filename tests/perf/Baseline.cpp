@@ -1,5 +1,6 @@
 #include "perf/Baseline.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 
@@ -7,6 +8,12 @@
 
 namespace microide::tests::perf {
 namespace {
+
+// JsonValue has no IsNumber(), and a metric may be written as either an integer
+// or a double depending on its value, so both count as "the baseline recorded it".
+bool IsNumber(const util::JsonValue& value) {
+  return value.IsInt() || value.IsDouble();
+}
 
 double AllowedDelta(double expected, double tolerance_percent) {
   return std::abs(expected) * (tolerance_percent / 100.0);
@@ -70,6 +77,33 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
       tolerances["alloc_p95_percent"].AsDouble(record.tolerances.p95_percent);
   record.tolerances.alloc_max_percent =
       tolerances["alloc_max_percent"].AsDouble(record.tolerances.max_percent);
+
+  // cpu/rss are gated only when the baseline actually recorded them. Treating an
+  // absent metric as 0.0 would fail every pre-existing baseline on the first run;
+  // treating it as "not recorded" lets the 93 existing files keep working and
+  // start gating when they are next re-recorded on the reference runner.
+  record.has_cpu_metrics = IsNumber(metrics["p50_cpu_ms"]);
+  if (record.has_cpu_metrics) {
+    record.metrics.p50_cpu_ms = metrics["p50_cpu_ms"].AsDouble();
+    record.metrics.p95_cpu_ms = metrics["p95_cpu_ms"].AsDouble();
+    record.metrics.max_cpu_ms = metrics["max_cpu_ms"].AsDouble();
+  }
+  record.has_rss_metrics = IsNumber(metrics["p50_rss_growth_bytes"]);
+  if (record.has_rss_metrics) {
+    record.metrics.p50_rss_growth_bytes = metrics["p50_rss_growth_bytes"].AsDouble();
+    record.metrics.p95_rss_growth_bytes = metrics["p95_rss_growth_bytes"].AsDouble();
+    record.metrics.max_rss_growth_bytes = metrics["max_rss_growth_bytes"].AsDouble();
+  }
+
+  record.tolerances.cpu_p50_percent =
+      tolerances["cpu_p50_percent"].AsDouble(record.tolerances.p50_percent);
+  record.tolerances.cpu_p95_percent =
+      tolerances["cpu_p95_percent"].AsDouble(record.tolerances.p95_percent);
+  record.tolerances.cpu_max_percent =
+      tolerances["cpu_max_percent"].AsDouble(record.tolerances.max_percent);
+  record.tolerances.rss_p50_percent = tolerances["rss_p50_percent"].AsDouble(25.0);
+  record.tolerances.rss_p95_percent = tolerances["rss_p95_percent"].AsDouble(35.0);
+  record.tolerances.rss_max_percent = tolerances["rss_max_percent"].AsDouble(60.0);
   return record;
 }
 
@@ -83,6 +117,12 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"p50_allocations", baseline.metrics.p50_allocations},
       {"p95_allocations", baseline.metrics.p95_allocations},
       {"max_allocations", baseline.metrics.max_allocations},
+      {"p50_cpu_ms", baseline.metrics.p50_cpu_ms},
+      {"p95_cpu_ms", baseline.metrics.p95_cpu_ms},
+      {"max_cpu_ms", baseline.metrics.max_cpu_ms},
+      {"p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes},
+      {"p95_rss_growth_bytes", baseline.metrics.p95_rss_growth_bytes},
+      {"max_rss_growth_bytes", baseline.metrics.max_rss_growth_bytes},
   };
   root["tolerances"] = util::JsonObject{
       {"p50_percent", baseline.tolerances.p50_percent},
@@ -91,6 +131,12 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"alloc_p50_percent", baseline.tolerances.alloc_p50_percent},
       {"alloc_p95_percent", baseline.tolerances.alloc_p95_percent},
       {"alloc_max_percent", baseline.tolerances.alloc_max_percent},
+      {"cpu_p50_percent", baseline.tolerances.cpu_p50_percent},
+      {"cpu_p95_percent", baseline.tolerances.cpu_p95_percent},
+      {"cpu_max_percent", baseline.tolerances.cpu_max_percent},
+      {"rss_p50_percent", baseline.tolerances.rss_p50_percent},
+      {"rss_p95_percent", baseline.tolerances.rss_p95_percent},
+      {"rss_max_percent", baseline.tolerances.rss_max_percent},
   };
   std::ofstream out(path);
   if (!out) {
@@ -115,6 +161,42 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
             aggregate.metrics.p95_allocations, baseline.tolerances.alloc_p95_percent);
   AddMetric(&result, "max_allocations", baseline.metrics.max_allocations,
             aggregate.metrics.max_allocations, baseline.tolerances.alloc_max_percent);
+  if (baseline.has_cpu_metrics) {
+    AddMetric(&result, "p50_cpu_ms", baseline.metrics.p50_cpu_ms, aggregate.metrics.p50_cpu_ms,
+              baseline.tolerances.cpu_p50_percent);
+    AddMetric(&result, "p95_cpu_ms", baseline.metrics.p95_cpu_ms, aggregate.metrics.p95_cpu_ms,
+              baseline.tolerances.cpu_p95_percent);
+    AddMetric(&result, "max_cpu_ms", baseline.metrics.max_cpu_ms, aggregate.metrics.max_cpu_ms,
+              baseline.tolerances.cpu_max_percent);
+  }
+  if (baseline.has_rss_metrics) {
+    // Resident growth is quantized to the 4 KiB page, so near zero a PERCENTAGE
+    // envelope is the wrong instrument entirely: one page of jitter on a one-page
+    // baseline is +50%, and no percentage that still catches real growth can absorb
+    // it. multi_project_switch proved this — recorded at 4,096, it measured 6,144 on
+    // the very next run and failed at +50% against a 25% envelope.
+    //
+    // The floor converts the gate to a flat absolute allowance in that regime. At
+    // 64 KiB the allowance is 80 KiB, which absorbs several pages of allocator
+    // jitter while still failing a scenario that newly retains ~80 KiB per
+    // iteration (8 MB over a hundred operations). 90 of 93 baselines record exactly
+    // zero growth, so nearly the whole suite gates on that flat allowance; the two
+    // that genuinely grow (2.75 MB and 1.61 MB per iteration) are 30-40x above it
+    // and gate on the percentage as intended.
+    constexpr double kRssNoiseFloorBytes = 64.0 * 1024.0;
+    const auto add_rss = [&](std::string_view name, double expected, double actual,
+                             double tolerance_percent) {
+      AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual, tolerance_percent);
+    };
+    // p50 ONLY, deliberately. Resident growth is bursty: the iteration that happens
+    // to trip an allocator arena expansion pays for it and the rest pay nothing, so
+    // p95 and max measure which iteration got unlucky rather than anything about the
+    // code. editor_column_selection_burst records p50 = 10 KiB against p95 = 9 MiB
+    // from exactly that -- gating either would be a permanent coin flip. The p95/max
+    // numbers are still recorded and reported; they are just not a gate.
+    add_rss("p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes,
+            aggregate.metrics.p50_rss_growth_bytes, baseline.tolerances.rss_p50_percent);
+  }
   return result;
 }
 

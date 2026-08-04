@@ -167,6 +167,14 @@ log "7/9  Package .deb + checksum + GPG sign"
 DEB_PATH="$(find "$BUILD_DIR" -maxdepth 1 -name "$DEB" -print -quit)"
 [[ -n "$DEB_PATH" ]] || DEB_PATH="$(find "$BUILD_DIR" -maxdepth 1 -name 'microide_*_amd64.deb' -print -quit)"
 [[ -n "$DEB_PATH" ]] || die "cpack did not produce a .deb"
+
+# Install-and-launch the artifact before it is signed. Building, testing and
+# signing a package says nothing about whether it starts on a machine that is not
+# this one — every release through v2.8.0 passed all three and still could not
+# load libSDL3.so.0 anywhere but the maintainer's box.
+"$REPO/scripts/ci/verify-deb-runtime.sh" "$DEB_PATH" \
+  || die "the built .deb does not start on a clean system — refusing to sign it"
+
 cp "$DEB_PATH" "$REPO/$DEB"
 ( cd "$REPO" && sha256sum "$DEB" > "$DEB.sha256" )
 info "checksum: $(cut -d' ' -f1 "$REPO/$DEB.sha256")"

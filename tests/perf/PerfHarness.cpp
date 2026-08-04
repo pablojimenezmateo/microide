@@ -12,6 +12,11 @@
 #include <limits>
 #include <sstream>
 
+#if defined(__unix__)
+#include <sys/resource.h>
+#include <unistd.h>
+#endif
+
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
 #include "WorkspaceShellEventHelpers.h"
@@ -60,23 +65,38 @@ double Percentile(std::vector<double> values, double p) {
   return values[lo] * (1.0 - weight) + values[hi] * weight;
 }
 
+double MaxOr0(const std::vector<double>& values) {
+  return values.empty() ? 0.0 : *std::max_element(values.begin(), values.end());
+}
+
 MetricSet AggregateMetrics(const std::vector<Iteration>& iterations) {
   std::vector<double> wall_ms;
   std::vector<double> allocations;
+  std::vector<double> cpu_ms;
+  std::vector<double> rss_growth_bytes;
   wall_ms.reserve(iterations.size());
   allocations.reserve(iterations.size());
+  cpu_ms.reserve(iterations.size());
+  rss_growth_bytes.reserve(iterations.size());
   for (const Iteration& iteration : iterations) {
     wall_ms.push_back(iteration.metrics.wall_ms);
     allocations.push_back(static_cast<double>(iteration.metrics.allocations));
+    cpu_ms.push_back(iteration.metrics.cpu_ms);
+    rss_growth_bytes.push_back(static_cast<double>(iteration.metrics.rss_growth_bytes));
   }
   MetricSet out;
   out.p50_wall_ms = Percentile(wall_ms, 0.50);
   out.p95_wall_ms = Percentile(wall_ms, 0.95);
-  out.max_wall_ms = wall_ms.empty() ? 0.0 : *std::max_element(wall_ms.begin(), wall_ms.end());
+  out.max_wall_ms = MaxOr0(wall_ms);
   out.p50_allocations = Percentile(allocations, 0.50);
   out.p95_allocations = Percentile(allocations, 0.95);
-  out.max_allocations =
-      allocations.empty() ? 0.0 : *std::max_element(allocations.begin(), allocations.end());
+  out.max_allocations = MaxOr0(allocations);
+  out.p50_cpu_ms = Percentile(cpu_ms, 0.50);
+  out.p95_cpu_ms = Percentile(cpu_ms, 0.95);
+  out.max_cpu_ms = MaxOr0(cpu_ms);
+  out.p50_rss_growth_bytes = Percentile(rss_growth_bytes, 0.50);
+  out.p95_rss_growth_bytes = Percentile(rss_growth_bytes, 0.95);
+  out.max_rss_growth_bytes = MaxOr0(rss_growth_bytes);
   return out;
 }
 
@@ -106,6 +126,48 @@ std::uint64_t ResolveSeed(std::optional<std::uint64_t> explicit_seed) {
 }
 
 }  // namespace
+
+double ProcessCpuMilliseconds() {
+#if defined(__unix__)
+  // RUSAGE_SELF sums every thread in the process, which is the point: a scenario
+  // that offloads work to the background executor still pays for it here even
+  // though its wall time does not move.
+  rusage usage{};
+  if (getrusage(RUSAGE_SELF, &usage) != 0) {
+    return 0.0;
+  }
+  const auto to_ms = [](const timeval& tv) {
+    return static_cast<double>(tv.tv_sec) * 1000.0 + static_cast<double>(tv.tv_usec) / 1000.0;
+  };
+  return to_ms(usage.ru_utime) + to_ms(usage.ru_stime);
+#else
+  return 0.0;
+#endif
+}
+
+std::uint64_t ProcessResidentBytes() {
+#if defined(__unix__)
+  // statm's second field is resident pages. ru_maxrss would be cheaper but it is
+  // a high-water mark that never comes down, so it cannot express the growth of
+  // one iteration inside a long-lived process.
+  std::ifstream statm("/proc/self/statm");
+  if (!statm) {
+    return 0;
+  }
+  std::uint64_t total_pages = 0;
+  std::uint64_t resident_pages = 0;
+  if (!(statm >> total_pages >> resident_pages)) {
+    return 0;
+  }
+  const long page_size = sysconf(_SC_PAGESIZE);
+  if (page_size <= 0) {
+    return 0;
+  }
+  return resident_pages * static_cast<std::uint64_t>(page_size);
+#else
+  return 0;
+#endif
+}
 
 ScenarioContext::ScenarioContext(workspace::WorkspaceShell& shell,
                                  SDL_Window* window,
@@ -514,6 +576,8 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     }
     const util::PerfCounterSnapshot counter_before = util::CapturePerformanceCounters();
     const AllocationSnapshot before = Allocations::Snapshot();
+    const double cpu_ms_before = ProcessCpuMilliseconds();
+    const std::uint64_t rss_before = ProcessResidentBytes();
     const auto start = std::chrono::steady_clock::now();
     try {
       scenario.run(context);
@@ -528,6 +592,8 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     }
     const auto end = std::chrono::steady_clock::now();
     const AllocationDelta delta = Allocations::DeltaSince(before);
+    const double cpu_ms_after = ProcessCpuMilliseconds();
+    const std::uint64_t rss_after = ProcessResidentBytes();
     const util::PerfCounterSnapshot counter_after = util::CapturePerformanceCounters();
     std::vector<std::pair<std::string, std::uint64_t>> counter_deltas;
     for (const auto& [name, value] : util::NonZeroCounterDelta(counter_before, counter_after)) {
@@ -545,6 +611,8 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
                     static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.bytes_allocated)),
                 .bytes_freed =
                     static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.bytes_freed)),
+                .cpu_ms = std::max(0.0, cpu_ms_after - cpu_ms_before),
+                .rss_growth_bytes = rss_after > rss_before ? rss_after - rss_before : 0,
             },
         .phase_metrics = context.TakePhaseMetrics(),
         .perf_counters = std::move(counter_deltas),

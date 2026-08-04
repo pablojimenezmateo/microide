@@ -10,6 +10,7 @@
 #include <span>
 #include <vector>
 
+#include "editor/ColumnSelection.h"
 #include "editor/EditTypes.h"
 #include "editor/HighlightPrefetch.h"
 #include "editor/LanguageContractView.h"
@@ -395,7 +396,11 @@ class TextViewport {
   // "add cursor at next/all match" (Ctrl+D) flow so multi-caret typing replaces
   // every matched occurrence and copy aggregates them. One clamp+sort+dedupe
   // pass keeps this O(k log k) instead of looping AddSecondaryCaretWithRange.
-  void SetSecondaryCaretsWithRanges(std::vector<SelectionRange> ranges);
+  // Takes a span, not a vector: SetBoxSelection rebuilds the whole caret set on
+  // every keystroke of a held column-select gesture, so an owning parameter there
+  // costs one growing allocation per keystroke. Callers keep their buffer and its
+  // capacity persists.
+  void SetSecondaryCaretsWithRanges(std::span<const SelectionRange> ranges);
   void ClearSecondaryCarets();
   // Places zero-width carets on every line between anchor_line and target_line
   // (inclusive) at column. Primary caret moves to target_line; other lines become
@@ -412,6 +417,18 @@ class TextViewport {
   // any existing secondary carets and selection. The caret span is capped so a drag
   // across a huge file cannot allocate one caret per line.
   void SetBoxSelection(TextPosition anchor, TextPosition caret);
+  // Keyboard column selection (Ctrl+Shift+Alt+Arrow). Lives on the viewport rather
+  // than in shell interaction state so it is naturally per-tab and survives a tab
+  // switch, like the secondary carets it drives. Two positions and a bool: no
+  // allocation, so this does not reopen the "TextViewport must not own copied
+  // state" perf rule that applies to the language-contract view.
+  const ColumnSelectionState& column_selection() const { return column_selection_; }
+  void SetColumnSelection(const ColumnSelectionState& selection) { column_selection_ = selection; }
+  void ClearColumnSelection() { column_selection_ = ColumnSelectionState{}; }
+  // Longest line in [lo, hi], used to bound the virtual column when a column
+  // selection extends right. O(span), and the span is already capped by
+  // SetBoxSelection's caret limit.
+  std::size_t MaxLineLengthInSpan(std::size_t lo, std::size_t hi) const;
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
@@ -706,9 +723,16 @@ class TextViewport {
   mutable std::size_t language_id_registry_revision_ = 0;
   mutable bool language_id_valid_ = false;
   std::vector<SecondaryCaret> secondary_carets_;
+  ColumnSelectionState column_selection_;
   // Cache for secondary_caret_positions(): mirrors `secondary_carets_.position` and is rebuilt
   // lazily when sizes differ or any element changed. Capacity persists across rebuilds.
   mutable std::vector<TextPosition> secondary_caret_positions_cache_;
+  // Scratch buffers for the box/column-selection caret rebuild. That rebuild runs
+  // once per keystroke of a held Ctrl+Shift+Alt+Arrow gesture and is O(span) each
+  // time; keeping the capacity here makes it allocation-free after the first
+  // keystroke instead of allocating twice per keystroke.
+  std::vector<SelectionRange> box_ranges_scratch_;
+  std::vector<SecondaryCaret> secondary_caret_candidates_scratch_;
   mutable TextLayoutCache layout_cache_;
   mutable std::unordered_map<std::size_t, std::vector<SyntaxTokenKind>> highlight_cache_;
   mutable std::deque<std::size_t> highlight_cache_order_;

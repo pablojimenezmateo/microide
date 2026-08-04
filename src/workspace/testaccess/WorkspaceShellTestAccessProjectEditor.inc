@@ -476,6 +476,14 @@
     shell.Render(nullptr, shell.window_presentation_.logical_width,
                  shell.window_presentation_.logical_height);
   }
+  // Paint with a real renderer. RenderFrame's null renderer stops at the
+  // `if (renderer == nullptr) return;` guard every surface opens with, so it
+  // validates layout and view-model construction but never the drawing itself.
+  // Pass a tests::HeadlessRenderTarget renderer here to execute the paint code.
+  static void RenderFrameWithRenderer(WorkspaceShell& shell, SDL_Renderer* renderer) {
+    shell.Render(renderer, shell.window_presentation_.logical_width,
+                 shell.window_presentation_.logical_height);
+  }
   static bool ExecuteProjectOpenFromMenu(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Menu);

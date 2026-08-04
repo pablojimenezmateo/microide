@@ -150,6 +150,14 @@ Not current work unless deliberately promoted into its own phase.
 - **Multi-window.** Single-window is a product decision
   (`openspec/specs/product-vision/spec.md`), not a gap.
 
+## Retired Docs
+
+`ROADMAP.md` is gone (2026-08-04). It was last reviewed 2026-06-17, it was not in
+`CLAUDE.md`'s source-of-truth list, and it contradicted shipped reality — its
+"do not expand this phase into: debugger/DAP support" line described work that had
+already shipped in v2.0.0, before that review date. Two forward-looking documents
+that disagree are worse than one. This file is the only one now.
+
 ## Companion Docs
 
 - `openspec/specs/product-vision/spec.md` — product thesis, priority order, non-goals

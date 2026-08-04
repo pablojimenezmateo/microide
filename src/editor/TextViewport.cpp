@@ -6,6 +6,7 @@
 #include <algorithm>
 
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 
@@ -53,7 +54,14 @@ TextViewport::TextViewport(const TextViewport& other)
       language_id_registry_revision_(other.language_id_registry_revision_),
       language_id_valid_(other.language_id_valid_),
       secondary_carets_(other.secondary_carets_),
+      column_selection_(other.column_selection_),
       secondary_caret_positions_cache_(other.secondary_caret_positions_cache_),
+      // box_ranges_scratch_ and secondary_caret_candidates_scratch_ are deliberately
+      // left empty rather than copied. They hold no state between calls — every use
+      // clears them on entry — so copying their contents would allocate to carry
+      // bytes the next call throws away. The capacity rebuilds on first use.
+      box_ranges_scratch_(),
+      secondary_caret_candidates_scratch_(),
       layout_cache_(other.layout_cache_),
       highlight_cache_(other.highlight_cache_),
       highlight_cache_order_(other.highlight_cache_order_),
@@ -113,7 +121,12 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       language_id_registry_revision_(other.language_id_registry_revision_),
       language_id_valid_(other.language_id_valid_),
       secondary_carets_(std::move(other.secondary_carets_)),
+      column_selection_(other.column_selection_),
       secondary_caret_positions_cache_(std::move(other.secondary_caret_positions_cache_)),
+      // Moved, not dropped: stealing the buffers is free and keeps the moved-to
+      // viewport's first box-selection rebuild allocation-free.
+      box_ranges_scratch_(std::move(other.box_ranges_scratch_)),
+      secondary_caret_candidates_scratch_(std::move(other.secondary_caret_candidates_scratch_)),
       layout_cache_(std::move(other.layout_cache_)),
       highlight_cache_(std::move(other.highlight_cache_)),
       highlight_cache_order_(std::move(other.highlight_cache_order_)),
@@ -170,7 +183,10 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   language_id_registry_revision_ = other.language_id_registry_revision_;
   language_id_valid_ = other.language_id_valid_;
   secondary_carets_ = std::move(other.secondary_carets_);
+  column_selection_ = other.column_selection_;
   secondary_caret_positions_cache_ = std::move(other.secondary_caret_positions_cache_);
+  box_ranges_scratch_ = std::move(other.box_ranges_scratch_);
+  secondary_caret_candidates_scratch_ = std::move(other.secondary_caret_candidates_scratch_);
   layout_cache_ = std::move(other.layout_cache_);
   highlight_cache_ = std::move(other.highlight_cache_);
   highlight_cache_order_ = std::move(other.highlight_cache_order_);
@@ -547,7 +563,7 @@ void TextViewport::SetSecondaryCarets(std::vector<TextPosition> carets) {
   }
 }
 
-void TextViewport::SetSecondaryCaretsWithRanges(std::vector<SelectionRange> ranges) {
+void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> ranges) {
   // Ranged rebuild mirroring SetSecondaryCarets, but each caret keeps its
   // selection anchor. Ctrl+D ("add cursor at next/all match") needs the
   // secondaries to retain their match selection so a following keystroke
@@ -560,7 +576,8 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::vector<SelectionRange> rang
     return;
   }
   const TextPosition primary{cursor_line_, cursor_column_};
-  std::vector<SecondaryCaret> candidates;
+  std::vector<SecondaryCaret>& candidates = secondary_caret_candidates_scratch_;
+  candidates.clear();
   candidates.reserve(ranges.size());
   for (const SelectionRange& range : ranges) {
     const SelectionRange norm = NormalizeRange(range);
@@ -585,7 +602,13 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::vector<SelectionRange> rang
         .selection_anchor = empty_range ? std::nullopt : std::optional<TextPosition>(anchor),
     });
   }
-  std::sort(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess);
+  // Both production callers already produce candidates in document order — the box
+  // rebuild walks lines low→high, and the Ctrl+D match scan walks the buffer
+  // forwards — so the common case is an O(k) verification instead of an O(k log k)
+  // sort. std::sort on sorted input is not free: it still recurses and partitions.
+  if (!std::is_sorted(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess)) {
+    std::sort(candidates.begin(), candidates.end(), detail::SecondaryCaretPositionLess);
+  }
   secondary_carets_.reserve(candidates.size());
   for (SecondaryCaret& candidate : candidates) {
     if (candidate.position == primary) {
@@ -610,10 +633,31 @@ void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
   SetBoxSelection(TextPosition{anchor_line, column}, TextPosition{target_line, column});
 }
 
+std::size_t TextViewport::MaxLineLengthInSpan(std::size_t lo, std::size_t hi) const {
+  if (document_->lines.empty()) {
+    return 0;
+  }
+  const std::size_t last_line = document_->lines.size() - 1;
+  lo = std::min(lo, last_line);
+  hi = std::min(hi, last_line);
+  if (lo > hi) {
+    std::swap(lo, hi);
+  }
+  util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionSpanLinesScanned,
+                              hi - lo + 1);
+  std::size_t longest = 0;
+  for (std::size_t line = lo; line <= hi; ++line) {
+    longest = std::max(longest, document_->lines.LineLength(line));
+  }
+  return longest;
+}
+
 void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
+  util::PerformanceTrace::Scope trace_scope("TextViewport::SetBoxSelection");
   if (document_->lines.empty()) {
     return;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionBuilds);
   const std::size_t last_line = document_->lines.size() - 1;
   anchor.line = std::min(anchor.line, last_line);
   caret.line = std::min(caret.line, last_line);
@@ -646,7 +690,11 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   // SetSecondaryCaretsWithRanges) for every line except the primary/caret line.
   // Columns are pre-clamped to each line's length so ValidateRangeColumns accepts
   // them; an anchor==caret range on a line yields a zero-width caret.
-  std::vector<SelectionRange> ranges;
+  util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionCaretsPlaced, hi - lo + 1);
+  // Reused across keystrokes: a held column-select gesture rebuilds the whole set
+  // every step, so a fresh vector here is one growing allocation per keystroke.
+  std::vector<SelectionRange>& ranges = box_ranges_scratch_;
+  ranges.clear();
   ranges.reserve(hi - lo);
   for (std::size_t line = lo; line <= hi; ++line) {
     if (line == caret.line) {
@@ -664,7 +712,7 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   const std::size_t caret_line_len = document_->lines.LineLength(caret.line);
   MoveCursorTo(caret.line, std::min(anchor_column, caret_line_len), false);
   MoveCursorTo(caret.line, std::min(caret_column, caret_line_len), true);
-  SetSecondaryCaretsWithRanges(std::move(ranges));
+  SetSecondaryCaretsWithRanges(ranges);
 }
 
 bool TextViewport::has_selection() const {

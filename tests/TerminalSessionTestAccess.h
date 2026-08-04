@@ -14,51 +14,29 @@ struct TerminalSessionTestAccess {
                     std::size_t rows,
                     std::size_t columns) {
     std::scoped_lock lock(session.mutex_);
+    // Emulation state comes from the production reset, not a hand-kept copy of it.
+    // This used to restate ~35 fields inline, which meant every new TerminalSession
+    // member had to be remembered in two places; it had already fallen behind on
+    // pending_clipboard_text_, so a test fixture could start with a stale OSC-52
+    // clipboard payload attached. Geometry is seeded first because
+    // ResetEmulationStateLocked derives the scroll region from rows_.
+    session.rows_ = std::max<std::size_t>(1, rows);
+    session.columns_ = std::max<std::size_t>(1, columns);
+    session.ResetEmulationStateLocked();
+
+    // What a fresh *fixture* needs on top of the emulation reset. Unlike the
+    // production start path this also zeroes scrollback_trim_total_ and drops the
+    // wake event type: a test session is a new object, not a restarted one, so
+    // nothing can be holding a search token or an event id from before.
     session.lines_ = {microide::terminal::TerminalLine{}};
-    session.primary_screen_ = microide::terminal::TerminalSession::ScreenState{};
-    session.alternate_screen_ = microide::terminal::TerminalSession::ScreenState{};
     session.working_directory_.clear();
     session.default_launch_label_.clear();
     session.launch_label_.clear();
-    session.current_style_ = microide::terminal::TerminalStyle{};
-    session.escape_sequence_buffer_.clear();
-    session.pending_utf8_sequence_.clear();
     session.wake_event_type_ = 0;
-    session.backend_.reset();
-    session.child_pid_ = -1;
-    session.running_ = false;
-    session.stop_requested_ = false;
     session.wake_event_pending_ = false;
-    session.escape_mode_ = microide::terminal::TerminalSession::EscapeMode::None;
-    session.osc_escape_pending_ = false;
-    session.use_alternate_screen_ = false;
-    session.mouse_tracking_normal_ = false;
-    session.mouse_tracking_drag_ = false;
-    session.mouse_tracking_any_ = false;
-    session.mouse_sgr_ext_mode_ = false;
-    session.application_cursor_keys_mode_ = false;
-    session.origin_mode_ = false;
-    session.auto_wrap_mode_ = true;
-    session.bracketed_paste_mode_ = false;
-    session.focus_event_mode_ = false;
-    session.cursor_visible_ = true;
-    session.synchronized_output_ = false;
-    session.sync_suppressed_wakes_ = 0;
-    session.kitty_keyboard_flags_ = 0;
-    session.kitty_keyboard_stack_.clear();
-    session.cursor_shape_ = microide::terminal::TerminalSession::CursorShape::Block;
-    session.cursor_blinking_ = true;
-    session.tab_stops_.clear();
-    session.reported_working_directory_.clear();
-    session.rows_ = std::max<std::size_t>(1, rows);
-    session.columns_ = std::max<std::size_t>(1, columns);
-    session.cursor_row_ = 0;
-    session.cursor_column_ = 0;
-    session.saved_cursor_row_ = 0;
-    session.saved_cursor_column_ = 0;
+    session.backend_.reset();
     session.scrollback_trim_total_ = 0;
     session.snapshot_generation_ = 1;
-    session.ResetScrollRegionLocked();
 #ifdef MICROIDE_TESTING
     session.test_sent_bytes_.clear();
 #endif

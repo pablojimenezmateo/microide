@@ -249,8 +249,55 @@ check_perf_tests() {
   return $rc
 }
 
+# Line-coverage gate with per-area floors.
+#
+# This is the one measurement discipline the repo did not have. Wall time,
+# allocation counts, three sanitizers, twelve fuzz targets and a vacuity-probed
+# architecture lint were all gated; nothing measured whether a line ever ran. The
+# cost showed up as WorkspaceShellRenderMerge.cpp — 568 lines, 0 of 11 functions
+# executed by 2611 tests, on the surface the product is built around. Sanitizers
+# cannot find a defect in code that never executes.
+#
+# clang source-based coverage (-fcoverage-mapping), not gcov: it gives exact
+# region counts and llvm-cov ships in the same apt package set CI already installs.
+# CMAKE_CXX_SCAN_FOR_MODULES=OFF because Ninja otherwise wants clang-scan-deps,
+# which is not part of that set.
+check_coverage() {
+  local build_dir="build/microide-coverage"
+  local log="${LOG_DIR}/microide-coverage.log"
+  local update="${1:-}"
+  run_logged "$log" bash -c '
+    set -e
+    cmake -S . -B '"$build_dir"' -G Ninja \
+      -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_CXX_COMPILER=clang++ \
+      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
+      -DMICROIDE_TEST_SHARDS=1 \
+      -DCMAKE_CXX_FLAGS="-fprofile-instr-generate -fcoverage-mapping -O0 -g0" \
+      -DCMAKE_EXE_LINKER_FLAGS="-fprofile-instr-generate"
+    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+
+    # One process, not the 24 shards: a merged multi-shard profile is fine for the
+    # numbers but slower to produce, and coverage is not a latency-sensitive lane.
+    cd '"$build_dir"'
+    LLVM_PROFILE_FILE=coverage.profraw ./microide/microide_tests
+    llvm-profdata merge -sparse coverage.profraw -o coverage.profdata
+    llvm-cov report ./microide/microide_tests \
+      -instr-profile=coverage.profdata \
+      -ignore-filename-regex="(tests/|third_party/|/usr/)" > coverage-report.txt
+    cd - >/dev/null
+
+    tools/check-coverage.py '"$build_dir"'/coverage-report.txt '"$update"'
+  '
+  local rc=$?
+  echo "run-checks: coverage finished (exit $rc); log at $log"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|coverage|all}" >&2
+  echo "       tools/run-checks.sh coverage      # line coverage + per-area floors" >&2
+  echo "       tools/run-checks.sh coverage --update-floors  # re-record the floors" >&2
   echo "       tools/run-checks.sh perf-tests    # tests with allocation counting armed" >&2
   echo "       tools/run-checks.sh fuzz --list   # configure+build fuzz targets, list them, no runs" >&2
   exit 2
@@ -266,6 +313,7 @@ main() {
     release) check_release ;;
     fuzz)  check_fuzz "${2:-run}" ;;
     perf-tests) check_perf_tests ;;
+    coverage) check_coverage "${2:-}" ;;
     all)
       local overall=0
       check_tests            || overall=1

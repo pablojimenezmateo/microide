@@ -53,6 +53,12 @@ checksum so users have a packaged install path.
 - [ ] `./build/microide/microide_tests AppStartupOptions` green (startup flags + UI surfacing)
 - [ ] Plugin host tests green (`PluginHost/*`)
 - [ ] Focused workspace Git/compare/merge smoke tests green
+- [ ] **The built `.deb` starts on a clean system**: `scripts/ci/verify-deb-runtime.sh build/microide_*_amd64.deb`.
+      `tools/release.sh` runs this before signing and refuses to sign a package that
+      fails it. Never skip it by signing a package built some other way — a green
+      test suite says nothing about whether the artifact loads its libraries
+      anywhere but this machine, which is how v2.8.0 and every release before it
+      shipped unable to find `libSDL3.so.0`.
 - [ ] Docs links resolve: `SECURITY.md`, `dev-docs/project/git-workstation.md`, `guidelines/plugin-trust-model.md`
 - [ ] No comparative marketing claims in README or release notes (see README performance section)
 

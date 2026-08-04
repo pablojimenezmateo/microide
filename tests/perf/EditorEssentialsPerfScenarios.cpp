@@ -1,3 +1,4 @@
+#include "editor/ColumnSelection.h"
 #include "perf/PerfHarness.h"
 
 #include "editor/IndentDetect.h"
@@ -128,6 +129,57 @@ void RunEditorAddCursorNextMatch(ScenarioContext& context) {
       if (!context.ExecuteCommand("add-cursor-next-match")) {
         throw std::runtime_error("add-cursor-next-match command failed");
       }
+    }
+  });
+}
+
+// Keyboard column selection materializes one caret per spanned line on every
+// keystroke, so a long gesture rebuilds a growing caret set repeatedly -- the one
+// shape where a single held-down chord can go quadratic. The 10,000-caret cap in
+// SetBoxSelection bounds the size; nothing bounded the rebuild rate, and no
+// scenario covered box selection at all (keyboard or mouse).
+void RunEditorColumnSelectionBurst(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!PathExistsNoThrow(cpp_50k)) {
+    std::cerr << "editor_column_selection_burst: missing fixture " << cpp_50k << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  vp.ClearSecondaryCarets();
+  vp.ClearColumnSelection();
+  vp.MoveCursorTo(5000, 8, false);
+
+  // 400 Down steps: the caret set grows by one line per step and is rebuilt whole
+  // each time, so allocations here scale with the SUM of the span, not its final
+  // size. That is the number worth watching.
+  context.Measure("column_selection.extend_down", [&] {
+    editor::ColumnSelectionState state = vp.column_selection();
+    for (int i = 0; i < 400; ++i) {
+      const std::size_t lo = state.active ? std::min(state.anchor.line, state.cursor.line) : 5000;
+      const std::size_t hi = state.active ? std::max(state.anchor.line, state.cursor.line) : 5000;
+      state = editor::StepColumnSelection(state, editor::ColumnSelectDirection::Down,
+                                          editor::TextPosition{vp.cursor_line(), vp.cursor_column()},
+                                          vp.line_count(), vp.MaxLineLengthInSpan(lo, hi));
+      vp.SetColumnSelection(state);
+      vp.SetBoxSelection(state.anchor, state.cursor);
+    }
+  });
+
+  // Horizontal extension re-scans the span for the longest line on every step,
+  // which is the cost the keyboard gesture adds over the mouse one.
+  context.Measure("column_selection.extend_right", [&] {
+    editor::ColumnSelectionState state = vp.column_selection();
+    for (int i = 0; i < 64; ++i) {
+      const std::size_t lo = std::min(state.anchor.line, state.cursor.line);
+      const std::size_t hi = std::max(state.anchor.line, state.cursor.line);
+      state = editor::StepColumnSelection(state, editor::ColumnSelectDirection::Right,
+                                          editor::TextPosition{vp.cursor_line(), vp.cursor_column()},
+                                          vp.line_count(), vp.MaxLineLengthInSpan(lo, hi));
+      vp.SetColumnSelection(state);
+      vp.SetBoxSelection(state.anchor, state.cursor);
     }
   });
 }
@@ -751,11 +803,27 @@ const ScenarioRegistration g_perf_editor_add_cursor_next_match({Scenario{
 const ScenarioRegistration g_perf_editor_shaping_multi_caret({Scenario{
     .name = "editor_shaping_multi_caret",
     .smoke = false,
+    // 12 warmup passes so rss_growth_bytes is measured on the flat part of the
+    // curve. This scenario retains ~18,714 net allocations per iteration while a
+    // bounded structure (undo history) fills, then drops to 12 net at iteration
+    // ~11 and settles onto a stable ~1.56 MB/iteration plateau. Measured across
+    // that step, the rss p50 is bimodal and the gate is a coin flip.
+    .warmup_iterations = 12,
     .run = RunEditorShapingMultiCaret,
 }});
 const ScenarioRegistration g_perf_editor_toggle_comment_large({Scenario{
     .name = "editor_toggle_comment_large_selection",
     .smoke = false,
+    // Same reason as editor_shaping_multi_caret: net allocations run at 32,052 per
+    // iteration until iteration ~8, then fall to 12 with resident growth settling
+    // at a stable ~2.8 MB/iteration. The first rebaseline recorded a p50 from the
+    // 9.8 MB pre-step plateau and the very next validation run measured the 2.8 MB
+    // post-step one, failing at +148%. Warm past the step and both are stable.
+    //
+    // The 2.8 MB plateau itself is NOT warmup and NOT a leak -- see
+    // TD-2026-08-04-130. Allocation counts are balanced there; the resident set
+    // grows anyway.
+    .warmup_iterations = 12,
     .run = RunEditorToggleCommentLargeSelection,
 }});
 const ScenarioRegistration g_perf_editor_mouse_selection_drag({Scenario{
@@ -878,6 +946,12 @@ const ScenarioRegistration g_perf_settings_change_many_tabs({Scenario{
     // Scenario itself: allocations are the oracle, keep it tight.
     .tolerance_alloc_p50_percent = 1.0,
     .run = RunSettingsChangeManyTabs,
+}});
+const ScenarioRegistration g_perf_editor_column_selection_burst({Scenario{
+    .name = "editor_column_selection_burst",
+    .smoke = false,
+    .baseline_gated = true,
+    .run = RunEditorColumnSelectionBurst,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",

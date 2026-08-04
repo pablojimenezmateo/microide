@@ -237,7 +237,7 @@ void RestoreSecondaryCaretRanges(TextViewport& viewport,
         secondary.selection_anchor.has_value() ? remap(*secondary.selection_anchor) : cursor;
     ranges.push_back(SelectionRange{anchor, cursor});
   }
-  viewport.SetSecondaryCaretsWithRanges(std::move(ranges));
+  viewport.SetSecondaryCaretsWithRanges(ranges);
 }
 
 void RestoreCaretsAfterLineMove(TextViewport& viewport,

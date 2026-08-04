@@ -76,6 +76,14 @@ class CommitWorkflowService {
   void RestorePersistedDraft(CommitWorkflowState& state,
                              const PersistedCommitDraftState& persisted);
 
+  // Invalidates the in-flight operation identified by `generation`, so its queued
+  // completion is dropped instead of publishing into a destroyed state. Called from
+  // ~CommitWorkflowState; a no-op if that operation was already superseded or
+  // published. The generation guard in the completion already handled the
+  // "a newer commit was dispatched" case — this covers the "the target went away"
+  // case, which is a project tab closing while its commit runs.
+  void AbandonOperation(std::uint64_t generation);
+
  private:
   void DispatchCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
   void PublishResult(CommitWorkflowState& state, project::CommitOperationResult result,

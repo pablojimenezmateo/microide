@@ -301,6 +301,18 @@ class TerminalSession {
   // differences on top (Start seeds the 24x80 geometry and the launch label,
   // Stop clears the label and keeps the geometry).
   void ResetEmulationStateLocked();
+  // The rest of what a starting session needs, on top of ResetEmulationStateLocked:
+  // the launch identity, a one-line buffer, the 24x80 seed geometry, and the wake /
+  // snapshot bookkeeping. Start() and StartPlaceholderForTesting() were still
+  // spelling this out separately after the emulation-state reset was factored out,
+  // which is exactly how the geometry-ordering comment ended up copied into both.
+  //
+  // Deliberately does NOT touch scrollback_trim_total_. That counter is the
+  // staleness token FindMatches compares an in-flight search against, so it must
+  // stay monotonic across a restart; zeroing it could make a search over the
+  // previous buffer's rows look current.
+  void ReseedForStartLocked(const std::filesystem::path& working_directory,
+                            std::string launch_label);
   bool ReserveWakeEvent(Uint32& event_type) const;
   void PushWakeEvent() const;
 

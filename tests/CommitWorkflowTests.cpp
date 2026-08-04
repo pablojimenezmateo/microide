@@ -404,6 +404,130 @@ void TestCommitResultIsMarshaledToMainThread() {
          "draining completions on the main thread must publish the commit result");
 }
 
+// Regression: a commit dispatched from a project state that is then CLOSED must not
+// publish into freed memory. The queued completion captures the CommitWorkflowState
+// by reference, and that state lives inside a ProjectWorkspaceState that a project
+// tab close destroys. The generation guard only covered "a newer commit was
+// dispatched", not "the target went away", so draining after a close was a
+// use-after-free. Heap-allocate the state so ASAN sees the freed region.
+void TestCommitCompletionSurvivesStateDestruction() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::CommitWorkflowService;
+  using microide::workspace::CommitWorkflowState;
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo = temp_dir.path() / "repo";
+  InitializeGitRepo(repo);
+  WriteFile(repo / "seed.txt", "seed\n");
+  CommitAll(repo, "base", "base");
+  WriteFile(repo / "seed.txt", "seed\nmore\n");
+  RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage change for teardown test");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+  Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
+
+  CommitWorkflowService service(executor, git_service);
+  auto state = std::make_unique<CommitWorkflowState>();
+  service.Open(*state);
+  state->subject.SetText("Add more");
+  for (const auto& check : state->checks) {
+    if (check.severity == project::CommitPreCheckSeverity::Warning) {
+      state->acknowledged_warning_ids.insert(check.id);
+    }
+  }
+  Expect(service.RequestCommit(*state, CommitOperationKind::Create),
+         "a staged change with a subject should dispatch a commit");
+
+  // Let the worker finish and queue its completion, so the completion is genuinely
+  // pending when the state dies — the exact interleaving that used to crash.
+  for (int i = 0; i < 2000 && service.PendingCompletionCount() == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Expect(service.PendingCompletionCount() > 0,
+         "the worker should queue a completion for the main thread");
+
+  // The project tab closes: the state is destroyed with its completion still queued.
+  state.reset();
+
+  // Draining must run the queued closure and drop it, not publish into freed memory.
+  service.DrainCompletions();
+  Expect(service.PendingCompletionCount() == 0, "the abandoned completion should be consumed");
+}
+
+// A state destroyed AFTER its completion published must not cancel an unrelated
+// commit that a different project dispatched in the meantime. The claim is released
+// on publication, so its destructor has nothing left to abandon.
+void TestPublishedCommitDoesNotCancelALaterOne() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::CommitWorkflowService;
+  using microide::workspace::CommitWorkflowState;
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo = temp_dir.path() / "repo";
+  InitializeGitRepo(repo);
+  WriteFile(repo / "seed.txt", "seed\n");
+  CommitAll(repo, "base", "base");
+  WriteFile(repo / "seed.txt", "seed\nfirst\n");
+  RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage first change");
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+
+  CommitWorkflowService service(executor, git_service);
+
+  const auto acknowledge_and_commit = [&](CommitWorkflowState& state, const char* subject) {
+    service.Open(state);
+    state.subject.SetText(subject);
+    for (const auto& check : state.checks) {
+      if (check.severity == project::CommitPreCheckSeverity::Warning) {
+        state.acknowledged_warning_ids.insert(check.id);
+      }
+    }
+    return service.RequestCommit(state, CommitOperationKind::Create);
+  };
+
+  auto first = std::make_unique<CommitWorkflowState>();
+  Expect(acknowledge_and_commit(*first, "First"), "first commit should dispatch");
+  for (int i = 0; i < 2000 && service.PendingCompletionCount() == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  service.DrainCompletions();
+  Expect(!first->operation_in_flight, "the first commit should have published");
+
+  // Second project dispatches; only now does the first project's tab close.
+  WriteFile(repo / "seed.txt", "seed\nfirst\nsecond\n");
+  RequireGitCommandSuccess(repo, {"add", "seed.txt"}, "stage second change");
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+  CommitWorkflowState second;
+  Expect(acknowledge_and_commit(second, "Second"), "second commit should dispatch");
+  first.reset();
+
+  for (int i = 0; i < 2000 && service.PendingCompletionCount() == 0; ++i) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  service.DrainCompletions();
+  Expect(!second.operation_in_flight,
+         "closing an already-published state must not cancel the live commit");
+}
+
 // Regression: the ConflictMarkers pre-check runs an unbounded `git diff --cached`
 // on the calling thread. Interactive commit-panel refreshes (every keystroke) must
 // skip it for speed by passing scan_staged_diff_for_conflict_markers=false; only the
@@ -613,6 +737,10 @@ void TestCancelledWarningConfirmationCommitsNothing() {
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
   AddTest(tests, "CommitWorkflow/ConflictMarkerScanGate", TestConflictMarkerScanGate);
+  AddTest(tests, "CommitWorkflow/CompletionSurvivesStateDestruction",
+          TestCommitCompletionSurvivesStateDestruction);
+  AddTest(tests, "CommitWorkflow/PublishedCommitDoesNotCancelALaterOne",
+          TestPublishedCommitDoesNotCancelALaterOne);
   AddTest(tests, "CommitWorkflow/ResultMarshaledToMainThread",
           TestCommitResultIsMarshaledToMainThread);
   AddTest(tests, "CommitWorkflow/EmptySubjectBlocks", TestEmptySubjectBlocksCommit);

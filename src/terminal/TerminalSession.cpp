@@ -100,21 +100,10 @@ bool TerminalSession::Start(const std::filesystem::path& working_directory, std:
   const std::string shell_str(shell);
   {
     std::scoped_lock lock(mutex_);
-    working_directory_ = working_directory;
-    default_launch_label_ =
-        command.empty()
-            ? ShellProgramName(shell_str.empty() ? DefaultShellPath() : shell_str)
-            : std::string(command);
-    launch_label_ = default_launch_label_;
-    lines_ = {TerminalLine{}};
-    // Geometry BEFORE ResetEmulationStateLocked: it resets the scroll region,
-    // whose bottom margin is derived from rows_. Reset it against the stale
-    // pre-restart height and the region outlives the 24x80 reseed.
-    rows_ = 24;
-    columns_ = 80;
-    ResetEmulationStateLocked();
-    wake_event_pending_ = false;
-    snapshot_generation_ = 1;
+    ReseedForStartLocked(working_directory,
+                         command.empty()
+                             ? ShellProgramName(shell_str.empty() ? DefaultShellPath() : shell_str)
+                             : std::string(command));
   }
 
   std::shared_ptr<platform::TerminalBackend> backend = platform::CreateTerminalBackend();
@@ -187,18 +176,12 @@ bool TerminalSession::StartPlaceholderForTesting(const std::filesystem::path& wo
   Stop();
   {
     std::scoped_lock lock(mutex_);
-    working_directory_ = working_directory;
-    default_launch_label_ =
-        command.empty() ? ShellProgramName(DefaultShellPath()) : std::string(command);
-    launch_label_ = default_launch_label_;
-    lines_ = {TerminalLine{}};
+    ReseedForStartLocked(working_directory, command.empty()
+                                                ? ShellProgramName(DefaultShellPath())
+                                                : std::string(command));
+    // The two differences from the real Start(): there is no backend to publish,
+    // and the captured-output buffer that stands in for one starts empty.
     backend_.reset();
-    // Geometry first — see Start().
-    rows_ = 24;
-    columns_ = 80;
-    ResetEmulationStateLocked();
-    wake_event_pending_ = false;
-    snapshot_generation_ = 1;
     test_sent_bytes_.clear();
   }
   PushWakeEvent();

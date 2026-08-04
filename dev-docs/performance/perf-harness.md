@@ -67,6 +67,92 @@ cancels because both sides pay it.
 Shared tolerance constants live in `tolerance::` in `tests/perf/PerfHarness.h`; prefer
 them over fresh numbers.
 
+## CPU Time And Resident Growth
+
+Wall time and allocation counts were the only two gated metrics for the first 93
+baselines, which left priorities 3 (low CPU) and 4 (low memory) stated but not
+measured. Two more metrics close that:
+
+- **`cpu_ms`** — process CPU time, user + system, from `getrusage(RUSAGE_SELF)`,
+  which sums **every thread**. This is the metric wall time structurally cannot
+  provide: a change that holds its latency by moving work onto the background
+  executor is neutral on wall and a large regression here. Tolerances default to
+  the wall envelopes, since CPU carries the same scheduler jitter.
+- **`rss_growth_bytes`** — resident-set delta across one iteration, from
+  `/proc/self/statm`. Deliberately the delta and not absolute RSS: the harness runs
+  every iteration of every scenario in one process, so absolute RSS is dominated by
+  whatever ran earlier and is not attributable to the scenario. Growth is. Steadier
+  than wall but not as deterministic as an allocation count (page granularity,
+  allocator arena behaviour), so tolerances sit between the two: **25 / 35 / 60 %**,
+  with a one-page (4 KiB) noise floor so a near-zero baseline cannot turn a single
+  page of jitter into an unbounded regression.
+
+This is separate from the existing hard RSS ceiling in `AdvisoryPerfScenarios.cpp`
+(256 MiB idle, 160 MiB growth). That is a ceiling; these are ratchets. A change
+taking idle RSS from 60 MB to 250 MB passed the ceiling silently and now does not.
+
+**Existing baselines are not gated on them.** A baseline that predates these metrics
+records neither, and `LoadBaseline` marks it ungated rather than comparing against
+an implicit `0.0` — which would have failed all 93 scenarios the moment the metrics
+shipped. They start gating when the baseline is next re-recorded on the reference
+runner, which is a deliberate act like any other rebaseline.
+
+Run-to-run stability, measured over four independent runs of one unchanged binary
+on the reference runner (`editor_column_selection_burst`, 10 iterations each — note
+the iteration-count caveat in the sweep section below):
+
+| metric | spread |
+| --- | --- |
+| `p50_allocations` | 4,247 every run — the oracle, as documented |
+| `p50_rss_growth_bytes` | 210,944 bytes every run — bit-identical |
+| `p50_cpu_ms` | 15.31 – 20.35 (**33 %**) |
+
+So resident growth is gateable at a tight envelope and CPU is not. CPU inherits the
+scenario's *resolved* wall envelope rather than the tolerance struct's default —
+without that, a scenario with a widened 100 % wall tolerance would carry a 10 % CPU
+tolerance and flag on its own recorded baseline immediately.
+
+### What the first full CPU/RSS sweep found: almost nothing
+
+A 95-scenario sweep was run once the metrics existed. The result is a clean bill of
+health, and the way it was nearly misread is the useful part.
+
+**At 5–6 iterations the data looked alarming.** `typing_large_file` reported 2.02 ms
+wall against 3.97 ms CPU, `scroll_large_file` 1.71 against 3.12 —
+apparently ~2× wall spent on other threads during the two hottest interaction paths.
+`editor_buffer_find_incremental` reported 2.9 MB of resident growth *per iteration*,
+which reads exactly like a leak.
+
+**All of it was the cold pass.** Re-measured at 20 iterations, per-iteration:
+
+| scenario | iter 0 ratio | steady-state ratio |
+| --- | ---: | ---: |
+| `typing_large_file` | 2.01 | **1.00** |
+| `scroll_large_file` | 2.37 | **1.01** |
+| `file_finder_cold` | 1.75 | **1.03** |
+| `git_sidebar_activate` | 1.95 | **1.08** |
+| `multi_project_switch` | 1.93 | **1.54** |
+
+`editor_buffer_find_incremental` grows 19.3 MB on iteration 0, then 4.6 / 1.5 / 5.0 MB,
+then **exactly zero for every iteration after the third**, with allocations flat at
+3,476. That is an allocator arena reaching steady state, not a leak.
+
+This is the "percentiles land on the cold pass" trap documented below, in a new
+dimension: thread-pool spin-up and arena growth are *first-iteration* costs, so CPU
+and RSS are far more cold-sensitive than wall time. **Never read a cpu_ms or
+rss_growth_bytes number off fewer than ~20 iterations, and prefer the per-iteration
+series to the percentile.** The p50 of six samples sits on a warming iteration.
+
+What survives: 94 of 95 scenarios run at a steady-state CPU/wall ratio of ≤1.1, and
+resident growth reaches zero within four iterations everywhere checked. The single
+exception is `multi_project_switch` at 1.54 (22.5 ms wall, 34.7 ms CPU) — concurrent
+file-index, git and language-server work for the new root, plausibly by design, and
+the one place worth a look if project-switch CPU ever matters.
+
+`repo_open_rss_idle` is worth knowing separately: 503.79 ms wall against 5.44 ms CPU.
+Its half-second "wall time" is a soak sleep, not work — read its allocation and CPU
+numbers, never its wall number.
+
 ## Reading A Measurement
 
 Most "regressions" this harness reports are not regressions. The heuristics below

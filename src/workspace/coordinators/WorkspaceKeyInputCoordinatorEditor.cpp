@@ -1,6 +1,7 @@
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 
 #include <limits>
+#include <optional>
 
 #include "editor/ShapingActions.h"
 #include "util/PerformanceTrace.h"
@@ -528,6 +529,14 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   }
   if (event.key == SDLK_TAB && operations_.accept_inline_completion()) {
     return true;
+  }
+
+  // Any editor key that is not a column-select step ends the gesture, so the next
+  // Ctrl+Shift+Alt+Arrow re-anchors at wherever the caret ended up instead of
+  // extending a stale box. The steps themselves arrive through the keybinding
+  // registry as ColumnSelect* actions and are dispatched before this handler runs.
+  if (editable_viewport != nullptr) {
+    editable_viewport->ClearColumnSelection();
   }
 
   switch (event.key) {

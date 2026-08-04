@@ -148,6 +148,17 @@ namespace microide::util {
   X(MainThreadMailboxPosts, "task.main_thread_mailbox_posts")                                   \
   X(MainThreadMailboxPostsCoalesced, "task.main_thread_mailbox_posts_coalesced")                \
   X(MainThreadMailboxDrains, "task.main_thread_mailbox_drains")                                 \
+  /* --- editor multi-caret ------------------------------------------------ */                 \
+  /* Box/column selection builds one caret per spanned line, which is the only  */             \
+  /* place a single gesture can allocate carets proportional to the file. The    */             \
+  /* 10,000-caret cap in SetBoxSelection bounds it; these say whether a real     */             \
+  /* gesture is anywhere near that, and carets_placed/builds is the mean span.   */             \
+  X(EditorBoxSelectionBuilds, "editor.box_selection_builds")                                   \
+  X(EditorBoxSelectionCaretsPlaced, "editor.box_selection_carets_placed")                      \
+  /* Lines scanned to bound a keyboard column selection's virtual column. This   */             \
+  /* is O(span) per Right keystroke, so it is the one repeated cost the keyboard */             \
+  /* gesture adds over the mouse one.                                            */             \
+  X(EditorBoxSelectionSpanLinesScanned, "editor.box_selection_span_lines_scanned")             \
   /* --- text document model ---------------------------------------------- */                 \
   X(DocumentEdits, "document.edits")                                                            \
   X(DocumentFullTextMaterializations, "document.full_text_materializations")                    \

@@ -38,3 +38,6 @@ __pycache__/
 
 # clangd index (created whenever compile_commands.json is exported).
 /.cache/
+
+# Coverage lane artifacts (tools/run-checks.sh coverage)
+build/microide-coverage/

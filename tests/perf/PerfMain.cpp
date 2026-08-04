@@ -1397,6 +1397,9 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
     iteration_json["frees"] = static_cast<std::int64_t>(iteration.metrics.frees);
     iteration_json["bytes_allocated"] = static_cast<std::int64_t>(iteration.metrics.bytes_allocated);
     iteration_json["bytes_freed"] = static_cast<std::int64_t>(iteration.metrics.bytes_freed);
+    iteration_json["cpu_ms"] = iteration.metrics.cpu_ms;
+    iteration_json["rss_growth_bytes"] =
+        static_cast<std::int64_t>(iteration.metrics.rss_growth_bytes);
     iteration_json["phase_durations_ms"] = std::move(phase_duration_json);
     iteration_json["phase_metrics"] = std::move(phase_metrics_json);
     iteration_json["perf_counters"] = std::move(counters_json);
@@ -1415,6 +1418,12 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
                       {"p50_allocations", aggregate.metrics.p50_allocations},
                       {"p95_allocations", aggregate.metrics.p95_allocations},
                       {"max_allocations", aggregate.metrics.max_allocations},
+                      {"p50_cpu_ms", aggregate.metrics.p50_cpu_ms},
+                      {"p95_cpu_ms", aggregate.metrics.p95_cpu_ms},
+                      {"max_cpu_ms", aggregate.metrics.max_cpu_ms},
+                      {"p50_rss_growth_bytes", aggregate.metrics.p50_rss_growth_bytes},
+                      {"p95_rss_growth_bytes", aggregate.metrics.p95_rss_growth_bytes},
+                      {"max_rss_growth_bytes", aggregate.metrics.max_rss_growth_bytes},
                   }},
       {"iterations", std::move(iterations_json)},
   };
@@ -1641,8 +1650,20 @@ int main(int argc, char** argv) {
                          .alloc_p95_percent = resolve_alloc(scenario.tolerance_alloc_p95_percent,
                                                             scenario.tolerance_p95_percent),
                          .alloc_max_percent = resolve_alloc(scenario.tolerance_alloc_max_percent,
-                                                            scenario.tolerance_max_percent)},
+                                                            scenario.tolerance_max_percent),
+                         // CPU carries the same scheduler jitter as wall, so it
+                         // inherits the scenario's *resolved* wall envelope rather
+                         // than the struct default. Writing the 10/20/50 default
+                         // next to a widened 100/150/200 wall envelope would gate
+                         // CPU ten times tighter than the metric it tracks, and
+                         // every scenario with a widened wall tolerance would flag
+                         // on CPU immediately.
+                         .cpu_p50_percent = scenario.tolerance_p50_percent,
+                         .cpu_p95_percent = scenario.tolerance_p95_percent,
+                         .cpu_max_percent = scenario.tolerance_max_percent},
       };
+      record.has_cpu_metrics = true;
+      record.has_rss_metrics = true;
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
         return 1;

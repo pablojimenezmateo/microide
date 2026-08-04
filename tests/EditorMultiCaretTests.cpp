@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include <vector>
+
 #include "editor/FoldingModel.h"
 #include "editor/LanguageContractView.h"
 #include "editor/ShapingActions.h"
@@ -475,7 +477,7 @@ void TestSetSecondaryCaretsWithRangesPreservesSelections() {
   viewport.SelectWordAtCursor();  // primary selection over the first "foo"
   // Mirror the "select all matches" executor path: the two other occurrences
   // become ranged secondary carets, not bare positions.
-  viewport.SetSecondaryCaretsWithRanges({
+  viewport.SetSecondaryCaretsWithRanges(std::vector<microide::editor::SelectionRange>{
       microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}},
       microide::editor::SelectionRange{TextPosition{0, 8}, TextPosition{0, 11}},
   });
@@ -499,7 +501,7 @@ void TestSetSecondaryCaretsWithRangesEmptyRangeIsBareCaret() {
   viewport.LoadContent("foo foo", "/tmp/mc-ranges-empty.cpp");
   viewport.MoveCursorTo(0, 1);
   viewport.SelectWordAtCursor();
-  viewport.SetSecondaryCaretsWithRanges({
+  viewport.SetSecondaryCaretsWithRanges(std::vector<microide::editor::SelectionRange>{
       microide::editor::SelectionRange{TextPosition{0, 5}, TextPosition{0, 5}},  // empty
   });
   // The primary has a selection but the lone secondary does not -> aggregate copy
@@ -520,7 +522,7 @@ void TestNonExtendingMoveCollapsesSecondarySelections() {
   viewport.LoadContent("aaa bbb ccc", "/tmp/mc-move-collapse.cpp");
   viewport.MoveCursorTo(0, 1);
   viewport.SelectWordAtCursor();  // primary selection over "aaa"
-  viewport.SetSecondaryCaretsWithRanges({
+  viewport.SetSecondaryCaretsWithRanges(std::vector<microide::editor::SelectionRange>{
       microide::editor::SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}},   // "bbb"
       microide::editor::SelectionRange{TextPosition{0, 8}, TextPosition{0, 11}},  // "ccc"
   });
@@ -804,7 +806,7 @@ void TestMultiCaretRefusesOverlappingSelections() {
   // selections on line 0 — [0,0)-[0,6) and [0,3)-[0,9), overlapping at [3,6) — are
   // injected via the ranges API, which dedups only by position, not overlap.
   viewport.MoveCursorTo(1, 0, false);
-  viewport.SetSecondaryCaretsWithRanges({
+  viewport.SetSecondaryCaretsWithRanges(std::vector<microide::editor::SelectionRange>{
       microide::editor::SelectionRange{{0, 0}, {0, 6}},
       microide::editor::SelectionRange{{0, 3}, {0, 9}},
   });
@@ -821,7 +823,7 @@ void TestMultiCaretDisjointSelectionsStillApply() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnop\nsecondline\n", "/tmp/disjoint.txt");
   viewport.MoveCursorTo(1, 0, false);
-  viewport.SetSecondaryCaretsWithRanges({
+  viewport.SetSecondaryCaretsWithRanges(std::vector<microide::editor::SelectionRange>{
       microide::editor::SelectionRange{{0, 0}, {0, 3}},  // "abc"
       microide::editor::SelectionRange{{0, 6}, {0, 9}},  // "ghi"
   });

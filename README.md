@@ -34,6 +34,7 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 - [Plugin trust warning](#security--trust-model)
 - [Performance methodology summary](#performance--benchmark-methodology)
 - [Deeper docs](#companion-docs)
+- [Contributing](CONTRIBUTING.md)
 
 ## About
 
@@ -55,8 +56,11 @@ for what is actually measured, and what is not.
 
 ### Editing
 - Multi-project tabs, file tabs, split editor groups, deferred-commit tab drag with ghost
+- Drag and drop from the desktop: a file opens as a tab, a folder opens as the project
 - UTF-8 codepoint boundaries, IME preedit, line-ending detection and preservation
 - Multi-caret editing with position remap, region-stack highlighting, and copy-with-context
+- Column/box selection by mouse (Shift+Alt+drag) and keyboard (Ctrl+Shift+Alt+Arrow), with a
+  virtual column that survives short lines
 - Soft word wrap with hanging indent; long-method fold resolution
 - Syntax highlighting with per-file checkpointed state (fast random jumps in large files)
 - Undo/redo storing line-range patches rather than full-buffer snapshots; word-level undo coalescing
@@ -248,7 +252,7 @@ with the shipped UI. The most honest look is still the running app: build it in 
 Mature enough to use day-to-day on the maintainer's own work:
 
 - editor: open / save / undo / redo, soft wrap, syntax highlighting with checkpointed state,
-  multi-cursor (Alt+click, add-cursor-at-match, and Shift+Alt+drag column/box selection), folding,
+  multi-cursor (Alt+click, add-cursor-at-match, Shift+Alt+drag and Ctrl+Shift+Alt+Arrow column/box selection), folding,
   indent guides, bracket match, auto-close / surround driven by a language contract, snippets,
   save normalization
 - compare and merge tabs: working-tree vs HEAD, vs arbitrary commit, outgoing-base-branch files,
@@ -488,15 +492,22 @@ Requirements:
   - Lua 5.4 — the plugin runtime (without it, Lua plugin support is disabled)
   - fontconfig — accurate `editor.font_family` matching (without it, a directory scan is used)
 
-On Debian/Ubuntu, the required and recommended packages are:
+On Debian/Ubuntu, everything except SDL3 comes from the archive:
 
 ```bash
 sudo apt-get install -y cmake ninja-build pkg-config \
-  libsdl3-dev libsdl3-ttf-dev libpcre2-dev liblua5.4-dev libfontconfig-dev
+  libpcre2-dev liblua5.4-dev libfontconfig-dev libfreetype-dev libharfbuzz-dev
 ```
 
-On other distributions, install the equivalent `-dev`/`-devel` packages. More build
-notes are in `dev-docs/platform/linux-build.md`.
+**SDL3 is not packaged by Debian or Ubuntu yet** — there is no `libsdl3-dev` to
+install. Build it from source with `scripts/ci/install-sdl3-linux.sh` (the same
+script CI uses), or follow
+[dev-docs/platform/linux-build.md](dev-docs/platform/linux-build.md).
+
+This affects only *building* microide. The published `.deb` bundles SDL3 and
+SDL3_ttf, so installing it needs nothing beyond the archive.
+
+On other distributions, install the equivalent `-dev`/`-devel` packages.
 
 Default build:
 
@@ -524,6 +535,15 @@ sudo ./scripts/install-deb.sh
 The package installs `microide` into `/usr/bin`, shared assets into
 `/usr/share/microide/assets`, and desktop-launcher metadata into the standard
 XDG application and icon locations.
+
+Because no Debian-family distribution packages SDL3 yet, the `.deb` bundles
+`libSDL3.so.0` and `libSDL3_ttf.so.0` into `/usr/lib/<triplet>/microide` and
+reaches them through an `$ORIGIN`-relative `RUNPATH`; every other dependency is a
+normal `Depends:` entry satisfied from the archive. `scripts/ci/verify-deb-runtime.sh`
+proves that by launching the packaged binary with the loader cache inhibited and
+the library path restricted to stock system directories, and CI additionally
+installs the package into a stock `ubuntu:24.04` container and runs it. Releases
+are refused if either check fails.
 
 Platform-specific setup, dependency install, and bring-up notes live in dedicated docs:
 
@@ -560,6 +580,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+s` | Save |
 | `Ctrl+Shift+p` | Open command palette |
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
+| `Ctrl+Shift+Alt+arrows` | Column (box) selection |
 | `PageUp` / `PageDown` | Scroll viewport |
 | `d` on sidebar file | Open compare commit picker |
 | `[` / `]` in compare/merge | Previous / next hunk |
@@ -576,6 +597,10 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | Mouse wheel on tab strip | Scroll tab overflow |
 
 Mouse: click to focus/open, drag to reorder tabs within their strip, wheel to scroll editor/sidebar/terminal.
+
+Drag and drop: drop a file onto the window to open it as a tab, or a folder to open
+it as the project. Dropping a file when no project is open opens its parent folder
+as the project first, so a drop onto the welcome screen works.
 
 Right-click in editor: **Copy with Context** (copies `relative/path:line` + selection).  
 Right-click terminal tab: **Copy Last Command and Output**.

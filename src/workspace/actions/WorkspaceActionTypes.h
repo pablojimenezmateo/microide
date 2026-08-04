@@ -147,6 +147,13 @@ enum class ActionId {
   ToggleBlockComment,
   MoveLineUp,
   MoveLineDown,
+  // Keyboard column (box) selection. Registry-driven rather than a hardcoded chord
+  // in the key coordinator, so the gesture shows up in the keyboard-shortcuts
+  // overlay and can be rebound like every other editor shortcut.
+  ColumnSelectUp,
+  ColumnSelectDown,
+  ColumnSelectLeft,
+  ColumnSelectRight,
   DuplicateLine,
   DeleteLine,
   IndentLines,
