@@ -32,12 +32,18 @@ constexpr std::size_t kSentinelIndent = static_cast<std::size_t>(-1);
 constexpr std::uint32_t kBlankIndent = std::numeric_limits<std::uint32_t>::max();
 constexpr std::uint32_t kUnmeasuredIndent = kBlankIndent - 1;
 
-// Block partition tuning. The two costs a block size trades off are the rebuild
-// of the block an edit lands in (O(block)) and the number of block words a walk
-// applies (O(document / block)); the geometric mean of a 50k-line file lands
-// around 250 lines, and real edits sit far below the rebuild cost anyway because
-// a rebuild reads cached per-line arrays rather than document bytes.
-constexpr std::size_t kTargetBlockLines = 256;
+// Block partition tuning.
+//
+// The obvious trade is the rebuild of the block an edit lands in (O(block))
+// against the number of words a walk applies (O(document / block)), which would
+// put the optimum near sqrt(document). But a rebuild reads cached per-line arrays
+// rather than document bytes -- about 4 ns a line -- so it is nearly free at any
+// size in this range, while each block costs a handful of ALLOCATIONS for its
+// word lists the first time it is built. That is the binding cost: at 256 lines,
+// first-touching a 50k-line file added ~750 allocations, enough to fail a perf
+// gate on its own. Fewer, larger blocks buy that back for a few microseconds of
+// extra line walking per refresh.
+constexpr std::size_t kTargetBlockLines = 1024;
 
 std::size_t MeasureIndent(std::string_view line, std::size_t tab_size) {
   if (tab_size == 0) tab_size = 1;

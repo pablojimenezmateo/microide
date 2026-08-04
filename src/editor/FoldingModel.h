@@ -41,7 +41,7 @@ struct FoldRange {
 //
 // The derivation is now incremental, in two steps.
 //
-// **Blocks.** The document is partitioned into variable-size blocks of ~256
+// **Blocks.** The document is partitioned into variable-size blocks of ~1024
 // lines. Each block stores its *reduced word*: the brackets it leaves unmatched
 // (closers reaching before it, openers still open at its end) and the same for
 // indent levels. Reducing a line range that way is a monoid -- combining two

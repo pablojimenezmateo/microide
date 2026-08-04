@@ -25,6 +25,103 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-04 `FoldingModel` rewrite, ninth round (perf-runner-v1)
+
+The item that had stood open since the fifth round -- "the fold model rescans the
+whole document per keystroke" -- is closed. It was correctly diagnosed as a
+rewrite rather than a constant-factor change, and that is what it took.
+
+### What the shape had to become
+
+Folds are a pure function of two per-line facts (the bracket bytes on a line, its
+leading indent width). Both were already cached and spliced across an edit; the
+cost was everything downstream, which re-derived the whole document's fold set
+from them on every keystroke.
+
+Two changes removed the asymptote, and both are worth understanding before
+touching `FoldingModel` again:
+
+1. **Block words.** The document is partitioned into ~1024-line blocks, each
+   holding its *reduced word*: the brackets it leaves unmatched and the indent
+   levels it leaves open. That reduction is a monoid -- the same stack machine
+   the line scan runs -- so combining adjacent words reaches exactly the state a
+   full scan would. Words store block-RELATIVE line numbers, so lines shifting
+   above a block never touch it; an edit invalidates only the block it lands in.
+   The walk state is memoised at each block boundary, which is what makes a
+   keystroke's prefix free: the edit is inside the viewport's own block, so the
+   boundary before it is still valid.
+2. **Windowed resolution.** The model no longer materialises every fold in the
+   document -- it resolves the folds a line window needs (opening inside it, plus
+   the ancestors of its first line for sticky scroll). Per-frame cost became
+   O(window). Reaching a far-below closer consumes whole block words rather than
+   lines.
+
+### Three things measurement caught that reading the code did not
+
+- **The forward walk never terminated early.** It stopped when both stacks had
+  been empty, but *every non-blank line pushes an indent entry* — the indent
+  stack is never empty after one, so the test could not fire and every refresh
+  walked to end-of-document. A size-based low-water mark cannot express "the
+  entries I care about are gone" when pops and pushes interleave; the fix counts
+  the entries opened at or before the window instead.
+- **The 50k-line fixture is an 8300-level brace onion**, not ordinary source.
+  Tracking every enclosing construct cost a copy per refresh, a memoised state
+  per block, and a walk that could not stop until the outermost brace closed.
+  Everything a fold consumer asks for is innermost-first (the gutter, sticky
+  scroll's eight, `InnermostFoldContaining`'s one), so `kMaxOpenDepth` = 256 is a
+  cap on nothing anyone reads.
+- **Chasing a closer means reading every byte in between.** There is no summary
+  that can be had for less, so `kMaxForwardResolveLines` = 8192 bounds it. Above
+  that bound the fold resolves when the viewport moves nearer — which is what the
+  old model did for *everything* past its budget, so this is still strictly more
+  fold markers on the first frame, not fewer.
+
+### Numbers
+
+Interleaved A/B against a worktree build of the pre-rewrite commit (five rounds
+of 15 iterations, alternating binaries; single-shot runs of the *same* binary
+drifted 45→55 ms on one scenario, which is why interleaving was necessary):
+
+| scenario | delta |
+| --- | --- |
+| `mid_file_edit_latency_large_file` | **−20%** |
+| `editor_fold_viewport_refresh` | +1.0% |
+| `editor_sticky_scroll_scroll` | −0.1% |
+| `editor_indent_guides_paint` | +1.2% |
+| `editor_fold_recompute` | +4…8% |
+
+`editor_fold_recompute` is the one that got slower, and it is the cold-start
+cost: its viewport sits at line 25000, so the first resolve must know the bracket
+depth there, which means reading everything above it — and unlike the old model
+it then also builds the block words for what it read. That investment is what
+makes the *edits* in the same scenario, and all of
+`mid_file_edit_latency_large_file`, cheaper.
+
+Both fold gates also caught an allocation regression on their own, and the
+allocation count is what set the block size. Building every block of a 50k-line
+file grew four small vectors per block by `push_back` -- ~2900 extra allocations.
+Block words are now built into reused scratch and assigned in, and the block size
+went from 256 to 1024 lines: the obvious trade (rebuild cost O(block) against
+walk cost O(document / block)) would put the optimum near sqrt(document), but a
+rebuild reads cached per-line arrays at about 4 ns a line and is nearly free at
+any size in this range, while each block costs allocations for its word lists the
+first time it is built.
+
+`editor_mouse_selection_drag` sits closest to its gate afterwards (5482
+allocations against a 5511 limit, and deterministic across runs). The remaining
+delta is NOT the newly-resolving fold markers -- capping forward resolution to
+nothing moved it only to 5450 -- it is the model's own cold-start structures on a
+scenario whose drag scrolls ~18k lines into the fixture.
+
+### Instrumentation added
+
+`editor.fold_{refresh_calls,window_lines_walked,block_words_applied,`
+`block_summaries_built,block_summary_lines,bracket_lines_scanned,`
+`indent_lines_measured,partial_resolves}`. The first three were what showed the
+non-terminating forward walk: 97 block words applied per refresh on a file whose
+viewport needed about three. `editor.fold_event_index_lines_walked` is gone with
+the O(line) prefix sum it measured — blocks carry their own event totals.
+
 ## 2026-08-04 measurement pass, eighth round (perf-runner-v1)
 
 Six fixes, two vacuous gates repaired, one wrong debt hypothesis corrected, and a
@@ -156,13 +253,8 @@ case: 567 ms of upload and 242 ms of rasterize, all of it lane.
 
 ### Still open
 
-- **The fold model still rescans the whole document per keystroke.**
-  `ScanIndentRanges` (96 µs), `MatchBracketRanges` (64 µs) and `MergeRanges`
-  (58 µs) are each O(document) by construction and together are ~26% of
-  `mid_file_edit_latency_large_file`. All three are near-optimal for the structure
-  they walk; the fix is VSCode's incremental bracket-pair tree, which is a rewrite
-  of `FoldingModel`, not a constant-factor change. Unchanged from the seventh
-  round.
+- ~~**The fold model still rescans the whole document per keystroke.**~~
+  **RESOLVED 2026-08-04 by the ninth round below.**
 - **`persistence::WriteFile::DurableWrite`** is still the largest scope in
   `linter_on_save` (30 ms) and it is the fsync. Unchanged; needs the
   `SaveX() == "bytes are on disk"` contract changed deliberately.

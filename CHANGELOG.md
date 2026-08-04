@@ -8,6 +8,22 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ## [Unreleased]
 
+### Changed
+
+- **Code folding was rewritten to be incremental.** Fold ranges used to be
+  re-derived for the whole document on every keystroke, which was ~26% of a
+  keystroke on a 50k-line file and O(document) by construction. The document is
+  now partitioned into ~256-line blocks, each holding a reduced summary of the
+  brackets and indent levels it leaves open, and ranges are resolved for the
+  viewport's line window rather than materialised for the entire file. Typing
+  deep in a large file measured 20% faster overall.
+
+  Two behaviours changed with it. A construct whose closer sits far below the
+  viewport now gets its fold marker on the first frame instead of only once you
+  scroll near the closer (constructs spanning more than 8192 lines still wait
+  until the viewport is nearer). And a collapsed fold outside the resolved part
+  of a very large file no longer silently re-expands after an edit.
+
 ### Fixed
 
 - **Sustained large multi-line editing no longer grows memory without bound.**
