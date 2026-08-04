@@ -527,39 +527,31 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     case ActionId::UnfoldAll: {
       auto* model = context_.EnsureActiveFoldingModelFresh();
       if (model == nullptr) return DispatchResult::Handled;
+      auto* viewport = context_.ActiveNavigableViewport();
       bool changed = false;
       if (id == ActionId::FoldAll) {
-        if (!model->ranges().empty()) {
-          model->CollapseAll();
-          changed = true;
-        }
+        // The per-frame refresh only resolves the viewport's window, so "all"
+        // has to widen it to the whole document first.
+        if (viewport == nullptr) return DispatchResult::Handled;
+        model->ResolveAllFolds(viewport->lines(), viewport);
+        changed = model->CollapseAllResolved();
       } else if (id == ActionId::UnfoldAll) {
-        if (!model->ranges().empty()) {
+        if (model->has_any_collapsed_fold()) {
           model->ExpandAll();
           changed = true;
         }
       } else {
-        auto* viewport = context_.ActiveNavigableViewport();
         if (viewport == nullptr) return DispatchResult::Handled;
-        const std::size_t caret_line = viewport->cursor_line();
-        // Find the innermost fold whose opener_line <= caret_line <= closer_line.
-        std::optional<std::size_t> target_opener;
-        std::size_t best_span = static_cast<std::size_t>(-1);
-        for (const auto& range : model->ranges()) {
-          if (caret_line < range.opener_line || caret_line > range.closer_line) continue;
-          const std::size_t span = range.closer_line - range.opener_line;
-          if (span < best_span) {
-            best_span = span;
-            target_opener = range.opener_line;
-          }
-        }
-        if (!target_opener) return DispatchResult::Handled;
+        // The innermost fold whose opener_line <= caret_line <= closer_line.
+        const std::optional<editor::FoldRange> target =
+            model->InnermostFoldContaining(viewport->cursor_line());
+        if (!target) return DispatchResult::Handled;
         if (id == ActionId::Fold) {
-          changed = model->Collapse(*target_opener);
+          changed = model->Collapse(target->opener_line);
         } else if (id == ActionId::Unfold) {
-          changed = model->Expand(*target_opener);
+          changed = model->Expand(target->opener_line);
         } else {
-          changed = model->ToggleFold(*target_opener);
+          changed = model->ToggleFold(target->opener_line);
         }
       }
       if (changed) {

@@ -134,7 +134,7 @@ void TestEditorViewModelIntoPreservesVectorCapacitiesAcrossStableFrames() {
   const std::size_t* sticky_data_first = vm.sticky_lines.data();
   const microide::editor::OccurrenceRange* occ_data_first = vm.occurrence_ranges.data();
 
-  Expect(!model.ranges().empty(), "capacity test needs a non-empty fold model");
+  Expect(!model.resolved_ranges().empty(), "capacity test needs a non-empty fold model");
   Expect(!vm.sticky_lines.empty(), "warm-up build should emit sticky lines for nested fixture");
 
   builder.BuildEditorViewModelInto(

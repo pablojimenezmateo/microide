@@ -1254,11 +1254,11 @@ void TestFoldingRefreshComputesBracketRanges() {
                                                /*tab_size=*/4,
                                                /*fold_enabled=*/true,
                                                /*visible_rows=*/viewport.visible_lines());
-  Expect(!tab.folding_model->ranges().empty(),
+  Expect(!tab.folding_model->resolved_ranges().empty(),
          "fold model should have at least one range after refresh");
-  Expect(tab.folding_model->ranges().front().opener_line == 0,
+  Expect(tab.folding_model->resolved_ranges().front().opener_line == 0,
          "first fold opener must be on line 0");
-  Expect(tab.folding_model->ranges().front().closer_line == 2,
+  Expect(tab.folding_model->resolved_ranges().front().closer_line == 2,
          "first fold closer must be on line 2");
 }
 
@@ -1290,7 +1290,7 @@ void TestFoldingRefreshDisabledExpandsAndClears() {
   const auto contract = MakeCStyleFoldContract();
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4, true,
                                                viewport.visible_lines());
-  Expect(tab.folding_model->ranges().size() >= 1,
+  Expect(tab.folding_model->resolved_ranges().size() >= 1,
          "fold model should have ranges after enable");
   Expect(tab.folding_model->Collapse(0), "expected to collapse fold at line 0");
   Expect(tab.folding_model->IsCollapsedAtOpener(0),
@@ -1298,9 +1298,9 @@ void TestFoldingRefreshDisabledExpandsAndClears() {
   microide::workspace::EnsureFoldingModelFresh(tab, viewport, &contract, 4,
                                                /*fold_enabled=*/false,
                                                /*visible_rows=*/viewport.visible_lines());
-  Expect(tab.folding_model->ranges().empty(),
+  Expect(tab.folding_model->resolved_ranges().empty(),
          "disabling fold must clear stored ranges");
-  Expect(tab.folding_model->collapsed_flags().empty(),
+  Expect(!tab.folding_model->has_any_collapsed_fold(),
          "disabling fold must drop collapsed state so no rows are hidden");
 }
 

@@ -2,10 +2,11 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <algorithm>
 #include <limits>
 #include <optional>
+#include <span>
 #include <string>
-#include <string_view>
 #include <vector>
 
 #include "editor/LineEditSpan.h"
@@ -26,12 +27,63 @@ struct FoldRange {
   FoldSource source = FoldSource::Bracket;
 };
 
-// Lazy fold-region model owned by the active editor tab. Designed as a
-// CPU-frugal lazy compute keyed on a coarse fingerprint (layout revision,
-// tab size, language id) so it can be reused across consecutive frames when
-// nothing actionable has changed.
+// Incremental fold-region model owned by the active editor tab.
+//
+// # Why this shape
+//
+// Folds are a pure function of two per-line facts: the bracket bytes on a line,
+// and the line's leading indent width. Both are cached per line and spliced
+// across an edit (see `LineEditSpan`), so a keystroke re-measures only the lines
+// it touched. The expensive part used to be everything *after* that: deriving
+// the fold ranges from those per-line facts re-walked the whole document on
+// every keystroke -- match every bracket, scan every indent block, then sort and
+// dedupe a document-sized range list -- which was ~26% of a keystroke on a
+// 50k-line file and O(document) by construction, not by constant factor.
+//
+// The derivation is now incremental, in two steps.
+//
+// **Blocks.** The document is partitioned into variable-size blocks of ~256
+// lines. Each block stores its *reduced word*: the brackets it leaves unmatched
+// (closers reaching before it, openers still open at its end) and the same for
+// indent levels. Reducing a line range that way is a monoid -- combining two
+// adjacent words cancels the right side's closers against the left side's
+// openers -- and it is the same stack machine the line-by-line scan runs, so
+// combining block words yields exactly the state a full scan would reach. An
+// edit invalidates only the block it lands in; every other block's word stays
+// valid, because a block's word is a pure function of its own lines. Words hold
+// line numbers *relative to their block*, so lines shifting above a block never
+// touch it.
+//
+// **Windowed resolution.** The model no longer materialises every fold range in
+// the document. It resolves the ranges relevant to a line window: the folds
+// opening inside it, plus the folds containing its first line (the sticky-scroll
+// ancestors). That is the whole per-frame need, and it makes the per-frame cost
+// O(window) rather than O(document). Reaching the window's incoming state is a
+// walk over block words, memoised at each block boundary, and resolving an
+// opener whose closer sits far below consumes whole block words rather than
+// lines -- a top-level `{` closing 50k lines later costs ~200 word applications,
+// not 50k line visits.
+//
+// # Collapsed state
+//
+// The set of collapsed folds is its own document-wide list, independent of what
+// is currently resolved. It used to be a parallel bit-vector over the resolved
+// range list, remapped by re-matching openers after every recompute, which meant
+// a collapsed fold outside the resolved prefix of a large file silently
+// re-expanded. Now an edit shifts the collapsed ranges by the edit delta, and a
+// resolve revalidates only the ones whose opener lands inside its window.
 class FoldingModel {
  public:
+  // `last_line` value meaning "through the end of the document".
+  static constexpr std::size_t kAllLines = std::numeric_limits<std::size_t>::max();
+  // "no such line", in the block-relative 32-bit and absolute 64-bit forms.
+  static constexpr std::uint32_t kNoLine = std::numeric_limits<std::uint32_t>::max();
+  static constexpr std::size_t kNoLineIndex = std::numeric_limits<std::size_t>::max();
+
+  // Extra lines resolved on each side of a requested window, so scrolling a few
+  // rows reuses the previous resolve instead of redoing it every frame.
+  static constexpr std::size_t kWindowPadLines = 96;
+
   struct Fingerprint {
     std::uint64_t layout_revision = 0;
     std::size_t tab_size = 4;
@@ -45,102 +97,108 @@ class FoldingModel {
   };
 
   struct ComputeOptions {
-    // Single-character bracket pairs (e.g. {/}, (/), [/]). Each entry is a
-    // (open, close) pair encoded as a 2-character string for ergonomic use
-    // in tests; either character can be supplied as the empty string to skip
-    // that pair (no-op).
+    // Single-character bracket pairs (e.g. {/}, (/), [/]).
     std::vector<std::pair<char, char>> bracket_pairs;
-    // When true, indent-driven block boundaries also yield fold ranges. They
-    // are ignored on lines already covered by a balanced bracket range.
+    // When true, indent-driven block boundaries also yield fold ranges. They are
+    // dropped when a bracket range already covers the same opener line.
     bool use_indent_source = true;
     std::size_t tab_size = 4;
   };
 
-  // Replace the stored ranges with a fresh scan. Returns true on completion.
-  bool Compute(LineSpan lines, const ComputeOptions& options);
+  // Resolve the fold ranges covering `[first_line, last_line]` (clamped to the
+  // document; `kAllLines` means end-of-document), reusing the incremental caches.
+  //
+  // `edit_span` reports which lines changed since the previous call: an empty
+  // span means "nothing changed", `LineEditSpan::FullRebuild()` drops every
+  // cache. `max_lines` bounds how many *uncached* lines this call may scan or
+  // measure (0 = unbounded); when the bound cuts the work short the resolved
+  // ranges are partial and `complete()` reports false -- and the next call gets
+  // twice the bound, so catching up after a jump takes O(log n) frames rather
+  // than O(n / budget). `syntax_viewport`, when non-null, suppresses brackets
+  // inside strings and comments for the lines whose syntax tokens are cached.
+  //
+  // Returns `complete()`.
+  bool Refresh(LineSpan lines,
+               const ComputeOptions& options,
+               std::size_t first_line,
+               std::size_t last_line,
+               std::size_t max_lines = 0,
+               const LineEditSpan& edit_span = LineEditSpan::FullRebuild(),
+               const TextViewport* syntax_viewport = nullptr);
 
-  // Same as `Compute` but stop scanning once `max_lines` of work is done; the
-  // returned ranges are partial and `complete()` will report `false`. This is
-  // the budgeted recompute described in the spec; the fold gutter renderer
-  // paints whatever is resolved.
-  // `edit_span` reports which lines have changed since the last compute (see
-  // LineEditSpan). It drives two things: bracket folds whose closer sits before
-  // `edit_span.begin()` are reused rather than rescanned, and the per-line
-  // indent cache is resynced across the window instead of being remeasured for
-  // the whole document. A default-constructed (empty) span means "nothing has
-  // changed"; `LineEditSpan::FullRebuild()` forces a whole-file rescan.
-  bool ComputeWithBudget(LineSpan lines,
-                         const ComputeOptions& options,
-                         std::size_t max_lines,
-                         const LineEditSpan& edit_span = LineEditSpan::FullRebuild(),
-                         std::size_t target_end_exclusive = std::numeric_limits<std::size_t>::max(),
-                         const TextViewport* syntax_viewport = nullptr);
+  // Resolve every fold range in the document. O(document); for tests, whole-file
+  // operations, and documents small enough that a window is not worth having.
+  bool Compute(LineSpan lines, const ComputeOptions& options) {
+    return Refresh(lines, options, 0, kAllLines, /*max_lines=*/0, LineEditSpan::FullRebuild(),
+                   nullptr);
+  }
 
-  // Resolve folds only for the visible prefix needed by the current viewport
-  // plus a bounded look-ahead. When the requested range is already resolved
-  // and the model is not dirty, this is a no-op.
-  bool EnsureFoldsForVisibleRange(
-      LineSpan lines,
-      const ComputeOptions& options,
-      std::size_t visible_start_line,
-      std::size_t visible_end_line,
-      std::size_t max_lines,
-      const LineEditSpan& edit_span = LineEditSpan::FullRebuild(),
-      const TextViewport* syntax_viewport = nullptr);
+  // Resolve every fold in the document reusing the options of the previous
+  // refresh, and without invalidating any cache. This is the `Fold All` /
+  // `Unfold All` command path: O(document) and unbudgeted, but driven only by an
+  // explicit user command -- and it keeps the fold options at the one place that
+  // already derives them from the language contract, rather than threading a
+  // second copy through the action layer.
+  bool ResolveAllFolds(LineSpan lines, const TextViewport* syntax_viewport = nullptr);
 
-  // Toggle the collapsed state of the fold range whose opener matches
-  // `opener_line`. Returns true if a matching range was found and toggled.
+  // ---- queries over the resolved window ---------------------------------
+
+  // The fold whose opener is `line`, if one is resolved.
+  std::optional<FoldRange> FoldStartingAt(std::size_t line) const;
+  // The innermost resolved fold whose `[opener, closer]` interval covers `line`.
+  std::optional<FoldRange> InnermostFoldContaining(std::size_t line) const;
+  // Every resolved fold covering `line`, outermost first.
+  void AppendFoldsContaining(std::size_t line, std::vector<FoldRange>* out) const;
+
+  // Ranges resolved by the last `Refresh`, sorted by opener line, one per opener.
+  const std::vector<FoldRange>& resolved_ranges() const { return ranges_; }
+  // The line window `resolved_ranges()` covers.
+  std::size_t resolved_first_line() const { return resolved_first_line_; }
+  std::size_t resolved_last_line() const { return resolved_last_line_; }
+  // True when the last resolve covers `[first_line, last_line]` and no edit has
+  // landed since, so the refresh gate can skip a redundant resolve.
+  bool IsWindowResolved(std::size_t first_line, std::size_t last_line) const {
+    return resolved_ && !dirty_ && first_line >= resolved_first_line_ &&
+           (last_line <= resolved_last_line_ || resolved_last_line_ + 1 >= document_line_count_);
+  }
+
+  // ---- collapsed state (document-wide) ----------------------------------
+
   bool ToggleFold(std::size_t opener_line);
   bool Collapse(std::size_t opener_line);
   bool Expand(std::size_t opener_line);
-  void CollapseAll();
+  // Collapse a range the caller already holds. Unlike `Collapse` this does not
+  // require the fold to be inside the resolved window: it is what restores a
+  // fold the caller temporarily expanded (buffer-search reveal) once the
+  // viewport has moved away from it.
+  bool CollapseRange(FoldRange range);
+  // Collapse every fold in the *resolved* window. `Fold All` resolves the whole
+  // document first (see `workspace::ResolveAllFolds`) so this means every fold.
+  bool CollapseAllResolved();
   void ExpandAll();
 
-  // Returns true when the line participates in a collapsed fold body (i.e. it
-  // is strictly between an opener and a closer of a collapsed range).
+  // True when `line` sits strictly inside a collapsed fold body.
   bool IsLineHidden(std::size_t line) const;
-
-  // Returns the fold range whose opener equals `line`, if any.
-  std::optional<FoldRange> FoldStartingAt(std::size_t line) const;
-
-  // Returns the innermost fold covering `line` (maximal opener_line among ranges
-  // with opener_line <= line <= closer_line). Empty optional when unknown.
-  std::optional<FoldRange> InnermostFoldContaining(std::size_t line) const;
-
-  // Append every fold range whose `[opener_line, closer_line]` interval covers
-  // `line`, in increasing-opener order (outermost first). Uses the indexed
-  // prefix-max-closer cache so callers do not need to scan `ranges()` linearly.
-  void AppendFoldsContaining(std::size_t line, std::vector<FoldRange>* out) const;
-
-  // True iff a fold range opens at `line` and is currently collapsed.
   bool IsCollapsedAtOpener(std::size_t line) const;
+  bool has_any_collapsed_fold() const { return !collapsed_.empty(); }
+  std::span<const FoldRange> collapsed_ranges() const { return collapsed_; }
 
   void Clear();
 
-  const std::vector<FoldRange>& ranges() const { return ranges_; }
-  const std::vector<bool>& collapsed_flags() const { return collapsed_; }
-  // O(1) probe for "is any fold collapsed". Replaces the linear scan of
-  // `collapsed_flags()` that the wrapped-row layout build used to do every edit.
-  bool has_any_collapsed_fold() const { return collapsed_count_ > 0; }
+  // True when the model carries anything the viewport must lay out or paint.
+  bool HasFolds() const { return !ranges_.empty() || !collapsed_.empty(); }
   bool complete() const { return complete_; }
-  std::size_t revision() const { return revision_; }
 
-  // Look-ahead the visible-range resolve extends past the last visible line so an
-  // opener on-screen whose closer sits just below still gets a marker. Shared with
-  // EnsureFoldsForVisibleRange and IsVisibleRangeResolved so the refresh gate and
-  // the scan use the same window.
-  static constexpr std::size_t kVisibleLookAhead = 32;
+  // Bumps whenever anything a fold consumer reads changes: the resolved window
+  // or the collapsed set. Keys the render view-model and sticky-scroll caches.
+  std::size_t revision() const { return revision_; }
+  // Bumps only when the *collapsed* set changes, i.e. when the set of hidden
+  // lines changes. Keys the wrapped-row layout cache, which must not be rebuilt
+  // just because a scroll resolved a different window.
+  std::size_t layout_revision() const { return layout_revision_; }
 
   bool IsFresh(const Fingerprint& fingerprint) const {
     return !dirty_ && fingerprint_ == fingerprint;
-  }
-  // True when the folds covering [0, visible_end + look-ahead] are already resolved,
-  // so an EnsureFoldsForVisibleRange call for that range would no-op. A budgeted
-  // compute on a huge file resolves only a prefix, so IsFresh (content-only) is not
-  // sufficient to skip the refresh — the scan must still extend as the user scrolls.
-  bool IsVisibleRangeResolved(std::size_t visible_end_line) const {
-    return !dirty_ &&
-           (complete_ || resolved_prefix_line_count_ >= visible_end_line + kVisibleLookAhead + 1);
   }
   void MarkDirty() { dirty_ = true; }
   void SetFingerprint(Fingerprint fingerprint) {
@@ -149,22 +207,17 @@ class FoldingModel {
   }
   const Fingerprint& fingerprint() const { return fingerprint_; }
 
- public:
-  // One open bracket on the scan stack. Public only so the scanners in the .cpp
-  // can name it; it is an implementation detail of the bracket scan.
-  struct BracketStackEntry {
-    char open = 0;
-    char close = 0;
-    std::size_t line = 0;
-  };
+  // ---- implementation types --------------------------------------------
+  //
+  // Public only so the scanners and walkers in the .cpp can name them; they are
+  // implementation detail of the block partition.
 
   // One bracket byte found on a line, cached so a recompute re-MATCHES events
-  // instead of re-SCANNING bytes. Public for the same reason as the stack entry:
-  // the scanners live in the .cpp.
+  // instead of re-SCANNING bytes.
   //
   // Deliberately records the raw byte and not the resolved pair index, so the
-  // cache is a pure function of the line's bytes -- the pair set can change
-  // (a language switch) without the recorded columns becoming wrong, and the
+  // cache is a pure function of the line's bytes: the pair set can change (a
+  // language switch) without the recorded columns becoming wrong, and the
   // suppression decision (is this bracket inside a string or comment?) stays at
   // match time where it belongs, since the highlight cache it depends on changes
   // as the user scrolls rather than as the document is edited.
@@ -173,117 +226,222 @@ class FoldingModel {
     char byte = 0;
   };
 
- private:
-  struct CollapsedInterval {
-    std::size_t lo = 0;  // first hidden line (opener + 1)
-    std::size_t hi = 0;  // last hidden line (closer, inclusive)
+  // A bracket left open by a block. `line` is relative to the block start.
+  struct WordOpener {
+    char close = 0;
+    std::uint32_t line = 0;
   };
 
-  // Bring `line_indent_` in sync with a document of `line_count` lines, given the
-  // lines that changed. Falls back to a full reset when the span cannot describe
-  // the difference (a mismatched common-suffix length means an edit went
-  // unreported, so nothing cached can be trusted).
+  // A closer a block could not match against anything inside itself. Whether it
+  // pops or is discarded is decided when the word meets a real incoming stack,
+  // exactly as the line-by-line scanner decides it.
+  struct WordCloser {
+    char close = 0;
+    std::uint32_t line = 0;
+  };
+
+  // An indent level left open by a block. `line` is relative to the block start.
+  struct WordIndent {
+    std::uint32_t level = 0;
+    std::uint32_t line = 0;
+  };
+
+  // A dedent reaching before the block that recorded it: every pending indent
+  // level at or above `threshold` closes, at `closer_line`. `closer_line ==
+  // kNoLine` means "the last non-blank line before this block", which the walk
+  // substitutes from its incoming state.
+  struct WordDedent {
+    std::uint32_t threshold = 0;
+    std::uint32_t closer_line = 0;
+  };
+
+  // Live walk state entries carry ABSOLUTE line numbers, so they are 64-bit
+  // where the block-relative word entries are 32-bit.
+  struct StackBracket {
+    char close = 0;
+    std::size_t line = 0;
+  };
+  struct StackIndent {
+    std::uint32_t level = 0;
+    std::size_t line = 0;
+  };
+
+  // How many uncached lines a call may still scan or measure. `kUnlimited`
+  // disables the bound; a bounded budget makes the caller mark the result
+  // partial rather than stall a frame on a huge file.
+  struct WorkBudget {
+    static constexpr std::size_t kUnlimited = std::numeric_limits<std::size_t>::max();
+    std::size_t remaining = kUnlimited;
+
+    bool available() const { return remaining != 0; }
+    void Spend(std::size_t lines = 1) {
+      if (remaining == kUnlimited) {
+        return;
+      }
+      remaining = lines >= remaining ? 0 : remaining - lines;
+    }
+  };
+
+ private:
+  // The reduced word of one run of lines, plus what a walk needs to skip over it:
+  // how many lines and bracket events it holds, and where its last non-blank line
+  // sits (the closer an indent fold ending in a later block gets).
+  struct Block {
+    std::uint32_t line_count = 0;
+    std::uint32_t event_count = 0;
+    bool valid = false;
+    std::uint32_t last_nonblank = kNoLine;  // relative to the block start
+    std::vector<WordCloser> bracket_closers;
+    std::vector<WordOpener> bracket_openers;
+    std::vector<WordDedent> indent_dedents;
+    std::vector<WordIndent> indent_openers;
+  };
+
+  // The walk state at a block boundary, sliced out of shared pools so a document
+  // with thousands of blocks does not hold thousands of small vectors.
+  struct PrefixState {
+    std::uint32_t bracket_offset = 0;
+    std::uint32_t bracket_count = 0;
+    std::uint32_t indent_offset = 0;
+    std::uint32_t indent_count = 0;
+    std::size_t event_index = 0;
+    std::size_t last_nonblank = kNoLineIndex;
+  };
+
+  // Live scan state: the two stacks plus the last non-blank line seen.
+  struct WalkState {
+    std::vector<StackBracket> brackets;
+    std::vector<StackIndent> indents;
+    std::size_t last_nonblank = kNoLineIndex;
+    // Smallest size each stack has reached since the low-water marks were armed.
+    // The forward walk is done exactly when every entry from at or before the
+    // window has been popped, and pops happen deep inside a line walk or a block
+    // word -- a stack that pops one entry and pushes another is the same size
+    // between chunks, so sampling the size at chunk boundaries would never see
+    // the dip and the walk would run to end-of-document.
+    std::size_t bracket_low_water = kNoLineIndex;
+    std::size_t indent_low_water = kNoLineIndex;
+
+    void ArmLowWater() {
+      bracket_low_water = brackets.size();
+      indent_low_water = indents.size();
+    }
+    void NoteBracketPop() { bracket_low_water = std::min(bracket_low_water, brackets.size()); }
+    void NoteIndentPop() { indent_low_water = std::min(indent_low_water, indents.size()); }
+
+    void Clear() {
+      brackets.clear();
+      indents.clear();
+      last_nonblank = kNoLineIndex;
+      bracket_low_water = kNoLineIndex;
+      indent_low_water = kNoLineIndex;
+    }
+  };
+
+  class BracketTable;
+  class SuppressionCursor;
+
+  // ---- per-line cache sync ----------------------------------------------
   void SyncLineIndentCache(std::size_t line_count, std::size_t tab_size,
                            const LineEditSpan& edit_span);
+  void SyncLineBracketCache(LineSpan lines, const BracketTable& table,
+                            const std::vector<std::pair<char, char>>& pairs,
+                            const LineEditSpan& edit_span, bool pairs_changed);
+  bool ExtendBracketCache(LineSpan lines, const BracketTable& table, std::size_t needed_end,
+                          WorkBudget& budget);
+  std::uint32_t IndentAt(LineSpan lines, std::size_t line, std::size_t tab_size,
+                         WorkBudget& budget);
+  std::size_t EventIndexForLine(std::size_t line) const;
 
-  // Splice the bracket cache across `edit_span`, then scan whatever lines below
-  // `needed_end` are still uncached (bounded by `max_new_line_scans`; clears
-  // `complete` when the budget cuts it short). Returns the number of lines the
-  // cache now covers.
-  std::size_t SyncLineBracketCache(LineSpan lines,
-                                   const std::vector<std::pair<char, char>>& pairs,
-                                   const LineEditSpan& edit_span, std::size_t needed_end,
-                                   std::size_t max_new_line_scans, bool& complete);
+  // ---- block partition ---------------------------------------------------
+  void SyncBlocks(std::size_t line_count, const LineEditSpan& edit_span, bool reset_all);
+  void RepartitionAll(std::size_t line_count);
+  void RecomputeBlockEventCount(std::size_t block_index);
+  void EnsureBlockStarts() const;
+  std::size_t BlockIndexForLine(std::size_t line) const;
+  bool EnsureBlockSummary(LineSpan lines, const ComputeOptions& options, const BracketTable& table,
+                          std::size_t block_index, std::size_t event_index, WorkBudget& budget);
+  // Memoise the walk state at each block boundary up to `boundary`. Returns the
+  // highest boundary whose state is known (== `boundary` on success).
+  std::size_t EnsurePrefixState(LineSpan lines, const ComputeOptions& options,
+                                const BracketTable& table, std::size_t boundary,
+                                WorkBudget& budget);
+  void LoadPrefixState(std::size_t boundary, WalkState& out) const;
+  void StorePrefixState(std::size_t boundary, const WalkState& state, std::size_t event_index);
+  void InvalidatePrefixFrom(std::size_t boundary);
 
-  // Drop cached bracket events for lines at/after `line_count`.
-  void TruncateLineBracketCache(std::size_t line_count);
+  // ---- walking -----------------------------------------------------------
+  void WalkLines(LineSpan lines, const ComputeOptions& options, const BracketTable& table,
+                 SuppressionCursor& suppression, std::size_t begin, std::size_t end,
+                 std::size_t& event_index, WalkState& state, std::vector<FoldRange>* out,
+                 std::size_t emit_opener_limit, WorkBudget& budget);
+  void ApplyBlockWord(const Block& block, std::size_t block_start, WalkState& state,
+                      std::vector<FoldRange>* out, std::size_t emit_opener_limit) const;
+  void FlushIndentsAtEof(WalkState& state, std::vector<FoldRange>* out,
+                         std::size_t emit_opener_limit) const;
 
-  // Build the revision-keyed lookup tables: sorted collapsed-interval list with
-  // prefix `hi` running-max, plus a per-range prefix running-max of `closer_line`
-  // for InnermostFoldContaining. Cheap when ranges_/collapsed_ are unchanged.
-  void EnsureLookupCache() const;
+  void FinishRanges();
+  void ShiftCollapsedRanges(const LineEditSpan& edit_span, std::size_t line_count);
+  void RevalidateCollapsedInWindow();
+  void EnsureCollapsedIndex() const;
+  void BumpCollapseRevision();
 
-  // Bracket stack as of the start of `prefix_stack_line_`.
-  //
-  // The incremental-resume path avoids re-EMITTING fold ranges for the lines
-  // before an edit, but it still had to walk every byte of them to know which
-  // brackets were open at the edit point -- half a document per keystroke on a
-  // mid-file edit. Consecutive keystrokes in one place all resume at the same
-  // line, and an edit at or after that line cannot change any byte before it, so
-  // the stack computed for it stays valid: reuse it while the resume line is
-  // unchanged.
-  //
-  // The resume line is the MINIMUM line touched since the last refresh consumed
-  // it, so an edit anywhere earlier lowers it and the memo stops matching --
-  // which is exactly the condition under which the prefix is no longer intact.
-  std::vector<BracketStackEntry> prefix_stack_;
-  std::size_t prefix_stack_line_ = 0;
-  bool prefix_stack_valid_ = false;
-
-  // Per-line bracket bytes for lines [0, bracket_cache_valid_through_).
-  //
-  // The bracket scan was the single largest cost of typing in a large file (404 ms
-  // of the 613 ms mid_file_edit_latency_large_file scenario): a mid-file keystroke
-  // re-scanned every byte from the edit to the end of the scan window, ~2 MB on the
-  // 50k-line fixture, purely to rediscover bracket positions that had not moved.
-  // Caching them turns that byte scan into a walk over a few events per line.
-  //
-  // Layout is counts + one flat event array rather than per-line offsets, so an
-  // edit splices both with plain memmoves and the match walk consumes them in
-  // lockstep -- no offset fixup pass. The cache covers a PREFIX of the document so
-  // a budgeted first paint still only scans its own window.
+  // ---- per-line caches ---------------------------------------------------
   std::vector<CachedBracket> line_brackets_;
   std::vector<std::uint32_t> line_bracket_count_;
   std::size_t bracket_cache_valid_through_ = 0;
-  // Bracket pair set the cache was filled against; a change invalidates it.
   std::vector<std::pair<char, char>> bracket_cache_pairs_;
-  // Reused splice buffers so a per-keystroke resync does not reallocate.
   std::vector<CachedBracket> bracket_event_scratch_;
   std::vector<std::uint32_t> bracket_count_scratch_;
-  // Sorted line indices whose highlight tokens are currently cached, rebuilt per
-  // recompute. Walking a cursor through this replaces a hash probe per line.
-  std::vector<std::size_t> suppression_lines_scratch_;
-
-  // Per-line leading-indent width, memoized across recomputes.
-  //
-  // Measuring it for the whole document was the second-largest cost of typing in
-  // a large file (ScanIndentRanges::Measure, 141 ms of the 759 ms
-  // mid_file_edit_latency_large_file scenario) -- and a line's indent depends on
-  // that line's bytes and nothing else, so an edit invalidates only the lines it
-  // touched. The reported LineEditSpan splices this array; entries inside the
-  // window are reset to `kUnmeasuredIndent` and remeasured on first read, which
-  // also keeps a budgeted first paint from measuring past its scan window.
+  // Per-line leading-indent width, measured lazily and memoised across
+  // recomputes; a line's indent depends on that line's bytes and nothing else,
+  // so an edit invalidates only the lines it touched.
   std::vector<std::uint32_t> line_indent_;
-  // Tab size the cached widths were measured against; a change invalidates all.
   std::size_t line_indent_tab_size_ = 0;
 
+  // ---- block partition ---------------------------------------------------
+  std::vector<Block> blocks_;
+  mutable std::vector<std::size_t> block_start_line_;
+  mutable bool block_starts_dirty_ = true;
+
+  std::vector<PrefixState> prefix_states_;
+  std::vector<StackBracket> prefix_bracket_pool_;
+  std::vector<StackIndent> prefix_indent_pool_;
+
+  // ---- resolved window ---------------------------------------------------
   std::vector<FoldRange> ranges_;
-  // Reused across recomputes: opener_line -> index of the winning range, used by
-  // the bucket dedupe that replaced the O(n log n) sort. Held on the model so a
-  // per-keystroke recompute does not reallocate a document-sized scratch.
-  std::vector<std::uint32_t> merge_by_opener_scratch_;
-  // Destination buffer for that compaction. Swapped with `ranges_` rather than
-  // assigned, so the two buffers alternate and neither reallocates in steady
-  // state.
-  std::vector<FoldRange> merge_compact_scratch_;
-  std::vector<bool> collapsed_;  // parallel to ranges_
-  // Maintained alongside `collapsed_` so `has_any_collapsed_fold()` is O(1).
-  std::size_t collapsed_count_ = 0;
+  std::vector<FoldRange> range_scratch_;
+  // Prefix running max of `closer_line` over `ranges_`, so the ancestor walk can
+  // stop instead of scanning back to the first range.
+  std::vector<std::size_t> range_closer_prefix_max_;
+  std::size_t resolved_first_line_ = 0;
+  std::size_t resolved_last_line_ = 0;
+  bool resolved_ = false;
+
+  // ---- collapsed set -----------------------------------------------------
+  std::vector<FoldRange> collapsed_;  // sorted by opener_line, unique openers
+  mutable std::vector<std::size_t> collapsed_hi_prefix_max_;
+  mutable bool collapsed_index_dirty_ = true;
+
+  // ---- scratch -----------------------------------------------------------
+  WalkState walk_;
+  std::vector<StackBracket> build_bracket_stack_;
+  std::vector<StackIndent> build_indent_stack_;
+  std::vector<std::size_t> suppression_lines_scratch_;
+
   Fingerprint fingerprint_;
+  std::size_t document_line_count_ = 0;
+  // Multiplier applied to the caller's per-refresh budget; doubles while the
+  // model is still catching up so a jump into a huge file converges in O(log n)
+  // frames instead of O(n / budget).
+  std::size_t budget_multiplier_ = 1;
+  // Whether the block words currently hold indent entries. Turning the indent
+  // source off must drop them, or a stale word would keep applying dedents.
+  bool indent_source_enabled_ = true;
   bool complete_ = true;
   bool dirty_ = true;
   std::size_t revision_ = 0;
-  std::size_t resolved_prefix_line_count_ = 0;
-  // Line count of the buffer at the last compute. The difference against the
-  // current line count gives the net edit delta used to shift previous collapsed
-  // fold openers so a collapsed fold survives a line-count-changing edit above it
-  // (VS Code shift-preserves; matching by absolute opener/closer alone dropped it).
-  std::size_t computed_line_count_ = 0;
-
-  mutable std::size_t cached_revision_ = std::numeric_limits<std::size_t>::max();
-  mutable std::vector<CollapsedInterval> cached_collapsed_intervals_;
-  mutable std::vector<std::size_t> cached_collapsed_hi_prefix_max_;
-  mutable std::vector<std::size_t> cached_range_closer_prefix_max_;
+  std::size_t layout_revision_ = 0;
 };
 
 }  // namespace microide::editor

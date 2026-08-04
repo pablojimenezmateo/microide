@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "FoldingReference.h"
 #include "editor/FoldingModel.h"
 #include "editor/TextViewport.h"
 #include "workspace/WorkspaceFoldingRefresh.h"
@@ -60,78 +61,12 @@ void TestViewportDetachFoldingModelRestoresVisualRows() {
          "detaching the folding model should expose every logical line again");
 }
 
-// The bracket scan's incremental-resume path reuses the bracket stack it built
-// for the previous recompute when the resume line is unchanged — which is sound
-// only because the resume line is the MINIMUM line touched since, so an edit
-// anywhere before it lowers the line and stops the reuse.
-//
-// That is an easy invariant to break and an invisible one to break: a stale
-// stack produces wrong fold ranges, not a crash. So compare the incrementally
-// resumed model against a from-scratch compute after every edit in a sequence
-// that deliberately mixes edits after, at, and BEFORE the previous resume line.
-void TestFoldingIncrementalResumeMatchesFullRecompute() {
-  std::vector<std::string> lines;
-  for (int block = 0; block < 12; ++block) {
-    lines.push_back("void f" + std::to_string(block) + "() {");
-    lines.push_back("  if (x) {");
-    lines.push_back("    body();");
-    lines.push_back("  }");
-    lines.push_back("}");
-  }
-
-  FoldingModel incremental;
-  const auto options = DefaultCStyleOptions();
-  Expect(incremental.Compute(lines, options), "seed compute should complete");
-
-  // (line to edit, replacement). Deliberately walks backwards at points so the
-  // resume line drops below the previous one, and repeats a line so the memo is
-  // exercised on its hit path too.
-  // Each block spans five lines: `void fN() {`, `  if (x) {`, `    body();`,
-  // `  }`, `}`. So a resume at 5B+2 sees TWO open brackets and a resume at 5B+4
-  // sees one -- alternating between those depths across different blocks is what
-  // makes a wrongly-reused stack produce different ranges rather than the same
-  // ones by luck.
-  const std::vector<std::pair<std::size_t, std::string>> edits = {
-      {42, "    body(); more();"},  // depth 2 at resume
-      {42, "    body();"},          // same line again: the memo's hit path
-      {14, "}  // f2"},             // depth 1, and BEFORE the previous resume line
-      {12, "    body(); x();"},     // depth 2, earlier block
-      {44, "}  // f8"},             // depth 1, later block
-      {22, "    body(); y();"},     // depth 2
-      {22, "    body();"},
-      {24, "}  // f4"},             // depth 1
-      {57, "  if (z) {"},           // depth 1, last block
-  };
-
-  for (const auto& [line, text] : edits) {
-    lines[line] = text;
-    // The exact one-line in-place splice a viewport publishes for this edit.
-    editor::LineEditSpan edited;
-    edited.NoteSplice(/*start=*/line, /*removed=*/1, /*inserted=*/1);
-    incremental.ComputeWithBudget(lines, options, /*max_lines=*/0, edited);
-
-    FoldingModel fresh;
-    Expect(fresh.Compute(lines, options), "reference compute should complete");
-
-    Expect(incremental.ranges().size() == fresh.ranges().size(),
-           "incremental resume must produce the same number of fold ranges as a full "
-           "recompute of the same content");
-    for (std::size_t i = 0; i < fresh.ranges().size(); ++i) {
-      Expect(incremental.ranges()[i].opener_line == fresh.ranges()[i].opener_line &&
-                 incremental.ranges()[i].closer_line == fresh.ranges()[i].closer_line &&
-                 incremental.ranges()[i].source == fresh.ranges()[i].source,
-             "incremental resume must produce identical fold ranges to a full recompute — a "
-             "reused bracket stack that is no longer valid shows up exactly here");
-    }
-  }
-}
-
-// The prefix-stack memo records which LINE it was computed for, not which
-// document. A full rescan is the path a freshly loaded or reset document takes,
-// so the memo has to be dropped there — otherwise an edit that happens to resume
-// at the same line as the previous document's would reuse a stack describing
-// content that is gone.
-void TestFoldingPrefixMemoDoesNotSurviveAFullRecompute() {
+// The memoised per-block prefix state is what lets a keystroke skip re-deriving
+// which brackets are open above it. It is invalidated from the edited block
+// onwards, and getting that wrong produces WRONG folds, not a crash — so drive a
+// document through a full recompute onto entirely different content and then a
+// localized edit at the same line, and diff against the cache-free reference.
+void TestFoldingPrefixStateDoesNotSurviveAFullRecompute() {
   // Line 7 sits two brackets deep here...
   std::vector<std::string> deep;
   for (int block = 0; block < 6; ++block) {
@@ -143,8 +78,8 @@ void TestFoldingPrefixMemoDoesNotSurviveAFullRecompute() {
   }
   // ...and one bracket deep here, opened at a DIFFERENT line. That difference is
   // the whole point: if both documents happened to have the same bracket open at
-  // line 7, reusing the wrong stack would emit the same ranges by luck and prove
-  // nothing. A short block first so the resume still finds a kept prefix.
+  // line 7, reusing the wrong state would emit the same ranges by luck and prove
+  // nothing.
   std::vector<std::string> flat(deep.size(), "  body();");
   flat[0] = "void a() {";
   flat[1] = "  x();";
@@ -155,28 +90,25 @@ void TestFoldingPrefixMemoDoesNotSurviveAFullRecompute() {
   const auto options = DefaultCStyleOptions();
   FoldingModel model;
   Expect(model.Compute(deep, options), "seed compute on the deep document");
-  // Populate the memo for line 7 against the deep document.
   deep[7] = "    body(); more();";
-  model.ComputeWithBudget(deep, options, /*max_lines=*/0,
-                          editor::LineEditSpan::SuffixReplacedFrom(7));
+  model.Refresh(deep, options, 0, FoldingModel::kAllLines, /*max_lines=*/0,
+                editor::LineEditSpan::SuffixReplacedFrom(7));
 
   // A full recompute on entirely different content — what a document load does.
   Expect(model.Compute(flat, options), "full recompute on the flat document");
 
-  // Now resume at the same line on the new content.
+  // Now edit at the same line on the new content.
   flat[7] = "  body(); more();";
-  model.ComputeWithBudget(flat, options, /*max_lines=*/0,
-                          editor::LineEditSpan::SuffixReplacedFrom(7));
+  model.Refresh(flat, options, 0, FoldingModel::kAllLines, /*max_lines=*/0,
+                editor::LineEditSpan::SuffixReplacedFrom(7));
 
-  FoldingModel fresh;
-  Expect(fresh.Compute(flat, options), "reference compute on the flat document");
-  Expect(model.ranges().size() == fresh.ranges().size(),
-         "a resume after a full recompute must not reuse the previous document's bracket "
-         "stack");
-  for (std::size_t i = 0; i < fresh.ranges().size(); ++i) {
-    Expect(model.ranges()[i].opener_line == fresh.ranges()[i].opener_line &&
-               model.ranges()[i].closer_line == fresh.ranges()[i].closer_line,
-           "fold ranges after a cross-document resume must match a full recompute");
+  const std::vector<editor::FoldRange> reference = ReferenceFolds(flat, options);
+  Expect(model.resolved_ranges().size() == reference.size(),
+         "an edit after a full recompute must not reuse the previous document's state");
+  for (std::size_t i = 0; i < reference.size() && i < model.resolved_ranges().size(); ++i) {
+    Expect(model.resolved_ranges()[i].opener_line == reference[i].opener_line &&
+               model.resolved_ranges()[i].closer_line == reference[i].closer_line,
+           "fold ranges after a cross-document edit must match the reference computation");
   }
 }
 
@@ -206,7 +138,7 @@ void TestFoldingWhitespaceOnlyLinesAreNeitherOpenersNorDedents() {
   Expect(model.Compute(lines, options), "indent-only fold compute should complete");
 
   bool found_outer = false;
-  for (const editor::FoldRange& range : model.ranges()) {
+  for (const editor::FoldRange& range : model.resolved_ranges()) {
     Expect(range.opener_line != 2 && range.opener_line != 4,
            "a whitespace-only line must never be a fold opener");
     if (range.opener_line == 0) {
@@ -259,24 +191,28 @@ void TestViewportAttachFoldingModelKeepsWidthCaches() {
          "detaching a fold model must not invalidate the visible-line layout cache either");
 }
 
-// Partial `ComputeWithBudget` still yields actionable ranges; viewport honors collapsed hiding
-// for resolved folds while `complete()==false` (§5.12 / §5.13 partial fallback).
+// A partial (budget-limited) resolve still yields actionable ranges; the viewport
+// honors collapsed hiding for resolved folds while `complete() == false`
+// (§5.12 / §5.13 partial fallback).
 void TestViewportPartialBudgetCollapsedFoldStillOmitsHiddenRows() {
-  const std::vector<std::string> lines = {
+  std::vector<std::string> lines = {
       "void f() {",
       "  a;",
       "}",
-      "void g() {",
-      "  b;",
-      "}",
   };
+  for (int i = 0; i < 400; ++i) {
+    lines.push_back("void g" + std::to_string(i) + "() {");
+    lines.push_back("  b;");
+    lines.push_back("}");
+  }
 
   FoldingModel model;
-  Expect(!model.ComputeWithBudget(lines, DefaultCStyleOptions(), /*max_lines=*/3),
-         "tight line budget should leave the model incomplete");
-  Expect(!model.complete(), "partial fallback should report incomplete compute");
-  Expect(!model.ranges().empty(),
-         "partial bracket scan should still emit folds within the visited prefix");
+  Expect(!model.Refresh(lines, DefaultCStyleOptions(), /*first_line=*/0, /*last_line=*/2,
+                        /*max_lines=*/8),
+         "a tight line budget should leave the model incomplete");
+  Expect(!model.complete(), "partial fallback should report incomplete resolve");
+  Expect(!model.resolved_ranges().empty(),
+         "a partial resolve should still emit the folds it did reach");
 
   TextViewport viewport;
   viewport.LoadContent(JoinLinesWithTrailingNewline(lines), "/tmp/editor-fold-partial.cpp");
@@ -315,7 +251,7 @@ void TestFoldingModelPointerStableAcrossTabVectorReallocation() {
   viewport.SetViewportSize(/*visible_lines=*/12, /*visible_columns=*/80);
   const auto contract = MakeCStyleFoldContract();
   EnsureFoldingModelFresh(editor_state, viewport, &contract, 4, true, viewport.visible_lines());
-  Expect(!editor_state.folding_model->ranges().empty(),
+  Expect(!editor_state.folding_model->resolved_ranges().empty(),
          "fixture should expose at least one fold range");
   Expect(editor_state.folding_model->Collapse(0),
          "fixture should collapse the top-level fold");
@@ -412,7 +348,7 @@ void TestMarkdownProseParensDoNotFold() {
 
   EnsureFoldingModelFresh(editor_state, viewport, &contract, 4, true, viewport.visible_lines());
 
-  for (const auto& range : editor_state.folding_model->ranges()) {
+  for (const auto& range : editor_state.folding_model->resolved_ranges()) {
     Expect(range.source != microide::editor::FoldSource::Bracket,
            "markdown prose parentheticals must not emit bracket fold ranges");
   }
@@ -444,8 +380,8 @@ void TestFoldingIncrementalCachesSurviveLineCountChanges() {
   const auto options = DefaultCStyleOptions();
 
   FoldingModel incremental;
-  Expect(incremental.ComputeWithBudget(viewport.lines().Snapshot(), options, /*max_lines=*/0,
-                                       viewport.ConsumeFoldEditSpan()),
+  Expect(incremental.Refresh(viewport.lines().Snapshot(), options, 0, FoldingModel::kAllLines,
+                             /*max_lines=*/0, viewport.ConsumeFoldEditSpan()),
          "seed compute should complete");
 
   // Each step mutates the buffer in a way that moves the lines below it.
@@ -476,19 +412,20 @@ void TestFoldingIncrementalCachesSurviveLineCountChanges() {
   for (const auto& [label, apply] : steps) {
     apply(viewport);
     const std::vector<std::string> snapshot = viewport.lines().Snapshot();
-    incremental.ComputeWithBudget(snapshot, options, /*max_lines=*/0,
-                                  viewport.ConsumeFoldEditSpan());
+    incremental.Refresh(snapshot, options, 0, FoldingModel::kAllLines, /*max_lines=*/0,
+                        viewport.ConsumeFoldEditSpan());
 
-    FoldingModel fresh;
-    Expect(fresh.Compute(snapshot, options), "reference compute should complete");
+    // The cache-free reference, not a second FoldingModel: a model-vs-model diff
+    // cannot see a derivation bug that both sides share.
+    const std::vector<editor::FoldRange> reference = ReferenceFolds(snapshot, options);
 
     const std::string context = std::string("after ") + label;
-    Expect(incremental.ranges().size() == fresh.ranges().size(),
-           context + ": incremental fold count must match a full recompute");
-    for (std::size_t i = 0; i < fresh.ranges().size() && i < incremental.ranges().size(); ++i) {
-      Expect(incremental.ranges()[i].opener_line == fresh.ranges()[i].opener_line &&
-                 incremental.ranges()[i].closer_line == fresh.ranges()[i].closer_line &&
-                 incremental.ranges()[i].source == fresh.ranges()[i].source,
+    Expect(incremental.resolved_ranges().size() == reference.size(),
+           context + ": incremental fold count must match the reference computation");
+    for (std::size_t i = 0; i < reference.size() && i < incremental.resolved_ranges().size(); ++i) {
+      Expect(incremental.resolved_ranges()[i].opener_line == reference[i].opener_line &&
+                 incremental.resolved_ranges()[i].closer_line == reference[i].closer_line &&
+                 incremental.resolved_ranges()[i].source == reference[i].source,
              context + ": a spliced per-line cache must yield identical fold ranges");
     }
   }
@@ -525,10 +462,8 @@ void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
           TestTextViewportMoveClearsFoldingModelBinding);
   AddTest(tests, "EditorFolding/Viewport/DetachModelRestoresVisualRows",
           TestViewportDetachFoldingModelRestoresVisualRows);
-  AddTest(tests, "EditorFolding/PrefixMemoDoesNotSurviveAFullRecompute",
-          TestFoldingPrefixMemoDoesNotSurviveAFullRecompute);
-  AddTest(tests, "EditorFolding/IncrementalResumeMatchesFullRecompute",
-          TestFoldingIncrementalResumeMatchesFullRecompute);
+  AddTest(tests, "EditorFolding/PrefixStateDoesNotSurviveAFullRecompute",
+          TestFoldingPrefixStateDoesNotSurviveAFullRecompute);
   AddTest(tests, "EditorFolding/IncrementalCachesSurviveLineCountChanges",
           TestFoldingIncrementalCachesSurviveLineCountChanges);
   AddTest(tests, "EditorFolding/WhitespaceOnlyLinesAreNeitherOpenersNorDedents",

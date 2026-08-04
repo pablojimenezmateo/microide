@@ -347,23 +347,27 @@ void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match
   }
 
   bool changed = false;
-  for (std::size_t i = 0; i < model->ranges().size() && i < model->collapsed_flags().size(); ++i) {
-    if (!model->collapsed_flags()[i]) {
-      continue;
+  // Walk the collapsed set, not the resolved ranges: a fold hiding this match can
+  // be anywhere in the document, including outside the window the last refresh
+  // resolved. Collect first, then expand -- expanding mutates the set.
+  std::vector<editor::FoldRange> hiding;
+  for (const editor::FoldRange& range : model->collapsed_ranges()) {
+    if (match.start.line > range.opener_line && match.start.line <= range.closer_line) {
+      hiding.push_back(range);
     }
-    const auto& range = model->ranges()[i];
-    if (match.start.line <= range.opener_line || match.start.line > range.closer_line) {
-      continue;
-    }
+  }
+  for (const editor::FoldRange& range : hiding) {
     if (model->Expand(range.opener_line)) {
-      if (buffer_search.temporarily_expanded_fold_openers.empty()) {
+      if (buffer_search.temporarily_expanded_folds.empty()) {
         buffer_search.temporarily_expanded_fold_tab_path = viewport->path().lexically_normal();
       }
-      if (std::find(buffer_search.temporarily_expanded_fold_openers.begin(),
-                    buffer_search.temporarily_expanded_fold_openers.end(),
-                    range.opener_line) ==
-          buffer_search.temporarily_expanded_fold_openers.end()) {
-        buffer_search.temporarily_expanded_fold_openers.push_back(range.opener_line);
+      const auto already = std::find_if(buffer_search.temporarily_expanded_folds.begin(),
+                                        buffer_search.temporarily_expanded_folds.end(),
+                                        [&](const editor::FoldRange& entry) {
+                                          return entry.opener_line == range.opener_line;
+                                        });
+      if (already == buffer_search.temporarily_expanded_folds.end()) {
+        buffer_search.temporarily_expanded_folds.push_back(range);
       }
       changed = true;
     }
@@ -378,16 +382,18 @@ void WorkspaceShell::ResetBufferSearchFoldRevealState(bool preserve_expanded_fol
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   const bool should_restore =
       !preserve_expanded_folds && !buffer_search.preserve_temporarily_expanded_folds &&
-      !buffer_search.temporarily_expanded_fold_openers.empty();
+      !buffer_search.temporarily_expanded_folds.empty();
   if (should_restore) {
     editor::TextViewport* viewport = ActiveEditorViewport();
     editor::FoldingModel* model = EnsureActiveFoldingModelFresh();
     if (viewport != nullptr && model != nullptr &&
         viewport->path().lexically_normal() == buffer_search.temporarily_expanded_fold_tab_path) {
       bool changed = false;
-      for (auto it = buffer_search.temporarily_expanded_fold_openers.rbegin();
-           it != buffer_search.temporarily_expanded_fold_openers.rend(); ++it) {
-        changed = model->Collapse(*it) || changed;
+      // CollapseRange, not Collapse(opener): the fold may no longer be inside the
+      // resolved window now that the viewport has moved to the match.
+      for (auto it = buffer_search.temporarily_expanded_folds.rbegin();
+           it != buffer_search.temporarily_expanded_folds.rend(); ++it) {
+        changed = model->CollapseRange(*it) || changed;
       }
       if (changed) {
         RequestEditorSurfaceRedraw();
@@ -395,7 +401,7 @@ void WorkspaceShell::ResetBufferSearchFoldRevealState(bool preserve_expanded_fol
     }
   }
 
-  buffer_search.temporarily_expanded_fold_openers.clear();
+  buffer_search.temporarily_expanded_folds.clear();
   buffer_search.temporarily_expanded_fold_tab_path.clear();
   buffer_search.preserve_temporarily_expanded_folds = false;
 }

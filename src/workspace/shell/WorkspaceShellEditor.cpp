@@ -205,10 +205,7 @@ editor::FoldingModel* WorkspaceShell::EnsureFoldingModelFreshForTab(
   {
     util::PerformanceTrace::Scope s("WorkspaceShell::EnsureFoldingModelFreshForTab::SetModel");
     editor_tab->viewport.SetFoldingModel(
-        editor_tab->folding_model->ranges().empty() &&
-                editor_tab->folding_model->collapsed_flags().empty()
-            ? nullptr
-            : editor_tab->folding_model.get());
+        editor_tab->folding_model->HasFolds() ? editor_tab->folding_model.get() : nullptr);
   }
   return editor_tab->folding_model.get();
 }

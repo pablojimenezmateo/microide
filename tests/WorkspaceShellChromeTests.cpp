@@ -2667,7 +2667,7 @@ void TestWorkspaceShellFoldingRefreshRunsOncePerPreparedFrame() {
 
   // The fold scan must actually resolve the braced range during prep, so the
   // render path can consume an already-fresh model.
-  Expect(!WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell)->ranges().empty(),
+  Expect(!WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell)->resolved_ranges().empty(),
          "prepared-frame folding refresh should resolve the fold range before render");
 
   // Five retained partial redraws off the same prepared frame must not re-run

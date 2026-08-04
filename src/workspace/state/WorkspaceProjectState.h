@@ -185,7 +185,11 @@ struct BufferSearchState {
   // the editor overview ruler can cheaply detect when its cached markers are stale.
   std::uint64_t matches_revision = 0;
   std::size_t selected_index = 0;
-  std::vector<std::size_t> temporarily_expanded_fold_openers;
+  // Folds the reveal path expanded to show a match, recorded as whole ranges
+  // rather than opener lines: restoring them re-collapses folds the viewport may
+  // have scrolled away from, and the fold model only resolves ranges for the
+  // window it is looking at.
+  std::vector<editor::FoldRange> temporarily_expanded_folds;
   std::filesystem::path temporarily_expanded_fold_tab_path;
   bool preserve_temporarily_expanded_folds = false;
 

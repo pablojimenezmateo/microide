@@ -5315,7 +5315,7 @@ void TestWorkspaceShellWorkspaceEditRefreshesFolds() {
     if (model == nullptr) {
       return 0;
     }
-    for (const auto& r : model->ranges()) {
+    for (const auto& r : model->resolved_ranges()) {
       if (r.opener_line == opener) {
         return r.closer_line;
       }

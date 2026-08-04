@@ -483,7 +483,7 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
                                       int sticky_max_depth,
                                       std::vector<std::size_t>& out_opener_lines) {
   out_opener_lines.clear();
-  if (!sticky_scroll_enabled || folding_model == nullptr || folding_model->ranges().empty()) {
+  if (!sticky_scroll_enabled || folding_model == nullptr || folding_model->resolved_ranges().empty()) {
     return;
   }
   const int clamped_depth = std::clamp(sticky_max_depth, 1, 8);
@@ -1241,7 +1241,7 @@ std::span<const std::size_t> RenderViewModelBuilder::StickyScrollLines(
     const editor::FoldingModel* folding_model,
     bool sticky_scroll_enabled,
     int sticky_max_depth) {
-  if (!sticky_scroll_enabled || folding_model == nullptr || folding_model->ranges().empty()) {
+  if (!sticky_scroll_enabled || folding_model == nullptr || folding_model->resolved_ranges().empty()) {
     return {};
   }
   const std::uintptr_t viewport_key = reinterpret_cast<std::uintptr_t>(&viewport);
@@ -1301,7 +1301,7 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   out.code_lens_above = false;
   BuildEditorInsetGaps(out, viewport, visible_rows, inset_flags, line_height);
 
-  if (folding_model != nullptr && !folding_model->ranges().empty()) {
+  if (folding_model != nullptr && !folding_model->resolved_ranges().empty()) {
     out.fold_gutter_marks.reserve(visible_rows);
     for (std::size_t row = 0; row < visible_rows; ++row) {
       const std::size_t visual_row_index = viewport.scroll_line() + row;

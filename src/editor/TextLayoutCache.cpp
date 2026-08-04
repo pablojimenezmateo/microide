@@ -172,8 +172,13 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
       wrapped_row_layouts_visible_columns_ == visible_columns &&
       wrapped_row_layouts_soft_wrap_ == soft_wrap &&
       wrapped_row_layouts_folding_model_ == folding_model &&
+      // `layout_revision`, NOT `revision`: which rows exist depends only on which
+      // lines are HIDDEN, i.e. on the collapsed set. The fold model also bumps
+      // its general revision every time a scroll resolves a different window,
+      // and keying on that would rebuild the whole document's row table on every
+      // scrolled frame with any fold collapsed.
       wrapped_row_layouts_fold_revision_ ==
-          (folding_model != nullptr ? folding_model->revision() : 0)) {
+          (folding_model != nullptr ? folding_model->layout_revision() : 0)) {
     return;
   }
 
@@ -192,7 +197,7 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
     wrapped_row_layouts_soft_wrap_ = soft_wrap;
     wrapped_row_layouts_folding_model_ = folding_model;
     wrapped_row_layouts_fold_revision_ =
-        folding_model != nullptr ? folding_model->revision() : 0;
+        folding_model != nullptr ? folding_model->layout_revision() : 0;
 #ifndef NDEBUG
     ++wrapped_row_layout_build_count_;
 #endif
@@ -243,7 +248,7 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
   wrapped_row_layouts_soft_wrap_ = soft_wrap;
   wrapped_row_layouts_folding_model_ = folding_model;
   wrapped_row_layouts_fold_revision_ =
-      folding_model != nullptr ? folding_model->revision() : 0;
+      folding_model != nullptr ? folding_model->layout_revision() : 0;
 #ifndef NDEBUG
   ++wrapped_row_layout_build_count_;
 #endif
@@ -266,7 +271,7 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
       wrapped_row_layouts_layout_shape_revision_ != layout_shape_revision ||
       wrapped_row_layouts_folding_model_ != folding_model ||
       wrapped_row_layouts_fold_revision_ !=
-          (folding_model != nullptr ? folding_model->revision() : 0)) {
+          (folding_model != nullptr ? folding_model->layout_revision() : 0)) {
     return false;
   }
 

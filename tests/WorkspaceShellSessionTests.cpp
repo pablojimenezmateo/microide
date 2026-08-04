@@ -652,7 +652,7 @@ void TestWorkspaceShellReopenClearsFoldCollapseState() {
 
   auto* initial_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
   Expect(initial_model != nullptr, "folding model should be available for editor tabs");
-  Expect(!initial_model->ranges().empty(), "folding model should compute a fold range");
+  Expect(!initial_model->resolved_ranges().empty(), "folding model should compute a fold range");
   Expect(initial_model->Collapse(0), "test fixture should collapse the top-level fold");
   Expect(initial_model->IsCollapsedAtOpener(0),
          "collapsed state should be present before reopen");
@@ -662,7 +662,7 @@ void TestWorkspaceShellReopenClearsFoldCollapseState() {
 
   auto* reopened_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
   Expect(reopened_model != nullptr, "reopened editor should rebuild the folding model");
-  Expect(!reopened_model->ranges().empty(),
+  Expect(!reopened_model->resolved_ranges().empty(),
          "reopened editor should still expose fold ranges");
   Expect(!reopened_model->IsCollapsedAtOpener(0),
          "reopening a clean editor should clear prior collapsed fold state");
@@ -690,7 +690,7 @@ void TestWorkspaceShellRefreshClearsFoldCollapseState() {
 
   auto* refreshed_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
   Expect(refreshed_model != nullptr, "refreshed editor should rebuild the folding model");
-  Expect(!refreshed_model->ranges().empty(),
+  Expect(!refreshed_model->resolved_ranges().empty(),
          "refreshed editor should still expose fold ranges");
   Expect(!refreshed_model->IsCollapsedAtOpener(0),
          "tree refresh should clear prior collapsed fold state");
@@ -824,7 +824,7 @@ void TestWorkspaceShellEnsureActiveFoldingModelFreshBinding() {
          "folded editor tab should open");
   auto* folded_model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
   Expect(folded_model != nullptr, "folded tab should expose a folding model");
-  Expect(!folded_model->ranges().empty(), "folded tab should compute fold ranges");
+  Expect(!folded_model->resolved_ranges().empty(), "folded tab should compute fold ranges");
   auto& folded_editor = WorkspaceShellTestAccess::ActiveEditor(shell);
   Expect(folded_editor.folding_revision() != 0,
          "non-empty folding model should bind to the active viewport");
@@ -900,7 +900,7 @@ void TestWorkspaceShellFoldAllUnfoldAllCtrlKChord() {
 
   auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
   Expect(model != nullptr, "fold-all chord fixture should build a folding model");
-  Expect(!model->ranges().empty(),
+  Expect(!model->resolved_ranges().empty(),
          "fold-all chord fixture should expose at least one fold range");
   Expect(!model->IsCollapsedAtOpener(0),
          "fold-all chord fixture should start with folds expanded");
