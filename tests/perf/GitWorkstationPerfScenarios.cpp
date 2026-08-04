@@ -401,16 +401,25 @@ const ScenarioRegistration g_perf_git_workstation_merge_next_conflict_large_file
     .run = RunMergeNextConflictLargeFile,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_accept_hunk_interleaved, RunMergeAcceptHunkInterleaved);
-// Not the macro: this one needs a warmup. Iteration 0 opens the merge and builds
-// the model (36,490 allocations against a 18,3xx steady state), so without one it
-// alone governs p95/max and the gate tracks which iteration the cold pass landed
-// on rather than the tail of the measured work.
+// Not the macro: this one needs a LONG warmup. Iteration 0 opens the merge and
+// builds the model (36,490 allocations against a 18,3xx steady state), so without
+// one it alone governs p95/max and the gate tracks which iteration the cold pass
+// landed on rather than the tail of the measured work.
+//
+// One is not enough, though, and the series says so: allocations sit at ~18,3xx
+// for eleven iterations and then STEP to ~15,49x and stay -- a discrete
+// transition, the shape of caches reaching capacity and starting to reuse rather
+// than a gradual settling. RSS growth tracks it exactly: ~3.9 MB per iteration
+// through iteration 8, then 942 KB / 627 KB / 4 KB, then flat zero from iteration
+// 11 on. Growth stops dead there, so it is a warmup curve and not a leak, but at
+// one warmup the `p50_rss_growth_bytes` gate was reading the ramp: 1.7 MB against
+// a 766 KB baseline, and identically so on the pre-rewrite binary.
 const ScenarioRegistration g_perf_git_workstation_merge_edit_result_then_scroll({
     .name = "merge_edit_result_then_scroll",
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    .warmup_iterations = 1,
+    .warmup_iterations = 12,
     .run = RunMergeEditResultThenScroll,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(commit_open_with_large_staged_set, RunCommitOpenWithLargeStagedSet);
