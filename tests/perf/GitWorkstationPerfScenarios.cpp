@@ -380,7 +380,26 @@ REGISTER_GIT_WORKSTATION_SCENARIO(diff_next_hunk_large_file, RunDiffNextHunkLarg
 REGISTER_GIT_WORKSTATION_SCENARIO(diff_stage_hunk_large_patch, RunDiffStageHunkLargePatch);
 REGISTER_GIT_WORKSTATION_SCENARIO(diff_stage_selected_lines, RunDiffStageSelectedLines);
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_open_many_conflicts, RunMergeOpenManyConflicts);
-REGISTER_GIT_WORKSTATION_SCENARIO(merge_next_conflict_large_file, RunMergeNextConflictLargeFile);
+// Not the macro: this one needs a LONG warmup, and it is the reason to look at a
+// scenario's per-iteration series rather than only its summary. Re-opening this
+// merge settles over about seven iterations -- allocations 39,069 / 11,27x (x5) /
+// 9,590 / 7,779-and-flat, RSS growth 9.3 MB / 7.3 / 7.3 / 7.8 / 5.0 / 2.2 / 0.8 /
+// 0.02 / 0-and-flat -- as the allocator reaches the arena size this merge's peak
+// footprint needs. It is a warmup curve, not a leak: growth stops dead once it
+// gets there.
+//
+// Without a warmup the gate's verdict depends on the iteration count it happened
+// to be run with: `p50_rss_growth_bytes` read 1.5 MB at 8 iterations (FAIL
+// against a 64 KB floor) and 0 at 20 (PASS), from the same binary. A gate that
+// answers differently depending on how long you ran it is not gating anything.
+const ScenarioRegistration g_perf_git_workstation_merge_next_conflict_large_file({
+    .name = "merge_next_conflict_large_file",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .warmup_iterations = 8,
+    .run = RunMergeNextConflictLargeFile,
+});
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_accept_hunk_interleaved, RunMergeAcceptHunkInterleaved);
 // Not the macro: this one needs a warmup. Iteration 0 opens the merge and builds
 // the model (36,490 allocations against a 18,3xx steady state), so without one it

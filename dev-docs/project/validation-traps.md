@@ -178,6 +178,32 @@ synthetic memset loop says nothing about the product, and gating it would only
 manufacture cross-machine flakes. Keep it that way — the canary measures the
 instrument, not the product.
 
+### A gate whose verdict depends on `--iterations`
+
+A scenario whose first iterations cost more than its steady state does not have a
+noisy gate — it has a gate that answers a *different question* at each iteration
+count, because p50/p95 are order statistics over however many samples you took.
+Two of them were caught this way on 2026-08-04, both failing at `--iterations=8`
+and passing at `--iterations=20` from the same binary:
+
+| scenario | cold shape | metric that flipped |
+| --- | --- | --- |
+| `repo_open_rss_idle` | iteration 0 = 3,685 allocations, steady state 550 | `p95_allocations` +55% |
+| `merge_next_conflict_large_file` | settles over ~7 iterations (39,069 → 11,27x → 7,779 allocations; RSS growth 9.3 MB → 0) | `p50_rss_growth_bytes` +2259% |
+
+Neither was a code regression, and neither was noise: allocation counts here are
+deterministic to the unit across runs. The fix is `warmup_iterations`, which the
+harness already supports and which several scenarios already carry with comments
+saying exactly this.
+
+**How to tell them apart from a real regression**, since both present as a red
+gate: print the per-iteration series, not the summary. `--report-json` carries
+every iteration's `allocations`, `rss_growth_bytes` and `wall_ms`. A regression
+moves the *whole* series; a missing warmup leaves a steady tail sitting at or
+below the committed baseline with a head that does not. If the tail is clean, the
+scenario needs a warmup, not a fix — and rebaselining it instead would bake the
+cold pass into the number and hide the next real regression underneath it.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit

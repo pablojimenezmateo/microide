@@ -592,6 +592,13 @@ const ScenarioRegistration g_perf_repo_open_rss_idle({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    // warmup: same reason as the two `*_first_paint` scenarios below. Iteration 0
+    // pays the project's cold open (background file-index build, initial watch
+    // batch, session write) at 3,685 allocations against a 550 steady state, and
+    // it is the only iteration that does. Without a warmup that single value
+    // governs p95, so the gate answered differently depending on the iteration
+    // count -- FAIL at 8 (+55% p95 allocations), PASS at 20, same binary.
+    .warmup_iterations = 1,
     .run = RunRepoOpenRssIdle,
 }});
 const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{
