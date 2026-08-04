@@ -32,6 +32,10 @@ struct TaggedChange {
 
 std::vector<SideChange> BuildSideChanges(const std::vector<std::string>& base_lines,
                                          const std::vector<std::string>& variant_lines) {
+  // Scoped: BuildMergeModel is one synchronous 50 ms call on the shell path when a
+  // merge tab opens, and until this scope existed there was no way to say which of
+  // its three phases (split, the two diffs, hunk grouping) that time was.
+  util::PerformanceTrace::Scope perf_scope("merge::BuildSideChanges");
   // BuildLineDiffOps consumes views; base_lines/variant_lines outlive `ops`.
   const std::vector<std::string_view> base_views(base_lines.begin(), base_lines.end());
   const std::vector<std::string_view> variant_views(variant_lines.begin(), variant_lines.end());
@@ -72,10 +76,15 @@ std::vector<std::string> SliceBaseLines(const std::vector<std::string>& base_lin
   return std::vector<std::string>(base_lines.begin() + safe_start, base_lines.begin() + safe_end);
 }
 
+// `changes` is taken by mutable reference and sorted IN PLACE. It used to be a
+// by-value parameter fed an lvalue, so every call deep-copied a vector of
+// SideChange — each of which owns a vector<string> of the changed lines. On a
+// merge with many hunks that copy was paid once per hunk per side, on the
+// synchronous shell path that opens a merge tab.
 std::vector<std::string> ApplySideChangesToSlice(const std::vector<std::string>& base_lines,
                                                  int start,
                                                  int end,
-                                                 std::vector<SideChange> changes) {
+                                                 std::vector<SideChange>& changes) {
   std::sort(changes.begin(), changes.end(), [](const SideChange& lhs, const SideChange& rhs) {
     if (lhs.base_start != rhs.base_start) {
       return lhs.base_start < rhs.base_start;
@@ -99,13 +108,15 @@ std::vector<std::string> ApplySideChangesToSlice(const std::vector<std::string>&
   return lines;
 }
 
-std::vector<TaggedChange> TaggedChanges(const std::vector<SideChange>& changes, MergeSide side) {
+// Consumes `changes`: tagging is a relabel, not a copy. Each SideChange owns the
+// changed lines, so copying here duplicated one side of the diff wholesale.
+std::vector<TaggedChange> TaggedChanges(std::vector<SideChange>&& changes, MergeSide side) {
   std::vector<TaggedChange> tagged;
   tagged.reserve(changes.size());
-  for (const SideChange& change : changes) {
+  for (SideChange& change : changes) {
     tagged.push_back(TaggedChange{
         .side = side,
-        .change = change,
+        .change = std::move(change),
     });
   }
   return tagged;
@@ -118,19 +129,25 @@ MergeModel BuildMergeModel(const std::string& base,
                            const std::string& current) {
   util::PerformanceTrace::Scope perf_scope("merge::BuildMergeModel");
   MergeModel model;
-  model.base_lines = util::SplitLines(base);
-  model.incoming_lines = util::SplitLines(incoming);
-  model.current_lines = util::SplitLines(current);
+  {
+    util::PerformanceTrace::Scope split_scope("merge::BuildMergeModel::SplitLines");
+    model.base_lines = util::SplitLines(base);
+    model.incoming_lines = util::SplitLines(incoming);
+    model.current_lines = util::SplitLines(current);
+  }
 
-  const std::vector<SideChange> incoming_changes =
+  std::vector<SideChange> incoming_changes =
       BuildSideChanges(model.base_lines, model.incoming_lines);
-  const std::vector<SideChange> current_changes =
+  std::vector<SideChange> current_changes =
       BuildSideChanges(model.base_lines, model.current_lines);
 
-  std::vector<TaggedChange> all_changes = TaggedChanges(incoming_changes, MergeSide::Incoming);
-  const std::vector<TaggedChange> current_tagged =
-      TaggedChanges(current_changes, MergeSide::Current);
-  all_changes.insert(all_changes.end(), current_tagged.begin(), current_tagged.end());
+  std::vector<TaggedChange> all_changes =
+      TaggedChanges(std::move(incoming_changes), MergeSide::Incoming);
+  std::vector<TaggedChange> current_tagged =
+      TaggedChanges(std::move(current_changes), MergeSide::Current);
+  all_changes.reserve(all_changes.size() + current_tagged.size());
+  all_changes.insert(all_changes.end(), std::make_move_iterator(current_tagged.begin()),
+                     std::make_move_iterator(current_tagged.end()));
   std::sort(all_changes.begin(), all_changes.end(), [](const TaggedChange& lhs, const TaggedChange& rhs) {
     if (lhs.change.base_start != rhs.change.base_start) {
       return lhs.change.base_start < rhs.change.base_start;
@@ -149,19 +166,27 @@ MergeModel BuildMergeModel(const std::string& base,
   // `<` gate, but ChangesInteract still pairs them. The sort order keeps such
   // insertions adjacent, so a single "previous-was-an-insertion-at-same-start"
   // check covers that case without rescanning the group.
+  // Reused across groups: one hunk's partition buffers are the next hunk's, and a
+  // merge with hundreds of hunks otherwise allocated two vectors per hunk.
+  std::vector<SideChange> hunk_incoming_changes;
+  std::vector<SideChange> hunk_current_changes;
   auto flush_group = [&](const std::vector<std::size_t>& group) {
     if (group.empty()) return;
     int base_start = all_changes[group.front()].change.base_start;
     int base_end = all_changes[group.front()].change.base_end;
-    std::vector<SideChange> hunk_incoming_changes;
-    std::vector<SideChange> hunk_current_changes;
+    hunk_incoming_changes.clear();
+    hunk_current_changes.clear();
     for (std::size_t group_index : group) {
       base_start = std::min(base_start, all_changes[group_index].change.base_start);
       base_end = std::max(base_end, all_changes[group_index].change.base_end);
+      // Moved, not copied: a flushed group's entries are never read again — the
+      // scan pushes `i` only AFTER flushing, and the one backward look
+      // (`all_changes[group.back()]`) is always at an element of the group still
+      // being accumulated.
       if (all_changes[group_index].side == MergeSide::Incoming) {
-        hunk_incoming_changes.push_back(all_changes[group_index].change);
+        hunk_incoming_changes.push_back(std::move(all_changes[group_index].change));
       } else {
-        hunk_current_changes.push_back(all_changes[group_index].change);
+        hunk_current_changes.push_back(std::move(all_changes[group_index].change));
       }
     }
 

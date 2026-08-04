@@ -17,6 +17,7 @@
 #endif
 
 #include "perf/AllocationCounter.h"
+#include "compare/MergeModel.h"
 #include "platform/Subprocess.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -405,6 +406,37 @@ void RunCompareScrollLargeFixture(ScenarioContext& context) {
   });
 }
 
+// `compare::BuildMergeModel` is one synchronous call on the shell path that opens
+// a merge tab, and on a many-hunk merge it is tens of milliseconds — the largest
+// single scope in any merge scenario. NOTHING gated it: every merge scenario
+// shares one driver across its iterations and reuses the already-open tab, so the
+// build lands on iteration 0 and is absorbed by the warmup. This scenario calls it
+// directly, once per iteration, over the same interleaved fixture the scroll
+// scenario uses (hundreds of hunks). It is a pure function of three strings, so
+// the allocation count is exact.
+void RunMergeModelBuildInterleaved(ScenarioContext& context) {
+  constexpr int kBlocks = 420;
+  const std::filesystem::path root = EnsureSharedFixtureTree(
+      "microide-perf-merge-interleaved", [&](const std::filesystem::path& dir) {
+        WriteFileTextOrThrow(dir / "base.cpp", BuildInterleavedBaseText(kBlocks));
+        WriteFileTextOrThrow(dir / "incoming.cpp", BuildInterleavedVariantText(kBlocks, 0));
+        WriteFileTextOrThrow(dir / "current.cpp", BuildInterleavedVariantText(kBlocks, 1));
+      });
+  // Read outside the measured window: this measures the model build, not file I/O.
+  const std::string base = ReadFileTextOrThrow(root / "base.cpp");
+  const std::string incoming = ReadFileTextOrThrow(root / "incoming.cpp");
+  const std::string current = ReadFileTextOrThrow(root / "current.cpp");
+
+  std::size_t hunks = 0;
+  context.Measure("merge_model.build_interleaved", [&] {
+    const compare::MergeModel model = compare::BuildMergeModel(base, incoming, current);
+    hunks = model.hunks.size();
+  });
+  if (hunks < 200) {
+    throw std::runtime_error("merge_model_build_interleaved: expected hundreds of hunks");
+  }
+}
+
 void RunMergeScrollInterleavedHunks(ScenarioContext& context) {
   constexpr int kBlocks = 420;
   const std::filesystem::path root = EnsureSharedFixtureTree(
@@ -608,6 +640,13 @@ const ScenarioRegistration g_perf_compare_scroll_large_fixture({Scenario{
     .baseline_gated = true,
     .run_by_default = true,
     .run = RunCompareScrollLargeFixture,
+}});
+const ScenarioRegistration g_perf_merge_model_build_interleaved({Scenario{
+    .name = "merge_model_build_interleaved",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .run = RunMergeModelBuildInterleaved,
 }});
 const ScenarioRegistration g_perf_merge_scroll_interleaved_hunks({Scenario{
     .name = "merge_scroll_interleaved_hunks",

@@ -278,7 +278,15 @@ void RunMergeEditResultThenScroll(ScenarioContext& context) {
     incoming += "void unit_" + std::to_string(i) + "() {\n  int value_" + std::to_string(i) +
                 " = " + std::to_string(i + 500) + ";\n  sink(value_" + std::to_string(i) +
                 ");\n}\n\n";
-    current += base;
+    // `current += base` — appending the whole accumulated base once per block —
+    // made this file the quadratic sum of every prefix: 3.3 MB of repeated text
+    // against a 24 KB base, so the scenario measured a 140x-lopsided diff rather
+    // than the three-way merge it is named for. Give `current` its own per-block
+    // variant, the way `incoming` has one, so every block is a genuine
+    // base/incoming/current conflict.
+    current += "void unit_" + std::to_string(i) + "() {\n  int value_" + std::to_string(i) +
+               " = " + std::to_string(i + 900) + ";\n  sink(value_" + std::to_string(i) +
+               ");\n}\n\n";
   }
   write("base.cpp", base);
   write("incoming.cpp", incoming);
@@ -374,7 +382,18 @@ REGISTER_GIT_WORKSTATION_SCENARIO(diff_stage_selected_lines, RunDiffStageSelecte
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_open_many_conflicts, RunMergeOpenManyConflicts);
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_next_conflict_large_file, RunMergeNextConflictLargeFile);
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_accept_hunk_interleaved, RunMergeAcceptHunkInterleaved);
-REGISTER_GIT_WORKSTATION_SCENARIO(merge_edit_result_then_scroll, RunMergeEditResultThenScroll);
+// Not the macro: this one needs a warmup. Iteration 0 opens the merge and builds
+// the model (36,490 allocations against a 18,3xx steady state), so without one it
+// alone governs p95/max and the gate tracks which iteration the cold pass landed
+// on rather than the tail of the measured work.
+const ScenarioRegistration g_perf_git_workstation_merge_edit_result_then_scroll({
+    .name = "merge_edit_result_then_scroll",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .warmup_iterations = 1,
+    .run = RunMergeEditResultThenScroll,
+});
 REGISTER_GIT_WORKSTATION_SCENARIO(commit_open_with_large_staged_set, RunCommitOpenWithLargeStagedSet);
 REGISTER_GIT_WORKSTATION_SCENARIO(external_change_refresh_open_diff,
                                  RunExternalChangeRefreshOpenDiff);

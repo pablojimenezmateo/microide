@@ -266,6 +266,10 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
     }
   }();
 
+  {
+  // Toolbar + status + optional base band: fixed-cost chrome, separate from the
+  // per-row work below so a regression in either is attributable.
+  util::PerformanceTrace::Scope chrome_scope("WorkspaceShell::RenderMergeSurface::Chrome");
   const MergeToolbarLayout toolbar = ComputeMergeToolbarLayout(rect, surface);
   draw_button(toolbar.prev_rect, "Prev", false, !merge_tab->conflicts.empty());
   draw_button(toolbar.next_rect, "Next", false, !merge_tab->conflicts.empty());
@@ -336,6 +340,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                  context_.interaction_state.drag_target == DragTarget::MergeRightDivider ? theme_.accent
                                                                                  : theme_.border);
 
+  }
   text_renderer_.DrawString(renderer, surface.left_x + surface.gutter_width, surface.header_y,
                             theme_.text_secondary,
                             TruncateLabelView(merge_tab->incoming_label, surface.left_width - 8.0f));
@@ -346,6 +351,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                             theme_.text_secondary,
                             TruncateLabelView(merge_tab->current_label, surface.right_width - 8.0f));
 
+  // The merge surface paints THREE panes: the result pane goes through
+  // EditorViewRenderer (already scoped), while the incoming and current side
+  // panes are painted by this loop. Without a scope of its own the loop sat in
+  // RenderMergeSurface's self time, which is 63 us per frame and was the largest
+  // unattributed per-frame cost in the suite.
+  {
+  util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderMergeSurface::SideRows");
   for (int row = 0; row < surface.visible_rows; ++row) {
     const std::size_t line_index =
         static_cast<std::size_t>(std::max(0, merge_tab->scroll_row + row));
@@ -436,6 +448,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
                                 FormatLineNumber(line_index + 1, line_number_buf));
     }
+  }
   }
 
   const std::optional<editor::EditorBlameOverlay> merge_blame_overlay =
