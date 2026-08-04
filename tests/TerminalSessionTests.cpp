@@ -428,6 +428,50 @@ void TestTerminalSessionTracksSoftWrappedRowsSeparatelyFromHardNewlines() {
          "rows reached by autowrap should be marked as wrapped continuations");
 }
 
+// Regression: every range-snapshot entry point used clear()+assign(), which
+// destroys each TerminalLine already in the destination — freeing its `cells`
+// vector — and copy-constructs a fresh one. The terminal render path re-snapshots
+// the visible range on every frame whose generation changed, and mouse-wheel
+// scrolling re-snapshots it per tick for hover resolution, so that was one
+// allocation AND one free per visible row per event. Reusing the destination rows'
+// buffers is observable as pointer stability of `cells.data()`.
+void TestTerminalSnapshotRangeReusesDestinationCellBuffers() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 16);
+  for (int i = 0; i < 8; ++i) {
+    TerminalSessionTestAccess::AppendOutput(session, "row-content\r\n");
+  }
+
+  microide::terminal::TerminalLineRangeSnapshot snapshot;
+  Expect(session.SnapshotLineRangeIfChanged(0, 4, 0, &snapshot),
+         "the first snapshot of a range should report a change");
+  Expect(snapshot.lines.size() == 4, "the snapshot should hold the requested rows");
+  std::vector<const void*> first_pass;
+  for (const auto& line : snapshot.lines) {
+    first_pass.push_back(line.cells.data());
+  }
+
+  // Re-snapshot the same row count after new output. A fresh generation forces the
+  // copy; the destination rows must keep the buffers they already own.
+  for (int round = 0; round < 4; ++round) {
+    TerminalSessionTestAccess::AppendOutput(session, "more-content\r\n");
+    Expect(session.SnapshotLineRangeIfChanged(0, 4, snapshot.generation - 1, &snapshot),
+           "a changed generation should re-copy the range");
+    Expect(snapshot.lines.size() == 4, "the row count is unchanged across rounds");
+    for (std::size_t i = 0; i < snapshot.lines.size(); ++i) {
+      Expect(snapshot.lines[i].cells.data() == first_pass[i],
+             "re-snapshotting a same-sized range must reuse the destination cell buffers");
+    }
+  }
+
+  // And the content is still correct — reuse must not leave stale trailing cells.
+  session.SnapshotLineRangeInto(0, 4, snapshot.lines);
+  Expect(snapshot.lines.size() == 4, "the reusing overload copies the same row count");
+  for (const auto& line : snapshot.lines) {
+    Expect(line.cells.size() <= 16, "reused rows must report the source row length, not the capacity");
+  }
+}
+
 void TestTerminalSessionCachedSnapshotRangeRefreshesAfterOutput() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 4, 8);
@@ -2527,6 +2571,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionDisableAutoWrapOverwritesLastColumn);
   AddTest(tests, "TerminalSession/TracksSoftWrappedRowsSeparatelyFromHardNewlines",
           TestTerminalSessionTracksSoftWrappedRowsSeparatelyFromHardNewlines);
+  AddTest(tests, "TerminalSession/SnapshotRangeReusesDestinationCellBuffers",
+          TestTerminalSnapshotRangeReusesDestinationCellBuffers);
   AddTest(tests, "TerminalSession/CachedSnapshotRangeRefreshesAfterOutput",
           TestTerminalSessionCachedSnapshotRangeRefreshesAfterOutput);
   AddTest(tests, "TerminalSession/LineRangeSnapshotSkipsUnchangedGeneration",

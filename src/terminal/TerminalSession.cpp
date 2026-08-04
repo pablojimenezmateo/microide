@@ -396,11 +396,49 @@ TerminalSession::SearchScan TerminalSession::FindMatches(const TerminalSearchQue
   return scan;
 }
 
+// Reuses the destination rows' `cells` buffers rather than destroying and
+// rebuilding them. Returns the number of rows copied.
+//
+// Every by-value snapshot entry point below funnels through this. `clear()` +
+// `assign()` — which is what they all used to do — destroys each TerminalLine and
+// frees its cells vector, then copy-constructs a fresh one, so a caller that
+// re-snapshots the same visible range on every mouse wheel tick or every frame
+// paid one allocation AND one free per visible row each time. The row count is a
+// panel height; it barely moves, so reusing the buffers makes the steady state
+// allocation-free.
+std::size_t TerminalSession::CopyLineRangeIntoLocked(std::size_t start_row,
+                                                     std::size_t max_lines,
+                                                     std::vector<TerminalLine>& out) const {
+  if (start_row >= lines_.size() || max_lines == 0) {
+    out.clear();
+    return 0;
+  }
+  const std::size_t end_row = std::min(lines_.size(), start_row + max_lines);
+  const std::size_t count = end_row - start_row;
+  out.resize(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    const TerminalLine& source = lines_[start_row + i];
+    TerminalLine& destination = out[i];
+    // `assign` on the existing vector reuses its capacity; TerminalCell is
+    // trivially copyable, so this is a memcpy plus a size update.
+    destination.cells.assign(source.cells.begin(), source.cells.end());
+    destination.wrapped_from_previous = source.wrapped_from_previous;
+  }
+  return count;
+}
+
+void TerminalSession::SnapshotLineRangeInto(std::size_t start_row,
+                                            std::size_t max_lines,
+                                            std::vector<TerminalLine>& out) const {
+  std::scoped_lock lock(mutex_);
+  (void)CopyLineRangeIntoLocked(start_row, max_lines, out);
+}
+
 const std::vector<TerminalLine>& TerminalSession::SnapshotLineRangeCached(
     std::size_t start_row,
     std::size_t max_lines) const {
   thread_local std::vector<TerminalLine> snapshot;
-  snapshot = SnapshotLineRange(start_row, max_lines);
+  SnapshotLineRangeInto(start_row, max_lines, snapshot);
   return snapshot;
 }
 
@@ -419,23 +457,15 @@ bool TerminalSession::SnapshotLineRangeIfChanged(std::size_t start_row,
   }
 
   snapshot->generation = snapshot_generation_;
-  snapshot->lines.clear();
-  if (start_row >= lines_.size() || max_lines == 0) {
-    return true;
-  }
-
-  const std::size_t end_row = std::min(lines_.size(), start_row + max_lines);
+  const std::size_t copied = CopyLineRangeIntoLocked(start_row, max_lines, snapshot->lines);
   util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCopiedLines,
-                              end_row - start_row);
+                              copied);
   std::uint64_t copied_cells = 0;
-  for (auto it = lines_.begin() + static_cast<std::ptrdiff_t>(start_row);
-       it != lines_.begin() + static_cast<std::ptrdiff_t>(end_row); ++it) {
-    copied_cells += it->cells.size();
+  for (const TerminalLine& line : snapshot->lines) {
+    copied_cells += line.cells.size();
   }
   util::AddPerformanceCounter(util::PerfCounterId::TerminalSnapshotLineRangeIfChangedCopiedCells,
                               copied_cells);
-  snapshot->lines.assign(lines_.begin() + static_cast<std::ptrdiff_t>(start_row),
-                         lines_.begin() + static_cast<std::ptrdiff_t>(end_row));
   return true;
 }
 

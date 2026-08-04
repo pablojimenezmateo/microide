@@ -318,15 +318,20 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   // instead of re-snapshotting the visible lines per move (TD-2026-07-17A-027). Fall
   // back to a fresh snapshot only when the cached range does not match (e.g. a hover
   // arriving before the first terminal-panel render).
-  std::vector<terminal::TerminalLine> owned_lines;
+  // The fallback is NOT rare: a mouse wheel tick moves `first_row` and the render
+  // that refreshes `visible_lines_snapshot` has not run yet, so every tick of a
+  // scroll takes it. A by-value SnapshotLineRange there allocates one vector per
+  // visible row per tick; the reusing overload into a main-thread scratch keeps
+  // the buffers.
+  thread_local std::vector<terminal::TerminalLine> fallback_lines;
   const std::vector<terminal::TerminalLine>* lines_ptr = nullptr;
   if (terminal_tab->visible_lines_first_row == first_row &&
       terminal_tab->visible_lines_max_rows == visible_rows &&
       !terminal_tab->visible_lines_snapshot.lines.empty()) {
     lines_ptr = &terminal_tab->visible_lines_snapshot.lines;
   } else {
-    owned_lines = terminal_tab->session.SnapshotLineRange(first_row, visible_rows);
-    lines_ptr = &owned_lines;
+    terminal_tab->session.SnapshotLineRangeInto(first_row, visible_rows, fallback_lines);
+    lines_ptr = &fallback_lines;
   }
   const std::vector<terminal::TerminalLine>& lines = *lines_ptr;
   const auto position =

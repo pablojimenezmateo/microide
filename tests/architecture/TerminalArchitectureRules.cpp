@@ -171,7 +171,14 @@ RuleResult CheckTerminalSessionPrivateMethodCount(const std::filesystem::path& r
   // TerminalSessionTestAccess::Reset drop its hand-kept ~35-field restatement of
   // the same state, which had already drifted (it never cleared
   // pending_clipboard_text_).
-  constexpr std::size_t kCap = 43;
+  // 44: +1 for CopyLineRangeIntoLocked, again on the "earns its slot" terms. Every
+  // range-snapshot entry point (SnapshotLineRange, SnapshotLineRangeCached,
+  // SnapshotLineRangeIfChanged, the new SnapshotLineRangeInto) had its own copy
+  // loop, and three of them used clear()+assign() — which destroys each
+  // TerminalLine's cells vector and rebuilds it, so a per-frame or per-wheel-tick
+  // re-snapshot allocated and freed one vector per visible row every time. One
+  // buffer-reusing body now backs all of them.
+  constexpr std::size_t kCap = 44;
   const std::filesystem::path path = repo_root / "src/terminal/TerminalSession.h";
   const std::string text = ReadRuleTarget(result, path);
   const std::regex locked_helper_pattern(R"((?:void|bool|std::size_t)\s+\w+Locked\s*\()");

@@ -384,8 +384,14 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
       const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, line_count);
       const std::size_t first_row =
           static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
-      const auto terminal_lines = terminal_tab->session.SnapshotLineRange(
-          first_row, static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)));
+      // Mouse motion over the terminal fires this per event during a selection
+      // drag, so the snapshot goes into a reused scratch rather than allocating a
+      // vector per visible row on every pixel of movement.
+      thread_local std::vector<terminal::TerminalLine> motion_lines;
+      terminal_tab->session.SnapshotLineRangeInto(
+          first_row, static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)),
+          motion_lines);
+      const std::vector<terminal::TerminalLine>& terminal_lines = motion_lines;
       if (const auto position = operations_.terminal_selection_position_for_point(
               event.motion.x, event.motion.y, terminal_lines, first_row);
           position.has_value()) {

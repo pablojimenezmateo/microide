@@ -122,6 +122,14 @@ class TerminalSession {
   std::uint64_t ScrollbackTrimTotal() const;
   std::vector<TerminalLine> SnapshotLines() const;
   std::vector<TerminalLine> SnapshotLineRange(std::size_t start_row, std::size_t max_lines) const;
+  // Same range, copied into a caller-owned buffer whose rows' `cells` capacity is
+  // reused. Prefer this on any path that re-snapshots the same visible range
+  // repeatedly (hover resolution, mouse drag, per-frame render): the by-value
+  // overload allocates one vector per row per call, and a wheel tick or a mouse
+  // move is not a rare event.
+  void SnapshotLineRangeInto(std::size_t start_row,
+                             std::size_t max_lines,
+                             std::vector<TerminalLine>& out) const;
   const std::vector<TerminalLine>& SnapshotLineRangeCached(std::size_t start_row,
                                                            std::size_t max_lines) const;
   bool SnapshotLineRangeIfChanged(std::size_t start_row,
@@ -290,6 +298,11 @@ class TerminalSession {
   void ResetScreenLocked(bool fill_rows);
   void SetAlternateScreenLocked(bool enabled, bool clear);
   void TrimScrollbackLocked();
+  // Shared body of every range snapshot: copies [start_row, start_row+max_lines)
+  // into `out`, reusing each destination row's cells buffer. Returns rows copied.
+  std::size_t CopyLineRangeIntoLocked(std::size_t start_row,
+                                      std::size_t max_lines,
+                                      std::vector<TerminalLine>& out) const;
   void AdvanceSnapshotGenerationLocked();
   // Clears everything a session negotiates or accumulates while a child is
   // attached: process bookkeeping, the escape/UTF-8 decoder, every DEC/xterm
