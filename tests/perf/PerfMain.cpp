@@ -707,42 +707,79 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(3);
           },
   });
+  // Both terminal scenarios below feed the emulator directly instead of launching
+  // a command and sleeping. The harness runs with placeholder terminals
+  // (SetUsePlaceholderTerminalsForTesting, PerfMain), so NO shell is ever spawned:
+  // the previous `yes` / `bash -lc` launches produced a terminal holding exactly
+  // one blank line, and both scenarios spent their whole measured window scrolling
+  // and toggling an EMPTY buffer. The committed baselines recorded that. Feeding
+  // bytes through the same path the pty reader thread uses makes them measure the
+  // emulator, the scrollback and the render path they are named for, and makes the
+  // allocation counts byte-identical run to run.
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_scroll_long_output",
       .smoke = true,
+      // Iteration 0 pays the project open and the emulator's first buffer growth;
+      // without a warmup it alone governs p95/max and the gate flaps.
+      .warmup_iterations = 1,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/small_project");
             context.PumpFrames(2);
-            context.Measure("terminal.open", [&]() { context.OpenTerminal("yes perf-output-line"); });
-            context.Measure("terminal.initial_wait", [&]() { context.Wait(std::chrono::milliseconds(80)); });
+            context.Measure("terminal.open", [&]() { context.OpenTerminal("perf-output"); });
+            std::string output;
+            output.reserve(4000 * 24);
+            for (int i = 0; i < 4000; ++i) {
+              output += "perf-output-line ";
+              output += std::to_string(i);
+              output += "\r\n";
+            }
+            context.Measure("terminal.feed_output",
+                            [&]() { context.FeedTerminalOutput(output); });
             context.Measure("terminal.scroll_burst", [&]() {
               for (int i = 0; i < 48; ++i) {
                 context.Scroll(-1);
               }
             });
             context.PumpFrames(2);
+            // The driver is shared across a scenario's iterations, so a terminal an
+            // iteration opens is still attached on the next one.
+            context.CloseAllTerminals();
           },
   });
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_alt_screen_toggle",
       .smoke = false,
+      // Iteration 0 pays the project open and the emulator's first buffer growth;
+      // without a warmup it alone governs p95/max and the gate flaps.
+      .warmup_iterations = 1,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/small_project");
             context.PumpFrames(2);
-            // Fill a deep primary scrollback, then toggle the alternate screen
-            // many times. Each toggle enters + exits, which previously deep-copied
-            // the full primary scrollback twice; this scenario surfaces that cost
-            // (and confirms the move-based swap that replaced it).
-            context.Measure("terminal.open", [&]() {
-              context.OpenTerminal(
-                  "bash -lc 'for i in $(seq 2000); do echo alt-screen-scrollback-line $i; "
-                  "done; for i in $(seq 200); do printf \"\\033[?1049h\\033[?1049l\"; done'");
-            });
+            context.Measure("terminal.open", [&]() { context.OpenTerminal("perf-alt-screen"); });
+            // Fill a deep primary scrollback, then toggle the alternate screen many
+            // times. Each toggle enters + exits, which previously deep-copied the
+            // full primary scrollback twice; this is what surfaces that cost (and
+            // confirms the move-based swap that replaced it).
+            std::string scrollback;
+            scrollback.reserve(2000 * 32);
+            for (int i = 0; i < 2000; ++i) {
+              scrollback += "alt-screen-scrollback-line ";
+              scrollback += std::to_string(i);
+              scrollback += "\r\n";
+            }
+            context.Measure("terminal.fill_scrollback",
+                            [&]() { context.FeedTerminalOutput(scrollback); });
+            std::string toggles;
+            toggles.reserve(200 * 16);
+            for (int i = 0; i < 200; ++i) {
+              toggles += "\x1b[?1049h\x1b[?1049l";
+            }
             context.Measure("terminal.alt_toggle_burst",
-                            [&]() { context.Wait(std::chrono::milliseconds(400)); });
+                            [&]() { context.FeedTerminalOutput(toggles); });
             context.PumpFrames(2);
+            context.CloseAllTerminals();
           },
   });
   PerfHarness::RegisterScenario(Scenario{

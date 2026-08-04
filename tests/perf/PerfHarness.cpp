@@ -19,6 +19,7 @@
 
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
+#include "TerminalSessionTestAccess.h"
 #include "WorkspaceShellEventHelpers.h"
 #include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
@@ -456,6 +457,32 @@ void ScenarioContext::OpenTerminal(std::string_view command) {
     command_line.append(command);
   }
   (void)ExecuteCommand(command_line);
+}
+
+void ScenarioContext::FeedTerminalOutput(std::string_view bytes) {
+  // The harness runs with placeholder terminals (no shell is spawned), so a
+  // scenario cannot get output by launching a command and sleeping — that
+  // measured an EMPTY terminal for as long as the sleep lasted. Feeding the
+  // emulator directly is what the production reader thread does with the bytes it
+  // reads off the pty, and it is byte-for-byte reproducible.
+  if (workspace::WorkspaceShell::TestAccess::TerminalTabCount(shell_) == 0) {
+    throw std::runtime_error("FeedTerminalOutput: no terminal is open");
+  }
+  TerminalSessionTestAccess::AppendOutput(
+      workspace::WorkspaceShell::TestAccess::ActiveTerminalSession(shell_), bytes);
+  PumpEvents();
+}
+
+void ScenarioContext::CloseAllTerminals() {
+  // The driver — and therefore the shell — is reused across every iteration of a
+  // scenario, so a terminal an iteration opens is still attached on the next one.
+  // Twenty accumulated shells draining output inside the next iteration's window
+  // is a per-iteration allocation ramp that reads exactly like a leak in whatever
+  // the scenario is actually measuring.
+  while (workspace::WorkspaceShell::TestAccess::TerminalTabCount(shell_) > 0) {
+    workspace::WorkspaceShell::TestAccess::CloseTerminalTab(shell_, 0);
+  }
+  PumpFrames(1);
 }
 
 void ScenarioContext::ResizeWindow(int width, int height) {

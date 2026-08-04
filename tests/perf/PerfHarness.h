@@ -159,6 +159,15 @@ class ScenarioContext {
   void SimulateExternalFileChange(const std::filesystem::path& path, std::string_view appended_text);
   void StartSearch(std::string_view query);
   void OpenTerminal(std::string_view command);
+  // Push bytes straight into the active terminal's emulator, exactly as the
+  // production pty reader thread does. The harness spawns no real shell, so this
+  // is the ONLY way a terminal scenario gets content — and unlike waiting on a
+  // child process it is byte-for-byte reproducible.
+  void FeedTerminalOutput(std::string_view bytes);
+  // Close every terminal tab. The driver is shared across a scenario's iterations,
+  // so a scenario that opens terminals must close them or each iteration inherits
+  // every earlier one.
+  void CloseAllTerminals();
   void ResizeWindow(int width, int height);
 
   void SetSetting(std::string_view id, std::string value);
