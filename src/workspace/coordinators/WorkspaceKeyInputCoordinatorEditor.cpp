@@ -1,7 +1,9 @@
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 
 #include <limits>
+#include <optional>
 
+#include "editor/ColumnSelection.h"
 #include "editor/ShapingActions.h"
 #include "util/PerformanceTrace.h"
 #include "workspace/SettingFlags.h"
@@ -9,6 +11,49 @@
 namespace microide::workspace {
 
 namespace {
+
+// Keyboard column (box) selection: VSCode's Ctrl+Shift+Alt+Arrow.
+//
+// Mouse box selection already existed (Shift+Alt+drag, WorkspaceEditorMouseCoordinator)
+// and TextViewport::SetBoxSelection already did the hard part -- per-line column
+// clamping and the 10,000-caret span cap. The keyboard half was missing entirely, so
+// without a pointer there was no way to make a rectangular selection.
+//
+// One helper rather than a copy per editable surface: the plain editor, the compare
+// panes and the merge result pane are all TextViewports and all take the same chord.
+// Returns true when the event was a column-select step and was consumed.
+bool TryColumnSelectStep(editor::TextViewport& viewport,
+                         const SDL_KeyboardEvent& event,
+                         SDL_Keymod modifiers) {
+  const bool chord = (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & SDL_KMOD_SHIFT) != 0 &&
+                     (modifiers & SDL_KMOD_ALT) != 0;
+  if (!chord) {
+    return false;
+  }
+  std::optional<editor::ColumnSelectDirection> direction;
+  switch (event.key) {
+    case SDLK_UP: direction = editor::ColumnSelectDirection::Up; break;
+    case SDLK_DOWN: direction = editor::ColumnSelectDirection::Down; break;
+    case SDLK_LEFT: direction = editor::ColumnSelectDirection::Left; break;
+    case SDLK_RIGHT: direction = editor::ColumnSelectDirection::Right; break;
+    default: return false;
+  }
+
+  const editor::TextPosition caret{viewport.cursor_line(), viewport.cursor_column()};
+  const editor::ColumnSelectionState before = viewport.column_selection();
+  const std::size_t lo = before.active ? std::min(before.anchor.line, before.cursor.line)
+                                       : caret.line;
+  const std::size_t hi = before.active ? std::max(before.anchor.line, before.cursor.line)
+                                       : caret.line;
+  // The virtual column may only grow to the longest line the box currently covers;
+  // unbounded growth would let Right run forever over a document of short lines.
+  const std::size_t max_column = viewport.MaxLineLengthInSpan(lo, hi);
+  const editor::ColumnSelectionState after = editor::StepColumnSelection(
+      before, *direction, caret, viewport.line_count(), max_column);
+  viewport.SetColumnSelection(after);
+  viewport.SetBoxSelection(after.anchor, after.cursor);
+  return true;
+}
 
 bool EditorShapingLineOpsSettingEnabled(const KeyInputCoordinator::Operations& operations) {
   if (!operations.get_setting_value) {
@@ -528,6 +573,17 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
   }
   if (event.key == SDLK_TAB && operations_.accept_inline_completion()) {
     return true;
+  }
+
+  if (editable_viewport != nullptr) {
+    if (TryColumnSelectStep(*editable_viewport, event, modifiers)) {
+      operations_.reset_caret_blink();
+      operations_.request_window_redraw();
+      return true;
+    }
+    // Any other editor key ends the gesture, so the next Ctrl+Shift+Alt+Arrow
+    // re-anchors at wherever the caret ended up instead of extending a stale box.
+    editable_viewport->ClearColumnSelection();
   }
 
   switch (event.key) {

@@ -224,6 +224,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/IndentGuides.cpp
   src/editor/RowDecorationBuilder.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
+  src/editor/ColumnSelection.cpp
   src/editor/ShapingActions.cpp
   src/editor/SingleLineEditor.cpp
   src/editor/SingleLineKeyHandler.cpp
@@ -1064,6 +1065,7 @@ add_executable(microide_tests
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellCompareTests.cpp
   tests/WorkspaceFileDropTests.cpp
+  tests/ColumnSelectionTests.cpp
   tests/WorkspaceShellRenderSurfaceTests.cpp
   tests/WorkspaceShellCursorTests.cpp
   tests/WorkspaceShellProjectTests.cpp

@@ -53,6 +53,7 @@ TextViewport::TextViewport(const TextViewport& other)
       language_id_registry_revision_(other.language_id_registry_revision_),
       language_id_valid_(other.language_id_valid_),
       secondary_carets_(other.secondary_carets_),
+      column_selection_(other.column_selection_),
       secondary_caret_positions_cache_(other.secondary_caret_positions_cache_),
       layout_cache_(other.layout_cache_),
       highlight_cache_(other.highlight_cache_),
@@ -113,6 +114,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       language_id_registry_revision_(other.language_id_registry_revision_),
       language_id_valid_(other.language_id_valid_),
       secondary_carets_(std::move(other.secondary_carets_)),
+      column_selection_(other.column_selection_),
       secondary_caret_positions_cache_(std::move(other.secondary_caret_positions_cache_)),
       layout_cache_(std::move(other.layout_cache_)),
       highlight_cache_(std::move(other.highlight_cache_)),
@@ -170,6 +172,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   language_id_registry_revision_ = other.language_id_registry_revision_;
   language_id_valid_ = other.language_id_valid_;
   secondary_carets_ = std::move(other.secondary_carets_);
+  column_selection_ = other.column_selection_;
   secondary_caret_positions_cache_ = std::move(other.secondary_caret_positions_cache_);
   layout_cache_ = std::move(other.layout_cache_);
   highlight_cache_ = std::move(other.highlight_cache_);
@@ -608,6 +611,23 @@ void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
   // Zero-width column carets are the degenerate box selection where both corners
   // share `column`; delegate so the span cap and caret-set construction live once.
   SetBoxSelection(TextPosition{anchor_line, column}, TextPosition{target_line, column});
+}
+
+std::size_t TextViewport::MaxLineLengthInSpan(std::size_t lo, std::size_t hi) const {
+  if (document_->lines.empty()) {
+    return 0;
+  }
+  const std::size_t last_line = document_->lines.size() - 1;
+  lo = std::min(lo, last_line);
+  hi = std::min(hi, last_line);
+  if (lo > hi) {
+    std::swap(lo, hi);
+  }
+  std::size_t longest = 0;
+  for (std::size_t line = lo; line <= hi; ++line) {
+    longest = std::max(longest, document_->lines.LineLength(line));
+  }
+  return longest;
 }
 
 void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {

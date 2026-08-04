@@ -122,6 +122,7 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceFileDropTests(std::vector<TestCase>& tests);
+void RegisterColumnSelectionTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellRenderSurfaceTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests);
@@ -505,6 +506,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceShellPromptTests(tests);
   microide::tests::RegisterWorkspaceShellCompareTests(tests);
   microide::tests::RegisterWorkspaceFileDropTests(tests);
+  microide::tests::RegisterColumnSelectionTests(tests);
   microide::tests::RegisterWorkspaceShellRenderSurfaceTests(tests);
   microide::tests::RegisterWorkspaceShellCursorTests(tests);
   microide::tests::RegisterWorkspaceShellProjectTests(tests);

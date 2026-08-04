@@ -58,6 +58,8 @@ for what is actually measured, and what is not.
 - Drag and drop from the desktop: a file opens as a tab, a folder opens as the project
 - UTF-8 codepoint boundaries, IME preedit, line-ending detection and preservation
 - Multi-caret editing with position remap, region-stack highlighting, and copy-with-context
+- Column/box selection by mouse (Shift+Alt+drag) and keyboard (Ctrl+Shift+Alt+Arrow), with a
+  virtual column that survives short lines
 - Soft word wrap with hanging indent; long-method fold resolution
 - Syntax highlighting with per-file checkpointed state (fast random jumps in large files)
 - Undo/redo storing line-range patches rather than full-buffer snapshots; word-level undo coalescing
@@ -249,7 +251,7 @@ with the shipped UI. The most honest look is still the running app: build it in 
 Mature enough to use day-to-day on the maintainer's own work:
 
 - editor: open / save / undo / redo, soft wrap, syntax highlighting with checkpointed state,
-  multi-cursor (Alt+click, add-cursor-at-match, and Shift+Alt+drag column/box selection), folding,
+  multi-cursor (Alt+click, add-cursor-at-match, Shift+Alt+drag and Ctrl+Shift+Alt+Arrow column/box selection), folding,
   indent guides, bracket match, auto-close / surround driven by a language contract, snippets,
   save normalization
 - compare and merge tabs: working-tree vs HEAD, vs arbitrary commit, outgoing-base-branch files,
@@ -577,6 +579,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+s` | Save |
 | `Ctrl+Shift+p` | Open command palette |
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
+| `Ctrl+Shift+Alt+arrows` | Column (box) selection |
 | `PageUp` / `PageDown` | Scroll viewport |
 | `d` on sidebar file | Open compare commit picker |
 | `[` / `]` in compare/merge | Previous / next hunk |
