@@ -809,7 +809,15 @@ std::size_t FoldingModel::SyncLineBracketCache(LineSpan lines,
       // Rescan just the replaced lines and splice both arrays. Counts + a flat
       // event array means this is two memmoves and no offset fixup.
       const std::size_t first_event = EventIndexForLine(line_bracket_count_, begin);
-      const std::size_t last_event = EventIndexForLine(line_bracket_count_, cached_end);
+      // Derived from `first_event`, not walked from 0 again. Both are prefix sums
+      // over the same array and `begin <= cached_end`, so the second index is the
+      // first plus the counts of the replaced window — which is the edit, usually
+      // one or two lines. The second full walk cost as much as the first: on the
+      // 50k fixture a mid-file edit paid two 25,000-iteration passes per keystroke.
+      std::size_t last_event = first_event;
+      for (std::size_t line = begin; line < cached_end; ++line) {
+        last_event += line_bracket_count_[line];
+      }
       bracket_event_scratch_.clear();
       bracket_count_scratch_.clear();
       for (std::size_t line = begin; line < current_end; ++line) {
