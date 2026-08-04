@@ -7,6 +7,7 @@
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
+#include "workspace/WorkspaceFileDrop.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
 namespace microide::workspace {
@@ -241,6 +242,30 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {
                 return shell->MakeKeyInputCoordinator().HandleKeyDown(event);
+              },
+          .handle_file_drop =
+              [shell](const char* dropped_path) {
+                if (dropped_path == nullptr) {
+                  return false;
+                }
+                // What a drop means is decided in WorkspaceFileDrop.h and executed
+                // through the two-call port below, so the shell gains no member and
+                // the behaviour is testable without an SDL event or a window.
+                const FileDropRequest request = ResolveFileDrop(
+                    std::filesystem::path(dropped_path),
+                    !shell->context_.current_project_state.root.empty());
+                return ApplyFileDrop(
+                    request,
+                    FileDropOperations{
+                        .open_project =
+                            [shell](const std::filesystem::path& root) {
+                              return shell->OpenProjectTab(root, true, true);
+                            },
+                        .open_file =
+                            [shell](const std::filesystem::path& path) {
+                              shell->OpenFile(path);
+                            },
+                    });
               },
       });
 }

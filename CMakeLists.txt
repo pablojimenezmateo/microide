@@ -402,6 +402,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/actions/WorkspaceActionServicesContextFactory.cpp
   src/workspace/actions/WorkspaceActionRequests.cpp
   src/workspace/WorkspaceCommandParsing.cpp
+  src/workspace/WorkspaceFileDrop.cpp
   src/workspace/control/ControlChannelService.cpp
   src/workspace/control/ControlClient.cpp
   src/workspace/control/ControlProtocol.cpp
@@ -1062,6 +1063,7 @@ add_executable(microide_tests
   tests/WorkspaceShellPluginTests.cpp
   tests/WorkspaceShellPromptTests.cpp
   tests/WorkspaceShellCompareTests.cpp
+  tests/WorkspaceFileDropTests.cpp
   tests/WorkspaceShellRenderSurfaceTests.cpp
   tests/WorkspaceShellCursorTests.cpp
   tests/WorkspaceShellProjectTests.cpp

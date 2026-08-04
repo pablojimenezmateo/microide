@@ -172,6 +172,16 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::TextInput");
         return finish(operations_.handle_text_input(event.text));
       }
+    case SDL_EVENT_DROP_FILE:
+      {
+        util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::DropFile");
+        if (!operations_.handle_file_drop) {
+          return finish(false);
+        }
+        // SDL owns event.drop.data and frees it after dispatch, so the handler
+        // must copy anything it keeps. It does (into a std::filesystem::path).
+        return finish(operations_.handle_file_drop(event.drop.data));
+      }
     case SDL_EVENT_WINDOW_MOUSE_LEAVE:
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowMouseLeave");

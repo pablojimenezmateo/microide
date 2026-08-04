@@ -55,6 +55,7 @@ for what is actually measured, and what is not.
 
 ### Editing
 - Multi-project tabs, file tabs, split editor groups, deferred-commit tab drag with ghost
+- Drag and drop from the desktop: a file opens as a tab, a folder opens as the project
 - UTF-8 codepoint boundaries, IME preedit, line-ending detection and preservation
 - Multi-caret editing with position remap, region-stack highlighting, and copy-with-context
 - Soft word wrap with hanging indent; long-method fold resolution
@@ -592,6 +593,10 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | Mouse wheel on tab strip | Scroll tab overflow |
 
 Mouse: click to focus/open, drag to reorder tabs within their strip, wheel to scroll editor/sidebar/terminal.
+
+Drag and drop: drop a file onto the window to open it as a tab, or a folder to open
+it as the project. Dropping a file when no project is open opens its parent folder
+as the project first, so a drop onto the welcome screen works.
 
 Right-click in editor: **Copy with Context** (copies `relative/path:line` + selection).  
 Right-click terminal tab: **Copy Last Command and Output**.
