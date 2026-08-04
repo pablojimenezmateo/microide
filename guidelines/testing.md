@@ -35,8 +35,26 @@ tools/run-checks.sh asan    # -> /tmp/microide-asan.log
 tools/run-checks.sh ubsan   # -> /tmp/microide-ubsan.log
 tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log
 tools/run-checks.sh perf-tests  # -> /tmp/microide-perf-tests.log (allocation counting armed)
+tools/run-checks.sh perf-canary # -> /tmp/microide-perf-canary.log (proves the perf gate can fail)
+tools/run-checks.sh clang-build # -> /tmp/microide-clang-build.log (2nd compiler, warnings-as-errors)
 tools/run-checks.sh all
 ```
+
+`clang-build` is the only lane that compiles the whole tree with clang and the only
+one that sets `MICROIDE_WARNINGS_AS_ERRORS=ON`. Everything else uses GCC — the
+sanitizer presets set no compiler — and `coverage` builds only `microide_tests`,
+so `src/app/main.cpp`, `microide_perf` and the three bench binaries had a single
+compiler between them. Run it after touching anything the default flow does not
+build, and after adding a source to a curated target list.
+
+`perf-canary` answers the question the rest of the perf lane cannot: *if the
+product got slower, would the harness say so?* It runs `perf_gate_canary` clean
+(must pass) and again inflated 4x (must **fail**), and reports loudly if the
+inflated run passes — that would mean every baseline in `tests/perf/baselines/` is
+unenforced. `PerfBaselineTests` covers the comparison arithmetic with hand-written
+numbers; this covers the pipeline that feeds it. Same reasoning as the
+positive-control fixtures on the architecture lint: a check that can only go green
+is not evidence. See `dev-docs/project/validation-traps.md`.
 
 The default `tests` target leaves `MICROIDE_PERF_HARNESS_BUILD` OFF, which is what
 arms the counting `operator new`/`delete`. Every `#if MICROIDE_PERF_HARNESS_BUILD`

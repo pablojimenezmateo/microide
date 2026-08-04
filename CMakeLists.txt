@@ -665,9 +665,16 @@ endif()
 # noise there.
 #
 # -Wduplicated-cond is GCC-only; clang rejects the flag with
-# -Wunknown-warning-option, which -Werror would turn into a hard build failure —
-# and the sanitizer presets build with clang. Keep the GCC-only flags behind the
-# compiler check; -Wmissing-declarations exists in both.
+# -Wunknown-warning-option, which -Werror would turn into a hard build failure.
+# Keep the GCC-only flags behind the compiler check; -Wmissing-declarations
+# exists in both.
+#
+# The clang lanes this guard protects are `run-checks.sh coverage` and, since it
+# was added, `run-checks.sh clang-build` — which is also the only lane that sets
+# MICROIDE_WARNINGS_AS_ERRORS=ON, so it is the only place -Werror can bite. NOT
+# the sanitizer presets: an earlier version of this comment said they build with
+# clang and they do not. CMakePresets.json sets no compiler for asan/ubsan/tsan,
+# so all three use the default /usr/bin/c++ (GCC).
 set(MICROIDE_EXTRA_WARNINGS -Wmissing-declarations)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   list(APPEND MICROIDE_EXTRA_WARNINGS -Wduplicated-cond)
@@ -1339,6 +1346,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/TechDebtCoveragePerfScenarios.cpp
     tests/perf/SyntaxHighlightPerfScenarios.cpp
     tests/perf/PluginCapPerfScenarios.cpp
+    tests/perf/PerfGateCanaryScenario.cpp
     tests/perf/PerfMain.cpp
   )
 

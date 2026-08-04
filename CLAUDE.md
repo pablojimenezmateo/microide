@@ -118,8 +118,21 @@ tools/run-checks.sh asan    # -> /tmp/microide-asan.log
 tools/run-checks.sh ubsan   # -> /tmp/microide-ubsan.log
 tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log  (no sudo needed; see below)
 tools/run-checks.sh perf-tests  # -> /tmp/microide-perf-tests.log (allocation counting armed)
+tools/run-checks.sh perf-canary # -> /tmp/microide-perf-canary.log (proves the perf gate can fail)
+tools/run-checks.sh clang-build # -> /tmp/microide-clang-build.log (2nd compiler, warnings-as-errors)
 tools/run-checks.sh all     # all four in sequence
 ```
+
+`clang-build` is the only lane that compiles the whole tree with clang and the only
+one that sets `MICROIDE_WARNINGS_AS_ERRORS=ON`. Every other lane is GCC (the
+sanitizer presets set no compiler), and `coverage` builds only `microide_tests` —
+so `src/app/main.cpp`, `microide_perf` and the three bench binaries are covered by
+nothing else. Run it after adding a source to a curated target list.
+
+`perf-canary` is a vacuity probe for the perf gate: it runs `perf_gate_canary`
+clean (must pass) and inflated 4x (must **fail**), so a gate that has stopped
+gating is loud instead of green. See `dev-docs/project/validation-traps.md`
+§ Perf-Gate Vacuity.
 
 The default `tests` target leaves `MICROIDE_PERF_HARNESS_BUILD` OFF, which is what
 arms the counting `operator new`/`delete`. Every `#if MICROIDE_PERF_HARNESS_BUILD`

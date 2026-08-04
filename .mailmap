@@ -1,0 +1,18 @@
+# Canonical author identities.
+#
+# One person committed under five name/email pairs across three addresses, so
+# `git shortlog -sn`, `git log --author=`, and every contribution graph split the
+# same author into five. This file collapses them; it changes reporting only, not
+# the commits themselves.
+#
+# Format: <canonical name> <canonical email> <name as committed> <email as committed>
+# The canonical pair matches the repository's configured user.name/user.email.
+
+Pablo Jimenez Mateo <pablojimenezmateo@gmail.com> <gef3233@gmail.com>
+# Retired address (last used 2026-05-29). The entry stays because it is what
+# retires it: deleting the line does not remove the address from the repository,
+# it un-maps 588 commits and they display under it again.
+Pablo Jimenez Mateo <pablojimenezmateo@gmail.com> <pablo@heydolfin.com>
+Pablo Jimenez Mateo <pablojimenezmateo@gmail.com> Pablo <pablojimenezmateo@gmail.com>
+Pablo Jimenez Mateo <pablojimenezmateo@gmail.com> pablo <gef3233@gmail.com>
+Pablo Jimenez Mateo <pablojimenezmateo@gmail.com> Pablo Jiménez Mateo <gef3233@gmail.com>

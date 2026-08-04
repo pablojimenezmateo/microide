@@ -249,6 +249,129 @@ check_perf_tests() {
   return $rc
 }
 
+# Second-compiler build gate.
+#
+# Two blind spots met here, and both were real:
+#
+# 1. No CI lane compiled the production tree with clang. The `tests`, `sanitizers`
+#    (all three presets) and `perf-tests` lanes all use the default /usr/bin/c++,
+#    i.e. GCC — the presets set no compiler, despite a comment in CMakeLists.txt
+#    claiming otherwise. `coverage` does use clang++, but it builds only
+#    microide_tests, and `fuzz-smoke` installs clang to build twelve fuzz targets
+#    that list explicit sources instead of linking microide_core. So nothing built
+#    src/app/main.cpp, microide_perf, or the three bench binaries with clang, and a
+#    whole-tree clang compile break has reached main before.
+#
+# 2. MICROIDE_WARNINGS_AS_ERRORS defaults to OFF and every preset pins it OFF, so
+#    no automated lane treated a warning as an error. The extra-warning ratchet in
+#    CMakeLists.txt (-Wmissing-declarations, -Wduplicated-cond) documents that each
+#    flag found a real defect and that the tree is clean of them — but nothing
+#    enforced staying clean. A ratchet with no pawl.
+#
+# This lane closes both: clang, warnings-as-errors, and the DEFAULT target so the
+# curated-source binaries (microide_perf and the benches, which no other flow
+# compiles) are covered. PERF_HARNESS_BUILD=ON is what pulls microide_perf in.
+#
+# Compile and link only — GCC already runs the tests, and running them twice buys
+# nothing this lane is for.
+check_clang_build() {
+  local build_dir="build/microide-clang"
+  local log="${LOG_DIR}/microide-clang-build.log"
+
+  if ! command -v clang++ >/dev/null 2>&1; then
+    echo "run-checks: clang++ not found; install it (apt install clang) to run this lane" >&2
+    return 1
+  fi
+
+  # CMAKE_CXX_SCAN_FOR_MODULES=OFF for the same reason the coverage lane sets it:
+  # Ninja otherwise wants clang-scan-deps, which is not in the apt set CI installs.
+  run_logged "$log" bash -c '
+    set -e
+    cmake -S . -B '"$build_dir"' -G Ninja \
+      -DCMAKE_BUILD_TYPE=Debug \
+      -DCMAKE_C_COMPILER=clang \
+      -DCMAKE_CXX_COMPILER=clang++ \
+      -DCMAKE_CXX_SCAN_FOR_MODULES=OFF \
+      -DMICROIDE_PERF_HARNESS_BUILD=ON \
+      -DMICROIDE_WARNINGS_AS_ERRORS=ON
+    cmake --build '"$build_dir"' -j'"$JOBS"'
+  '
+  local rc=$?
+  echo "run-checks: clang-build finished (exit $rc); log at $log"
+  return $rc
+}
+
+# Vacuity probe for the perf gate itself.
+#
+# Everything else in the perf lane answers "is the product still fast?". This
+# answers the prior question: if the product got slower, would the harness say so?
+# Nothing checked that. PerfBaselineTests exercises CompareToBaseline with
+# hand-written numbers, which proves the arithmetic and nothing about the pipeline
+# that feeds it — if measurement, aggregation, baseline loading or the exit code
+# breaks, every scenario reports a clean run and a clean run looks exactly like a
+# real pass. The suite's wall numbers have already been silently wrong twice (the
+# xvfb video lane, hybrid-CPU placement), so this is a demonstrated failure mode,
+# not a hypothetical one.
+#
+# The probe runs tests/perf/PerfGateCanaryScenario.cpp twice and asserts BOTH
+# directions:
+#   1. clean     -> must PASS. A failure here means the committed baseline does not
+#                   describe this machine, so the probe cannot conclude anything.
+#   2. inflated  -> must FAIL. A pass here means the gate has stopped gating.
+#
+# Direction 2 is the whole point: a check that can only go green proves nothing.
+# The canary's allocation count is fixed by its own source (one vector per block),
+# so inflating by N multiplies it by exactly N against a 10% tolerance — the
+# assertion holds on any machine, including a CI runner that is not perf-runner-v1.
+check_perf_canary() {
+  local build_dir="build/microide-perf-make"
+  local log="${LOG_DIR}/microide-perf-canary.log"
+  local iterations="${MICROIDE_PERF_CANARY_ITERATIONS:-10}"
+  # Any factor >= 2 trips the 10% allocation tolerance; 4 leaves no doubt.
+  local inflate="${MICROIDE_PERF_CANARY_FACTOR:-4}"
+
+  run_logged "$log" bash -c '
+    set -e
+    cmake --preset microide-perf
+    cmake --build '"$build_dir"' --target microide_perf -j'"$JOBS"'
+    bin='"$build_dir"'/microide/microide_perf
+
+    echo
+    echo "=== 1/2: clean run of perf_gate_canary (must PASS) ==="
+    if ! "$bin" --scenarios=perf_gate_canary --iterations='"$iterations"'; then
+      echo
+      echo "run-checks: the perf canary FAILED ITS CLEAN RUN." >&2
+      echo "            The committed baseline does not describe this machine, so this" >&2
+      echo "            probe cannot tell you whether the gate works. Re-record with:" >&2
+      echo "              microide_perf --scenarios=perf_gate_canary --update-baseline \\" >&2
+      echo "                --reference-runner=perf-runner-v1" >&2
+      echo "            (only on the reference runner — see dev-docs/performance/)." >&2
+      exit 1
+    fi
+
+    echo
+    echo "=== 2/2: inflated run at '"$inflate"'x (must FAIL) ==="
+    if MICROIDE_PERF_CANARY_INFLATE='"$inflate"' \
+         "$bin" --scenarios=perf_gate_canary --iterations='"$iterations"'; then
+      echo
+      echo "run-checks: THE PERF GATE IS VACUOUS." >&2
+      echo "            perf_gate_canary was inflated '"$inflate"'x — that is '"$inflate"'x the" >&2
+      echo "            allocations, against a 10% tolerance — and the gate still passed." >&2
+      echo "            Every perf baseline in tests/perf/baselines/ is currently" >&2
+      echo "            unenforced: a green perf run is not evidence until this is fixed." >&2
+      echo "            Look at measurement, aggregation, baseline loading, and the" >&2
+      echo "            exit code in tests/perf/PerfMain.cpp." >&2
+      exit 1
+    fi
+
+    echo
+    echo "=== perf gate canary: clean run passed, inflated run was caught ==="
+  '
+  local rc=$?
+  echo "run-checks: perf-canary finished (exit $rc); log at $log"
+  return $rc
+}
+
 # Line-coverage gate with per-area floors.
 #
 # This is the one measurement discipline the repo did not have. Wall time,
@@ -295,7 +418,9 @@ check_coverage() {
 }
 
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|coverage|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|clang-build|coverage|all}" >&2
+  echo "       tools/run-checks.sh clang-build   # whole tree, clang, warnings-as-errors" >&2
+  echo "       tools/run-checks.sh perf-canary   # prove the perf gate can still fail" >&2
   echo "       tools/run-checks.sh coverage      # line coverage + per-area floors" >&2
   echo "       tools/run-checks.sh coverage --update-floors  # re-record the floors" >&2
   echo "       tools/run-checks.sh perf-tests    # tests with allocation counting armed" >&2
@@ -313,10 +438,17 @@ main() {
     release) check_release ;;
     fuzz)  check_fuzz "${2:-run}" ;;
     perf-tests) check_perf_tests ;;
+    perf-canary) check_perf_canary ;;
+    clang-build) check_clang_build ;;
     coverage) check_coverage "${2:-}" ;;
     all)
       local overall=0
       check_tests            || overall=1
+      # Before the sanitizers, which are the expensive part: a warning or a
+      # clang-only compile break should surface in minutes, not after three
+      # sanitizer builds.
+      check_clang_build      || overall=1
+      check_perf_canary      || overall=1
       check_sanitizer asan   || overall=1
       check_sanitizer ubsan  || overall=1
       check_sanitizer tsan   || overall=1
