@@ -33,6 +33,11 @@ namespace microide::util {
   X(EditorRefreshEncodingCalls, "editor.refresh_encoding_calls")                                \
   X(EditorInvalidateDerivedCachesCalls, "editor.invalidate_derived_caches_calls")               \
   X(EditorInvalidateDerivedCachesLines, "editor.invalidate_derived_caches_lines")               \
+  X(EditorFoldEventIndexLinesWalked, "editor.fold_event_index_lines_walked")                    \
+  X(EditorVisibleLineLayoutQueries, "editor.visible_line_layout_queries")                        \
+  X(EditorVisibleLineLayoutHits, "editor.visible_line_layout_hits")                              \
+  X(EditorVisibleLineLayoutEvictions, "editor.visible_line_layout_evictions")                    \
+  X(EditorVisibleLineLayoutRecycled, "editor.visible_line_layout_recycled")                      \
   X(EditorContentRevisionBumps, "editor.content_revision_bumps")                                \
   X(EditorSyntaxRevisionBumps, "editor.syntax_revision_bumps")                                  \
   X(EditorLayoutShapeRevisionBumps, "editor.layout_shape_revision_bumps")                       \

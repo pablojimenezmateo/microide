@@ -15,6 +15,7 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::size_t visible_columns,
                                                               std::size_t tab_size) const {
   ++visible_line_queries_;
+  util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutQueries);
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
       .horizontal_scroll = horizontal_scroll,
@@ -23,18 +24,38 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   };
   if (const auto it = visible_line_cache_.find(cache_key); it != visible_line_cache_.end()) {
     ++visible_line_hits_;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutHits);
     return it->second;
   }
-  LayoutLine layout =
-      TextLayout::BuildVisibleLine(lines[line_index], horizontal_scroll, visible_columns, tab_size);
   if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
     // This is the only point that can invalidate a reference previously handed
     // out by this function. Counted so the "a frame never evicts what it is
     // still reading" invariant is measurable rather than merely asserted.
     ++visible_line_evictions_;
-    visible_line_cache_.erase(visible_line_cache_order_.front());
+    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutEvictions);
+    // Recycle the evicted entry rather than destroying it and building a fresh
+    // one. Scrolling through fresh content misses on EVERY row, so this path is
+    // the steady state there, and erase()+emplace() paid four allocations per row
+    // — the map node plus the LayoutLine's text, source_columns and text_offsets
+    // (~3.4 KB for a 200-column window) — only to free the identical set when the
+    // entry reached the front of the LRU a few hundred rows later. `extract`
+    // hands back the node with its buffers intact; rewriting the key and
+    // reinserting reuses all four.
+    auto node = visible_line_cache_.extract(visible_line_cache_order_.front());
     visible_line_cache_order_.pop_front();
+    if (!node.empty()) {
+      TextLayout::BuildVisibleLineInto(lines[line_index], horizontal_scroll, visible_columns,
+                                       tab_size, node.mapped());
+      node.key() = cache_key;
+      util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
+      const auto result = visible_line_cache_.insert(std::move(node));
+      visible_line_cache_order_.push_back(cache_key);
+      return result.position->second;
+    }
   }
+  LayoutLine layout;
+  TextLayout::BuildVisibleLineInto(lines[line_index], horizontal_scroll, visible_columns, tab_size,
+                                   layout);
   const auto [it, _] = visible_line_cache_.emplace(cache_key, std::move(layout));
   visible_line_cache_order_.push_back(cache_key);
   return it->second;

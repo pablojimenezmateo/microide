@@ -1,5 +1,6 @@
 #include "editor/FoldingModel.h"
 
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
@@ -285,8 +286,17 @@ void MatchBracketEvents(const std::vector<CachedBracket>& events,
 }
 
 // Flat-array index of the first event on `line`.
+//
+// O(line): a prefix sum from 0 over the per-line event counts. A mid-file edit
+// resolves this at the edit line, so on a 50k-line file it is a 25,000-iteration
+// walk, and the recompute wants it two or three times per keystroke. Scoped so
+// its share of the fold resync is visible rather than hidden in the caller's self
+// time -- it was the blind spot that made SyncLineBracketCache look like a scan
+// cost when most of it is this walk.
 std::size_t EventIndexForLine(const std::vector<std::uint32_t>& counts, std::size_t line) {
+  util::PerformanceTrace::Scope perf_scope("FoldingModel::EventIndexForLine");
   const std::size_t end = std::min(line, counts.size());
+  util::AddPerformanceCounter(util::PerfCounterId::EditorFoldEventIndexLinesWalked, end);
   std::size_t index = 0;
   for (std::size_t i = 0; i < end; ++i) {
     index += counts[i];

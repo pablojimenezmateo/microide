@@ -141,10 +141,26 @@ LayoutLine TextLayout::BuildVisibleLine(std::string_view line,
                                         std::size_t visible_columns,
                                         std::size_t tab_size) {
   LayoutLine result;
+  BuildVisibleLineInto(line, horizontal_scroll, visible_columns, tab_size, result);
+  return result;
+}
+
+void TextLayout::BuildVisibleLineInto(std::string_view line,
+                                      std::size_t horizontal_scroll,
+                                      std::size_t visible_columns,
+                                      std::size_t tab_size,
+                                      LayoutLine& result) {
+  // `clear()` keeps each buffer's capacity, which is the whole point: a caller
+  // recycling an evicted cache entry must not pay three allocations to refill it.
+  result.text.clear();
+  result.source_columns.clear();
+  result.text_offsets.clear();
+  result.caret_column = 0;
+  result.caret_visible = false;
   result.visual_columns = VisualColumnForTextColumn(line, line.size(), tab_size);
 
   if (visible_columns == 0) {
-    return result;
+    return;
   }
 
   // The append loop emits at most `visible_columns` cells (it breaks once a cell
@@ -186,8 +202,6 @@ LayoutLine TextLayout::BuildVisibleLine(std::string_view line,
       break;
     }
   }
-
-  return result;
 }
 
 std::size_t TextLayout::VisualColumnFromLayoutClipped(const LayoutLine& layout,

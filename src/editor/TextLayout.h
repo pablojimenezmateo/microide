@@ -28,6 +28,16 @@ class TextLayout {
   static std::size_t ClampTextColumn(std::string_view line, std::size_t text_column);
   static std::size_t PreviousTextColumn(std::string_view line, std::size_t text_column);
   static std::size_t NextTextColumn(std::string_view line, std::size_t text_column);
+  // Builds into a caller-owned LayoutLine, reusing its `text`, `source_columns`
+  // and `text_offsets` capacity. Scrolling through fresh content misses the
+  // visible-line cache on every row, and each miss otherwise allocates all three
+  // buffers (~3.4 KB for a 200-column window) and then frees them again a few
+  // hundred rows later when the entry is evicted.
+  static void BuildVisibleLineInto(std::string_view line,
+                                   std::size_t horizontal_scroll,
+                                   std::size_t visible_columns,
+                                   std::size_t tab_size,
+                                   LayoutLine& out);
   static LayoutLine BuildVisibleLine(std::string_view line,
                                      std::size_t horizontal_scroll,
                                      std::size_t visible_columns,

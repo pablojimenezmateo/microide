@@ -215,6 +215,55 @@ void TestTextLayoutCacheVisibleWorkingSetDoesNotEvict() {
          "no-eviction assertion above proves nothing");
 }
 
+// Regression: an eviction now RECYCLES the evicted map node — its LayoutLine keeps
+// its text/source_columns/text_offsets buffers and is rebuilt in place — so that
+// scrolling through fresh content stops paying four allocations per row. A reuse
+// that forgot to reset any part of the recycled LayoutLine would serve the
+// previous line's content under the new key, which the caller cannot detect.
+// Every recycled entry must therefore be byte-identical to a freshly built one.
+void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
+  std::vector<std::string> lines;
+  lines.reserve(600);
+  for (std::size_t i = 0; i < 600; ++i) {
+    // Deliberately varied: different lengths, a tab, and a multibyte glyph, so a
+    // stale buffer tail or a stale visual_columns would show up.
+    lines.push_back(std::string(i % 37, 'x') + "\tline-" + std::to_string(i) + " \xc3\xa9 end");
+  }
+  microide::editor::TextLayoutCache cache;
+
+  // Walk far past the cache limit so most of these are served by the recycle path.
+  cache.ResetStats();
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    const microide::editor::LayoutLine& cached =
+        cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize);
+    const microide::editor::LayoutLine fresh =
+        microide::editor::TextLayout::BuildVisibleLine(lines[i], 0, 80, kTabSize);
+    Expect(cached.text == fresh.text, "a recycled entry must hold the new line's visible text");
+    Expect(cached.source_columns == fresh.source_columns,
+           "a recycled entry must hold the new line's source columns");
+    Expect(cached.text_offsets == fresh.text_offsets,
+           "a recycled entry must hold the new line's text offsets");
+    Expect(cached.visual_columns == fresh.visual_columns,
+           "a recycled entry must hold the new line's visual width");
+    Expect(!cached.caret_visible && cached.caret_column == 0,
+           "a recycled entry must not carry the evicted line's caret state");
+  }
+  Expect(cache.stats().visible_line_evictions > 0,
+         "the walk must actually evict, or the recycle path was never exercised");
+
+  // Same content at a horizontal scroll: the recycled buffers are longer than the
+  // window here, so a missing clear would leave a stale tail behind.
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    const microide::editor::LayoutLine& cached =
+        cache.VisibleLineLayoutRefCached(lines, i, 20, 16, kTabSize);
+    const microide::editor::LayoutLine fresh =
+        microide::editor::TextLayout::BuildVisibleLine(lines[i], 20, 16, kTabSize);
+    Expect(cached.text == fresh.text, "a recycled entry must not keep a stale text tail");
+    Expect(cached.text_offsets == fresh.text_offsets,
+           "a recycled entry must not keep stale text offsets");
+  }
+}
+
 void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
   const std::vector<std::string> lines = {"alpha alpha", "bravo bravo", "charlie charlie"};
   microide::editor::TextLayoutCache cache;
@@ -256,6 +305,8 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
 void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextLayoutCache/InvalidateAllClearsVisibleLineCache",
           TestTextLayoutCacheInvalidateAllClearsVisibleLineCache);
+  AddTest(tests, "TextLayout/RecycledEntriesMatchFreshBuilds",
+          TestTextLayoutCacheRecycledEntriesMatchFreshBuilds);
   AddTest(tests, "TextLayout/VisibleWorkingSetDoesNotEvict",
           TestTextLayoutCacheVisibleWorkingSetDoesNotEvict);
   AddTest(tests, "TextLayout/AdvanceVisualColumnTabStops", TestAdvanceVisualColumnTabStops);
