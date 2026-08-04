@@ -269,6 +269,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                             theme_.text_secondary,
                             TruncateLabelView(compare_tab->right_label, surface.right_width - 8.0f));
 
+  {
+  // The compare surface paints two side panes here; the row loop was the whole of
+  // RenderCompareSurface's 74 us-per-frame self time and had no scope of its own,
+  // exactly as the merge surface's did.
+  util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderCompareSurface::SideRows");
   for (int row = 0; row < surface.visible_rows; ++row) {
     const int presentation_index = compare_tab->scroll_row + row;
     if (presentation_index < 0 ||
@@ -635,6 +640,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       }
     }
     draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
+  }
   }
 }
 
