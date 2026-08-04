@@ -34,6 +34,7 @@ For the authoritative in-scope / non-goal list see `openspec/specs/product-visio
 - [Plugin trust warning](#security--trust-model)
 - [Performance methodology summary](#performance--benchmark-methodology)
 - [Deeper docs](#companion-docs)
+- [Contributing](CONTRIBUTING.md)
 
 ## About
 
