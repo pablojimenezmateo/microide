@@ -150,6 +150,6 @@ visibility, or merge resolution.** The only size-driven behavior is diff
 ## Related Docs
 
 - [`openspec/specs/diff-merge-editor/spec.md`](../../openspec/specs/diff-merge-editor/spec.md) — authoritative requirements
-- [`ROADMAP.md`](../../ROADMAP.md) — product priority for this wedge
+- [`dev-docs/project/active-work.md`](active-work.md) — product priority for this wedge
 - [`dev-docs/performance/perf-harness.md`](../performance/perf-harness.md) — regression oracle
 - [`dev-docs/design/text-surface-unification.md`](../design/text-surface-unification.md) — text-input contract (orthogonal but shared editor surface)
