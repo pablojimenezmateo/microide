@@ -425,16 +425,21 @@ def _percentile(values: list[float], p: float) -> float:
 
 
 def _recompute_metrics(iterations: list[dict]) -> dict[str, float]:
-    wall_ms = [float(it["wall_ms"]) for it in iterations if "wall_ms" in it]
-    allocations = [float(it["allocations"]) for it in iterations if "allocations" in it]
-    return {
-        "p50_wall_ms": _percentile(wall_ms, 0.50),
-        "p95_wall_ms": _percentile(wall_ms, 0.95),
-        "max_wall_ms": max(wall_ms) if wall_ms else 0.0,
-        "p50_allocations": _percentile(allocations, 0.50),
-        "p95_allocations": _percentile(allocations, 0.95),
-        "max_allocations": max(allocations) if allocations else 0.0,
-    }
+    def series(key: str) -> list[float]:
+        return [float(it[key]) for it in iterations if key in it]
+
+    out: dict[str, float] = {}
+    # cpu_ms and rss_growth_bytes are absent from reports produced before those
+    # metrics existed; emitting a 0.0 for them would read as a huge improvement in
+    # the comparison table rather than "not measured".
+    for key in ("wall_ms", "allocations", "cpu_ms", "rss_growth_bytes"):
+        values = series(key)
+        if not values:
+            continue
+        out[f"p50_{key}"] = _percentile(values, 0.50)
+        out[f"p95_{key}"] = _percentile(values, 0.95)
+        out[f"max_{key}"] = max(values)
+    return out
 
 
 def merge_side_reports(side: SideRun, json_out: Path) -> None:
@@ -479,6 +484,16 @@ METRICS: list[tuple[str, str]] = [
     ("p50_allocations", ""),
     ("p95_allocations", ""),
     ("max_allocations", ""),
+    # CPU time sums every thread, so it is the metric that sees work moved onto the
+    # background executor -- which wall time cannot. Resident growth is per-iteration
+    # delta, not absolute RSS: the harness runs everything in one process, so
+    # absolute RSS is dominated by whatever ran before.
+    ("p50_cpu_ms", "ms"),
+    ("p95_cpu_ms", "ms"),
+    ("max_cpu_ms", "ms"),
+    ("p50_rss_growth_bytes", "bytes"),
+    ("p95_rss_growth_bytes", "bytes"),
+    ("max_rss_growth_bytes", "bytes"),
 ]
 
 

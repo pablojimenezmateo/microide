@@ -201,6 +201,128 @@ void TestPerfRecipesDoNotPinAVideoDriver() {
   Expect(invocations_seen >= 2, "perf recipes should reference microide_perf in both files");
 }
 
+
+// The 93 baselines recorded before cpu/rss existed carry neither metric. Loading
+// one must mark them ungated rather than comparing the measured value against an
+// implicit 0.0, which would fail every scenario the moment the metrics shipped.
+void TestPerfBaselineLeavesCpuAndRssUngatedWhenAbsent() {
+  TemporaryDirectory temp;
+  const std::filesystem::path path = temp.path() / "pre_cpu_rss_baseline.json";
+  WriteFile(path,
+            R"({"scenario":"legacy","metrics":{"p50_wall_ms":10,"p95_wall_ms":10,)"
+            R"("max_wall_ms":10,"p50_allocations":10,"p95_allocations":10,"max_allocations":10},)"
+            R"("tolerances":{"p50_percent":30,"p95_percent":60,"max_percent":90}})");
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value(), "a baseline without cpu/rss metrics should still load");
+  Expect(!loaded->has_cpu_metrics, "absent cpu metrics should be reported as not recorded");
+  Expect(!loaded->has_rss_metrics, "absent rss metrics should be reported as not recorded");
+
+  // And the comparison must not invent cpu/rss rows for it.
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "legacy";
+  aggregate.metrics = perf::MetricSet{
+      .p50_wall_ms = 10.0, .p95_wall_ms = 10.0, .max_wall_ms = 10.0,
+      .p50_allocations = 10.0, .p95_allocations = 10.0, .max_allocations = 10.0,
+      .p50_cpu_ms = 999.0, .p95_cpu_ms = 999.0, .max_cpu_ms = 999.0,
+      .p50_rss_growth_bytes = 9.0e8, .p95_rss_growth_bytes = 9.0e8,
+      .max_rss_growth_bytes = 9.0e8,
+  };
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(*loaded, aggregate);
+  Expect(comparison.passed,
+         "an ungated baseline must not fail on cpu/rss it never recorded");
+  for (const auto& metric : comparison.metrics) {
+    Expect(metric.metric.find("cpu_ms") == std::string::npos &&
+               metric.metric.find("rss_growth") == std::string::npos,
+           "no cpu/rss row should be produced for a baseline that did not record them");
+  }
+}
+
+// Once a baseline does record them, they gate like any other metric.
+void TestPerfBaselineGatesCpuAndRssWhenRecorded() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.has_cpu_metrics = true;
+  baseline.has_rss_metrics = true;
+  baseline.metrics.p50_cpu_ms = 100.0;
+  baseline.metrics.p95_cpu_ms = 100.0;
+  baseline.metrics.max_cpu_ms = 100.0;
+  baseline.metrics.p50_rss_growth_bytes = 1'000'000.0;
+  baseline.metrics.p95_rss_growth_bytes = 1'000'000.0;
+  baseline.metrics.max_rss_growth_bytes = 1'000'000.0;
+  baseline.tolerances.cpu_p50_percent = 10.0;
+  baseline.tolerances.rss_p50_percent = 25.0;
+
+  // Wall time held constant while CPU doubles: exactly the shape of "the work moved
+  // onto background threads". Wall-only gating calls this neutral.
+  perf::Aggregate cpu_regression;
+  cpu_regression.scenario_name = baseline.scenario_name;
+  cpu_regression.metrics = baseline.metrics;
+  cpu_regression.metrics.p50_cpu_ms = 200.0;
+  Expect(!perf::CompareToBaseline(baseline, cpu_regression).passed,
+         "doubling CPU time at constant wall time must fail the baseline");
+
+  perf::Aggregate rss_regression;
+  rss_regression.scenario_name = baseline.scenario_name;
+  rss_regression.metrics = baseline.metrics;
+  rss_regression.metrics.p50_rss_growth_bytes = 4'000'000.0;
+  Expect(!perf::CompareToBaseline(baseline, rss_regression).passed,
+         "quadrupling resident growth must fail the baseline");
+
+  perf::Aggregate within;
+  within.scenario_name = baseline.scenario_name;
+  within.metrics = baseline.metrics;
+  within.metrics.p50_cpu_ms = 105.0;
+  within.metrics.p50_rss_growth_bytes = 1'100'000.0;
+  Expect(perf::CompareToBaseline(baseline, within).passed,
+         "cpu/rss inside their envelopes should pass");
+}
+
+// A scenario that grows the resident set by essentially nothing has a near-zero
+// baseline, where a percentage envelope collapses and a single page of allocator
+// noise reads as an unbounded regression. Below one page there is no signal.
+void TestPerfBaselineRssNoiseFloorAbsorbsSubPageJitter() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.has_rss_metrics = true;
+  baseline.metrics.p50_rss_growth_bytes = 0.0;
+  baseline.metrics.p95_rss_growth_bytes = 0.0;
+  baseline.metrics.max_rss_growth_bytes = 0.0;
+
+  perf::Aggregate one_page;
+  one_page.scenario_name = baseline.scenario_name;
+  one_page.metrics = baseline.metrics;
+  one_page.metrics.p50_rss_growth_bytes = 4096.0;
+  Expect(perf::CompareToBaseline(baseline, one_page).passed,
+         "a single page of growth over a zero baseline must not be a regression");
+
+  perf::Aggregate real_growth;
+  real_growth.scenario_name = baseline.scenario_name;
+  real_growth.metrics = baseline.metrics;
+  real_growth.metrics.p50_rss_growth_bytes = 64.0 * 1024.0 * 1024.0;
+  Expect(!perf::CompareToBaseline(baseline, real_growth).passed,
+         "64 MiB of growth over a zero baseline is a real regression, not noise");
+}
+
+// cpu/rss survive a Save -> Load round trip and come back gated.
+void TestPerfBaselineCpuAndRssRoundTrip() {
+  TemporaryDirectory temp;
+  const std::filesystem::path path = temp.path() / "cpu_rss_roundtrip.json";
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.metrics.p50_cpu_ms = 12.5;
+  baseline.metrics.p95_cpu_ms = 18.5;
+  baseline.metrics.max_cpu_ms = 24.5;
+  baseline.metrics.p50_rss_growth_bytes = 131072.0;
+  baseline.metrics.p95_rss_growth_bytes = 262144.0;
+  baseline.metrics.max_rss_growth_bytes = 524288.0;
+  Expect(perf::SaveBaseline(path, baseline), "saving a baseline with cpu/rss should succeed");
+
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value(), "a saved cpu/rss baseline should load");
+  Expect(loaded->has_cpu_metrics && loaded->has_rss_metrics,
+         "a round-tripped baseline should come back gated");
+  Expect(loaded->metrics.p50_cpu_ms == 12.5, "cpu p50 should survive the round trip");
+  Expect(loaded->metrics.max_rss_growth_bytes == 524288.0,
+         "rss max should survive the round trip");
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
@@ -213,6 +335,13 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PerfBaseline/LoadDefaultsAllocationToleranceToWall",
           TestPerfBaselineLoadDefaultsAllocationToleranceToWall);
   AddTest(tests, "PerfBaseline/ToleranceRoundTrip", TestPerfBaselineToleranceRoundTrip);
+  AddTest(tests, "PerfBaseline/LeavesCpuAndRssUngatedWhenAbsent",
+          TestPerfBaselineLeavesCpuAndRssUngatedWhenAbsent);
+  AddTest(tests, "PerfBaseline/GatesCpuAndRssWhenRecorded",
+          TestPerfBaselineGatesCpuAndRssWhenRecorded);
+  AddTest(tests, "PerfBaseline/RssNoiseFloorAbsorbsSubPageJitter",
+          TestPerfBaselineRssNoiseFloorAbsorbsSubPageJitter);
+  AddTest(tests, "PerfBaseline/CpuAndRssRoundTrip", TestPerfBaselineCpuAndRssRoundTrip);
 }
 
 }  // namespace microide::tests

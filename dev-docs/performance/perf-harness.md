@@ -67,6 +67,49 @@ cancels because both sides pay it.
 Shared tolerance constants live in `tolerance::` in `tests/perf/PerfHarness.h`; prefer
 them over fresh numbers.
 
+## CPU Time And Resident Growth
+
+Wall time and allocation counts were the only two gated metrics for the first 93
+baselines, which left priorities 3 (low CPU) and 4 (low memory) stated but not
+measured. Two more metrics close that:
+
+- **`cpu_ms`** — process CPU time, user + system, from `getrusage(RUSAGE_SELF)`,
+  which sums **every thread**. This is the metric wall time structurally cannot
+  provide: a change that holds its latency by moving work onto the background
+  executor is neutral on wall and a large regression here. Tolerances default to
+  the wall envelopes, since CPU carries the same scheduler jitter.
+- **`rss_growth_bytes`** — resident-set delta across one iteration, from
+  `/proc/self/statm`. Deliberately the delta and not absolute RSS: the harness runs
+  every iteration of every scenario in one process, so absolute RSS is dominated by
+  whatever ran earlier and is not attributable to the scenario. Growth is. Steadier
+  than wall but not as deterministic as an allocation count (page granularity,
+  allocator arena behaviour), so tolerances sit between the two: **25 / 35 / 60 %**,
+  with a one-page (4 KiB) noise floor so a near-zero baseline cannot turn a single
+  page of jitter into an unbounded regression.
+
+This is separate from the existing hard RSS ceiling in `AdvisoryPerfScenarios.cpp`
+(256 MiB idle, 160 MiB growth). That is a ceiling; these are ratchets. A change
+taking idle RSS from 60 MB to 250 MB passed the ceiling silently and now does not.
+
+**Existing baselines are not gated on them.** A baseline that predates these metrics
+records neither, and `LoadBaseline` marks it ungated rather than comparing against
+an implicit `0.0` — which would have failed all 93 scenarios the moment the metrics
+shipped. They start gating when the baseline is next re-recorded on the reference
+runner, which is a deliberate act like any other rebaseline.
+
+First measurements worth knowing (advisory lane, 5 iterations):
+
+| scenario | wall p50 | cpu p50 |
+| --- | ---: | ---: |
+| `typing_large_file` | 2.02 ms | **3.97 ms** |
+| `scroll_large_file` | 1.71 ms | **3.12 ms** |
+| `repo_open_rss_idle` | 503.79 ms | 5.44 ms |
+
+The first two burn roughly twice their wall time in CPU across threads, which no
+wall-time baseline could ever have shown. The third confirms what its name hides:
+its half-second "wall time" is a soak sleep, not work — read its allocation and CPU
+numbers, not its wall number.
+
 ## Reading A Measurement
 
 Most "regressions" this harness reports are not regressions. The heuristics below

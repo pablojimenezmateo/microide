@@ -1,5 +1,6 @@
 #include "perf/Baseline.h"
 
+#include <algorithm>
 #include <cmath>
 #include <fstream>
 
@@ -7,6 +8,12 @@
 
 namespace microide::tests::perf {
 namespace {
+
+// JsonValue has no IsNumber(), and a metric may be written as either an integer
+// or a double depending on its value, so both count as "the baseline recorded it".
+bool IsNumber(const util::JsonValue& value) {
+  return value.IsInt() || value.IsDouble();
+}
 
 double AllowedDelta(double expected, double tolerance_percent) {
   return std::abs(expected) * (tolerance_percent / 100.0);
@@ -70,6 +77,33 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
       tolerances["alloc_p95_percent"].AsDouble(record.tolerances.p95_percent);
   record.tolerances.alloc_max_percent =
       tolerances["alloc_max_percent"].AsDouble(record.tolerances.max_percent);
+
+  // cpu/rss are gated only when the baseline actually recorded them. Treating an
+  // absent metric as 0.0 would fail every pre-existing baseline on the first run;
+  // treating it as "not recorded" lets the 93 existing files keep working and
+  // start gating when they are next re-recorded on the reference runner.
+  record.has_cpu_metrics = IsNumber(metrics["p50_cpu_ms"]);
+  if (record.has_cpu_metrics) {
+    record.metrics.p50_cpu_ms = metrics["p50_cpu_ms"].AsDouble();
+    record.metrics.p95_cpu_ms = metrics["p95_cpu_ms"].AsDouble();
+    record.metrics.max_cpu_ms = metrics["max_cpu_ms"].AsDouble();
+  }
+  record.has_rss_metrics = IsNumber(metrics["p50_rss_growth_bytes"]);
+  if (record.has_rss_metrics) {
+    record.metrics.p50_rss_growth_bytes = metrics["p50_rss_growth_bytes"].AsDouble();
+    record.metrics.p95_rss_growth_bytes = metrics["p95_rss_growth_bytes"].AsDouble();
+    record.metrics.max_rss_growth_bytes = metrics["max_rss_growth_bytes"].AsDouble();
+  }
+
+  record.tolerances.cpu_p50_percent =
+      tolerances["cpu_p50_percent"].AsDouble(record.tolerances.p50_percent);
+  record.tolerances.cpu_p95_percent =
+      tolerances["cpu_p95_percent"].AsDouble(record.tolerances.p95_percent);
+  record.tolerances.cpu_max_percent =
+      tolerances["cpu_max_percent"].AsDouble(record.tolerances.max_percent);
+  record.tolerances.rss_p50_percent = tolerances["rss_p50_percent"].AsDouble(25.0);
+  record.tolerances.rss_p95_percent = tolerances["rss_p95_percent"].AsDouble(35.0);
+  record.tolerances.rss_max_percent = tolerances["rss_max_percent"].AsDouble(60.0);
   return record;
 }
 
@@ -83,6 +117,12 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"p50_allocations", baseline.metrics.p50_allocations},
       {"p95_allocations", baseline.metrics.p95_allocations},
       {"max_allocations", baseline.metrics.max_allocations},
+      {"p50_cpu_ms", baseline.metrics.p50_cpu_ms},
+      {"p95_cpu_ms", baseline.metrics.p95_cpu_ms},
+      {"max_cpu_ms", baseline.metrics.max_cpu_ms},
+      {"p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes},
+      {"p95_rss_growth_bytes", baseline.metrics.p95_rss_growth_bytes},
+      {"max_rss_growth_bytes", baseline.metrics.max_rss_growth_bytes},
   };
   root["tolerances"] = util::JsonObject{
       {"p50_percent", baseline.tolerances.p50_percent},
@@ -91,6 +131,12 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"alloc_p50_percent", baseline.tolerances.alloc_p50_percent},
       {"alloc_p95_percent", baseline.tolerances.alloc_p95_percent},
       {"alloc_max_percent", baseline.tolerances.alloc_max_percent},
+      {"cpu_p50_percent", baseline.tolerances.cpu_p50_percent},
+      {"cpu_p95_percent", baseline.tolerances.cpu_p95_percent},
+      {"cpu_max_percent", baseline.tolerances.cpu_max_percent},
+      {"rss_p50_percent", baseline.tolerances.rss_p50_percent},
+      {"rss_p95_percent", baseline.tolerances.rss_p95_percent},
+      {"rss_max_percent", baseline.tolerances.rss_max_percent},
   };
   std::ofstream out(path);
   if (!out) {
@@ -115,6 +161,30 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
             aggregate.metrics.p95_allocations, baseline.tolerances.alloc_p95_percent);
   AddMetric(&result, "max_allocations", baseline.metrics.max_allocations,
             aggregate.metrics.max_allocations, baseline.tolerances.alloc_max_percent);
+  if (baseline.has_cpu_metrics) {
+    AddMetric(&result, "p50_cpu_ms", baseline.metrics.p50_cpu_ms, aggregate.metrics.p50_cpu_ms,
+              baseline.tolerances.cpu_p50_percent);
+    AddMetric(&result, "p95_cpu_ms", baseline.metrics.p95_cpu_ms, aggregate.metrics.p95_cpu_ms,
+              baseline.tolerances.cpu_p95_percent);
+    AddMetric(&result, "max_cpu_ms", baseline.metrics.max_cpu_ms, aggregate.metrics.max_cpu_ms,
+              baseline.tolerances.cpu_max_percent);
+  }
+  if (baseline.has_rss_metrics) {
+    // A scenario that grows the resident set by ~nothing has a near-zero baseline,
+    // where a percentage envelope collapses to nothing and one page of noise reads
+    // as an infinite regression. Below one page there is no signal to gate on.
+    constexpr double kRssNoiseFloorBytes = 4096.0;
+    const auto add_rss = [&](std::string_view name, double expected, double actual,
+                             double tolerance_percent) {
+      AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual, tolerance_percent);
+    };
+    add_rss("p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes,
+            aggregate.metrics.p50_rss_growth_bytes, baseline.tolerances.rss_p50_percent);
+    add_rss("p95_rss_growth_bytes", baseline.metrics.p95_rss_growth_bytes,
+            aggregate.metrics.p95_rss_growth_bytes, baseline.tolerances.rss_p95_percent);
+    add_rss("max_rss_growth_bytes", baseline.metrics.max_rss_growth_bytes,
+            aggregate.metrics.max_rss_growth_bytes, baseline.tolerances.rss_max_percent);
+  }
   return result;
 }
 

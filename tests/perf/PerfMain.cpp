@@ -1397,6 +1397,9 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
     iteration_json["frees"] = static_cast<std::int64_t>(iteration.metrics.frees);
     iteration_json["bytes_allocated"] = static_cast<std::int64_t>(iteration.metrics.bytes_allocated);
     iteration_json["bytes_freed"] = static_cast<std::int64_t>(iteration.metrics.bytes_freed);
+    iteration_json["cpu_ms"] = iteration.metrics.cpu_ms;
+    iteration_json["rss_growth_bytes"] =
+        static_cast<std::int64_t>(iteration.metrics.rss_growth_bytes);
     iteration_json["phase_durations_ms"] = std::move(phase_duration_json);
     iteration_json["phase_metrics"] = std::move(phase_metrics_json);
     iteration_json["perf_counters"] = std::move(counters_json);
@@ -1415,6 +1418,12 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
                       {"p50_allocations", aggregate.metrics.p50_allocations},
                       {"p95_allocations", aggregate.metrics.p95_allocations},
                       {"max_allocations", aggregate.metrics.max_allocations},
+                      {"p50_cpu_ms", aggregate.metrics.p50_cpu_ms},
+                      {"p95_cpu_ms", aggregate.metrics.p95_cpu_ms},
+                      {"max_cpu_ms", aggregate.metrics.max_cpu_ms},
+                      {"p50_rss_growth_bytes", aggregate.metrics.p50_rss_growth_bytes},
+                      {"p95_rss_growth_bytes", aggregate.metrics.p95_rss_growth_bytes},
+                      {"max_rss_growth_bytes", aggregate.metrics.max_rss_growth_bytes},
                   }},
       {"iterations", std::move(iterations_json)},
   };

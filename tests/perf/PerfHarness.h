@@ -42,6 +42,18 @@ struct MetricSnapshot {
   std::uint64_t frees = 0;
   std::uint64_t bytes_allocated = 0;
   std::uint64_t bytes_freed = 0;
+  // Process CPU time (user + system, summed across ALL threads) consumed by the
+  // iteration. Wall time alone cannot see priority 3: a change that keeps its
+  // latency by moving work onto three background threads reads as neutral on
+  // wall and is a large regression here. This is what makes "low CPU usage" a
+  // measured budget instead of a stated intention.
+  double cpu_ms = 0.0;
+  // Resident-set growth across the iteration, in bytes. Deliberately the delta and
+  // not absolute RSS: the harness runs every iteration of every scenario in one
+  // process, so absolute RSS is dominated by whatever ran earlier and is not
+  // attributable to the scenario. Growth is. Clamped at zero when the iteration
+  // gives memory back.
+  std::uint64_t rss_growth_bytes = 0;
 };
 
 struct MetricSet {
@@ -51,7 +63,19 @@ struct MetricSet {
   double p50_allocations = 0.0;
   double p95_allocations = 0.0;
   double max_allocations = 0.0;
+  double p50_cpu_ms = 0.0;
+  double p95_cpu_ms = 0.0;
+  double max_cpu_ms = 0.0;
+  double p50_rss_growth_bytes = 0.0;
+  double p95_rss_growth_bytes = 0.0;
+  double max_rss_growth_bytes = 0.0;
 };
+
+// Process-wide CPU time and resident set, for the harness and for scenarios that
+// want to assert on them directly. CPU time comes from getrusage(RUSAGE_SELF),
+// which sums every thread; RSS from /proc/self/statm.
+double ProcessCpuMilliseconds();
+std::uint64_t ProcessResidentBytes();
 
 struct Iteration {
   struct PhaseMetrics {
