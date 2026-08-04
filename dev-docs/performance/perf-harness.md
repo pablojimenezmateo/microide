@@ -687,6 +687,20 @@ The harness selects its own video driver (`dummy`) and renderer (`software`) bef
 no display, `xvfb-run`, or `SDL_VIDEODRIVER` export is needed — and none should be used, because a
 real window system charges present cost the baselines do not contain (see "Reference Runner Class").
 
+**How wrong this goes if you wrap it anyway:** running the gate under `xvfb` + x11
+inflated frame-pumping scenarios by **2-12x**, and hybrid-CPU core placement added
+another **2.4x** on top. Both read exactly like a broad code regression across
+unrelated subsystems — which is the tell: a real regression is localised, a lane
+error moves everything that pumps frames. When a wall number looks impossible,
+**check the lane before the code**.
+
+`--video=x11|wayland|auto` is the explicit windowed lane: provenance is never
+`reference`, `--update-baseline` refuses it, and its wall metrics print as
+`[advisory: windowed video lane, not comparable]` while allocation gates still
+enforce. `tools/perf-compare.py` does not wrap in xvfb either.
+`PerfBaseline/RecipesDoNotPinAVideoDriver` fails if a doc or tool reintroduces the
+recipe — including this one.
+
 ## Baseline Workflow
 
 Per-scenario baselines are stored under `tests/perf/baselines/<scenario>.json`.
