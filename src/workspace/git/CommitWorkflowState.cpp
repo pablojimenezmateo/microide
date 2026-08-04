@@ -1,6 +1,36 @@
 #include "workspace/git/CommitWorkflowState.h"
 
+#include "workspace/git/CommitWorkflowService.h"
+
 namespace microide::workspace {
+
+void CommitOperationClaim::Cancel() {
+  if (service_ != nullptr) {
+    service_->AbandonOperation(generation_);
+  }
+  service_ = nullptr;
+  generation_ = 0;
+}
+
+CommitOperationClaim::~CommitOperationClaim() { Cancel(); }
+
+CommitOperationClaim& CommitOperationClaim::operator=(CommitOperationClaim&& other) noexcept {
+  if (this != &other) {
+    Cancel();
+    service_ = other.service_;
+    generation_ = other.generation_;
+    other.service_ = nullptr;
+    other.generation_ = 0;
+  }
+  return *this;
+}
+
+CommitOperationClaim& CommitOperationClaim::operator=(const CommitOperationClaim&) noexcept {
+  // Assigning over a state abandons whatever it had in flight; the source's claim
+  // is not duplicated. See the note on the copy constructor.
+  Cancel();
+  return *this;
+}
 
 std::string CommitWorkflowBodyText(const editor::TextViewport& viewport) {
   // The piece tree already stores the body '\n'-joined; taking it directly skips

@@ -14,6 +14,57 @@
 
 namespace microide::workspace {
 
+class CommitWorkflowService;
+
+// RAII claim on an in-flight background commit.
+//
+// A dispatched commit runs on a worker thread and posts a completion that resolves
+// back to the CommitWorkflowState that started it. That state lives inside a
+// ProjectWorkspaceState, which is not stable: closing a project tab destroys it,
+// resetting to the welcome screen move-assigns a fresh one over it, and erasing a
+// catalog entry shifts every later entry down by one move-assignment. All three
+// leave the completion pointing at storage that is gone or now belongs to a
+// different project — a use-after-free in the first case and a result published
+// into the wrong project's commit panel in the others.
+//
+// Holding the claim as a member means the compiler routes every one of those paths
+// through this type's destructor or move, so none of them can be forgotten. The
+// commit itself still runs to completion on disk; only the UI publication is
+// dropped, which is the same outcome as being superseded by a newer dispatch.
+class CommitOperationClaim {
+ public:
+  CommitOperationClaim() = default;
+  CommitOperationClaim(CommitWorkflowService* service, std::uint64_t generation)
+      : service_(service), generation_(generation) {}
+  ~CommitOperationClaim();
+
+  CommitOperationClaim(CommitOperationClaim&& other) noexcept
+      : service_(other.service_), generation_(other.generation_) {
+    other.service_ = nullptr;
+    other.generation_ = 0;
+  }
+  CommitOperationClaim& operator=(CommitOperationClaim&& other) noexcept;
+
+  // A copy is a different object and therefore claims nothing: the operation is
+  // identified by the address the completion resolves to, and only one object can
+  // be at that address.
+  CommitOperationClaim(const CommitOperationClaim&) noexcept {}
+  CommitOperationClaim& operator=(const CommitOperationClaim&) noexcept;
+
+  // Gives up the claim without cancelling — used when the completion has already
+  // published, so the operation is finished rather than abandoned.
+  void Release() {
+    service_ = nullptr;
+    generation_ = 0;
+  }
+
+ private:
+  void Cancel();
+
+  CommitWorkflowService* service_ = nullptr;
+  std::uint64_t generation_ = 0;
+};
+
 enum class CommitWorkflowFocusField {
   Subject,
   Body,
@@ -74,6 +125,16 @@ struct CommitWorkflowState {
   // large) body (A-075). content_revision advances on every content edit, so a
   // matching revision guarantees the cached string is current.
   const std::string& BodyText() const;
+
+  // Held while a commit dispatched by this state is in flight. See
+  // CommitOperationClaim: destroying, moving over, or copying this state gives the
+  // claim up, so the queued completion is dropped rather than publishing into
+  // storage that is gone or now belongs to a different project.
+  //
+  // Public rather than private-with-a-friend: workspace code does not use `friend`
+  // (AGENTS.md § Do-Not-Regress Patterns), and there is no invariant for privacy to
+  // protect here — the claim type enforces its own, and holding one is not a secret.
+  CommitOperationClaim in_flight_claim_;
 
  private:
   mutable std::string body_text_cache_;

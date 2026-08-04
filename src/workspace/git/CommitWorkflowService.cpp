@@ -290,6 +290,10 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
     std::lock_guard lock(mutex_);
     captured_generation = ++operation_generation_;
   }
+  // Let the state cancel this operation if it is destroyed before the completion
+  // is drained — a project tab closing mid-commit. Without it the completion below
+  // publishes into freed memory.
+  state.in_flight_claim_ = CommitOperationClaim(this, captured_generation);
   background_executor_.Post([this, &state, operation, subject, body, repository_generation,
                              captured_generation,
                              repository_root = repository_state.repository_root]() {
@@ -303,11 +307,29 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
                               result = std::move(result)]() mutable {
       std::lock_guard completion_lock(mutex_);
       if (captured_generation != operation_generation_) {
+        // Superseded by a newer dispatch, or abandoned because the owning state was
+        // destroyed. Either way `state` must not be touched — in the second case it
+        // no longer exists.
         return;
       }
+      // Reaching here proves the state is still alive and still the one that
+      // dispatched: destroying, moving over, or copying it would have cancelled the
+      // claim and bumped the generation. Release rather than cancel — the operation
+      // finished, it was not abandoned.
+      state.in_flight_claim_.Release();
       PublishResult(state, std::move(result), operation, repository_generation);
     });
   });
+}
+
+void CommitWorkflowService::AbandonOperation(const std::uint64_t generation) {
+  std::lock_guard lock(mutex_);
+  // Only invalidate if this state's operation is still the current one. A state
+  // whose commit already published, or was superseded by another project's, must
+  // not cancel whatever is running now.
+  if (generation != 0 && generation == operation_generation_) {
+    ++operation_generation_;
+  }
 }
 
 void CommitWorkflowService::SetCompletionWakeEvent(std::uint32_t event_type) {
