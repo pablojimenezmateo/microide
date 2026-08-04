@@ -159,9 +159,18 @@ class PieceTree {
   std::uint32_t NthNewlineOffset(std::uint8_t buffer, std::uint32_t from, std::uint32_t nth) const;
   // Append `text` to the add buffer; returns its start offset there.
   std::uint32_t AppendToAdd(std::string_view text);
+  // Below this, `add_` is too small to be worth a compaction pass; ordinary typing
+  // in a small document never reaches it.
+  static constexpr std::size_t kAddBufferCompactionFloorBytes = 4u * 1024u * 1024u;
+  // Compact once the dead edit history exceeds this multiple of the LIVE document,
+  // so the bound on resident text is proportional to the document rather than to
+  // how long the session has been editing it. Larger = fewer compactions and more
+  // retained history; smaller = tighter memory and more O(document) rebuilds.
+  static constexpr std::size_t kAddBufferDeadHistoryMultiple = 4;
   // Materialize the live document into `original_` and clear the append-only
   // `add_` buffer, preserving content and line_count_. Called by InsertText when
-  // add_ would otherwise overflow the 32-bit offset space.
+  // add_ would otherwise overflow the 32-bit offset space, and when the dead
+  // history has outgrown the live document by kAddBufferDeadHistoryMultiple.
   void CompactAddBuffer();
   // Rebuild the newline index + single root piece from the current `original_`
   // (shared by Reset / ResetFromText). Does not set line_count_.

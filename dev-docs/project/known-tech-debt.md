@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-04. **81 open items.**
+Reviewed 2026-08-04. **80 open items.**
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
@@ -22,50 +22,49 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-04-130 — repeated large multi-line edits grow the resident set ~176 KB each, permanently
+### TD-2026-08-04-130 — repeated large multi-line edits grew the resident set without bound. [RESOLVED 2026-08-04.]
 
-Found by the first CPU/RSS sweep, on the day the metric existed. The existing
-allocation oracle structurally cannot see it: the counts are *balanced*.
+Cause: **`PieceTree`'s append-only `add_` buffer**, not heap fragmentation. The
+original hypothesis in this entry was wrong, and the way it was wrong is the
+reusable part.
 
-`editor_toggle_comment_large_selection` performs 16 toggle-line-comment operations
-over a 1000-line selection per iteration. Measured at 20 iterations:
+Every insert appends its text to `add_` and nothing ever reclaims it; the only
+compaction trigger was the 4 GiB offset-overflow backstop, which in practice never
+fires. So `editor_toggle_comment_large_selection` — 16 toggle-line-comment
+operations over a 1,000-line selection — appended ~2.7 MB per iteration forever,
+and `add_` doubled itself 17 -> 35 -> 70 MB.
 
-| iteration | allocations | frees | net | rss growth |
-| ---: | ---: | ---: | ---: | ---: |
-| 0 | 189,486 | 156,473 | 33,013 | 22.3 MB |
-| 5 | 185,486 | 153,434 | 32,052 | 9.8 MB |
-| 12 | 185,488 | 185,476 | **12** | **2.81 MB** |
-| 19 | 185,486 | 185,474 | **12** | **2.81 MB** |
+Three counters said "no leak" and all three were telling the truth about the wrong
+thing:
 
-The first phase is a bounded structure (undo history) filling to its cap — real
-retention, and it ends. What does not end is the second: from iteration ~8 onward
-allocations and frees are balanced to within 12, and the resident set still grows
-**2.81 MB every iteration, indefinitely**. That is ~176 KB per toggle of 1000 lines.
+- **Allocation counts stayed balanced** (to within 12) because a container
+  doubling is exactly one allocation and one free.
+- **`mallinfo2().uordblks` and `.arena` were flat**, because a 35 MB block is
+  served by mmap, not the sbrk arena.
+- **`malloc_trim(0)` returned nothing**, because the memory was live, not free.
 
-`editor_shaping_multi_caret` shows the same shape at a stable ~1.56 MB/iteration
-after its own step at iteration ~11, so this is not one scenario's quirk.
+What did find it, in about a minute: `/proc/self/smaps` diffed per iteration named
+one growing anonymous mapping, and `MICROIDE_PERF_BIG_ALLOC_BYTES=16000000` (a
+backtrace on any allocation at or above that size, now in
+`tests/perf/AllocationCounter.cpp`) named the line. **Balanced allocation counts
+with growing RSS means a growing container, not fragmentation** — check the
+mapping and the large-allocation backtrace before theorising about the allocator.
 
-Hypothesis, not yet confirmed: heap fragmentation from the undo history's
-insert/evict cycle. Eviction frees the old entry in whatever small pieces it was
-built from while insertion asks for a large contiguous line-range block, so the
-allocator cannot reuse the freed space and extends the arena instead. Balanced
-counts with growing RSS is the signature of exactly that.
+Fix: `PieceTree::InsertText` now compacts when the dead history exceeds
+`kAddBufferDeadHistoryMultiple` (4x) the live document, above a
+`kAddBufferCompactionFloorBytes` (4 MiB) floor, and `CompactAddBuffer` swaps the
+buffers with empty ones so the capacity is actually returned rather than merely
+`clear()`ed. Resident text is now proportional to the document instead of to how
+long the session has been editing it; the scenario's per-iteration RSS growth
+becomes a bounded sawtooth. Amortized cost is a fraction of a byte-copy per
+inserted byte, since a compaction is O(live document) and cannot recur until
+another 4x the live document has been inserted.
+`PieceTree/AddBufferStaysBoundedUnderRepeatedLargeEdits` pins it by asserting the
+buffer's high-water mark over 800 passes does not exceed its mark over the first
+200 — a bound stated against the buffer's own behaviour rather than against the
+trigger's constants, so it cannot drift out of agreement with them.
 
-Why it matters: a session doing sustained large multi-line editing grows resident
-memory with no upper bound and no way for the user to get it back short of
-restarting. Priority 4 is low memory usage.
-
-What would confirm or kill it:
-- `malloc_stats()` / `malloc_info()` around the loop to separate arena growth from
-  live bytes; if live bytes are flat and arena bytes climb, it is fragmentation.
-- `malloc_trim(0)` after the loop — if RSS returns, it is definitively unreturned
-  free space rather than retention.
-- Whether the undo entry's line-range storage can be made one allocation of a
-  stable size class instead of a variable-size composite.
-
-Do NOT chase this by reading the undo code first. The measurement above is cheap to
-extend and will say which of the three it is.
-
+`editor_shaping_multi_caret` showed the same shape and is covered by the same fix.
 
 Earlier archives: the 2026-07-12 deferred-backlog sweep (which cleared the pass
 5–24 backlog) is at `guidelines/tech-debt/archive/2026-07-12-deferred-backlog-sweep.md`,

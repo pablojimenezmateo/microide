@@ -243,6 +243,7 @@ void PieceTree::CompactAddBuffer() {
   // buffer and drop the accumulated add_ history. Content and line count are
   // invariant (representation only changes), so keep the authoritative line_count_
   // rather than re-deriving it (which would mishandle the empty-document edge case).
+  util::AddPerformanceCounter(util::PerfCounterId::DocumentAddBufferCompactions);
   const std::size_t saved_line_count = line_count_;
   std::string materialized;
   const std::uint32_t byte_size = static_cast<std::uint32_t>(ByteSize());
@@ -250,6 +251,11 @@ void PieceTree::CompactAddBuffer() {
   CopyRange(0, byte_size, materialized);
   original_ = std::move(materialized);
   RebuildFromOriginal();
+  // RebuildFromOriginal clear()s these, which keeps their capacity — and the
+  // capacity is the entire point here: what is being compacted away is tens of MB
+  // of dead edit history. Swap with empty objects so the pages actually go back.
+  std::string().swap(add_);
+  std::vector<std::uint32_t>().swap(add_newlines_);
   line_count_ = saved_line_count;
 }
 
@@ -264,6 +270,29 @@ void PieceTree::InsertText(std::uint32_t pos, std::string_view text) {
   // stale early bytes -> silent corruption. Compact first (mirrors
   // RebuildFromOriginal's original_ self-defense) so add_ offsets stay in range.
   if (add_.size() + text.size() > std::numeric_limits<std::uint32_t>::max()) {
+    CompactAddBuffer();
+  } else if (add_.size() >= kAddBufferCompactionFloorBytes &&
+             add_.size() / kAddBufferDeadHistoryMultiple > ByteSize()) {
+    // Memory-pressure compaction (TD-2026-08-04-130). The 4 GiB guard above is a
+    // correctness backstop and essentially never fires; without this, a session
+    // doing sustained large multi-line editing grows resident memory with no upper
+    // bound and no way for the user to get it back short of restarting.
+    //
+    // The measurement that found it is worth repeating, because the counters that
+    // usually catch this said nothing. Sixteen toggle-line-comment operations over
+    // a 1,000-line selection grew RSS 2.68 MB per repetition, indefinitely, while
+    // the per-thread allocation counts stayed BALANCED to within 12 and glibc's
+    // arena/uordblks were flat. Both are consistent with what was actually
+    // happening: `add_` is one std::string doubling itself (17 -> 35 -> 70 MB),
+    // which is one allocation and one free each time, and lives in an mmap'd chunk
+    // that never touches the sbrk arena. The original hypothesis in the debt entry
+    // was heap fragmentation; a backtrace on allocations >= 16 MB named this line
+    // instead.
+    //
+    // Amortized cost is a fraction of a byte-copy per inserted byte: compaction is
+    // O(live document) and cannot recur until another
+    // kAddBufferDeadHistoryMultiple x live-document bytes have been inserted. The
+    // floor keeps small documents from compacting on ordinary typing.
     CompactAddBuffer();
   }
   const std::uint32_t start = AppendToAdd(text);

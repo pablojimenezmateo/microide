@@ -166,6 +166,7 @@ namespace microide::util {
   X(EditorBoxSelectionSpanLinesScanned, "editor.box_selection_span_lines_scanned")             \
   /* --- text document model ---------------------------------------------- */                 \
   X(DocumentEdits, "document.edits")                                                            \
+  X(DocumentAddBufferCompactions, "document.add_buffer_compactions")                            \
   X(DocumentFullTextMaterializations, "document.full_text_materializations")                    \
   X(DocumentFullTextBytes, "document.full_text_bytes")
 

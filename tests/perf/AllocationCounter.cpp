@@ -1,6 +1,8 @@
 #include "AllocationCounter.h"
 
+#include <cstdio>
 #include <cstdlib>
+#include <execinfo.h>
 #include <new>
 
 namespace {
@@ -30,9 +32,34 @@ thread_local std::uint64_t t_frees = 0;
 thread_local std::uint64_t t_bytes_allocated = 0;
 thread_local std::uint64_t t_bytes_freed = 0;
 
+// Diagnostic only, off unless MICROIDE_PERF_BIG_ALLOC_BYTES is set: print a
+// backtrace for any single allocation at or above that many bytes, then resolve
+// them with `addr2line -e <binary> -f -C <offset>`.
+//
+// This exists because balanced allocation counts with growing RSS -- the shape
+// TD-2026-08-04-130 was filed as -- is invisible to every other counter here. A
+// container doubling itself is ONE allocation and ONE free each time, so the
+// counts stay balanced while the bytes climb; if the block is large enough glibc
+// serves it from mmap, so the arena and uordblks stay flat too. The debt entry's
+// hypothesis was heap fragmentation. One run of this named the actual line
+// (PieceTree's append-only add buffer, 17 -> 35 -> 70 MB) in about a minute.
+//
+// Namespace-scope const, not a function-local static: a function-local would put
+// a thread-safe-init guard load on the hottest path in the process.
+const std::size_t g_big_alloc_threshold = [] {
+  const char* env = std::getenv("MICROIDE_PERF_BIG_ALLOC_BYTES");
+  return env == nullptr ? std::size_t{0} : static_cast<std::size_t>(std::strtoull(env, nullptr, 10));
+}();
+
 inline void RecordAlloc(std::size_t size) {
   ++t_allocations;
   t_bytes_allocated += static_cast<std::uint64_t>(size);
+  if (g_big_alloc_threshold != 0 && size >= g_big_alloc_threshold) [[unlikely]] {
+    void* frames[24];
+    const int count = ::backtrace(frames, 24);
+    std::fprintf(stderr, "[bigalloc] %zu bytes\n", size);
+    ::backtrace_symbols_fd(frames, count, 2);
+  }
 }
 
 inline void RecordFree(std::size_t size) {

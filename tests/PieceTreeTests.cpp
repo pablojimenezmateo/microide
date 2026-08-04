@@ -319,6 +319,62 @@ void TestPieceTreeAddBufferCompaction() {
   Expect(tree.ToVector() == expected, "edits after compaction must apply correctly");
 }
 
+// Regression (TD-2026-08-04-130): `add_` is append-only, so repeated large edits
+// accumulated dead history forever — a session doing sustained multi-line editing
+// grew resident memory with no upper bound and no way to get it back short of
+// restarting. The 4 GiB overflow guard is a correctness backstop that in practice
+// never fires. Compaction is now also driven by memory pressure, so the dead
+// history stays proportional to the LIVE document.
+//
+// The shape that made this hard to see: `add_` doubling itself is one allocation
+// and one free, so allocation counts stay balanced while the bytes climb.
+// Assert on the buffer size, which is the thing that actually grows.
+void TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits() {
+  std::vector<std::string> lines;
+  lines.reserve(2000);
+  for (std::size_t i = 0; i < 2000; ++i) {
+    lines.push_back("line " + std::to_string(i) + " with enough content to be worth bytes");
+  }
+  PieceTree tree(lines);
+
+  // Rewrite a 1,000-line window over and over, exactly what toggle-line-comment on
+  // a large selection does. Each pass appends ~the window's bytes to add_.
+  std::vector<std::string> replacement(lines.begin(), lines.begin() + 1000);
+  const auto run_passes = [&](int count, int base_pass) {
+    std::size_t peak = 0;
+    for (int pass = 0; pass < count; ++pass) {
+      replacement[0] = "pass " + std::to_string(base_pass + pass);
+      tree.ReplaceLineRange(500, 1000, replacement);
+      peak = std::max(peak, tree.AddBufferSizeForTesting());
+    }
+    return peak;
+  };
+
+  // Boundedness is asserted against the buffer's OWN earlier peak rather than
+  // against the trigger's constants, so the test cannot drift out of agreement
+  // with them: if the dead history is bounded, running four times as long cannot
+  // raise the high-water mark. Without the memory-pressure trigger the second
+  // window's peak is ~4x the first, because add_ only ever grows.
+  const std::size_t early_peak = run_passes(200, 0);
+  const std::size_t late_peak = run_passes(800, 200);
+  // A small slack, because the replacement text is not byte-identical across passes
+  // (the pass number is in it), so the exact byte at which the threshold is crossed
+  // moves by a few bytes. Measured: 4,216,850 against 4,216,860. Unbounded growth
+  // would put the second window's peak at ~4x the first.
+  Expect(late_peak <= early_peak + 64 * 1024,
+         "repeated large edits must not raise the add buffer's high-water mark");
+
+  // And the content is still exactly right: compaction is representation-only, and
+  // it now happens in the middle of an edit rather than only from a test seam.
+  const std::vector<std::string> materialized = tree.ToVector();
+  Expect(materialized.size() == lines.size(),
+         "compaction during an edit must preserve the line count");
+  Expect(materialized[500] == "pass 999",
+         "compaction during an edit must preserve the edited content");
+  Expect(materialized[499] == lines[499] && materialized[1500] == lines[1500],
+         "compaction during an edit must leave the untouched lines alone");
+}
+
 // Regression: a spanning line (content crossing a piece boundary, the shape
 // mid-line character editing produces) is materialized into a per-index cache
 // slot. A second LineView() for the SAME index must return the already-cached
@@ -504,6 +560,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/LiveDocumentByteCeiling", TestPieceTreeLiveDocumentByteCeiling);
   AddTest(tests, "PieceTree/BasicSemantics", TestPieceTreeBasicSemantics);
   AddTest(tests, "PieceTree/AddBufferCompaction", TestPieceTreeAddBufferCompaction);
+  AddTest(tests, "PieceTree/AddBufferStaysBoundedUnderRepeatedLargeEdits",
+          TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits);
   AddTest(tests, "PieceTree/MidLineEdits", TestPieceTreeMidLineEdits);
   AddTest(tests, "PieceTree/RandomizedEquivalence", TestPieceTreeRandomizedEquivalence);
   AddTest(tests, "PieceTree/RandomAccessOrderMatchesModel",
