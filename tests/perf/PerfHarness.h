@@ -2,8 +2,10 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdint>
 #include <filesystem>
 #include <functional>
@@ -37,6 +39,26 @@ inline bool DirectoryExistsNoThrow(const std::filesystem::path& path) {
   return std::filesystem::is_directory(path, ec) && !ec;
 }
 
+// Linear-interpolated percentile over an unsorted sample. Shared with the
+// baseline comparison, which re-percentiles the clock-normalised CPU series
+// (Baseline.cpp) and must do it exactly the way the harness percentiled the raw
+// one -- two subtly different percentile rules would put the normalised and raw
+// numbers on different samples and make the reported factor unreadable.
+inline double Percentile(std::vector<double> values, double p) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  std::sort(values.begin(), values.end());
+  const double idx = p * static_cast<double>(values.size() - 1);
+  const std::size_t lo = static_cast<std::size_t>(std::floor(idx));
+  const std::size_t hi = static_cast<std::size_t>(std::ceil(idx));
+  if (lo == hi) {
+    return values[lo];
+  }
+  const double weight = idx - static_cast<double>(lo);
+  return values[lo] * (1.0 - weight) + values[hi] * weight;
+}
+
 struct MetricSnapshot {
   double wall_ms = 0.0;
   std::uint64_t allocations = 0;
@@ -49,6 +71,17 @@ struct MetricSnapshot {
   // wall and is a large regression here. This is what makes "low CPU usage" a
   // measured budget instead of a stated intention.
   double cpu_ms = 0.0;
+  // Nanoseconds the harness's fixed-work calibration probe took just OUTSIDE this
+  // iteration's window -- a reading of the machine's effective clock while the
+  // iteration ran, not of the iteration. Zero when no probe ran.
+  //
+  // Carried per iteration and not just per run because the failure that motivated
+  // it was a clock that stepped MID-run: idle_soak_30s measured 14 ms of CPU on
+  // its first five iterations and 30 ms on its last five, one clean step, with
+  // every application counter byte-identical across it. Normalising against a
+  // single per-run number would smear that; normalising each iteration against
+  // its own reading cancels it exactly (TD-2026-08-05-137).
+  std::uint64_t cpu_calibration_ns = 0;
   // Resident-set growth across the iteration, in bytes. Deliberately the delta and
   // not absolute RSS: the harness runs every iteration of every scenario in one
   // process, so absolute RSS is dominated by whatever ran earlier and is not
@@ -70,6 +103,13 @@ struct MetricSet {
   double p50_rss_growth_bytes = 0.0;
   double p95_rss_growth_bytes = 0.0;
   double max_rss_growth_bytes = 0.0;
+  // Median of the per-iteration calibration probe. Recorded INTO the
+  // baseline, which is what makes a duration gate machine-state-independent: the
+  // baseline knows what clock it was captured at, so a later run can be compared
+  // against a scaled expectation instead of against a number that silently meant
+  // "on a 5.1 GHz core" (TD-2026-08-05-137). Zero on a run with no probe, which
+  // disables normalisation rather than scaling by a nonsense factor.
+  double p50_cpu_calibration_ns = 0.0;
 };
 
 // Process-wide CPU time and resident set, for the harness and for scenarios that
@@ -77,6 +117,10 @@ struct MetricSet {
 // which sums every thread; RSS from /proc/self/statm.
 double ProcessCpuMilliseconds();
 std::uint64_t ProcessResidentBytes();
+// Release allocator-held free pages back to the OS. Call immediately before a
+// resident reading that is meant to measure retained memory; see the definition
+// for why an untrimmed reading is a coin flip (TD-2026-08-05-136).
+void SettleResidentSet();
 
 struct Iteration {
   struct PhaseMetrics {
@@ -153,11 +197,11 @@ class ScenarioContext {
   // for identical application counters has no visible explanation at all.
   std::vector<std::pair<std::string, std::uint64_t>> TakeHarnessCounters();
   // Nanoseconds a fixed, deterministic slab of integer work took, measured just
-  // OUTSIDE this iteration's window. cpu_ms is a duration, so it moves when the
-  // machine's effective clock moves — and on a laptop forty minutes into a gate
-  // run the boost budget is spent and identical instructions cost measurably
-  // more wall and CPU. Without this reading, the report cannot tell "the code
-  // got slower" from "the machine got slower".
+  // OUTSIDE this iteration's window. cpu_ms is a duration, so it moves when the machine's effective clock moves —
+  // and on a laptop forty minutes into a gate run the boost budget is spent and
+  // identical instructions cost measurably more wall and CPU. Without this
+  // reading, the report cannot tell "the code got slower" from "the machine got
+  // slower"; with it, the gate normalises the difference away.
   void RecordCpuCalibration(std::uint64_t nanoseconds);
   std::uint64_t RandomU64();
   void OpenFileFinder();
@@ -267,6 +311,19 @@ struct Scenario {
   double tolerance_alloc_p50_percent = 10.0;
   double tolerance_alloc_p95_percent = 20.0;
   double tolerance_alloc_max_percent = 50.0;
+  // Resident-growth envelopes, written into this scenario's baseline at
+  // --update-baseline time.
+  //
+  // These exist because a widened envelope that lives only in the committed JSON
+  // does not survive a rebaseline. editor_long_line_select_all_edit carried a
+  // hand-edited 60% for TD-2026-08-05-136 while the writer below had no rss
+  // fields at all, so the next `--update-baseline` would have silently reset it to
+  // the struct default and re-armed a gate its own TD calls a coin flip -- with
+  // nothing in the diff to read except three numbers changing in a generated file.
+  // A tolerance that is not expressed in code is a comment.
+  double tolerance_rss_p50_percent = 25.0;
+  double tolerance_rss_p95_percent = 35.0;
+  double tolerance_rss_max_percent = 60.0;
   // Whether this scenario's iteration CPU time is a valid regression signal.
   //
   // Set false only where it provably is not, and say what replaces it. cpu_ms is

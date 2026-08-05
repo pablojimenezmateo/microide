@@ -85,7 +85,24 @@ measured. Two more metrics close that:
   than wall but not as deterministic as an allocation count (page granularity,
   allocator arena behaviour), so tolerances sit between the two: **25 / 35 / 60 %**,
   with a one-page (4 KiB) noise floor so a near-zero baseline cannot turn a single
-  page of jitter into an unbounded regression.
+  page of jitter into an unbounded regression. Per-scenario overrides live in
+  `Scenario::tolerance_rss_*` — **in code, not in the JSON**, because
+  `--update-baseline` rewrites every tolerance in a baseline file from the scenario.
+  A widening hand-edited into the JSON survives exactly until the next rebaseline
+  and then vanishes with nothing in the diff to read.
+
+  **Both resident readings are taken on a trimmed heap** (`SettleResidentSet()` →
+  `malloc_trim(0)`, at both boundaries, outside the measured window, so it costs
+  neither wall nor CPU). Without that the delta measured allocator arena state as
+  much as retained memory: `editor_long_line_select_all_edit` was bimodal at 4.19
+  vs 6.29 MB per iteration — both multiples of its fixture's ~2 MiB line, both with
+  byte-identical allocation counts — and the p50 reported whichever mode came up
+  more often, so the same binary passed and failed the same gate on different runs
+  (TD-2026-08-05-136). Trimmed, the metric means "what this iteration RETAINS", and
+  that scenario now measures the same p50, p95 and max **to the byte across
+  repeated runs**. The cost is that the next iteration re-faults the pages it gave
+  back, which is a real cost now carried uniformly rather than by whichever
+  iteration got unlucky.
 
 This is separate from the existing hard RSS ceiling in `AdvisoryPerfScenarios.cpp`
 (256 MiB idle, 160 MiB growth). That is a ceiling; these are ratchets. A change
@@ -123,9 +140,44 @@ effective clock. Each iteration therefore carries a reading of that clock:
 Read it whenever a CPU or wall failure comes with **unchanged allocations and
 unchanged application counters**. On `idle_soak_30s` it stepped 671 → 857 us
 mid-run at exactly the iteration where `cpu_ms` stepped 14 → 30 ms — the governor,
-not the binary (TD-2026-08-05-137). Caveat: it is a dense dependent chain, so it
-pulls the clock up while it runs and *understates* the effect on workloads made of
-short bursts between sleeps; treat its ratio as a lower bound.
+not the binary (TD-2026-08-05-137).
+
+**What the machine actually does**, measured on perf-runner-v1 while closing that
+entry: a thread working *continuously* for about a second reaches a state where the
+probe reads ~467 us instead of ~673 us — **1.44x** — and holds it while it keeps
+working. 300 ms of idle drops it back, and no amount of spinning afterwards
+recovers it inside a run that has idle in it. A busy keeper thread pinned to
+another physical core does not hold it either, so this is per-thread residency and
+not a package state the harness can pin. Consequences:
+
+- Scenarios that pump frames and wait live in the slow state permanently.
+- Scenarios that grind continuously cross into the fast state **part way through a
+  run**: `syntax_highlight_cpp_lines` measured 252 us for nine iterations and then
+  179 us for five, with `cpu_ms` tracking it 15.6 → 11.3 ms.
+- So two scenarios in the same run are not necessarily measured on the same
+  machine, and neither are two runs of the same scenario.
+
+That is what per-iteration clock normalisation (below) exists for.
+
+Two other probe shapes were tried and rejected **on measurement**, and are worth
+not re-proposing:
+
+- **Memory-mixed** (the chain plus an L2 pointer chase plus a 256 KiB streaming
+  copy, to look more like real editor work) reads *dirtier*, not truer. Its memory
+  half swung 3.3x across one scenario's iterations while the chain held to 1%,
+  because the probe's own buffers get evicted by whatever the scenario just did.
+  That makes the reading a function of the code under test — a change that grows
+  the working set inflates the probe, which scales the expectation up, which
+  loosens the very gate that change should have tripped. It also streams ~12 MB
+  immediately before the measured window, evicting the app's working set.
+- **Burst-shaped** (the same work in short slabs, each after a 1 ms sleep, to time
+  a core that has just been idle) read within 1% of the plain chain on every
+  iteration of every scenario tried. 1 ms is nowhere near long enough for the core
+  to leave the state it is in, and the gaps that would work cost more than the
+  reading is worth.
+
+The probe stays a pure dependent integer chain: branch-free, allocation-free and
+memory-free. Those properties are load-bearing now that the number scales a gate.
 
 **You no longer have to go looking.** The harness computes the probe's
 min/max/ratio across a scenario's measured iterations and, when the ratio clears
@@ -146,10 +198,44 @@ clock prints nothing, so the note appearing at all is the signal.
 
 That also makes "which CPU gates are really measuring the governor" fall out of any
 ordinary full run — scan the verdict lines for the note rather than sweeping for it.
-What is still owed is using the probe rather than only reporting it: normalising
-`cpu_ms`/`wall_ms` by it before the comparison would make every duration gate
-machine-state-independent, but a baseline carries no reference calibration today, so
-it needs a baseline-format change plus a full rebaseline on the reference runner.
+
+### The CPU gate is normalised against the clock the baseline was captured at
+
+A baseline records `p50_cpu_calibration_ns` beside its metrics: the clock the
+machine was running at when those numbers were taken. The comparison then
+re-expresses the run in that machine state before checking the envelope, so a CPU
+gate is a statement about the code and not about the governor.
+
+- **Per iteration, against that iteration's own probe reading**, then percentiled.
+  The failure that motivated this was a clock that stepped *mid-run* (five
+  iterations at 671 us, five at 857 us); a single per-run factor would smear it
+  across both halves, while each iteration's own reading cancels it exactly.
+- **CPU only.** Allocation counts do not scale with the clock — their coming out
+  identical across a clock step is the *evidence* that a duration failure is the
+  machine — and neither does resident growth. Wall is deliberately left raw too: a
+  scenario that sleeps for 27 of its 30 seconds has a wall time that is mostly not
+  work, and scaling it by a clock reading would be arithmetic on a number that does
+  not scale.
+- **Clamped at 3x either way**, and a clamped comparison says so loudly on the
+  verdict line. A factor that far out is a broken probe or a baseline from another
+  machine class, and quietly scaling a gate by it is how a gate goes vacuous.
+- **Only when the baseline recorded a clock.** Baselines written before the field
+  existed compare raw, exactly as they did before — the same rule cpu/rss already
+  follow, so an old baseline degrades to the old behaviour instead of dividing by
+  a zero.
+
+A verdict line says when it did arithmetic, and a failing normalised metric prints
+both numbers:
+
+```
+[perf] PASS syntax_highlight_cpp_lines (…)  [cpu normalised for machine clock:
+  this run measured 1.41x the baseline's calibration]
+[perf]   p50_cpu_ms: baseline=11.3 measured=15.9 (raw 22.4, clock-normalised)
+  (+40.7%, tolerance +100%)
+```
+
+This is what makes `Scenario::gate_cpu_metrics = false` a last resort rather than
+the standard answer to a noisy CPU gate.
 
 Scenarios whose iteration is mostly sleep let the core idle down to the 605 MHz
 floor, 8.5x below its 5157 MHz ceiling, and their CPU number is then decided by
@@ -332,6 +418,15 @@ before an improvement lets the scenario pass against a number no longer connecte
 the code. The committed set had drifted 3–8x that way, in part because a bare
 `--update-baseline` used to abort partway through on the first advisory-only scenario
 it reached, leaving everything after it untouched.
+
+**Rebaseline down, investigate up.** A sweep that rewrites every number with
+whatever the machine says today also enshrines every regression that crept in since
+the last one. The rule that keeps a rebaseline honest: a scenario measuring *under*
+its committed baseline may be tightened without ceremony — that is drift, and
+closing it is the point of the sweep. A scenario measuring *over* it is a finding,
+even when it is inside its envelope, and gets looked at before its number is
+written. TD-2026-08-05-135 was found exactly this way and is why the drift table
+belongs in the commit message.
 
 ## Configure
 

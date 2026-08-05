@@ -427,9 +427,217 @@ void TestPerfCalibrationSpreadFlagsAMovingClock() {
          "and must describe nothing rather than a 1x range of zeros");
 }
 
+// Build an aggregate whose iterations each carry a cpu_ms and the calibration
+// reading taken beside it, and whose MetricSet is percentiled from them exactly as
+// the harness does.
+perf::Aggregate MakeCpuRun(std::vector<std::pair<double, std::uint64_t>> cpu_and_calibration) {
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "test";
+  std::vector<double> cpu_ms;
+  std::vector<double> calibration_ns;
+  std::size_t index = 0;
+  for (const auto& [cpu, calibration] : cpu_and_calibration) {
+    perf::Iteration iteration;
+    iteration.index = index++;
+    iteration.metrics.cpu_ms = cpu;
+    iteration.metrics.cpu_calibration_ns = calibration;
+    cpu_ms.push_back(cpu);
+    if (calibration != 0) {
+      calibration_ns.push_back(static_cast<double>(calibration));
+    }
+    aggregate.iterations.push_back(std::move(iteration));
+  }
+  aggregate.metrics.p50_cpu_ms = perf::Percentile(cpu_ms, 0.50);
+  aggregate.metrics.p95_cpu_ms = perf::Percentile(cpu_ms, 0.95);
+  aggregate.metrics.max_cpu_ms = *std::max_element(cpu_ms.begin(), cpu_ms.end());
+  aggregate.metrics.p50_cpu_calibration_ns = perf::Percentile(calibration_ns, 0.50);
+  // Wall and allocations flat and equal to the baseline: this fixture is about the
+  // CPU gate only, so nothing else may decide the verdict.
+  aggregate.metrics.p50_wall_ms = 100.0;
+  aggregate.metrics.p95_wall_ms = 100.0;
+  aggregate.metrics.max_wall_ms = 100.0;
+  aggregate.metrics.p50_allocations = 100.0;
+  aggregate.metrics.p95_allocations = 100.0;
+  aggregate.metrics.max_allocations = 100.0;
+  return aggregate;
+}
+
+perf::BaselineRecord MakeCpuBaseline(double cpu_ms, std::uint64_t calibration_ns) {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.has_cpu_metrics = true;
+  baseline.metrics.p50_cpu_ms = cpu_ms;
+  baseline.metrics.p95_cpu_ms = cpu_ms;
+  baseline.metrics.max_cpu_ms = cpu_ms;
+  // Tight, so the test is about normalisation and not about the suite's wide
+  // default CPU envelope absorbing everything.
+  baseline.tolerances.cpu_p50_percent = 10.0;
+  baseline.tolerances.cpu_p95_percent = 10.0;
+  baseline.tolerances.cpu_max_percent = 10.0;
+  baseline.has_calibration = calibration_ns != 0;
+  baseline.metrics.p50_cpu_calibration_ns = static_cast<double>(calibration_ns);
+  return baseline;
+}
+
+// TD-2026-08-05-137 item 2: cpu_ms is a duration, so a baseline captured on a core
+// at one clock is not a budget for the same code on a core at another. The
+// baseline now records the clock it was captured at, and the comparison re-expresses
+// the run in it.
+void TestPerfBaselineNormalisesCpuAgainstTheBaselineClock() {
+  // Captured at 670 us of calibration, costing 10 ms of CPU.
+  const perf::BaselineRecord baseline = MakeCpuBaseline(10.0, 670000);
+
+  // Same code, machine 1.4x slower: every duration is 1.4x, calibration included.
+  const perf::Aggregate slower_machine = MakeCpuRun({{14.0, 938000},
+                                                     {14.0, 938000},
+                                                     {14.0, 938000},
+                                                     {14.0, 938000}});
+  const perf::BaselineComparison normalised = perf::CompareToBaseline(baseline, slower_machine);
+  Expect(normalised.passed,
+         "a +40% cpu rise that the calibration probe says was the machine must not fail");
+  Expect(normalised.clock.applied, "the comparison should report that it normalised");
+  Expect(std::abs(normalised.clock.factor - 1.4) < 0.01,
+         "the reported factor should be the measured clock ratio");
+  for (const auto& metric : normalised.metrics) {
+    if (metric.metric == "p50_cpu_ms") {
+      Expect(std::abs(metric.raw_actual - 14.0) < 1e-9,
+             "the raw measurement should still be reported alongside");
+      Expect(std::abs(metric.actual - 10.0) < 1e-6,
+             "the normalised measurement should come back to the baseline's machine state");
+    }
+  }
+
+  // The same +40% on a machine holding the baseline's clock is a real regression,
+  // and normalisation must not hide it. This is the negative control: without it
+  // the test above passes just as well against a gate that stopped gating.
+  const perf::Aggregate real_regression = MakeCpuRun({{14.0, 670000},
+                                                      {14.0, 670000},
+                                                      {14.0, 670000},
+                                                      {14.0, 670000}});
+  Expect(!perf::CompareToBaseline(baseline, real_regression).passed,
+         "a +40% cpu rise at an unchanged clock must still fail");
+
+  // And a baseline that never recorded a clock compares raw, exactly as before.
+  perf::BaselineRecord no_clock = baseline;
+  no_clock.has_calibration = false;
+  no_clock.metrics.p50_cpu_calibration_ns = 0.0;
+  const perf::BaselineComparison unnormalised =
+      perf::CompareToBaseline(no_clock, slower_machine);
+  Expect(!unnormalised.passed,
+         "a baseline with no recorded clock must compare raw rather than invent a factor");
+  Expect(!unnormalised.clock.applied, "and must report that it did not normalise");
+}
+
+// The failure that opened the TD was a clock that stepped MID-run: five iterations
+// at one clock and five at another, one clean step, application counters identical
+// across it. A single per-run factor would smear that across both halves; each
+// iteration is normalised against its own reading instead.
+void TestPerfBaselineNormalisesEachIterationAgainstItsOwnClock() {
+  const perf::BaselineRecord baseline = MakeCpuBaseline(14.0, 671000);
+  // The reproduction's own shape: unchanged code, clock steps 671 -> 857 us at the
+  // halfway point, cpu_ms steps with it.
+  const perf::Aggregate stepped = MakeCpuRun({{14.0, 671000},
+                                              {14.1, 674000},
+                                              {13.9, 673000},
+                                              {14.2, 676000},
+                                              {17.9, 857000},
+                                              {17.8, 860000},
+                                              {17.9, 856000},
+                                              {18.0, 858000}});
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, stepped);
+  Expect(comparison.passed,
+         "a mid-run clock step with unchanged code must not fail the cpu gate");
+  for (const auto& metric : comparison.metrics) {
+    if (metric.metric == "max_cpu_ms") {
+      Expect(metric.actual < 15.0,
+             "even the max, which lands in the slow half, should normalise back near 14 ms");
+    }
+  }
+
+  // A regression that appears only in the slow half is still visible after
+  // normalisation: it is the ratio that carries the signal, not the raw value.
+  const perf::Aggregate stepped_with_regression = MakeCpuRun({{14.0, 671000},
+                                                              {14.1, 674000},
+                                                              {13.9, 673000},
+                                                              {14.2, 676000},
+                                                              {26.0, 857000},
+                                                              {26.0, 860000},
+                                                              {26.0, 856000},
+                                                              {26.0, 858000}});
+  Expect(!perf::CompareToBaseline(baseline, stepped_with_regression).passed,
+         "a real regression inside the slow half must survive normalisation");
+}
+
+// A factor far outside the range a governor can produce is much more likely a
+// broken probe or a baseline from another machine class. Scaling a gate by it
+// silently would make the gate vacuous, which is the failure mode this whole area
+// exists to prevent.
+void TestPerfBaselineClampsAnAbsurdClockFactor() {
+  const perf::BaselineRecord baseline = MakeCpuBaseline(10.0, 670000);
+  const perf::Aggregate absurd = MakeCpuRun({{100.0, 67000000}, {100.0, 67000000}});
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, absurd);
+  Expect(comparison.clock.clamped, "a 100x clock reading should report as clamped");
+  Expect(!comparison.passed,
+         "and must not pass: clamping means the gate stays enforced at 3x, not disabled");
+}
+
+// Normalisation is a CPU-only correction. Allocation counts do not depend on the
+// clock at all -- their agreeing across a clock step is the EVIDENCE that a cpu
+// failure is the machine -- and resident growth does not either.
+void TestPerfBaselineClockNormalisationTouchesCpuOnly() {
+  perf::BaselineRecord baseline = MakeCpuBaseline(10.0, 670000);
+  baseline.has_rss_metrics = true;
+  baseline.metrics.p50_rss_growth_bytes = 1'000'000.0;
+
+  perf::Aggregate run = MakeCpuRun({{14.0, 938000}, {14.0, 938000}});
+  run.metrics.p50_allocations = 140.0;             // +40%, like the durations
+  run.metrics.p50_rss_growth_bytes = 1'400'000.0;  // +40%, like the durations
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, run);
+  Expect(!comparison.passed, "a clock move must not excuse an allocation or rss rise");
+  for (const auto& metric : comparison.metrics) {
+    if (metric.metric == "p50_allocations" || metric.metric == "p50_rss_growth_bytes") {
+      Expect(metric.actual == metric.raw_actual,
+             "non-duration metrics must be compared exactly as measured: " + metric.metric);
+      Expect(!metric.passed, metric.metric + " should have failed at +40%");
+    }
+  }
+}
+
+// The recorded clock survives a Save -> Load round trip, and is omitted rather than
+// zeroed when a run had no probe -- a zero would come back as "recorded" and divide
+// by it.
+void TestPerfBaselineCalibrationRoundTrip() {
+  TemporaryDirectory temp;
+  const std::filesystem::path path = temp.path() / "calibration_roundtrip.json";
+  perf::BaselineRecord baseline = MakeCpuBaseline(10.0, 673456);
+  Expect(perf::SaveBaseline(path, baseline), "a baseline with a recorded clock should save");
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value() && loaded->has_calibration,
+         "it should come back carrying its clock");
+  Expect(loaded->metrics.p50_cpu_calibration_ns == 673456.0,
+         "the recorded clock should survive the round trip");
+
+  const std::filesystem::path absent = temp.path() / "calibration_absent.json";
+  perf::BaselineRecord probeless = MakeCpuBaseline(10.0, 0);
+  Expect(perf::SaveBaseline(absent, probeless), "a baseline with no probe should still save");
+  Expect(ReadFile(absent).find("p50_cpu_calibration_ns") == std::string::npos,
+         "a missing clock must be omitted, not written as zero");
+  const std::optional<perf::BaselineRecord> reloaded = perf::LoadBaseline(absent);
+  Expect(reloaded.has_value() && !reloaded->has_calibration,
+         "and must come back unnormalised rather than gated against a zero clock");
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/NormalisesCpuAgainstTheBaselineClock",
+          TestPerfBaselineNormalisesCpuAgainstTheBaselineClock);
+  AddTest(tests, "PerfBaseline/NormalisesEachIterationAgainstItsOwnClock",
+          TestPerfBaselineNormalisesEachIterationAgainstItsOwnClock);
+  AddTest(tests, "PerfBaseline/ClampsAnAbsurdClockFactor",
+          TestPerfBaselineClampsAnAbsurdClockFactor);
+  AddTest(tests, "PerfBaseline/ClockNormalisationTouchesCpuOnly",
+          TestPerfBaselineClockNormalisationTouchesCpuOnly);
+  AddTest(tests, "PerfBaseline/CalibrationRoundTrip", TestPerfBaselineCalibrationRoundTrip);
   AddTest(tests, "PerfBaseline/CalibrationSpreadFlagsAMovingClock",
           TestPerfCalibrationSpreadFlagsAMovingClock);
   AddTest(tests, "PerfBaseline/RecipesDoNotPinAVideoDriver",

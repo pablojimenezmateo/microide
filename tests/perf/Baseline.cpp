@@ -28,18 +28,110 @@ void AddMetric(BaselineComparison* out,
                std::string_view name,
                double expected,
                double actual,
-               double tolerance_percent) {
+               double tolerance_percent,
+               double raw_actual) {
   MetricComparison metric{
       .metric = std::string(name),
       .expected = expected,
       .actual = actual,
       .tolerance_percent = tolerance_percent,
       .passed = WithinTolerance(expected, actual, tolerance_percent),
+      .raw_actual = raw_actual,
   };
   if (!metric.passed) {
     out->passed = false;
   }
   out->metrics.push_back(std::move(metric));
+}
+
+void AddMetric(BaselineComparison* out,
+               std::string_view name,
+               double expected,
+               double actual,
+               double tolerance_percent) {
+  AddMetric(out, name, expected, actual, tolerance_percent, actual);
+}
+
+double ClampNormalizationFactor(double factor, bool* clamped) {
+  if (factor > kMaxClockNormalizationFactor) {
+    *clamped = true;
+    return kMaxClockNormalizationFactor;
+  }
+  if (factor < 1.0 / kMaxClockNormalizationFactor) {
+    *clamped = true;
+    return 1.0 / kMaxClockNormalizationFactor;
+  }
+  return factor;
+}
+
+// Re-express this run's CPU durations in the machine state the baseline was
+// captured in, so the gate compares code against code.
+//
+// cpu_ms is a duration; it scales with the machine's effective clock, and the
+// baselines never recorded what that clock was. So `p50_cpu_ms: baseline=14.7
+// measured=29.9` was a statement about the governor as much as about the binary
+// — the same binary passed the same gate on other runs of the same suite
+// (TD-2026-08-05-137). Recording the clock in the baseline and scaling by the
+// ratio makes every CPU gate machine-state-independent instead of exempting
+// scenarios from CPU gating one at a time.
+//
+// PER ITERATION, against that iteration's own probe. The motivating failure was a
+// clock that stepped in the middle of a run — five iterations at one clock and
+// five at another — which a single per-run factor would smear across both halves.
+// Each iteration's reading cancels its own clock exactly, and the percentiles are
+// then taken over the normalised series.
+struct NormalizedCpu {
+  MetricSet metrics;
+  ClockNormalization clock;
+};
+
+NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
+                                               const Aggregate& aggregate) {
+  NormalizedCpu out;
+  out.metrics = aggregate.metrics;
+  const double baseline_ns = baseline.metrics.p50_cpu_calibration_ns;
+  if (!baseline.has_calibration || baseline_ns <= 0.0) {
+    return out;
+  }
+
+  std::vector<double> normalized;
+  normalized.reserve(aggregate.iterations.size());
+  std::vector<double> measured_ns;
+  measured_ns.reserve(aggregate.iterations.size());
+  for (const Iteration& iteration : aggregate.iterations) {
+    if (iteration.metrics.cpu_calibration_ns == 0) {
+      continue;
+    }
+    const double iteration_ns = static_cast<double>(iteration.metrics.cpu_calibration_ns);
+    measured_ns.push_back(iteration_ns);
+    normalized.push_back(iteration.metrics.cpu_ms *
+                         ClampNormalizationFactor(baseline_ns / iteration_ns, &out.clock.clamped));
+  }
+
+  if (normalized.empty()) {
+    // No per-iteration probe. A caller that supplied only aggregate metrics (the
+    // baseline unit tests, and any future report replay) can still normalise on
+    // the run-level median, which is exact whenever the clock held steady.
+    if (aggregate.metrics.p50_cpu_calibration_ns <= 0.0) {
+      return out;
+    }
+    const double factor =
+        ClampNormalizationFactor(baseline_ns / aggregate.metrics.p50_cpu_calibration_ns,
+                                 &out.clock.clamped);
+    out.metrics.p50_cpu_ms = aggregate.metrics.p50_cpu_ms * factor;
+    out.metrics.p95_cpu_ms = aggregate.metrics.p95_cpu_ms * factor;
+    out.metrics.max_cpu_ms = aggregate.metrics.max_cpu_ms * factor;
+    out.clock.applied = true;
+    out.clock.factor = 1.0 / factor;
+    return out;
+  }
+
+  out.metrics.p50_cpu_ms = Percentile(normalized, 0.50);
+  out.metrics.p95_cpu_ms = Percentile(normalized, 0.95);
+  out.metrics.max_cpu_ms = *std::max_element(normalized.begin(), normalized.end());
+  out.clock.applied = true;
+  out.clock.factor = Percentile(measured_ns, 0.50) / baseline_ns;
+  return out;
 }
 
 }  // namespace
@@ -89,6 +181,13 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
     record.metrics.p95_cpu_ms = metrics["p95_cpu_ms"].AsDouble();
     record.metrics.max_cpu_ms = metrics["max_cpu_ms"].AsDouble();
   }
+  // The clock the baseline was captured at. Absent on every baseline written
+  // before it existed, which leaves those comparing unnormalised -- the same
+  // deliberate "start gating when re-recorded" rule cpu/rss already follow.
+  record.has_calibration = IsNumber(metrics["p50_cpu_calibration_ns"]);
+  if (record.has_calibration) {
+    record.metrics.p50_cpu_calibration_ns = metrics["p50_cpu_calibration_ns"].AsDouble();
+  }
   record.has_rss_metrics = IsNumber(metrics["p50_rss_growth_bytes"]);
   if (record.has_rss_metrics) {
     record.metrics.p50_rss_growth_bytes = metrics["p50_rss_growth_bytes"].AsDouble();
@@ -130,6 +229,11 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
     metrics["p95_cpu_ms"] = baseline.metrics.p95_cpu_ms;
     metrics["max_cpu_ms"] = baseline.metrics.max_cpu_ms;
   }
+  // Same rule: omitted rather than zeroed when the run had no probe, because a
+  // zero here would come back as `has_calibration` with a divide-by-zero clock.
+  if (baseline.has_calibration && baseline.metrics.p50_cpu_calibration_ns > 0.0) {
+    metrics["p50_cpu_calibration_ns"] = baseline.metrics.p50_cpu_calibration_ns;
+  }
   root["metrics"] = std::move(metrics);
   root["tolerances"] = util::JsonObject{
       {"p50_percent", baseline.tolerances.p50_percent},
@@ -169,12 +273,14 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
   AddMetric(&result, "max_allocations", baseline.metrics.max_allocations,
             aggregate.metrics.max_allocations, baseline.tolerances.alloc_max_percent);
   if (baseline.has_cpu_metrics) {
-    AddMetric(&result, "p50_cpu_ms", baseline.metrics.p50_cpu_ms, aggregate.metrics.p50_cpu_ms,
-              baseline.tolerances.cpu_p50_percent);
-    AddMetric(&result, "p95_cpu_ms", baseline.metrics.p95_cpu_ms, aggregate.metrics.p95_cpu_ms,
-              baseline.tolerances.cpu_p95_percent);
-    AddMetric(&result, "max_cpu_ms", baseline.metrics.max_cpu_ms, aggregate.metrics.max_cpu_ms,
-              baseline.tolerances.cpu_max_percent);
+    const NormalizedCpu cpu = NormalizeCpuAgainstBaselineClock(baseline, aggregate);
+    result.clock = cpu.clock;
+    AddMetric(&result, "p50_cpu_ms", baseline.metrics.p50_cpu_ms, cpu.metrics.p50_cpu_ms,
+              baseline.tolerances.cpu_p50_percent, aggregate.metrics.p50_cpu_ms);
+    AddMetric(&result, "p95_cpu_ms", baseline.metrics.p95_cpu_ms, cpu.metrics.p95_cpu_ms,
+              baseline.tolerances.cpu_p95_percent, aggregate.metrics.p95_cpu_ms);
+    AddMetric(&result, "max_cpu_ms", baseline.metrics.max_cpu_ms, cpu.metrics.max_cpu_ms,
+              baseline.tolerances.cpu_max_percent, aggregate.metrics.max_cpu_ms);
   }
   if (baseline.has_rss_metrics) {
     // Resident growth is quantized to the 4 KiB page, so near zero a PERCENTAGE
@@ -210,19 +316,29 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
 CalibrationSpread MeasureCalibrationSpread(const Aggregate& aggregate) {
   CalibrationSpread spread;
   for (const Iteration& iteration : aggregate.iterations) {
-    for (const auto& [name, value] : iteration.perf_counters) {
-      if (name != "harness.cpu_calibration_ns" || value == 0) {
-        continue;
+    // The metric field is the live path; the counter scan is the fallback for an
+    // aggregate rebuilt from a report, where the probe only ever appears as a
+    // named counter.
+    std::uint64_t reading = iteration.metrics.cpu_calibration_ns;
+    if (reading == 0) {
+      for (const auto& [name, value] : iteration.perf_counters) {
+        if (name == "harness.cpu_calibration_ns") {
+          reading = value;
+          break;
+        }
       }
-      if (!spread.valid) {
-        spread.valid = true;
-        spread.min_ns = value;
-        spread.max_ns = value;
-        continue;
-      }
-      spread.min_ns = std::min(spread.min_ns, value);
-      spread.max_ns = std::max(spread.max_ns, value);
     }
+    if (reading == 0) {
+      continue;
+    }
+    if (!spread.valid) {
+      spread.valid = true;
+      spread.min_ns = reading;
+      spread.max_ns = reading;
+      continue;
+    }
+    spread.min_ns = std::min(spread.min_ns, reading);
+    spread.max_ns = std::max(spread.max_ns, reading);
   }
   if (spread.valid && spread.min_ns != 0) {
     spread.ratio = static_cast<double>(spread.max_ns) / static_cast<double>(spread.min_ns);

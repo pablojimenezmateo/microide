@@ -19,6 +19,10 @@
 #include <unistd.h>
 #endif
 
+#if defined(__GLIBC__)
+#include <malloc.h>
+#endif
+
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
 #include "TerminalSessionTestAccess.h"
@@ -54,21 +58,6 @@ std::string& ResolvedVideoDriverStorage() {
   return driver;
 }
 
-double Percentile(std::vector<double> values, double p) {
-  if (values.empty()) {
-    return 0.0;
-  }
-  std::sort(values.begin(), values.end());
-  const double idx = p * static_cast<double>(values.size() - 1);
-  const std::size_t lo = static_cast<std::size_t>(std::floor(idx));
-  const std::size_t hi = static_cast<std::size_t>(std::ceil(idx));
-  if (lo == hi) {
-    return values[lo];
-  }
-  const double weight = idx - static_cast<double>(lo);
-  return values[lo] * (1.0 - weight) + values[hi] * weight;
-}
-
 double MaxOr0(const std::vector<double>& values) {
   return values.empty() ? 0.0 : *std::max_element(values.begin(), values.end());
 }
@@ -78,15 +67,20 @@ MetricSet AggregateMetrics(const std::vector<Iteration>& iterations) {
   std::vector<double> allocations;
   std::vector<double> cpu_ms;
   std::vector<double> rss_growth_bytes;
+  std::vector<double> calibration_ns;
   wall_ms.reserve(iterations.size());
   allocations.reserve(iterations.size());
   cpu_ms.reserve(iterations.size());
   rss_growth_bytes.reserve(iterations.size());
+  calibration_ns.reserve(iterations.size());
   for (const Iteration& iteration : iterations) {
     wall_ms.push_back(iteration.metrics.wall_ms);
     allocations.push_back(static_cast<double>(iteration.metrics.allocations));
     cpu_ms.push_back(iteration.metrics.cpu_ms);
     rss_growth_bytes.push_back(static_cast<double>(iteration.metrics.rss_growth_bytes));
+    if (iteration.metrics.cpu_calibration_ns != 0) {
+      calibration_ns.push_back(static_cast<double>(iteration.metrics.cpu_calibration_ns));
+    }
   }
   MetricSet out;
   out.p50_wall_ms = Percentile(wall_ms, 0.50);
@@ -101,6 +95,7 @@ MetricSet AggregateMetrics(const std::vector<Iteration>& iterations) {
   out.p50_rss_growth_bytes = Percentile(rss_growth_bytes, 0.50);
   out.p95_rss_growth_bytes = Percentile(rss_growth_bytes, 0.95);
   out.max_rss_growth_bytes = MaxOr0(rss_growth_bytes);
+  out.p50_cpu_calibration_ns = Percentile(calibration_ns, 0.50);
   return out;
 }
 
@@ -129,13 +124,46 @@ std::uint64_t ResolveSeed(std::optional<std::uint64_t> explicit_seed) {
   return 1337ULL;
 }
 
-// Time a fixed, deterministic slab of integer work. Everything the harness
-// records as a cost -- wall_ms, cpu_ms -- is a duration, so all of it scales
-// with the machine's effective clock. This gives every iteration a reading of
-// what that clock actually was, so a report can separate a slower binary from a
-// slower machine. Deliberately branch-free, allocation-free and dependent
-// (each step needs the previous result) so it measures clock rate rather than
-// how wide the core can go, and sunk into a volatile so it cannot be elided.
+// Time a fixed, deterministic slab of integer work. Everything the harness records
+// as a cost -- wall_ms, cpu_ms -- is a duration, so all of it scales with the
+// machine's effective clock. This gives every iteration a reading of what that
+// clock actually was, so a report can separate a slower binary from a slower
+// machine and the gate can normalise the difference away (TD-2026-08-05-137).
+//
+// Deliberately branch-free, allocation-free, memory-free and dependent (each step
+// needs the previous result), and sunk into a volatile so it cannot be elided.
+// Every one of those properties is load-bearing, because this number scales a
+// gate: a probe that touches memory is a probe the code under test can move.
+//
+// Measured on perf-runner-v1 (Ryzen AI 9 HX 370, 8 fast threads at 5157 MHz),
+// while closing item 3 of the TD -- the probe "understates the effect", so try a
+// shape closer to the work:
+//
+//  - A MEMORY-MIXED probe (this chain + an L2 pointer chase + a 256 KiB streaming
+//    copy) reads DIRTIER, not truer. Its memory half swung 3.3x across one
+//    scenario's iterations (632 -> 192 us) while the chain held to 1%, because the
+//    probe's buffers are evicted by whatever the scenario just did. That makes the
+//    reading a function of the code under test: a change that grows the working set
+//    inflates the probe, which scales the expectation up, which loosens the very
+//    gate that change should have tripped. It also streams ~12 MB immediately
+//    before the measured window, evicting the app's own working set. Rejected on
+//    both counts.
+//  - A BURST-SHAPED probe (the same work in short slabs, each after a 1 ms sleep,
+//    to time a core that has just been idle) read within 1% of this one on every
+//    iteration of every scenario tried. A 1 ms gap is nowhere near long enough for
+//    the core to leave the state it is in.
+//
+// What the machine actually does here, measured: a thread that works CONTINUOUSLY
+// for about a second reaches a state where this probe reads ~467 us instead of
+// ~673 us -- 1.44x -- and holds it for as long as it keeps working. 300 ms of idle
+// drops it back, and no amount of spinning afterwards recovers it inside a run with
+// idle in it; a busy keeper thread pinned to another physical core does not hold it
+// either, so it is per-thread residency and not a package state the harness can
+// pin. Scenarios that pump frames and wait therefore live in the slow state, and
+// the few that grind continuously (syntax_highlight_cpp_lines) cross into the fast
+// one PART WAY THROUGH A RUN: it measured 252 us for nine iterations then 179 us
+// for five, with cpu_ms tracking it 15.6 -> 11.3 ms (1.38x against the probe's
+// 1.41x). That is the case per-iteration normalisation exists for.
 std::uint64_t MeasureCpuCalibrationNanoseconds() {
   static volatile std::uint64_t sink = 0;
   const auto start = std::chrono::steady_clock::now();
@@ -170,6 +198,28 @@ double ProcessCpuMilliseconds() {
   return to_ms(usage.ru_utime) + to_ms(usage.ru_stime);
 #else
   return 0.0;
+#endif
+}
+
+// Hand every page the allocator is merely *holding* back to the OS, so a resident
+// reading either side of an iteration measures what the process RETAINS rather
+// than what its arenas happen to be caching.
+//
+// Without this, `rss_growth_bytes` on editor_long_line_select_all_edit was bimodal
+// — 4.19 MB or 6.29 MB per iteration, stably, with byte-identical allocation
+// counts on both sides (TD-2026-08-05-136). Both values are multiples of the
+// fixture's ~2 MiB line: the variance is whether a megabyte-scale block was still
+// sitting on a free list at the sample point, which is a fact about glibc's arena
+// bookkeeping and not about the code under test. A gate whose value is decided
+// there is a coin flip.
+//
+// Runs OUTSIDE the measured window at both boundaries, so it costs the scenario
+// neither wall nor CPU; it does mean the next iteration re-faults the pages it
+// gets back, which is a real cost the measurement now carries uniformly instead of
+// on whichever iteration got unlucky.
+void SettleResidentSet() {
+#if defined(__GLIBC__)
+  malloc_trim(0);
 #endif
 }
 
@@ -675,7 +725,12 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     }
     // Outside the measured window on purpose: this is a reading of the machine,
     // not of the scenario, and must not be charged to either cpu_ms or wall_ms.
-    context.RecordCpuCalibration(MeasureCpuCalibrationNanoseconds());
+    const std::uint64_t calibration_ns = MeasureCpuCalibrationNanoseconds();
+    context.RecordCpuCalibration(calibration_ns);
+    // Both resident readings are taken on a trimmed heap so the delta between them
+    // is retained memory, not arena state. Trimming here (before cpu_ms_before) and
+    // after cpu_ms_after keeps its own cost out of every measured metric.
+    SettleResidentSet();
     const util::PerfCounterSnapshot counter_before = util::CapturePerformanceCounters();
     const AllocationSnapshot before = Allocations::Snapshot();
     const double cpu_ms_before = ProcessCpuMilliseconds();
@@ -695,6 +750,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     const auto end = std::chrono::steady_clock::now();
     const AllocationDelta delta = Allocations::DeltaSince(before);
     const double cpu_ms_after = ProcessCpuMilliseconds();
+    SettleResidentSet();
     const std::uint64_t rss_after = ProcessResidentBytes();
     const util::PerfCounterSnapshot counter_after = util::CapturePerformanceCounters();
     std::vector<std::pair<std::string, std::uint64_t>> counter_deltas;
@@ -717,6 +773,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
                 .bytes_freed =
                     static_cast<std::uint64_t>(std::max<std::int64_t>(0, delta.bytes_freed)),
                 .cpu_ms = std::max(0.0, cpu_ms_after - cpu_ms_before),
+                .cpu_calibration_ns = calibration_ns,
                 .rss_growth_bytes = rss_after > rss_before ? rss_after - rss_before : 0,
             },
         .phase_metrics = context.TakePhaseMetrics(),

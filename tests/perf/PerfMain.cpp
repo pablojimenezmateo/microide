@@ -1501,6 +1501,7 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
                       {"p50_rss_growth_bytes", aggregate.metrics.p50_rss_growth_bytes},
                       {"p95_rss_growth_bytes", aggregate.metrics.p95_rss_growth_bytes},
                       {"max_rss_growth_bytes", aggregate.metrics.max_rss_growth_bytes},
+                      {"p50_cpu_calibration_ns", aggregate.metrics.p50_cpu_calibration_ns},
                   }},
       {"iterations", std::move(iterations_json)},
   };
@@ -1750,10 +1751,21 @@ int main(int argc, char** argv) {
                          // on CPU immediately.
                          .cpu_p50_percent = scenario.tolerance_p50_percent,
                          .cpu_p95_percent = scenario.tolerance_p95_percent,
-                         .cpu_max_percent = scenario.tolerance_max_percent},
+                         .cpu_max_percent = scenario.tolerance_max_percent,
+                         // From the scenario, not the struct default: see
+                         // Scenario::tolerance_rss_* for the rebaseline that
+                         // silently reset a deliberate widening.
+                         .rss_p50_percent = scenario.tolerance_rss_p50_percent,
+                         .rss_p95_percent = scenario.tolerance_rss_p95_percent,
+                         .rss_max_percent = scenario.tolerance_rss_max_percent},
       };
       record.has_cpu_metrics = scenario.gate_cpu_metrics;
       record.has_rss_metrics = true;
+      // Record the clock this baseline was captured at, so a later run's CPU
+      // numbers can be compared in the same machine state instead of against a
+      // number that silently meant "measured on a core that happened to be at
+      // 5.1 GHz" (TD-2026-08-05-137).
+      record.has_calibration = aggregate->metrics.p50_cpu_calibration_ns > 0.0;
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
         return 1;
@@ -1806,9 +1818,31 @@ int main(int argc, char** argv) {
     const bool clock_moved = calibration.valid && calibration.ratio >= kCalibrationSpreadNoteRatio;
     const std::string calibration_note =
         clock_moved ? DescribeCalibrationSpread(calibration) : std::string{};
+    // Say when the CPU gate was compared in the baseline's machine state rather
+    // than in this run's. A normalisation that is invisible is a gate nobody can
+    // audit: it is the difference between "the CPU numbers agree" and "the CPU
+    // numbers agree after being scaled by 1.4x".
+    const std::string clock_note = [&]() -> std::string {
+      if (!comparison.clock.applied) {
+        return {};
+      }
+      const double deviation = std::abs(comparison.clock.factor - 1.0);
+      if (deviation < 0.05 && !comparison.clock.clamped) {
+        return {};
+      }
+      std::ostringstream note;
+      note << "  [cpu normalised for machine clock: this run measured "
+           << comparison.clock.factor << "x the baseline's calibration"
+           << (comparison.clock.clamped ? ", CLAMPED — probe reading is out of range, treat the cpu"
+                                          " gate as unenforced"
+                                        : "")
+           << "]";
+      return note.str();
+    }();
     std::cerr << "[perf] " << verdict << ' ' << scenario.name << " (p50_wall="
               << aggregate->metrics.p50_wall_ms << "ms, p50_alloc="
-              << aggregate->metrics.p50_allocations << ")" << calibration_note << "\n";
+              << aggregate->metrics.p50_allocations << ")" << clock_note << calibration_note
+              << "\n";
     if (!comparison.passed) {
       for (const MetricComparison& metric : comparison.metrics) {
         if (metric.passed) {
@@ -1824,9 +1858,17 @@ int main(int argc, char** argv) {
         // a cpu/wall failure is the machine and not the code.
         const bool duration_metric = metric.metric.find("cpu") != std::string::npos ||
                                      metric.metric.find("wall") != std::string::npos;
+        // A normalised metric prints both numbers. Reporting only the normalised
+        // one hides that the gate did arithmetic; reporting only the raw one makes
+        // the percentage next to it unreproducible.
+        const bool normalized = metric.actual != metric.raw_actual;
         std::cerr << "[perf]   " << metric.metric << ": baseline=" << metric.expected
-                  << " measured=" << metric.actual << " (" << (delta_percent >= 0.0 ? "+" : "")
-                  << delta_percent << "%, tolerance +" << metric.tolerance_percent << "%)"
+                  << " measured=" << metric.actual;
+        if (normalized) {
+          std::cerr << " (raw " << metric.raw_actual << ", clock-normalised)";
+        }
+        std::cerr << " (" << (delta_percent >= 0.0 ? "+" : "") << delta_percent
+                  << "%, tolerance +" << metric.tolerance_percent << "%)"
                   << (advisory_metric ? "  [advisory: windowed video lane, not comparable]" : "")
                   << (clock_moved && duration_metric ? calibration_note : std::string{}) << '\n';
       }

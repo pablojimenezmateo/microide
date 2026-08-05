@@ -47,7 +47,20 @@ struct BaselineRecord {
   // deliberate act like any other rebaseline.
   bool has_cpu_metrics = false;
   bool has_rss_metrics = false;
+  // Whether the baseline recorded the clock it was captured at
+  // (`metrics.p50_cpu_calibration_ns`). Baselines written before that field
+  // existed did not, and they compare unnormalised exactly as they did before.
+  bool has_calibration = false;
 };
+
+// Ceiling on the clock-normalisation factor, in either direction. A machine
+// genuinely 3x off the one a baseline was captured on is not the same reference
+// lane, and a probe reading that far out is much more likely to be a preempted
+// probe than a real clock move -- either way, scaling a gate by it would loosen it
+// past the point of measuring anything. Clamping and saying so beats going quietly
+// vacuous. 3x sits well above the 2.0x the governor was measured to be worth
+// (TD-2026-08-05-137) and well below "these are different machines".
+inline constexpr double kMaxClockNormalizationFactor = 3.0;
 
 struct MetricComparison {
   std::string metric;
@@ -55,12 +68,31 @@ struct MetricComparison {
   double actual = 0.0;
   double tolerance_percent = 0.0;
   bool passed = true;
+  // For a clock-normalised metric, the raw measurement before normalisation.
+  // Equal to `actual` for every other metric. Reported so a verdict line can say
+  // both what was measured and what it was worth on the baseline's machine state.
+  double raw_actual = 0.0;
+};
+
+// How a run's clock compared to the clock the baseline was captured at, and what
+// the comparison did about it. See NormalizeCpuAgainstBaselineClock.
+struct ClockNormalization {
+  bool applied = false;
+  // measured clock / baseline clock, as the probe reads it: >1 means this run's
+  // machine was slower, so a CPU duration was expected to be proportionally larger.
+  double factor = 1.0;
+  // Set when `factor` hit the sanity clamp. A probe reading that far out is more
+  // likely broken (a preempted probe, a baseline from another machine class) than
+  // a real 3x clock move, and silently scaling a gate by it would make the gate
+  // vacuous without anybody noticing.
+  bool clamped = false;
 };
 
 struct BaselineComparison {
   std::string scenario_name;
   bool passed = true;
   std::vector<MetricComparison> metrics;
+  ClockNormalization clock;
 };
 
 // Spread of the harness's fixed-work CPU calibration probe across one scenario's
