@@ -308,7 +308,15 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
     }
     EnsureCursorLineExistsLocked();
     auto& line = lines_[cursor_row_];
-    const std::size_t base = cursor_column_ - 1;
+    std::size_t base = cursor_column_ - 1;
+    // A double-width base glyph advanced the cursor by two and left a
+    // wide-trailing spacer in the column just behind it. The mark belongs to the
+    // lead cell one column further back — the spacer holds no bytes, so the
+    // `cell.length > 0` guard below silently dropped every combining mark that
+    // followed a wide glyph (2026-07-10 pass).
+    if (base > 0 && base < line.cells.size() && line.cells[base].style.wide_trailing()) {
+      --base;
+    }
     if (base < line.cells.size()) {
       TerminalCell& cell = line.cells[base];
       if (cell.length > 0 && cell.length + effective_glyph.size() <= cell.bytes.size()) {

@@ -465,10 +465,41 @@ is what this ledger is for. Not fixed in that pass — low value or hard to reac
   both functions are `WorkspaceShell` members needing a live `text_renderer_` and
   the narrow-field trigger (debug variables inline editor). Fix verified by
   inspection; ASAN covers it if a shell-level test ever drives that path.
-- Terminal minor spec deviations (not user-visible in normal use): a combining
-  mark following a double-width glyph attaches to the wide-trailing spacer and is
-  dropped; multi-byte charset designations (`ESC ( " ?`) mis-parse; DECSTBM on the
-  alternate screen with origin mode homes to screen-top rather than region-top.
+- **[RESOLVED 2026-08-05]** Terminal minor spec deviations: a combining mark
+  following a double-width glyph attached to the wide-trailing spacer and was
+  dropped; multi-byte charset designations (`ESC ( " ?`) mis-parsed; DECSTBM on the
+  alternate screen with origin mode was said to home to screen-top rather than
+  region-top. Each now has a test; two were real, the third was already fixed.
+
+  - **Combining mark after a wide glyph.** Two bugs stacked, and only fixing the
+    first would have changed nothing observable. The mark attaches to
+    `cursor_column_ - 1`, which after a double-width base is the wide-trailing
+    spacer — a cell with `length == 0`, so the "is there a base glyph?" guard
+    dropped the mark. Stepping back to the lead cell is the fix. But the lead cell
+    then failed the *other* guard: a base plus a mark has to fit the cell's inline
+    UTF-8 storage, and at four bytes it could not hold *any* accented double-width
+    glyph — every double-width codepoint is U+1100 or above (3 bytes) and every
+    combining mark is at least 2. Inline storage is now **five** bytes, which is
+    free: `length` + `TerminalStyle` pad `TerminalCell` to 18 bytes at either
+    width (6 is what costs 20), so nothing grows on any scrollback cell. A new
+    `sizeof(TerminalCell) == 18` static_assert keeps that deliberate. Still
+    unsupported, and out of scope here: an emoji with a 3-byte variation selector,
+    or several stacked marks — that wants out-of-line per-cell storage, the way
+    xterm.js does it.
+  - **Multi-byte charset designations.** The parser consumed exactly one byte after
+    the designator, so for `ESC ( " ?` the `"` was taken as the final and the `?`
+    printed as text. ECMA-48 is `<designator> I... F`: intermediates 0x20..0x2F,
+    then one final 0x30..0x7E. Intermediates are consumed now, under the same
+    `kMaxEscapeSequenceLength` cap every other escape carries.
+  - **DECSTBM under origin mode was already correct.** `MoveCursorLocked` clamps to
+    `ActiveScrollRegionTopLocked()` on the alternate screen whenever origin mode is
+    on, and DECSTBM assigns the new margins *before* homing, so `MoveCursorLocked(0,
+    0)` already lands on the top margin. The existing coverage did not show this
+    because it sets the region before enabling origin mode (`\x1b[2;4r\x1b[?6h`);
+    the ordering that would expose a regression is `?6h` first. Pinned by
+    `TerminalSession/DecstbmHomesToTheMarginUnderOriginMode`, which fails if the
+    home escapes the margin (it writes at the homed position and checks the row
+    above is untouched).
 - `MergeConflictKind` may label a both-modified conflict `LineEndingHeavy` when
   only one side is line-ending-only; cosmetic (summary text), behavior unchanged.
 - **[RESOLVED 2026-08-05]** LSP diagnostics version gate after close→reopen

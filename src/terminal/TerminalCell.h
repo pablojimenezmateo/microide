@@ -84,7 +84,17 @@ struct TerminalCell {
   // length=0 marks an empty/uninitialized cell. The cell is now trivially copyable, so terminal
   // snapshots and scrollback trims become bulk memcpys instead of per-cell std::string moves.
   // (Round-2 Finding 8.)
-  std::array<char, 4> bytes{};
+  //
+  // FIVE bytes, not four, and the fifth is free: `length` + TerminalStyle already
+  // pad the struct out to 18 bytes at either width (verified — 6 bytes is what
+  // costs 20). A base glyph plus one combining mark has to fit inline or the mark
+  // is dropped, and the widest case that can occur is a 3-byte base with a 2-byte
+  // mark: every double-width codepoint is U+1100 or above (3 bytes in UTF-8) and
+  // every combining mark is at least 2, so four bytes could not hold a single
+  // accented CJK glyph. Longer runs (an emoji with a 3-byte variation selector,
+  // several stacked marks) still do not fit; that wants out-of-line storage keyed
+  // by cell, which is what xterm.js does, and is a separate change.
+  std::array<char, 5> bytes{};
   std::uint8_t length = 0;
   TerminalStyle style;
 

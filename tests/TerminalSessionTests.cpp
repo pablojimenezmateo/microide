@@ -605,6 +605,59 @@ void TestTerminalSessionIgnoresCharsetDesignationEscapes() {
                  "charset designation escapes should not leak trailing selector bytes");
 }
 
+// A designation is `<designator> I... F`: zero or more intermediates (0x20..0x2F)
+// then one final (0x30..0x7E). The parser consumed exactly one byte after the
+// designator, so a real multi-byte designation left its final to be printed as
+// text (2026-07-10 pass). `ESC ( " ?` is DEC Supplemental Graphic; `ESC ( % 5` is
+// DEC Supplemental Graphic via a 96-character set.
+void TestTerminalSessionConsumesMultiByteCharsetDesignations() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  TerminalSessionTestAccess::AppendOutput(session, "A\x1b(\"?B\x1b)%5C\x1b(BD");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "ABCD",
+                 "a multi-byte charset designation must be consumed whole, final byte included");
+}
+
+// A combining mark is zero-width, so it attaches to the previously written cell
+// instead of taking a column. After a DOUBLE-width base glyph the cursor sits two
+// columns on, and the cell immediately behind it is the wide-trailing spacer --
+// which holds no bytes, so every mark following a wide glyph was dropped
+// (2026-07-10 pass). It belongs to the lead cell one column further back.
+void TestTerminalSessionCombiningMarkAttachesToAWideBaseGlyph() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 8);
+
+  // U+4E00 (double-width) followed by U+0301 COMBINING ACUTE ACCENT, then a
+  // narrow base with the same mark as the control -- that one always worked.
+  TerminalSessionTestAccess::AppendOutput(session, "\xe4\xb8\x80\xcc\x81" "e\xcc\x81");
+
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "\xe4\xb8\x80\xcc\x81" "e\xcc\x81",
+                 "a combining mark after a double-width glyph must attach to the lead cell");
+  Expect(session.cursor_column() == 3,
+         "the mark must not consume a column of its own");
+}
+
+// DECSTBM homes the cursor. With origin mode already on, "home" is the top MARGIN,
+// not the top of the screen -- the same rebasing every other addressing command
+// does under DECOM (2026-07-10 pass; the ordering that exposes it is `?6h` BEFORE
+// `r`, since the existing coverage sets the region first).
+void TestTerminalSessionDecstbmHomesToTheMarginUnderOriginMode() {
+  microide::terminal::TerminalSession session;
+  ResetAlternateScreenFixture(session);
+
+  TerminalSessionTestAccess::AppendOutput(session, "\x1b[?6h\x1b[2;4rZ");
+
+  Expect(session.cursor_row() == 1,
+         "DECSTBM under origin mode should home to the top margin, not to screen row 0");
+  const auto lines = session.SnapshotLines();
+  ExpectLineText(lines, 0, "A", "the row above the margin must be untouched");
+  ExpectLineText(lines, 1, "Z", "the homed write should land on the top margin row");
+}
+
 void TestTerminalSessionOscTitleBellUpdatesLaunchLabel() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -1827,11 +1880,19 @@ void TestTerminalCellIsTriviallyCopyableAndCompact() {
   using microide::terminal::TerminalCell;
   static_assert(std::is_trivially_copyable_v<TerminalCell>,
                 "TerminalCell must be trivially copyable to support bulk snapshot copies");
-  // 4 bytes inline + 1 length byte + TerminalStyle (~24 bytes for two optional SDL_Color +
+  // 5 bytes inline + 1 length byte + TerminalStyle (~24 bytes for two optional SDL_Color +
   // two bools). Cap at 64 to leave headroom for alignment.
   static_assert(sizeof(TerminalCell) <= 64,
                 "TerminalCell footprint regressed; inline storage and trivial copyability are the "
                 "point of Finding 8");
+  // The inline width is load-bearing, and the exact figure is what makes it free:
+  // `length` + TerminalStyle pad the struct to 18 bytes at 4 OR 5 inline bytes, so
+  // the fifth (which is what lets a 3-byte double-width base carry a 2-byte
+  // combining mark) costs nothing. A sixth would cost two bytes per cell, on every
+  // cell of every scrollback line — decide that deliberately, not by drift.
+  static_assert(sizeof(TerminalCell) == 18,
+                "TerminalCell grew past the free padding; widening inline storage now costs "
+                "memory on every scrollback cell");
 
   // Functional invariants of the inline storage.
   TerminalCell ascii;
@@ -2595,6 +2656,12 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionDisableOriginModeRestoresAbsoluteCup);
   AddTest(tests, "TerminalSession/IgnoresCharsetDesignationEscapes",
           TestTerminalSessionIgnoresCharsetDesignationEscapes);
+  AddTest(tests, "TerminalSession/ConsumesMultiByteCharsetDesignations",
+          TestTerminalSessionConsumesMultiByteCharsetDesignations);
+  AddTest(tests, "TerminalSession/CombiningMarkAttachesToAWideBaseGlyph",
+          TestTerminalSessionCombiningMarkAttachesToAWideBaseGlyph);
+  AddTest(tests, "TerminalSession/DecstbmHomesToTheMarginUnderOriginMode",
+          TestTerminalSessionDecstbmHomesToTheMarginUnderOriginMode);
   AddTest(tests, "TerminalSession/OscTitleBellUpdatesLaunchLabel",
           TestTerminalSessionOscTitleBellUpdatesLaunchLabel);
   AddTest(tests, "TerminalSession/OscTitleStUpdatesLaunchLabel",

@@ -209,6 +209,20 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         escape_mode_ = EscapeMode::None;
         continue;
       }
+      // ECMA-48: a designation is <designator> I... F — zero or more intermediate
+      // bytes (0x20..0x2F) followed by one final (0x30..0x7E). Consuming exactly
+      // one byte treated the first intermediate as the final, so a real multi-byte
+      // designation such as `ESC ( " ?` (DEC Supplemental Graphic) left the `?` to
+      // be printed as text (2026-07-10 pass). Capped like every other escape so a
+      // runaway stream of intermediates cannot swallow all output.
+      if (byte >= 0x20 && byte <= 0x2f) {
+        if (escape_sequence_buffer_.size() > kMaxEscapeSequenceLength) {
+          AbandonEscapeSequenceLocked();
+          continue;
+        }
+        escape_sequence_buffer_.push_back(static_cast<char>(byte));
+        continue;
+      }
       escape_sequence_buffer_.clear();
       escape_mode_ = EscapeMode::None;
       continue;
