@@ -67,6 +67,62 @@ class TextLayout {
                                    std::size_t tab_size,
                                    LayoutLine& out,
                                    LineLayoutFacts facts = {});
+
+  // A line handed to the builder as a bounded byte window instead of whole.
+  //
+  // Rendering a row reads a screenful of bytes, but asking for them as
+  // `lines[index]` asks for the whole line -- and on a piece-tree source that
+  // materializes a copy of any line that spans pieces, i.e. every line an in-line
+  // edit has touched. On a file with no line breaks in it that is a multi-megabyte
+  // copy per frame (TD-2026-08-05-133).
+  //
+  // `bytes` are the line's bytes beginning at absolute byte column `start_byte`,
+  // which must be a position where visual column still equals byte column -- i.e.
+  // no tab and no byte >= 0x80 precedes it. That is what lets the walk start there
+  // instead of at column 0, and it is the same precondition the whole-line build
+  // already relies on. `ComputeVisibleLineWindowStart` is the one place that
+  // picks it.
+  struct VisibleLineWindow {
+    std::string_view bytes;
+    std::size_t start_byte = 0;
+    std::size_t line_length = 0;
+  };
+
+  // First byte the visible walk can start at, given what is known about the line.
+  // `plain_prefix_end` is the line's first tab-or-multibyte byte (`line_length`
+  // when there is none), which the caller scans for -- possibly in chunks, since
+  // that scan is itself bounded by `horizontal_scroll`.
+  static std::size_t ComputeVisibleLineWindowStart(std::size_t horizontal_scroll,
+                                                   std::size_t line_length,
+                                                   std::size_t plain_prefix_end) {
+    if (horizontal_scroll == 0 || line_length == 0) {
+      return 0;
+    }
+    return std::min({horizontal_scroll, line_length, plain_prefix_end});
+  }
+
+  // Bytes the visible walk can read past `start_byte`, and therefore the smallest
+  // window that is guaranteed to hold everything it visits. The walk stops once
+  // the visual column reaches `horizontal_scroll + visible_columns`, and every
+  // step advances that by at least one while consuming at most four bytes (the
+  // longest UTF-8 sequence); the trailing `+ 4` covers the step that crosses the
+  // edge. Clamping to the line is the caller's job (LineWindow does it).
+  static std::size_t VisibleLineWindowBytes(std::size_t start_byte,
+                                            std::size_t horizontal_scroll,
+                                            std::size_t visible_columns) {
+    const std::size_t reach = horizontal_scroll > start_byte ? horizontal_scroll - start_byte : 0;
+    return (reach + visible_columns) * 4 + 4;
+  }
+
+  // Window form of `BuildVisibleLineInto`. `facts` must be known: the line's full
+  // visual width cannot be derived from a window, and the caller that has a window
+  // has a width table (TextLayoutCache).
+  static void BuildVisibleLineWindowInto(const VisibleLineWindow& window,
+                                         std::size_t horizontal_scroll,
+                                         std::size_t visible_columns,
+                                         std::size_t tab_size,
+                                         LayoutLine& out,
+                                         LineLayoutFacts facts);
   static LayoutLine BuildVisibleLine(std::string_view line,
                                      std::size_t horizontal_scroll,
                                      std::size_t visible_columns,

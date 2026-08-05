@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "editor/LineSpan.h"
+#include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
 #include "editor/TextLayoutCache.h"
 #include "util/StringUtil.h"
@@ -255,6 +257,98 @@ void TestBuildVisibleLineMatchesWalkFromColumnZero() {
   }
 }
 
+// TD-2026-08-05-133: the visible-row build reads a bounded byte window of the
+// line instead of all of it, so a piece-tree line that spans pieces -- every line
+// an in-line edit has touched -- is no longer copied whole to render one row.
+//
+// Two things have to hold and only the first is obvious: the window build must
+// agree with the whole-line build (same glyphs, same source columns, same offsets)
+// AND the window must be big enough that the walk never runs off the end of it. A
+// window one byte short does not crash; it silently drops the row's last cell. So
+// the oracle is the whole-line build, over the same generated line set that pins
+// the prefix-skipping walk, at every scroll offset and several widths.
+void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
+  const auto same = [](const LayoutLine& a, const LayoutLine& b) {
+    return a.text == b.text && a.source_columns == b.source_columns &&
+           a.text_offsets == b.text_offsets && a.visual_columns == b.visual_columns;
+  };
+
+  const std::string kSpecials[] = {"\t", "\xC3\xA9", "\xE4\xB8\xAD", "\xFF"};
+  std::vector<std::string> lines;
+  for (std::size_t length = 0; length <= 18; ++length) {
+    const std::string ascii(length, 'a');
+    lines.push_back(ascii);
+    for (const std::string& special : kSpecials) {
+      for (std::size_t at = 0; at <= length; ++at) {
+        std::string line = ascii;
+        line.insert(at, special);
+        lines.push_back(std::move(line));
+      }
+    }
+  }
+  // Long lines too, since the window sizing is the whole point and a 20-byte line
+  // is shorter than any window it can ask for. The all-multibyte ones are what
+  // makes the four-bytes-per-cell factor load-bearing: on a line of four-byte code
+  // points the walk consumes exactly four bytes per visual column, so a window
+  // sized on columns alone -- or one byte short -- drops the row's last cells.
+  lines.push_back(std::string(600, 'x') + "\t" + std::string(600, 'y'));
+  lines.push_back(std::string(600, 'x') + "\xE4\xB8\xAD" + std::string(600, 'y'));
+  std::string four_byte;
+  std::string three_byte;
+  for (int i = 0; i < 300; ++i) {
+    four_byte += "\xf0\x9f\x98\x80";  // U+1F600, four bytes, one cell
+    three_byte += "\xE4\xB8\xAD";     // U+4E2D, three bytes, one cell
+  }
+  lines.push_back(four_byte);
+  lines.push_back(three_byte);
+  lines.push_back(std::string(40, 'x') + four_byte);
+
+  LayoutLine expected;
+  LayoutLine windowed;
+  std::string scratch;
+  for (const std::string& line : lines) {
+    // Fragment the line so every window read that crosses a piece boundary takes
+    // LineWindow's copying path rather than its zero-copy one.
+    microide::editor::TextBuffer buffer;
+    buffer.ResetFromText(line + "\n");
+    if (line.size() >= 2) {
+      buffer.ReplaceTextRange(0, line.size() / 2, 0, line.size() / 2, "");
+      buffer.ReplaceTextRange(0, 1, 0, 1, "");
+    }
+    const microide::editor::LineSpan span(buffer);
+    const LineLayoutFacts facts = TextLayout::MeasureLineFacts(line, kTabSize);
+
+    const std::size_t scroll_limit = std::min<std::size_t>(line.size() + 3, 64);
+    for (std::size_t scroll = 0; scroll <= scroll_limit; ++scroll) {
+      for (const std::size_t columns :
+           {std::size_t{0}, std::size_t{1}, std::size_t{4}, std::size_t{32}}) {
+        TextLayout::BuildVisibleLineInto(line, scroll, columns, kTabSize, expected, facts);
+
+        // Exactly what TextLayoutCache does to size and read the window.
+        const std::size_t probe = std::min(scroll, line.size());
+        const std::size_t plain_prefix_end =
+            facts.plain_ascii
+                ? line.size()
+                : util::FirstNonAsciiOrByte(std::string_view(line).substr(0, probe), '\t');
+        const std::size_t start_byte =
+            TextLayout::ComputeVisibleLineWindowStart(scroll, line.size(), plain_prefix_end);
+        const TextLayout::VisibleLineWindow window{
+            .bytes = span.LineWindow(
+                0, start_byte, TextLayout::VisibleLineWindowBytes(start_byte, scroll, columns),
+                scratch),
+            .start_byte = start_byte,
+            .line_length = line.size(),
+        };
+        TextLayout::BuildVisibleLineWindowInto(window, scroll, columns, kTabSize, windowed, facts);
+        Expect(same(windowed, expected),
+               "the windowed build must match the whole-line build (line of " +
+                   std::to_string(line.size()) + " bytes, scroll " + std::to_string(scroll) +
+                   ", " + std::to_string(columns) + " columns)");
+      }
+    }
+  }
+}
+
 }  // namespace
 
 // TextLayoutCache::InvalidateAll documents that it "wipes every cache + every
@@ -494,6 +588,8 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
           TestVisualColumnMapMatchesDirectWalk);
   AddTest(tests, "TextLayout/VisualColumnFastPathMatchesReferenceWalk",
           TestVisualColumnFastPathMatchesReferenceWalk);
+  AddTest(tests, "TextLayout/BuildVisibleLineWindowMatchesWholeLineBuild",
+          TestBuildVisibleLineWindowMatchesWholeLineBuild);
   AddTest(tests, "TextLayout/BuildVisibleLineMatchesWalkFromColumnZero",
           TestBuildVisibleLineMatchesWalkFromColumnZero);
   AddTest(tests, "TextLayout/TextVisualRoundTrip", TestTextVisualRoundTrip);

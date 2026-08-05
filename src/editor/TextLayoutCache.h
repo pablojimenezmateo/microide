@@ -309,6 +309,10 @@ class TextLayoutCache {
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;
   mutable std::size_t visible_line_evictions_ = 0;
+  // Scratch for the bounded line reads a visible-row build does (the prefix scan
+  // and the window itself). A member, not a local, so the capacity survives: a
+  // local would allocate once per rendered row of every line that spans pieces.
+  mutable std::string line_window_scratch_;
 
   // Wrapped-row table
   mutable std::vector<WrappedRow> wrapped_row_layouts_;

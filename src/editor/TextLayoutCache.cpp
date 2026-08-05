@@ -10,6 +10,40 @@
 
 namespace microide::editor {
 
+namespace {
+
+// Bytes read at a time when scanning a line's plain-ASCII prefix.
+constexpr std::size_t kPrefixScanChunkBytes = 4096;
+
+// Offset of the first tab-or-multibyte byte of line `index` within [0, limit),
+// or `limit` when that prefix is all plain single-cell ASCII.
+//
+// Read in chunks rather than from a whole-line view: on a piece-tree source
+// `lines[index]` materializes a copy of any line that spans pieces -- every line
+// an in-line edit has touched -- so a file with no line breaks in it paid a
+// multi-megabyte copy per rendered row per frame (TD-2026-08-05-133). The scan
+// itself is already bounded by the horizontal scroll offset, which is what makes
+// the chunked form finite.
+std::size_t FirstNonPlainAsciiByteInPrefix(LineSpan lines, std::size_t index, std::size_t limit,
+                                           std::string& scratch) {
+  std::size_t offset = 0;
+  while (offset < limit) {
+    const std::string_view chunk =
+        lines.LineWindow(index, offset, std::min(kPrefixScanChunkBytes, limit - offset), scratch);
+    if (chunk.empty()) {
+      break;
+    }
+    const std::size_t hit = util::FirstNonAsciiOrByte(chunk, '\t');
+    if (hit < chunk.size()) {
+      return offset + hit;
+    }
+    offset += chunk.size();
+  }
+  return limit;
+}
+
+}  // namespace
+
 const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::size_t line_index,
                                                               std::size_t horizontal_scroll,
@@ -46,6 +80,49 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
            "per-line width table went stale against the buffer");
   }
 #endif
+  // Read only the bytes the build can visit, when the width table can tell us
+  // where the visible walk starts. Without `facts` the line's full visual width
+  // has to be walked, which needs all of it -- the whole-line form below.
+  //
+  // The window is bounded by the row, not by the line: `lines[line_index]` asks
+  // for the whole line, and on a piece-tree source that materializes any line that
+  // spans pieces -- every line an in-line edit has touched. On a file with no line
+  // breaks in it that was a multi-megabyte copy per frame, and it was the last
+  // caller keeping that copy alive (TD-2026-08-05-133).
+  TextLayout::VisibleLineWindow window;
+  bool windowed = false;
+  if (facts.known) {
+    const std::size_t line_length = lines.LineLength(line_index);
+    const std::size_t probe = std::min(horizontal_scroll, line_length);
+    const std::size_t plain_prefix_end =
+        facts.plain_ascii ? line_length
+                          : FirstNonPlainAsciiByteInPrefix(lines, line_index, probe,
+                                                           line_window_scratch_);
+    if (!facts.plain_ascii) {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
+                                  std::min(plain_prefix_end, probe));
+    }
+    const std::size_t start_byte = TextLayout::ComputeVisibleLineWindowStart(
+        horizontal_scroll, line_length, plain_prefix_end);
+    window = TextLayout::VisibleLineWindow{
+        .bytes = lines.LineWindow(
+            line_index, start_byte,
+            TextLayout::VisibleLineWindowBytes(start_byte, horizontal_scroll, visible_columns),
+            line_window_scratch_),
+        .start_byte = start_byte,
+        .line_length = line_length,
+    };
+    windowed = true;
+  }
+  const auto build_into = [&](LayoutLine& out) {
+    if (windowed) {
+      TextLayout::BuildVisibleLineWindowInto(window, horizontal_scroll, visible_columns, tab_size,
+                                             out, facts);
+    } else {
+      TextLayout::BuildVisibleLineInto(lines[line_index], horizontal_scroll, visible_columns,
+                                       tab_size, out, facts);
+    }
+  };
   if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
     // This is the only point that can invalidate a reference previously handed
     // out by this function. Counted so the "a frame never evicts what it is
@@ -68,8 +145,7 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     auto node = visible_line_cache_.extract(visible_line_cache_order_.front());
     visible_line_cache_order_.pop_front();
     if (!node.empty()) {
-      TextLayout::BuildVisibleLineInto(lines[line_index], horizontal_scroll, visible_columns,
-                                       tab_size, node.mapped(), facts);
+      build_into(node.mapped());
       node.key() = cache_key;
       util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
       const auto result = visible_line_cache_.insert(std::move(node));
@@ -78,8 +154,7 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     }
   }
   LayoutLine layout;
-  TextLayout::BuildVisibleLineInto(lines[line_index], horizontal_scroll, visible_columns, tab_size,
-                                   layout, facts);
+  build_into(layout);
   const auto [it, _] = visible_line_cache_.emplace(cache_key, std::move(layout));
   visible_line_cache_order_.push_back(cache_key);
   return it->second;

@@ -272,6 +272,17 @@ class PieceTree {
   }
   std::uint32_t LineStartByte(std::size_t line) const;
   void CopyRange(std::uint32_t pos, std::uint32_t length, std::string& out) const;
+
+  // Explicit stack for CopyRange's pruned in-order walk, held as a member so the
+  // walk is allocation-free. A local `std::vector` cost one allocation per call,
+  // which was invisible while CopyRange ran once per revision and is not once the
+  // render path reads a bounded window per row per frame (TD-2026-08-05-133).
+  struct CopyFrame {
+    NodeId id;
+    std::uint32_t base;
+    bool emit;  // false: expand children; true: append this node's overlap
+  };
+  mutable std::vector<CopyFrame> copy_stack_;
   // Append lines [begin_line, end_line) (newlines excluded) to `out` in a single
   // in-order treap walk -- O(N + p) instead of the O(N log p) that per-line
   // LineView() extraction costs (two tree descents per line). Callers guarantee

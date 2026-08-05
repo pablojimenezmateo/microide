@@ -196,6 +196,50 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
                                       std::size_t tab_size,
                                       LayoutLine& result,
                                       LineLayoutFacts facts) {
+  // Whole-line form: derive the width and the walk start here (both need bytes
+  // this form has and the window form does not), then share one loop.
+  const std::size_t visual_columns =
+      facts.known ? facts.visual_columns : VisualColumnForTextColumn(line, line.size(), tab_size);
+  std::size_t start_byte = 0;
+  if (horizontal_scroll > 0 && !line.empty()) {
+    const std::size_t probe = std::min(horizontal_scroll, line.size());
+    if (facts.known && facts.plain_ascii) {
+      start_byte = probe;
+    } else {
+      // Reach the first visible cell without decoding what precedes it. Every byte
+      // before the line's first tab-or-multibyte byte occupies exactly one visual
+      // column, so within that prefix byte offset == visual column and the walk can
+      // start at the scroll offset outright. A caller that already knows the whole
+      // line is plain ASCII (`facts.plain_ascii`) skips even the scan.
+      //
+      // This is exact for every line, not a fast path for a special case: the walk
+      // simply starts at the first byte where visual column can stop tracking byte
+      // offset. On an ordinary line the two forms do the same negligible work; on a
+      // line with no newlines in it and the caret a megabyte in, this replaces ~1M
+      // decoder iterations per rendered row with a word-at-a-time scan, or with
+      // nothing at all when the width cache has the line's facts.
+      start_byte = FirstNonPlainAsciiByte(line.substr(0, probe));
+      util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
+                                  start_byte);
+    }
+  }
+  BuildVisibleLineWindowInto(
+      VisibleLineWindow{
+          .bytes = line.substr(std::min(start_byte, line.size())),
+          .start_byte = start_byte,
+          .line_length = line.size(),
+      },
+      horizontal_scroll, visible_columns, tab_size, result,
+      LineLayoutFacts{.visual_columns = visual_columns, .plain_ascii = facts.plain_ascii,
+                      .known = true});
+}
+
+void TextLayout::BuildVisibleLineWindowInto(const VisibleLineWindow& window,
+                                            std::size_t horizontal_scroll,
+                                            std::size_t visible_columns,
+                                            std::size_t tab_size,
+                                            LayoutLine& result,
+                                            LineLayoutFacts facts) {
   // `clear()` keeps each buffer's capacity, which is the whole point: a caller
   // recycling an evicted cache entry must not pay three allocations to refill it.
   result.text.clear();
@@ -203,8 +247,7 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
   result.text_offsets.clear();
   result.caret_column = 0;
   result.caret_visible = false;
-  result.visual_columns =
-      facts.known ? facts.visual_columns : VisualColumnForTextColumn(line, line.size(), tab_size);
+  result.visual_columns = facts.visual_columns;
 
   if (visible_columns == 0) {
     return;
@@ -218,34 +261,15 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
   result.source_columns.reserve(visible_columns);
   result.text.reserve(visible_columns);
 
-  // Reach the first visible cell without decoding what precedes it. Every byte
-  // before the line's first tab-or-multibyte byte occupies exactly one visual
-  // column, so within that prefix byte offset == visual column and the walk can
-  // start at the scroll offset outright. A caller that already knows the whole
-  // line is plain ASCII (`facts.plain_ascii`) skips even the scan.
-  //
-  // This is exact for every line, not a fast path for a special case: the walk
-  // simply starts at the first byte where visual column can stop tracking byte
-  // offset. On an ordinary line the two forms do the same negligible work; on a
-  // line with no newlines in it and the caret a megabyte in, this replaces ~1M
-  // decoder iterations per rendered row with a word-at-a-time scan, or with
-  // nothing at all when the width cache has the line's facts.
-  std::size_t start_byte = 0;
-  if (horizontal_scroll > 0 && !line.empty()) {
-    const std::size_t probe = std::min(horizontal_scroll, line.size());
-    if (facts.known && facts.plain_ascii) {
-      start_byte = probe;
-    } else {
-      start_byte = FirstNonPlainAsciiByte(line.substr(0, probe));
-      util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
-                                  start_byte);
-    }
-  }
-
-  std::size_t visual_column = start_byte;
-  for (std::size_t i = start_byte; i < line.size();) {
-    const char character = line[i];
-    const std::size_t next_text = i + util::Utf8SequenceLength(line, i);
+  const std::string_view bytes = window.bytes;
+  const std::size_t base = window.start_byte;
+  // `start_byte` sits inside the line's plain-ASCII prefix by construction, so the
+  // visual column there equals the byte column -- which is what makes starting the
+  // walk mid-line exact rather than approximate.
+  std::size_t visual_column = base;
+  for (std::size_t j = 0; j < bytes.size();) {
+    const char character = bytes[j];
+    const std::size_t next_text = j + util::Utf8SequenceLength(bytes, j);
     const std::size_t next_visual =
         AdvanceVisualColumn(visual_column, character, tab_size);
     const std::size_t width = next_visual - visual_column;
@@ -262,13 +286,13 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
       if (character == '\t') {
         result.text.push_back(' ');
       } else {
-        result.text.append(line, i, next_text - i);
+        result.text.append(bytes, j, next_text - j);
       }
-      result.source_columns.push_back(i);
+      result.source_columns.push_back(base + j);
     }
 
     visual_column = next_visual;
-    i = next_text;
+    j = next_text;
     if (visual_column >= horizontal_scroll + visible_columns) {
       break;
     }

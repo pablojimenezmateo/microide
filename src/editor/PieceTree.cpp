@@ -395,16 +395,13 @@ void PieceTree::CopyRange(std::uint32_t pos, std::uint32_t length, std::string& 
   out.reserve(out.size() + length);
   const std::uint32_t end = pos + length;
   // Pruned in-order walk: each frame carries the global base offset of its
-  // subtree; subtrees that cannot overlap [pos, end) are skipped.
-  struct Frame {
-    NodeId id;
-    std::uint32_t base;
-    bool emit;  // false: expand children; true: append this node's overlap
-  };
-  std::vector<Frame> stack;
+  // subtree; subtrees that cannot overlap [pos, end) are skipped. The stack is a
+  // member so its capacity survives the call (see copy_stack_).
+  std::vector<CopyFrame>& stack = copy_stack_;
+  stack.clear();
   stack.push_back({root_, 0, false});
   while (!stack.empty()) {
-    const Frame frame = stack.back();
+    const CopyFrame frame = stack.back();
     stack.pop_back();
     if (frame.id == kNull) continue;
     const Node& node = nodes_[frame.id];
