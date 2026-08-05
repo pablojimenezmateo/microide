@@ -1,14 +1,21 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-05. **76 open items.**
+Reviewed 2026-08-06. **73 open items.**
+
+The 2026-08-06 pass closed the three perf-gate-integrity entries filed on
+2026-08-05: TD-2026-08-05-135 (four gated baselines 40-80% looser than the code
+they gate), TD-2026-08-05-136 (a resident-growth gate decided by allocator arena
+state), and TD-2026-08-05-137 (a CPU gate decided by the governor). All three were
+the same failure in different metrics — a green run that was green for a reason
+having nothing to do with the code — and all three are now measured rather than
+worked around.
 
 The 2026-08-05 burndown closed seven: TD-2026-07-30-001 (search-panel Alt chords),
 TD-2026-07-26-005 (replace-all measured through counters only it writes),
 TD-2026-07-26-003 (post-commit refresh failure reaches the user), and four from the
 2026-07-10 deferred set (LSP diagnostics across a close→reopen, three terminal spec
 deviations, the `LineEndingHeavy` mislabel, and the single-line view-metrics
-coverage gap). TD-2026-08-05-137 lost its first sub-item — the CPU-gate audit is a
-byproduct of any run now — and stays open on the other two.
+coverage gap).
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
@@ -30,7 +37,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. RESOLVED for `idle_soak_30s`; OPEN as a general audit.
+### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
 `idle_soak_30s` failed the gate at `p50_cpu_ms: baseline=14.6955 measured=29.8665
 (+103.236%, tolerance +100%)` while wall, allocations, RSS and its zero-wake
@@ -91,23 +98,82 @@ build) measured 32–51 ms and owned the max and p95.
    `PerfBaseline/CalibrationSpreadFlagsAMovingClock`, which pins the reproduction's
    own 671→857 us numbers, that ordinary ~1% drift stays silent, and that a run
    with no probe describes nothing rather than a 1x range of zeros.
-2. **[STILL OPEN]** `cpu_calibration_ns` is now *read* — but only to explain a
-   failure, not to prevent one. The principled fix is still to normalise `cpu_ms`
-   (and arguably `wall_ms`) by it before comparing to a baseline, which would make
-   every duration gate machine-state-independent instead of exempting scenarios one
-   at a time. That needs a reference calibration recorded *in the baseline*, which
-   no baseline carries: a format change plus a full rebaseline on perf-runner-v1.
-3. **[STILL OPEN]** The probe understates the effect. It is a dense dependent chain
-   that pulls the clock up while it runs, so its 1.28x step is a *lower bound* on
-   the 2.0x the scenario's short bursts actually saw. A calibration workload shaped
-   like the thing being measured would read truer — and would also move the 1.10
-   note threshold, which is calibrated against the current probe.
+2. ~~`cpu_calibration_ns` is now *read* — but only to explain a failure, not to
+   prevent one. The principled fix is still to normalise `cpu_ms` (and arguably
+   `wall_ms`) by it before comparing to a baseline.~~ **[DONE 2026-08-06.]** A
+   baseline records `p50_cpu_calibration_ns` — the clock it was captured at — and
+   `CompareToBaseline` re-expresses the run in that machine state before checking
+   the envelope. Details that are load-bearing:
+
+   - **Per iteration, against that iteration's own probe reading**, then
+     percentiled. The motivating failure was a clock that stepped *mid-run*; a
+     single per-run factor would smear it across both halves.
+   - **CPU only.** Allocations and RSS do not scale with the clock — their coming
+     out identical across a step is the *evidence* a duration failure is the
+     machine. Wall stays raw too: a scenario that sleeps for 27 of its 30 seconds
+     has a wall time that is mostly not work, and scaling it would be arithmetic
+     on a number that does not scale.
+   - **Clamped at 3x either way, loudly.** A factor that far out is a broken probe
+     or a baseline from another machine class; scaling a gate by it quietly is how
+     a gate goes vacuous. A clamped comparison stays enforced at 3x and says so on
+     the verdict line.
+   - **Only when the baseline recorded a clock**, so pre-format baselines compare
+     raw exactly as before rather than dividing by a zero.
+
+   Covered by `PerfBaseline/NormalisesCpuAgainstTheBaselineClock` (with the
+   negative control: the same rise at an unchanged clock still fails),
+   `NormalisesEachIterationAgainstItsOwnClock` (the reproduction's own 671→857 us
+   step passes, a regression inside its slow half still fails),
+   `ClampsAnAbsurdClockFactor`, `ClockNormalisationTouchesCpuOnly`, and
+   `CalibrationRoundTrip`.
+3. ~~The probe understates the effect… A calibration workload shaped like the thing
+   being measured would read truer.~~ **[DONE 2026-08-06 — measured, and the
+   answer is no.]** Two shapes were built and both rejected on their own numbers:
+
+   - **Memory-mixed** (the chain plus an L2 pointer chase plus a 256 KiB streaming
+     copy) reads *dirtier*, not truer. Its memory half swung **3.3x** across one
+     scenario's iterations (632 → 192 us) while the ALU chain held to 1%, because
+     the probe's buffers are evicted by whatever the scenario just did. That makes
+     the reading a function of the code under test: a change that grows the working
+     set inflates the probe, which scales the expectation up, which loosens the
+     very gate that change should have tripped. It also streams ~12 MB immediately
+     before the measured window, evicting the app's own working set.
+   - **Burst-shaped** (the same work in short slabs, each after a 1 ms sleep, to
+     time a core that has just been idle) read **within 1%** of the plain chain on
+     every iteration of every scenario tried. 1 ms is nowhere near long enough for
+     the core to leave the state it is in.
+
+   So the probe stays a pure dependent integer chain, and branch-free /
+   allocation-free / **memory-free** are now load-bearing properties rather than
+   incidental ones: this number scales a gate, so anything the code under test can
+   move must stay out of it. The 1.10 note threshold stands unchanged.
+
+   What the machine actually does, measured while settling this: a thread working
+   **continuously for about a second** reaches a state where the probe reads ~467 us
+   instead of ~673 us — **1.44x** — and holds it while it keeps working. 300 ms of
+   idle drops it back, no amount of later spinning recovers it inside a run with
+   idle in it, and a busy keeper thread pinned to another physical core does not
+   hold it either. It is per-thread residency, not a package state the harness can
+   pin. So frame-pumping scenarios live in the slow state permanently, continuous
+   ones cross into the fast state *part way through a run*
+   (`syntax_highlight_cpp_lines`: 252 us for nine iterations then 179 us for five,
+   with `cpu_ms` tracking it 15.6 → 11.3 ms), and two scenarios in one run are not
+   necessarily measured on the same machine. That is the case per-iteration
+   normalisation exists for, and it is why the "sleep-heavy scenarios only"
+   framing above was too narrow.
+
+`idle_soak_30s` keeps `gate_cpu_metrics = false`: normalisation would have absorbed
+its 2.0x step down to about +56% against a +100% envelope, but a gate that passes
+by 44 points of an envelope is not a measurement, and the direct 20 ms budget
+assertion across its soak window is a better instrument than a percentage of a
+percentile. The opt-out is now a genuine last resort rather than the standard
+answer to a noisy CPU gate.
 
 Related: [TD-2026-08-05-136](#td-2026-08-05-136) is the same class of defect on a
 different metric — a gate whose value is decided by machine state rather than by
 the code.
 
-### TD-2026-08-05-135 — four gated perf baselines are 40-80% looser than the code they gate. OPEN.
+### TD-2026-08-05-135 — four gated perf baselines are 40-80% looser than the code they gate. [RESOLVED 2026-08-06.]
 
 Found while rebaselining after TD-2026-08-05-133. Running the full gate showed
 several scenarios far under their committed baselines; an **interleaved A/B against
@@ -137,7 +203,54 @@ The generalizable part is already in `dev-docs/project/validation-traps.md`:
 and "improved against the previous commit" are different claims, and only the
 second one is about your change.
 
-### TD-2026-08-05-136 — `editor_long_line_select_all_edit`'s resident-growth gate is a coin flip. OPEN.
+**[RESOLVED 2026-08-06 — swept, and the sweep found more than the four.]** All
+four reproduce exactly as filed and are rebaselined; the whole-suite sweep found
+nine more allocation gates carrying drift and six wall gates at 0.54-0.66 of their
+committed number:
+
+| scenario | committed allocations | measured | ratio |
+| --- | ---: | ---: | ---: |
+| `editor_shaping_multi_caret` | 103,880 | 57,362 | 0.55 |
+| `editor_toggle_comment_large_selection` | 185,486 | 105,600 | 0.57 |
+| `merge_next_conflict_large_file` | 12,552 | 7,779 | 0.62 |
+| `editor_surround_multi_caret` | 121,787 | 79,852 | 0.66 |
+| `git_sidebar_activate` | 624 | 534 | 0.86 |
+| `merge_edit_result_then_scroll` | 17,698 | 15,484 | 0.87 |
+| `terminal_scroll_long_output` | 7,207 | 6,492 | 0.90 |
+| `first_line_edit_latency_large_file` | 15,476 | 14,636 | 0.95 |
+| `editor_smart_indent_typing` | 14,706 | 14,123 | 0.96 |
+| `editor_snippet_expand` | 781 | 754 | 0.97 |
+| `editor_fold_recompute` | 14,016 | 13,709 | 0.98 |
+
+Wall, same sweep: `git_sidebar_refresh_large_repo` 0.54, `commit_open_with_large_staged_set`
+0.57, `diff_open_1000_file_changes` 0.59, `git_sidebar_refresh_many_untracked` 0.63,
+`diff_stage_hunk_large_patch` 0.63, `diff_stage_selected_lines` 0.66.
+
+**And the sweep found drift in the other direction, which is the part a blind
+rebaseline would have buried.** Five scenarios measured OVER their committed
+allocation baseline: `diff_stage_hunk_large_patch`, `diff_stage_selected_lines` and
+`external_change_refresh_open_diff` all +2.1% (a flat +1,326 allocations on each —
+one shared change in the diff/staging path, not three), `diff_next_hunk_large_file`
++1.5%, and `editor_mouse_selection_drag` **+9.4%** (5,010 → 5,482 over 160 mouse
+moves, ~3 allocations per move). All five are inside their envelopes and none is
+explained; they are recorded at their measured values, so the next drift in that
+direction starts from a number somebody looked at. The rule that keeps this honest
+is now in the harness doc: **rebaseline down, investigate up.**
+
+**On "when did it drift":** part of the wall column is not code at all. Grouping
+the sweep's scenarios by the calibration probe they were measured at, the ten that
+ran at ~675 us have a median wall ratio of 1.08 against 0.98 for the 86 that ran at
+~482 us — the same machine, the same run, a 1.4x clock difference decided by
+whether the scenario before them kept the core busy (see
+[TD-2026-08-05-137](#td-2026-08-05-137)). That is why the CPU gate now normalises
+against the recorded clock and why the wall gate stays at 100%.
+
+The process gap the entry names is real and unfixed by a sweep: nothing reruns the
+gate on a schedule, so drift accumulates silently until somebody rebaselines. What
+this pass adds is that a rebaseline now records the machine state it was captured
+in, so the next sweep can tell drift from the governor without guessing.
+
+### TD-2026-08-05-136 — `editor_long_line_select_all_edit`'s resident-growth gate is a coin flip. [RESOLVED 2026-08-06.]
 
 Its `rss_growth_bytes` is **bimodal**: per iteration it lands on either 4.19 MB or
 6.29 MB, stably, with no compounding across 20 iterations, and the p50 reports
@@ -153,13 +266,34 @@ allocator placement of a handful of large blocks, which is exactly the weakness 
 perf-harness doc records for this metric ("page granularity, allocator arena
 behaviour").
 
-**Worked around, not fixed:** that one scenario's `rss_p50_percent` /
-`rss_p95_percent` were widened to 60% (its own max envelope) so the gate stops
-flipping. The harness's own policy says the right fix for a non-reproducible metric
-is to make the scenario deterministic rather than widen the envelope — that is what
-is still owed here, and it likely means either pinning the allocator's behaviour for
-the measured window or measuring peak rather than delta. Its allocation gate stays
-at 1% and remains the real oracle.
+**Fixed by measuring the right thing: both resident readings are now taken on a
+trimmed heap.** `SettleResidentSet()` (`malloc_trim(0)`) runs at both iteration
+boundaries, outside the measured window, so it costs neither wall nor CPU. The
+delta then means "what this iteration RETAINS" rather than "what this iteration
+retains plus whatever its allocator happened to be caching at the sample point".
+
+Measured: the scenario reports p50 **4,956,160**, p95 **7,033,036**, max
+**7,036,928** — **byte-identical across three repeated 20-iteration runs**, with 17
+of 20 iterations inside a 40 KB band. The bimodality is gone, not widened around.
+The 60% workaround envelope is reverted to the 25/35/60 default.
+
+That workaround also surfaced a landmine worth more than the fix. It lived only in
+the committed JSON, while `--update-baseline` rewrites every tolerance in a
+baseline from the `Scenario` struct — which had no RSS fields at all. The next
+rebaseline would have silently reset 60% to 25% and re-armed the coin flip, with
+nothing in the diff but three numbers changing in a generated file. `Scenario` now
+carries `tolerance_rss_p50/p95/max_percent` and the writer reads them: **a
+tolerance that is not expressed in code is a comment.**
+
+Two side effects of the trim, both improvements:
+
+- Six scenarios that recorded ~0 growth now record 88-303 KB. The free list was
+  absorbing their per-iteration retention; trimmed, it is visible. Their new
+  numbers are what they always cost.
+- The next iteration re-faults the pages it gave back. That is a real cost, now
+  carried uniformly by every iteration instead of by whichever one got unlucky.
+
+Its allocation gate stays at 1% and remains the real oracle.
 
 ### TD-2026-08-05-131 — a one-character edit walked its line 5 times, because undo history stored whole lines. [RESOLVED 2026-08-05.]
 

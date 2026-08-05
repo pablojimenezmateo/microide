@@ -393,6 +393,17 @@ someone else's win. **A/B against the base commit before attributing any delta t
 your change**, and rebaseline only what your change actually moved — folding
 pre-existing drift into your numbers makes both unreadable.
 
+The 2026-08-06 sweep that closed that entry found eleven allocation gates and six
+wall gates carrying drift, and — the part worth carrying forward — **five gates
+that had drifted the other way**, up to +9.4% allocations, all of them passing.
+A sweep that rewrites every number with whatever the machine says today closes the
+loose gates and quietly enshrines the tight ones' regressions. The rule:
+**rebaseline down, investigate up.** A scenario measuring under its baseline is
+drift and may be tightened without ceremony; a scenario measuring over it is a
+finding, even when it is inside its envelope, and gets looked at before its number
+is written. Put the drift table in the commit message either way — it is the only
+record of which direction each gate moved.
+
 ### A baseline recorded at the wrong iteration count cannot be held
 
 `--update-baseline --iterations=20` recorded `typing_small_file`'s
