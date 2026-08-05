@@ -135,21 +135,21 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
       if (const SDL_FRect rect = project_search_panel::ModeButtonRect(layout.sidebar);
           Contains(rect, x, y)) {
         found = hit(options.pattern_mode == project::ProjectSearchPatternMode::Regex
-                        ? "Pattern: regex (click for literal)"
-                        : "Pattern: literal (click for regex)",
+                        ? "Pattern: regex (click or Alt+R for literal)"
+                        : "Pattern: literal (click or Alt+R for regex)",
                     rect);
       } else if (const SDL_FRect case_rect = project_search_panel::CaseButtonRect(layout.sidebar);
                  Contains(case_rect, x, y)) {
         found = hit(options.case_mode == project::ProjectSearchCaseMode::Sensitive
-                        ? "Case: sensitive (click to cycle)"
+                        ? "Case: sensitive (click or Alt+C to cycle)"
                     : options.case_mode == project::ProjectSearchCaseMode::Insensitive
-                        ? "Case: insensitive (click to cycle)"
-                        : "Case: smart (click to cycle)",
+                        ? "Case: insensitive (click or Alt+C to cycle)"
+                        : "Case: smart (click or Alt+C to cycle)",
                     case_rect);
       } else if (const SDL_FRect hidden = project_search_panel::HiddenButtonRect(layout.sidebar);
                  Contains(hidden, x, y)) {
-        found = hit(options.show_hidden ? "Searching hidden files (click to skip)"
-                                        : "Skipping hidden files (click to include)",
+        found = hit(options.show_hidden ? "Searching hidden files (click or Alt+H to skip)"
+                                        : "Skipping hidden files (click or Alt+H to include)",
                     hidden);
       } else if (const SDL_FRect scope = project_search_panel::ScopeButtonRect(layout.sidebar);
                  Contains(scope, x, y)) {

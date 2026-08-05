@@ -111,6 +111,12 @@ class KeyInputCoordinator {
     std::function<void(BufferFindToggle)> toggle_buffer_search_option;
     std::function<void(int)> move_project_search_selection;
     std::function<void()> refresh_project_search;
+    // Alt+R / Alt+C / Alt+H in the search panel — the same three toggles the
+    // panel's buttons drive (VSCode binds the equivalent chords in its search
+    // box). Each re-runs the search itself.
+    std::function<void()> toggle_project_search_pattern_mode;
+    std::function<void()> cycle_project_search_case_mode;
+    std::function<void()> toggle_project_search_hidden_files;
     std::function<void()> replace_all_buffer_search_matches;
     std::function<void()> replace_current_buffer_search_match;
     std::function<void(int)> move_file_finder_selection;

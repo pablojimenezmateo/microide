@@ -1302,6 +1302,9 @@
   bool ActivateOverlaySelection();
   void BeginProjectSearchEdit(ProjectSearchEditField field);
   void CommitProjectSearchEdit();
+  // Write an in-flight edit back to its field without leaving edit mode, so an
+  // option toggle re-runs the search against what is on screen.
+  void FlushProjectSearchEditField();
   void CancelProjectSearchEdit();
   // Panel geometry lives in workspace/ProjectSearchPanelLayout.h (free functions
   // of the sidebar rect + the scope-expanded flag) so the shell owns behaviour,

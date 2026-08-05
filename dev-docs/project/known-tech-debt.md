@@ -487,15 +487,40 @@ nobody invokes compiles, wires, reads as part of the contract, and does nothing.
   targets have a cursor rule. Frame prep: already revision-gated with an
   allocation-free fast path.
 
-- **[OPEN] TD-2026-07-30-001 — the project-search regex / case / hidden-file
-  toggles are mouse-only.** Found while removing the dead
+- **[RESOLVED 2026-08-05] TD-2026-07-30-001 — the project-search regex / case /
+  hidden-file toggles were mouse-only.** Found while removing the dead
   `toggle_project_search_pattern_mode`, `cycle_project_search_case_mode` and
   `toggle_project_search_hidden_files` hooks from the key coordinator: the
-  behavior is live, but only from `WorkspaceShellSidebarMouse`. VSCode binds
-  Alt+R / Alt+C / Alt+H (and Alt+W for whole-word) inside the search box. Adding
-  them is a new keybinding, not a dead wire, so it was deliberately kept out of
-  the removal commit. Files: `src/workspace/shell/WorkspaceShellProjectSearch.cpp`,
-  `src/workspace/registries/WorkspaceKeybindingRegistry.cpp`.
+  behavior was live, but only from `WorkspaceShellSidebarMouse`. VSCode binds
+  Alt+R / Alt+C / Alt+H inside the search box, so the same three hooks are back
+  on `KeyInputCoordinator::Operations` and driven from
+  `HandleSidebarKeyDown`'s Search branch — deliberately **before** the
+  `editing` branch, so a chord works from the results list and from inside the
+  query field alike (the buffer find widget's Alt+C/W/R already worked that way;
+  see `HandleSharedBufferSearchKey`).
+
+  The non-obvious half is what a chord does to an in-flight field edit. The
+  mouse path commits it (`editing = false`), which is right for a click —
+  focus genuinely leaves the field. For a keyboard chord it is wrong twice: it
+  kicks the caret out of the box, and the toggles re-run the search, which reads
+  the **committed** field values. So Alt+C after typing a new query would have
+  re-run against the previous one. The three toggles now call a new
+  `WorkspaceShell::FlushProjectSearchEditField()` first: it writes the edit
+  buffer back into its field and leaves `editing`/caret untouched. The mouse
+  path still commits before dispatching, so the flush is a no-op there.
+
+  Alt+W (whole word) is deliberately NOT bound: `ProjectSearchOptions` has no
+  `whole_word` — that is a worker + panel-button feature, not a keybinding, and
+  is the remaining VSCode gap on this surface.
+
+  The three panel tooltips advertise the chords now ("click or Alt+R for
+  literal", …), matching how the find widget's read. Covered by
+  `WorkspaceShell/ProjectSearchAltChordsToggleOptions`, which drives all three
+  from the list and then re-drives Alt+C from inside the query field, asserting
+  the field editor stays open and the rerun matched the just-typed text.
+  Files: `src/workspace/coordinators/WorkspaceKeyInputCoordinatorSidebar.cpp`,
+  `src/workspace/shell/WorkspaceShellProjectSearch.cpp`,
+  `src/workspace/HoverTooltipSurface.cpp`.
 
 ### Producer-side reachability sweep (TD-2026-07-27-*)
 

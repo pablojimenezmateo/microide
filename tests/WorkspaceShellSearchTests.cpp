@@ -977,6 +977,74 @@ void TestWorkspaceShellProjectSearchReplaceAllHonorsScopeGlobs() {
          "replace-all must not rewrite a file the scope excluded");
 }
 
+// TD-2026-07-30-001: the search panel's three option toggles were reachable only
+// from the mouse. Alt+R / Alt+C / Alt+H are VSCode's search-box chords; they must
+// work from the results list AND from inside the query field, and a toggle
+// pressed mid-typing must re-run against the text on screen rather than the last
+// committed query (that is what the flush-without-committing step buys).
+void TestWorkspaceShellProjectSearchAltChordsToggleOptions() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "visible.txt", "alp.a\nALPHA\n");
+  WriteFile(root / ".hidden.txt", "alp.a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "alp.a", false);
+  WaitForProjectSearch(shell);
+  Expect(!WorkspaceShellTestAccess::ProjectSearchEditing(shell),
+         "opening with a query should land on the results list, not the editor");
+
+  using microide::project::ProjectSearchCaseMode;
+  using microide::project::ProjectSearchPatternMode;
+  const auto& options = WorkspaceShellTestAccess::ProjectSearchOptions(shell);
+  Expect(options.pattern_mode == ProjectSearchPatternMode::Literal &&
+             options.case_mode == ProjectSearchCaseMode::Smart && !options.show_hidden,
+         "the panel should start literal / smart-case / hidden-excluded");
+
+  Expect(SendKeyDown(shell, SDLK_R, SDL_KMOD_ALT), "Alt+R should be handled by the panel");
+  WaitForProjectSearch(shell);
+  Expect(options.pattern_mode == ProjectSearchPatternMode::Regex,
+         "Alt+R should switch the panel into regex mode");
+
+  Expect(SendKeyDown(shell, SDLK_C, SDL_KMOD_ALT), "Alt+C should be handled by the panel");
+  WaitForProjectSearch(shell);
+  Expect(options.case_mode == ProjectSearchCaseMode::Sensitive,
+         "Alt+C should cycle smart case to case-sensitive");
+
+  Expect(SendKeyDown(shell, SDLK_H, SDL_KMOD_ALT), "Alt+H should be handled by the panel");
+  WaitForProjectSearch(shell);
+  Expect(options.show_hidden, "Alt+H should include hidden files");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
+         "including hidden files should rerun and surface the dotfile match");
+
+  // Now from inside the query field: type a new query, then chord without
+  // committing. The rerun must see the typed text, and the caret must stay in
+  // the field rather than being kicked back to the results list.
+  Expect(SendKeyDown(shell, SDLK_SLASH, SDL_KMOD_NONE), "'/' should focus the query field");
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
+         "'/' should begin editing the query");
+  Expect(SendKeyDown(shell, SDLK_A, SDL_KMOD_CTRL), "Ctrl+A should select the field text");
+  SDL_Event text_event{};
+  text_event.type = SDL_EVENT_TEXT_INPUT;
+  const std::string typed = "ALPHA";
+  text_event.text.text = typed.c_str();
+  Expect(shell.HandleEvent(text_event).handled, "typing into the query field should be handled");
+
+  Expect(SendKeyDown(shell, SDLK_C, SDL_KMOD_ALT),
+         "Alt+C should be handled while the query field has focus");
+  WaitForProjectSearch(shell);
+  Expect(WorkspaceShellTestAccess::ProjectSearchEditing(shell),
+         "an option chord must not close the field editor");
+  Expect(options.case_mode == ProjectSearchCaseMode::Insensitive,
+         "Alt+C should cycle case-sensitive to case-insensitive");
+  Expect(WorkspaceShellTestAccess::ProjectSearchQuery(shell) == typed,
+         "the chord must flush the in-flight query before rerunning");
+  Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 1,
+         "the rerun should match the just-typed query, not the previous one");
+}
+
 // Escape must peel one layer at a time. "Close a temporary sidebar on Escape"
 // used to be duplicated in the surface-navigation fallback (Search only, and it
 // ran first) and in the per-mode sidebar handler, so Escape while typing a query
@@ -1117,6 +1185,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferFindReplaceAllHonoursOptions);
   AddTest(tests, "WorkspaceShell/ProjectSearchSidebarScrollPastSelection",
           TestWorkspaceShellProjectSearchSidebarScrollPastSelection);
+  AddTest(tests, "WorkspaceShell/ProjectSearchAltChordsToggleOptions",
+          TestWorkspaceShellProjectSearchAltChordsToggleOptions);
   AddTest(tests, "WorkspaceShell/ProjectSearchHiddenToggleReruns",
           TestWorkspaceShellProjectSearchHiddenToggleReruns);
   AddTest(tests, "WorkspaceShell/ProjectSearchPatternModeToggleReruns",

@@ -377,6 +377,9 @@
   static bool ProjectSearchEditing(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.editing;
   }
+  static const project::ProjectSearchOptions& ProjectSearchOptions(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.overlay.workflow.project_search.options;
+  }
   static SDL_FRect TreeSidebarCollapseButtonRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.TreeSidebarCollapseButtonRect(layout.sidebar);

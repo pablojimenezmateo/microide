@@ -270,6 +270,20 @@ void WorkspaceShell::BeginProjectSearchEdit(ProjectSearchEditField field) {
   RequestSidebarRedraw();
 }
 
+// Write the in-flight edit buffer back into the field it is editing WITHOUT
+// leaving edit mode. The option toggles below re-run the search, and the search
+// reads the committed field values — so a toggle pressed mid-typing would
+// otherwise re-run against the stale query. Unlike CommitProjectSearchEdit this
+// keeps `editing` and the caret intact, which is what a keyboard chord needs
+// (the mouse path genuinely does move focus off the field, so it still commits).
+void WorkspaceShell::FlushProjectSearchEditField() {
+  auto& search = context_.current_project_state.overlay.workflow.project_search;
+  if (!search.editing) {
+    return;
+  }
+  ProjectSearchFieldEditor(search, search.edit_field).SetText(search.edit_buffer.text());
+}
+
 void WorkspaceShell::CommitProjectSearchEdit() {
   auto& search = context_.current_project_state.overlay.workflow.project_search;
   search.editing = false;
@@ -356,6 +370,7 @@ bool WorkspaceShell::ProjectSearchReplaceCaseSensitive() const {
 }
 
 void WorkspaceShell::ToggleProjectSearchPatternMode() {
+  FlushProjectSearchEditField();
   context_.current_project_state.overlay.workflow.project_search.options.pattern_mode =
       context_.current_project_state.overlay.workflow.project_search.options.pattern_mode ==
               project::ProjectSearchPatternMode::Literal
@@ -366,6 +381,7 @@ void WorkspaceShell::ToggleProjectSearchPatternMode() {
 }
 
 void WorkspaceShell::CycleProjectSearchCaseMode() {
+  FlushProjectSearchEditField();
   switch (context_.current_project_state.overlay.workflow.project_search.options.case_mode) {
     case project::ProjectSearchCaseMode::Smart:
       context_.current_project_state.overlay.workflow.project_search.options.case_mode =
@@ -384,6 +400,7 @@ void WorkspaceShell::CycleProjectSearchCaseMode() {
 }
 
 void WorkspaceShell::ToggleProjectSearchHiddenFiles() {
+  FlushProjectSearchEditField();
   context_.current_project_state.overlay.workflow.project_search.options.show_hidden =
       !context_.current_project_state.overlay.workflow.project_search.options.show_hidden;
   RefreshProjectSearch();

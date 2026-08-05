@@ -1,6 +1,7 @@
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 
 #include <cstddef>
+#include <functional>
 #include <vector>
 
 #include "project/CommitWorkflowTypes.h"
@@ -46,6 +47,24 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
       }
       return fields;
     };
+
+    // Alt+R / Alt+C / Alt+H toggle regex, case sensitivity and hidden-file
+    // inclusion — VSCode's search-box chords, in the panel's button order. They
+    // were mouse-only (TD-2026-07-30-001). Handled before the editing branch so
+    // they work while typing a query as well as from the results list; the
+    // toggles flush the in-flight field first, so the re-run search sees the
+    // text on screen and the caret stays in the box.
+    if ((modifiers & SDL_KMOD_ALT) != 0) {
+      const std::function<void()>* toggle =
+          event.key == SDLK_R   ? &operations_.toggle_project_search_pattern_mode
+          : event.key == SDLK_C ? &operations_.cycle_project_search_case_mode
+          : event.key == SDLK_H ? &operations_.toggle_project_search_hidden_files
+                                : nullptr;
+      if (toggle != nullptr && *toggle != nullptr) {
+        (*toggle)();
+        return true;
+      }
+    }
 
     if (search_state.editing) {
       switch (event.key) {

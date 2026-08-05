@@ -93,7 +93,8 @@ for what is actually measured, and what is not.
 - Commit picker overlay for compare target selection
 
 ### Search
-- Parallelized project-search sidebar: literal (default) or regex, case control, hidden-file toggle
+- Parallelized project-search sidebar: literal (default) or regex (Alt+R), case control (Alt+C),
+  hidden-file toggle (Alt+H) — the chords work from the results list and from inside the query field
 - Scope filters ("..." toggle): comma-separated files-to-include / files-to-exclude globs with `**`,
   character classes, and `{a,b}` alternation; out-of-scope files are rejected on their path and never read
 - Count-all totals with match highlighting; replace-in-project in literal and regex modes (regex expands capture groups)
