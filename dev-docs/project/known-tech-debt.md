@@ -67,18 +67,33 @@ build) measured 32–51 ms and owned the max and p95.
 
 **Still owed, and why this is filed rather than closed:**
 
-1. The same reasoning applies to every scenario whose iteration is mostly sleep or
+1. ~~The same reasoning applies to every scenario whose iteration is mostly sleep or
    mostly waiting. `repo_open_rss_idle` already shows the symptom — its calibration
    swings 671–1352 us *between iterations of one run*. Nobody has audited which
-   other CPU gates are measuring the governor.
-2. `cpu_calibration_ns` is recorded but not *used*: the principled fix is to
-   normalise `cpu_ms` (and arguably `wall_ms`) by it before comparing to a
-   baseline, which would make every duration gate machine-state-independent
-   instead of exempting scenarios one at a time.
-3. The probe understates the effect. It is a dense dependent chain that pulls the
-   clock up while it runs, so its 1.28x step is a *lower bound* on the 2.0x the
-   scenario's short bursts actually saw. A calibration workload shaped like the
-   thing being measured would read truer.
+   other CPU gates are measuring the governor.~~ **[ADDRESSED 2026-08-05 — the audit
+   is now a byproduct of any run rather than a sweep somebody has to schedule.]**
+   `MeasureCalibrationSpread` / `DescribeCalibrationSpread` (`tests/perf/Baseline.h`)
+   fold the probe into min/max/ratio across a scenario's measured iterations, and
+   `PerfMain` appends the note to that scenario's verdict line whenever the ratio
+   clears `kCalibrationSpreadNoteRatio` (1.10). So a full run *labels* every
+   scenario whose clock moved under it, and a failing duration metric carries the
+   same note inline. Attached to `cpu_*`/`wall_*` lines only: an allocation or RSS
+   gate does not scale with the clock, and identical allocation counts across a
+   step are the evidence the duration failure is the machine. Covered by
+   `PerfBaseline/CalibrationSpreadFlagsAMovingClock`, which pins the reproduction's
+   own 671→857 us numbers, that ordinary ~1% drift stays silent, and that a run
+   with no probe describes nothing rather than a 1x range of zeros.
+2. **[STILL OPEN]** `cpu_calibration_ns` is now *read* — but only to explain a
+   failure, not to prevent one. The principled fix is still to normalise `cpu_ms`
+   (and arguably `wall_ms`) by it before comparing to a baseline, which would make
+   every duration gate machine-state-independent instead of exempting scenarios one
+   at a time. That needs a reference calibration recorded *in the baseline*, which
+   no baseline carries: a format change plus a full rebaseline on perf-runner-v1.
+3. **[STILL OPEN]** The probe understates the effect. It is a dense dependent chain
+   that pulls the clock up while it runs, so its 1.28x step is a *lower bound* on
+   the 2.0x the scenario's short bursts actually saw. A calibration workload shaped
+   like the thing being measured would read truer — and would also move the 1.10
+   note threshold, which is calibrated against the current probe.
 
 Related: [TD-2026-08-05-136](#td-2026-08-05-136) is the same class of defect on a
 different metric — a gate whose value is decided by machine state rather than by

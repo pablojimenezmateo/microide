@@ -20,6 +20,7 @@
 #include <iostream>
 #include <limits>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <unordered_map>
@@ -1797,9 +1798,17 @@ int main(int argc, char** argv) {
     // offending metric had to be reverse-engineered from --report-json. Smoke
     // runs do not enforce, so they annotate the line as advisory.
     const char* verdict = !enforced_failure ? "PASS" : (options->smoke ? "WARN" : "FAIL");
+    // Reported on every verdict line that earns it, not only on failures: which
+    // scenarios run on a clock that moves under them is exactly the audit
+    // TD-2026-08-05-137 says nobody has done, and this way it falls out of an
+    // ordinary run instead of needing its own sweep.
+    const CalibrationSpread calibration = MeasureCalibrationSpread(*aggregate);
+    const bool clock_moved = calibration.valid && calibration.ratio >= kCalibrationSpreadNoteRatio;
+    const std::string calibration_note =
+        clock_moved ? DescribeCalibrationSpread(calibration) : std::string{};
     std::cerr << "[perf] " << verdict << ' ' << scenario.name << " (p50_wall="
               << aggregate->metrics.p50_wall_ms << "ms, p50_alloc="
-              << aggregate->metrics.p50_allocations << ")\n";
+              << aggregate->metrics.p50_allocations << ")" << calibration_note << "\n";
     if (!comparison.passed) {
       for (const MetricComparison& metric : comparison.metrics) {
         if (metric.passed) {
@@ -1809,11 +1818,17 @@ int main(int argc, char** argv) {
             windowed_lane && metric.metric.find("wall") != std::string::npos;
         const double delta_percent =
             metric.expected != 0.0 ? (metric.actual / metric.expected - 1.0) * 100.0 : 0.0;
+        // Duration metrics only. An allocation or RSS gate is unaffected by the
+        // clock, so annotating those would be actively misleading — allocation
+        // counts coming out identical across a clock step is the *evidence* that
+        // a cpu/wall failure is the machine and not the code.
+        const bool duration_metric = metric.metric.find("cpu") != std::string::npos ||
+                                     metric.metric.find("wall") != std::string::npos;
         std::cerr << "[perf]   " << metric.metric << ": baseline=" << metric.expected
                   << " measured=" << metric.actual << " (" << (delta_percent >= 0.0 ? "+" : "")
                   << delta_percent << "%, tolerance +" << metric.tolerance_percent << "%)"
                   << (advisory_metric ? "  [advisory: windowed video lane, not comparable]" : "")
-                  << '\n';
+                  << (clock_moved && duration_metric ? calibration_note : std::string{}) << '\n';
       }
     }
     if (enforced_failure && !options->smoke) {

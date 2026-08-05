@@ -127,6 +127,30 @@ not the binary (TD-2026-08-05-137). Caveat: it is a dense dependent chain, so it
 pulls the clock up while it runs and *understates* the effect on workloads made of
 short bursts between sleeps; treat its ratio as a lower bound.
 
+**You no longer have to go looking.** The harness computes the probe's
+min/max/ratio across a scenario's measured iterations and, when the ratio clears
+`kCalibrationSpreadNoteRatio` (1.10 — well under the 1.28 that produced a real
+failure, well over the ~1 % a steady machine drifts), appends it to that scenario's
+verdict line and to every failing **duration** metric:
+
+```
+[perf] FAIL idle_soak_30s (p50_wall=30012ms, p50_alloc=2956)  [machine clock moved
+  during the run: harness.cpu_calibration_ns 670-860us, 1.28x — a duration metric
+  scales with it; see TD-2026-08-05-137]
+```
+
+It is deliberately NOT attached to a failing allocation or RSS line: those do not
+scale with the clock, and identical allocation counts across a clock step are
+precisely the *evidence* that a duration failure is the machine. A run on a steady
+clock prints nothing, so the note appearing at all is the signal.
+
+That also makes "which CPU gates are really measuring the governor" fall out of any
+ordinary full run — scan the verdict lines for the note rather than sweeping for it.
+What is still owed is using the probe rather than only reporting it: normalising
+`cpu_ms`/`wall_ms` by it before the comparison would make every duration gate
+machine-state-independent, but a baseline carries no reference calibration today, so
+it needs a baseline-format change plus a full rebaseline on the reference runner.
+
 Scenarios whose iteration is mostly sleep let the core idle down to the 605 MHz
 floor, 8.5x below its 5157 MHz ceiling, and their CPU number is then decided by
 where the governor happened to be. `Scenario::gate_cpu_metrics = false` opts such a

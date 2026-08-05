@@ -374,9 +374,64 @@ void TestPerfBaselineUngatedCpuIsOmittedNotZeroed() {
   }
 }
 
+// TD-2026-08-05-137: harness.cpu_calibration_ns was recorded and never read, so
+// working out that a cpu_ms failure was the governor rather than the code meant
+// scraping --report-json by hand. The spread across a run is what carries that
+// signal, and it must stay silent on a machine holding one clock.
+void TestPerfCalibrationSpreadFlagsAMovingClock() {
+  const auto make_run = [](std::initializer_list<std::uint64_t> calibrations) {
+    perf::Aggregate aggregate;
+    std::size_t index = 0;
+    for (const std::uint64_t nanoseconds : calibrations) {
+      perf::Iteration iteration;
+      iteration.index = index++;
+      // A real iteration carries application counters beside the probe; the
+      // scan must pick out its own and ignore those.
+      iteration.perf_counters.emplace_back("editor.line_materializations", 4200);
+      iteration.perf_counters.emplace_back("harness.cpu_calibration_ns", nanoseconds);
+      aggregate.iterations.push_back(std::move(iteration));
+    }
+    return aggregate;
+  };
+
+  // The numbers from the reproduction in the TD: a clean 671 -> 857 us step.
+  const perf::CalibrationSpread stepped = perf::MeasureCalibrationSpread(
+      make_run({670700, 674300, 673600, 716300, 676800, 860800, 857200, 856600}));
+  Expect(stepped.valid, "a run that recorded the probe should produce a spread");
+  Expect(stepped.min_ns == 670700 && stepped.max_ns == 860800,
+         "the spread should bound the probe, not any counter beside it");
+  Expect(stepped.ratio > perf::kCalibrationSpreadNoteRatio,
+         "a 1.28x clock step must clear the note threshold");
+  const std::string note = perf::DescribeCalibrationSpread(stepped);
+  Expect(note.find("670-860us") != std::string::npos,
+         "the note should print the microsecond range it observed");
+  Expect(note.find("TD-2026-08-05-137") != std::string::npos,
+         "the note should point at the analysis that explains it");
+
+  // A machine holding one clock drifts about 1%, which must not be reported --
+  // a note on every scenario would be noise, and noise is how a real one gets
+  // skipped.
+  const perf::CalibrationSpread steady =
+      perf::MeasureCalibrationSpread(make_run({670700, 673100, 671900, 674300}));
+  Expect(steady.valid, "a steady run still records the probe");
+  Expect(steady.ratio < perf::kCalibrationSpreadNoteRatio,
+         "ordinary drift must stay under the note threshold");
+
+  // A scenario whose run recorded no probe at all (an older report, or a lane
+  // that skipped it) must not synthesise one.
+  perf::Aggregate probeless;
+  probeless.iterations.push_back(perf::Iteration{});
+  const perf::CalibrationSpread absent = perf::MeasureCalibrationSpread(probeless);
+  Expect(!absent.valid, "a run without the probe has no spread");
+  Expect(perf::DescribeCalibrationSpread(absent).empty(),
+         "and must describe nothing rather than a 1x range of zeros");
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/CalibrationSpreadFlagsAMovingClock",
+          TestPerfCalibrationSpreadFlagsAMovingClock);
   AddTest(tests, "PerfBaseline/RecipesDoNotPinAVideoDriver",
           TestPerfRecipesDoNotPinAVideoDriver);
   AddTest(tests, "PerfBaseline/AllowsImprovements", TestPerfBaselineComparisonAllowsImprovements);

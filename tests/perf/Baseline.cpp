@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cmath>
 #include <fstream>
+#include <sstream>
 
 #include "util/JsonValue.h"
 
@@ -204,6 +205,40 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
             aggregate.metrics.p50_rss_growth_bytes, baseline.tolerances.rss_p50_percent);
   }
   return result;
+}
+
+CalibrationSpread MeasureCalibrationSpread(const Aggregate& aggregate) {
+  CalibrationSpread spread;
+  for (const Iteration& iteration : aggregate.iterations) {
+    for (const auto& [name, value] : iteration.perf_counters) {
+      if (name != "harness.cpu_calibration_ns" || value == 0) {
+        continue;
+      }
+      if (!spread.valid) {
+        spread.valid = true;
+        spread.min_ns = value;
+        spread.max_ns = value;
+        continue;
+      }
+      spread.min_ns = std::min(spread.min_ns, value);
+      spread.max_ns = std::max(spread.max_ns, value);
+    }
+  }
+  if (spread.valid && spread.min_ns != 0) {
+    spread.ratio = static_cast<double>(spread.max_ns) / static_cast<double>(spread.min_ns);
+  }
+  return spread;
+}
+
+std::string DescribeCalibrationSpread(const CalibrationSpread& spread) {
+  if (!spread.valid) {
+    return {};
+  }
+  std::ostringstream out;
+  out << "  [machine clock moved during the run: harness.cpu_calibration_ns "
+      << (spread.min_ns / 1000) << "-" << (spread.max_ns / 1000) << "us, " << spread.ratio
+      << "x — a duration metric scales with it; see TD-2026-08-05-137]";
+  return out.str();
 }
 
 }  // namespace microide::tests::perf
