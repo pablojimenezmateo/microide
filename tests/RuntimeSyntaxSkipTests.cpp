@@ -201,6 +201,44 @@ void TestInvalidUtf8LineStillHighlights() {
                      "line: got '") + rendered + "'");
 }
 
+// A line past the tokenization cutoff renders unhighlighted. That has always been
+// the behaviour; what this pins is that it costs nothing to say so. The refusal
+// path used to `assign(line.size(), Plain)` before returning, so declining to
+// tokenize an 8 MB minified line still allocated and memset 8 MB — per token-cache
+// miss, then held it in the per-line LRU. An EMPTY token vector renders identically
+// because every consumer treats an absent entry as Plain (the same convention
+// TextViewport::HighlightedLineTokens has always used when highlighting is off).
+//
+// The under-cutoff control case is what keeps this from passing vacuously: the
+// pre-sizing still has to happen for every line that IS tokenized, since the
+// highlighter writes through MarkRange, which only overwrites existing entries.
+void TestOverLongLineSkipsTokenMaterialization() {
+  ScopedGoldGrammar grammar;
+  // Just under the cutoff: tokenized, so every byte carries a kind.
+  const std::string under = "\"" + std::string(90000, 'a') + "\"";
+  const auto under_result = Highlight(under);
+  Expect(under_result.tokens.size() == under.size(),
+         "a line under the tokenization cutoff must still carry one token per byte");
+  Expect(under_result.tokens.front() == SyntaxTokenKind::String,
+         "a line under the cutoff must still be highlighted");
+
+  // Past the cutoff: declined, and declined for free.
+  const std::string over = "\"" + std::string(150000, 'a') + "\"";
+  const auto over_result = Highlight(over);
+  Expect(over_result.tokens.empty(),
+         "a line past the tokenization cutoff must not materialize a token per byte");
+
+  // The open-region carry-forward across an over-long line is unchanged by this:
+  // an inherited region state still survives the line it could not scan.
+  microide::editor::SyntaxState open_state;
+  open_state.definition_id = under_result.end_state.definition_id;
+  open_state.region_depth = 1;
+  open_state.region_stack[0] = 7;
+  const auto carried = HighlightLine(over, "buffer.gold", open_state, "");
+  Expect(carried.end_state.region_depth == 1 && carried.end_state.region_stack[0] == 7,
+         "an over-long line must carry the incoming open-region stack forward");
+}
+
 // Stress/liveness guard for the pathological re-scan shape the tech-debt entry
 // describes: a single string with many `${}` interpolations makes the string
 // region's end+skip search re-run at each `}`. This must still terminate with the
@@ -348,6 +386,8 @@ void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests) {
           TestUtf8NextToEscapeStaysString);
   AddTest(tests, "RuntimeSyntaxSkip/InvalidUtf8LineStillHighlights",
           TestInvalidUtf8LineStillHighlights);
+  AddTest(tests, "RuntimeSyntaxSkip/OverLongLineSkipsTokenMaterialization",
+          TestOverLongLineSkipsTokenMaterialization);
   AddTest(tests, "RuntimeSyntaxSkip/ManyInterpolationsTerminateWithStringClosed",
           TestManyInterpolationsTerminateWithStringClosed);
 }

@@ -140,14 +140,18 @@ void TestTextViewportEditingPastFormerLargeFileLineThresholdKeepsSyntaxHighlight
 
 void TestTextViewportEditingPastFormerLargeFileByteThresholdKeepsSyntaxHighlighting() {
   TextViewport viewport;
-  viewport.LoadContent("int value = 42;\n", "/tmp/threshold.cpp");
+  // Two lines: the edit below grows line 0 past the per-line tokenization cutoff,
+  // while line 1 stays short. The point of this test is that crossing a byte
+  // threshold does not disable highlighting for the DOCUMENT — so line 1 is what
+  // carries the assertion once line 0 is individually too long to scan.
+  viewport.LoadContent("int value = 42;\nint other = 7;\n", "/tmp/threshold.cpp");
 
   viewport.MoveCursorTo(0, viewport.lines().front().size());
   viewport.InsertText(std::string(400000, 'a'));
 
   Expect(viewport.syntax_highlighting_enabled(),
          "editing across the former byte threshold should keep syntax highlighting enabled");
-  Expect(!viewport.HighlightedLineTokens(0).empty(),
+  Expect(!viewport.HighlightedLineTokens(1).empty(),
          "editing across the former byte threshold should keep producing syntax tokens");
 
   Expect(viewport.Undo(), "undo should succeed after crossing the byte threshold");
@@ -2389,18 +2393,35 @@ void TestSyntaxHighlightSkipsOverlongLine() {
            "a short line with the keyword should highlight");
   }
 
-  // A >100 KB line beginning with the keyword must NOT be tokenized: all Plain,
-  // one token per byte.
+  // A >100 KB line beginning with the keyword must NOT be tokenized. It renders
+  // all-Plain, and it does so by returning NO tokens rather than one Plain token
+  // per byte: every consumer already reads an absent entry as Plain (the same
+  // convention HighlightedLineTokens uses when highlighting is off), so filling
+  // the vector only made declining to tokenize cost what tokenizing would have —
+  // an 8 MB alloc + memset per cache miss on a minified file, then held in the
+  // per-line LRU.
   std::string huge = "TODO ";
   huge.append(300000, 'x');
   TextViewport bigv;
   bigv.LoadContent(huge + "\n", "/tmp/big.todo");
   const auto& tokens = bigv.HighlightedLineTokens(0);
-  Expect(tokens.size() == bigv.lines().front().size(),
-         "overlong line must still return one token per byte (contract preserved)");
+  Expect(tokens.empty(),
+         "an overlong line must not materialize a token per byte to say 'unhighlighted'");
   Expect(std::all_of(tokens.begin(), tokens.end(),
                      [](SyntaxTokenKind k) { return k == SyntaxTokenKind::Plain; }),
          "an overlong line must be left unhighlighted (all Plain)");
+
+  // The cutoff is per LINE, not per document: a short line in the same buffer is
+  // still tokenized. Without this, the assertion above would also pass if the
+  // whole file had silently stopped highlighting.
+  TextViewport mixedv;
+  mixedv.LoadContent(huge + "\nTODO here\n", "/tmp/mixed.todo");
+  Expect(mixedv.HighlightedLineTokens(0).empty(),
+         "the overlong line stays untokenized when a short line follows it");
+  const auto& short_tokens = mixedv.HighlightedLineTokens(1);
+  Expect(std::any_of(short_tokens.begin(), short_tokens.end(),
+                     [](SyntaxTokenKind k) { return k == SyntaxTokenKind::Keyword; }),
+         "a short line sharing the buffer with an overlong one must still highlight");
 }
 
 void TestSyntaxHighlightNestedRegionResumesParentScope() {

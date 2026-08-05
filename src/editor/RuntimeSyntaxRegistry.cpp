@@ -1424,10 +1424,18 @@ HighlightedLine HighlightLine(std::string_view line,
                                : DetectDefinitionId(registry, path, nullptr, first_line);
 
   HighlightedLine result;
-  result.tokens.assign(line.size(), SyntaxTokenKind::Plain);
   result.end_state = SyntaxState{};
   result.end_state.definition_id = definition_id;
   if (line.empty() || line.size() > kMaxHighlightLineBytes) {
+    // Leave `tokens` EMPTY rather than filling `line.size()` Plain entries. Every
+    // consumer already treats a short/absent token vector as Plain at that column
+    // (DecoratedTextGridRenderer, BracketScanner, FoldingModel, the auto-pair
+    // language behaviour all bounds-check), and the disabled-highlighting path in
+    // TextViewport::HighlightedLineTokens has always returned an empty vector for
+    // exactly that reason — so this is the same rendering, without the buffer.
+    // Filling it made the refusal to tokenize cost what tokenizing would have: a
+    // minified 8 MB single-line file allocated and memset 8 MB per token-cache
+    // miss, ~1.6 ms of a ~15 ms keystroke, and cached it per line.
     // Carry the incoming open-region stack forward instead of dropping it. An
     // empty line contains no delimiter, and a line too long to scan is far more
     // likely to sit inside a region than to open/close one — resetting to top
@@ -1438,6 +1446,10 @@ HighlightedLine HighlightLine(std::string_view line,
     }
     return result;  // empty, or too long to tokenize affordably: leave Plain
   }
+
+  // Past the guard: the scoped highlighter writes through MarkRange, which only
+  // overwrites existing entries, so the vector must be pre-sized to the line here.
+  result.tokens.assign(line.size(), SyntaxTokenKind::Plain);
 
   // Resume the previous line's open-region stack only when the definition still
   // matches; otherwise start fresh at the top level.
