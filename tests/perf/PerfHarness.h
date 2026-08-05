@@ -267,6 +267,21 @@ struct Scenario {
   double tolerance_alloc_p50_percent = 10.0;
   double tolerance_alloc_p95_percent = 20.0;
   double tolerance_alloc_max_percent = 50.0;
+  // Whether this scenario's iteration CPU time is a valid regression signal.
+  //
+  // Set false only where it provably is not, and say what replaces it. cpu_ms is
+  // a duration, so it scales with the machine's effective clock -- and a scenario
+  // that spends most of its iteration asleep lets the governor walk the core down
+  // to the 605 MHz floor, 8.5x below its 5157 MHz ceiling. What is left to
+  // measure then is a handful of frames rendered at whatever clock the core
+  // happened to be at on the way back up. `harness.cpu_calibration_ns` makes that
+  // visible: on idle_soak_30s it stepped 671 -> 857 us mid-run and the iteration
+  // cpu_ms stepped 14 -> 30 ms with it, application counters byte-identical
+  // across the step (TD-2026-08-05-137). No percentage envelope is both stable
+  // and meaningful against that. Same reasoning as the p50-only RSS gate in
+  // Baseline.cpp: a metric that measures which iteration got unlucky is not a
+  // gate. The numbers are still measured and reported, just not enforced.
+  bool gate_cpu_metrics = true;
   std::function<void(ScenarioContext&)> run;
 };
 

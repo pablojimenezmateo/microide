@@ -110,20 +110,26 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
 bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& baseline) {
   util::JsonObject root;
   root["scenario"] = baseline.scenario_name;
-  root["metrics"] = util::JsonObject{
+  util::JsonObject metrics{
       {"p50_wall_ms", baseline.metrics.p50_wall_ms},
       {"p95_wall_ms", baseline.metrics.p95_wall_ms},
       {"max_wall_ms", baseline.metrics.max_wall_ms},
       {"p50_allocations", baseline.metrics.p50_allocations},
       {"p95_allocations", baseline.metrics.p95_allocations},
       {"max_allocations", baseline.metrics.max_allocations},
-      {"p50_cpu_ms", baseline.metrics.p50_cpu_ms},
-      {"p95_cpu_ms", baseline.metrics.p95_cpu_ms},
-      {"max_cpu_ms", baseline.metrics.max_cpu_ms},
       {"p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes},
       {"p95_rss_growth_bytes", baseline.metrics.p95_rss_growth_bytes},
       {"max_rss_growth_bytes", baseline.metrics.max_rss_growth_bytes},
   };
+  // Omitted entirely, not written as zero, when the scenario opts out: the
+  // loader decides `has_cpu_metrics` from whether p50_cpu_ms is a number, and a
+  // zero baseline would gate every future run against 0 ms.
+  if (baseline.has_cpu_metrics) {
+    metrics["p50_cpu_ms"] = baseline.metrics.p50_cpu_ms;
+    metrics["p95_cpu_ms"] = baseline.metrics.p95_cpu_ms;
+    metrics["max_cpu_ms"] = baseline.metrics.max_cpu_ms;
+  }
+  root["metrics"] = std::move(metrics);
   root["tolerances"] = util::JsonObject{
       {"p50_percent", baseline.tolerances.p50_percent},
       {"p95_percent", baseline.tolerances.p95_percent},

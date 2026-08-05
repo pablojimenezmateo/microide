@@ -837,9 +837,29 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(1);
           },
   });
+  // CPU the process may spend across the 27 s soak window, summed over every
+  // thread. Set from measurement with headroom, not from a guess -- see the
+  // scenario body for what it does and does not cover.
+  // CPU the whole process may spend across the 27 s soak window, summed over
+  // every thread. Measured on perf-runner-v1 across ten iterations: 3.85, 3.95,
+  // 4.09, 4.16, 4.67, then 8.55, 9.25, 10.31, 10.57, 10.69 -- one run, one clean
+  // step where the governor walked the clock down (harness.cpu_calibration_ns
+  // 671 -> 857 us at the same boundary). 20 ms sits at ~2x the slow mode, which
+  // is 0.07% CPU across the window; a regression that so much as wakes a thread
+  // at 10 Hz for 27 s lands far above it. Do not tighten it toward the fast mode
+  // -- the fast mode is a property of the machine, not of the code.
+  constexpr double kIdleSoakCpuBudgetMs = 20.0;
   PerfHarness::RegisterScenario(Scenario{
       .name = "idle_soak_30s",
       .smoke = false,
+      // One discarded pass. Opening the fixture project costs the watcher ~1000
+      // coalesced events and the file index a full build, none of which is what
+      // "idle" means; that pass measured 32-51 ms against a 14 ms steady state
+      // and owned this scenario's max and p95 outright.
+      .warmup_iterations = 1,
+      // Replaced by the soak-window assertion in the body -- see gate_cpu_metrics
+      // in PerfHarness.h for why the iteration-level number cannot gate here.
+      .gate_cpu_metrics = false,
       .run =
           [](ScenarioContext& context) {
             context.PumpFrames(2);
@@ -849,12 +869,31 @@ void RegisterBuiltInScenarios() {
             // Task 9.6: assert watcher/executor threads generate zero wake events after settling.
             // Allow 3 s for background work to settle before the soak window begins.
             context.Wait(std::chrono::seconds(3));
+            // Scope the CPU assertion to the soak window itself. The iteration's
+            // baseline-gated p50_cpu_ms cannot do this job: 18 of the ~15 ms it
+            // measures are harness frames at ~0.83 ms each, and two or three of
+            // those are rendered on a core that just woke from 27 s of sleeping,
+            // at the 605 MHz hardware floor rather than the 5157 MHz ceiling.
+            // Whether the governor has ramped by then is what decides a 15 ms
+            // iteration from a 30 ms one -- the same binary passed and failed the
+            // same +100% gate on consecutive runs with byte-identical application
+            // counters. The application's own idle cost, which is the whole point
+            // of this scenario, is the ~2 ms residual underneath all that.
+            // Measured here it is directly assertable, exactly like the zero-wake
+            // budget, and immune to the clock question (TD-2026-08-05-137).
+            const double cpu_before_soak = ProcessCpuMilliseconds();
             const std::uint64_t wakeups_during_soak =
                 context.Wait(std::chrono::seconds(27));
+            const double soak_cpu_ms = ProcessCpuMilliseconds() - cpu_before_soak;
             if (wakeups_during_soak > 0) {
               std::cerr << "idle_soak_30s: " << wakeups_during_soak
                         << " unexpected wake events during soak window\n";
               throw std::runtime_error("idle_soak_30s: unexpected wakes during soak window");
+            }
+            std::cerr << "idle_soak_30s soak_cpu_ms=" << soak_cpu_ms
+                      << " budget_ms=" << kIdleSoakCpuBudgetMs << '\n';
+            if (soak_cpu_ms > kIdleSoakCpuBudgetMs) {
+              throw std::runtime_error("idle_soak_30s: CPU budget exceeded during soak window");
             }
             context.PumpFrames(1);
           },
@@ -1712,7 +1751,7 @@ int main(int argc, char** argv) {
                          .cpu_p95_percent = scenario.tolerance_p95_percent,
                          .cpu_max_percent = scenario.tolerance_max_percent},
       };
-      record.has_cpu_metrics = true;
+      record.has_cpu_metrics = scenario.gate_cpu_metrics;
       record.has_rss_metrics = true;
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
