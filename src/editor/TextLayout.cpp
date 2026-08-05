@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
 namespace microide::editor {
@@ -165,12 +166,27 @@ std::size_t TextLayout::NextTextColumn(std::string_view line, std::size_t text_c
                   clamped_column + util::Utf8SequenceLength(line, clamped_column));
 }
 
+LineLayoutFacts TextLayout::MeasureLineFacts(std::string_view line, std::size_t tab_size) {
+  const std::size_t plain_prefix = FirstNonPlainAsciiByte(line);
+  std::size_t visual_column = plain_prefix;
+  for (std::size_t i = plain_prefix; i < line.size();) {
+    visual_column = AdvanceVisualColumn(visual_column, line[i], tab_size);
+    i += util::Utf8SequenceLength(line, i);
+  }
+  return LineLayoutFacts{
+      .visual_columns = visual_column,
+      .plain_ascii = plain_prefix == line.size(),
+      .known = true,
+  };
+}
+
 LayoutLine TextLayout::BuildVisibleLine(std::string_view line,
                                         std::size_t horizontal_scroll,
                                         std::size_t visible_columns,
-                                        std::size_t tab_size) {
+                                        std::size_t tab_size,
+                                        LineLayoutFacts facts) {
   LayoutLine result;
-  BuildVisibleLineInto(line, horizontal_scroll, visible_columns, tab_size, result);
+  BuildVisibleLineInto(line, horizontal_scroll, visible_columns, tab_size, result, facts);
   return result;
 }
 
@@ -178,7 +194,8 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
                                       std::size_t horizontal_scroll,
                                       std::size_t visible_columns,
                                       std::size_t tab_size,
-                                      LayoutLine& result) {
+                                      LayoutLine& result,
+                                      LineLayoutFacts facts) {
   // `clear()` keeps each buffer's capacity, which is the whole point: a caller
   // recycling an evicted cache entry must not pay three allocations to refill it.
   result.text.clear();
@@ -186,7 +203,8 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
   result.text_offsets.clear();
   result.caret_column = 0;
   result.caret_visible = false;
-  result.visual_columns = VisualColumnForTextColumn(line, line.size(), tab_size);
+  result.visual_columns =
+      facts.known ? facts.visual_columns : VisualColumnForTextColumn(line, line.size(), tab_size);
 
   if (visible_columns == 0) {
     return;
@@ -200,8 +218,32 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
   result.source_columns.reserve(visible_columns);
   result.text.reserve(visible_columns);
 
-  std::size_t visual_column = 0;
-  for (std::size_t i = 0; i < line.size();) {
+  // Reach the first visible cell without decoding what precedes it. Every byte
+  // before the line's first tab-or-multibyte byte occupies exactly one visual
+  // column, so within that prefix byte offset == visual column and the walk can
+  // start at the scroll offset outright. A caller that already knows the whole
+  // line is plain ASCII (`facts.plain_ascii`) skips even the scan.
+  //
+  // This is exact for every line, not a fast path for a special case: the walk
+  // simply starts at the first byte where visual column can stop tracking byte
+  // offset. On an ordinary line the two forms do the same negligible work; on a
+  // line with no newlines in it and the caret a megabyte in, this replaces ~1M
+  // decoder iterations per rendered row with a word-at-a-time scan, or with
+  // nothing at all when the width cache has the line's facts.
+  std::size_t start_byte = 0;
+  if (horizontal_scroll > 0 && !line.empty()) {
+    const std::size_t probe = std::min(horizontal_scroll, line.size());
+    if (facts.known && facts.plain_ascii) {
+      start_byte = probe;
+    } else {
+      start_byte = FirstNonPlainAsciiByte(line.substr(0, probe));
+      util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
+                                  start_byte);
+    }
+  }
+
+  std::size_t visual_column = start_byte;
+  for (std::size_t i = start_byte; i < line.size();) {
     const char character = line[i];
     const std::size_t next_text = i + util::Utf8SequenceLength(line, i);
     const std::size_t next_visual =

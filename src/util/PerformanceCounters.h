@@ -43,6 +43,8 @@ namespace microide::util {
   X(EditorFoldPartialResolves, "editor.fold_partial_resolves")                                  \
   X(EditorVisibleLineLayoutEvictions, "editor.visible_line_layout_evictions")                    \
   X(EditorVisibleLineLayoutRecycled, "editor.visible_line_layout_recycled")                      \
+  X(EditorVisibleLineLayoutPrefixBytesScanned,                                                   \
+    "editor.visible_line_layout_prefix_bytes_scanned")                                           \
   X(EditorContentRevisionBumps, "editor.content_revision_bumps")                                \
   X(EditorSyntaxRevisionBumps, "editor.syntax_revision_bumps")                                  \
   X(EditorLayoutShapeRevisionBumps, "editor.layout_shape_revision_bumps")                       \

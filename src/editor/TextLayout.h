@@ -17,6 +17,27 @@ struct LayoutLine {
   bool caret_visible = false;
 };
 
+// What a caller already knows about a line, so `TextLayout::BuildVisibleLineInto`
+// does not re-derive it. Both facts cost O(line) to compute and both are already
+// maintained per line by `TextLayoutCache`, which is the hot caller.
+//
+// Without them a visible-row build is O(line) twice over on a line with no
+// newlines in it (a minified bundle): once to measure the full width for the
+// scrollbar and end-of-line decorations, and once to step code points from column
+// 0 up to the horizontal scroll offset to find the first visible cell. With the
+// caret a megabyte in, that is a megabyte of decoding per rendered row, per frame
+// (TD-2026-08-05-132).
+struct LineLayoutFacts {
+  // The line's full visual width. Read only when `known`.
+  std::size_t visual_columns = 0;
+  // Every byte of the line is a plain single-cell ASCII character: no tab, no
+  // byte >= 0x80. Visual column then equals byte column at every offset on the
+  // line, which is what lets the builder jump straight to the first visible cell
+  // instead of walking to it. Read only when `known`.
+  bool plain_ascii = false;
+  bool known = false;
+};
+
 class TextLayout {
  public:
   static std::size_t VisualColumnForTextColumn(std::string_view line,
@@ -44,11 +65,19 @@ class TextLayout {
                                    std::size_t horizontal_scroll,
                                    std::size_t visible_columns,
                                    std::size_t tab_size,
-                                   LayoutLine& out);
+                                   LayoutLine& out,
+                                   LineLayoutFacts facts = {});
   static LayoutLine BuildVisibleLine(std::string_view line,
                                      std::size_t horizontal_scroll,
                                      std::size_t visible_columns,
-                                     std::size_t tab_size);
+                                     std::size_t tab_size,
+                                     LineLayoutFacts facts = {});
+
+  // Measures both `LineLayoutFacts` in one pass. The plain-ASCII prefix scan that
+  // `VisualColumnForTextColumn` already runs is exactly the question
+  // `plain_ascii` asks, so measuring both together costs no more than measuring
+  // the width alone.
+  static LineLayoutFacts MeasureLineFacts(std::string_view line, std::size_t tab_size);
 
   // O(N) prefix walk that captures every text-byte boundary's visual column for `line`. Once
   // built, `VisualColumnFor(text_column)` is O(log N). Use when more than one VisualColumn query

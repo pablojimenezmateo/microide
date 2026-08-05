@@ -13,6 +13,7 @@ namespace microide::tests {
 namespace {
 
 using microide::editor::LayoutLine;
+using microide::editor::LineLayoutFacts;
 using microide::editor::TextLayout;
 
 constexpr std::size_t kTabSize = 4;
@@ -155,6 +156,100 @@ void TestVisualColumnFastPathMatchesReferenceWalk() {
                      reference_walk(line, c),
                  "prefix-skipping fast path matches the reference walk at every chunk offset");
         }
+      }
+    }
+  }
+}
+
+// BuildVisibleLineInto no longer steps code points from column 0 to reach the
+// horizontal scroll offset: it starts at the line's first tab-or-multibyte byte,
+// where visual column can first stop tracking byte offset, and a caller holding
+// `LineLayoutFacts` for an all-plain line skips even that scan (TD-2026-08-05-132).
+//
+// Both are claims about EVERY line, not fast paths for a special case, so pin them
+// differentially against a reference that walks from byte 0 the old way — with the
+// special byte at every offset of lines spanning several eight-byte scan chunks,
+// and at every scroll offset including past end-of-line.
+void TestBuildVisibleLineMatchesWalkFromColumnZero() {
+  const auto reference_build = [](std::string_view line, std::size_t horizontal_scroll,
+                                  std::size_t visible_columns) {
+    LayoutLine out;
+    out.visual_columns = TextLayout::VisualColumnForTextColumn(line, line.size(), kTabSize);
+    if (visible_columns == 0) {
+      return out;
+    }
+    std::size_t visual_column = 0;
+    for (std::size_t i = 0; i < line.size();) {
+      const char character = line[i];
+      const std::size_t next_text = i + util::Utf8SequenceLength(line, i);
+      const std::size_t next_visual =
+          TextLayout::AdvanceVisualColumn(visual_column, character, kTabSize);
+      for (std::size_t cell = 0; cell < next_visual - visual_column; ++cell) {
+        const std::size_t absolute_cell = visual_column + cell;
+        if (absolute_cell < horizontal_scroll) {
+          continue;
+        }
+        if (absolute_cell >= horizontal_scroll + visible_columns) {
+          break;
+        }
+        out.text_offsets.push_back(out.text.size());
+        if (character == '\t') {
+          out.text.push_back(' ');
+        } else {
+          out.text.append(line, i, next_text - i);
+        }
+        out.source_columns.push_back(i);
+      }
+      visual_column = next_visual;
+      i = next_text;
+      if (visual_column >= horizontal_scroll + visible_columns) {
+        break;
+      }
+    }
+    return out;
+  };
+
+  const auto same = [](const LayoutLine& a, const LayoutLine& b) {
+    return a.text == b.text && a.source_columns == b.source_columns &&
+           a.text_offsets == b.text_offsets && a.visual_columns == b.visual_columns;
+  };
+
+  const std::string kSpecials[] = {"\t", "\xC3\xA9", "\xE4\xB8\xAD", "\xFF"};
+  std::vector<std::string> lines;
+  for (std::size_t length = 0; length <= 18; ++length) {
+    const std::string ascii(length, 'a');
+    lines.push_back(ascii);
+    for (const std::string& special : kSpecials) {
+      for (std::size_t at = 0; at <= length; ++at) {
+        std::string line = ascii;
+        line.insert(at, special);
+        lines.push_back(std::move(line));
+      }
+    }
+  }
+
+  LayoutLine built;
+  for (const std::string& line : lines) {
+    const LineLayoutFacts facts = TextLayout::MeasureLineFacts(line, kTabSize);
+    Expect(facts.known, "MeasureLineFacts reports its result as known");
+    Expect(facts.visual_columns ==
+               TextLayout::VisualColumnForTextColumn(line, line.size(), kTabSize),
+           "MeasureLineFacts agrees with the direct width walk");
+    Expect(facts.plain_ascii == (line.find('\t') == std::string::npos &&
+                                 line.find_first_of("\xC3\xE4\xA9\xB8\xAD\xFF") ==
+                                     std::string::npos),
+           "plain_ascii means no tab and no byte >= 0x80");
+
+    for (std::size_t scroll = 0; scroll <= line.size() + 3; ++scroll) {
+      for (const std::size_t columns : {std::size_t{0}, std::size_t{1}, std::size_t{4},
+                                        std::size_t{32}}) {
+        const LayoutLine expected = reference_build(line, scroll, columns);
+        TextLayout::BuildVisibleLineInto(line, scroll, columns, kTabSize, built);
+        Expect(same(built, expected),
+               "the prefix-skipping build matches a walk from column zero");
+        TextLayout::BuildVisibleLineInto(line, scroll, columns, kTabSize, built, facts);
+        Expect(same(built, expected),
+               "the facts-hinted build matches a walk from column zero");
       }
     }
   }
@@ -399,6 +494,8 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
           TestVisualColumnMapMatchesDirectWalk);
   AddTest(tests, "TextLayout/VisualColumnFastPathMatchesReferenceWalk",
           TestVisualColumnFastPathMatchesReferenceWalk);
+  AddTest(tests, "TextLayout/BuildVisibleLineMatchesWalkFromColumnZero",
+          TestBuildVisibleLineMatchesWalkFromColumnZero);
   AddTest(tests, "TextLayout/TextVisualRoundTrip", TestTextVisualRoundTrip);
   AddTest(tests, "TextLayout/ResolveVisualColumnMatchesTextLayout",
           TestResolveVisualColumnMatchesTextLayout);
