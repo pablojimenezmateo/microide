@@ -112,6 +112,35 @@ scenario's *resolved* wall envelope rather than the tolerance struct's default �
 without that, a scenario with a widened 100 % wall tolerance would carry a 10 % CPU
 tolerance and flag on its own recorded baseline immediately.
 
+### `harness.cpu_calibration_ns`: what the clock actually was
+
+Every metric above is a *duration*, so all of it scales with the machine's
+effective clock. Each iteration therefore carries a reading of that clock:
+`harness.cpu_calibration_ns`, a fixed 400k-step dependent integer chain timed just
+**outside** the measured window, so it is charged to neither `cpu_ms` nor
+`wall_ms`. It costs ~475 us per iteration and reads stable to ~3 %.
+
+Read it whenever a CPU or wall failure comes with **unchanged allocations and
+unchanged application counters**. On `idle_soak_30s` it stepped 671 → 857 us
+mid-run at exactly the iteration where `cpu_ms` stepped 14 → 30 ms — the governor,
+not the binary (TD-2026-08-05-137). Caveat: it is a dense dependent chain, so it
+pulls the clock up while it runs and *understates* the effect on workloads made of
+short bursts between sleeps; treat its ratio as a lower bound.
+
+Scenarios whose iteration is mostly sleep let the core idle down to the 605 MHz
+floor, 8.5x below its 5157 MHz ceiling, and their CPU number is then decided by
+where the governor happened to be. `Scenario::gate_cpu_metrics = false` opts such a
+scenario out of the iteration-level CPU gate — it omits the three cpu metrics from
+the baseline rather than writing zeros. **Only set it with a direct assertion
+replacing it**, as `idle_soak_30s` does by measuring CPU across its soak window and
+throwing on a budget.
+
+The other harness-owned counters describe the harness's own contribution, which on
+soak and frame-pumping scenarios is most of the measurement: `harness.frames_pumped`
+(~0.83 ms each on the software present), `harness.idle_wait_polls` and its
+breakdown into `idle_wait_idle_sleeps` / `idle_wait_caret_sleeps` /
+`idle_wait_short_polls` / `idle_wait_handled_wakes`.
+
 ### What the first full CPU/RSS sweep found: almost nothing
 
 A 95-scenario sweep was run once the metrics existed. The result is a clean bill of

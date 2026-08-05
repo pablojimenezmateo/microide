@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-05. **82 open items.**
+Reviewed 2026-08-05. **83 open items.**
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
@@ -21,6 +21,68 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. RESOLVED for `idle_soak_30s`; OPEN as a general audit.
+
+`idle_soak_30s` failed the gate at `p50_cpu_ms: baseline=14.6955 measured=29.8665
+(+103.236%, tolerance +100%)` while wall, allocations, RSS and its zero-wake
+assertion all passed, and while **the same binary passed the same gate on two other
+full runs**.
+
+Reproduced, with the new `harness.cpu_calibration_ns` probe alongside:
+
+| it | polls | soak_cpu_ms | cpu_ms | calib_us |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 2920 | 4.67 | 37.71 | 670.7 |
+| 2 | 391 | 4.09 | 13.58 | 674.3 |
+| 3 | 3836 | 4.16 | 14.42 | 673.6 |
+| 4 | 1280 | 3.85 | 13.62 | 716.3 |
+| 5 | 1900 | 3.95 | 15.54 | 676.8 |
+| 6 | 479 | 9.25 | 30.47 | **860.8** |
+| 7 | 2229 | 10.69 | 30.05 | **857.2** |
+| 8 | 1461 | 8.55 | 25.23 | **856.6** |
+| 9 | 3401 | 10.57 | 28.44 | **857.4** |
+| 10 | 2188 | 10.31 | 31.60 | **859.9** |
+
+One run, one clean step. The calibration probe is a fixed slab of dependent
+integer work timed outside the measured window, so it can only move when the
+machine does — and it steps 671 → 857 us at exactly the boundary where `cpu_ms`
+steps 14 → 30 ms. Every application counter is byte-identical across the step,
+allocations are 2956 on both sides, and the poll count is uncorrelated (479 polls
+→ 9.25 ms; 3836 polls → 4.16 ms). The governor walked the clock down mid-run.
+
+**Why this scenario and not others.** It sleeps for 27 of its 30 seconds, which is
+what lets the core idle down to the 605 MHz floor — 8.5x below its 5157 MHz
+ceiling. Its whole CPU budget is ~18 harness frames at ~0.83 ms each, two or three
+of them rendered on a core still climbing back, so the p50 lands wherever the
+governor did. Rebaselining cannot fix it; no percentage envelope is both stable
+and meaningful against a 2x machine-state swing.
+
+**What shipped.** CPU across the soak window is now measured and asserted directly
+against a 20 ms budget (measured 3.85–10.69 ms across the clock step), exactly like
+the zero-wake assertion beside it, and the iteration-level CPU gate is dropped for
+this one scenario via `Scenario::gate_cpu_metrics`. Plus `warmup_iterations = 1`,
+since the fixture-open pass (watcher's ~1000 coalesced events, full file-index
+build) measured 32–51 ms and owned the max and p95.
+
+**Still owed, and why this is filed rather than closed:**
+
+1. The same reasoning applies to every scenario whose iteration is mostly sleep or
+   mostly waiting. `repo_open_rss_idle` already shows the symptom — its calibration
+   swings 671–1352 us *between iterations of one run*. Nobody has audited which
+   other CPU gates are measuring the governor.
+2. `cpu_calibration_ns` is recorded but not *used*: the principled fix is to
+   normalise `cpu_ms` (and arguably `wall_ms`) by it before comparing to a
+   baseline, which would make every duration gate machine-state-independent
+   instead of exempting scenarios one at a time.
+3. The probe understates the effect. It is a dense dependent chain that pulls the
+   clock up while it runs, so its 1.28x step is a *lower bound* on the 2.0x the
+   scenario's short bursts actually saw. A calibration workload shaped like the
+   thing being measured would read truer.
+
+Related: [TD-2026-08-05-136](#td-2026-08-05-136) is the same class of defect on a
+different metric — a gate whose value is decided by machine state rather than by
+the code.
 
 ### TD-2026-08-05-135 — four gated perf baselines are 40-80% looser than the code they gate. OPEN.
 

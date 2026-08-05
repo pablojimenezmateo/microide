@@ -453,6 +453,47 @@ The fix was a fixture where two lines land one column apart across the chunk
 boundary, with a tab size that does not divide the chunk (so the boundary is not a
 tab stop) — then a wrong carry changes the fold *tree*, which the output can see.
 
+### A gate that measures the machine, because every metric it holds is a duration
+
+`idle_soak_30s` failed the perf gate at `p50_cpu_ms +103%` — and passed the same
+gate, same binary, on the runs either side of it. Wall, allocations, RSS and its
+zero-wake assertion were all green, and **every application perf counter was
+byte-identical between a 14 ms iteration and a 30 ms one**.
+
+`cpu_ms` and `wall_ms` are durations, so both scale with the machine's effective
+clock, and nothing in the report said what that clock was. `harness.cpu_calibration_ns`
+now does: a fixed 400k-step dependent integer chain, timed just outside each
+iteration's window so it is charged to neither metric. On the reproducing run it
+stepped 671 → 857 us at exactly the iteration where `cpu_ms` stepped 14 → 30 ms.
+The governor had walked the core down; nothing about the binary changed.
+
+**Two things generalise:**
+
+- **A scenario that sleeps is a scenario that lets the clock drop.** 27 of this
+  scenario's 30 seconds are sleep, which parks the core at the 605 MHz floor —
+  8.5x below its 5157 MHz ceiling. What is left to measure is a handful of frames
+  rendered on the way back up. `repo_open_rss_idle` shows the same signature: its
+  calibration swings 671–1352 us *between iterations of a single run*.
+- **Check what the gated number is actually made of before rebaselining it.** This
+  scenario's whole ~15 ms CPU budget was 18 *harness* frames at ~0.83 ms each; the
+  idling it exists to measure was the ~2 ms residual underneath. No baseline and no
+  envelope could fix that — the fix was to measure CPU across the soak window
+  directly and assert it, which is stable at 3.85–10.69 ms across the same clock
+  step that doubled the iteration number.
+
+Ruled out along the way, each cheaply and each worth ruling out before reaching for
+a thermal or scheduler story: the process was already pinned to the 8 fastest CPUs
+(`--pin-cores=auto`), so it was not E-core placement; calibration over a 40-minute
+gate run came out at 0.97x first-10 vs last-10 with temperature ending where it
+started, so there is no thermal drift; a 10-scenario warm-process prefix reproduced
+the baseline p50 exactly (14.69 vs 14.6955), so it was not cache or RSS pressure
+from earlier scenarios; and the harness's own idle-poll count swings 530–5,606 per
+iteration (10.6x) while moving CPU by 15%, so it was not the poll loop.
+
+**Habit:** when a perf failure is CPU-or-wall-only, with allocations and
+application counters unchanged, read `harness.cpu_calibration_ns` before reading
+the diff.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit
