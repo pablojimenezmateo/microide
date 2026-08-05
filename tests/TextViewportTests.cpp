@@ -2623,6 +2623,67 @@ void TestTextViewportInlineEditDerivesLineWidthFromTheSplice() {
   expect_width_matches_a_fresh_measure("redoing a multibyte insert re-measures the line");
 }
 
+// The caret's byte column <-> visual column conversions answer in O(1) on a
+// plain-ASCII line by reading the layout cache's per-line facts instead of walking
+// the line (TD-2026-08-05-132). That shortcut is only correct while the facts are
+// current, and the facts are only present once something has populated the width
+// table -- so the two paths must agree whether the table is cold or warm, and
+// across the edits that change a line's class.
+void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
+  using microide::editor::TextLayout;
+  const std::vector<std::string> rows = {
+      "plain ascii row",           // one cell per byte
+      "tabbed\tcolumns\there",     // tab stops
+      "caf\xC3\xA9 \xE4\xB8\xAD",  // multibyte
+      "",                          // empty
+  };
+  std::string content;
+  for (const std::string& row : rows) {
+    content += row;
+    content += '\n';
+  }
+
+  const auto check_every_column = [&](microide::editor::TextViewport& viewport,
+                                      const char* context) {
+    for (std::size_t line = 0; line < viewport.line_count(); ++line) {
+      const std::string_view text = viewport.lines()[line];
+      for (std::size_t column = 0; column <= text.size() + 2; ++column) {
+        Expect(viewport.VisualColumnAt(line, column) ==
+                   TextLayout::VisualColumnForTextColumn(text, column, viewport.tab_size()),
+               std::string("VisualColumnAt matches the direct walk (") + context + ")");
+        Expect(viewport.TextColumnAtVisualColumn(line, column) ==
+                   TextLayout::TextColumnForVisualColumn(text, column, viewport.tab_size()),
+               std::string("TextColumnAtVisualColumn matches the direct walk (") + context + ")");
+      }
+    }
+  };
+
+  {
+    // Cold: nothing has built the width table yet, so every query must fall back
+    // to the walk and still be right.
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent(content, "/tmp/caret-columns.txt");
+    check_every_column(viewport, "cold width table");
+  }
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/caret-columns.txt");
+  (void)viewport.max_visual_columns();  // populate the per-line facts
+  check_every_column(viewport, "warm width table");
+
+  // Typing a tab into the plain row moves it out of the plain class; typing a
+  // multibyte code point does the same by a different route. Both must be
+  // reflected before the next conversion, or the caret lands on the wrong cell.
+  viewport.MoveCursorTo(0, 5);
+  viewport.InsertText("\t");
+  check_every_column(viewport, "after a tab is typed into a plain row");
+  viewport.InsertText("\xC3\xA9");
+  check_every_column(viewport, "after a multibyte code point is typed");
+  Expect(viewport.Undo(), "undo the multibyte insert");
+  Expect(viewport.Undo(), "undo the tab insert");
+  check_every_column(viewport, "after undoing back to the plain row");
+}
+
 void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
   namespace perf = microide::tests::perf;
   microide::editor::TextViewport viewport;
@@ -4542,6 +4603,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine);
   AddTest(tests, "TextViewport/InlineEditDerivesLineWidthFromTheSplice",
           TestTextViewportInlineEditDerivesLineWidthFromTheSplice);
+  AddTest(tests, "TextViewport/CaretColumnConversionsMatchTheDirectWalk",
+          TestTextViewportCaretColumnConversionsMatchTheDirectWalk);
   AddTest(tests, "TextViewport/LanguageIdMemoIsAllocationFreeOnASettledBuffer",
           TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer);
   AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnContentChange",

@@ -274,8 +274,7 @@ void TextViewport::MoveCursorToVisualColumn(std::size_t line,
   }
 
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
-  const std::size_t text_column = TextLayout::TextColumnForVisualColumn(
-      document_->lines.LineView(clamped_line), visual_column, tab_size_);
+  const std::size_t text_column = TextColumnAtVisualColumn(clamped_line, visual_column);
   MoveCursorTo(clamped_line, text_column, extend_selection);
 }
 
@@ -298,19 +297,47 @@ void TextViewport::Page(int direction, bool extend_selection) {
   MoveCursorVertical(static_cast<int>(step) * direction, extend_selection);
 }
 
-std::size_t TextViewport::cursor_visual_column() const {
-  if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
-    return 0;
+LineLayoutFacts TextViewport::CachedLineFacts(std::size_t line) const {
+  if (document_ == nullptr) {
+    return LineLayoutFacts{};
   }
-  return TextLayout::VisualColumnForTextColumn(document_->lines.LineView(cursor_line_), cursor_column_,
-                                               tab_size_);
+  return layout_cache_.LineFactsIfCurrent(document_->lines.size(), line, tab_size_,
+                                          document_->content_revision);
+}
+
+std::size_t TextViewport::cursor_visual_column() const {
+  return VisualColumnAt(cursor_line_, cursor_column_);
 }
 
 std::size_t TextViewport::VisualColumnAt(std::size_t line, std::size_t column) const {
   if (document_->lines.empty() || line >= document_->lines.size()) {
     return 0;
   }
+  // A plain-ASCII line spends one cell per byte, so the visual column IS the byte
+  // column and there is nothing to walk -- nor any need to materialize the line to
+  // find that out. Without this the caret's own visual column costs O(column):
+  // on a line with no newlines in it and the caret a megabyte in, that is a
+  // megabyte scanned per keystroke by EnsureCursorVisible and again by the
+  // preferred-column update (TD-2026-08-05-132).
+  const LineLayoutFacts facts = CachedLineFacts(line);
+  if (facts.known && facts.plain_ascii) {
+    return std::min(column, document_->lines.LineLength(line));
+  }
   return TextLayout::VisualColumnForTextColumn(document_->lines.LineView(line), column, tab_size_);
+}
+
+std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
+                                                   std::size_t visual_column) const {
+  if (document_->lines.empty() || line >= document_->lines.size()) {
+    return 0;
+  }
+  // The inverse of the above, and exact for the same reason.
+  const LineLayoutFacts facts = CachedLineFacts(line);
+  if (facts.known && facts.plain_ascii) {
+    return std::min(visual_column, document_->lines.LineLength(line));
+  }
+  return TextLayout::TextColumnForVisualColumn(document_->lines.LineView(line), visual_column,
+                                               tab_size_);
 }
 
 std::size_t TextViewport::CurrentLineLength() const {
@@ -334,13 +361,11 @@ void TextViewport::ClampCursorColumn() {
     // absolute visual column for the caret's current row first (mirrors
     // AdvanceCaretVertical).
     const std::size_t target_visual = ResolveSoftWrapCursorColumnForTargetRow(CursorVisualRow());
-    cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(cursor_line_),
-                                                           target_visual, tab_size_);
+    cursor_column_ = TextColumnAtVisualColumn(cursor_line_, target_visual);
     return;
   }
 
-  cursor_column_ = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(cursor_line_),
-                                                         preferred_column_, tab_size_);
+  cursor_column_ = TextColumnAtVisualColumn(cursor_line_, preferred_column_);
 }
 
 void TextViewport::ClampScrollState() {
@@ -576,8 +601,7 @@ void TextViewport::AdvanceCaretVertical(TextPosition& caret,
   const std::size_t target_visual_column =
       ResolveSoftWrapCursorColumnForTargetRow(caret, preferred_column, target_row);
   caret.line = target.line_index;
-  caret.column = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(target.line_index),
-                                                       target_visual_column, tab_size_);
+  caret.column = TextColumnAtVisualColumn(target.line_index, target_visual_column);
 }
 
 void TextViewport::EnsureDocument() {

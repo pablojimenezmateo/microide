@@ -266,6 +266,17 @@ class TextViewport {
   std::size_t cursor_line() const { return cursor_line_; }
   std::size_t cursor_column() const { return cursor_column_; }
   std::size_t cursor_visual_column() const;
+  // Visual column of byte `column` on `line` in the live buffer, and its inverse.
+  //
+  // Both consult the layout cache's per-line facts first: on a plain-ASCII line
+  // the two coordinates coincide, so the answer is O(1) rather than a walk to the
+  // column. Every caret path in the editor goes through this pair, which is what
+  // keeps a caret a megabyte into one line from costing a megabyte a keystroke.
+  std::size_t VisualColumnAt(std::size_t line, std::size_t column) const;
+  std::size_t TextColumnAtVisualColumn(std::size_t line, std::size_t visual_column) const;
+  // What the layout cache currently knows about `line`, or an unknown value when
+  // its width table does not describe this document.
+  LineLayoutFacts CachedLineFacts(std::size_t line) const;
   std::size_t cursor_visual_row() const;
   std::size_t scroll_line() const { return scroll_line_; }
   std::size_t horizontal_scroll() const { return horizontal_scroll_; }
@@ -616,8 +627,6 @@ class TextViewport {
   // consumer that cannot read the column form (undo-group aggregation). Costs one
   // copy of the affected line; see PushHistoryEntry.
   void WidenInlineEntryToLines(HistoryEntry& entry) const;
-  // Visual column of byte `column` on `line` in the live buffer.
-  std::size_t VisualColumnAt(std::size_t line, std::size_t column) const;
   HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
                                      std::size_t end_line,
                                      const std::vector<std::string>& replacement) const;

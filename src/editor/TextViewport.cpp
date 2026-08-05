@@ -369,8 +369,7 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
   const std::size_t target_visual = layout.visual_start + clamped_local;
   return LogicalPosition{
       .line = layout.line_index,
-      .column = TextLayout::TextColumnForVisualColumn(document_->lines.LineView(layout.line_index),
-                                                       target_visual, tab_size_),
+      .column = TextColumnAtVisualColumn(layout.line_index, target_visual),
   };
 }
 

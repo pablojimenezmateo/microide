@@ -31,9 +31,7 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   // visible cell. Both are O(line), and on a line with no newlines in it that is
   // the dominant cost of rendering a row (TD-2026-08-05-132, item 1).
   const LineLayoutFacts facts =
-      LineWidthsAreCurrent(lines.size(), tab_size, content_revision)
-          ? cached_visual_line_columns_[line_index].facts()
-          : LineLayoutFacts{};
+      LineFactsIfCurrent(lines.size(), line_index, tab_size, content_revision);
 #ifndef NDEBUG
   // The table is only as good as the invariant that every content edit either
   // splices it or drops it. Cross-check it here, where a stale entry would

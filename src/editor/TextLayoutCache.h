@@ -141,6 +141,21 @@ class TextLayoutCache {
   bool wrapped_row_layouts_trivial() const { return wrapped_row_layouts_trivial_; }
 
   // ---- max visual columns cache -----------------------------------------
+  // What this cache knows about `line_index`, or an unknown value when the width
+  // table does not currently describe the document. Callers that only need to
+  // turn a byte column into a visual one use this to answer in O(1) on a plain
+  // ASCII line instead of walking the line to the column.
+  LineLayoutFacts LineFactsIfCurrent(std::size_t lines_size,
+                                     std::size_t line_index,
+                                     std::size_t tab_size,
+                                     std::uint64_t content_revision) const {
+    if (!LineWidthsAreCurrent(lines_size, tab_size, content_revision) ||
+        line_index >= cached_visual_line_columns_.size()) {
+      return LineLayoutFacts{};
+    }
+    return cached_visual_line_columns_[line_index].facts();
+  }
+
   std::size_t MaxVisualColumns(LineSpan lines,
                                std::size_t tab_size,
                                std::uint64_t content_revision) const;
