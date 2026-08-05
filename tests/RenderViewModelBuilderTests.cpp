@@ -1,6 +1,7 @@
 #include "TestSupport.h"
 
 #include "editor/BreakpointStore.h"
+#include "editor/SingleLineEditor.h"
 #include "editor/EditorViewModel.h"
 #include "editor/TextViewport.h"
 #include "editor/WelcomeView.h"
@@ -8,6 +9,7 @@
 #include "workspace/debug/DebugViewModel.h"
 #include "workspace/persistence/RecentsService.h"
 #include "workspace/render/RenderViewModelBuilder.h"
+#include "workspace/render/SingleLineViewMetrics.h"
 #include "workspace/WorkspaceUiText.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
 #include "workspace/services/SettingsOverlayService.h"
@@ -1297,7 +1299,70 @@ void TestSettingsOverlayCategoryIndexIsRebuiltPerFilter() {
          "the rebuilt index resolves the surviving LSP row");
 }
 
+// 2026-07-10 pass: the single-line-input view-metrics OOB fix shipped with no
+// direct regression test, because at the time the logic lived on two WorkspaceShell
+// members that needed a live text_renderer_ and the narrow-field trigger (the debug
+// variables inline editor). It is a free function now
+// (workspace/render/SingleLineViewMetrics.h) and a default-constructed TextRenderer
+// measures a deterministic 8px per ASCII char, so the whole contract is reachable
+// directly.
+void TestSingleLineViewMetricsCaretWindow() {
+  using microide::workspace::ComputeSingleLineViewMetrics;
+  TextRenderer text_renderer;  // no-backend: deterministic 8px/char
+  editor::SingleLineEditor editor;
+  editor.SetText("abcdefgh");  // 8 chars = 64px
+
+  // Everything fits: the whole virtual string (prefix + body) is shown and the
+  // caret sits at its measured offset.
+  {
+    editor.MoveEnd();
+    const auto metrics = ComputeSingleLineViewMetrics(text_renderer, editor, "> ", 400.0f);
+    Expect(metrics.displayed_text == "> abcdefgh", "a wide field shows prefix and body whole");
+    Expect(metrics.cursor_x == 80.0f, "the caret x is the measured width of everything left of it");
+  }
+
+  // Narrower than the whole string: the window is caret-relative, so it keeps the
+  // caret visible by dropping text on the left.
+  {
+    editor.MoveEnd();
+    const auto metrics = ComputeSingleLineViewMetrics(text_renderer, editor, "> ", 32.0f);
+    Expect(metrics.displayed_text == "efgh", "a narrow field scrolls to keep the caret visible");
+    Expect(metrics.cursor_x == 32.0f, "the caret sits at the right edge of the fitted window");
+  }
+
+  // THE REGRESSION: a field narrower than a single glyph. Nothing left of the caret
+  // fits, so the backward walk never assigns view_start_idx and indexing it would
+  // read a reserve()'d-but-uninitialized entry. The window must simply start at the
+  // caret.
+  {
+    editor.MoveEnd();
+    const auto metrics = ComputeSingleLineViewMetrics(text_renderer, editor, "> ", 4.0f);
+    Expect(metrics.displayed_text.empty(),
+           "a field narrower than one glyph shows nothing rather than reading past the end");
+    Expect(metrics.cursor_x == 0.0f, "with nothing to its left the caret sits at x=0");
+    Expect(!metrics.selection_bytes.has_value(), "an empty window clips any selection away");
+  }
+
+  // A selection is reported in bytes relative to the window, clipped to it.
+  {
+    editor.MoveEnd();
+    editor.SelectAll();
+    const auto clipped = ComputeSingleLineViewMetrics(text_renderer, editor, "> ", 32.0f);
+    Expect(clipped.displayed_text == "efgh", "the window is unchanged by the selection");
+    Expect(clipped.selection_bytes.has_value() && clipped.selection_bytes->first == 0 &&
+               clipped.selection_bytes->second == 4,
+           "a selection wider than the window is clipped to the window's own byte range");
+
+    const auto whole = ComputeSingleLineViewMetrics(text_renderer, editor, "> ", 400.0f);
+    Expect(whole.selection_bytes.has_value() && whole.selection_bytes->first == 2 &&
+               whole.selection_bytes->second == 10,
+           "in a full window the selection is offset past the prefix, which is never selectable");
+  }
+}
+
 void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RenderViewModelBuilder/SingleLineViewMetricsCaretWindow",
+          TestSingleLineViewMetricsCaretWindow);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayCategoryIndexIsRebuiltPerFilter",
           TestSettingsOverlayCategoryIndexIsRebuiltPerFilter);
   AddTest(tests, "RenderViewModelBuilder/SettingsOverlayQueryFilterIsCaseInsensitive",

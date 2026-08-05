@@ -459,12 +459,20 @@ is what this ledger is for. Not fixed in that pass — low value or hard to reac
 - `SurfaceTextureCache` eviction/null-renderer fixes lack direct unit coverage:
   `Upload` needs a live SDL renderer (`SDL_CreateTexture`), unavailable headless.
   They mirror the already-tested sibling text-texture cache guard.
-- The single-line-input view-metrics OOB fix (`WorkspaceShellRenderTextInput` /
-  `WorkspaceShellSingleLineInputMouse`: `view_start_idx == size()` when no glyph
-  left of the caret fits a sub-glyph-width field) lacks a direct regression test —
-  both functions are `WorkspaceShell` members needing a live `text_renderer_` and
-  the narrow-field trigger (debug variables inline editor). Fix verified by
-  inspection; ASAN covers it if a shell-level test ever drives that path.
+- **[RESOLVED 2026-08-05]** The single-line-input view-metrics OOB fix
+  (`view_start_idx == size()` when no glyph left of the caret fits a
+  sub-glyph-width field) lacked a direct regression test, because the logic was a
+  `WorkspaceShell` member needing a live `text_renderer_` and the narrow-field
+  trigger (the debug variables inline editor). The premise expired: TD-2026-07-17-
+  084/083 moved it to the free `ComputeSingleLineViewMetrics`
+  (`workspace/render/SingleLineViewMetrics.h`), and a default-constructed
+  `TextRenderer` measures a deterministic 8 px per ASCII char — so the whole
+  contract is now reachable directly with no shell.
+  `RenderViewModelBuilder/SingleLineViewMetricsCaretWindow` covers the
+  everything-fits case, the caret-relative scroll, the sub-glyph-width field that
+  triggered the OOB, and selection clipping to the window (including the prefix
+  offset). Worth remembering as a pattern: "untestable" claims should be re-checked
+  after a refactor moves the code, not inherited.
 - **[RESOLVED 2026-08-05]** Terminal minor spec deviations: a combining mark
   following a double-width glyph attached to the wide-trailing spacer and was
   dropped; multi-byte charset designations (`ESC ( " ?`) mis-parsed; DECSTBM on the
