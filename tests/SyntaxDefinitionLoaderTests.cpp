@@ -5,6 +5,10 @@
 #include <string>
 #include <vector>
 
+#if MICROIDE_PERF_HARNESS_BUILD
+#include "perf/AllocationCounter.h"
+#endif
+
 #include "editor/HighlightPrefetchService.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SyntaxDefinitionLoader.h"
@@ -102,6 +106,46 @@ void TestHighlightPrefetchServiceDestructorDrainsWithoutShutdown() {
   Expect(true, "destroying the service with queued work must not crash or leak the worker");
 }
 
+// Filetype detection reads a bounded HEAD of the buffer. The bound used to be
+// stated only in lines ("at most 64 head lines"), which bounds nothing on a file
+// that has no line breaks: a minified bundle or a newline-free JSON blob is ONE
+// line of many megabytes, so the head copy was the whole document -- on the shell
+// thread, once per keystroke, because DetectState runs from the highlight path.
+//
+// This pins the byte bound rather than a duration, so it cannot go flaky: under a
+// perf-harness build the counting allocator says exactly how many bytes the call
+// took, and 8 MB of line must not turn into 8 MB of head.
+void TestDetectStateBoundsHeadCopyOnANewlineFreeBuffer() {
+  runtime_syntax::EnsureInitialized();
+  // One line, 8 MB, no newline anywhere -- the minified-bundle shape.
+  const std::vector<std::string> huge_single_line = {
+      std::string(8u * 1024u * 1024u, 'x')};
+
+  // Detection still works: the extension decides, and it must keep deciding.
+  const std::uint32_t expected =
+      runtime_syntax::DetectState(std::filesystem::path("short.cpp"),
+                                  std::vector<std::string>{"int main() { return 0; }"})
+          .definition_id;
+  const std::uint32_t huge =
+      runtime_syntax::DetectState(std::filesystem::path("minified.cpp"), huge_single_line)
+          .definition_id;
+  Expect(huge == expected,
+         "a newline-free buffer must still resolve the same definition as a short one");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  // Warm anything one-shot (lazy registry init, first-call regex state) so the
+  // measured call below allocates only for the head it builds.
+  (void)runtime_syntax::DetectState(std::filesystem::path("minified.cpp"), huge_single_line);
+  const auto before = microide::tests::perf::Allocations::Snapshot();
+  (void)runtime_syntax::DetectState(std::filesystem::path("minified.cpp"), huge_single_line);
+  const auto delta = microide::tests::perf::Allocations::DeltaSince(before);
+  // Generous: the cap is 4 KiB per head line and there is one line here. Anything
+  // near the 8 MB line length means the head copied the buffer again.
+  Expect(delta.bytes_allocated < 256 * 1024,
+         "detecting a filetype on an 8 MB single-line buffer must not copy the buffer");
+#endif
+}
+
 }  // namespace
 
 void RegisterSyntaxDefinitionLoaderTests(std::vector<TestCase>& tests) {
@@ -111,6 +155,8 @@ void RegisterSyntaxDefinitionLoaderTests(std::vector<TestCase>& tests) {
           TestFingerprintTracksContentChanges);
   AddTest(tests, "SyntaxDefinitionLoader/CompileAndPrewarmDefinitionAreSafe",
           TestCompileAndPrewarmDefinitionAreSafe);
+  AddTest(tests, "SyntaxDefinitionLoader/DetectStateBoundsHeadCopyOnANewlineFreeBuffer",
+          TestDetectStateBoundsHeadCopyOnANewlineFreeBuffer);
   AddTest(tests, "SyntaxDefinitionLoader/HighlightPrefetchServiceDestructorDrainsWithoutShutdown",
           TestHighlightPrefetchServiceDestructorDrainsWithoutShutdown);
 }

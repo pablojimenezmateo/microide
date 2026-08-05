@@ -56,16 +56,27 @@ constexpr uint32_t kRegexCompileOptions = PCRE2_UTF | PCRE2_UCP;
 // of trading that away for the speed.
 constexpr uint32_t kAsciiRegexCompileOptions = 0;
 
-// Materialize at most kSignatureDetectLineLimit head lines from `lines`.
-// DetectDefinitionId inspects no further (see the line_limit clamp in its
-// signature scan), so this bounds the copy to the head -- a LineSpan over a
-// multi-megabyte buffer never materializes more than 64 short strings.
+// Materialize at most kSignatureDetectLineLimit head lines from `lines`, each
+// truncated to kSignatureDetectLineBytes.
+//
+// The line-count bound alone does NOT bound the copy: "64 head lines" is 64
+// *short* strings only in a file with line breaks. A minified bundle or a
+// newline-free JSON blob is ONE line of many megabytes, so this copied the whole
+// document -- per call, on the shell thread, on every keystroke (DetectState runs
+// from the highlight path). The byte cap is what actually delivers the bound this
+// function was written to provide.
+//
+// A signature is an opening marker -- a shebang, an XML declaration, a modeline --
+// so it lives in the first bytes of a head line. Nothing in the registry looks for
+// one a kilobyte in, and a match past this cap is deliberately out of scope.
+constexpr std::size_t kSignatureDetectLineBytes = 4096;
+
 std::vector<std::string> SignatureDetectHead(LineSpan lines) {
   std::vector<std::string> head;
   const std::size_t head_count = std::min(lines.size(), kSignatureDetectLineLimit);
   head.reserve(head_count);
   for (std::size_t i = 0; i < head_count; ++i) {
-    head.emplace_back(lines[i]);
+    head.emplace_back(lines[i].substr(0, kSignatureDetectLineBytes));
   }
   return head;
 }
