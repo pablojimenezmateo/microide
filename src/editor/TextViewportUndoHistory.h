@@ -140,7 +140,12 @@ class TextViewportUndoHistory {
     std::vector<Entry> disjoint_entries;
   };
 
-  static std::optional<Entry> TryMergeGroupEntry(const Entry& aggregate, const Entry& next);
+  // Split in two so the merge can consume the aggregate instead of copying it.
+  // A single TryMergeGroupEntry had to deep-copy both line vectors before it knew
+  // whether the merge was even possible, and typing coalesces on every keystroke.
+  // Call the predicate first; the merge's precondition is that it returned true.
+  static bool CanMergeGroupEntry(const Entry& aggregate, const Entry& next);
+  static Entry MergeGroupEntry(Entry aggregate, const Entry& next);
   // Fold a freshly recorded child edit into a frame's disjoint-range set: splice
   // into a containing/adjacent range or insert a new one, reindexing strictly-lower
   // ranges by the child's net line delta. O(#ranges), never a whole-buffer copy.

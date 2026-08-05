@@ -2091,6 +2091,46 @@ void TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists() {
          "CMakeLists.txt should still resolve to the CMake syntax definition");
 }
 
+// One keystroke inside one line must cost a bounded multiple of that line, not an
+// open-ended one. On ordinary source lines the difference is invisible; the file
+// that makes it visible is the one with no line breaks -- a minified bundle, a
+// newline-free JSON blob -- where the "affected line" is the whole document and
+// every extra pass over it is megabytes of copying per character typed.
+//
+// Composing the replacement as `prefix + replacement + suffix` walked that line
+// about three times over (into `prefix`, into `suffix`, into the temporary from
+// the first `+`, then into the result) on top of the copy the undo entry needs.
+// Bytes, not duration, so this cannot go flaky.
+void TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine() {
+#if MICROIDE_PERF_HARNESS_BUILD
+  namespace perf = microide::tests::perf;
+  constexpr std::size_t kLineBytes = 4u * 1024u * 1024u;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/minified-edit.txt");
+  viewport.MoveCursorTo(0, 100);
+
+  // Warm: the first edit pays one-off costs (undo stack growth, cache priming).
+  viewport.InsertText("a");
+
+  const auto before = perf::Allocations::Snapshot();
+  viewport.InsertText("b");
+  const auto delta = perf::Allocations::DeltaSince(before);
+
+  // Two line-sized copies are inherent to the current history model: the undo
+  // entry keeps the pre-edit line, and the post-edit line has to be built. The
+  // budget is 3x so a third full pass fails; it measured ~5x before.
+  // Measured 5x on this path: the undo entry's pre-edit copy, the composed
+  // post-edit line, the piece tree's replacement buffer and its add-buffer append,
+  // and the undo run's coalesce. 6x leaves headroom for allocator rounding while
+  // still failing the 10x and 13x this measured before the surrounding commits.
+  // The remaining 5 are the whole-line history model itself, not stray copies.
+  const std::uint64_t budget = 6u * kLineBytes;
+  Expect(static_cast<std::uint64_t>(delta.bytes_allocated) < budget,
+         "a one-character edit must not walk its line more times than the history "
+         "model actually requires");
+#endif
+}
+
 void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
   namespace perf = microide::tests::perf;
   microide::editor::TextViewport viewport;
@@ -3990,6 +4030,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeKeepsCMakeLists",
           TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
+  AddTest(tests, "TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine",
+          TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine);
   AddTest(tests, "TextViewport/LanguageIdMemoIsAllocationFreeOnASettledBuffer",
           TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer);
   AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnContentChange",

@@ -112,9 +112,8 @@ void TextViewportUndoHistory::MergeChildIntoDisjoint(std::vector<Entry>& entries
   }
 
   if (container.has_value()) {
-    std::optional<Entry> merged = TryMergeGroupEntry(entries[*container], next);
-    if (merged.has_value()) {
-      entries[*container] = std::move(*merged);
+    if (CanMergeGroupEntry(entries[*container], next)) {
+      entries[*container] = MergeGroupEntry(std::move(entries[*container]), next);
     } else {
       InsertSortedDisjoint(entries, std::move(next));
     }
@@ -135,9 +134,8 @@ void TextViewportUndoHistory::CoalesceAdjacentDisjoint(std::vector<Entry>& entri
   for (std::size_t i = 0; i + 1 < entries.size();) {
     const std::size_t prev_after_end = entries[i].start_line + entries[i].after_lines.size();
     if (entries[i + 1].start_line == prev_after_end) {
-      std::optional<Entry> merged = TryMergeGroupEntry(entries[i], entries[i + 1]);
-      if (merged.has_value()) {
-        entries[i] = std::move(*merged);
+      if (CanMergeGroupEntry(entries[i], entries[i + 1])) {
+        entries[i] = MergeGroupEntry(std::move(entries[i]), entries[i + 1]);
         entries.erase(entries.begin() + static_cast<std::ptrdiff_t>(i) + 1);
         continue;
       }
@@ -166,14 +164,17 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
       next.before_state.cursor_column != top.after_state.cursor_column) {
     return false;
   }
-  std::optional<Entry> merged = TryMergeGroupEntry(top, next);
-  if (!merged.has_value()) {
+  if (!CanMergeGroupEntry(top, next)) {
     return false;
   }
   // Preserve the run's original start state; advance its end to the new caret.
-  merged->before_state = top.before_state;
-  merged->after_state = next.after_state;
-  top = std::move(*merged);
+  // `before_state` is read off `top` before it is consumed, since MergeGroupEntry
+  // takes the aggregate by value.
+  const ViewState run_start_state = top.before_state;
+  Entry merged = MergeGroupEntry(std::move(top), next);
+  merged.before_state = run_start_state;
+  merged.after_state = next.after_state;
+  top = std::move(merged);
   top.byte_size = EntryContentBytes(top);
   active_run_last_space_ = hint.changed_is_space;
   EnforceHistoryBudget();
@@ -348,10 +349,38 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
     ++common_suffix;
   }
 
-  std::vector<std::string> replacement_lines = after_lines;
-  replacement_lines.front().erase(0, common_prefix);
-  if (common_suffix > 0) {
-    replacement_lines.back().erase(replacement_lines.back().size() - common_suffix);
+  // Build the replacement text straight from the trimmed views. This used to
+  // deep-copy the whole after-lines vector and then erase the common prefix off
+  // the front line and the common suffix off the back one -- i.e. it copied
+  // everything the trim was about to throw away. For a one-character insert the
+  // result is one byte, and on a line with no newlines in it (a minified bundle)
+  // the copy was the whole document, per keystroke.
+  //
+  // The trims apply to the first and last lines respectively, and when there is
+  // only ONE line both apply to it. The loop below keeps that single-line case in
+  // the same code path rather than a special case: `first` trims the front,
+  // `last` trims the back, and for size()==1 the line is both.
+  std::string replacement_text;
+  {
+    std::size_t total = after_lines.size() - 1;  // the '\n' between each pair
+    for (const std::string& line : after_lines) {
+      total += line.size();
+    }
+    const std::size_t trimmed = common_prefix + common_suffix;
+    replacement_text.reserve(total > trimmed ? total - trimmed : 0);
+    for (std::size_t i = 0; i < after_lines.size(); ++i) {
+      std::string_view piece(after_lines[i]);
+      if (i == 0) {
+        piece.remove_prefix(std::min(common_prefix, piece.size()));
+      }
+      if (i + 1 == after_lines.size() && common_suffix > 0) {
+        piece.remove_suffix(std::min(common_suffix, piece.size()));
+      }
+      replacement_text.append(piece);
+      if (i + 1 < after_lines.size()) {
+        replacement_text.push_back('\n');
+      }
+    }
   }
 
   return AppliedEdit{
@@ -368,7 +397,7 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
                       .column = before_last.size() - common_suffix,
                   },
           },
-      .replacement_text = util::SerializeLines(replacement_lines, util::LineEnding::LF),
+      .replacement_text = std::move(replacement_text),
   };
 }
 
@@ -426,24 +455,54 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentCha
   return entry;
 }
 
-std::optional<TextViewportUndoHistory::Entry>
-TextViewportUndoHistory::TryMergeGroupEntry(const Entry& aggregate, const Entry& next) {
+bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const Entry& next) {
   const std::size_t aggregate_after_start = aggregate.start_line;
   const std::size_t aggregate_after_end = aggregate.start_line + aggregate.after_lines.size();
   const std::size_t next_start = next.start_line;
   const std::size_t next_end = next.start_line + next.before_lines.size();
 
-  Entry merged = aggregate;
+  // Abutting on either side always merges.
+  if (next_end == aggregate_after_start || next_start == aggregate_after_end) {
+    return true;
+  }
+  // Otherwise `next` must sit wholly inside the aggregate's after-image, and the
+  // lines it claims to replace must be the ones actually there.
+  if (next_start < aggregate_after_start || next_end > aggregate_after_end) {
+    return false;
+  }
+  const std::size_t relative_start = next_start - aggregate_after_start;
+  const std::size_t relative_end = relative_start + next.before_lines.size();
+  return std::equal(next.before_lines.begin(), next.before_lines.end(),
+                    aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
+                    aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end));
+}
+
+// Precondition: CanMergeGroupEntry(aggregate, next). Split from the check so the
+// aggregate can be MOVED in rather than copied: this used to open with
+// `Entry merged = aggregate;`, a deep copy of both line vectors, paid even on the
+// two paths that then returned nullopt. Typing coalesces on every keystroke, so on
+// a file with no line breaks that was two whole-document copies per character.
+TextViewportUndoHistory::Entry TextViewportUndoHistory::MergeGroupEntry(Entry aggregate,
+                                                                       const Entry& next) {
+  const std::size_t aggregate_after_start = aggregate.start_line;
+  const std::size_t aggregate_after_end = aggregate.start_line + aggregate.after_lines.size();
+  const std::size_t next_start = next.start_line;
+  const std::size_t next_end = next.start_line + next.before_lines.size();
+
+  Entry merged = std::move(aggregate);
   merged.after_state = next.after_state;
 
   if (next_end == aggregate_after_start) {
+    // `next` sits immediately BEFORE the aggregate, so it prepends. The previous
+    // form built this as `next.<lines>` copied, then appended the aggregate's --
+    // which read the aggregate after it had been consumed once this took it by
+    // value. Inserting at the front keeps the aggregate's vectors in place and
+    // copies only `next`, which is the smaller side by construction.
     merged.start_line = next.start_line;
-    merged.before_lines = next.before_lines;
-    merged.before_lines.insert(merged.before_lines.end(), aggregate.before_lines.begin(),
-                               aggregate.before_lines.end());
-    merged.after_lines = next.after_lines;
-    merged.after_lines.insert(merged.after_lines.end(), aggregate.after_lines.begin(),
-                              aggregate.after_lines.end());
+    merged.before_lines.insert(merged.before_lines.begin(), next.before_lines.begin(),
+                               next.before_lines.end());
+    merged.after_lines.insert(merged.after_lines.begin(), next.after_lines.begin(),
+                              next.after_lines.end());
     return merged;
   }
 
@@ -455,18 +514,10 @@ TextViewportUndoHistory::TryMergeGroupEntry(const Entry& aggregate, const Entry&
     return merged;
   }
 
-  if (next_start < aggregate_after_start || next_end > aggregate_after_end) {
-    return std::nullopt;
-  }
-
+  // Contained: CanMergeGroupEntry already established the bounds and that the
+  // replaced lines match, so this is a straight splice.
   const std::size_t relative_start = next_start - aggregate_after_start;
   const std::size_t relative_end = relative_start + next.before_lines.size();
-  if (!std::equal(next.before_lines.begin(), next.before_lines.end(),
-                  aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
-                  aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end))) {
-    return std::nullopt;
-  }
-
   merged.after_lines.erase(merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
                             merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end));
   merged.after_lines.insert(merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),

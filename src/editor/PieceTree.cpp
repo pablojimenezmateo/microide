@@ -583,35 +583,51 @@ std::vector<std::string> PieceTree::ToVector() const {
 // --- mutation ---
 
 void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
-                                 const std::vector<std::string>& inserted) {
+                                 std::span<const std::string> inserted) {
   util::AddPerformanceCounter(util::PerfCounterId::DocumentEdits);
   const std::size_t n = line_count_;
   start = std::min(start, n);
   removed = std::min(removed, n - start);
   const std::size_t end_line = start + removed;
 
-  std::string joined;
-  for (std::size_t i = 0; i < inserted.size(); ++i) {
-    if (i != 0) joined.push_back('\n');
-    joined.append(inserted[i]);
-  }
-
+  // Decide the surrounding newline BEFORE building the text, and reserve for it.
+  // This used to join into `joined` with no reserve and then produce `replacement`
+  // as `std::move(joined) + "\n"` (or `"\n" + std::move(joined)`) -- a concatenation
+  // that reallocates, because `joined` came out of append growth with no spare
+  // capacity. Replacing one 4 MB line therefore allocated 4 MB for the join and
+  // then 8 MB for the concatenation. Reserving once and placing the newline while
+  // building costs a single exact-sized buffer.
   std::uint32_t old_start = 0;
   std::uint32_t old_end = 0;
-  std::string replacement;
+  bool newline_before = false;
+  bool newline_after = false;
   if (end_line < n) {
     old_start = LineStartByte(start);
     old_end = LineStartByte(end_line);
-    if (!inserted.empty()) replacement = std::move(joined) + "\n";
+    newline_after = !inserted.empty();
   } else {
     old_end = ByteSize();
     if (start > 0) {
       old_start = (start < n) ? LineStartByte(start) - 1 : ByteSize();
-      if (!inserted.empty()) replacement = "\n" + std::move(joined);
+      newline_before = !inserted.empty();
     } else {
       old_start = 0;
-      replacement = std::move(joined);
     }
+  }
+
+  std::string replacement;
+  if (!inserted.empty()) {
+    std::size_t total = inserted.size() - 1;  // the '\n' between each pair
+    for (const std::string& line : inserted) {
+      total += line.size();
+    }
+    replacement.reserve(total + (newline_before ? 1 : 0) + (newline_after ? 1 : 0));
+    if (newline_before) replacement.push_back('\n');
+    for (std::size_t i = 0; i < inserted.size(); ++i) {
+      if (i != 0) replacement.push_back('\n');
+      replacement.append(inserted[i]);
+    }
+    if (newline_after) replacement.push_back('\n');
   }
 
   // Live-document byte ceiling: subtree_length/TreeLength are uint32, so a document
@@ -635,25 +651,25 @@ void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
 }
 
 void PieceTree::SetLine(std::size_t index, const std::string& value) {
-  ReplaceLineRange(index, 1, {value});
+  ReplaceLineRange(index, 1, std::span<const std::string>(&value, 1));
 }
 
 void PieceTree::InsertLine(std::size_t index, const std::string& value) {
-  ReplaceLineRange(index, 0, {value});
+  ReplaceLineRange(index, 0, std::span<const std::string>(&value, 1));
 }
 
 void PieceTree::EraseLine(std::size_t index) {
   if (index >= line_count_) return;
-  ReplaceLineRange(index, 1, {});
+  ReplaceLineRange(index, 1, std::span<const std::string>{});
 }
 
 void PieceTree::EraseLineRange(std::size_t begin, std::size_t end) {
   if (begin >= end) return;
-  ReplaceLineRange(begin, end - begin, {});
+  ReplaceLineRange(begin, end - begin, std::span<const std::string>{});
 }
 
 void PieceTree::PushBackLine(const std::string& value) {
-  ReplaceLineRange(line_count_, 0, {value});
+  ReplaceLineRange(line_count_, 0, std::span<const std::string>(&value, 1));
 }
 
 }  // namespace microide::editor

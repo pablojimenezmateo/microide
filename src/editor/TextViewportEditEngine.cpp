@@ -120,7 +120,12 @@ void TextViewport::Backspace() {
   }
 
   if (cursor_column_ > 0) {
-    const std::string& line = document_->lines[cursor_line_];
+    // LineView, not operator[]: the latter is TextBuffer's compatibility accessor
+    // and materializes an owned copy of the line into a per-revision cache that
+    // the very next edit clears. On the single hottest path in the editor that is
+    // a full line copy per keystroke -- invisible on a 40-character line, the
+    // whole document on a file with no newlines in it.
+    const std::string_view line = document_->lines.LineView(cursor_line_);
     const std::size_t erase_start = TextLayout::PreviousTextColumn(line, cursor_column_);
     const CoalesceHint hint{
         .kind = CoalesceKind::DeleteBackward,
@@ -143,7 +148,7 @@ void TextViewport::Backspace() {
 
   (void)ApplyRangeEdit(
       SelectionRange{
-          .start = TextPosition{cursor_line_ - 1, document_->lines[cursor_line_ - 1].size()},
+          .start = TextPosition{cursor_line_ - 1, document_->lines.LineLength(cursor_line_ - 1)},
           .end = TextPosition{cursor_line_, 0},
       },
       "", true);
@@ -164,7 +169,7 @@ void TextViewport::DeleteForward() {
     return;
   }
 
-  const std::string& line = document_->lines[cursor_line_];
+  const std::string_view line = document_->lines.LineView(cursor_line_);  // see Backspace
   if (cursor_column_ < line.size()) {
     const std::size_t erase_end = TextLayout::NextTextColumn(line, cursor_column_);
     const CoalesceHint hint{
@@ -540,10 +545,14 @@ void TextViewport::FlushActiveUndoGroup() {
 }
 
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::ApplyHistoryEntry");
   const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
-  TextViewportUndoHistory::ApplyEntryToBuffer(document_->lines, entry, forward);
+  {
+    util::PerformanceTrace::Scope scope("TextViewport::ApplyHistoryEntry::ApplyEntryToBuffer");
+    TextViewportUndoHistory::ApplyEntryToBuffer(document_->lines, entry, forward);
+  }
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
   // Incremental, upgrade-only: scan just the inserted lines instead of
@@ -565,6 +574,7 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
 std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     const SelectionRange& range,
     std::string_view replacement) const {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::BuildRangeHistoryEntry");
   if (document_->lines.empty()) {
     return std::nullopt;
   }
@@ -574,7 +584,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     const std::size_t line = std::min(position.line, document_->lines.size() - 1);
     return TextPosition{
         .line = line,
-        .column = TextLayout::ClampTextColumn(document_->lines[line], position.column),
+        .column = TextLayout::ClampTextColumn(document_->lines.LineView(line), position.column),
     };
   };
 
@@ -584,22 +594,54 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     return std::nullopt;
   }
 
-  std::vector<std::string> before_lines =
-      document_->lines.SliceLines(start.line, end.line + 1);
+  std::vector<std::string> before_lines;
+  {
+    util::PerformanceTrace::Scope slice_scope("TextViewport::BuildRangeHistoryEntry::SliceBefore");
+    before_lines = document_->lines.SliceLines(start.line, end.line + 1);
+  }
   const std::vector<std::string> replacement_lines =
       util::SplitLines(util::NormalizeLineEndings(replacement));
 
   std::vector<std::string> after_lines;
   after_lines.reserve(std::max<std::size_t>(1, replacement_lines.size()));
-  const std::string prefix = document_->lines[start.line].substr(0, start.column);
-  const std::string suffix = document_->lines[end.line].substr(end.column);
-  if (replacement_lines.size() == 1) {
-    after_lines.push_back(prefix + replacement_lines.front() + suffix);
-  } else {
-    after_lines.push_back(prefix + replacement_lines.front());
-    after_lines.insert(after_lines.end(), replacement_lines.begin() + 1,
-                       replacement_lines.end() - 1);
-    after_lines.push_back(replacement_lines.back() + suffix);
+  // `start.column` is exact, not a clamp: ClampTextColumn already bounded it to
+  // the line and snapped it to a codepoint boundary, so the prefix is that many
+  // bytes and the caret arithmetic below can use it without materializing one.
+  const std::size_t prefix_size = start.column;
+  {
+    util::PerformanceTrace::Scope compose_scope(
+        "TextViewport::BuildRangeHistoryEntry::ComposeAfter");
+    // Views, not owned copies, and one reserved append run per composed line.
+    // Building this as `prefix + replacement + suffix` walked the affected line
+    // roughly three times over: once into `prefix`, once into `suffix`, once into
+    // the temporary from the first `+`, and once more into the result. On an
+    // ordinary line that is noise; on the single-line file this path also has to
+    // serve -- a minified bundle -- each of those is a multi-megabyte copy on
+    // every keystroke. The views stay valid because nothing mutates the buffer
+    // between here and the appends.
+    const std::string_view prefix = document_->lines.LineView(start.line).substr(0, start.column);
+    const std::string_view suffix = document_->lines.LineView(end.line).substr(end.column);
+    if (replacement_lines.size() == 1) {
+      std::string composed;
+      composed.reserve(prefix.size() + replacement_lines.front().size() + suffix.size());
+      composed.append(prefix);
+      composed.append(replacement_lines.front());
+      composed.append(suffix);
+      after_lines.push_back(std::move(composed));
+    } else {
+      std::string first;
+      first.reserve(prefix.size() + replacement_lines.front().size());
+      first.append(prefix);
+      first.append(replacement_lines.front());
+      after_lines.push_back(std::move(first));
+      after_lines.insert(after_lines.end(), replacement_lines.begin() + 1,
+                         replacement_lines.end() - 1);
+      std::string last;
+      last.reserve(replacement_lines.back().size() + suffix.size());
+      last.append(replacement_lines.back());
+      last.append(suffix);
+      after_lines.push_back(std::move(last));
+    }
   }
 
   // Exact no-op: the replacement reproduces the covered text byte-for-byte, so the
@@ -614,7 +656,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
   ViewState after_state = CaptureViewState();
   after_state.cursor_line = start.line + after_lines.size() - 1;
   after_state.cursor_column =
-      after_lines.size() == 1 ? prefix.size() + replacement_lines.front().size()
+      after_lines.size() == 1 ? prefix_size + replacement_lines.front().size()
                               : replacement_lines.back().size();
   after_state.preferred_column = TextLayout::VisualColumnForTextColumn(
       after_lines.back(), after_state.cursor_column, tab_size_);
@@ -680,6 +722,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
   ApplyHistoryEntry(*entry, true);
   SetLastAppliedEditFromEntry(*entry, true);
   if (record_undo) {
+    util::PerformanceTrace::Scope scope("TextViewport::ApplyRangeEdit::PushHistoryEntry");
     // `entry` is dead after this read, so move its line vectors into the saved
     // entry instead of deep-copying them on every keystroke.
     HistoryEntry saved_entry = std::move(*entry);

@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -72,8 +73,16 @@ class PieceTree {
   // --- Mutate ---
   // Universal primitive: erase `removed` lines starting at `start`, then insert
   // `inserted` at `start`. Identical in effect to a vector erase+insert.
+  // `inserted` is a span so the single-line mutators below can pass the caller's
+  // own string without wrapping it in a temporary vector -- that wrap was a full
+  // copy of the line, paid on every SetLine, i.e. on every in-line keystroke.
   void ReplaceLineRange(std::size_t start, std::size_t removed,
-                        const std::vector<std::string>& inserted);
+                        std::span<const std::string> inserted);
+  // Convenience overload so callers (and braced initializer lists) keep working.
+  void ReplaceLineRange(std::size_t start, std::size_t removed,
+                        const std::vector<std::string>& inserted) {
+    ReplaceLineRange(start, removed, std::span<const std::string>(inserted));
+  }
   void SetLine(std::size_t index, const std::string& value);
   void InsertLine(std::size_t index, const std::string& value);
   void EraseLine(std::size_t index);
