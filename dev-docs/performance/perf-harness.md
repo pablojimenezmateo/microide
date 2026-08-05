@@ -145,10 +145,15 @@ the iteration-count caveat in the sweep section below):
 | `p50_rss_growth_bytes` | 210,944 bytes every run — bit-identical |
 | `p50_cpu_ms` | 15.31 – 20.35 (**33 %**) |
 
-So resident growth is gateable at a tight envelope and CPU is not. CPU inherits the
-scenario's *resolved* wall envelope rather than the tolerance struct's default —
-without that, a scenario with a widened 100 % wall tolerance would carry a 10 % CPU
-tolerance and flag on its own recorded baseline immediately.
+So resident growth is gateable at a tight envelope and CPU is not. **Read that RSS
+row narrowly**: it says this one scenario's p50 was reproducible, which was true and
+is not the general case — see the trimmed-mean discussion above for the two shapes
+where a resident percentile is either a coin flip or blind, both found on scenarios
+this table did not include. CPU inherits the scenario's *resolved* wall envelope
+rather than the tolerance struct's default — without that, a scenario with a widened
+100 % wall tolerance would carry a 10 % CPU tolerance and flag on its own recorded
+baseline immediately — and is then normalised against the baseline's recorded clock,
+which is what makes a 33 % spread gateable at all.
 
 ### `harness.cpu_calibration_ns`: what the clock actually was
 
