@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-04. **80 open items.**
+Reviewed 2026-08-05. **81 open items.**
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
@@ -21,6 +21,63 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-05-131 — a one-character edit still walks its line 5 times, because undo history stores whole lines. OPEN (needs a column-scoped edit model, not a patch).
+
+Found by adding the first perf fixture in the tree with a long line
+(`editor_essentials_minified`, one ~2 MiB line). Every other editor fixture is
+ordinary line-broken text — the widest line in `large_project` is 20 bytes — so
+nothing measured the shape where a per-line cost becomes a per-document cost.
+
+A single-character insert allocated **13x the affected line's bytes** in 24
+allocations. Five of those were bookkeeping and are fixed (commit
+`944de6d0`): the applied-edit record deep-copied the after-lines only to trim
+both ends off them, undo coalescing copied the aggregate entry before knowing
+whether the merge was possible, `PieceTree::ReplaceLineRange` joined without a
+reserve and then reallocated to attach the newline, `SetLine` wrapped its
+argument in a temporary vector, and the compose path built `prefix + replacement
++ suffix` out of two owned substrings while `Backspace`/`DeleteForward` reached
+for `TextBuffer::operator[]` (which materializes an owned line copy). That took
+it to **5x in 12 allocations, ~22 ms -> ~13 ms per keystroke on an 8 MB line.**
+
+**The remaining 5x is the data model, and each one is load-bearing:**
+
+1. `SliceLines` copies the pre-edit line — the undo entry's `before_lines`.
+2. The composed post-edit line — the entry's `after_lines`.
+3. `PieceTree`'s replacement buffer, and
+4. its append into `add_`.
+5. `MergeGroupEntry`'s copy of `next.after_lines` into the coalesced run.
+
+`HistoryEntry` is `{start_line, before_lines, after_lines}` — whole lines. For an
+in-line edit the interesting delta is a few bytes at a column, and everything
+else in those vectors is context that both sides already agree on. Closing this
+means a column-scoped entry (offset + removed length + inserted text) with the
+line-vector form kept for the multi-line cases, which touches undo/redo, the
+coalescing rules, `BuildAppliedEdit`, and the LSP incremental-sync bridge. That
+is a dedicated pass with its own test matrix, not an addition to a perf commit.
+
+There is a smaller companion item inside it: `UpgradeEncodingForInsertedLines`
+re-scans the whole rebuilt line on every edit (~1 ms of the 13 on an 8 MB line),
+because `ApplyHistoryEntry` only has the entry, not the replacement. The bytes
+that can raise the classification are exactly the inserted ones, and undo/redo
+cannot raise it at all — every line they restore was scanned when it first
+entered the document. Threading the replacement through the five
+`ApplyHistoryEntry` callers would make it O(replacement); it is deferred with
+the rest because it lands in the same code.
+
+**Gated meanwhile.** `editor_typing_minified_line` measures this at a 1%
+allocation tolerance (allocations are exact here: a 0.02% spread), and
+`TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine` pins the 5x as a
+byte budget under a perf-harness build. Both were confirmed to fail when a fix is
+reverted, so the ratchet is real rather than assumed.
+
+**Also worth remembering: `TextBuffer::operator[]` is not free.** It is the
+compatibility accessor; it materializes an owned copy of the line into a cache
+that the next mutation clears, and its header says so. The single-caret edit path
+now uses `LineView`/`LineLength`. `TextViewportMultiCaret.cpp` and
+`TextViewportLanguageBehavior.cpp` still hold ~20 `operator[]` reads that are
+only asking for a length or a clamp; they were left alone because no scenario
+measures them with a long line, not because they are known to be fine.
 
 ### TD-2026-08-04-130 — repeated large multi-line edits grew the resident set without bound. [RESOLVED 2026-08-04.]
 

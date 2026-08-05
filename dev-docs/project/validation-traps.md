@@ -288,6 +288,46 @@ evidence of a regression**, and the three checks above settle it in minutes.
 Allocation counts do not have this failure mode, which is the reason this suite
 gates primarily on them.
 
+### A green suite proves nothing about a shape no fixture has
+
+The gate can be perfectly healthy and still be blind, because coverage is a
+property of the *fixtures*, not of the gate. On 2026-08-05 the whole 95-scenario
+suite was green while a one-character insert allocated **13x the affected line's
+bytes** — five redundant whole-line copies per keystroke on the editor's single
+hottest path.
+
+Nothing was broken about the instrument. Every editor fixture in the tree is
+ordinary line-broken text (the widest line in `large_project` is 20 bytes), so
+no scenario ever put a long line through the edit path, and a cost that is
+proportional to line length is a rounding error on 20 bytes. The same code on a
+minified bundle — one line of megabytes, which the editor opens with no size
+guard — was ~22 ms per keystroke.
+
+The generalisation is worth more than the instance: **for any cost that scales
+with some input dimension, ask which fixture spans that dimension.** Line length
+had no fixture. Others to check before assuming they are covered: a file with
+one enormous line (now `editor_essentials_minified`), a file with hundreds of
+thousands of very short lines, a line with dense non-ASCII, a project with one
+directory of 50k files.
+
+Two habits made the instance findable in about an hour, both already in the tree:
+
+- `MICROIDE_PERF_BIG_ALLOC_BYTES=<n>` prints a backtrace for every allocation at
+  or above `n` (`tests/perf/AllocationCounter.cpp`). Resolve the frames with
+  `addr2line -e <binary> -f -C <offset>`. It named all five sites directly;
+  no profiler is needed and none works on this host anyway.
+- `MICROIDE_PERF_SUMMARY=1` ranks `PerformanceTrace::Scope` regions by self time.
+  The edit path carried **no scopes at all** — `BuildRangeHistoryEntry`,
+  `ApplyHistoryEntry` and the buffer write were unmeasurable — so the first step
+  was adding them. A hot path with no scopes is itself a finding.
+
+And when you close the gap, **gate on bytes or counts, not duration**, and check
+the tolerance is tight enough to catch what you just fixed: the default 10%
+allocation envelope would have passed the +7.7% regression that
+`editor_typing_minified_line` exists to catch, so it runs at 1%. Then reintroduce
+one fix's worth of the regression and confirm the gate goes red — it did, at
++1.93%.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit

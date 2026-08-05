@@ -25,6 +25,47 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-05 the edit path on a line with no newlines in it (perf-runner-v1)
+
+A one-character insert allocated **13x the affected line's bytes** in 24
+allocations. The whole 95-scenario suite was green throughout, because no fixture
+in the tree has a long line — the widest in `large_project` is 20 bytes — so a
+cost proportional to line length had nowhere to show up. On a minified bundle,
+which the editor opens with no size guard, that was ~22 ms per keystroke.
+
+Five of the copies were bookkeeping, not the data model, and are gone:
+
+| site | what it did | why it mattered |
+| --- | --- | --- |
+| `BuildAppliedEdit` | deep-copied after-lines, then erased the common prefix/suffix | copied exactly what the trim discarded, to produce a 1-byte replacement |
+| `TryMergeGroupEntry` | `Entry merged = aggregate;` before knowing if the merge was possible | two whole-line copies per keystroke; paid again on the reject paths |
+| `PieceTree::ReplaceLineRange` | joined with no reserve, then `std::move(joined) + "\n"` | the concatenation reallocates — 4 MB join, then 8 MB |
+| `PieceTree::SetLine` | wrapped its argument in a temporary vector | one full line copy per in-line keystroke |
+| `BuildRangeHistoryEntry` | `prefix + replacement + suffix` from owned substrings; `operator[]` in Backspace/DeleteForward | ~3 walks of the line, plus `operator[]`'s materialized copy |
+
+Result: **13x -> 5x in allocated bytes, 24 -> 12 allocations, ~22 ms -> ~13 ms
+per keystroke on an 8 MB line.** Ordinary-file scenarios are unmoved — all 14
+editor/typing baselines pass unchanged, which is the expected shape: these are
+proportional-to-line-length costs, and ordinary lines are short.
+
+**Two things worth carrying forward.**
+
+`TextBuffer::operator[]` is not an accessor, it is a materializer. It copies the
+line into a per-revision cache that the next mutation clears, and the header says
+so and even exposes `materialized_line_count()` so a test can pin a path as
+zero-copy. Hot paths want `LineView`/`LineLength`. The single-caret edit path was
+converted; `TextViewportMultiCaret.cpp` and `TextViewportLanguageBehavior.cpp`
+still hold ~20 reads that only want a length or a clamp.
+
+The remaining 5x is the whole-line undo model and is filed as **TD-2026-08-05-131**
+with the per-copy breakdown. It needs a column-scoped `HistoryEntry`, which is a
+dedicated pass.
+
+Gated by `editor_typing_minified_line` (new fixture: one ~2 MiB line) at a **1%**
+allocation tolerance — the default 10% would have passed the +7.7% regression the
+scenario exists to catch — plus a byte-budget unit test. Both were confirmed to
+fail with a fix reverted.
+
 ## 2026-08-04 `FoldingModel` rewrite, ninth round (perf-runner-v1)
 
 The item that had stood open since the fifth round -- "the fold model rescans the
