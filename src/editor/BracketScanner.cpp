@@ -2,8 +2,10 @@
 
 #include <algorithm>
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextViewport.h"
+#include "util/PerformanceCounters.h"
 
 namespace microide::editor {
 
@@ -275,6 +277,24 @@ std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
   const auto& lines = viewport.lines();
   const std::size_t line_count = lines.size();
   if (caret_line >= line_count) {
+    return std::nullopt;
+  }
+  // A caret line past the tokenization cap matches nothing.
+  //
+  // This is the argument `FoldingModel::kMaxBracketScanLineBytes` already makes,
+  // applied to the same bracket on the same line: past that cap the line has no
+  // syntax tokens, so `LineSuppressionCursor` cannot tell a brace inside a string
+  // literal from a real one and suppresses nothing. The pair it would highlight is
+  // arbitrary rather than approximate, and highlighting none is both cheaper and
+  // more honest -- the same degradation mature editors apply.
+  //
+  // It is also what stops this from reading the line at all. The window below
+  // takes a LineView per line, which on a piece-tree source materializes any line
+  // that spans pieces -- and on a file with no line breaks in it that was the last
+  // multi-megabyte copy per frame on the render path (TD-2026-08-05-133). Asking
+  // the LENGTH first costs two offset lookups.
+  if (lines.LineLength(caret_line) > runtime_syntax::kMaxHighlightLineBytes) {
+    util::AddPerformanceCounter(util::PerfCounterId::EditorBracketMatchLineTooLong);
     return std::nullopt;
   }
   // Only the window [caret_line - max, caret_line + max] is ever scanned: the

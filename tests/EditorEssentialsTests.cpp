@@ -7,6 +7,7 @@
 #include "editor/IndentDetect.h"
 #include "editor/IndentGuides.h"
 #include "editor/LineSpan.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextBuffer.h"
 #include "editor/LanguageContractView.h"
 #include "editor/SaveNormalization.h"
@@ -164,27 +165,80 @@ void TestBracketScannerProbesTokensOncePerLineNotPerByte() {
 // costs; past it the match is reported not-found, exactly as an unbalanced bracket
 // inside the line window already is.
 void TestBracketScannerStopsAtTheScanByteCap() {
-  const std::size_t over_cap = microide::editor::kMaxBracketMatchScanBytes + 1024;
-  std::string line = "(";
-  line.append(over_cap, 'x');
-  line.push_back(')');
-  TextViewport viewport;
-  viewport.LoadContent(line + "\n", "/tmp/bracket-over-cap.cpp");
+  // The byte budget spans the whole scan window, and since TD-2026-08-05-133 a
+  // caret line past the tokenization cap is refused outright -- so the budget can
+  // only be reached across MANY lines now, and a single over-long line no longer
+  // exercises it. Building this from one line would pass for the other reason.
+  const auto document_of = [](std::size_t body_lines) {
+    std::string text = "(\n";
+    for (std::size_t i = 0; i < body_lines; ++i) {
+      text.append(1000, 'x');
+      text.push_back('\n');
+    }
+    text += ")\n";
+    return text;
+  };
+  const std::size_t over_budget_lines = microide::editor::kMaxBracketMatchScanBytes / 1000 + 64;
 
+  TextViewport viewport;
+  viewport.LoadContent(document_of(over_budget_lines), "/tmp/bracket-over-cap.cpp");
   Expect(!microide::editor::FindBracketMatch(viewport, 0, 1).has_value(),
          "a forward scan past the byte cap reports no match");
-  Expect(!microide::editor::FindBracketMatch(viewport, 0, line.size()).has_value(),
+  Expect(!microide::editor::FindBracketMatch(viewport, over_budget_lines + 1, 1).has_value(),
          "a backward scan past the byte cap reports no match");
 
-  // Just under the cap still matches, so the cap bounds work rather than breaking
-  // bracket matching on merely-long lines.
-  std::string under = "(";
-  under.append(microide::editor::kMaxBracketMatchScanBytes / 2, 'x');
-  under.push_back(')');
+  // Half the budget still matches, so the cap bounds work rather than breaking
+  // bracket matching on merely-large windows.
   TextViewport under_viewport;
-  under_viewport.LoadContent(under + "\n", "/tmp/bracket-under-cap.cpp");
+  under_viewport.LoadContent(document_of(over_budget_lines / 4), "/tmp/bracket-under-cap.cpp");
   Expect(microide::editor::FindBracketMatch(under_viewport, 0, 1).has_value(),
          "a scan comfortably inside the byte cap still matches");
+}
+
+// TD-2026-08-05-133: a caret line past `runtime_syntax::kMaxHighlightLineBytes`
+// matches no bracket at all. That is the argument FoldingModel::kMaxBracketScanLineBytes
+// already makes about the same bracket on the same line -- past the tokenization
+// cap the line has no tokens, so a brace inside a string literal is
+// indistinguishable from a real one and the pair would be arbitrary rather than
+// approximate. It is also what keeps the scan from reading the line: on a
+// piece-tree source the window build takes a LineView per line, which copies any
+// line that spans pieces.
+void TestBracketScannerRefusesALineTooLongToTokenize() {
+  const std::size_t cap = microide::editor::runtime_syntax::kMaxHighlightLineBytes;
+  const auto line_of = [](std::size_t filler) {
+    std::string line = "()";
+    line.append(filler, 'x');
+    return line;
+  };
+
+  // Adjacent pair at column 0 -- the cheapest possible match, so a refusal here is
+  // the cap and nothing else.
+  TextViewport under;
+  under.LoadContent(line_of(cap - 8) + "\n", "/tmp/bracket-under-line-cap.cpp");
+  Expect(microide::editor::FindBracketMatch(under, 0, 1).has_value(),
+         "a line just under the tokenization cap still matches its brackets");
+
+  TextViewport over;
+  over.LoadContent(line_of(cap + 8) + "\n", "/tmp/bracket-over-line-cap.cpp");
+  Expect(!microide::editor::FindBracketMatch(over, 0, 1).has_value(),
+         "one byte past the cap the line contributes no bracket match");
+
+  // The work claim: refusing must not read the line. Split it first, so reading it
+  // whole could only be served by a copy.
+  TextViewport spanning;
+  spanning.LoadContent(line_of(2 * cap) + "\n", "/tmp/bracket-spanning.cpp");
+  spanning.InsertText("Z");
+  spanning.Backspace();
+  util::ResetPerformanceCounters();
+  Expect(!microide::editor::FindBracketMatch(spanning, 0, 1).has_value(),
+         "the long spanning line is refused");
+  const std::uint64_t copied =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes);
+  Expect(copied == 0, "a refused caret line must not be read (copied " + std::to_string(copied) +
+                          " bytes)");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorBracketMatchLineTooLong) > 0,
+         "the refusal counter must have moved -- otherwise the zero above proves nothing");
+  util::ResetPerformanceCounters();
 }
 
 void TestShapingMoveLineDown() {
@@ -1465,6 +1519,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestBracketScannerProbesTokensOncePerLineNotPerByte);
   AddTest(tests, "EditorEssentials/BracketScanner/StopsAtTheScanByteCap",
           TestBracketScannerStopsAtTheScanByteCap);
+  AddTest(tests, "EditorEssentials/BracketScanner/RefusesALineTooLongToTokenize",
+          TestBracketScannerRefusesALineTooLongToTokenize);
   AddTest(tests, "EditorEssentials/BracketScanner/WindowedDeepCaret",
           TestBracketScannerWindowedDeepCaret);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",
