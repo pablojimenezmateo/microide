@@ -18,6 +18,11 @@ from pathlib import Path
 TARGET_LINES_CPP = 50_000
 TARGET_LINES_PY = 50_000
 TARGET_BYTES_1MB = 1 << 20  # 1 MiB
+# One line, no line breaks: the minified-bundle shape. Every per-line cost in the
+# editor becomes a per-document cost here, which is exactly what makes it worth
+# measuring -- a regression that is a rounding error on a 40-character line is
+# megabytes of copying per keystroke on this one.
+TARGET_BYTES_MINIFIED = 2 << 20  # 2 MiB on a single line
 BLOCK_DEPTH = 64  # deep nesting chunks; 4 spaces each => conventional C++/Python indentation.
 INDENT_UNIT = "    "
 PY_LINE_COMMENT = "# perf fixture"
@@ -207,6 +212,30 @@ def write_fixture_mixed_1mb(root: Path) -> None:
     if len(blob) < TARGET_BYTES_1MB:
         blob.extend(b"@" * (TARGET_BYTES_1MB - len(blob)))
     path.write_bytes(bytes(blob))
+def write_fixture_minified(root: Path) -> None:
+    """One ~2 MiB line with no newline before the final one: a minified bundle.
+
+    Deterministic and ASCII, with brace/quote/paren structure so bracket matching,
+    auto-close and syntax detection see realistic input rather than filler.
+    """
+    wipe_tree(root)
+    root.mkdir(parents=True, exist_ok=True)
+    path = root / "bundle.min.js"
+
+    unit = '{"id":%d,"name":"item_%d","tags":["a","b"],"fn":function(x){return x*%d;}},'
+    parts: list[str] = ["var DATA=["]
+    total = len(parts[0])
+    seq = 0
+    while total < TARGET_BYTES_MINIFIED:
+        chunk = unit % (seq, seq, (seq % 97) + 1)
+        parts.append(chunk)
+        total += len(chunk)
+        seq += 1
+    parts.append("];")
+    # Exactly one line plus the trailing newline: no interior line break anywhere.
+    path.write_text("".join(parts) + "\n", encoding="ascii")
+
+
 def write_fixture_moby_dick(root: Path) -> None:
     """Real Moby-Dick prose body (Gutenberg #2701), normalized to LF.
 
@@ -249,7 +278,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--fixture",
-        choices=("cpp", "py", "mb", "moby", "all"),
+        choices=("cpp", "py", "mb", "minified", "moby", "all"),
         default="all",
         help="Which fixture subtree to regenerate (default: all).",
     )
@@ -266,12 +295,19 @@ def main() -> int:
         default="tests/perf/fixtures/editor_essentials_1mb",
     )
     parser.add_argument(
+        "--output-minified",
+        default="tests/perf/fixtures/editor_essentials_minified",
+    )
+    parser.add_argument(
         "--output-moby",
         default="tests/perf/fixtures/editor_essentials_moby_dick",
     )
     parser.add_argument("--hash-cpp", default="tests/perf/fixtures/editor_essentials_50k_cpp.sha256")
     parser.add_argument("--hash-py", default="tests/perf/fixtures/editor_essentials_50k_py.sha256")
     parser.add_argument("--hash-1mb", default="tests/perf/fixtures/editor_essentials_1mb.sha256")
+    parser.add_argument(
+        "--hash-minified", default="tests/perf/fixtures/editor_essentials_minified.sha256"
+    )
     parser.add_argument(
         "--hash-moby", default="tests/perf/fixtures/editor_essentials_moby_dick.sha256"
     )
@@ -294,6 +330,11 @@ def main() -> int:
         specs.append(("py", Path(args.output_py), Path(args.hash_py), write_fixture_py))
     if args.fixture in ("mb", "all"):
         specs.append(("1mb", Path(args.output_1mb), Path(args.hash_1mb), write_fixture_mixed_1mb))
+    if args.fixture in ("minified", "all"):
+        specs.append(
+            ("minified", Path(args.output_minified), Path(args.hash_minified),
+             write_fixture_minified)
+        )
     # `moby` is deliberately NOT part of `all`: it needs a network fetch, so it
     # stays opt-in (`--fixture moby`) to keep offline `--fixture all` working.
     if args.fixture == "moby":

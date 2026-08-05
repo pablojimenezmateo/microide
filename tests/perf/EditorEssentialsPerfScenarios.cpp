@@ -635,6 +635,51 @@ void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
   });
 }
 
+// Typing inside a file with NO line breaks -- a minified bundle. Every per-line
+// cost in the editor is a per-DOCUMENT cost here, so this is where a stray copy
+// of "the affected line" stops being a rounding error and becomes megabytes per
+// keystroke.
+//
+// Nothing measured this shape before: every editor fixture in the tree is
+// ordinary line-broken text (the widest line in `large_project` is 20 bytes), so
+// a one-character insert allocating 13x the affected line passed the whole perf
+// suite unnoticed. Allocations are the metric that matters here -- they scale
+// exactly with how many times the edit path walks the line, which is the thing
+// that regresses.
+void RunEditorTypingMinifiedLine(ScenarioContext& context) {
+  const std::filesystem::path minified =
+      "tests/perf/fixtures/editor_essentials_minified/bundle.min.js";
+  if (!PathExistsNoThrow(minified)) {
+    std::cerr << "editor_typing_minified_line: missing fixture " << minified << "\n";
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(minified);
+  auto& vp = context.ActiveViewport();
+  if (vp.lines().size() > 2) {
+    throw std::runtime_error(
+        "editor_typing_minified_line: fixture is not a single line (regenerate it)");
+  }
+  // Mid-line, so the composed replacement has a real prefix and a real suffix
+  // rather than degenerating into an append.
+  vp.MoveCursorTo(0, vp.lines().front().size() / 2, false);
+  context.PumpFrames(2);  // warm the visible window's layout/highlight
+  context.Measure("minified_line.type_burst", [&] {
+    for (int i = 0; i < 16; ++i) {
+      context.Type("x");
+      context.PumpFrames(1);
+    }
+  });
+  // Backspace runs a different composition path (empty replacement) and its own
+  // coalesce run, so it is not covered by the insert burst above.
+  context.Measure("minified_line.backspace_burst", [&] {
+    for (int i = 0; i < 16; ++i) {
+      context.KeyDown(SDLK_BACKSPACE);
+      context.PumpFrames(1);
+    }
+  });
+}
+
 // Same burst as above, on the FIRST line instead of the middle of the file.
 //
 // This exists because the two were not the same cost and nothing measured the
@@ -952,6 +997,22 @@ const ScenarioRegistration g_perf_editor_column_selection_burst({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run = RunEditorColumnSelectionBurst,
+}});
+const ScenarioRegistration g_perf_editor_typing_minified_line({Scenario{
+    .name = "editor_typing_minified_line",
+    .smoke = false,
+    .baseline_gated = true,
+    // warmup: the first pass pays the project's cold open plus this buffer's
+    // first layout/width build, which dwarfs the measured typing burst.
+    .warmup_iterations = 1,
+    // Allocations are the oracle here and they are exact: 4,970 / 4,971 / 4,971
+    // across p50/p95/max, a 0.02% spread. The default 10% envelope is far too
+    // loose for what this scenario exists to catch -- the regression it was
+    // written for (the edit path walking the line 13 times instead of 5) is
+    // +12 allocations per keystroke, ~7.7% over this burst, and 10% would pass
+    // it. 1% is 50x the observed noise and still fails on that.
+    .tolerance_alloc_p50_percent = 1.0,
+    .run = RunEditorTypingMinifiedLine,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",
