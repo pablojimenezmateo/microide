@@ -1,6 +1,14 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-05. **83 open items.**
+Reviewed 2026-08-05. **76 open items.**
+
+The 2026-08-05 burndown closed seven: TD-2026-07-30-001 (search-panel Alt chords),
+TD-2026-07-26-005 (replace-all measured through counters only it writes),
+TD-2026-07-26-003 (post-commit refresh failure reaches the user), and four from the
+2026-07-10 deferred set (LSP diagnostics across a close→reopen, three terminal spec
+deviations, the `LineEndingHeavy` mislabel, and the single-line view-metrics
+coverage gap). TD-2026-08-05-137 lost its first sub-item — the CPU-gate audit is a
+byproduct of any run now — and stays open on the other two.
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
