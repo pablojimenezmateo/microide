@@ -152,6 +152,13 @@ class ScenarioContext {
   // Without these the two are indistinguishable, and an iteration that costs 2x
   // for identical application counters has no visible explanation at all.
   std::vector<std::pair<std::string, std::uint64_t>> TakeHarnessCounters();
+  // Nanoseconds a fixed, deterministic slab of integer work took, measured just
+  // OUTSIDE this iteration's window. cpu_ms is a duration, so it moves when the
+  // machine's effective clock moves — and on a laptop forty minutes into a gate
+  // run the boost budget is spent and identical instructions cost measurably
+  // more wall and CPU. Without this reading, the report cannot tell "the code
+  // got slower" from "the machine got slower".
+  void RecordCpuCalibration(std::uint64_t nanoseconds);
   std::uint64_t RandomU64();
   void OpenFileFinder();
   void ActivateGitSidebar();
@@ -210,6 +217,7 @@ class ScenarioContext {
     kIdleWaitCaretSleeps,
     kIdleWaitShortPolls,
     kIdleWaitHandledWakes,
+    kCpuCalibrationNs,
     kCount,
   };
   void BumpHarnessCounter(HarnessCounter counter, std::uint64_t amount = 1) {

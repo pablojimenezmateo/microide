@@ -129,6 +129,30 @@ std::uint64_t ResolveSeed(std::optional<std::uint64_t> explicit_seed) {
   return 1337ULL;
 }
 
+// Time a fixed, deterministic slab of integer work. Everything the harness
+// records as a cost -- wall_ms, cpu_ms -- is a duration, so all of it scales
+// with the machine's effective clock. This gives every iteration a reading of
+// what that clock actually was, so a report can separate a slower binary from a
+// slower machine. Deliberately branch-free, allocation-free and dependent
+// (each step needs the previous result) so it measures clock rate rather than
+// how wide the core can go, and sunk into a volatile so it cannot be elided.
+std::uint64_t MeasureCpuCalibrationNanoseconds() {
+  static volatile std::uint64_t sink = 0;
+  const auto start = std::chrono::steady_clock::now();
+  std::uint64_t accumulator = 1;
+  for (std::uint64_t i = 0; i < 400000; ++i) {
+    accumulator = accumulator * 6364136223846793005ULL + 1442695040888963407ULL;
+    accumulator ^= accumulator >> 33;
+  }
+  const auto end = std::chrono::steady_clock::now();
+  sink = accumulator;
+  // Read the sink back so the store is observably live: written-and-never-read
+  // is a warning, and -Werror is on in the clang lane.
+  return static_cast<std::uint64_t>(
+             std::chrono::duration_cast<std::chrono::nanoseconds>(end - start).count()) |
+         (sink & 0U);
+}
+
 }  // namespace
 
 double ProcessCpuMilliseconds() {
@@ -185,6 +209,7 @@ std::vector<std::pair<std::string, std::uint64_t>> ScenarioContext::TakeHarnessC
           "harness.frames_pumped",         "harness.idle_wait_polls",
           "harness.idle_wait_idle_sleeps", "harness.idle_wait_caret_sleeps",
           "harness.idle_wait_short_polls", "harness.idle_wait_handled_wakes",
+          "harness.cpu_calibration_ns",
       };
   std::vector<std::pair<std::string, std::uint64_t>> out;
   for (std::size_t i = 0; i < harness_counters_.size(); ++i) {
@@ -194,6 +219,10 @@ std::vector<std::pair<std::string, std::uint64_t>> ScenarioContext::TakeHarnessC
   }
   harness_counters_.fill(0);
   return out;
+}
+
+void ScenarioContext::RecordCpuCalibration(std::uint64_t nanoseconds) {
+  BumpHarnessCounter(HarnessCounter::kCpuCalibrationNs, nanoseconds);
 }
 
 void ScenarioContext::PumpFrames(std::size_t count) {
@@ -644,6 +673,9 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
         return std::nullopt;
       }
     }
+    // Outside the measured window on purpose: this is a reading of the machine,
+    // not of the scenario, and must not be charged to either cpu_ms or wall_ms.
+    context.RecordCpuCalibration(MeasureCpuCalibrationNanoseconds());
     const util::PerfCounterSnapshot counter_before = util::CapturePerformanceCounters();
     const AllocationSnapshot before = Allocations::Snapshot();
     const double cpu_ms_before = ProcessCpuMilliseconds();
