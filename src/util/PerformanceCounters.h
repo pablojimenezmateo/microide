@@ -39,6 +39,7 @@ namespace microide::util {
   X(EditorFoldBlockSummariesBuilt, "editor.fold_block_summaries_built")                         \
   X(EditorFoldBlockSummaryLines, "editor.fold_block_summary_lines")                             \
   X(EditorFoldBracketLinesScanned, "editor.fold_bracket_lines_scanned")                         \
+  X(EditorFoldBracketLinesSkippedTooLong, "editor.fold_bracket_lines_skipped_too_long")         \
   X(EditorFoldIndentLinesMeasured, "editor.fold_indent_lines_measured")                         \
   X(EditorFoldPartialResolves, "editor.fold_partial_resolves")                                  \
   X(EditorVisibleLineLayoutEvictions, "editor.visible_line_layout_evictions")                    \

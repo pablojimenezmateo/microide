@@ -13,9 +13,18 @@
 #include <span>
 #include <utility>
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 
 namespace microide::editor {
+
+// The bracket cap must not exceed the tokenization cap: past the latter a line has
+// no syntax tokens, so a brace inside a string literal is indistinguishable from a
+// real one and the folds derived from it would be arbitrary rather than merely
+// approximate. See FoldingModel::kMaxBracketScanLineBytes.
+static_assert(FoldingModel::kMaxBracketScanLineBytes <=
+                  runtime_syntax::kMaxHighlightLineBytes,
+              "a line that folds must be a line that can be tokenized");
 
 namespace {
 
@@ -182,7 +191,16 @@ class FoldingModel::BracketTable {
   }
 
   // Append every bracket byte on `line` to `out`.
+  //
+  // A line past `kMaxBracketScanLineBytes` contributes nothing: see that cap for
+  // why folds derived from such a line were arbitrary anyway. This is the single
+  // point the cap is applied, so both the incremental splice and the extend path
+  // get it and neither can drift from the other.
   void ScanLine(std::string_view line, std::vector<CachedBracket>& out) const {
+    if (line.size() > kMaxBracketScanLineBytes) {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBracketLinesSkippedTooLong);
+      return;
+    }
     for (std::size_t column = NextCandidate(line, 0); column < line.size();
          column = NextCandidate(line, column + 1)) {
       out.push_back(CachedBracket{static_cast<std::uint32_t>(column), line[column]});

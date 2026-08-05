@@ -112,6 +112,27 @@ class FoldingModel {
   // window, so the refresh gate must not keep asking.
   static constexpr std::size_t kMaxForwardResolveLines = 8192;
 
+  // Declared cap on the length of a line whose brackets participate in folding.
+  //
+  // Every other bound in this model is on the DERIVATION -- how deep, how far,
+  // how many lines. This one is on a single line, because a line is the unit the
+  // per-line bracket cache resyncs: an edit anywhere in a line rescans all of it,
+  // and there is no summary that can be had for less, so on a file with no line
+  // breaks in it the model re-read a megabyte and re-matched 200k bracket events
+  // on every keystroke (TD-2026-08-05-132, item 3).
+  //
+  // Set equal to `runtime_syntax::kMaxHighlightLineBytes`, and that equality is
+  // the point rather than a coincidence. Past the highlight cap a line has no
+  // syntax tokens, so `IsSuppressedBracketAt` cannot tell a brace inside a string
+  // literal from a real one -- the folds derived from such a line were already
+  // arbitrary. Dropping them makes an over-long line contribute NO folds instead
+  // of wrong ones, which is both cheaper and more honest, and it is the same
+  // shape mature editors use to stop giving very long lines whole-line treatment.
+  //
+  // A line at the cap costs a word-at-a-time scan of 100 kB plus its own events;
+  // that is a rescan a keystroke can afford. Lines below it are unaffected.
+  static constexpr std::size_t kMaxBracketScanLineBytes = 100000;
+
   struct Fingerprint {
     std::uint64_t layout_revision = 0;
     std::size_t tab_size = 4;

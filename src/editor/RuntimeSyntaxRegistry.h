@@ -13,6 +13,18 @@
 
 namespace microide::editor::runtime_syntax {
 
+// Above this byte length a line is not tokenized: running the syntax rules over
+// the whole line is O(line) work on the UI thread on every token-cache miss, so a
+// single enormous line (a minified bundle with no newline) would stall the shell.
+// Such lines render unhighlighted (all Plain) — the same threshold behavior
+// mature editors use to disable tokenization on very long lines.
+//
+// Exported because it is the editor's one "this line does not get whole-line
+// treatment" threshold, and folding has to agree with it: past this length a line
+// has no syntax tokens, so nothing can tell a brace in a string literal from a
+// real one (see FoldingModel::kMaxBracketScanLineBytes).
+inline constexpr std::size_t kMaxHighlightLineBytes = 100000;
+
 struct RuntimeSyntaxRuleData {
   GeneratedRuleKind kind = GeneratedRuleKind::Pattern;
   std::string group_name;

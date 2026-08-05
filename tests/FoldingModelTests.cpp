@@ -866,9 +866,62 @@ void TestLayoutRevisionOnlyTracksTheCollapsedSet() {
          "changing the collapsed set must bump the layout revision");
 }
 
+// TD-2026-08-05-132 item 3: a line past `kMaxBracketScanLineBytes` contributes no
+// brackets at all. The per-line bracket cache resyncs a whole line at a time, so
+// without the cap an edit anywhere inside a line with no newlines in it re-read a
+// megabyte and re-matched 200k events on every keystroke -- and past the
+// tokenization cap those events could not be filtered for string/comment context
+// anyway, so the folds they produced were arbitrary.
+//
+// Pinned at the boundary in both directions, and with a normal line in the same
+// document, because the cap is per line and must not take the document with it.
+void TestOverLongLineContributesNoBrackets() {
+  FoldingModel::ComputeOptions options = DefaultCStyleOptions();
+  // Isolate the bracket source: an indent fold would otherwise answer for a line
+  // whose brackets were dropped and hide the thing being measured.
+  options.use_indent_source = false;
+
+  const auto document_with_opener_of_length = [](std::size_t bytes) {
+    std::string opener = "{";
+    opener.append(bytes - opener.size(), 'x');
+    return std::vector<std::string>{
+        std::move(opener), "  body", "}", "{", "  ordinary", "}",
+    };
+  };
+
+  {
+    std::vector<std::string> lines =
+        document_with_opener_of_length(FoldingModel::kMaxBracketScanLineBytes);
+    FoldingModel model;
+    Expect(model.Compute(lines, options), "resolving an at-cap line should complete");
+    Expect(Find(model.resolved_ranges(), 0).closer_line == 2,
+           "a line exactly at the bracket cap still folds: " +
+               DescribeRanges(model.resolved_ranges()));
+    Expect(Find(model.resolved_ranges(), 3).closer_line == 5,
+           "the ordinary fold below it resolves too");
+  }
+
+  {
+    std::vector<std::string> lines =
+        document_with_opener_of_length(FoldingModel::kMaxBracketScanLineBytes + 1);
+    FoldingModel model;
+    Expect(model.Compute(lines, options), "resolving an over-cap line should complete");
+    Expect(!model.FoldStartingAt(0).has_value(),
+           "one byte past the cap the line contributes no brackets: " +
+               DescribeRanges(model.resolved_ranges()));
+    // The dropped `{` must not leave the walk with a phantom open bracket that
+    // swallows the closer of the ordinary fold below it.
+    Expect(Find(model.resolved_ranges(), 3).closer_line == 5,
+           "a normal line in the same document keeps folding: " +
+               DescribeRanges(model.resolved_ranges()));
+  }
+}
+
 }  // namespace
 
 void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorFolding/Bracket/OverLongLineContributesNoBrackets",
+          TestOverLongLineContributesNoBrackets);
   AddTest(tests, "EditorFolding/Bracket/EmitsOpenerAndCloser",
           TestBracketFoldEmitsOpenerAndCloser);
   AddTest(tests, "EditorFolding/Bracket/InnermostFoldContainingNested",

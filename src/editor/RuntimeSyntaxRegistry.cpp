@@ -1416,13 +1416,6 @@ void CompileDefinition(std::uint32_t definition_id) {
   EnsureDefinitionCompiled(GetRegistry(), definition_id);
 }
 
-// Above this byte length a line is not tokenized: running the syntax rules over
-// the whole line is O(line) work on the UI thread on every token-cache miss, so a
-// single enormous line (a minified bundle with no newline) would stall the shell.
-// Such lines render unhighlighted (all Plain) — the same threshold behavior
-// mature editors use to disable tokenization on very long lines.
-constexpr std::size_t kMaxHighlightLineBytes = 100000;
-
 HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
