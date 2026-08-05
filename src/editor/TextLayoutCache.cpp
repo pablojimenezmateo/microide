@@ -1,6 +1,7 @@
 #include "editor/TextLayoutCache.h"
 
 #include <algorithm>
+#include <cassert>
 
 #include "editor/FoldingModel.h"
 #include "util/PerformanceCounters.h"
