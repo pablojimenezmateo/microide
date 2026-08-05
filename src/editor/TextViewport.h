@@ -10,6 +10,7 @@
 #include <span>
 #include <vector>
 
+#include "editor/CaretNeighborhood.h"
 #include "editor/ColumnSelection.h"
 #include "editor/EditTypes.h"
 #include "editor/HighlightPrefetch.h"
@@ -669,6 +670,12 @@ class TextViewport {
                      bool record_undo);
   std::string AutoIndentForNewline(std::size_t line, std::size_t column) const;
   std::string IndentUnit() const;
+  // Caret-local bytes for the pair/indent heuristics, read without materializing
+  // the line. See editor/CaretNeighborhood.h for why that matters.
+  CaretNeighborhood ReadCaretNeighborhood(std::size_t line, std::size_t column) const {
+    return editor::ReadCaretNeighborhood(document_->lines, line, column);
+  }
+
   bool TryAutoCloseInsert(char ch);
   bool TrySurroundInsert(char ch);
   bool TrySkipOverClose(char ch);

@@ -51,12 +51,12 @@ bool IsIndentCharacter(char c) {
   return c == ' ' || c == '\t';
 }
 
-bool LineIsIndentOnly(const std::string& line) {
+bool LineIsIndentOnly(std::string_view line) {
   return std::all_of(line.begin(), line.end(),
                      [](char c) { return IsIndentCharacter(c); });
 }
 
-std::string_view TrimmedRightView(const std::string& line) {
+std::string_view TrimmedRightView(std::string_view line) {
   std::size_t end = line.size();
   while (end > 0 && IsIndentCharacter(line[end - 1])) {
     --end;
@@ -91,12 +91,10 @@ const LanguagePair* FindSurroundOpener(const LanguageContractView& view, char ch
   return nullptr;
 }
 
-bool ShouldAutoCloseAtNext(const std::string& line, std::size_t column,
-                           const LanguageContractView& view) {
-  if (column >= line.size()) {
+bool ShouldAutoCloseAtNext(bool at_end, char next, const LanguageContractView& view) {
+  if (at_end) {
     return true;
   }
-  const char next = line[column];
   if (next == ' ' || next == '\t') {
     return true;
   }
@@ -182,19 +180,18 @@ bool TextViewport::TryAutoCloseInsert(char ch) {
   if (cursor_line_ >= document_->lines.size()) {
     return false;
   }
-  const std::string& current_line = document_->lines[cursor_line_];
-  const std::size_t clamped_column = TextLayout::ClampTextColumn(current_line, cursor_column_);
+  const CaretNeighborhood at = ReadCaretNeighborhood(cursor_line_, cursor_column_);
+  const std::size_t clamped_column = at.clamped_column;
   if (InInsertionSuppressedScope(cursor_line_, clamped_column)) {
     return false;
   }
-  if (!ShouldAutoCloseAtNext(current_line, clamped_column, language_contract_view())) {
+  if (!ShouldAutoCloseAtNext(at.at_end, at.next, language_contract_view())) {
     return false;
   }
   // Same-character pairs (quotes): avoid stacking when the previous char is
   // already the same quote (typing inside a comment/string we can't detect
   // semantically) -- simple heuristic.
-  if (pair->open == pair->close && clamped_column > 0 &&
-      current_line[clamped_column - 1] == ch) {
+  if (pair->open == pair->close && at.has_prev && at.prev == ch) {
     return false;
   }
 
@@ -287,18 +284,16 @@ bool TextViewport::TrySkipOverClose(char ch) {
   if (cursor_line_ >= document_->lines.size()) {
     return false;
   }
-  const std::string& current_line = document_->lines[cursor_line_];
-  const std::size_t clamped_column = TextLayout::ClampTextColumn(current_line, cursor_column_);
-  if (clamped_column >= current_line.size()) {
-    return false;
-  }
-  if (current_line[clamped_column] != ch) {
+  // This asks one question about one byte; reading the whole line to answer it
+  // cost megabytes per inserted character on a file with no line breaks in it.
+  const CaretNeighborhood at = ReadCaretNeighborhood(cursor_line_, cursor_column_);
+  if (at.at_end || at.next != ch) {
     return false;
   }
   if (FindAutoCloseCloser(language_contract_view(), ch) == nullptr) {
     return false;
   }
-  cursor_column_ = clamped_column + 1;
+  cursor_column_ = at.clamped_column + 1;
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
   EnsureCursorVisible();
@@ -318,23 +313,30 @@ bool TextViewport::MaybeDedentOnClose(char ch) {
   if (cursor_line_ >= document_->lines.size()) {
     return false;
   }
-  const std::string& current_line = document_->lines[cursor_line_];
-  if (!LineIsIndentOnly(current_line)) {
-    return false;
-  }
-  if (cursor_column_ != current_line.size()) {
+  // Order matters for cost, not just for clarity: the caret-at-end-of-line and
+  // long-enough-for-an-indent-unit tests read no text at all, and they exclude
+  // every line this can act on except an indent-only one. Asking them first means
+  // the line itself is only read when the caret sits at the end of a short line —
+  // never on the file shape where reading it is megabytes (TD-2026-08-05-133).
+  const std::size_t line_length = document_->lines.LineLength(cursor_line_);
+  if (cursor_column_ != line_length) {
     return false;
   }
   const std::string unit = IndentUnit();
-  if (current_line.size() < unit.size()) {
+  if (line_length < unit.size()) {
     return false;
   }
-  if (current_line.compare(current_line.size() - unit.size(), unit.size(), unit) != 0) {
+  std::string scratch;
+  if (document_->lines.LineWindow(cursor_line_, line_length - unit.size(), unit.size(), scratch) !=
+      unit) {
+    return false;
+  }
+  if (!LineIsIndentOnly(document_->lines.LineView(cursor_line_))) {
     return false;
   }
   const SelectionRange erase_range = SelectionRange{
-      TextPosition{cursor_line_, current_line.size() - unit.size()},
-      TextPosition{cursor_line_, current_line.size()},
+      TextPosition{cursor_line_, line_length - unit.size()},
+      TextPosition{cursor_line_, line_length},
   };
   return ApplyRangeEdit(erase_range, "", true);
 }
@@ -347,14 +349,14 @@ std::optional<TextViewport::NewlineBraceSplit> TextViewport::ComputeNewlineBrace
   if (line >= document_->lines.size()) {
     return std::nullopt;
   }
-  const std::string& current_line = document_->lines[line];
-  if (column == 0 || column >= current_line.size()) {
+  // Two bytes, read as two bytes: `column` is already a clamped code-point start
+  // at every call site, so the neighbourhood read below re-clamps to itself.
+  const CaretNeighborhood at = ReadCaretNeighborhood(line, column);
+  if (!at.has_prev || at.at_end) {
     return std::nullopt;
   }
-  const char prev = current_line[column - 1];
-  const char next = current_line[column];
-  const auto* opener = FindAutoCloseOpener(language_contract_view(), prev);
-  if (opener == nullptr || opener->close.size() != 1 || opener->close[0] != next) {
+  const auto* opener = FindAutoCloseOpener(language_contract_view(), at.prev);
+  if (opener == nullptr || opener->close.size() != 1 || opener->close[0] != at.next) {
     return std::nullopt;
   }
   const std::string base_indent = AutoIndentForNewline(line, column);
@@ -373,7 +375,7 @@ bool TextViewport::TryInsertNewlineSplitBraces() {
     return false;
   }
   const std::size_t column =
-      TextLayout::ClampTextColumn(document_->lines[cursor_line_], cursor_column_);
+      ReadCaretNeighborhood(cursor_line_, cursor_column_).clamped_column;
   const std::optional<NewlineBraceSplit> split = ComputeNewlineBraceSplit(cursor_line_, column);
   if (!split.has_value()) {
     return false;
@@ -388,7 +390,8 @@ bool TextViewport::TryInsertNewlineSplitBraces() {
   }
   cursor_line_ = opener_line + 1;
   if (cursor_line_ < document_->lines.size()) {
-    cursor_column_ = std::min(split->inner_indent.size(), document_->lines[cursor_line_].size());
+    cursor_column_ =
+        std::min(split->inner_indent.size(), document_->lines.LineLength(cursor_line_));
   } else {
     cursor_column_ = 0;
   }
@@ -403,15 +406,14 @@ bool TextViewport::InInsertionSuppressedScope(std::size_t line, std::size_t colu
       line >= document_->lines.size()) {
     return false;
   }
-  const std::string& text = document_->lines[line];
-  if (text.empty()) {
+  if (document_->lines.LineLength(line) == 0) {
     return false;
   }
   const auto& tokens = HighlightedLineTokens(line);
   if (tokens.empty()) {
     return false;
   }
-  const std::size_t clamped_column = TextLayout::ClampTextColumn(text, column);
+  const std::size_t clamped_column = ReadCaretNeighborhood(line, column).clamped_column;
   const std::size_t token_index = clamped_column == 0 ? 0 : std::min(clamped_column - 1, tokens.size() - 1);
   const SyntaxTokenKind kind = tokens[token_index];
   if (language_contract_view().inhibit_pairs_in_strings && kind == SyntaxTokenKind::String) {
@@ -524,9 +526,11 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   for (std::size_t slot_index = slots.size(); slot_index-- > 0;) {
     const Slot& slot = slots[slot_index];
     const std::size_t line = std::min(slot.reference.line, document_->lines.size() - 1);
-    const std::size_t column =
-        TextLayout::ClampTextColumn(document_->lines[line], slot.reference.column);
-    const std::string& current_line = document_->lines[line];
+    // Same bounded read as the single-caret pair paths: everything this loop asks
+    // about the caret's own line is the byte on either side of it, and reading
+    // the line to get them is unbounded on a document with no line breaks in it.
+    const CaretNeighborhood at = ReadCaretNeighborhood(line, slot.reference.column);
+    const std::size_t column = at.clamped_column;
 
     if (slot.selection.has_value()) {
       const SelectionRange norm = NormalizeRange(*slot.selection);
@@ -588,7 +592,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     }
 
     const auto* close_pair = language_contract_view().auto_close_enabled ? FindAutoCloseCloser(language_contract_view(), ch) : nullptr;
-    if (close_pair != nullptr && column < current_line.size() && current_line[column] == ch) {
+    if (close_pair != nullptr && !at.at_end && at.next == ch) {
       caret_changed = true;
       sites[slot_index] =
           detail::MultiCaretRemapSite{.landed = TextPosition{line, column + 1}};
@@ -598,8 +602,8 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     std::string replacement(1, ch);
     const auto* open_pair = language_contract_view().auto_close_enabled ? FindAutoCloseOpener(language_contract_view(), ch) : nullptr;
     if (open_pair != nullptr && !open_pair->close.empty() && !InInsertionSuppressedScope(line, column) &&
-        ShouldAutoCloseAtNext(current_line, column, language_contract_view())) {
-      if (!(open_pair->open == open_pair->close && column > 0 && current_line[column - 1] == ch)) {
+        ShouldAutoCloseAtNext(at.at_end, at.next, language_contract_view())) {
+      if (!(open_pair->open == open_pair->close && at.has_prev && at.prev == ch)) {
         replacement = open_pair->open + open_pair->close;
       }
     }

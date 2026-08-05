@@ -4,7 +4,9 @@
 #include <string>
 #include <vector>
 
+#include "editor/CaretNeighborhood.h"
 #include "editor/PieceTree.h"
+#include "editor/TextBuffer.h"
 #include "util/PerformanceCounters.h"
 
 namespace microide::tests {
@@ -469,6 +471,68 @@ void TestPieceTreeLineWindowDoesNotMaterializeTheLine() {
   util::ResetPerformanceCounters();
 }
 
+// TD-2026-08-05-133: the caret-local pair heuristics answer from five bytes now
+// instead of the whole line. The oracle has to be the OLD derivation -- clamp
+// against the whole line, index it -- computed here in the test. A same-content
+// contiguous-vs-spanning differential would be blind: both sides run the new
+// windowed code, so a window that is one byte short is wrong identically on both.
+void TestCaretNeighborhoodMatchesWholeLineReading() {
+  // Multi-byte code points on both sides of every interesting column, a tab, and
+  // an ASCII run long enough that the window's start clamp is exercised.
+  const std::vector<std::string> lines = {
+      "caf\xc3\xa9()na\xc3\xafve[]\xe2\x82\xac{}xyzzy\tend",
+      "",
+      "a",
+      "\xf0\x9f\x98\x80!",     // a four-byte code point at column 0
+      // ...and one mid-line, which is what forces the window
+      "ab\xf0\x9f\x98\x80" "cd",  // NOLINT(bugprone-suspicious-missing-comma)
+      // to reach FOUR bytes back rather than three: the caret on its last
+      // continuation byte clamps three columns down, and `prev` sits one before
+      // that.
+  };
+  std::string content;
+  for (const std::string& line : lines) {
+    content += line;
+    content += '\n';
+  }
+  microide::editor::TextBuffer buffer;
+  buffer.ResetFromText(content);
+  // Fragment every line so the window can straddle a piece boundary at the
+  // offsets the loop below asks about.
+  for (std::size_t line = 0; line < buffer.size(); ++line) {
+    const std::size_t length = buffer.LineLength(line);
+    if (length >= 2) {
+      buffer.ReplaceTextRange(line, length / 2, line, length / 2, "");
+      buffer.ReplaceTextRange(line, 1, line, 1, "");
+    }
+  }
+
+  for (std::size_t line = 0; line < buffer.size(); ++line) {
+    const std::string whole(buffer.LineView(line));
+    for (std::size_t column = 0; column <= whole.size() + 2; ++column) {
+      const microide::editor::CaretNeighborhood at =
+          microide::editor::ReadCaretNeighborhood(buffer, line, column);
+      const std::size_t expected_clamped =
+          microide::editor::TextLayout::ClampTextColumn(whole, column);
+      const std::string where =
+          " (line " + std::to_string(line) + ", column " + std::to_string(column) + ")";
+      Expect(at.line_length == whole.size(), "line_length must match the whole line" + where);
+      Expect(at.clamped_column == expected_clamped,
+             "clamped_column must match ClampTextColumn over the whole line" + where);
+      Expect(at.at_end == (expected_clamped >= whole.size()),
+             "at_end must match the whole-line end test" + where);
+      if (!at.at_end) {
+        Expect(at.next == whole[expected_clamped], "next must be the byte at the clamp" + where);
+      }
+      Expect(at.has_prev == (expected_clamped > 0), "has_prev must match the clamp" + where);
+      if (at.has_prev) {
+        Expect(at.prev == whole[expected_clamped - 1],
+               "prev must be the byte before the clamp" + where);
+      }
+    }
+  }
+}
+
 // TD-2026-07-16-35: a mutation that would push the live document past the byte ceiling
 // must be refused as a no-op (leaving content + line count intact) rather than wrap the
 // uint32 subtree_length and corrupt the tree. Exercised via a lowered test ceiling.
@@ -818,6 +882,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
           TestPieceTreeAppendWholeTextMatchesLineJoin);
   AddTest(tests, "PieceTree/SpanningLineViewStableAcrossReReads",
           TestPieceTreeSpanningLineViewStableAcrossReReads);
+  AddTest(tests, "PieceTree/CaretNeighborhoodMatchesWholeLineReading",
+          TestCaretNeighborhoodMatchesWholeLineReading);
   AddTest(tests, "PieceTree/LineWindowMatchesSubstring", TestPieceTreeLineWindowMatchesSubstring);
   AddTest(tests, "PieceTree/LineWindowDoesNotMaterializeTheLine",
           TestPieceTreeLineWindowDoesNotMaterializeTheLine);
