@@ -769,13 +769,29 @@ Still open from this sweep:
   `match_a.txt` and `match_b.txt` inside the measured window, guaranteeing watcher
   activity there, and a watcher-triggered rescan lands extra counted reads.
 
-  Deliberately NOT blind-fixed. A change that cannot be shown to fix anything is
-  worth less than an accurate report — and this sweep already produced two
-  "fixes" that were verified only against fixtures and turned out to detect
-  nothing. To close it properly: reproduce first (a watcher-drain test seam does
-  not exist yet, so one would have to be added), then either quiesce the watcher
-  for the measured window or replace the global-counter subtraction with a
-  per-search read count that cannot be perturbed by another subsystem.
+  **[RESOLVED 2026-08-05 — the second option, a counter nothing else can
+  perturb.]** Quiescing the watcher for the measured window would have made the
+  test depend on a new drain seam and would still leave the measurement standing
+  on a counter any subsystem may bump. Instead the replace path got its own
+  instrumentation: `search.project_replace_candidate_files` and
+  `search.project_replace_files_read`, incremented only inside `RunProjectReplace`
+  (a pure function over its own arguments, reached only by an explicit user
+  replace-all — the watcher cannot trigger one). The test is now a plain
+  before/after delta of those two, with no control search, no
+  `WaitForProjectSearchWorkersIdle` barriers, and nothing global in the window.
+
+  Two things worth keeping from the rewrite. The candidate count is the better
+  assertion of the two: reads==2 is also what a whole-catalog fallback over a
+  2-file project would report, whereas candidates==2 pins that the fast path ran.
+  And the wait had the "!running is also true before the work starts" trap — a
+  replace-all runs on the background executor and its trailing refresh is only
+  fired by the apply, so the test now waits on **both files carrying their
+  replacement on disk**, which every counted read provably precedes.
+
+  `util::TextSearchReadCount()` / `ResetTextSearchReadCount()` were the seam's
+  only consumers, so both are deleted along with the relaxed atomic increment
+  they cost every project-search file read. Probed non-vacuous by forcing
+  `results_cover_all_matches` false: the candidate assertion fails.
 
 - **TD-2026-07-26-003 — `CommitOperationResultCategory::RefreshFailedAfterSuccess`
   is handled but never produced. OPEN (needs the async correlation, not a

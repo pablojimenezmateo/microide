@@ -82,6 +82,17 @@ namespace microide::util {
   /* and one that scanned all of it read identically. Nonzero here is also exactly the */       \
   /* condition that makes a result set truncated (ProjectSearchService::RunSearch). */          \
   X(SearchProjectCapUnscannedFiles, "search.project_cap_unscanned_files")                       \
+  /* Replace-all's candidate set and how much of it it actually opened. These are  */           \
+  /* the only counters the replace path touches, and nothing else touches them --  */           \
+  /* which is the point: the shared ReadFileForTextSearch counter is also bumped   */           \
+  /* by watcher-triggered rescans, so measuring replace-all through it meant       */           \
+  /* subtracting two windows a background subsystem could perturb (TD-2026-07-26-  */           \
+  /* 005). candidates == the matched-file subset on the fast path and the whole    */           \
+  /* indexed catalog on the fallback, so candidates >> files_read never happens    */           \
+  /* and candidates ~= project size is exactly the regression that path exists to  */           \
+  /* prevent. */                                                                                \
+  X(SearchProjectReplaceCandidateFiles, "search.project_replace_candidate_files")               \
+  X(SearchProjectReplaceFilesRead, "search.project_replace_files_read")                         \
   X(FileFinderCacheBuildCalls, "search.file_finder_cache_build_calls")                          \
   X(FileFinderCacheEntriesBuilt, "search.file_finder_cache_entries_built")                      \
   X(ProjectFileScannerCollectProjectFilesCalls, "project.collect_project_files_calls")          \

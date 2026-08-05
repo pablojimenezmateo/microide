@@ -117,11 +117,4 @@ FileSignature StatFileSignature(const std::filesystem::path& path);
 bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
                            std::uintmax_t max_bytes = kMaxSearchFileBytes);
 
-// Test seam: total ReadFileForTextSearch invocations since the last reset, counted
-// at function entry before any early-out. Lets replace-all prove it touches only
-// the matched-file subset rather than re-reading the whole project. Thread-safe
-// because project-search workers call the reader from several threads at once.
-std::size_t TextSearchReadCount();
-void ResetTextSearchReadCount();
-
 }  // namespace microide::util

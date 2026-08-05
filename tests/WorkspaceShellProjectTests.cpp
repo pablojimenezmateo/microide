@@ -4456,42 +4456,46 @@ void TestWorkspaceShellReplaceAllReadsOnlyMatchedFiles() {
   Expect(WorkspaceShellTestAccess::ProjectSearchResults(shell).size() == 2,
          "the search should find exactly the two matching files");
 
-  // Replace-all reads its candidate files synchronously, then fires a trailing
-  // "needle" refresh that reads every candidate on worker threads. To isolate the
-  // synchronous replace reads deterministically, drain that refresh, then measure a
-  // control search over the same tree: a search reads every candidate regardless of
-  // the query (the query only decides whether a read file MATCHES, not whether it is
-  // read), so the control equals the trailing refresh's whole-project read count and
-  // (replace-pass total - control) is the synchronous replace read count alone. The
-  // control uses a distinct no-match query so it bypasses the same-query result cache
-  // and actually re-runs.
-  // The read counter is a process-global atomic incremented by search worker
-  // tasks. `running == false` is published when the worker signals `finished`,
-  // but the task may not have fully JOINED yet — under load a trailing counted
-  // read can land after ResetTextSearchReadCount() and corrupt the measurement.
-  // Drain the worker to fully idle (a hard join barrier that also flushes the
-  // relaxed counter writes) before every reset and every read so both windows
-  // count exactly one whole-project scan.
-  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
-  util::ResetTextSearchReadCount();
+  // TD-2026-07-26-005: this used to subtract two readings of the process-global
+  // util::TextSearchReadCount() across windows that also contain a trailing
+  // "needle" refresh, live search workers AND the filesystem watcher — which the
+  // worker-idle barriers do not drain. Replace-all writes match_a/match_b inside
+  // the measured window, so watcher activity there is guaranteed, and one
+  // watcher-triggered rescan lands extra counted reads and fails the ==2.
+  //
+  // The replace path now carries its own counters that nothing else bumps, so
+  // the measurement is a plain delta with no control search and nothing a
+  // background subsystem can perturb.
+  const std::uint64_t candidates_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectReplaceCandidateFiles);
+  const std::uint64_t reads_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectReplaceFilesRead);
   WorkspaceShellTestAccess::ReplaceAllProjectSearchMatches(shell);
+  // Wait on the on-disk result, not on `!running`: the replace runs on the
+  // background executor and its trailing refresh is only fired by the apply, so
+  // "the search is not running" is also true in the window before either starts.
+  // Every counted read happens before the first write, so both files carrying
+  // their replacement is a hard barrier for the numbers read below.
+  const bool replaced = WaitUntil(
+      [&root]() {
+        return ReadFile(root / "match_a.txt").find("needle") == std::string::npos &&
+               ReadFile(root / "match_b.txt").find("needle") == std::string::npos;
+      },
+      std::chrono::seconds(2), std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeProjectSearchUpdates(shell); });
+  Expect(replaced, "replace-all should rewrite both matched files");
   Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
          "replace-all should settle its trailing refresh");
-  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
-  const std::size_t replace_pass_reads = util::TextSearchReadCount();
+  const std::uint64_t candidates =
+      util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectReplaceCandidateFiles) -
+      candidates_before;
+  const std::uint64_t reads =
+      util::ReadPerformanceCounter(util::PerfCounterId::SearchProjectReplaceFilesRead) -
+      reads_before;
 
-  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
-  util::ResetTextSearchReadCount();
-  WorkspaceShellTestAccess::ShowSearchSidebar(shell, "zqxjq_no_match", false);
-  Expect(WaitForProjectSearchCompletion(shell, std::chrono::milliseconds(2000)),
-         "control refresh should settle");
-  WorkspaceShellTestAccess::WaitForProjectSearchWorkersIdle(shell);
-  const std::size_t control_refresh_reads = util::TextSearchReadCount();
-
-  Expect(replace_pass_reads >= control_refresh_reads,
-         "the replace pass includes at least the trailing refresh's whole-project reads");
-  Expect(replace_pass_reads - control_refresh_reads == 2,
-         "replace-all must read only the two matched files, not the whole project");
+  Expect(candidates == 2,
+         "replace-all must take the cached-results fast path, not the whole-catalog fallback");
+  Expect(reads == 2, "replace-all must read only the two matched files, not the whole project");
 
   Expect(ReadFile(root / "match_a.txt").find("needle") == std::string::npos,
          "the first matched file should have its needle replaced");

@@ -44,11 +44,21 @@ ProjectReplaceOutcome RunProjectReplace(const std::filesystem::path& root,
   std::vector<Buffered> pending;
   std::size_t aggregate_bytes = 0;
 
+  // Instrumentation for the candidate-set reduction this function exists to
+  // exploit: `files` is the matched subset on the fast path and the whole indexed
+  // catalog on the fallback, so these two counters say which path ran and how much
+  // of the project it opened. They are private to this path — nothing else bumps
+  // them — which is what makes them a usable oracle where the shared
+  // ReadFileForTextSearch counter is not (TD-2026-07-26-005).
+  util::AddPerformanceCounter(util::PerfCounterId::SearchProjectReplaceCandidateFiles,
+                              files.size());
+
   for (const auto& relative_path : files) {
     const std::filesystem::path absolute_path = (root / relative_path).lexically_normal();
     std::string content;
     // Same read cap as the finder/search: a file too large to search shows no
     // matches, so replace-all must not silently rewrite it either.
+    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectReplaceFilesRead);
     if (!util::ReadFileForTextSearch(absolute_path, content)) {
       continue;
     }
