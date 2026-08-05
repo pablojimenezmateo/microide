@@ -388,6 +388,11 @@ std::uint32_t PieceTree::LineStartByteMemoized(std::size_t line) const {
 
 void PieceTree::CopyRange(std::uint32_t pos, std::uint32_t length, std::string& out) const {
   if (length == 0) return;
+  // The exact final size is known here, and the walk below appends one piece at a
+  // time. Without this a materialization of a 2 MiB line grew its buffer through
+  // 1 -> 2 -> 4 MiB, i.e. three allocations and two full copies of what had
+  // already been copied, for a result whose size was never in doubt.
+  out.reserve(out.size() + length);
   const std::uint32_t end = pos + length;
   // Pruned in-order walk: each frame carries the global base offset of its
   // subtree; subtrees that cannot overlap [pos, end) are skipped.
@@ -492,6 +497,36 @@ std::string_view PieceTree::LineView(std::size_t index) const {
   std::string& cached = line_view_cache_[index];
   CopyRange(start, length, cached);
   return cached;
+}
+
+std::string_view PieceTree::LineWindow(std::size_t index, std::size_t byte_start,
+                                       std::size_t byte_len, std::string& scratch) const {
+  const std::uint32_t line_start = LineStartByteMemoized(index);
+  const std::uint32_t line_end =
+      (index + 1 < line_count_) ? LineStartByteMemoized(index + 1) - 1 : ByteSize();
+  const std::uint32_t line_length = line_end - line_start;
+  if (byte_start >= line_length) return {};
+  const std::uint32_t start = line_start + static_cast<std::uint32_t>(byte_start);
+  const std::uint32_t length =
+      static_cast<std::uint32_t>(std::min<std::size_t>(byte_len, line_length - byte_start));
+  if (length == 0) return {};
+
+  // Same walk-node shortcut LineView uses: the line-start lookups above leave the
+  // cursor on the piece the resolved newline lives in, so a window inside that
+  // piece needs no tree descent at all.
+  if (walk_valid_) {
+    const Node& node = nodes_[walk_node_];
+    if (start >= walk_base_ && start + length <= walk_base_ + node.length) {
+      return std::string_view(BufferOf(node.buffer).data() + node.start + (start - walk_base_),
+                              length);
+    }
+  }
+  bool ok = false;
+  const std::string_view view = TryViewRange(start, length, ok);
+  if (ok) return view;
+  scratch.clear();
+  CopyRange(start, length, scratch);
+  return scratch;
 }
 
 std::size_t PieceTree::LineLength(std::size_t index) const {
