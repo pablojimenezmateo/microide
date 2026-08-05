@@ -175,6 +175,20 @@ struct LspClient::Impl {
   std::function<bool(WorkspaceEdit)> apply_edit_handler;
 
   std::unordered_map<std::string, int> document_versions;
+  // Highest version each URI reached before it was last closed. A reopen resumes
+  // from here + 1 instead of restarting at 1, which is what makes the staleness
+  // gate survive a close -> reopen: a publishDiagnostics still in flight from the
+  // previous open carries a version from the OLD numbering, and against a
+  // restarted-at-1 document `old_version < 1` is false, so it was accepted and
+  // painted on the freshly reopened buffer until the next republish. Nothing in
+  // the protocol requires didOpen to start at 1 — `TextDocumentItem.version` is
+  // just "the version number of this document" — so keeping it monotonic per URI
+  // costs nothing on the wire and removes the whole window.
+  //
+  // Entries are only added on close, so this holds at most one int per file the
+  // session has opened and closed; a document that is still open lives in
+  // document_versions.
+  std::unordered_map<std::string, int> retired_document_versions;
   std::deque<QueuedMessage> deferred_messages;
   std::deque<QueuedMessage> outbound_messages;
   // Aggregate approximate bytes across deferred_messages + outbound_messages, guarded
@@ -306,6 +320,8 @@ struct LspClient::Impl {
     pending_requests.clear();
     main_mailbox.Clear();
     document_versions.clear();
+    // A restarted server has no memory of the old numbering, so neither should we.
+    retired_document_versions.clear();
     shutdown_response_received = false;
     shutdown_request_id = 0;
     readiness_snapshot = LspClient::ReadinessSnapshot{};

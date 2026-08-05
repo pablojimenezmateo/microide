@@ -1,5 +1,7 @@
 #include "workspace/lsp/WorkspaceLspClient.h"
 
+#include <algorithm>
+
 #include "workspace/FileUri.h"
 #include "workspace/lsp/WorkspaceLspClientInternal.h"
 
@@ -160,21 +162,33 @@ void LspClient::DrainCallbacks() {
 
 bool LspClient::DidOpen(std::string uri, std::string language_id, std::string text) {
   TraceLspLifecycle(language_id, impl_->proc.pid(), "didOpen", uri);
-  // Commit the open state (version 1) only after a successful enqueue, matching
-  // DidChange. Committing before the enqueue (the old operator[] = 1) would make
-  // the host believe the document is open even when the queue was full / the I/O
-  // thread stopped / shutdown rejected the frame, so later version-gated
-  // diagnostics would be checked against a document the server never opened.
-  // `uri` is captured by value so it stays valid for the post-enqueue commit.
+  // Resume above whatever this URI reached before it was last closed, rather than
+  // restarting at 1. See `retired_document_versions`: a late publishDiagnostics
+  // from the previous open otherwise slips through the staleness gate and paints
+  // on the reopened buffer.
+  int open_version = 1;
+  {
+    std::lock_guard lock(impl_->mutex);
+    const auto it = impl_->retired_document_versions.find(uri);
+    if (it != impl_->retired_document_versions.end()) {
+      open_version = it->second + 1;
+    }
+  }
+  // Commit the open state only after a successful enqueue, matching DidChange.
+  // Committing before the enqueue (the old operator[] = 1) would make the host
+  // believe the document is open even when the queue was full / the I/O thread
+  // stopped / shutdown rejected the frame, so later version-gated diagnostics
+  // would be checked against a document the server never opened. `uri` is
+  // captured by value so it stays valid for the post-enqueue commit.
   const std::size_t approx_bytes = text.size();
   const bool queued = impl_->SendMessageBuilderAfterInitialize(
-      [impl = impl_, uri, language_id = std::move(language_id),
-       text = std::move(text)]() mutable {
+      [impl = impl_, uri, language_id = std::move(language_id), text = std::move(text),
+       open_version]() mutable {
         using namespace util;
         JsonObject text_doc;
         text_doc["uri"] = JsonValue(uri);
         text_doc["languageId"] = JsonValue(language_id);
-        text_doc["version"] = JsonValue(static_cast<std::int64_t>(1));
+        text_doc["version"] = JsonValue(static_cast<std::int64_t>(open_version));
         text_doc["text"] = JsonValue(text);
         JsonObject params;
         params["textDocument"] = JsonValue(std::move(text_doc));
@@ -184,7 +198,12 @@ bool LspClient::DidOpen(std::string uri, std::string language_id, std::string te
       approx_bytes);
   if (queued) {
     std::lock_guard lock(impl_->mutex);
-    impl_->document_versions[uri] = 1;
+    impl_->document_versions[uri] = open_version;
+    // The URI is open again, so the retired high-water mark has been consumed.
+    // Leaving it would make a later reopen jump past a version the server has
+    // already seen, which is harmless but makes the numbering unreadable in a
+    // protocol trace.
+    impl_->retired_document_versions.erase(uri);
   }
   return queued;
 }
@@ -352,7 +371,14 @@ bool LspClient::DidClose(const std::string& uri) {
     // didChange would be dropped by the missing-version guard and a re-open
     // could violate LSP ordering against a version the server never released.
     std::lock_guard lock(impl_->mutex);
-    impl_->document_versions.erase(uri);
+    const auto it = impl_->document_versions.find(uri);
+    if (it != impl_->document_versions.end()) {
+      // Retire the version rather than forgetting it, so a reopen resumes above
+      // it and diagnostics still in flight for the closed document stay stale.
+      int& retired = impl_->retired_document_versions[uri];
+      retired = std::max(retired, it->second);
+      impl_->document_versions.erase(it);
+    }
   }
   return queued;
 }

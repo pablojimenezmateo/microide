@@ -1459,6 +1459,131 @@ while True:
 #endif
 }
 
+// TD-2026-07-10: the staleness gate above did not survive a close -> reopen.
+// didClose erased the URI's tracked version and didOpen reset it to 1, so a
+// publishDiagnostics still in flight from the previous open (version 3) compared
+// `3 < 1` — false — and painted on the freshly reopened buffer until the next
+// republish. Versions are monotonic per URI across a reopen now, so the old push
+// is still stale.
+void TestWorkspaceLspClientDropsDiagnosticsFromAPreviousOpen() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#else
+  TemporaryDirectory temp_dir;
+  const auto server_path = temp_dir.path() / "server.py";
+  WriteFile(
+      server_path,
+      std::string(R"py(import json
+import sys
+
+def read_message():
+    content_length = None
+    while True:
+        line = sys.stdin.buffer.readline()
+        if not line:
+            return None
+        if line in (b"\r\n", b"\n"):
+            break
+        if line.lower().startswith(b"content-length:"):
+            content_length = int(line.split(b":", 1)[1].strip())
+    if content_length is None:
+        return None
+    body = sys.stdin.buffer.read(content_length)
+    if not body:
+        return None
+    return json.loads(body.decode("utf-8"))
+
+def write_message(message):
+    data = json.dumps(message).encode("utf-8")
+    sys.stdout.buffer.write(f"Content-Length: {len(data)}\r\n\r\n".encode("ascii"))
+    sys.stdout.buffer.write(data)
+    sys.stdout.buffer.flush()
+
+def diag(version, message):
+    write_message({
+        "jsonrpc": "2.0",
+        "method": "textDocument/publishDiagnostics",
+        "params": {
+            "uri": "file:///tmp/reopen.py",
+            "version": version,
+            "diagnostics": [{
+                "range": {"start": {"line": 0, "character": 0},
+                          "end": {"line": 0, "character": 1}},
+                "message": message,
+                "severity": 1,
+            }],
+        },
+    })
+
+opens = 0
+while True:
+    msg = read_message()
+    if msg is None:
+        break
+    method = msg.get("method")
+    if method == "initialize":
+        write_message({
+            "jsonrpc": "2.0",
+            "id": msg["id"],
+            "result": {"capabilities": {"textDocumentSync": 1}},
+        })
+    elif method == "textDocument/didOpen":
+        opens += 1
+        if opens == 2:
+            # A slow analysis of the FIRST open landing after the reopen. Version 3
+            # was the document's last version before it closed.
+            diag(3, "stale-from-previous-open")
+            # Then the reopened document's own diagnostics, at whatever version the
+            # client actually opened it with.
+            diag(msg["params"]["textDocument"]["version"], "fresh-after-reopen")
+    elif method == "shutdown":
+        write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
+    elif method == "exit":
+        break
+)py"));
+
+  LspClient client;
+  std::vector<std::string> received;
+  client.SetDiagnosticsCallback(
+      [&](std::string /*uri*/, std::vector<LspClient::Diagnostic> diags) {
+        if (!diags.empty()) {
+          received.push_back(diags.front().message);
+        }
+      });
+  Expect(client.Start({"python3", server_path.string()}, "file:///tmp", "python"),
+         "reopen-diagnostics fixture should start");
+  Expect(WaitForLspReadinessState(client, LspClient::ReadinessSnapshot::State::Ready, 2000) ||
+             client.IsInitialized(),
+         "reopen-diagnostics fixture should initialize");
+
+  const std::string uri = "file:///tmp/reopen.py";
+  Expect(client.DidOpen(uri, "python", "first"), "didOpen should enqueue (version 1)");
+  Expect(client.DidChange(uri, "second"), "didChange should enqueue (version 2)");
+  Expect(client.DidChange(uri, "third"), "didChange should enqueue (version 3)");
+  Expect(client.TrackedDocumentVersion(uri) == 3, "the document should be tracked at version 3");
+  Expect(client.DidClose(uri), "didClose should enqueue");
+  Expect(!client.TrackedDocumentVersion(uri).has_value(),
+         "a closed document is no longer tracked as open");
+
+  Expect(client.DidOpen(uri, "python", "reopened"), "the reopen should enqueue");
+  Expect(client.TrackedDocumentVersion(uri) == 4,
+         "a reopen must resume above the version the document retired at, not restart at 1");
+
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+  while (std::chrono::steady_clock::now() < deadline &&
+         std::find(received.begin(), received.end(), "fresh-after-reopen") == received.end()) {
+    client.DrainCallbacks();
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  client.DrainCallbacks();
+  Expect(std::find(received.begin(), received.end(), "fresh-after-reopen") != received.end(),
+         "the reopened document's own diagnostics must be delivered");
+  Expect(std::find(received.begin(), received.end(), "stale-from-previous-open") == received.end(),
+         "diagnostics computed for the previous open must not paint on the reopened buffer");
+  client.Shutdown();
+#endif
+}
+
 // ---------------------------------------------------------------------------
 // JsonRpcMessageFramer — direct, subprocess-free unit coverage of the wire codec.
 // The parser is a hot path and a hostile-input surface; these exercise its
@@ -2263,6 +2388,8 @@ void RegisterWorkspaceLspClientTests(std::vector<TestCase>& tests) {
           TestWorkspaceLspClientDropsStaleDiagnosticsVersion);
   AddTest(tests, "WorkspaceLspClient/DropsStaleDiagnosticsFloatVersion",
           TestWorkspaceLspClientDropsStaleDiagnosticsFloatVersion);
+  AddTest(tests, "WorkspaceLspClient/DropsDiagnosticsFromAPreviousOpen",
+          TestWorkspaceLspClientDropsDiagnosticsFromAPreviousOpen);
   AddTest(tests, "WorkspaceLspClient/FramerSplitFrameAcrossChunks",
           TestJsonRpcMessageFramerSplitFrameAcrossChunks);
   AddTest(tests, "WorkspaceLspClient/FramerMultipleFramesInOneChunk",

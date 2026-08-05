@@ -471,12 +471,21 @@ is what this ledger is for. Not fixed in that pass — low value or hard to reac
   alternate screen with origin mode homes to screen-top rather than region-top.
 - `MergeConflictKind` may label a both-modified conflict `LineEndingHeavy` when
   only one side is line-ending-only; cosmetic (summary text), behavior unchanged.
-- LSP diagnostics version gate after close→reopen (`WorkspaceLspClientDispatch`):
-  `DidClose` erases the URI's tracked version and `DidOpen` resets it to 1, so a
-  late `publishDiagnostics` from the previous open (version > 1) is not dropped and
-  can paint briefly on the reopened buffer until the next republish. Narrow race,
-  self-healing; low severity. Fix would require an open-generation token or a
-  version that never resets across reopen.
+- **[RESOLVED 2026-08-05]** LSP diagnostics version gate after close→reopen
+  (`WorkspaceLspClientDispatch`): `DidClose` erased the URI's tracked version and
+  `DidOpen` reset it to 1, so a late `publishDiagnostics` from the previous open
+  (version > 1) compared `old < 1` — false — and painted briefly on the reopened
+  buffer until the next republish. Closed with the second of the two options the
+  entry listed, "a version that never resets across reopen", which needs no
+  generation token: `DidClose` retires the URI's version into
+  `retired_document_versions` instead of forgetting it, and `DidOpen` resumes at
+  retired + 1. Nothing in LSP requires `TextDocumentItem.version` to start at 1, so
+  this costs nothing on the wire; a server restart clears the map along with the
+  rest of the protocol state, because the new server has no memory of the old
+  numbering either. Covered by
+  `WorkspaceLspClient/DropsDiagnosticsFromAPreviousOpen` (real python fake server:
+  open → v3 → close → reopen, with the server pushing a v3 diagnostic after the
+  reopen), probed non-vacuous by forcing the reopen back to 1.
 - **WON'T DO** — Windows `FileIndexWatcher` (`ReadDirectoryChangesW`) backend gaps:
   a tracked directory rename leaves ghost index entries + an unindexed subtree (no
   recursive delete / no subtree walk), and a change-buffer overflow
