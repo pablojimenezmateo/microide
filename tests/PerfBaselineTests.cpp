@@ -312,6 +312,9 @@ void TestPerfBaselineCpuAndRssRoundTrip() {
   baseline.metrics.p50_rss_growth_bytes = 131072.0;
   baseline.metrics.p95_rss_growth_bytes = 262144.0;
   baseline.metrics.max_rss_growth_bytes = 524288.0;
+  // Load-bearing on SAVE as well as load: a scenario with gate_cpu_metrics=false
+  // must not write cpu metrics at all (see the sibling test below).
+  baseline.has_cpu_metrics = true;
   Expect(perf::SaveBaseline(path, baseline), "saving a baseline with cpu/rss should succeed");
 
   const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
@@ -321,6 +324,54 @@ void TestPerfBaselineCpuAndRssRoundTrip() {
   Expect(loaded->metrics.p50_cpu_ms == 12.5, "cpu p50 should survive the round trip");
   Expect(loaded->metrics.max_rss_growth_bytes == 524288.0,
          "rss max should survive the round trip");
+}
+
+// A scenario that opts out of CPU gating (Scenario::gate_cpu_metrics = false,
+// used by idle_soak_30s -- see TD-2026-08-05-137) must have the cpu metrics
+// OMITTED from its baseline, not written as zeros. LoadBaseline infers
+// has_cpu_metrics from whether p50_cpu_ms is a number, so a zero would come back
+// gated and hold every future run against a 0 ms budget -- the opt-out would
+// invert into the tightest gate in the suite.
+void TestPerfBaselineUngatedCpuIsOmittedNotZeroed() {
+  TemporaryDirectory temp;
+  const std::filesystem::path path = temp.path() / "cpu_ungated.json";
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.metrics.p50_cpu_ms = 12.5;
+  baseline.metrics.p95_cpu_ms = 18.5;
+  baseline.metrics.max_cpu_ms = 24.5;
+  baseline.metrics.p50_rss_growth_bytes = 131072.0;
+  baseline.has_cpu_metrics = false;
+  Expect(perf::SaveBaseline(path, baseline), "saving an ungated-cpu baseline should succeed");
+
+  const std::string text = ReadFile(path);
+  Expect(text.find("p50_cpu_ms") == std::string::npos,
+         "an ungated baseline must not write cpu metrics at all");
+  Expect(text.find("p50_rss_growth_bytes") != std::string::npos,
+         "opting out of cpu gating must not disturb rss gating");
+
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value(), "an ungated-cpu baseline should load");
+  Expect(!loaded->has_cpu_metrics, "it must come back ungated on cpu, not gated against zero");
+  Expect(loaded->has_rss_metrics, "and still gated on rss");
+
+  // The comparison must then report no cpu metric at all, rather than a 0 ms
+  // expectation that anything above zero fails.
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = loaded->scenario_name;
+  aggregate.metrics.p50_wall_ms = loaded->metrics.p50_wall_ms;
+  aggregate.metrics.p95_wall_ms = loaded->metrics.p95_wall_ms;
+  aggregate.metrics.max_wall_ms = loaded->metrics.max_wall_ms;
+  aggregate.metrics.p50_allocations = loaded->metrics.p50_allocations;
+  aggregate.metrics.p95_allocations = loaded->metrics.p95_allocations;
+  aggregate.metrics.max_allocations = loaded->metrics.max_allocations;
+  aggregate.metrics.p50_rss_growth_bytes = loaded->metrics.p50_rss_growth_bytes;
+  aggregate.metrics.p50_cpu_ms = 999.0;
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(*loaded, aggregate);
+  Expect(comparison.passed, "a wildly higher cpu_ms must not fail an ungated scenario");
+  for (const auto& metric : comparison.metrics) {
+    Expect(metric.metric.find("cpu") == std::string::npos,
+           "an ungated comparison must not report a cpu metric");
+  }
 }
 
 }  // namespace
@@ -342,6 +393,8 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PerfBaseline/RssNoiseFloorAbsorbsSubPageJitter",
           TestPerfBaselineRssNoiseFloorAbsorbsSubPageJitter);
   AddTest(tests, "PerfBaseline/CpuAndRssRoundTrip", TestPerfBaselineCpuAndRssRoundTrip);
+  AddTest(tests, "PerfBaseline/UngatedCpuIsOmittedNotZeroed",
+          TestPerfBaselineUngatedCpuIsOmittedNotZeroed);
 }
 
 }  // namespace microide::tests
