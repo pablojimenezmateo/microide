@@ -222,6 +222,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/HighlightPrefetchService.cpp
   src/editor/IndentDetect.cpp
   src/editor/IndentGuides.cpp
+  src/editor/LineIndentScan.cpp
   src/editor/RowDecorationBuilder.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/ColumnSelection.cpp
@@ -1417,6 +1418,7 @@ add_executable(microide_diff_bench
   src/editor/ExecutionLineRender.cpp
   src/editor/FoldingModel.cpp
   src/editor/IndentGuides.cpp
+  src/editor/LineIndentScan.cpp
   src/editor/RowDecorationBuilder.cpp
   src/editor/WelcomeView.cpp
   src/editor/RuntimeSyntaxRegistry.cpp

@@ -49,4 +49,9 @@ void ComputeIndentGuides(LineSpan lines,
 // `tab_size` cells. Stops at the first non-whitespace character.
 std::size_t LeadingVisualIndent(std::string_view line, std::size_t tab_size);
 
+// Same, for a line held by a LineSpan. Prefer this: it reads only the leading
+// whitespace, where the view form makes the caller produce the whole line -- which
+// on a piece-tree source copies any line that spans pieces (TD-2026-08-05-133).
+std::size_t LeadingVisualIndent(LineSpan lines, std::size_t line_index, std::size_t tab_size);
+
 }  // namespace microide::editor

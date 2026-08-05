@@ -1,5 +1,7 @@
 #include "editor/IndentGuides.h"
 
+#include "editor/LineIndentScan.h"
+
 #include "editor/FoldingModel.h"
 #include "editor/TextLayout.h"
 #include "util/StringUtil.h"
@@ -27,21 +29,13 @@ std::size_t ActiveGuideColumnFromLeading(std::size_t caret_leading_visual_indent
 }  // namespace
 
 std::size_t LeadingVisualIndent(std::string_view line, std::size_t tab_size) {
-  // Leading spaces advance one column each, so count the run a word at a time and
-  // only step character-by-character once a tab appears (a tab advances to the
-  // next stop). This runs for every visible row on every guide recompute.
-  const std::size_t spaces = util::LeadingByteRun(line, ' ');
-  std::size_t visual = spaces;
-  for (std::size_t i = spaces; i < line.size(); ++i) {
-    const char c = line[i];
-    if (c != ' ' && c != '\t') {
-      break;
-    }
-    // Leading indent is space+tab only, both of which advance exactly as the one
-    // authoritative tab-stop/width step does.
-    visual = TextLayout::AdvanceVisualColumn(visual, c, tab_size);
-  }
+  std::size_t visual = 0;
+  (void)AdvanceLeadingIndentOverChunk(line, tab_size, visual);
   return visual;
+}
+
+std::size_t LeadingVisualIndent(LineSpan lines, std::size_t line_index, std::size_t tab_size) {
+  return MeasureLeadingIndent(lines, line_index, tab_size);
 }
 
 void ComputeIndentGuides(LineSpan lines,
@@ -64,7 +58,7 @@ void ComputeIndentGuides(LineSpan lines,
       if (const auto fold = folding_model->InnermostFoldContaining(caret_line)) {
         if (caret_line > fold->opener_line && fold->opener_line < lines.size()) {
           const std::size_t opener_lead =
-              LeadingVisualIndent(lines[fold->opener_line], tab_size);
+              LeadingVisualIndent(lines, fold->opener_line, tab_size);
           if (opener_lead >= indent_width) {
             active_column = (opener_lead / indent_width) * indent_width;
           }
@@ -100,7 +94,7 @@ void ComputeIndentGuides(LineSpan lines,
     if (line_index >= lines.size()) {
       continue;
     }
-    const std::size_t leading = LeadingVisualIndent(lines[line_index], tab_size);
+    const std::size_t leading = LeadingVisualIndent(lines, line_index, tab_size);
     leading_scratch[row] = leading;
     max_leading = std::max(max_leading, leading);
   }

@@ -490,7 +490,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     } else {
       const std::size_t caret_indent =
           cursor_line < lines.size()
-              ? LeadingVisualIndent(lines.LineView(cursor_line), viewport.tab_size())
+              ? LeadingVisualIndent(lines, cursor_line, viewport.tab_size())
               : 0;
       auto same_viewport_it = std::find_if(
           indent_guides_cache_entries_.begin(), indent_guides_cache_entries_.end(),

@@ -6,6 +6,8 @@
 #include "editor/FoldingModel.h"
 #include "editor/IndentDetect.h"
 #include "editor/IndentGuides.h"
+#include "editor/LineSpan.h"
+#include "editor/TextBuffer.h"
 #include "editor/LanguageContractView.h"
 #include "editor/SaveNormalization.h"
 #include "editor/ShapingActions.h"
@@ -17,6 +19,7 @@
 #include "workspace/state/WorkspaceTabState.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceContext.h"
+#include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <optional>
@@ -1385,9 +1388,67 @@ void TestFoldingRefreshLanguageChangeRebuilds() {
          "post-refresh fingerprint must reflect the new language id");
 }
 
+// TD-2026-08-05-133: three places asked "how wide is this line's leading
+// whitespace" by materializing the whole line -- the fold indent source, the
+// indent guides, and the caret's active-guide column. They share one chunked scan
+// now. Two claims, and only the first is about the answer:
+//   * the LineSpan form equals the whole-line form on every shape, including
+//     indents that cross the 256-byte chunk boundary with tabs on both sides, and
+//   * asking a piece-tree line that spans pieces reads none of it past the indent.
+void TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm() {
+  using microide::editor::LeadingVisualIndent;
+  constexpr std::size_t kTabSize = 3;  // does not divide the chunk, so the
+                                       // carried column across a boundary matters
+
+  std::vector<std::string> shapes = {
+      "", " ", "\t", "code", "  code", "\t\tcode", " \t \tcode", "   ",
+      std::string(255, ' ') + "\tx",  std::string(256, ' ') + "\tx",
+      std::string(257, ' ') + "\tx",  std::string(600, ' ') + "\t\t\tx",
+      std::string(300, ' '),           std::string(300, '\t') + "x",
+  };
+  for (const std::string& shape : shapes) {
+    microide::editor::TextBuffer buffer;
+    buffer.ResetFromText(shape + "\n");
+    // Fragment the line without changing it: insert a byte mid-line and delete it
+    // again. The tree never re-merges pieces, so the line now spans them and
+    // reading it whole can only be served by a copy. A zero-length splice would
+    // not do -- it is a no-op and leaves the line contiguous, which is how a
+    // "fragmented" fixture quietly stops testing the path it names.
+    if (shape.size() >= 2) {
+      const std::size_t mid = shape.size() / 2;
+      buffer.ReplaceTextRange(0, mid, 0, mid, "Z");
+      buffer.ReplaceTextRange(0, mid, 0, mid + 1, "");
+    }
+    const microide::editor::LineSpan span(buffer);
+    Expect(LeadingVisualIndent(span, 0, kTabSize) == LeadingVisualIndent(shape, kTabSize),
+           "the chunked indent scan must equal the whole-line one (" +
+               std::to_string(shape.size()) + " bytes)");
+  }
+
+  // The work claim, on a line long enough that reading it would show up.
+  microide::editor::TextBuffer wide;
+  wide.ResetFromText(std::string(8, ' ') + std::string(512 * 1024, 'x') + "\n");
+  wide.ReplaceTextRange(0, 100000, 0, 100000, "Z");  // split it into pieces...
+  wide.ReplaceTextRange(0, 100000, 0, 100001, "");   // ...and leave them split
+  util::ResetPerformanceCounters();
+  Expect(LeadingVisualIndent(microide::editor::LineSpan(wide), 0, kTabSize) == 8,
+         "the indent of a long line is still measured correctly");
+  const std::uint64_t copied =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes);
+  Expect(copied == 0, "measuring an indent must not read the line (copied " +
+                          std::to_string(copied) + " bytes)");
+  // Reachability control: the same line read whole does copy it.
+  (void)wide.LineView(0);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) > 512 * 1024,
+         "reading the spanning line whole still copies it (control)");
+  util::ResetPerformanceCounters();
+}
+
 }  // namespace
 
 void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorEssentials/IndentGuides/LeadingIndentScanIsBoundedAndMatchesTheWholeLineForm",
+          TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm);
   AddTest(tests, "EditorEssentials/BracketScanner/ForwardMatch",
           TestBracketScannerForwardMatch);
   AddTest(tests, "EditorEssentials/BracketScanner/BackwardMatch",

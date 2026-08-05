@@ -497,13 +497,17 @@ void TestCaretNeighborhoodMatchesWholeLineReading() {
   }
   microide::editor::TextBuffer buffer;
   buffer.ResetFromText(content);
-  // Fragment every line so the window can straddle a piece boundary at the
-  // offsets the loop below asks about.
+  // Fragment every line WITHOUT changing it: insert a byte mid-line and delete it
+  // again. The tree never re-merges pieces, so the window can straddle a seam at
+  // the offsets the loop below asks about. A zero-length splice is a no-op and
+  // would leave every line contiguous -- a fixture that names a path it does not
+  // take.
   for (std::size_t line = 0; line < buffer.size(); ++line) {
     const std::size_t length = buffer.LineLength(line);
     if (length >= 2) {
-      buffer.ReplaceTextRange(line, length / 2, line, length / 2, "");
-      buffer.ReplaceTextRange(line, 1, line, 1, "");
+      const std::size_t mid = length / 2;
+      buffer.ReplaceTextRange(line, mid, line, mid, "Z");
+      buffer.ReplaceTextRange(line, mid, line, mid + 1, "");
     }
   }
 

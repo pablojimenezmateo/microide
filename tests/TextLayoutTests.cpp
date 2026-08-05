@@ -4,6 +4,7 @@
 #include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
 #include "editor/TextLayoutCache.h"
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
 #include <cstddef>
@@ -311,12 +312,26 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
     // LineWindow's copying path rather than its zero-copy one.
     microide::editor::TextBuffer buffer;
     buffer.ResetFromText(line + "\n");
+    // Fragment without changing the content: insert a byte mid-line and delete it
+    // again. The tree never re-merges pieces, so every window read that crosses
+    // the seam takes LineWindow's copying path. A zero-length splice is a no-op
+    // and would leave the line contiguous.
     if (line.size() >= 2) {
-      buffer.ReplaceTextRange(0, line.size() / 2, 0, line.size() / 2, "");
-      buffer.ReplaceTextRange(0, 1, 0, 1, "");
+      const std::size_t mid = line.size() / 2;
+      buffer.ReplaceTextRange(0, mid, 0, mid, "Z");
+      buffer.ReplaceTextRange(0, mid, 0, mid + 1, "");
     }
     const microide::editor::LineSpan span(buffer);
     const LineLayoutFacts facts = TextLayout::MeasureLineFacts(line, kTabSize);
+    if (line.size() >= 2) {
+      // The fixture claims the line spans pieces; prove it, or the copying path
+      // this exercises is never taken and the loop below measures nothing.
+      util::ResetPerformanceCounters();
+      (void)buffer.LineView(0);
+      Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializations) == 1,
+             "the fixture line must actually span pieces");
+      util::ResetPerformanceCounters();
+    }
 
     const std::size_t scroll_limit = std::min<std::size_t>(line.size() + 3, 64);
     for (std::size_t scroll = 0; scroll <= scroll_limit; ++scroll) {
