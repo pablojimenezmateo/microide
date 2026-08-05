@@ -379,6 +379,32 @@ against the widest realistic input rather than a round number
 (`kMaxBracketMatchScanBytes` is 512 KiB because the 50k-line C++ fixture's full
 2000-line window measures ~326 KB).
 
+### A committed baseline is not a proxy for main
+
+Running the full perf gate after a change showed several scenarios comfortably
+under their committed baselines, which reads as "this change improved them". An
+interleaved A/B against the base commit — same preset build, same lane — showed
+they measure **identically on both sides**: `editor_shaping_multi_caret` records
+103,880 allocations and measures 57,362 on base *and* HEAD, and three more
+scenarios are 40-80% loose the same way (TD-2026-08-05-135).
+
+So a gate can drift loose without anyone noticing, and the drift then reads as
+someone else's win. **A/B against the base commit before attributing any delta to
+your change**, and rebaseline only what your change actually moved — folding
+pre-existing drift into your numbers makes both unreadable.
+
+### A baseline recorded at the wrong iteration count cannot be held
+
+`--update-baseline --iterations=20` recorded `typing_small_file`'s
+`p95_allocations` as 525.9. A default-length gate run failed it immediately at
+2,194. The scenario has a ~3,700-allocation cold first iteration, so at ten
+iterations (five samples) the p95 lands on the cold pass and at twenty it does not
+— the same iteration-count sensitivity documented above for verdicts, now on the
+recording side.
+
+**Record a baseline the way the gate runs it**: `--update-baseline
+--reference-runner=perf-runner-v1`, no `--iterations`.
+
 ### A bound that reads its input before rejecting it
 
 The next level down from the above, and it is easy to miss precisely *because* the
