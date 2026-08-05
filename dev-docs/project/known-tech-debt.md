@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-05. **81 open items.**
+Reviewed 2026-08-05. **80 open items.**
 
 This file is the queue for tech debt that is **open, actionable, and still present
 in the tree**. Closed debt does not live here.
@@ -66,7 +66,7 @@ line-sized copy is the piece tree materializing the edited line into its
 per-revision cache, which the renderer and the visual-width scan both read as one
 contiguous view — it is shared, not per-caller, and removing it means teaching
 both to consume the line in chunks. The visual-width scan stopped needing it in
-TD-2026-08-05-132; the renderer still does (TD-2026-08-05-133).
+TD-2026-08-05-132; the renderer stopped in TD-2026-08-05-133, which closed it.
 
 **Two consumers needed real work rather than a branch.** Undo-group frames
 aggregate by line range, so an in-line child is widened back to the line form on
@@ -105,19 +105,20 @@ test `TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine` tightened f
 6x to 2x. Both that and the routing test were confirmed to fail with the routing
 reverted.
 
-**Still true, and still unmeasured:** `TextBuffer::operator[]` is a materializer,
-not an accessor — it copies the line into a per-revision cache that the next
-mutation clears. The single-caret edit path uses `LineView`/`LineLength`;
-`TextViewportMultiCaret.cpp` and `TextViewportLanguageBehavior.cpp` still hold ~20
+**Partly addressed by TD-2026-08-05-133:** `TextBuffer::operator[]` is still a
+materializer, not an accessor, but it no longer makes a SECOND copy — for a line
+that spans pieces it aliases the one the tree already had to make. The pair
+heuristics in `TextViewportLanguageBehavior.cpp` were converted to
+`editor/CaretNeighborhood.h`. `TextViewportMultiCaret.cpp` still holds ~8
 `operator[]` reads that only want a length or a clamp, and no scenario measures
-them with a long line.
+them with a long line — a multi-caret long-line fixture is the missing coverage.
 
 ### TD-2026-08-05-132 — on a line with no newlines in it, the render and folding paths still scan the whole line per keystroke. [RESOLVED 2026-08-05.]
 
 **`editor_typing_minified_line` 148.7 ms -> 18.9 ms (7.9x), allocations unchanged
 at 4,918.** All three filed items are done, plus a fourth the profile named once
 the first three were gone. What is left after them is one thing, filed as
-TD-2026-08-05-133.
+TD-2026-08-05-133 and since closed.
 
 The per-keystroke self time this entry opened with, and what happened to it:
 
@@ -217,41 +218,59 @@ Instrumentation left behind: `EditorViewRenderer::Render::BracketMatch` and
 `WorkspaceShell::Render::BuildEditorViewModel`, both of which ran every frame, were
 the largest cost in their parent, and had no scope of their own.
 
-### TD-2026-08-05-133 — the renderer needs the edited line as one contiguous view, which costs a full copy of it per keystroke. OPEN.
-
-The one line-sized copy left on the edit path, deferred here by
-TD-2026-08-05-131 and now the single dominant cost on
-`editor_typing_minified_line`: **7.5 ms of 19 ms of traced self time, one ~2 MiB
-copy per keystroke** (`PieceTree::MaterializeSpanningLine`, 96 calls over 3
-iterations — exactly one per edit).
+### TD-2026-08-05-133 — the renderer needs the edited line as one contiguous view, which costs a full copy of it per keystroke. [RESOLVED 2026-08-05.]
 
 `PieceTree::LineView` is zero-copy while a line lies inside one piece. An in-line
-edit splits its line into three, so from the first keystroke on the edited line
+edit splits its line into three, so from the first keystroke on, the edited line
 spans pieces and every reader of it pays a copy into the per-revision cache. The
 copy is shared — the first caller in a frame pays and the rest hit the cache — so
-removing it means no caller may want the whole line.
+removing it meant **no caller may want the whole line**. On
+`editor_typing_minified_line` that was one ~2 MiB copy per keystroke, the single
+dominant cost of typing.
 
-Most callers do not, and those are the easy half: `SignatureDetectHead` wants a
-bounded head, `FoldingModel`'s bracket scan and the syntax highlighter both bail on
-length before reading, `MeasureIndent` wants the leading whitespace. Each of those
-reads the line only to throw nearly all of it away, and each can take a bounded
-range instead (`TextBuffer::AppendTextRange` is already that primitive).
+**Result: 256 materializations per 8 iterations became 8** — one per file open,
+none per keystroke. Traced application self time per iteration **5.16 ms →
+1.30 ms (4.0x)**; allocations **4,918.5 → 4,559.5**.
 
-Fixing only those moves the copy rather than removing it, because the render path
-genuinely reads the line: `BuildVisibleLineInto` indexes it by absolute byte
-column, and `RowDecorationInput::text` is the whole line for six consumers that use
-`text.size()` as "end of line" and slice windows out of it with their own
-`SliceVisibleColumns` (itself an O(start_column) walk, latent behind
-plugin-decoration and diff paths). Making that path window-based means a
-`LineWindow(line, byte_start, byte_len)` on the buffer plus a base-offset in the
-row-decoration arithmetic — a real refactor of the hottest render loop in the app,
-for a cost that only appears on pathologically long lines.
+**Eight callers, and the entry above named four of them wrong.** It called
+`SignatureDetectHead`, the fold bracket scan, the syntax highlighter and
+`MeasureIndent` "the easy half" because each already had a bound — but every one of
+them applied its bound *after* reading the line. `ScanLine(lines[i], out)` skips a
+line past `kMaxBracketScanLineBytes`, having first copied it. That shape —
+**a bound that reads its input before rejecting it** — was the whole of the easy
+half, and it is the generalizable finding: a cap on a line's LENGTH must be asked
+of `LineLength`, which reads no text, not of the bytes.
 
-Filed rather than done for that reason: the priority order puts speed first but
-still ranks correctness above it, and this trades risk on every rendered row of
-every file against a win confined to one file shape.
+The other four were the render and edit paths:
 
-Gated meanwhile by `editor_typing_minified_line`'s wall-clock baselines.
+- **`TextLayoutCache`** now builds a row from `{bytes, start_byte, line_length}`.
+  The window is four bytes per visual column the walk can reach — the longest UTF-8
+  sequence — which is exactly tight (confirmed by injection: one byte less fails).
+  Without `LineLayoutFacts` the full visual width still has to be walked, so that
+  path stays whole-line.
+- **`RowDecorationInput::text`** was the whole line for every row. On the editor's
+  path its only consumer is diagnostic underlining, so it is empty unless the row
+  carries a diagnostic; whole-line plugin decorations read a new `line_length`.
+  The predicted "six consumers using `text.size()` as end-of-line" was three, and
+  `SliceVisibleColumns` turned out to be reachable only from the compare/merge
+  path, which still passes whole lines.
+- **`FindBracketMatch`** refuses a caret line past
+  `runtime_syntax::kMaxHighlightLineBytes`, the same threshold and the same
+  argument the fold cap already makes: past it the line has no tokens, so a brace
+  inside a string cannot be filtered and the pair would be arbitrary.
+- **`Backspace` and `BuildRangeHistoryEntry`'s clamp** answer from
+  `editor/CaretNeighborhood.h`, which reads the line's length plus at most nine
+  bytes around the caret.
+
+**The entry's own risk assessment was right about where the risk was and wrong
+about its size.** "A real refactor of the hottest render loop in the app" is what
+it took; what made it tractable is that the whole-line build is a perfectly good
+oracle for the windowed one, so the differential is exact rather than approximate.
+
+Instrumentation and traps this left behind are in
+`dev-docs/performance/performance-findings.md`. Gated by
+`TextViewport/TypingInALongLineCopiesNothing` (always on, counter-based, confirmed
+to fail with any one caller reverted) plus `editor_typing_minified_line`.
 
 ### TD-2026-08-04-130 — repeated large multi-line edits grew the resident set without bound. [RESOLVED 2026-08-04.]
 

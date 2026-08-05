@@ -25,6 +25,106 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-05 (fifth pass) no caller wants the whole line (perf-runner-v1)
+
+TD-2026-08-05-133 was the one line-sized copy left on the keystroke path: an
+in-line edit splits its line into three pieces, so `PieceTree::LineView` can only
+serve it by copying it into a per-revision cache, and on a minified bundle that is
+~2 MiB per keystroke. The copy is **shared** — the first caller in a frame pays and
+the rest hit the cache — so it could only be removed by making sure *no* caller
+wants the whole line. There were eight.
+
+**Result on `editor_typing_minified_line`: 256 line materializations per 8
+iterations became 8** — one per file open, none per keystroke. Traced application
+self time per iteration **5.16 ms → 1.30 ms (4.0x)**, allocations **4,918.5 →
+4,559.5**.
+
+### The single most useful finding: a bound that reads its input before rejecting it
+
+Four of the eight callers already had a cap, and the tech-debt entry called them
+"the easy half" for that reason. Every one of them applied the cap *after* reading
+the line:
+
+| caller | its bound | what it read first |
+| --- | --- | --- |
+| `SignatureDetectHead` | first 4 KiB of a head line | `lines[i].substr(0, 4096)` |
+| `FoldingModel::ScanLine` | `kMaxBracketScanLineBytes` | `lines[i]` |
+| `HighlightedLineTokens` | `kMaxHighlightLineBytes` | `lines.LineView(i)` |
+| `MeasureIndent` | the leading whitespace | `lines[i]` |
+
+So the very lines each cap exists to skip were the expensive ones, once per
+keystroke. **A cap on a line's LENGTH must be asked of `LineLength`, which reads no
+text — never of the bytes.** This is the same shape as "a bound in lines is not a
+bound on work" from the pass below, one level down: a bound in bytes is not a bound
+on work either, if you have to fetch the bytes to apply it.
+
+### The primitive
+
+`PieceTree::LineWindow(line, byte_start, byte_len, scratch)` — zero-copy when the
+window lies inside one piece (still the common case on an edited line, which splits
+into exactly three), otherwise copying the WINDOW, never the line. Surfaced through
+`TextBuffer` and `LineSpan`. Two consumers grew out of it:
+
+- `editor/CaretNeighborhood.h` — the line's length plus at most nine bytes around
+  the caret, which is everything auto-close, skip-over-close, brace-split, the
+  multi-caret pair fan-out, `Backspace` and the edit-range clamp actually consult.
+- `editor/LineIndentScan.h` — the leading whitespace, read 256 bytes at a time.
+  The fold indent source, the indent guides and the caret's active-guide column had
+  each grown their own byte-identical copy of this scan; there is one now.
+
+### The render path, which genuinely reads the line
+
+`TextLayoutCache` builds a row from `{bytes, start_byte, line_length}`. The window
+is **four bytes per visual column the walk can reach** — the longest UTF-8 sequence
+— which is exactly tight: shortening it by one byte fails the differential, and so
+does dropping the factor. `RowDecorationInput::text` is now empty on the editor's
+row path unless the row carries a diagnostic (its only consumer there), with
+whole-line plugin decorations reading a new `line_length`.
+
+`FindBracketMatch` refuses a caret line past `runtime_syntax::kMaxHighlightLineBytes`
+— the same threshold and the same argument the fold cap already makes: past it the
+line has no tokens, so a brace inside a string cannot be filtered and the matched
+pair would be arbitrary rather than approximate.
+
+### Traps this pass hit
+
+**A "fragmented" fixture that was not.** Three tests here spliced a *zero-length*
+range to make a line span pieces. That is a no-op — the line stayed contiguous and
+the copying path each test named was never taken, while every test passed. They now
+insert a byte and delete it again (the tree never re-merges pieces), and one
+asserts the fixture materializes before relying on it. Same failure mode as an
+architecture lint that cannot fire.
+
+**A differential whose oracle is insensitive to the bug.** The chunked indent scan
+was first tested on a document whose lines all shared one indent string. Fold
+output only compares indents *against each other*, so a consistently wrong
+measurement produced identical folds and the test passed against a deliberately
+broken chunk carry. The sharp case puts two lines one column apart across the
+chunk boundary, with a tab size that does not divide the chunk — so the boundary is
+not a tab stop and a wrong carry changes the fold tree.
+
+**Removing a whole-line read can COST allocations.** With the render window in and
+`CopyRange`'s walk stack still a local `std::vector`, allocations went *up* — 4,822
+→ 4,969 — because a per-revision copy became a per-row-per-frame bounded read, and
+each one paid for that stack. Moving it to a member took it to 4,559. A cost that
+was amortized over a revision is not amortized over a frame.
+
+### Instrumentation added
+
+`PerfHarness::PumpFrames::Present` and `::ShellRender`. The scenario traced 41 ms
+of self time against 160 ms of wall and the missing 119 ms read as "unexplained" —
+it is `SDL_RenderPresent` on a 1920x1080 software surface, ~85% of the measured
+wall, and entirely the harness's. **Read a frame-pumping scenario's wall number
+knowing that.** The editor's own per-frame cost on this scenario is 2.2 ms against
+16.5 ms traced, and a change to the edit path has to be judged against the 2.2.
+
+`editor.bracket_match_line_too_long` joins the existing
+`editor.line_materializations` / `editor.line_materialized_bytes`. The latter pair
+is what makes any of this testable: every caller fixed here returned the *right
+answer* before and after, so only a counter can tell a bounded read from an
+unbounded one. `TextViewport/TypingInALongLineCopiesNothing` is the always-on gate,
+confirmed to fail with any single caller reverted.
+
 ## 2026-08-05 (fourth pass) the rest of the long-line interactions (perf-runner-v1)
 
 The three passes below fixed *typing* on a file with no line breaks in it. Nothing

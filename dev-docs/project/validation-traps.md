@@ -379,6 +379,54 @@ against the widest realistic input rather than a round number
 (`kMaxBracketMatchScanBytes` is 512 KiB because the 50k-line C++ fixture's full
 2000-line window measures ~326 KB).
 
+### A bound that reads its input before rejecting it
+
+The next level down from the above, and it is easy to miss precisely *because* the
+bound is there and correct. Four separate long-line caps in the editor were applied
+after the line had already been read:
+
+```cpp
+void ScanLine(std::string_view line, std::vector<CachedBracket>& out) const {
+  if (line.size() > kMaxBracketScanLineBytes) return;   // correct, and too late
+  ...
+}
+// caller:  table.ScanLine(lines[i], out);   // `lines[i]` copies a piece-tree line
+```
+
+So the very lines the cap exists to skip were the expensive ones — a
+multi-megabyte copy per keystroke, discarded on the next statement
+(TD-2026-08-05-133). `SignatureDetectHead` spelled it `lines[i].substr(0, 4096)`,
+which *reads* bounded and *asks* unbounded.
+
+**Ask the LENGTH, not the bytes.** `LineLength` is two offset lookups and reads no
+text. Where a caller needs part of a line, `LineWindow(line, start, len, scratch)`
+asks for exactly that. A `substr` on a whole-line accessor is the tell.
+
+### A "fragmented" fixture that is not fragmented
+
+Three tests written in that same pass made a piece-tree line span pieces with a
+**zero-length splice** (`ReplaceTextRange(0, mid, 0, mid, "")`). That is a no-op:
+the line stayed contiguous, the copying path each test named was never taken, and
+every test passed. Insert a byte and delete it again — the tree never re-merges
+pieces — and then assert the fixture actually materializes before relying on it.
+This is the architecture-lint vacuity problem in fixture form: a fixture that
+cannot reach the path it names is worth nothing, and it looks exactly like one that
+can.
+
+### A differential whose oracle is insensitive to the bug
+
+Stronger than the "control shares the code path" trap above, because here the
+oracle is genuinely independent — and still blind. The chunked indent scan was
+tested against `FoldingReference.h`'s own single-pass measurement, on a document
+whose lines all shared one indent string. Fold output only compares indents
+*against each other*, so a consistently wrong measurement produces identical folds:
+the test passed against a deliberately broken chunk carry.
+
+**Check what the output is sensitive to, not just where the oracle comes from.**
+The fix was a fixture where two lines land one column apart across the chunk
+boundary, with a tab size that does not divide the chunk (so the boundary is not a
+tab stop) — then a wrong carry changes the fold *tree*, which the output can see.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit
