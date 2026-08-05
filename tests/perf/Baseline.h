@@ -28,12 +28,11 @@ struct Tolerances {
   double cpu_p50_percent = 10.0;
   double cpu_p95_percent = 20.0;
   double cpu_max_percent = 50.0;
-  // Resident-growth envelopes. Growth is much steadier than wall but not as
-  // deterministic as an allocation count (page granularity, allocator arena
-  // behavior), so these sit between the two.
-  double rss_p50_percent = 25.0;
-  double rss_p95_percent = 35.0;
-  double rss_max_percent = 60.0;
+  // Resident-growth envelope, for the ONE resident gate (the trimmed mean; see
+  // CompareToBaseline). Growth is much steadier than wall but not as deterministic
+  // as an allocation count (page granularity, allocator arena behavior), so it
+  // sits between the two.
+  double rss_mean_percent = 25.0;
 };
 
 struct BaselineRecord {

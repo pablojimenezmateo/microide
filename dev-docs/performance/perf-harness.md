@@ -83,13 +83,34 @@ measured. Two more metrics close that:
   every iteration of every scenario in one process, so absolute RSS is dominated by
   whatever ran earlier and is not attributable to the scenario. Growth is. Steadier
   than wall but not as deterministic as an allocation count (page granularity,
-  allocator arena behaviour), so tolerances sit between the two: **25 / 35 / 60 %**,
-  with a one-page (4 KiB) noise floor so a near-zero baseline cannot turn a single
-  page of jitter into an unbounded regression. Per-scenario overrides live in
-  `Scenario::tolerance_rss_*` — **in code, not in the JSON**, because
+  allocator arena behaviour), so its tolerance sits between the two: **25 %**, with
+  a 64 KiB noise floor so a near-zero baseline cannot turn a few pages of jitter
+  into an unbounded regression. Per-scenario overrides live in
+  `Scenario::tolerance_rss_percent` — **in code, not in the JSON**, because
   `--update-baseline` rewrites every tolerance in a baseline file from the scenario.
   A widening hand-edited into the JSON survives exactly until the next rebaseline
   and then vanishes with nothing in the diff to read.
+
+  **The gated statistic is `mean_rss_growth_bytes`** — the mean over the measured
+  iterations with the single largest sample dropped (that sample is iteration 0's
+  cold pass). p50/p95/max are still recorded and reported, and none of them gates.
+  p95 and max measure which iteration tripped an arena expansion, which is why they
+  never did; p50 turned out to be no better once the readings were sharp enough to
+  see why:
+
+  - It sits on a mode boundary for any scenario that retains on *some* iterations.
+    `diff_stage_hunk_large_patch` alternates 0 / ~220 KB, so its p50 is decided by
+    how many iterations landed in each mode — 218, 184 and 324 KB across three runs
+    of one unchanged binary.
+  - Worse, it is **blind** to that shape. `merge_scroll_large_fixture` retains
+    ~972 KB per iteration and its p50 is exactly **0**, so its gate read "grows by
+    nothing" for a megabyte an iteration. Same for `editor_sort_lines_large`
+    (p50 28 KB, mean 250 KB) and `editor_scroll_fresh_content_large` (p50 2 KB,
+    mean 195 KB).
+
+  Across the same three runs the trimmed mean is stable where p50 was not: 1.02x on
+  `editor_sort_lines_large` against 1.14x, 1.12x on `editor_surround_multi_caret`
+  against 1.68x, 1.001x on `merge_scroll_large_fixture`.
 
   **Both resident readings are taken on a trimmed heap** (`SettleResidentSet()` →
   `malloc_trim(0)`, at both boundaries, outside the measured window, so it costs

@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <fstream>
 #include <iostream>
+#include <numeric>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -62,6 +63,28 @@ double MaxOr0(const std::vector<double>& values) {
   return values.empty() ? 0.0 : *std::max_element(values.begin(), values.end());
 }
 
+// Mean with the single largest sample dropped.
+//
+// The largest sample is almost always iteration 0's cold pass -- arena growth,
+// first-touch page faults, the caches every later iteration reuses -- which is
+// several times every other sample and would own a plain mean. Dropping exactly
+// one keeps the statistic a mean (it still sees every other iteration, including
+// a scenario that retains on only some of them) rather than turning it into
+// another percentile.
+double TrimmedMeanOr0(std::vector<double> values) {
+  if (values.empty()) {
+    return 0.0;
+  }
+  if (values.size() < 3) {
+    return std::accumulate(values.begin(), values.end(), 0.0) /
+           static_cast<double>(values.size());
+  }
+  const auto largest = std::max_element(values.begin(), values.end());
+  values.erase(largest);
+  return std::accumulate(values.begin(), values.end(), 0.0) /
+         static_cast<double>(values.size());
+}
+
 MetricSet AggregateMetrics(const std::vector<Iteration>& iterations) {
   std::vector<double> wall_ms;
   std::vector<double> allocations;
@@ -95,6 +118,7 @@ MetricSet AggregateMetrics(const std::vector<Iteration>& iterations) {
   out.p50_rss_growth_bytes = Percentile(rss_growth_bytes, 0.50);
   out.p95_rss_growth_bytes = Percentile(rss_growth_bytes, 0.95);
   out.max_rss_growth_bytes = MaxOr0(rss_growth_bytes);
+  out.mean_rss_growth_bytes = TrimmedMeanOr0(rss_growth_bytes);
   out.p50_cpu_calibration_ns = Percentile(calibration_ns, 0.50);
   return out;
 }
@@ -497,8 +521,37 @@ void ScenarioContext::RefreshGitSidebar() {
 }
 
 bool ScenarioContext::WaitForGitSidebarIdle(std::chrono::milliseconds timeout) {
-  return WaitForGitSidebarEntries(0, timeout) &&
-         !workspace::WorkspaceShell::TestAccess::GitSidebarRefreshing(shell_);
+  // Prefer WorkspaceShell::TestAccess::PerfRunGitSidebarRefreshSync for a scenario
+  // that needs a settled sidebar: showing the git sidebar dispatches an async
+  // status whose completion is subject to supersession by the throttled automatic
+  // refresh, so polling for the flag to clear can outlast any timeout you pick.
+  // This helper is for waiting on a refresh you know was dispatched once.
+  //
+  // Deliberately NOT delegating to WaitForGitSidebarEntries(0, ...): that call
+  // asks for "at least zero entries", which is true on the first check, so this
+  // returned after one pump and reported whatever the refreshing flag happened to
+  // say at that instant. It waited for nothing. A scenario reaching for a
+  // wait-for-idle helper wants the async refresh to have LANDED, and getting a
+  // one-shot poll instead is how git_sidebar_activate's allocation count wandered
+  // 498-626 across runs with byte-identical git counters.
+  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  while (std::chrono::steady_clock::now() < deadline) {
+    PumpEvents();
+    workspace::WorkspaceShell::TestAccess::ConsumeGitSidebarRefresh(shell_);
+    if (!workspace::WorkspaceShell::TestAccess::GitSidebarRefreshing(shell_)) {
+      return true;
+    }
+    // A frame every poll, not only on a handled wake: the background status result
+    // is published through the main-thread mailbox that a frame drains, so a loop
+    // that only pumps events can spin until its deadline with the answer already
+    // sitting in the queue.
+    (void)shell_.HandleScheduledWake();
+    PumpFrames(1);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  PumpEvents();
+  workspace::WorkspaceShell::TestAccess::ConsumeGitSidebarRefresh(shell_);
+  return !workspace::WorkspaceShell::TestAccess::GitSidebarRefreshing(shell_);
 }
 
 bool ScenarioContext::WaitForGitSidebarEntries(std::size_t min_entries,

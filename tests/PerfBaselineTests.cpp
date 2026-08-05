@@ -225,7 +225,7 @@ void TestPerfBaselineLeavesCpuAndRssUngatedWhenAbsent() {
       .p50_allocations = 10.0, .p95_allocations = 10.0, .max_allocations = 10.0,
       .p50_cpu_ms = 999.0, .p95_cpu_ms = 999.0, .max_cpu_ms = 999.0,
       .p50_rss_growth_bytes = 9.0e8, .p95_rss_growth_bytes = 9.0e8,
-      .max_rss_growth_bytes = 9.0e8,
+      .max_rss_growth_bytes = 9.0e8, .mean_rss_growth_bytes = 9.0e8,
   };
   const perf::BaselineComparison comparison = perf::CompareToBaseline(*loaded, aggregate);
   Expect(comparison.passed,
@@ -245,11 +245,12 @@ void TestPerfBaselineGatesCpuAndRssWhenRecorded() {
   baseline.metrics.p50_cpu_ms = 100.0;
   baseline.metrics.p95_cpu_ms = 100.0;
   baseline.metrics.max_cpu_ms = 100.0;
+  baseline.metrics.mean_rss_growth_bytes = 1'000'000.0;
   baseline.metrics.p50_rss_growth_bytes = 1'000'000.0;
   baseline.metrics.p95_rss_growth_bytes = 1'000'000.0;
   baseline.metrics.max_rss_growth_bytes = 1'000'000.0;
   baseline.tolerances.cpu_p50_percent = 10.0;
-  baseline.tolerances.rss_p50_percent = 25.0;
+  baseline.tolerances.rss_mean_percent = 25.0;
 
   // Wall time held constant while CPU doubles: exactly the shape of "the work moved
   // onto background threads". Wall-only gating calls this neutral.
@@ -263,7 +264,7 @@ void TestPerfBaselineGatesCpuAndRssWhenRecorded() {
   perf::Aggregate rss_regression;
   rss_regression.scenario_name = baseline.scenario_name;
   rss_regression.metrics = baseline.metrics;
-  rss_regression.metrics.p50_rss_growth_bytes = 4'000'000.0;
+  rss_regression.metrics.mean_rss_growth_bytes = 4'000'000.0;
   Expect(!perf::CompareToBaseline(baseline, rss_regression).passed,
          "quadrupling resident growth must fail the baseline");
 
@@ -271,7 +272,7 @@ void TestPerfBaselineGatesCpuAndRssWhenRecorded() {
   within.scenario_name = baseline.scenario_name;
   within.metrics = baseline.metrics;
   within.metrics.p50_cpu_ms = 105.0;
-  within.metrics.p50_rss_growth_bytes = 1'100'000.0;
+  within.metrics.mean_rss_growth_bytes = 1'100'000.0;
   Expect(perf::CompareToBaseline(baseline, within).passed,
          "cpu/rss inside their envelopes should pass");
 }
@@ -282,6 +283,7 @@ void TestPerfBaselineGatesCpuAndRssWhenRecorded() {
 void TestPerfBaselineRssNoiseFloorAbsorbsSubPageJitter() {
   perf::BaselineRecord baseline = MakeBaseline();
   baseline.has_rss_metrics = true;
+  baseline.metrics.mean_rss_growth_bytes = 0.0;
   baseline.metrics.p50_rss_growth_bytes = 0.0;
   baseline.metrics.p95_rss_growth_bytes = 0.0;
   baseline.metrics.max_rss_growth_bytes = 0.0;
@@ -289,14 +291,14 @@ void TestPerfBaselineRssNoiseFloorAbsorbsSubPageJitter() {
   perf::Aggregate one_page;
   one_page.scenario_name = baseline.scenario_name;
   one_page.metrics = baseline.metrics;
-  one_page.metrics.p50_rss_growth_bytes = 4096.0;
+  one_page.metrics.mean_rss_growth_bytes = 4096.0;
   Expect(perf::CompareToBaseline(baseline, one_page).passed,
          "a single page of growth over a zero baseline must not be a regression");
 
   perf::Aggregate real_growth;
   real_growth.scenario_name = baseline.scenario_name;
   real_growth.metrics = baseline.metrics;
-  real_growth.metrics.p50_rss_growth_bytes = 64.0 * 1024.0 * 1024.0;
+  real_growth.metrics.mean_rss_growth_bytes = 64.0 * 1024.0 * 1024.0;
   Expect(!perf::CompareToBaseline(baseline, real_growth).passed,
          "64 MiB of growth over a zero baseline is a real regression, not noise");
 }
@@ -309,6 +311,7 @@ void TestPerfBaselineCpuAndRssRoundTrip() {
   baseline.metrics.p50_cpu_ms = 12.5;
   baseline.metrics.p95_cpu_ms = 18.5;
   baseline.metrics.max_cpu_ms = 24.5;
+  baseline.metrics.mean_rss_growth_bytes = 98304.0;
   baseline.metrics.p50_rss_growth_bytes = 131072.0;
   baseline.metrics.p95_rss_growth_bytes = 262144.0;
   baseline.metrics.max_rss_growth_bytes = 524288.0;
@@ -586,20 +589,75 @@ void TestPerfBaselineClampsAnAbsurdClockFactor() {
 void TestPerfBaselineClockNormalisationTouchesCpuOnly() {
   perf::BaselineRecord baseline = MakeCpuBaseline(10.0, 670000);
   baseline.has_rss_metrics = true;
-  baseline.metrics.p50_rss_growth_bytes = 1'000'000.0;
+  baseline.metrics.mean_rss_growth_bytes = 1'000'000.0;
 
   perf::Aggregate run = MakeCpuRun({{14.0, 938000}, {14.0, 938000}});
-  run.metrics.p50_allocations = 140.0;             // +40%, like the durations
-  run.metrics.p50_rss_growth_bytes = 1'400'000.0;  // +40%, like the durations
+  run.metrics.p50_allocations = 140.0;              // +40%, like the durations
+  run.metrics.mean_rss_growth_bytes = 1'400'000.0;  // +40%, like the durations
   const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, run);
   Expect(!comparison.passed, "a clock move must not excuse an allocation or rss rise");
   for (const auto& metric : comparison.metrics) {
-    if (metric.metric == "p50_allocations" || metric.metric == "p50_rss_growth_bytes") {
+    if (metric.metric == "p50_allocations" || metric.metric == "mean_rss_growth_bytes") {
       Expect(metric.actual == metric.raw_actual,
              "non-duration metrics must be compared exactly as measured: " + metric.metric);
       Expect(!metric.passed, metric.metric + " should have failed at +40%");
     }
   }
+}
+
+// TD-2026-08-05-136: the resident gate is the trimmed mean, and the two reasons it
+// is not a percentile are worth pinning, because both were live defects.
+void TestPerfBaselineRssGateSeesPeriodicRetention() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.has_rss_metrics = true;
+  baseline.tolerances.rss_mean_percent = 25.0;
+  // A scenario that retains ~1 MB on every other iteration: its p50 is exactly
+  // zero, which is what merge_scroll_large_fixture's gate said while it grew by
+  // ~972 KB per iteration. The mean says 500 KB, so the gate has something to hold.
+  baseline.metrics.mean_rss_growth_bytes = 500'000.0;
+  baseline.metrics.p50_rss_growth_bytes = 0.0;
+
+  perf::Aggregate doubled;
+  doubled.scenario_name = baseline.scenario_name;
+  doubled.metrics = baseline.metrics;
+  doubled.metrics.mean_rss_growth_bytes = 1'000'000.0;
+  doubled.metrics.p50_rss_growth_bytes = 0.0;  // still zero: the percentile is blind
+  Expect(!perf::CompareToBaseline(baseline, doubled).passed,
+         "doubling a periodic retention rate must fail even though its p50 stays zero");
+
+  // And the metric that gates is named in the comparison, so a failing run says
+  // which number it means.
+  bool saw_mean = false;
+  for (const auto& metric : perf::CompareToBaseline(baseline, doubled).metrics) {
+    saw_mean = saw_mean || metric.metric == "mean_rss_growth_bytes";
+    Expect(metric.metric != "p50_rss_growth_bytes",
+           "the percentile must not gate: it is recorded for diagnosis only");
+  }
+  Expect(saw_mean, "the trimmed mean should be the resident row in the comparison");
+}
+
+// A baseline that predates the trimmed mean records only percentiles. It must come
+// back ungated on resident growth rather than gated against a 0.0 mean, which would
+// fail every scenario that grows at all.
+void TestPerfBaselineLeavesRssUngatedWhenOnlyPercentilesRecorded() {
+  TemporaryDirectory temp;
+  const std::filesystem::path path = temp.path() / "percentile_only_rss.json";
+  WriteFile(path,
+            R"({"scenario":"legacy","metrics":{"p50_wall_ms":10,"p95_wall_ms":10,)"
+            R"("max_wall_ms":10,"p50_allocations":10,"p95_allocations":10,"max_allocations":10,)"
+            R"("p50_rss_growth_bytes":1000,"p95_rss_growth_bytes":2000,)"
+            R"("max_rss_growth_bytes":3000},"tolerances":{}})");
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value(), "a percentile-only baseline should load");
+  Expect(!loaded->has_rss_metrics,
+         "and must come back ungated on resident growth rather than gated against zero");
+
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "legacy";
+  aggregate.metrics = loaded->metrics;
+  aggregate.metrics.mean_rss_growth_bytes = 9.0e8;
+  Expect(perf::CompareToBaseline(*loaded, aggregate).passed,
+         "a huge measured mean must not fail a baseline that never recorded one");
 }
 
 // The recorded clock survives a Save -> Load round trip, and is omitted rather than
@@ -638,6 +696,10 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PerfBaseline/ClockNormalisationTouchesCpuOnly",
           TestPerfBaselineClockNormalisationTouchesCpuOnly);
   AddTest(tests, "PerfBaseline/CalibrationRoundTrip", TestPerfBaselineCalibrationRoundTrip);
+  AddTest(tests, "PerfBaseline/RssGateSeesPeriodicRetention",
+          TestPerfBaselineRssGateSeesPeriodicRetention);
+  AddTest(tests, "PerfBaseline/LeavesRssUngatedWhenOnlyPercentilesRecorded",
+          TestPerfBaselineLeavesRssUngatedWhenOnlyPercentilesRecorded);
   AddTest(tests, "PerfBaseline/CalibrationSpreadFlagsAMovingClock",
           TestPerfCalibrationSpreadFlagsAMovingClock);
   AddTest(tests, "PerfBaseline/RecipesDoNotPinAVideoDriver",

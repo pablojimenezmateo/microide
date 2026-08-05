@@ -388,8 +388,34 @@ const ScenarioRegistration g_perf_git_workstation_diff_next_hunk_large_file({
     .warmup_iterations = 5,
     .run = RunDiffNextHunkLargeFile,
 });
-REGISTER_GIT_WORKSTATION_SCENARIO(diff_stage_hunk_large_patch, RunDiffStageHunkLargePatch);
-REGISTER_GIT_WORKSTATION_SCENARIO(diff_stage_selected_lines, RunDiffStageSelectedLines);
+// Not the macro: these three stage into the same large patch and share a resident
+// shape no envelope at the default 25% can hold. Their growth alternates cleanly —
+// zero on odd iterations, ~200-400 KB on even ones — and the size of the growing
+// half moves run to run: diff_stage_hunk_large_patch measured a trimmed mean of
+// 174 / 157 / 227 KB across three full runs of one unchanged binary (1.45x), the
+// other two 1.23x and 1.15x. That is page-granular placement of a ~300 KB working
+// set, not the code, and it is stable enough to gate at 60% while a scenario that
+// starts retaining a megabyte an iteration still trips.
+//
+// Widened HERE and not in the JSON on purpose: --update-baseline rewrites every
+// tolerance in a baseline from this struct, so a hand-edit to the file survives
+// exactly until the next rebaseline (TD-2026-08-05-136).
+const ScenarioRegistration g_perf_git_workstation_diff_stage_hunk_large_patch({
+    .name = "diff_stage_hunk_large_patch",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .tolerance_rss_percent = 60.0,
+    .run = RunDiffStageHunkLargePatch,
+});
+const ScenarioRegistration g_perf_git_workstation_diff_stage_selected_lines({
+    .name = "diff_stage_selected_lines",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .tolerance_rss_percent = 60.0,
+    .run = RunDiffStageSelectedLines,
+});
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_open_many_conflicts, RunMergeOpenManyConflicts);
 // Not the macro: this one needs a LONG warmup, and it is the reason to look at a
 // scenario's per-iteration series rather than only its summary. Re-opening this
@@ -434,8 +460,15 @@ const ScenarioRegistration g_perf_git_workstation_merge_edit_result_then_scroll(
     .run = RunMergeEditResultThenScroll,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(commit_open_with_large_staged_set, RunCommitOpenWithLargeStagedSet);
-REGISTER_GIT_WORKSTATION_SCENARIO(external_change_refresh_open_diff,
-                                 RunExternalChangeRefreshOpenDiff);
+// The third of the same family; see diff_stage_hunk_large_patch above.
+const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_diff({
+    .name = "external_change_refresh_open_diff",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .tolerance_rss_percent = 60.0,
+    .run = RunExternalChangeRefreshOpenDiff,
+});
 REGISTER_GIT_WORKSTATION_SCENARIO(external_change_refresh_open_merge,
                                  RunExternalChangeRefreshOpenMerge);
 

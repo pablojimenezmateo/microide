@@ -103,6 +103,11 @@ struct MetricSet {
   double p50_rss_growth_bytes = 0.0;
   double p95_rss_growth_bytes = 0.0;
   double max_rss_growth_bytes = 0.0;
+  // Mean resident growth per iteration with the single largest sample dropped.
+  // This is the GATED resident statistic; p50/p95/max stay recorded for
+  // diagnosis. See CompareToBaseline for why a percentile is the wrong
+  // instrument for this metric.
+  double mean_rss_growth_bytes = 0.0;
   // Median of the per-iteration calibration probe. Recorded INTO the
   // baseline, which is what makes a duration gate machine-state-independent: the
   // baseline knows what clock it was captured at, so a later run can be compared
@@ -311,7 +316,7 @@ struct Scenario {
   double tolerance_alloc_p50_percent = 10.0;
   double tolerance_alloc_p95_percent = 20.0;
   double tolerance_alloc_max_percent = 50.0;
-  // Resident-growth envelopes, written into this scenario's baseline at
+  // Resident-growth envelope, written into this scenario's baseline at
   // --update-baseline time.
   //
   // These exist because a widened envelope that lives only in the committed JSON
@@ -321,9 +326,7 @@ struct Scenario {
   // the struct default and re-armed a gate its own TD calls a coin flip -- with
   // nothing in the diff to read except three numbers changing in a generated file.
   // A tolerance that is not expressed in code is a comment.
-  double tolerance_rss_p50_percent = 25.0;
-  double tolerance_rss_p95_percent = 35.0;
-  double tolerance_rss_max_percent = 60.0;
+  double tolerance_rss_percent = 25.0;
   // Whether this scenario's iteration CPU time is a valid regression signal.
   //
   // Set false only where it provably is not, and say what replaces it. cpu_ms is

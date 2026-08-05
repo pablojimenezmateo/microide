@@ -935,6 +935,15 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "git_sidebar_activate",
       .smoke = false,
+      // The activation dispatches an async git status; five frame pumps caught
+      // however much of it happened to have landed, so the allocation count --
+      // this suite's one deterministic oracle -- wandered 498/534/595/624/626
+      // across runs with `git.commands_run`, `subprocess.spawns` and
+      // `git.command_output_bytes` byte-identical. Waiting for the refresh to
+      // land puts the same work inside the window every time, and it is also what
+      // this scenario claims to measure ("first status"). The warmup discards the
+      // 4,137-allocation cold pass that owned max and p95.
+      .warmup_iterations = 1,
       .run =
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
@@ -947,6 +956,14 @@ void RegisterBuiltInScenarios() {
             }
             context.PumpFrames(2);
             context.ActivateGitSidebar();
+            // Run the status the activation dispatched, synchronously, the way
+            // every git-workstation scenario does. Activating alone dispatches it
+            // onto the background executor and the five frame pumps below caught
+            // however much of it happened to have landed -- so this scenario's
+            // allocation count, the suite's one deterministic oracle, wandered
+            // 498/534/595/624/626 across runs with git.commands_run,
+            // subprocess.spawns and git.command_output_bytes byte-identical.
+            workspace::WorkspaceShell::TestAccess::PerfRunGitSidebarRefreshSync(context.Shell());
             context.PumpFrames(5);
           },
   });
@@ -1501,6 +1518,7 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
                       {"p50_rss_growth_bytes", aggregate.metrics.p50_rss_growth_bytes},
                       {"p95_rss_growth_bytes", aggregate.metrics.p95_rss_growth_bytes},
                       {"max_rss_growth_bytes", aggregate.metrics.max_rss_growth_bytes},
+                      {"mean_rss_growth_bytes", aggregate.metrics.mean_rss_growth_bytes},
                       {"p50_cpu_calibration_ns", aggregate.metrics.p50_cpu_calibration_ns},
                   }},
       {"iterations", std::move(iterations_json)},
@@ -1753,11 +1771,9 @@ int main(int argc, char** argv) {
                          .cpu_p95_percent = scenario.tolerance_p95_percent,
                          .cpu_max_percent = scenario.tolerance_max_percent,
                          // From the scenario, not the struct default: see
-                         // Scenario::tolerance_rss_* for the rebaseline that
+                         // Scenario::tolerance_rss_percent for the rebaseline that
                          // silently reset a deliberate widening.
-                         .rss_p50_percent = scenario.tolerance_rss_p50_percent,
-                         .rss_p95_percent = scenario.tolerance_rss_p95_percent,
-                         .rss_max_percent = scenario.tolerance_rss_max_percent},
+                         .rss_mean_percent = scenario.tolerance_rss_percent},
       };
       record.has_cpu_metrics = scenario.gate_cpu_metrics;
       record.has_rss_metrics = true;

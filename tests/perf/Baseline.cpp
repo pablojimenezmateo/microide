@@ -188,8 +188,13 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   if (record.has_calibration) {
     record.metrics.p50_cpu_calibration_ns = metrics["p50_cpu_calibration_ns"].AsDouble();
   }
-  record.has_rss_metrics = IsNumber(metrics["p50_rss_growth_bytes"]);
+  // The GATED resident statistic is the trimmed mean. A baseline that predates it
+  // records only the percentiles, and gating those was a coin flip in both
+  // directions (TD-2026-08-05-136), so such a baseline stays ungated on resident
+  // growth until it is re-recorded rather than being gated on the wrong number.
+  record.has_rss_metrics = IsNumber(metrics["mean_rss_growth_bytes"]);
   if (record.has_rss_metrics) {
+    record.metrics.mean_rss_growth_bytes = metrics["mean_rss_growth_bytes"].AsDouble();
     record.metrics.p50_rss_growth_bytes = metrics["p50_rss_growth_bytes"].AsDouble();
     record.metrics.p95_rss_growth_bytes = metrics["p95_rss_growth_bytes"].AsDouble();
     record.metrics.max_rss_growth_bytes = metrics["max_rss_growth_bytes"].AsDouble();
@@ -201,9 +206,7 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
       tolerances["cpu_p95_percent"].AsDouble(record.tolerances.p95_percent);
   record.tolerances.cpu_max_percent =
       tolerances["cpu_max_percent"].AsDouble(record.tolerances.max_percent);
-  record.tolerances.rss_p50_percent = tolerances["rss_p50_percent"].AsDouble(25.0);
-  record.tolerances.rss_p95_percent = tolerances["rss_p95_percent"].AsDouble(35.0);
-  record.tolerances.rss_max_percent = tolerances["rss_max_percent"].AsDouble(60.0);
+  record.tolerances.rss_mean_percent = tolerances["rss_mean_percent"].AsDouble(25.0);
   return record;
 }
 
@@ -217,6 +220,7 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"p50_allocations", baseline.metrics.p50_allocations},
       {"p95_allocations", baseline.metrics.p95_allocations},
       {"max_allocations", baseline.metrics.max_allocations},
+      {"mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes},
       {"p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes},
       {"p95_rss_growth_bytes", baseline.metrics.p95_rss_growth_bytes},
       {"max_rss_growth_bytes", baseline.metrics.max_rss_growth_bytes},
@@ -245,9 +249,7 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"cpu_p50_percent", baseline.tolerances.cpu_p50_percent},
       {"cpu_p95_percent", baseline.tolerances.cpu_p95_percent},
       {"cpu_max_percent", baseline.tolerances.cpu_max_percent},
-      {"rss_p50_percent", baseline.tolerances.rss_p50_percent},
-      {"rss_p95_percent", baseline.tolerances.rss_p95_percent},
-      {"rss_max_percent", baseline.tolerances.rss_max_percent},
+      {"rss_mean_percent", baseline.tolerances.rss_mean_percent},
   };
   std::ofstream out(path);
   if (!out) {
@@ -301,14 +303,31 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
                              double tolerance_percent) {
       AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual, tolerance_percent);
     };
-    // p50 ONLY, deliberately. Resident growth is bursty: the iteration that happens
-    // to trip an allocator arena expansion pays for it and the rest pay nothing, so
-    // p95 and max measure which iteration got unlucky rather than anything about the
-    // code. editor_column_selection_burst records p50 = 10 KiB against p95 = 9 MiB
-    // from exactly that -- gating either would be a permanent coin flip. The p95/max
-    // numbers are still recorded and reported; they are just not a gate.
-    add_rss("p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes,
-            aggregate.metrics.p50_rss_growth_bytes, baseline.tolerances.rss_p50_percent);
+    // ONE resident gate, on the trimmed mean, deliberately.
+    //
+    // p95 and max measure which iteration tripped an allocator arena expansion,
+    // which is why they were never gated. But p50 turned out to be no better, in
+    // two ways that only showed up once the readings were trimmed
+    // (TD-2026-08-05-136) and the numbers got sharp enough to see:
+    //
+    //  - It sits on a mode boundary for any scenario that retains on SOME
+    //    iterations. diff_stage_hunk_large_patch alternates 0 / ~220 KB, so its p50
+    //    is decided by how many iterations happened to land in each mode: 218, 184
+    //    and 324 KB across three runs of one unchanged binary, a 1.76x swing.
+    //  - Worse, it is BLIND to that whole shape. merge_scroll_large_fixture retains
+    //    ~972 KB per iteration on average and its p50 is exactly 0, so the gate
+    //    read "this scenario grows by nothing" for a megabyte an iteration. Same
+    //    for editor_sort_lines_large (p50 28 KB, mean 250 KB) and
+    //    editor_scroll_fresh_content_large (p50 2 KB, mean 195 KB).
+    //
+    // The trimmed mean sees every iteration, so a scenario that retains on half of
+    // them reports half the rate instead of zero, and dropping the single largest
+    // sample keeps iteration 0's cold pass from owning it. Measured across the same
+    // three runs it is stable where p50 was not: 1.02x on editor_sort_lines_large
+    // against 1.14x, 1.12x on editor_surround_multi_caret against 1.68x, 1.001x on
+    // merge_scroll_large_fixture. The percentiles stay recorded and reported.
+    add_rss("mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes,
+            aggregate.metrics.mean_rss_growth_bytes, baseline.tolerances.rss_mean_percent);
   }
   return result;
 }
