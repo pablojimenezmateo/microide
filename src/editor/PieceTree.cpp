@@ -479,13 +479,12 @@ std::string_view PieceTree::LineView(std::size_t index) const {
   bool ok = false;
   const std::string_view view = TryViewRange(start, length, ok);
   if (ok) return view;
-  // Spanning line: materialize once per revision. If this index is already
-  // cached (the whole map is cleared on every mutation via BumpRevision), return
-  // the existing slot untouched — re-running clear()+CopyRange could reallocate
-  // the slot's buffer and dangle a view returned by an earlier same-index call,
-  // and re-materializing is wasted work anyway.
-  auto it = line_view_cache_.find(index);
-  if (it != line_view_cache_.end()) return it->second;
+  // Spanning line: materialize once per revision. A same-index re-read within the
+  // revision returns the existing slot UNTOUCHED — re-running clear()+CopyRange
+  // could reallocate the slot's buffer and dangle a view returned by an earlier
+  // same-index call, and re-materializing is wasted work anyway.
+  CachedLine& cached = line_view_cache_[index];
+  if (cached.revision == revision_) return cached.text;
   // Counted and scoped because this is the one line-sized copy left on the edit
   // path (TD-2026-08-05-131) and nothing measured it: it is charged to whichever
   // consumer happens to ask for the edited line first in a frame, so it moved
@@ -494,9 +493,13 @@ std::string_view PieceTree::LineView(std::size_t index) const {
   util::PerformanceTrace::Scope perf_scope("PieceTree::MaterializeSpanningLine");
   util::AddPerformanceCounter(util::PerfCounterId::EditorLineMaterializations);
   util::AddPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes, length);
-  std::string& cached = line_view_cache_[index];
-  CopyRange(start, length, cached);
-  return cached;
+  // clear() keeps the capacity, so a line re-materialized at the same size after a
+  // keystroke re-copies into the buffer it already had rather than allocating a
+  // fresh one and freeing the old.
+  cached.text.clear();
+  CopyRange(start, length, cached.text);
+  cached.revision = revision_;
+  return cached.text;
 }
 
 std::string_view PieceTree::LineWindow(std::size_t index, std::size_t byte_start,
