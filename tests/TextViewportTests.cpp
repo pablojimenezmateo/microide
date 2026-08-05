@@ -2725,6 +2725,53 @@ void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
 // answer. `editor.visual_column_walk_bytes` counts what the fallback actually
 // read, so "no walk happened" is assertable, and the number is the blind spot's
 // own units -- bytes of line re-read per keystroke.
+// TD-2026-08-05-133: typing in a line with no line breaks in it must not COPY the
+// line, on any path a keystroke reaches. `PieceTree::LineView` materializes any
+// line that spans pieces -- which every line becomes on its first in-line edit --
+// so a single caller reaching for the whole line puts a multi-megabyte copy back
+// on the keystroke path, and it is invisible: the copy is shared and cached, so it
+// is charged to whichever consumer asks first and moves between scopes as the code
+// around it changes.
+//
+// The counter is what makes this testable at all. Every one of the callers that
+// used to do this returned the right answer; only the amount of work differed.
+void TestTextViewportTypingInALongLineCopiesNothing() {
+  constexpr std::size_t kLineBytes = 512u * 1024u;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/long-line-copies.txt");
+  viewport.SetViewportSize(40, 120);
+  viewport.MoveCursorTo(0, kLineBytes / 2, false);
+  // Warm what a first frame warms: the width table, the caret row, the line's
+  // tokens and its fold-relevant facts.
+  (void)viewport.max_visual_columns();
+  (void)viewport.CaretForLine(0);
+  (void)viewport.HighlightedLineTokens(0);
+  viewport.InsertText("y");
+  (void)viewport.CaretForLine(0);
+
+  util::ResetPerformanceCounters();
+  for (int i = 0; i < 8; ++i) {
+    viewport.InsertText("y");
+    (void)viewport.CaretForLine(0);
+    (void)viewport.cursor_visual_column();
+    (void)viewport.HighlightedLineTokens(0);
+    viewport.Backspace();
+    (void)viewport.CaretForLine(0);
+  }
+  const std::uint64_t copied =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes);
+  Expect(copied == 0, "typing in a long line must copy none of it (copied " +
+                          std::to_string(copied) + " bytes over 16 edits)");
+
+  // Reachability control: the counter can move on this very buffer, so the zero
+  // above is a property of the edit path and not of a counter that never fires.
+  (void)viewport.lines().LineView(0);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) >=
+             kLineBytes,
+         "asking for the whole line still copies it (control)");
+  util::ResetPerformanceCounters();
+}
+
 void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
   constexpr std::size_t kLineBytes = 256u * 1024u;
   microide::editor::TextViewport viewport;
@@ -4685,6 +4732,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportCaretColumnConversionsMatchTheDirectWalk);
   AddTest(tests, "TextViewport/TypingInALongLineDoesNotWalkItForCaretColumns",
           TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns);
+  AddTest(tests, "TextViewport/TypingInALongLineCopiesNothing",
+          TestTextViewportTypingInALongLineCopiesNothing);
   AddTest(tests, "TextViewport/LanguageIdMemoIsAllocationFreeOnASettledBuffer",
           TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer);
   AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnContentChange",
