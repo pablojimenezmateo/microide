@@ -179,8 +179,24 @@ ScenarioContext::ScenarioContext(workspace::WorkspaceShell& shell,
 
 void ScenarioContext::PumpFrames(std::size_t count) {
   for (std::size_t i = 0; i < count; ++i) {
-    shell_.Render(renderer_, 1920, 1080);
-    SDL_RenderPresent(renderer_);
+    {
+      // The application's whole frame. Named here because the app's own top-level
+      // scopes (PrepareFrameOnce, WorkspaceRootView::Render) are siblings, so
+      // without this there is nothing in a trace summary to add them up against.
+      util::PerformanceTrace::Scope scope("PerfHarness::PumpFrames::ShellRender");
+      shell_.Render(renderer_, 1920, 1080);
+    }
+    {
+      // The single largest cost in most frame-pumping scenarios, and it belongs to
+      // the harness, not the editor: presenting a 1920x1080 software surface is
+      // ~8 MB of pixel work per frame. On editor_typing_minified_line it is ~85%
+      // of the measured wall, which is why that scenario's wall number barely
+      // moves for large changes to the edit path and its allocation count is the
+      // oracle. Untraced, that time read as "unexplained", which invites reading a
+      // 5% app-side win as noise (TD-2026-08-05-133).
+      util::PerformanceTrace::Scope scope("PerfHarness::PumpFrames::Present");
+      SDL_RenderPresent(renderer_);
+    }
   }
 }
 
