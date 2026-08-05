@@ -1565,10 +1565,30 @@ void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild
          "files shortcut should open the file finder overlay");
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "target-match"),
          "typing in the file finder should be handled");
+  // Sample the finder's state BEFORE Enter (which dismisses the overlay), and say
+  // the numbers. "should still open matches" on its own cannot distinguish "the
+  // query matched nothing", "the overlay was gone by the time Enter arrived" and
+  // "Enter opened the wrong row" — and this test has failed that way once in CI
+  // with no way to tell which. The truncated-replace-all test next door was made
+  // to name its numbers for the same reason, and that is what identified its bug.
+  const bool finder_open = WorkspaceShellTestAccess::OverlayVisible(shell) &&
+                           WorkspaceShellTestAccess::OverlayModeIsFileFinder(shell);
+  const std::size_t match_count = WorkspaceShellTestAccess::FileFinderResultCount(shell);
+  const std::optional<std::filesystem::path> selected =
+      WorkspaceShellTestAccess::FileFinderSelectedPath(shell);
+  const std::string finder_state =
+      std::string(" (finder_open=") + (finder_open ? "yes" : "no") +
+      ", matches=" + std::to_string(match_count) +
+      ", selected=" + (selected.has_value() ? selected->generic_string() : "<none>") + ")";
+  Expect(finder_open, "the file finder must still be the active overlay when Enter arrives" +
+                          finder_state);
+  Expect(match_count > 0, "typing the target's name must match it in the finder" + finder_state);
+
   Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
          "pressing enter in the file finder should open the selected match");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == target.lexically_normal(),
-         "file finder should still open matches after deferred index cache build");
+         "file finder should still open matches after deferred index cache build" + finder_state +
+             " opened=" + WorkspaceShellTestAccess::ActiveEditor(shell).path().generic_string());
 }
 
 void TestWorkspaceShellProjectOpenFromWelcomeInvalidatesCachedLayout() {
