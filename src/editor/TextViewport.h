@@ -686,9 +686,13 @@ class TextViewport {
   void InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line,
                                std::optional<ContentSplice> splice = std::nullopt);
   void InvalidateVisualColumnCache();
+  // `splice` describes an edit confined to one line by the text it inserted;
+  // with it the width table updates without reading the line at all. Only
+  // ApplyHistoryEntry has that, and only for a column-scoped entry.
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
-                                        std::size_t inserted_count);
+                                        std::size_t inserted_count,
+                                        InlineLineSplice splice = {});
   void UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                   std::size_t removed_count,
                                   std::size_t inserted_count);
@@ -821,6 +825,9 @@ class TextViewport {
   }
   std::size_t VisualColumnIncrementalInplaceCountForDebug() const {
     return layout_cache_.visual_column_incremental_inplace_count_for_debug();
+  }
+  std::size_t VisualColumnSpliceDerivedCountForDebug() const {
+    return layout_cache_.visual_column_splice_derived_count_for_debug();
   }
 #endif
 };

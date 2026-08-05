@@ -17,6 +17,18 @@ namespace microide::editor {
 
 class FoldingModel;
 
+// An edit confined to a single line, described by the text it spliced in.
+//
+// A line already known to be plain ASCII stays plain exactly when the text
+// spliced into it is, and a plain line's visual width is its byte count. So with
+// this `TextLayoutCache::UpdateVisualColumnCacheAfterEdit` updates the width table
+// in O(inserted) instead of re-measuring the whole line -- which on a line with no
+// newlines in it is a megabyte scan per keystroke (TD-2026-08-05-132, item 2).
+struct InlineLineSplice {
+  std::string_view inserted_text;
+  bool valid = false;
+};
+
 // Owns the per-viewport derived-layout caches that previously lived as flat
 // mutable members on TextViewport: the visible-line LayoutLine LRU, the
 // wrapped-row layout vector (soft-wrap / fold-aware visual-row mapping), and
@@ -65,11 +77,16 @@ class TextLayoutCache {
   // kVisibleLineCacheLimit, so a renderer that consumes each row before
   // requesting the next never sees its own entry evicted mid-use). Like the
   // by-value variant, the cache does not set caret fields.
+  //
+  // `content_revision` is what lets a miss reuse the per-line width table this
+  // cache already maintains, so building a row does not re-walk the line for its
+  // width and its first visible cell.
   const LayoutLine& VisibleLineLayoutRefCached(LineSpan lines,
                                                std::size_t line_index,
                                                std::size_t horizontal_scroll,
                                                std::size_t visible_columns,
-                                               std::size_t tab_size) const;
+                                               std::size_t tab_size,
+                                               std::uint64_t content_revision) const;
 
   // ---- wrapped row layout (soft-wrap + folds) ---------------------------
   // Rebuilds the wrapped-row table when its keyed inputs changed. The
@@ -131,13 +148,15 @@ class TextLayoutCache {
   // Falls back to a full invalidation if the cache state predates the edit
   // or the tab_size changed.
   // `inserted_count` is a count; the widths are measured off `lines` (see
-  // UpdateWrappedRowsAfterEdit).
+  // UpdateWrappedRowsAfterEdit) unless `splice` describes the edit precisely
+  // enough to derive the new width without reading the line at all.
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
                                         std::size_t inserted_count,
                                         LineSpan lines,
                                         std::size_t tab_size,
-                                        std::uint64_t content_revision);
+                                        std::uint64_t content_revision,
+                                        InlineLineSplice splice = {});
 
   // ---- invalidation ------------------------------------------------------
   // Wipes every cache + every cache key. Equivalent to the previous
@@ -187,6 +206,12 @@ class TextLayoutCache {
   std::size_t visual_column_incremental_inplace_count_for_debug() const {
     return visual_column_incremental_inplace_count_;
   }
+  // Edits whose new line width came from the splice alone -- no read of the line
+  // at all. This is what makes "a keystroke does not re-measure the line" a
+  // testable claim rather than a comment (TD-2026-08-05-132, item 2).
+  std::size_t visual_column_splice_derived_count_for_debug() const {
+    return visual_column_splice_derived_count_;
+  }
 #endif
 
  private:
@@ -211,6 +236,44 @@ class TextLayoutCache {
       return h;
     }
   };
+
+  // One line's derived layout facts, packed into a single word.
+  //
+  // This table holds one entry per line for the life of a tab, so on a 50k-line
+  // file it is real memory, and a separate `bool` member would double it to 16
+  // bytes per line to carry one bit. A visual width is bounded by the line's byte
+  // length, so the top bit is free.
+  struct PackedLineWidth {
+    static constexpr std::size_t kPlainAsciiBit = std::size_t{1}
+                                                  << (8 * sizeof(std::size_t) - 1);
+    std::size_t packed = 0;
+
+    static PackedLineWidth From(LineLayoutFacts facts) {
+      return PackedLineWidth{facts.visual_columns |
+                             (facts.plain_ascii ? kPlainAsciiBit : std::size_t{0})};
+    }
+    std::size_t visual_columns() const { return packed & ~kPlainAsciiBit; }
+    LineLayoutFacts facts() const {
+      return LineLayoutFacts{
+          .visual_columns = visual_columns(),
+          .plain_ascii = (packed & kPlainAsciiBit) != 0,
+          .known = true,
+      };
+    }
+  };
+
+  // True when the per-line width table describes the document `lines` currently
+  // holds, at this tab size. Both the max-columns query and the visible-line
+  // builder read it, and every content edit either splices it (see
+  // UpdateVisualColumnCacheAfterEdit) or drops it, so freshness is exactly
+  // "same tab size, same content revision, same line count".
+  bool LineWidthsAreCurrent(std::size_t lines_size,
+                            std::size_t tab_size,
+                            std::uint64_t content_revision) const {
+    return cached_max_visual_columns_tab_size_ == tab_size &&
+           cached_max_visual_columns_content_revision_ == content_revision &&
+           cached_visual_line_columns_.size() == lines_size;
+  }
 
   // Appends the wrapped rows for a single logical line to `out` (always at
   // least one row, even for an empty line). Shared by the full-table build and
@@ -256,16 +319,17 @@ class TextLayoutCache {
   mutable std::size_t wrapped_row_incremental_inplace_count_ = 0;
   mutable std::size_t wrapped_row_incremental_splice_count_ = 0;
   mutable std::size_t visual_column_incremental_inplace_count_ = 0;
+  mutable std::size_t visual_column_splice_derived_count_ = 0;
 #endif
 
   // Visual-column width cache
   mutable std::optional<std::size_t> cached_max_visual_columns_;
   mutable std::optional<std::size_t> cached_max_visual_columns_line_index_;
-  mutable std::deque<std::size_t> cached_visual_line_columns_;
+  mutable std::deque<PackedLineWidth> cached_visual_line_columns_;
   // Scratch for UpdateVisualColumnCacheAfterEdit's inserted-line widths. A local
   // vector there is one heap allocation per edit -- i.e. per keystroke, on the
   // shell thread -- for what is usually a single value.
-  mutable std::vector<std::size_t> inserted_columns_scratch_;
+  mutable std::vector<PackedLineWidth> inserted_columns_scratch_;
   mutable std::size_t cached_max_visual_columns_tab_size_ = 0;
   mutable std::uint64_t cached_max_visual_columns_content_revision_ = 0;
 };

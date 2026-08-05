@@ -291,7 +291,7 @@ void TestTextLayoutCacheVisibleWorkingSetDoesNotEvict() {
   cache.ResetStats();
   for (std::size_t pass = 0; pass < 3; ++pass) {
     for (std::size_t i = 0; i < kGenerousVisibleRows; ++i) {
-      (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize);
+      (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
     }
   }
   Expect(cache.stats().visible_line_evictions == 0,
@@ -303,7 +303,7 @@ void TestTextLayoutCacheVisibleWorkingSetDoesNotEvict() {
   cache.InvalidateAll();
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
   }
   Expect(cache.stats().visible_line_evictions > 0,
          "querying more distinct lines than the cache holds must evict — otherwise the "
@@ -330,7 +330,7 @@ void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
     const microide::editor::LayoutLine& cached =
-        cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize);
+        cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
     const microide::editor::LayoutLine fresh =
         microide::editor::TextLayout::BuildVisibleLine(lines[i], 0, 80, kTabSize);
     Expect(cached.text == fresh.text, "a recycled entry must hold the new line's visible text");
@@ -350,7 +350,7 @@ void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
   // window here, so a missing clear would leave a stale tail behind.
   for (std::size_t i = 0; i < lines.size(); ++i) {
     const microide::editor::LayoutLine& cached =
-        cache.VisibleLineLayoutRefCached(lines, i, 20, 16, kTabSize);
+        cache.VisibleLineLayoutRefCached(lines, i, 20, 16, kTabSize, /*content_revision=*/0);
     const microide::editor::LayoutLine fresh =
         microide::editor::TextLayout::BuildVisibleLine(lines[i], 20, 16, kTabSize);
     Expect(cached.text == fresh.text, "a recycled entry must not keep a stale text tail");
@@ -365,11 +365,11 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
 
   // Warm the visible-line LRU.
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
   }
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
   }
   Expect(cache.stats().visible_line_hits == lines.size(),
          "the warmed visible-line cache should serve every repeat query from cache");
@@ -378,7 +378,7 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
   cache.InvalidateAll();
   cache.ResetStats();
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
   }
   Expect(cache.stats().visible_line_queries == lines.size(),
          "every line should be queried again after InvalidateAll");
@@ -388,11 +388,11 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
 
   // ClearVisibleLineAndMaxColumns keeps doing the same thing on its own.
   for (std::size_t i = 0; i < lines.size(); ++i) {
-    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize);
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 40, kTabSize, /*content_revision=*/0);
   }
   cache.ClearVisibleLineAndMaxColumns();
   cache.ResetStats();
-  (void)cache.VisibleLineLayoutRefCached(lines, 0, 0, 40, kTabSize);
+  (void)cache.VisibleLineLayoutRefCached(lines, 0, 0, 40, kTabSize, /*content_revision=*/0);
   Expect(cache.stats().visible_line_hits == 0,
          "ClearVisibleLineAndMaxColumns must still clear the visible-line cache");
 }

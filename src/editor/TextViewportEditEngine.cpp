@@ -584,7 +584,14 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   // folding model's per-line caches resync instead of rebuilding.
   InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line,
                           ContentSplice{.removed = removed_count, .inserted = inserted_count});
-  UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_count);
+  // A column-scoped entry names the byte splice it applied, which is all the
+  // width table needs to update the edited line without re-reading it.
+  UpdateVisualColumnCacheAfterEdit(
+      start_line, removed_count, inserted_count,
+      entry.is_inline
+          ? InlineLineSplice{.inserted_text = forward ? entry.inserted_text : entry.removed_text,
+                             .valid = true}
+          : InlineLineSplice{});
   // Keep the wrapped-row table in sync incrementally so soft-wrap editing does
   // not force a full O(document) re-wrap per keystroke.
   UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_count);

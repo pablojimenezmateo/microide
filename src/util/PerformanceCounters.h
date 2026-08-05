@@ -45,6 +45,8 @@ namespace microide::util {
   X(EditorVisibleLineLayoutRecycled, "editor.visible_line_layout_recycled")                      \
   X(EditorVisibleLineLayoutPrefixBytesScanned,                                                   \
     "editor.visible_line_layout_prefix_bytes_scanned")                                           \
+  X(EditorLineWidthFullMeasures, "editor.line_width_full_measures")                              \
+  X(EditorLineWidthSpliceUpdates, "editor.line_width_splice_updates")                            \
   X(EditorContentRevisionBumps, "editor.content_revision_bumps")                                \
   X(EditorSyntaxRevisionBumps, "editor.syntax_revision_bumps")                                  \
   X(EditorLayoutShapeRevisionBumps, "editor.layout_shape_revision_bumps")                       \

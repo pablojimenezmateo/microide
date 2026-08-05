@@ -2555,6 +2555,74 @@ void TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine() {
 #endif
 }
 
+// TD-2026-08-05-132 item 2: a keystroke inside a line must not re-measure that
+// line's visual width. It does not have to: a line already known to be plain
+// ASCII (no tab, no byte >= 0x80) stays plain exactly when the spliced-in text is,
+// and a plain line's width is its byte count -- so the new width follows from the
+// splice without reading the line at all.
+//
+// The correctness half is the interesting half: the derivation is only valid while
+// both halves of that precondition hold, so this pins the width against a
+// from-scratch measurement across the transitions that break it (a tab typed in, a
+// multibyte code point typed in, and undo/redo back across both).
+void TestTextViewportInlineEditDerivesLineWidthFromTheSplice() {
+  using microide::editor::TextLayout;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("plain ascii line\nsecond\n", "/tmp/inline-width.txt");
+  const std::size_t tab_size = viewport.tab_size();
+
+  // The width the cache reports must always equal a fresh measurement of the
+  // widest line -- that is the whole contract of the incremental table.
+  const auto expect_width_matches_a_fresh_measure = [&](const char* what) {
+    std::size_t widest = 0;
+    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+      widest = std::max(widest, TextLayout::MeasureLineFacts(viewport.lines()[i], tab_size)
+                                    .visual_columns);
+    }
+    Expect(viewport.max_visual_columns() == widest, what);
+  };
+
+  expect_width_matches_a_fresh_measure("the initial width table matches a fresh measure");
+
+  viewport.MoveCursorTo(0, 5);
+#ifndef NDEBUG
+  const std::size_t derived_before = viewport.VisualColumnSpliceDerivedCountForDebug();
+#endif
+  viewport.InsertText("X");
+  expect_width_matches_a_fresh_measure("a plain-ASCII insert keeps the width table exact");
+#ifndef NDEBUG
+  Expect(viewport.VisualColumnSpliceDerivedCountForDebug() > derived_before,
+         "a plain-ASCII insert into a plain-ASCII line derives its width from the splice");
+  const std::size_t derived_after_ascii = viewport.VisualColumnSpliceDerivedCountForDebug();
+#endif
+
+  // A tab breaks the precondition on the way in: the width must come from a real
+  // measurement, and every later edit on that line must keep doing so.
+  viewport.InsertText("\t");
+  expect_width_matches_a_fresh_measure("a tab typed into a plain line re-measures the line");
+#ifndef NDEBUG
+  Expect(viewport.VisualColumnSpliceDerivedCountForDebug() == derived_after_ascii,
+         "inserting a tab must not take the splice-derived path");
+#endif
+  viewport.InsertText("y");
+  expect_width_matches_a_fresh_measure("a line carrying a tab keeps re-measuring");
+#ifndef NDEBUG
+  Expect(viewport.VisualColumnSpliceDerivedCountForDebug() == derived_after_ascii,
+         "a line that is no longer plain ASCII must not take the splice-derived path");
+#endif
+
+  // A multibyte code point breaks it the other way: bytes stop being cells.
+  Expect(viewport.Undo(), "undo the trailing character");
+  Expect(viewport.Undo(), "undo the tab");
+  expect_width_matches_a_fresh_measure("undoing back to a plain line restores its width");
+  viewport.InsertText("\xC3\xA9");
+  expect_width_matches_a_fresh_measure("a multibyte insert re-measures the line");
+  Expect(viewport.Undo(), "undo the multibyte insert");
+  expect_width_matches_a_fresh_measure("undoing a multibyte insert restores the plain width");
+  Expect(viewport.Redo(), "redo the multibyte insert");
+  expect_width_matches_a_fresh_measure("redoing a multibyte insert re-measures the line");
+}
+
 void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
   namespace perf = microide::tests::perf;
   microide::editor::TextViewport viewport;
@@ -4472,6 +4540,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
   AddTest(tests, "TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine",
           TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine);
+  AddTest(tests, "TextViewport/InlineEditDerivesLineWidthFromTheSplice",
+          TestTextViewportInlineEditDerivesLineWidthFromTheSplice);
   AddTest(tests, "TextViewport/LanguageIdMemoIsAllocationFreeOnASettledBuffer",
           TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer);
   AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnContentChange",

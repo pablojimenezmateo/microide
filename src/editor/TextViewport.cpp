@@ -272,7 +272,8 @@ const LayoutLine& TextViewport::VisibleLineLayoutRef(std::size_t line_index) con
     return kEmpty;
   }
   return layout_cache_.VisibleLineLayoutRefCached(document_->lines, line_index, horizontal_scroll_,
-                                                  visible_columns_, tab_size_);
+                                                  visible_columns_, tab_size_,
+                                                  document_->content_revision);
 }
 
 LayoutLine TextViewport::VisibleLineLayout(std::size_t line_index) const {
@@ -1232,10 +1233,11 @@ void TextViewport::BeginSelectionIfNeeded(bool extend_selection) {
 
 void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                                     std::size_t removed_count,
-                                                    std::size_t inserted_count) {
+                                                    std::size_t inserted_count,
+                                                    InlineLineSplice splice) {
   layout_cache_.UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_count,
                                                   document_->lines, tab_size_,
-                                                  document_->content_revision);
+                                                  document_->content_revision, splice);
 }
 
 void TextViewport::UpdateWrappedRowsAfterEdit(std::size_t start_line,

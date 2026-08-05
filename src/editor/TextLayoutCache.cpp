@@ -13,7 +13,8 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::size_t line_index,
                                                               std::size_t horizontal_scroll,
                                                               std::size_t visible_columns,
-                                                              std::size_t tab_size) const {
+                                                              std::size_t tab_size,
+                                                              std::uint64_t content_revision) const {
   ++visible_line_queries_;
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
@@ -25,6 +26,27 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     ++visible_line_hits_;
     return it->second;
   }
+  // Hand the builder what this cache already knows about the line, so a miss does
+  // not re-walk it for its visual width nor step code points to reach the first
+  // visible cell. Both are O(line), and on a line with no newlines in it that is
+  // the dominant cost of rendering a row (TD-2026-08-05-132, item 1).
+  const LineLayoutFacts facts =
+      LineWidthsAreCurrent(lines.size(), tab_size, content_revision)
+          ? cached_visual_line_columns_[line_index].facts()
+          : LineLayoutFacts{};
+#ifndef NDEBUG
+  // The table is only as good as the invariant that every content edit either
+  // splices it or drops it. Cross-check it here, where a stale entry would
+  // silently mislay a row's glyphs rather than merely mis-size the scrollbar.
+  // Bounded by line length so the check costs nothing on the pathological lines
+  // this whole path exists for.
+  if (facts.known && lines.LineLength(line_index) <= 4096) {
+    const LineLayoutFacts measured = TextLayout::MeasureLineFacts(lines[line_index], tab_size);
+    assert(measured.visual_columns == facts.visual_columns &&
+           measured.plain_ascii == facts.plain_ascii &&
+           "per-line width table went stale against the buffer");
+  }
+#endif
   if (visible_line_cache_.size() >= kVisibleLineCacheLimit) {
     // This is the only point that can invalidate a reference previously handed
     // out by this function. Counted so the "a frame never evicts what it is
@@ -48,7 +70,7 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     visible_line_cache_order_.pop_front();
     if (!node.empty()) {
       TextLayout::BuildVisibleLineInto(lines[line_index], horizontal_scroll, visible_columns,
-                                       tab_size, node.mapped());
+                                       tab_size, node.mapped(), facts);
       node.key() = cache_key;
       util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
       const auto result = visible_line_cache_.insert(std::move(node));
@@ -58,7 +80,7 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   }
   LayoutLine layout;
   TextLayout::BuildVisibleLineInto(lines[line_index], horizontal_scroll, visible_columns, tab_size,
-                                   layout);
+                                   layout, facts);
   const auto [it, _] = visible_line_cache_.emplace(cache_key, std::move(layout));
   visible_line_cache_order_.push_back(cache_key);
   return it->second;
@@ -454,14 +476,14 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
   if (cached_max_visual_columns_tab_size_ != tab_size ||
       cached_visual_line_columns_.size() != lines.size()) {
     util::PerformanceTrace::Scope s("TextLayoutCache::BuildVisualLineColumns");
-    cached_visual_line_columns_.assign(lines.size(), 0);
+    cached_visual_line_columns_.assign(lines.size(), PackedLineWidth{});
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthFullMeasures, lines.size());
     for (std::size_t index = 0; index < lines.size(); ++index) {
       // One LineSpan read per line: `operator[]` goes through an indirect call
       // into the piece tree, and this loop asked for the same line twice (once
       // for the text, once for its length) on every line of the document.
-      const std::string_view line = lines[index];
       cached_visual_line_columns_[index] =
-          TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size);
+          PackedLineWidth::From(TextLayout::MeasureLineFacts(lines[index], tab_size));
     }
   }
 
@@ -469,8 +491,8 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
   std::size_t max_columns = 0;
   std::size_t max_line = 0;
   for (std::size_t index = 0; index < cached_visual_line_columns_.size(); ++index) {
-    if (cached_visual_line_columns_[index] >= max_columns) {
-      max_columns = cached_visual_line_columns_[index];
+    if (cached_visual_line_columns_[index].visual_columns() >= max_columns) {
+      max_columns = cached_visual_line_columns_[index].visual_columns();
       max_line = index;
     }
   }
@@ -484,7 +506,7 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
 void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     std::size_t start_line, std::size_t removed_count, std::size_t inserted_count,
     LineSpan lines,
-    std::size_t tab_size, std::uint64_t content_revision) {
+    std::size_t tab_size, std::uint64_t content_revision, InlineLineSplice splice) {
   if (cached_max_visual_columns_tab_size_ != tab_size ||
       lines.size() + removed_count < inserted_count ||
       cached_visual_line_columns_.size() != lines.size() - inserted_count + removed_count) {
@@ -497,12 +519,37 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
     return;
   }
 
-  std::vector<std::size_t>& inserted_columns = inserted_columns_scratch_;
+  // A single line replaced in place by a byte splice keeps its width derivable
+  // without reading it: the line was plain ASCII (no tab, no byte >= 0x80), so it
+  // stays plain exactly when the spliced-in text is, and a plain line's visual
+  // width is its byte count. That turns a megabyte scan per keystroke on a line
+  // with no newlines in it into a scan of the one or two bytes typed
+  // (TD-2026-08-05-132, item 2).
+  const bool inline_width_is_derivable =
+      splice.valid && removed_count == 1 && inserted_count == 1 &&
+      start_line < cached_visual_line_columns_.size() && start_line < lines.size() &&
+      cached_visual_line_columns_[start_line].facts().plain_ascii &&
+      util::FirstNonAsciiOrByte(splice.inserted_text, '\t') == splice.inserted_text.size();
+
+  std::vector<PackedLineWidth>& inserted_columns = inserted_columns_scratch_;
   inserted_columns.clear();
   inserted_columns.reserve(inserted_count);
-  for (std::size_t i = 0; i < inserted_count && start_line + i < lines.size(); ++i) {
-    const std::string_view line = lines[start_line + i];
-    inserted_columns.push_back(TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size));
+  if (inline_width_is_derivable) {
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthSpliceUpdates);
+#ifndef NDEBUG
+    ++visual_column_splice_derived_count_;
+#endif
+    inserted_columns.push_back(PackedLineWidth::From(LineLayoutFacts{
+        .visual_columns = lines.LineLength(start_line),
+        .plain_ascii = true,
+        .known = true,
+    }));
+  } else {
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthFullMeasures, inserted_count);
+    for (std::size_t i = 0; i < inserted_count && start_line + i < lines.size(); ++i) {
+      inserted_columns.push_back(
+          PackedLineWidth::From(TextLayout::MeasureLineFacts(lines[start_line + i], tab_size)));
+    }
   }
 
   const std::size_t clamped_start = std::min(start_line, cached_visual_line_columns_.size());
@@ -535,8 +582,9 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
       *cached_max_visual_columns_line_index_ >= clamped_start &&
       *cached_max_visual_columns_line_index_ < clamped_start + removed_count;
   const bool candidate_expands_max =
-      std::any_of(inserted_columns.begin(), inserted_columns.end(), [&](std::size_t width) {
-        return !cached_max_visual_columns_.has_value() || width >= *cached_max_visual_columns_;
+      std::any_of(inserted_columns.begin(), inserted_columns.end(), [&](PackedLineWidth width) {
+        return !cached_max_visual_columns_.has_value() ||
+               width.visual_columns() >= *cached_max_visual_columns_;
       });
   if (max_line_erased || candidate_expands_max || !cached_max_visual_columns_.has_value()) {
     cached_max_visual_columns_.reset();
