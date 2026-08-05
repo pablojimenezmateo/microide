@@ -505,6 +505,11 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
   PublishSnapshot(std::move(snapshot), request.generation);
 }
 
+std::uint64_t GitRepositoryService::CurrentRefreshGeneration() const {
+  std::lock_guard lock(mutex_);
+  return refresh_generation_;
+}
+
 bool GitRepositoryService::ConsumePendingSidebarSnapshot(
     GitSidebarState::RefreshSnapshot* snapshot) {
   if (snapshot == nullptr) {

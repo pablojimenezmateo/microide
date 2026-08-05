@@ -860,6 +860,79 @@ void TestWorkspaceShellGitBranchActionsSwitchHead() {
   Expect(CurrentGitBranch(root) == base_branch, "git-switch-branch should move HEAD back");
 }
 
+// TD-2026-07-26-003: a successful commit marks the repository stale and asks for a
+// refresh, then reports plain success and returns. When that refresh fails the user
+// used to be told only by the git sidebar's "Git refresh failed: …" banner, and
+// CommitOperationResultCategory::RefreshFailedAfterSuccess -- which both
+// ResultFeedback and ResultTone have a branch for -- was never produced by anything.
+// The commit now watches the refresh generation it asked for and posts a follow-up
+// warning toast when that refresh comes back failed.
+void TestWorkspaceShellCommitReportsFailedFollowUpRefresh() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "seed commit", "seed body");
+  WriteFile(source, "int main() { return 1; }\n");
+  RequireGitCommandSuccess(root, {"add", "main.cpp"}, "stage the change to commit");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the staged change should list one entry");
+
+  Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "commit workflow should open");
+  WorkspaceShellTestAccess::CommitWorkflow(shell).subject.SetText("Change the return value");
+
+  // Arm the failure only now: the pre-checks and the dispatch read the state the
+  // real refresh above produced, so the commit itself still runs normally and only
+  // the refresh it triggers comes back broken.
+  WorkspaceShellTestAccess::FailGitRefreshesForTesting(shell, "simulated status failure");
+  Expect(WorkspaceShellTestAccess::RequestCommitWorkflowCommit(shell),
+         "a staged repo with a subject should accept the commit");
+
+  const auto has_toast = [&shell](std::string_view fragment) {
+    const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+    return std::any_of(notifications.begin(), notifications.end(),
+                       [fragment](const auto& notification) {
+                         return notification.message.find(fragment) != std::string::npos;
+                       });
+  };
+  // ConsumeGitSidebarRefresh drains the commit completion AND consumes the refresh
+  // snapshot, which is where the outcome is reported back to the commit workflow.
+  const bool reported = WaitUntil(
+      [&]() { return has_toast("repository refresh failed"); }, std::chrono::seconds(3),
+      std::chrono::milliseconds(5),
+      [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
+
+  Expect(has_toast("Commit created"),
+         "the commit itself succeeded, so its success toast must still be posted");
+  Expect(reported,
+         "a failed post-commit refresh should post a follow-up toast, not just the banner");
+  const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  const auto refresh_toast =
+      std::find_if(notifications.begin(), notifications.end(), [](const auto& notification) {
+        return notification.message.find("repository refresh failed") != std::string::npos;
+      });
+  Expect(refresh_toast != notifications.end(), "the follow-up toast should be present");
+  Expect(refresh_toast->tone == microide::workspace::NotificationService::Tone::Warning,
+         "a commit that succeeded reports its refresh failure as a warning, not an error");
+  Expect(refresh_toast->message.find("simulated status failure") != std::string::npos,
+         "the follow-up toast should name why the refresh failed");
+
+  // The watch is one-shot: further failing refreshes belong to whatever caused
+  // them, so they must not keep re-attributing themselves to this commit.
+  const std::size_t after_first = notifications.size();
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WaitUntil([]() { return false; }, std::chrono::milliseconds(300),
+            std::chrono::milliseconds(5),
+            [&shell]() { WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell); });
+  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == after_first,
+         "a later failing refresh must not post another commit-refresh toast");
+}
+
 // A missing required argument must be rejected before anything is dispatched, and a
 // git failure must surface as a notification rather than being swallowed.
 void TestWorkspaceShellGitOperationFailuresAreReported() {
@@ -999,6 +1072,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitBranchActionsSwitchHead);
   AddTest(tests, "WorkspaceShell/GitOperationFailuresAreReported",
           TestWorkspaceShellGitOperationFailuresAreReported);
+  AddTest(tests, "WorkspaceShell/CommitReportsFailedFollowUpRefresh",
+          TestWorkspaceShellCommitReportsFailedFollowUpRefresh);
   AddTest(tests, "WorkspaceShell/GitStashActionsRoundTrip",
           TestWorkspaceShellGitStashActionsRoundTrip);
   AddTest(tests, "WorkspaceShell/GitBranchPickerSwitchesBranch",

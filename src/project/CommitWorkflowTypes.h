@@ -67,11 +67,13 @@ struct CommitOperationResult {
   std::string hook_output;
   // NOTE: there is deliberately no `refresh_failed_after_success` flag here. The
   // post-commit repository refresh is asynchronous and completes long after this
-  // result is published, so the committing worker cannot know its outcome —
-  // `CommitOperationResultCategory::RefreshFailedAfterSuccess` is the channel for
-  // that, and wiring it needs the async refresh correlated back by
-  // `repository_generation` (see TD-2026-07-26-003). A bool here read by nobody
-  // just made it look already handled.
+  // result is published, so the committing worker cannot know its outcome. It is
+  // reported separately, as a follow-up toast built from
+  // `CommitOperationResultCategory::RefreshFailedAfterSuccess`: the commit arms a
+  // watch on the refresh generation it asks for, and
+  // `CommitWorkflowService::NoteGitRefreshOutcome` fires when the matching
+  // snapshot comes back failed. A bool on this struct could never be set by the
+  // code that produces it and only made the gap look handled.
 };
 
 struct CommitDraftContext {

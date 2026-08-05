@@ -289,6 +289,9 @@ void CommitWorkflowService::DispatchCommit(CommitWorkflowState& state,
   {
     std::lock_guard lock(mutex_);
     captured_generation = ++operation_generation_;
+    // The operation in front of the user owns the feedback: drop any watch left
+    // over from a previous commit whose refresh has not landed yet.
+    post_commit_refresh_watch_ = 0;
   }
   // Let the state cancel this operation if it is destroyed before the completion
   // is drained — a project tab closing mid-commit. Without it the completion below
@@ -367,8 +370,16 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
     state.draft_restored = false;
     git_repository_service_.MarkStale();
     if (callbacks_.request_git_refresh != nullptr) {
+      // Arm the watch BEFORE asking, so a refresh that is dispatched immediately
+      // is still >= the recorded floor. `+ 1` because the request may be
+      // throttled or folded into a deferred follow-up, in which case the commit's
+      // changes surface in a generation later than any this call mints.
+      post_commit_refresh_watch_ = git_repository_service_.CurrentRefreshGeneration() + 1;
       callbacks_.request_git_refresh();
     }
+    // `repository_generation` is the snapshot the commit was composed against; the
+    // refresh correlation runs off the refresh generation instead, because that is
+    // what a published snapshot carries.
     (void)repository_generation;
     Close(state);
   }
@@ -379,6 +390,38 @@ void CommitWorkflowService::PublishResult(CommitWorkflowState& state,
   }
   if (callbacks_.notify != nullptr) {
     callbacks_.notify(ResultTone(result.category), state.status_message);
+  }
+}
+
+void CommitWorkflowService::NoteGitRefreshOutcome(const std::uint64_t snapshot_generation,
+                                                  const std::string_view refresh_error) {
+  // Same locking shape as PublishResult: `callbacks_` is guarded by mutex_, and
+  // both run on the main thread, so the callbacks fire under the lock.
+  std::lock_guard lock(mutex_);
+  if (post_commit_refresh_watch_ == 0 || snapshot_generation < post_commit_refresh_watch_) {
+    return;
+  }
+  // This snapshot answers the commit's refresh either way; a later failure
+  // belongs to whatever caused it, not to the commit.
+  post_commit_refresh_watch_ = 0;
+  if (refresh_error.empty()) {
+    return;
+  }
+
+  project::CommitOperationResult result;
+  result.category = project::CommitOperationResultCategory::RefreshFailedAfterSuccess;
+  // `detail` is left empty on purpose: that is what routes through the category's
+  // own branch in ResultFeedback rather than around it. The git text is appended
+  // after, since the canonical sentence alone does not say why.
+  std::string message = ResultFeedback(result);
+  message += ": ";
+  message += refresh_error;
+
+  if (callbacks_.set_command_feedback != nullptr) {
+    callbacks_.set_command_feedback(message);
+  }
+  if (callbacks_.notify != nullptr) {
+    callbacks_.notify(ResultTone(result.category), std::move(message));
   }
 }
 

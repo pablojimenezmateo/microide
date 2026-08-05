@@ -794,25 +794,43 @@ Still open from this sweep:
   `results_cover_all_matches` false: the candidate assertion fails.
 
 - **TD-2026-07-26-003 — `CommitOperationResultCategory::RefreshFailedAfterSuccess`
-  is handled but never produced. OPEN (needs the async correlation, not a
-  one-liner).** `ResultFeedback` and `ResultTone` both have a branch for it, so a
-  commit that succeeds but whose follow-up refresh fails would say "Commit
-  succeeded, but repository refresh failed" — except nothing ever sets the
-  category, so the toast says plain success.
+  was handled but never produced. [RESOLVED 2026-08-05.]** `ResultFeedback` and
+  `ResultTone` both have a branch for it, so a commit that succeeds but whose
+  follow-up refresh fails would say "Commit succeeded, but repository refresh
+  failed" — except nothing ever set the category, so the toast said plain success.
 
-  **This is a missing-message issue, not silent data loss.** `PublishResult`
+  **This was a missing-message issue, not silent data loss.** `PublishResult`
   fires `MarkStale()` + `request_git_refresh()` and returns; the refresh runs
   asynchronously and its failure IS surfaced independently, as the git sidebar's
   "Git refresh failed: …" banner (`BuildGitRefreshErrorBanner`). Only the
-  commit-specific toast is missing.
+  commit-specific toast was missing.
 
-  Producing it means correlating the async refresh outcome back to the commit
-  that triggered it. The hook already exists: `PublishResult` captures
-  `repository_generation` and then explicitly discards it (`(void)
-  repository_generation;`), which is where the intended correlation was meant to
-  land. What still needs deciding is the UX — whether the refresh-failure toast
-  replaces or follows the success toast, and what happens if the user starts
-  another operation while the refresh is in flight.
+  **The UX decision: follow-up, not replacement.** The commit really did succeed
+  and saying so promptly matters more than withholding feedback for a refresh that
+  can take seconds, so the success toast fires unchanged and a second warning toast
+  follows if the refresh comes back failed. A newer commit disarms the watch, so
+  the operation in front of the user always owns the feedback.
+
+  **The correlation does NOT run off `repository_generation`**, which is what the
+  entry above assumed. That value is the snapshot the commit was *composed*
+  against; what a published refresh snapshot carries is the **refresh** generation
+  (`GitRepositoryService::refresh_generation_`, stamped onto the request and copied
+  into `RefreshSnapshot::generation`). So `PublishResult` now records
+  `CurrentRefreshGeneration() + 1` before calling `request_git_refresh()` and
+  accepts the first snapshot at or above it. The `+ 1` and the "at or above"
+  matter: `RequestAutomaticGitSidebarRefresh` is throttled to 750 ms and returns
+  early while a refresh is in flight, in which case the call only marks the repo
+  stale and the commit's changes surface in a *later* generation than any the call
+  minted. Reading the generation the request produced would have watched the wrong
+  refresh — or no refresh at all.
+
+  The reporting hop is the shell's `consume_git_refresh_snapshot` lambda, which is
+  the one place an async refresh outcome is known on the main thread.
+  `WorkspaceShell/CommitReportsFailedFollowUpRefresh` drives it end to end through
+  a real commit with `FailGitRefreshesForTesting` armed after dispatch (so the
+  pre-checks and the commit itself still run against the real repo), and also pins
+  the one-shot property — a second failing refresh must not re-attribute itself to
+  the commit. Probed non-vacuous by disarming the watch.
 
   The parallel `bool refresh_failed_after_success` on `CommitOperationResult` was
   deleted: the committing worker cannot know the refresh outcome, so a flag it

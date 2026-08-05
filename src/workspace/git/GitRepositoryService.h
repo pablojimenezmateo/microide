@@ -34,6 +34,14 @@ class GitRepositoryService {
                       bool tree_git_badges_materialized);
   bool ConsumePendingSidebarSnapshot(GitSidebarState::RefreshSnapshot* snapshot);
 
+  // Generation of the most recently *scheduled* refresh. A published snapshot
+  // carries the generation of the request that produced it, so a caller that
+  // wants to hear about the outcome of a refresh it is about to ask for reads
+  // this first and then waits for a snapshot whose generation exceeds it — which
+  // stays correct when the request is throttled or coalesced into a deferred
+  // follow-up (see CommitWorkflowService's post-commit refresh watch).
+  std::uint64_t CurrentRefreshGeneration() const;
+
   // Test seam: drives a refresh on the calling thread. Always compiled; unused
   // by production code paths (which dispatch refreshes asynchronously).
   void RunRefreshSynchronouslyForTesting(const std::filesystem::path& project_root,

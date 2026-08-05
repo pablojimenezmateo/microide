@@ -275,6 +275,12 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
                 const bool consumed = ConsumePendingGitSidebarRefreshSnapshot(snapshot);
                 if (consumed) {
                   InvalidateStaleMergeTabs();
+                  // A commit that succeeded and then asked for this refresh wants
+                  // to hear whether it failed (TD-2026-07-26-003). Every consumed
+                  // snapshot goes through here, so this is the one place the async
+                  // outcome is known on the main thread.
+                  commit_workflow_service_.NoteGitRefreshOutcome(snapshot->generation,
+                                                                 snapshot->refresh_error);
                 }
                 return consumed;
               },

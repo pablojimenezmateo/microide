@@ -464,6 +464,26 @@
     return shell.MakeKeyInputCoordinator().HandleKeyDown(event);
   }
   static bool OpenCommitWorkflow(WorkspaceShell& shell) { return shell.OpenCommitWorkflow(); }
+  static bool RequestCommitWorkflowCommit(WorkspaceShell& shell) {
+    return shell.RequestCommitWorkflowCommit();
+  }
+  // Test seam: make every subsequent git refresh publish `error` as its
+  // refresh_error while otherwise reproducing the state the last real refresh
+  // produced — the shape of a repository whose status query failed. Used to prove
+  // a commit hears about the failure of the refresh it asked for.
+  static void FailGitRefreshesForTesting(WorkspaceShell& shell, std::string error) {
+    shell.git_repository_service_.SetRepositoryStateProviderForTesting(
+        [state = shell.git_repository_service_.CurrentState(), error](
+            const std::filesystem::path&, std::uint64_t) {
+          project::GitRepositoryState failed = state;
+          failed.refresh_error = {
+              .category = project::GitRefreshErrorCategory::UnknownError,
+              .detail = error,
+          };
+          failed.stale = true;
+          return failed;
+        });
+  }
   static CommitWorkflowState& CommitWorkflow(WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.commit_workflow;
   }

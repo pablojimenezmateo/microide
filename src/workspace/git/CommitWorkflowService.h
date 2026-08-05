@@ -84,6 +84,21 @@ class CommitWorkflowService {
   // case, which is a project tab closing while its commit runs.
   void AbandonOperation(std::uint64_t generation);
 
+  // A successful commit marks the repository stale and asks for a refresh, then
+  // reports plain success — the refresh runs long after and its outcome used to
+  // reach the user only as the git sidebar's "Git refresh failed: …" banner, so
+  // `CommitOperationResultCategory::RefreshFailedAfterSuccess` had two live
+  // display branches and no producer (TD-2026-07-26-003). The shell calls this
+  // with every consumed refresh snapshot; when the snapshot is the one a commit
+  // was waiting on and it failed, a follow-up warning toast is posted.
+  //
+  // Follow-up, not replacement: the commit really did succeed and saying so
+  // promptly matters more than waiting out a refresh that may take seconds. A
+  // newer commit disarms the watch, so the operation in front of the user always
+  // owns the feedback.
+  void NoteGitRefreshOutcome(std::uint64_t snapshot_generation,
+                             std::string_view refresh_error);
+
  private:
   void DispatchCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
   void PublishResult(CommitWorkflowState& state, project::CommitOperationResult result,
@@ -95,6 +110,12 @@ class CommitWorkflowService {
   Callbacks callbacks_;
   mutable std::mutex mutex_;
   std::uint64_t operation_generation_ = 0;
+  // 0 = not watching. Otherwise the lowest refresh generation whose snapshot can
+  // be the post-commit refresh (see NoteGitRefreshOutcome). It is "current + 1"
+  // rather than the generation the request produced because the request can be
+  // throttled or folded into an already-deferred refresh, in which case the
+  // commit's changes are picked up by a later generation than the call returned.
+  std::uint64_t post_commit_refresh_watch_ = 0;
   // Background-thread commit result -> main-thread PublishResult marshaling. Keeps
   // all mutation of CommitWorkflowState (subject/body viewports, status message)
   // on the render thread; the worker only produces the CommitOperationResult.
