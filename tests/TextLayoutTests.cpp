@@ -302,7 +302,92 @@ void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
          "ClearVisibleLineAndMaxColumns must still clear the visible-line cache");
 }
 
+// ClampTextColumn rounds a byte offset down to the start of the code point that
+// contains it. It used to answer that by re-tiling the line from byte 0, one
+// UTF-8 sequence at a time -- an O(1) question at O(column) cost, run four times
+// per keystroke on the edit path (TD-2026-08-05-131). It now steps back over
+// continuation bytes instead, which is exact because UTF-8 is self-synchronizing.
+//
+// Differential: for WELL-FORMED UTF-8 the backward step must agree with the
+// forward tiling at every offset of every line. That is the whole claim, so test
+// it exhaustively rather than on a hand-picked row list.
+void TestClampTextColumnMatchesForwardTiling() {
+  const auto forward_tiling = [](std::string_view line, std::size_t text_column) {
+    const std::size_t clamped = std::min(text_column, line.size());
+    if (clamped >= line.size()) {
+      return line.size();
+    }
+    std::size_t current = 0;
+    while (current < clamped) {
+      const std::size_t next = current + util::Utf8SequenceLength(line, current);
+      if (next > clamped) {
+        break;
+      }
+      current = next;
+    }
+    return current;
+  };
+
+  // One representative of each UTF-8 sequence length, plus a tab and plain ASCII,
+  // so every continuation-byte run length (0..3) appears at every alignment.
+  const std::string units[] = {"a", "\t", "\xC3\xA9", "\xE4\xB8\xAD", "\xF0\x9F\x98\x80"};
+  std::vector<std::string> lines = {"", "a", "\xF0\x9F\x98\x80"};
+  for (const std::string& first : units) {
+    for (const std::string& second : units) {
+      for (const std::string& third : units) {
+        lines.push_back(first + second + third);
+        lines.push_back(second + first + third + second);
+      }
+    }
+  }
+
+  for (const std::string& line : lines) {
+    for (std::size_t column = 0; column <= line.size() + 2; ++column) {
+      const std::size_t clamped = TextLayout::ClampTextColumn(line, column);
+      Expect(clamped == forward_tiling(line, column),
+             "ClampTextColumn must agree with the forward tiling on well-formed UTF-8");
+      Expect(clamped <= std::min(column, line.size()),
+             "ClampTextColumn must never move the column forward");
+      Expect(clamped == line.size() ||
+                 (static_cast<unsigned char>(line[clamped]) & 0xC0u) != 0x80u,
+             "ClampTextColumn must land on a lead byte, never inside a code point");
+      // The neighbours the caret actually steps to must stay inside the line and
+      // on boundaries too.
+      const std::size_t previous = TextLayout::PreviousTextColumn(line, column);
+      const std::size_t next = TextLayout::NextTextColumn(line, column);
+      Expect(previous <= clamped && next >= clamped && next <= line.size(),
+             "Previous/NextTextColumn must bracket the clamped column");
+    }
+  }
+}
+
+// Malformed bytes must still produce a usable clamp: inside the line, never past
+// what was asked, and bounded -- a run of stray continuation bytes must not walk
+// backwards forever.
+void TestClampTextColumnBoundsMalformedSequences() {
+  const std::string malformed[] = {
+      std::string("\x80\x80\x80\x80\x80\x80", 6),   // continuation bytes with no lead
+      std::string("a\xC3", 2),                       // truncated 2-byte sequence
+      std::string("\xF0\x9F\x98", 3),                // truncated 4-byte sequence
+      std::string("\xFF\xFE" "ab", 4),               // invalid lead bytes
+  };
+  for (const std::string& line : malformed) {
+    for (std::size_t column = 0; column <= line.size() + 2; ++column) {
+      const std::size_t clamped = TextLayout::ClampTextColumn(line, column);
+      Expect(clamped <= line.size(), "a malformed line must still clamp inside the line");
+      Expect(clamped <= std::min(column, line.size()),
+             "a malformed line must still clamp at or before the requested column");
+      Expect(std::min(column, line.size()) - clamped <= 3,
+             "the backward re-sync must be bounded by the longest UTF-8 sequence");
+    }
+  }
+}
+
 void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextLayout/ClampTextColumnMatchesForwardTiling",
+          TestClampTextColumnMatchesForwardTiling);
+  AddTest(tests, "TextLayout/ClampTextColumnBoundsMalformedSequences",
+          TestClampTextColumnBoundsMalformedSequences);
   AddTest(tests, "TextLayoutCache/InvalidateAllClearsVisibleLineCache",
           TestTextLayoutCacheInvalidateAllClearsVisibleLineCache);
   AddTest(tests, "TextLayout/RecycledEntriesMatchFreshBuilds",

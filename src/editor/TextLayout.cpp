@@ -115,15 +115,32 @@ std::size_t TextLayout::ClampTextColumn(std::string_view line, std::size_t text_
     return line.size();
   }
 
-  std::size_t current = 0;
-  while (current < clamped_column) {
-    const std::size_t next = current + util::Utf8SequenceLength(line, current);
-    if (next > clamped_column) {
-      break;
-    }
-    current = next;
+  // Round down to the start of the code point containing `clamped_column` by
+  // stepping back over continuation bytes -- at most three, because UTF-8 is
+  // self-synchronizing: a lead byte and a continuation byte are distinguishable
+  // from the byte alone.
+  //
+  // This used to re-tile the line from byte 0, one sequence at a time, which made
+  // an O(1) question cost O(column). Nothing notices on a 40-character line. On a
+  // file with no line breaks in it -- a minified bundle -- the caret sits a
+  // megabyte into "the line", and this ran FOUR times per keystroke: twice
+  // clamping the edit range's endpoints, once inside VisualColumnForTextColumn for
+  // the caret's preferred column, and once inside PreviousTextColumn for a
+  // backspace. It was the single largest remaining cost on the edit path after
+  // the copies were removed (TD-2026-08-05-131), at ~1.2 ms a call.
+  //
+  // For well-formed UTF-8 the two agree exactly. They can differ inside a
+  // malformed sequence (a truncated lead byte's claimed length is not observable
+  // from a later byte); the answer is still a valid clamp -- inside the line, no
+  // greater than asked, and never splitting a well-formed code point -- and it
+  // matches how the rest of the editor re-syncs (PreviousTextColumn already
+  // scanned backwards this way).
+  std::size_t column = clamped_column;
+  const std::size_t floor = column >= 3 ? column - 3 : 0;
+  while (column > floor && (static_cast<unsigned char>(line[column]) & 0xC0u) == 0x80u) {
+    --column;
   }
-  return current;
+  return column;
 }
 
 std::size_t TextLayout::PreviousTextColumn(std::string_view line, std::size_t text_column) {
