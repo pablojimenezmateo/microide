@@ -418,6 +418,213 @@ void TestRendererCachesReuseWarmEntriesAcrossViewportSwitches() {
   Expect(renderer.indent_guides_cache_hits() >= 2,
          "alternating warmed viewports should hit the indent-guides cache after warm-up");
 }
+
+// The row's match-fill loops narrow their span list by the row's visible SOURCE
+// window, not just by line. Narrowing by line alone is not narrowing at all when
+// the document is one line -- every match in the file lands on the one row, and
+// each was resolved and clipped individually before being discarded.
+//
+// The risk is the opposite failure: dropping a span that should have painted.
+// Pinned two ways, because either alone is vacuous. A differential against a
+// control that cannot narrow on its left edge -- the same bytes rendered from
+// column 0 -- catches an asymmetric bound. A positive count of painted highlight
+// pixels catches a bound that is wrong in the SAME way on both sides, which the
+// differential cannot see because both renders lose the same fills.
+//
+// Both fill sources get this: the explicit match list (regex / whole-buffer find)
+// and the occurrence highlight, which is the one the perf scenario actually hit.
+void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
+  EnsureDummySdlVideo();
+  microide::render::TextRenderer text_renderer;
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+
+  // 40 records of 12 bytes; "MMMM" is the match token at the start of each. The
+  // spaces matter: the occurrence highlight seeds on the WORD under the caret, so
+  // a record with no separators would make the whole line one word.
+  constexpr std::size_t kRecordCount = 40;
+  const std::string record = "MMMM abcdef ";
+  std::string line;
+  for (std::size_t i = 0; i < kRecordCount; ++i) {
+    line += record;
+  }
+  std::vector<microide::editor::SelectionRange> all_matches;
+  for (std::size_t i = 0; i < kRecordCount; ++i) {
+    const std::size_t start = i * record.size();
+    all_matches.push_back(microide::editor::SelectionRange{
+        .start = {0, start},
+        .end = {0, start + 4},
+    });
+  }
+  // Land the scroll inside a match (record 8 spans [96, 108), its token [96, 100))
+  // so a match straddles the left edge -- the case a naive column bound gets wrong.
+  constexpr std::size_t kScroll = 98;
+  const SDL_FRect rect{0.0f, 0.0f, 400.0f, 60.0f};
+
+  // Highlight fills are drawn with alpha and then overpainted by glyphs, so there
+  // is no exact color to look for. The robust question is "did the matches change
+  // anything HERE?", answered against the same render with no matches at all.
+  const auto count_differing_pixels = [&](const SoftwareCanvas& a, const SoftwareCanvas& b,
+                                          int x_lo, int x_hi) {
+    std::size_t differing = 0;
+    for (int y = 0; y < 24; ++y) {
+      for (int x = std::max(0, x_lo); x < std::min(400, x_hi); ++x) {
+        const SDL_Color pa = a.PixelAt(x, y);
+        const SDL_Color pb = b.PixelAt(x, y);
+        if (pa.r != pb.r || pa.g != pb.g || pa.b != pb.b || pa.a != pb.a) {
+          ++differing;
+        }
+      }
+    }
+    return differing;
+  };
+
+  // Where a source column lands on screen. The row is plain ASCII, so its visual
+  // column IS its byte column, and the geometry is the renderer's own -- computed
+  // here rather than reused from it, so this side of the check does not go through
+  // the narrowing being tested.
+  const float char_width = text_renderer.CharWidth();
+
+  // --- explicit match list (regex / whole-buffer find) ---------------------
+  {
+    SoftwareCanvas scrolled_canvas(400, 60);
+    SoftwareCanvas control_canvas(400, 60);
+    microide::editor::TextViewport scrolled;
+    scrolled.LoadContent(line + "\n", "/tmp/row-fill-scrolled.txt");
+    scrolled.SetViewportSize(3, 20);
+    // Plain ASCII, so the visual scroll offset IS the byte offset.
+    scrolled.SetHorizontalScroll(kScroll);
+
+    // Control: the same bytes rendered from column 0 of their own line -- same text
+    // at the same screen position, but its left edge is the line's start, so
+    // nothing can be narrowed away on that side.
+    microide::editor::TextViewport control;
+    control.LoadContent(line.substr(kScroll) + "\n", "/tmp/row-fill-control.txt");
+    control.SetViewportSize(3, 20);
+    std::vector<microide::editor::SelectionRange> control_matches;
+    for (const auto& match : all_matches) {
+      if (match.end.column <= kScroll) {
+        continue;
+      }
+      control_matches.push_back(microide::editor::SelectionRange{
+          .start = {0, match.start.column > kScroll ? match.start.column - kScroll : 0},
+          .end = {0, match.end.column - kScroll},
+      });
+    }
+    Expect(control_matches.size() >= 2,
+           "the window must contain more than one match for this to test anything");
+
+    microide::editor::EditorViewRenderer scrolled_renderer;
+    microide::editor::EditorViewRenderer control_renderer;
+    scrolled_renderer.Render(scrolled_canvas.renderer(), text_renderer, theme, scrolled, rect,
+                             /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr,
+                             false, false, false, nullptr, nullptr, nullptr,
+                             /*show_line_numbers=*/false, all_matches);
+    control_renderer.Render(control_canvas.renderer(), text_renderer, theme, control, rect,
+                            /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr,
+                            false, false, false, nullptr, nullptr, nullptr,
+                            /*show_line_numbers=*/false, control_matches);
+
+    // Same viewport and scroll, no matches: anything the match list paints shows up
+    // as a difference against this.
+    SoftwareCanvas bare_canvas(400, 60);
+    microide::editor::EditorViewRenderer bare_renderer;
+    bare_renderer.Render(bare_canvas.renderer(), text_renderer, theme, scrolled, rect,
+                         /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr, false,
+                         false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false, {});
+
+    // EVERY match the window can show must have painted, checked cell by cell.
+    // A differential against another scrolled render cannot see a bound that is
+    // wrong the same way on both sides -- both would lose the same fills -- so this
+    // is the check that has to be independent of the code under test.
+    const microide::editor::EditorViewMetrics metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, scrolled, rect, 0,
+                                                             /*show_line_numbers=*/false);
+    std::size_t checked = 0;
+    for (const auto& match : all_matches) {
+      const std::size_t window_end = kScroll + metrics.visible_columns;
+      if (match.end.column <= kScroll || match.start.column >= window_end) {
+        continue;
+      }
+      const std::size_t visible_start = std::max(match.start.column, kScroll);
+      const int x_lo = static_cast<int>(metrics.text_x +
+                                        static_cast<float>(visible_start - kScroll) * char_width);
+      const int x_hi = x_lo + static_cast<int>(char_width);
+      Expect(count_differing_pixels(scrolled_canvas, bare_canvas, x_lo, x_hi) > 0,
+             "the match at source column " + std::to_string(match.start.column) +
+                 " is inside the scrolled window and must paint");
+      ++checked;
+    }
+    Expect(checked >= 3,
+           "the window must contain several matches for this to test anything (checked " +
+               std::to_string(checked) + ")");
+
+    const std::size_t differing = count_differing_pixels(scrolled_canvas, control_canvas, 0, 400);
+    Expect(differing == 0,
+           "a horizontally scrolled row must paint the same match highlights as the same text "
+           "unscrolled (" +
+               std::to_string(differing) + " pixels differ)");
+  }
+
+  // --- occurrence highlight (the caret's word) -----------------------------
+  {
+    microide::workspace::WorkspaceContext ctx;
+    microide::workspace::RenderViewModelBuilder builder(ctx);
+    microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+
+    SoftwareCanvas canvas(400, 60);
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent(line + "\n", "/tmp/row-fill-occurrences.txt");
+    viewport.SetViewportSize(3, 20);
+    // Caret inside the "MMMM" of record 9, which is inside the scrolled window, so
+    // the seed occurrence and its siblings all land on the row.
+    viewport.MoveCursorTo(0, 9 * record.size() + 1, false);
+    viewport.SetHorizontalScroll(kScroll);
+
+    microide::editor::EditorViewModel vm;
+    builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/3, /*folding_model=*/nullptr,
+                                     /*occurrences_highlight_enabled=*/true,
+                                     /*occurrences_case_sensitive=*/true,
+                                     /*sticky_scroll_enabled=*/false,
+                                     /*sticky_max_depth=*/3,
+                                     /*render_whitespace_enabled=*/false);
+    Expect(vm.occurrence_ranges.size() >= 8,
+           "the fixture must produce many occurrences for the narrowing to matter (got " +
+               std::to_string(vm.occurrence_ranges.size()) + ")");
+
+    microide::editor::EditorViewRenderer renderer;
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect,
+                    /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, &vm, false, false,
+                    false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+
+    SoftwareCanvas bare_canvas(400, 60);
+    microide::editor::EditorViewModel bare_vm;
+    microide::editor::EditorViewRenderer bare_renderer;
+    bare_renderer.Render(bare_canvas.renderer(), text_renderer, theme, viewport, rect,
+                         /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, &bare_vm, false,
+                         false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+    const microide::editor::EditorViewMetrics metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
+                                                             /*show_line_numbers=*/false);
+    std::size_t checked = 0;
+    for (const auto& occurrence : vm.occurrence_ranges) {
+      const std::size_t window_end = kScroll + metrics.visible_columns;
+      if (occurrence.end_column <= kScroll || occurrence.start_column >= window_end) {
+        continue;
+      }
+      const std::size_t visible_start = std::max<std::size_t>(occurrence.start_column, kScroll);
+      const int x_lo = static_cast<int>(metrics.text_x +
+                                        static_cast<float>(visible_start - kScroll) * char_width);
+      const int x_hi = x_lo + static_cast<int>(char_width);
+      Expect(count_differing_pixels(canvas, bare_canvas, x_lo, x_hi) > 0,
+             "the occurrence at source column " + std::to_string(occurrence.start_column) +
+                 " is inside the scrolled window and must paint");
+      ++checked;
+    }
+    Expect(checked >= 3,
+           "the window must contain several occurrences for this to test anything (checked " +
+               std::to_string(checked) + ")");
+  }
+}
 #endif  // MICROIDE_HAS_SDL3_TTF
 
 }  // namespace
@@ -436,6 +643,8 @@ void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests) 
           TestPerFrameCacheInvalidationKeysRenderPaths);
   AddTest(tests, "EditorRenderViewModel/RendererCachesReuseWarmEntriesAcrossViewportSwitches",
           TestRendererCachesReuseWarmEntriesAcrossViewportSwitches);
+  AddTest(tests, "EditorRenderViewModel/RowMatchFillsSurviveHorizontalScrollNarrowing",
+          TestRowMatchFillsSurviveHorizontalScrollNarrowing);
 #endif
 }
 

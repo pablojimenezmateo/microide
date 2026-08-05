@@ -715,6 +715,27 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // them to the unified BuildDecoratedRow. The builder resolves source->visual
     // columns and owns the assembly order (background -> column fills ->
     // pre-positioned -> syntax -> diagnostics).
+    // Source-byte window this row can actually show. Narrowing a match list by
+    // LINE is not narrowing at all when the document is one line: every match in
+    // the file lands on this row, and each one was resolved (two binary searches
+    // over the layout's cell grid) and then clipped away. `source_columns` is
+    // ascending, so its ends bound the row exactly.
+    //
+    // `+ 1` on the right so a one-cell end-of-line marker at `row_len` survives
+    // when the line's last byte is visible — that is the only span whose start
+    // legitimately sits one past the last visible source byte.
+    const bool row_shows_source = !row_layout.source_columns.empty();
+    const std::size_t row_first_source =
+        row_shows_source ? row_layout.source_columns.front() : 0;
+    const std::size_t row_last_source_plus_one =
+        row_shows_source ? row_layout.source_columns.back() + 1 : 0;
+    // True when a source range [start, end) can put a cell on this row. A span
+    // ending at or before the window, or starting past it, draws nothing.
+    const auto row_can_show_span = [&](std::size_t start_column, std::size_t end_column) {
+      return row_shows_source && end_column > row_first_source &&
+             start_column <= row_last_source_plus_one;
+    };
+
     column_fill_scratch_.clear();
     prepositioned_fill_scratch_.clear();
 
@@ -728,7 +749,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           frag_begin, frag_end, line_index,
           [](const SelectionRange& r, std::size_t l) { return r.start.line < l; });
       const std::size_t row_len = lines.LineLength(line_index);
-      for (; it != frag_end && it->start.line == line_index; ++it) {
+      // Fragments are sorted by (start.line, start.column), so the first one
+      // starting past this row's window ends the slice — everything after it is
+      // off-row by construction.
+      for (; it != frag_end && it->start.line == line_index &&
+             it->start.column <= row_last_source_plus_one;
+           ++it) {
+        if (!row_can_show_span(it->start.column, std::max(it->end.column, it->start.column + 1))) {
+          continue;
+        }
         const bool is_active_match = active_search_match.has_value() &&
                                      active_search_match->start.line == it->start.line &&
                                      active_search_match->start.column == it->start.column;
@@ -821,7 +850,24 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       const auto occ_hi = std::upper_bound(
           occ_lo, occ_end_ptr, line_index,
           [](std::size_t l, const OccurrenceRange& r) { return l < r.line_index; });
-      for (auto occ_it = occ_lo; occ_it < occ_hi; ++occ_it) {
+      // Same second narrowing as the search fragments above: occurrences are
+      // emitted left to right within a line (RefillOccurrenceScanCache), so the
+      // row's source window bounds the slice. Without it, a caret on a common
+      // token in a minified bundle pushed every one of its thousands of matches
+      // through the fill path on every visible row of every frame.
+      auto occ_visible_lo = std::lower_bound(
+          occ_lo, occ_hi, row_first_source,
+          [](const OccurrenceRange& r, std::size_t column) { return r.start_column < column; });
+      // A match can start before the window and still reach into it. Spans are
+      // ascending, so stepping back stops at the first one that ends clear of it.
+      while (occ_visible_lo > occ_lo && (occ_visible_lo - 1)->end_column > row_first_source) {
+        --occ_visible_lo;
+      }
+      const auto occ_visible_hi = std::upper_bound(
+          occ_visible_lo, occ_hi, row_last_source_plus_one,
+          [](std::size_t column, const OccurrenceRange& r) { return column < r.start_column; });
+      for (auto occ_it = row_shows_source ? occ_visible_lo : occ_hi; occ_it < occ_visible_hi;
+           ++occ_it) {
         const OccurrenceRange& occ = *occ_it;
         if (occ.start_column >= occ.end_column) {
           continue;
