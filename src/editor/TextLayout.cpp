@@ -80,6 +80,18 @@ std::size_t TextLayout::VisualColumnForTextColumn(std::string_view line,
   return visual_column;
 }
 
+std::size_t TextLayout::AdvanceVisualColumnsOver(std::size_t visual_column, std::string_view text,
+                                                 std::size_t tab_size) {
+  // Same plain-ASCII shortcut as VisualColumnForTextColumn: one byte, one column.
+  const std::size_t plain_prefix = FirstNonPlainAsciiByte(text);
+  visual_column += plain_prefix;
+  for (std::size_t i = plain_prefix; i < text.size();) {
+    visual_column = AdvanceVisualColumn(visual_column, text[i], tab_size);
+    i += util::Utf8SequenceLength(text, i);
+  }
+  return visual_column;
+}
+
 std::size_t TextLayout::TextColumnForVisualColumn(std::string_view line,
                                                   std::size_t visual_column,
                                                   std::size_t tab_size) {

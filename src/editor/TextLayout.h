@@ -22,6 +22,13 @@ class TextLayout {
   static std::size_t VisualColumnForTextColumn(std::string_view line,
                                                std::size_t text_column,
                                                std::size_t tab_size);
+  // Visual column reached by walking `text` starting from `visual_column`. Lets a
+  // caller that already knows the visual column at some byte offset extend it over
+  // a run appended there, instead of composing the joined string and re-walking
+  // its whole prefix.
+  static std::size_t AdvanceVisualColumnsOver(std::size_t visual_column,
+                                              std::string_view text,
+                                              std::size_t tab_size);
   static std::size_t TextColumnForVisualColumn(std::string_view line,
                                                std::size_t visual_column,
                                                std::size_t tab_size);

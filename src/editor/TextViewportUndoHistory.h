@@ -60,8 +60,31 @@ class TextViewportUndoHistory {
     bool dirty = false;
   };
 
+  // One undo step. It has two shapes, and which one it is decides whether a
+  // keystroke costs a few bytes or a few megabytes.
+  //
+  // COLUMN-SCOPED ("inline", `is_inline == true`). The entry describes a single
+  // in-line splice: on line `start_line`, the bytes
+  // [`start_column`, `start_column` + `removed_text.size()`) become
+  // `inserted_text`. Neither string contains a '\n', and the line vectors stay
+  // empty. This is what an ordinary keystroke produces.
+  //
+  // LINE-VECTOR (`is_inline == false`). `before_lines` at `start_line` become
+  // `after_lines`. Every structural edit lives here: line splits and joins,
+  // multi-line replaces, grouped/multi-caret aggregates, whole-document changes.
+  //
+  // The line form cannot express "one character changed at a column" without
+  // storing the entire affected line twice, so a one-character edit used to
+  // allocate five copies of its line: the pre-edit slice, the composed post-edit
+  // line, the tree's replacement buffer, its add-buffer append, and the typing
+  // run's coalesce. Three of those are gone with the column-scoped form, and the
+  // other two with the piece tree's column-scoped splice (TD-2026-08-05-131).
   struct Entry {
     std::size_t start_line = 0;
+    bool is_inline = false;
+    std::size_t start_column = 0;
+    std::string removed_text;
+    std::string inserted_text;
     std::vector<std::string> before_lines;
     std::vector<std::string> after_lines;
     ViewState before_state;
@@ -69,6 +92,13 @@ class TextViewportUndoHistory {
     // Cached content byte size, stamped when the entry enters the undo stack so
     // the byte-budget trim stays O(entries). Meaningful only while stacked.
     std::size_t byte_size = 0;
+
+    // Lines the entry replaces / installs. An inline entry is exactly one line
+    // wide on both sides by construction, so every line-arithmetic consumer
+    // (cache invalidation, wrapped-row splice, group bookkeeping) reads these
+    // instead of the vectors' sizes.
+    std::size_t before_line_count() const { return is_inline ? 1 : before_lines.size(); }
+    std::size_t after_line_count() const { return is_inline ? 1 : after_lines.size(); }
   };
 
   // Grouping ------------------------------------------------------------
@@ -91,6 +121,7 @@ class TextViewportUndoHistory {
                                           ViewState after_state);
 
   // Undo / redo stack access -------------------------------------------
+  const Entry* TopUndoEntry() const { return undo_stack_.empty() ? nullptr : &undo_stack_.back(); }
   bool CanUndo() const { return !undo_stack_.empty(); }
   bool CanRedo() const { return !redo_stack_.empty(); }
   Entry PopUndo();
@@ -146,6 +177,19 @@ class TextViewportUndoHistory {
   // Call the predicate first; the merge's precondition is that it returned true.
   static bool CanMergeGroupEntry(const Entry& aggregate, const Entry& next);
   static Entry MergeGroupEntry(Entry aggregate, const Entry& next);
+  // Column-scoped counterparts, used only by the typing/deletion coalesce run
+  // (grouped edits widen their children to the line form before recording, so
+  // the disjoint-range bookkeeping never sees an inline entry).
+  //
+  // `aggregate` describes line L as [c0, c0 + |R0|) -> I0 in PRE-run coordinates;
+  // once applied, its inserted text occupies [c0, c0 + |I0|), and `next` is stated
+  // in those post-aggregate coordinates. Three shapes compose:
+  //   * `next` abuts on the right (an insert run, and a delete-forward run),
+  //   * `next` abuts on the left (a backspace run),
+  //   * `next` lies wholly inside the aggregate's insertion (a re-edit of text
+  //     the run itself typed).
+  static bool CanMergeInlineEntry(const Entry& aggregate, const Entry& next);
+  static void MergeInlineEntryInto(Entry& aggregate, const Entry& next);
   // Fold a freshly recorded child edit into a frame's disjoint-range set: splice
   // into a containing/adjacent range or insert a new one, reindexing strictly-lower
   // ranges by the child's net line delta. O(#ranges), never a whole-buffer copy.

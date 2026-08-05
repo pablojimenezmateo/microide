@@ -1232,18 +1232,18 @@ void TextViewport::BeginSelectionIfNeeded(bool extend_selection) {
 
 void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                                     std::size_t removed_count,
-                                                    const std::vector<std::string>& inserted_lines) {
-  layout_cache_.UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines,
+                                                    std::size_t inserted_count) {
+  layout_cache_.UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_count,
                                                   document_->lines, tab_size_,
                                                   document_->content_revision);
 }
 
 void TextViewport::UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                               std::size_t removed_count,
-                                              const std::vector<std::string>& inserted_lines) {
+                                              std::size_t inserted_count) {
   // Fast path for the pure soft-wrap case: splice only the edited rows. Any
   // unsupported shape returns false and the content_revision guard rebuilds.
-  layout_cache_.UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_lines,
+  layout_cache_.UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_count,
                                            document_->lines, tab_size_, visible_columns_,
                                            soft_wrap_, folding_model_,
                                            document_->layout_shape_revision,

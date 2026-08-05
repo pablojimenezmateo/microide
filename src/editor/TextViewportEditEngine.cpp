@@ -228,6 +228,11 @@ bool TextViewport::ApplyHistoryStep(bool redo) {
   return true;
 }
 
+bool TextViewport::TopUndoEntryIsColumnScopedForTesting() const {
+  const HistoryEntry* top = undo_history_.TopUndoEntry();
+  return top != nullptr && top->is_inline;
+}
+
 bool TextViewport::Undo() { return ApplyHistoryStep(/*redo=*/false); }
 
 bool TextViewport::Redo() { return ApplyHistoryStep(/*redo=*/true); }
@@ -517,6 +522,15 @@ void TextViewport::RestoreViewState(const ViewState& state) {
 }
 
 void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
+  // INVARIANT: a group frame's disjoint-range bookkeeping is expressed entirely in
+  // line coordinates (start_line + before/after line vectors), so an inline child
+  // has to be widened before it enters one. This is the single point where a
+  // recorded entry can still be inline, which is why the widening lives here
+  // rather than inside TextViewportUndoHistory (which has no buffer to read the
+  // line from).
+  if (entry.is_inline && undo_history_.IsGroupActive()) {
+    WidenInlineEntryToLines(entry);
+  }
   undo_history_.RecordEntry(std::move(entry), hint);
 }
 
@@ -547,27 +561,33 @@ void TextViewport::FlushActiveUndoGroup() {
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   util::PerformanceTrace::Scope perf_scope("TextViewport::ApplyHistoryEntry");
   const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
-  const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
-  const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
+  const std::size_t removed_count =
+      forward ? entry.before_line_count() : entry.after_line_count();
+  const std::size_t inserted_count =
+      forward ? entry.after_line_count() : entry.before_line_count();
   {
     util::PerformanceTrace::Scope scope("TextViewport::ApplyHistoryEntry::ApplyEntryToBuffer");
     TextViewportUndoHistory::ApplyEntryToBuffer(document_->lines, entry, forward);
   }
 
   RestoreViewState(forward ? entry.after_state : entry.before_state);
-  // Incremental, upgrade-only: scan just the inserted lines instead of
-  // re-detecting the whole document's encoding on every keystroke.
-  UpgradeEncodingForInsertedLines(inserted_lines);
+  // Incremental, upgrade-only: scan just what the edit spliced in instead of
+  // re-detecting the whole document's encoding on every keystroke. For an in-line
+  // entry that is the delta itself, not the rebuilt line.
+  if (entry.is_inline) {
+    UpgradeEncodingForInsertedText(forward ? entry.inserted_text : entry.removed_text);
+  } else {
+    UpgradeEncodingForInsertedLines(forward ? entry.after_lines : entry.before_lines);
+  }
   // Undo/redo replays a content delta starting at start_line. This is the only
   // edit path that knows the exact extent, so it is the only one that lets the
   // folding model's per-line caches resync instead of rebuilding.
   InvalidateDerivedCaches(InvalidationReason::ContentEdit, start_line,
-                          ContentSplice{.removed = removed_count,
-                                        .inserted = inserted_lines.size()});
-  UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_lines);
+                          ContentSplice{.removed = removed_count, .inserted = inserted_count});
+  UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_count);
   // Keep the wrapped-row table in sync incrementally so soft-wrap editing does
   // not force a full O(document) re-wrap per keystroke.
-  UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_lines);
+  UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_count);
   EnsureCursorVisible();
 }
 
@@ -592,6 +612,16 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
   const TextPosition end = clamp_position(normalized.end);
   if (start.line == end.line && start.column == end.column && replacement.empty()) {
     return std::nullopt;
+  }
+
+  // The in-line case -- one line in, one line out -- is the overwhelming majority
+  // of edits (every keystroke) and is the only one the line-vector entry cannot
+  // express without storing the whole affected line twice. Route it to the
+  // column-scoped form, whose cost is the size of the delta rather than the size
+  // of the line. (TD-2026-08-05-131.)
+  if (start.line == end.line && replacement.find('\n') == std::string_view::npos &&
+      replacement.find('\r') == std::string_view::npos) {
+    return BuildInlineHistoryEntry(start.line, start.column, end.column, replacement);
   }
 
   std::vector<std::string> before_lines;
@@ -671,6 +701,72 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
       .before_state = CaptureViewState(),
       .after_state = after_state,
   };
+}
+
+std::optional<TextViewport::HistoryEntry> TextViewport::BuildInlineHistoryEntry(
+    std::size_t line, std::size_t start_column, std::size_t end_column,
+    std::string_view replacement) const {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::BuildInlineHistoryEntry");
+  std::string removed;
+  if (end_column > start_column) {
+    removed.reserve(end_column - start_column);
+    // AppendTextRange, not LineView().substr: the latter materializes the WHOLE
+    // line whenever it spans pieces, which after the first edit it always does.
+    document_->lines.AppendTextRange(line, start_column, line, end_column, removed);
+  }
+  // Exact no-op (the replacement reproduces the covered text byte for byte). The
+  // line form rejects these centrally for the same reasons -- LSP WorkspaceEdits,
+  // plugin apply_edits and formatters that return identical text must not bump
+  // content_revision or clear redo (TD-2026-07-17A-092).
+  if (removed.size() == replacement.size() &&
+      std::equal(removed.begin(), removed.end(), replacement.begin())) {
+    return std::nullopt;
+  }
+
+  ViewState after_state = CaptureViewState();
+  after_state.cursor_line = line;
+  after_state.cursor_column = start_column + replacement.size();
+  // Visual column of the caret WITHOUT composing the post-edit line: the bytes
+  // before `start_column` are unchanged by the edit, so walk the pre-edit line up
+  // to there and continue over the replacement.
+  after_state.preferred_column = TextLayout::AdvanceVisualColumnsOver(
+      VisualColumnAt(line, start_column), replacement, tab_size_);
+  after_state.selection_anchor.reset();
+  after_state.placeholder = false;
+  after_state.dirty = true;
+
+  HistoryEntry entry;
+  entry.is_inline = true;
+  entry.start_line = line;
+  entry.start_column = start_column;
+  entry.removed_text = std::move(removed);
+  entry.inserted_text.assign(replacement);
+  entry.before_state = CaptureViewState();
+  entry.after_state = std::move(after_state);
+  return entry;
+}
+
+void TextViewport::WidenInlineEntryToLines(HistoryEntry& entry) const {
+  if (!entry.is_inline || document_->lines.empty()) {
+    return;
+  }
+  // The edit has already been applied, so the buffer holds the AFTER line; the
+  // before line is that line with the inserted bytes swapped back for the removed
+  // ones. Costs one copy of the line -- paid only by grouped edits, never by a
+  // keystroke.
+  const std::size_t line = std::min(entry.start_line, document_->lines.size() - 1);
+  std::string after_line(document_->lines.LineView(line));
+  std::string before_line = after_line;
+  const std::size_t column = std::min(entry.start_column, before_line.size());
+  before_line.replace(column, std::min(entry.inserted_text.size(), before_line.size() - column),
+                      entry.removed_text);
+  entry.before_lines.assign(1, std::move(before_line));
+  entry.after_lines.assign(1, std::move(after_line));
+  entry.is_inline = false;
+  entry.start_line = line;
+  entry.start_column = 0;
+  entry.removed_text.clear();
+  entry.inserted_text.clear();
 }
 
 TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(

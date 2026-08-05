@@ -948,6 +948,417 @@ void TestTextViewportMoveCursorToSameColumnBreaksTypingCoalesce() {
          "the original 'abc' run should undo as one step");
 }
 
+// TD-2026-08-05-131. An edit that stays inside one line is now recorded as
+// {column, removed_text, inserted_text} rather than as the whole line before and
+// after. That is a SECOND representation of "what changed", and a second
+// representation is exactly where undo/redo silently drifts from the buffer.
+//
+// Differential test: drive a viewport with random in-line edits against a naive
+// string model, then walk the entire undo stack back and the entire redo stack
+// forward, comparing at every step. A caret move before each edit ends the
+// coalesce run so one Undo reverses exactly one recorded edit.
+void TestTextViewportInlineUndoRedoMatchesNaiveModel() {
+  struct Rng {
+    std::uint64_t state = 0x2026080531ull;
+    std::uint64_t Next() {
+      state ^= state << 13;
+      state ^= state >> 7;
+      state ^= state << 17;
+      return state;
+    }
+    std::size_t Below(std::size_t bound) { return bound == 0 ? 0 : Next() % bound; }
+  };
+
+  for (std::uint64_t seed : {1ull, 7ull, 0xC0FFEEull, 0xBEEFull}) {
+    Rng rng{seed};
+    // Tabs and a multi-byte code point, because the caret's preferred (visual)
+    // column is computed from the pre-edit line plus the replacement rather than
+    // from a composed post-edit line.
+    const std::string initial = "alpha\tbeta gamma\nsecond line\n\tthird\xC3\xA9 line\n";
+    TextViewport viewport;
+    viewport.LoadContent(initial, "/tmp/inline-undo-model.txt");
+
+    std::vector<std::string> model = {"alpha\tbeta gamma", "second line", "\tthird\xC3\xA9 line",
+                                      ""};
+    std::vector<std::vector<std::string>> states;
+    states.push_back(model);
+
+    const auto snapshot = [&] {
+      std::vector<std::string> out;
+      for (std::size_t i = 0; i < viewport.lines().size(); ++i) {
+        out.emplace_back(viewport.lines().LineView(i));
+      }
+      return out;
+    };
+    Expect(snapshot() == model, "fixture: the model must start equal to the buffer");
+
+    for (int step = 0; step < 60; ++step) {
+      const std::size_t line = rng.Below(model.size());
+      const std::size_t length = model[line].size();
+      std::size_t start = rng.Below(length + 1);
+      std::size_t end = start + rng.Below(length - start + 1);
+      // Byte columns must land on code-point boundaries or the edit clamps and
+      // the model would have to model the clamp too.
+      const auto snap = [&](std::size_t column) {
+        while (column > 0 && column < model[line].size() &&
+               (static_cast<unsigned char>(model[line][column]) & 0xC0u) == 0x80u) {
+          --column;
+        }
+        return column;
+      };
+      start = snap(start);
+      end = std::max(start, snap(end));
+
+      std::string replacement;
+      for (std::size_t i = 0, count = rng.Below(4); i < count; ++i) {
+        replacement.push_back(static_cast<char>('A' + static_cast<char>(rng.Below(26))));
+      }
+      if (start == end && replacement.empty()) {
+        continue;  // exact no-op: records nothing by design
+      }
+      if (model[line].compare(start, end - start, replacement) == 0) {
+        continue;  // exact no-op
+      }
+
+      // End any open coalesce run so undo steps map 1:1 onto recorded edits.
+      viewport.MoveCursorTo(line, start, false);
+      Expect(viewport.ReplaceRange(SelectionRange{TextPosition{line, start},
+                                                  TextPosition{line, end}},
+                                   replacement, true),
+             "an in-line replacement that changes content must be recorded");
+      model[line].replace(start, end - start, replacement);
+      Expect(snapshot() == model, "the buffer must track the model after an in-line edit");
+      states.push_back(model);
+    }
+
+    Expect(states.size() > 20, "the fixture must actually produce edits to undo");
+    for (std::size_t i = states.size(); i-- > 1;) {
+      Expect(viewport.Undo(), "every recorded in-line edit must be undoable");
+      Expect(snapshot() == states[i - 1], "undo must restore the previous document exactly");
+    }
+    Expect(!viewport.Undo(), "the undo stack must be exhausted after undoing every edit");
+    for (std::size_t i = 1; i < states.size(); ++i) {
+      Expect(viewport.Redo(), "every undone in-line edit must be redoable");
+      Expect(snapshot() == states[i], "redo must restore the next document exactly");
+    }
+    Expect(!viewport.Redo(), "the redo stack must be exhausted after redoing every edit");
+  }
+}
+
+// The routing itself, pinned. Both entry shapes produce identical buffer content,
+// so nothing above this line would notice if in-line edits quietly went back to
+// storing the whole affected line twice -- only the allocation gate would, and
+// that one only runs under a perf-harness build.
+void TestTextViewportInLineEditsRecordColumnScopedUndoEntries() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha beta\nsecond line\n", "/tmp/inline-entry-shape.txt");
+
+  viewport.MoveCursorTo(0, 5, false);
+  viewport.InsertCharacter('X');
+  Expect(viewport.TopUndoEntryIsColumnScopedForTesting(),
+         "a typed character must record a column-scoped undo entry");
+
+  viewport.MoveCursorTo(0, 3, false);
+  viewport.Backspace();
+  Expect(viewport.TopUndoEntryIsColumnScopedForTesting(),
+         "a backspace inside a line must record a column-scoped undo entry");
+
+  viewport.MoveCursorTo(0, 0, false);
+  Expect(viewport.ReplaceRange(SelectionRange{TextPosition{0, 0}, TextPosition{0, 3}}, "ZZ",
+                               true),
+         "the in-line range replacement applies");
+  Expect(viewport.TopUndoEntryIsColumnScopedForTesting(),
+         "an in-line range replacement must record a column-scoped undo entry");
+
+  // Anything that changes the line structure must NOT -- the column form cannot
+  // express it, and silently taking it would corrupt the document.
+  viewport.MoveCursorTo(0, 2, false);
+  viewport.InsertNewline();
+  Expect(!viewport.TopUndoEntryIsColumnScopedForTesting(),
+         "splitting a line must fall back to the line-vector entry");
+
+  viewport.MoveCursorTo(1, 0, false);
+  viewport.Backspace();  // joins the split back together
+  Expect(!viewport.TopUndoEntryIsColumnScopedForTesting(),
+         "joining two lines must fall back to the line-vector entry");
+
+  viewport.MoveCursorTo(0, 4, false);
+  viewport.InsertText("multi\nline");
+  Expect(!viewport.TopUndoEntryIsColumnScopedForTesting(),
+         "a multi-line insertion must fall back to the line-vector entry");
+
+  // And a grouped in-line child is widened on the way into the frame, because the
+  // group's aggregation is expressed in line coordinates.
+  viewport.BeginUndoGroup();
+  Expect(viewport.ReplaceRange(SelectionRange{TextPosition{0, 0}, TextPosition{0, 1}}, "Q", true),
+         "the grouped child edit applies");
+  viewport.EndUndoGroup();
+  Expect(!viewport.TopUndoEntryIsColumnScopedForTesting(),
+         "a grouped in-line child must be widened to the line form before it is recorded");
+}
+
+// The column-scoped coalesce has three compose shapes, and only two of them are
+// reachable by typing (append: an insert or delete-forward run; prepend: a
+// backspace run). The third -- an edit landing wholly inside what the run itself
+// inserted -- is defensive, mirroring the line form's contained-splice case, so
+// drive all three through the history's own API rather than leaving one untested.
+//
+// Oracle: applying the coalesced entry must give the same buffer as applying the
+// two entries in sequence, and undoing it must give back the original.
+void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
+  using microide::editor::CoalesceHint;
+  using microide::editor::CoalesceKind;
+  using microide::editor::TextViewportUndoHistory;
+
+  struct Shape {
+    const char* name;
+    std::size_t first_column;
+    const char* first_removed;
+    const char* first_inserted;
+    std::size_t second_column;
+    const char* second_removed;
+    const char* second_inserted;
+  };
+  const Shape shapes[] = {
+      // Typing run: "ab" appended at column 3 as two entries.
+      {"append", 3, "", "a", 4, "", "b"},
+      // Backspace run: delete column 4 then column 3.
+      {"prepend", 4, "e", "", 3, "d", ""},
+      // Delete-forward run: both delete at the same column.
+      {"delete-forward", 3, "d", "", 3, "e", ""},
+      // Contained: the second edit rewrites a byte the first one inserted.
+      {"contained", 3, "", "XY", 4, "Y", "Z"},
+      // Contained, widening: replaces the whole insertion.
+      {"contained-wide", 2, "cd", "PQ", 2, "PQ", "R"},
+  };
+
+  for (const Shape& shape : shapes) {
+    const std::string line = "abcdefgh";
+    const auto make = [&](std::size_t column, const char* removed, const char* inserted,
+                          std::size_t before_column, std::size_t after_column) {
+      TextViewportUndoHistory::Entry entry;
+      entry.is_inline = true;
+      entry.start_line = 0;
+      entry.start_column = column;
+      entry.removed_text = removed;
+      entry.inserted_text = inserted;
+      entry.before_state.cursor_column = before_column;
+      entry.after_state.cursor_column = after_column;
+      return entry;
+    };
+    // The run only continues when the next edit begins exactly where the previous
+    // one left off, so thread the caret through both entries.
+    const std::size_t first_after =
+        shape.first_column + std::string(shape.first_inserted).size();
+    const TextViewportUndoHistory::Entry first =
+        make(shape.first_column, shape.first_removed, shape.first_inserted, shape.first_column,
+             first_after);
+    const TextViewportUndoHistory::Entry second =
+        make(shape.second_column, shape.second_removed, shape.second_inserted, first_after,
+             shape.second_column + std::string(shape.second_inserted).size());
+
+    // Oracle: apply both entries in order to a buffer.
+    microide::editor::TextBuffer sequential({line});
+    TextViewportUndoHistory::ApplyEntryToBuffer(sequential, first, /*forward=*/true);
+    TextViewportUndoHistory::ApplyEntryToBuffer(sequential, second, /*forward=*/true);
+
+    TextViewportUndoHistory history;
+    const CoalesceHint hint{.kind = CoalesceKind::Insert, .changed_is_space = false};
+    history.RecordEntry(first, hint);
+    history.RecordEntry(second, hint);
+    Expect(history.CanUndo(), std::string("history must hold an entry for ")
+                                  .append(shape.name)
+                                  .c_str());
+    TextViewportUndoHistory::Entry merged = history.PopUndo();
+    Expect(!history.CanUndo(),
+           std::string("the two in-line edits must coalesce into ONE undo step for ")
+               .append(shape.name)
+               .c_str());
+    Expect(merged.is_inline,
+           std::string("a coalesced in-line run must stay column-scoped for ")
+               .append(shape.name)
+               .c_str());
+
+    microide::editor::TextBuffer coalesced({line});
+    TextViewportUndoHistory::ApplyEntryToBuffer(coalesced, merged, /*forward=*/true);
+    Expect(coalesced.LineView(0) == sequential.LineView(0),
+           std::string("the coalesced entry must produce the same text as applying both for ")
+               .append(shape.name)
+               .c_str());
+
+    TextViewportUndoHistory::ApplyEntryToBuffer(coalesced, merged, /*forward=*/false);
+    Expect(coalesced.LineView(0) == line,
+           std::string("undoing the coalesced entry must restore the original line for ")
+               .append(shape.name)
+               .c_str());
+  }
+}
+
+// A non-contiguous second edit must NOT fold into the run: it would splice at a
+// column the aggregate says nothing about. This is the guard that keeps the merge
+// shapes above from being an "always true" test.
+void TestInlineUndoEntriesRefuseNonContiguousCoalesce() {
+  using microide::editor::CoalesceHint;
+  using microide::editor::CoalesceKind;
+  using microide::editor::TextViewportUndoHistory;
+
+  TextViewportUndoHistory history;
+  TextViewportUndoHistory::Entry first;
+  first.is_inline = true;
+  first.start_column = 2;
+  first.inserted_text = "a";
+  first.after_state.cursor_column = 3;
+
+  TextViewportUndoHistory::Entry second = first;
+  second.start_column = 7;  // a gap the aggregate does not cover
+  second.inserted_text = "b";
+  second.before_state.cursor_column = 3;  // caret continuity holds; the columns do not
+  second.after_state.cursor_column = 8;
+
+  const CoalesceHint hint{.kind = CoalesceKind::Insert, .changed_is_space = false};
+  history.RecordEntry(first, hint);
+  history.RecordEntry(second, hint);
+  Expect(history.CanUndo(), "the history must hold the second edit");
+  (void)history.PopUndo();
+  Expect(history.CanUndo(),
+         "a non-contiguous in-line edit must start a fresh undo entry, not splice into the run");
+}
+
+// An in-line edit reports its delta as a character-level range, which is what the
+// LSP incremental-sync bridge and the marker stores shift by. The column-scoped
+// entry has to derive that from {column, removed, inserted} instead of from a
+// prefix/suffix diff of two whole lines.
+void TestTextViewportInlineEditPublishesCharacterLevelAppliedEdit() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha beta gamma\n", "/tmp/inline-applied-edit.txt");
+
+  Expect(viewport.ReplaceRange(
+             SelectionRange{TextPosition{0, 6}, TextPosition{0, 10}}, "BETA", true),
+         "the replacement must apply");
+  const auto applied = viewport.last_applied_edit();
+  Expect(applied.has_value(), "an in-line edit must publish an applied edit");
+  Expect(applied->range_before.start.line == 0 && applied->range_before.start.column == 6,
+         "the applied edit must start at the replaced range's column");
+  Expect(applied->range_before.end.line == 0 && applied->range_before.end.column == 10,
+         "the applied edit must end at the replaced range's end column");
+  Expect(applied->replacement_text == "BETA", "the applied edit must carry the replacement");
+
+  // Undo publishes the inverse.
+  Expect(viewport.Undo(), "undo must succeed");
+  const auto undone = viewport.last_applied_edit();
+  Expect(undone.has_value() && undone->replacement_text == "beta",
+         "undo must publish the inverse replacement");
+
+  // Shared bytes at either end are trimmed off, exactly as the line form does, so
+  // markers are not dragged across text that did not change.
+  viewport.MoveCursorTo(0, 0, false);
+  Expect(viewport.ReplaceRange(
+             SelectionRange{TextPosition{0, 0}, TextPosition{0, 5}}, "alpaca", true),
+         "the second replacement must apply");
+  const auto trimmed = viewport.last_applied_edit();
+  Expect(trimmed.has_value(), "the second edit must publish an applied edit");
+  // "alpha" -> "alpaca": shared prefix "alp", shared suffix "a", so the reported
+  // delta is the single byte "h" becoming "ac".
+  Expect(trimmed->range_before.start.column == 3 && trimmed->range_before.end.column == 4,
+         "a shared prefix and suffix must be trimmed out of the reported range");
+  Expect(trimmed->replacement_text == "ac",
+         "only the changed bytes belong in the replacement text");
+}
+
+// The encoding classification is upgrade-only and incremental. The column-scoped
+// entry scans only the bytes it splices in -- every other byte on the line was
+// classified when it entered the document -- so the scan must still notice a
+// non-ASCII insert, and must not be fooled into a downgrade.
+void TestTextViewportInlineEditUpgradesEncodingFromTheDeltaAlone() {
+  TextViewport viewport;
+  viewport.LoadContent("plain ascii line\n", "/tmp/inline-encoding.txt");
+  using TextEncoding = microide::editor::TextViewport::TextEncoding;
+  Expect(viewport.encoding() == TextEncoding::ASCII,
+         "fixture: an ASCII document should be classified ASCII");
+
+  viewport.MoveCursorTo(0, 6, false);
+  viewport.InsertText("\xC3\xA9");
+  Expect(viewport.encoding() == TextEncoding::UTF8,
+         "an in-line insert of a non-ASCII code point must raise the classification");
+
+  // Undo restores ASCII content but the classification is upgrade-only, matching
+  // the line form (a full re-detection happens on reload).
+  Expect(viewport.Undo(), "undo must succeed");
+  Expect(viewport.encoding() == TextEncoding::UTF8,
+         "the incremental encoding refresh never downgrades");
+
+  TextViewport bytes_viewport;
+  bytes_viewport.LoadContent("plain\n", "/tmp/inline-encoding-nul.txt");
+  bytes_viewport.MoveCursorTo(0, 2, false);
+  bytes_viewport.InsertText(std::string("\0", 1));
+  Expect(bytes_viewport.encoding() == TextEncoding::Bytes,
+         "an in-line insert of a NUL must raise the classification to Bytes");
+}
+
+// A grouped edit's aggregation is expressed entirely in line coordinates, so an
+// in-line child has to be widened before it enters a group frame. Get that wrong
+// and a snippet / multi-caret / plugin apply_edits group silently records an undo
+// entry that restores the wrong text.
+void TestTextViewportGroupedInlineEditsUndoAtomically() {
+  TextViewport viewport;
+  const std::string initial = "one two\nthree four\nfive six\n";
+  viewport.LoadContent(initial, "/tmp/grouped-inline.txt");
+
+  viewport.BeginUndoGroup();
+  Expect(viewport.ReplaceRange(SelectionRange{TextPosition{2, 0}, TextPosition{2, 4}}, "FIVE",
+                               true),
+         "third child edit applies");
+  Expect(viewport.ReplaceRange(SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}}, "TWO",
+                               true),
+         "first child edit applies");
+  Expect(viewport.ReplaceRange(SelectionRange{TextPosition{1, 0}, TextPosition{1, 5}}, "THREE",
+                               true),
+         "second child edit applies");
+  viewport.EndUndoGroup();
+
+  Expect(viewport.lines().LineView(0) == "one TWO" &&
+             viewport.lines().LineView(1) == "THREE four" &&
+             viewport.lines().LineView(2) == "FIVE six",
+         "all three grouped in-line edits must be applied");
+
+  Expect(viewport.Undo(), "one undo must reverse the whole group");
+  Expect(viewport.lines().LineView(0) == "one two" &&
+             viewport.lines().LineView(1) == "three four" &&
+             viewport.lines().LineView(2) == "five six",
+         "a single undo must restore every line the group touched");
+  Expect(!viewport.Undo(), "the group must have recorded exactly one undo entry");
+
+  Expect(viewport.Redo(), "redo must re-apply the whole group");
+  Expect(viewport.lines().LineView(0) == "one TWO" &&
+             viewport.lines().LineView(2) == "FIVE six",
+         "redo must restore every line the group touched");
+}
+
+// A run of keystrokes coalesces by appending to the entry's two small strings, so
+// the entry's recorded byte size has to be restamped on every merge -- otherwise
+// the total-byte history budget trims against a stale size.
+void TestInlineCoalescedEntryRestampsItsByteSize() {
+  using microide::editor::CoalesceHint;
+  using microide::editor::CoalesceKind;
+  using microide::editor::TextViewportUndoHistory;
+
+  TextViewportUndoHistory history;
+  const CoalesceHint hint{.kind = CoalesceKind::Insert, .changed_is_space = false};
+  for (std::size_t i = 0; i < 8; ++i) {
+    TextViewportUndoHistory::Entry entry;
+    entry.is_inline = true;
+    entry.start_column = i;
+    entry.inserted_text = "x";
+    entry.before_state.cursor_column = i;
+    entry.after_state.cursor_column = i + 1;
+    history.RecordEntry(entry, hint);
+  }
+  const TextViewportUndoHistory::Entry merged = history.PopUndo();
+  Expect(merged.inserted_text == "xxxxxxxx", "the run must coalesce into one 8-byte insertion");
+  Expect(merged.byte_size == merged.inserted_text.size() + merged.removed_text.size(),
+         "the coalesced entry's stamped byte size must match its content");
+}
+
 void TestTextViewportBackspaceCoalescesIntoWordUndoSteps() {
   TextViewport viewport;
   viewport.LoadContent("foo bar", "/tmp/undo-coalesce-backspace.txt");
@@ -2124,10 +2535,23 @@ void TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine() {
   // and the undo run's coalesce. 6x leaves headroom for allocator rounding while
   // still failing the 10x and 13x this measured before the surrounding commits.
   // The remaining 5 are the whole-line history model itself, not stray copies.
-  const std::uint64_t budget = 6u * kLineBytes;
+  // Measured 1.00x in 9 allocations (4,195,125 bytes for a 4 MiB line). The one
+  // remaining line-sized copy is the piece tree materializing the edited line into
+  // its per-revision cache, which the renderer and the visual-width scan both need
+  // as one contiguous view -- it is shared, not per-caller. Everything else on the
+  // path is now proportional to the delta:
+  //   * the undo entry stores {column, removed_text, inserted_text}, not the line
+  //     before and after (TD-2026-08-05-131),
+  //   * the piece tree splices bytes at two offsets instead of rebuilding the line
+  //     into a replacement buffer and appending that to `add_`,
+  //   * the typing run coalesces by appending to those two small strings,
+  //   * the encoding upgrade scans the spliced-in bytes, not the rebuilt line.
+  // 2x leaves room for allocator rounding while failing the moment a second full
+  // pass over the line comes back. It measured 13x, then 5x, before this.
+  const std::uint64_t budget = 2u * kLineBytes;
   Expect(static_cast<std::uint64_t>(delta.bytes_allocated) < budget,
-         "a one-character edit must not walk its line more times than the history "
-         "model actually requires");
+         "a one-character edit must cost its delta plus the one shared line "
+         "materialization, not a multiple of the line");
 #endif
 }
 
@@ -3924,6 +4348,22 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportMoveCursorToSameColumnBreaksTypingCoalesce);
   AddTest(tests, "TextViewport/BackspaceCoalescesIntoWordUndoSteps",
           TestTextViewportBackspaceCoalescesIntoWordUndoSteps);
+  AddTest(tests, "TextViewport/InLineEditsRecordColumnScopedUndoEntries",
+          TestTextViewportInLineEditsRecordColumnScopedUndoEntries);
+  AddTest(tests, "TextViewport/InlineUndoRedoMatchesNaiveModel",
+          TestTextViewportInlineUndoRedoMatchesNaiveModel);
+  AddTest(tests, "TextViewport/InlineUndoEntriesCoalesceLikeSequentialApplication",
+          TestInlineUndoEntriesCoalesceLikeSequentialApplication);
+  AddTest(tests, "TextViewport/InlineUndoEntriesRefuseNonContiguousCoalesce",
+          TestInlineUndoEntriesRefuseNonContiguousCoalesce);
+  AddTest(tests, "TextViewport/InlineEditPublishesCharacterLevelAppliedEdit",
+          TestTextViewportInlineEditPublishesCharacterLevelAppliedEdit);
+  AddTest(tests, "TextViewport/InlineEditUpgradesEncodingFromTheDeltaAlone",
+          TestTextViewportInlineEditUpgradesEncodingFromTheDeltaAlone);
+  AddTest(tests, "TextViewport/GroupedInlineEditsUndoAtomically",
+          TestTextViewportGroupedInlineEditsUndoAtomically);
+  AddTest(tests, "TextViewport/InlineCoalescedEntryRestampsItsByteSize",
+          TestInlineCoalescedEntryRestampsItsByteSize);
   AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
           TestTextViewportMultiCaretInsertAndUndoAreAtomic);
   AddTest(tests, "TextViewport/MultiCaretBackspaceAndDeleteForward",

@@ -255,8 +255,8 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
 }
 
 bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
-    std::size_t start_line, std::size_t removed_count,
-    const std::vector<std::string>& inserted_lines, LineSpan lines,
+    std::size_t start_line, std::size_t removed_count, std::size_t inserted_count,
+    LineSpan lines,
     std::size_t tab_size, std::size_t visible_columns, bool soft_wrap,
     const FoldingModel* folding_model, std::uint64_t layout_shape_revision,
     std::uint64_t content_revision) const {
@@ -278,7 +278,6 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
   // The table must be in sync with the *pre-edit* buffer: one offset entry per
   // pre-edit logical line, contiguous rows per line (pure soft-wrap has no
   // hidden lines). old_line_count is derived from the new buffer + edit deltas.
-  const std::size_t inserted_count = inserted_lines.size();
   if (lines.size() + removed_count < inserted_count) {
     return false;
   }
@@ -483,11 +482,12 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
 }
 
 void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
-    std::size_t start_line, std::size_t removed_count,
-    const std::vector<std::string>& inserted_lines, LineSpan lines,
+    std::size_t start_line, std::size_t removed_count, std::size_t inserted_count,
+    LineSpan lines,
     std::size_t tab_size, std::uint64_t content_revision) {
   if (cached_max_visual_columns_tab_size_ != tab_size ||
-      cached_visual_line_columns_.size() != lines.size() - inserted_lines.size() + removed_count) {
+      lines.size() + removed_count < inserted_count ||
+      cached_visual_line_columns_.size() != lines.size() - inserted_count + removed_count) {
     // Reset only the visual-column + visible-line caches here. The wrapped-row
     // table is content-guarded separately (content_revision) and updated
     // incrementally by UpdateWrappedRowsAfterEdit, so it must not be wiped on
@@ -499,8 +499,9 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
 
   std::vector<std::size_t>& inserted_columns = inserted_columns_scratch_;
   inserted_columns.clear();
-  inserted_columns.reserve(inserted_lines.size());
-  for (const std::string& line : inserted_lines) {
+  inserted_columns.reserve(inserted_count);
+  for (std::size_t i = 0; i < inserted_count && start_line + i < lines.size(); ++i) {
+    const std::string_view line = lines[start_line + i];
     inserted_columns.push_back(TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size));
   }
 

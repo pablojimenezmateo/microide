@@ -370,6 +370,17 @@ void TextViewport::UpgradeEncodingForInsertedLines(
   }
 }
 
+void TextViewport::UpgradeEncodingForInsertedText(std::string_view text) {
+  util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
+  if (text.empty() || document_->encoding == TextEncoding::Bytes) {
+    return;  // already the worst classification; an insert cannot raise it further.
+  }
+  const TextEncoding delta = DetectEncoding(text);
+  if (static_cast<int>(delta) > static_cast<int>(document_->encoding)) {
+    document_->encoding = delta;
+  }
+}
+
 TextViewport::TextEncoding TextViewport::DetectEncoding(std::string_view content) {
   // One scan answers both questions the common case asks -- "is there a NUL?"
   // and "is there any non-ASCII byte?" -- instead of walking the whole buffer

@@ -11,6 +11,9 @@ namespace microide::editor {
 namespace {
 
 std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
+  if (entry.is_inline) {
+    return entry.removed_text.size() + entry.inserted_text.size();
+  }
   std::size_t bytes = 0;
   for (const std::string& line : entry.before_lines) {
     bytes += line.size() + 1;
@@ -144,6 +147,54 @@ void TextViewportUndoHistory::CoalesceAdjacentDisjoint(std::vector<Entry>& entri
   }
 }
 
+bool TextViewportUndoHistory::CanMergeInlineEntry(const Entry& aggregate, const Entry& next) {
+  if (aggregate.start_line != next.start_line) {
+    return false;
+  }
+  const std::size_t aggregate_start = aggregate.start_column;
+  const std::size_t aggregate_end = aggregate_start + aggregate.inserted_text.size();
+  const std::size_t next_start = next.start_column;
+  const std::size_t next_end = next_start + next.removed_text.size();
+
+  if (next_start == aggregate_end || next_end == aggregate_start) {
+    return true;  // abuts on either side
+  }
+  if (next_start < aggregate_start || next_end > aggregate_end) {
+    return false;
+  }
+  // Contained: the bytes `next` claims to remove must be the ones the aggregate
+  // put there, or the two entries disagree about the line's content.
+  return std::equal(
+      next.removed_text.begin(), next.removed_text.end(),
+      aggregate.inserted_text.begin() + static_cast<std::ptrdiff_t>(next_start - aggregate_start));
+}
+
+void TextViewportUndoHistory::MergeInlineEntryInto(Entry& aggregate, const Entry& next) {
+  const std::size_t aggregate_start = aggregate.start_column;
+  const std::size_t aggregate_end = aggregate_start + aggregate.inserted_text.size();
+  const std::size_t next_start = next.start_column;
+  const std::size_t next_end = next_start + next.removed_text.size();
+
+  if (next_start == aggregate_end) {
+    // Appends. In pre-run coordinates `next` removes the bytes immediately after
+    // what the aggregate removed, so both deltas simply concatenate.
+    aggregate.removed_text.append(next.removed_text);
+    aggregate.inserted_text.append(next.inserted_text);
+  } else if (next_end == aggregate_start) {
+    // Prepends (a backspace run): `next` removes bytes that sit before the
+    // aggregate's edit point and are therefore already in pre-run coordinates.
+    aggregate.start_column = next_start;
+    aggregate.removed_text.insert(0, next.removed_text);
+    aggregate.inserted_text.insert(0, next.inserted_text);
+  } else {
+    // Contained: splice into the aggregate's inserted text; what the run removed
+    // from the ORIGINAL line is unchanged.
+    aggregate.inserted_text.replace(next_start - aggregate_start, next.removed_text.size(),
+                                    next.inserted_text);
+  }
+  aggregate.after_state = next.after_state;
+}
+
 bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint hint) {
   if (active_run_kind_ != hint.kind || undo_stack_.empty()) {
     return false;
@@ -163,6 +214,24 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
   if (next.before_state.cursor_line != top.after_state.cursor_line ||
       next.before_state.cursor_column != top.after_state.cursor_column) {
     return false;
+  }
+  // A run never mixes the two entry shapes. In practice it cannot want to: every
+  // edit that produces a line-form entry (newline, line join, multi-line paste)
+  // carries CoalesceKind::None and so ends the run before it gets here. Refusing
+  // the mix costs at most one extra undo step at a line boundary.
+  if (top.is_inline != next.is_inline) {
+    return false;
+  }
+  if (top.is_inline) {
+    if (!CanMergeInlineEntry(top, next)) {
+      return false;
+    }
+    // Only after_state advances; the run keeps its original start state.
+    MergeInlineEntryInto(top, next);
+    top.byte_size = EntryContentBytes(top);
+    active_run_last_space_ = hint.changed_is_space;
+    EnforceHistoryBudget();
+    return true;
   }
   if (!CanMergeGroupEntry(top, next)) {
     return false;
@@ -301,6 +370,15 @@ void TextViewportUndoHistory::Clear() {
 
 void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry& entry,
                                                  bool forward) {
+  if (entry.is_inline && !lines.empty()) {
+    const std::string& removed = forward ? entry.removed_text : entry.inserted_text;
+    const std::string& inserted = forward ? entry.inserted_text : entry.removed_text;
+    const std::size_t line = std::min(entry.start_line, lines.size() - 1);
+    lines.ReplaceTextRange(line, entry.start_column, line,
+                           entry.start_column + removed.size(), inserted);
+    return;
+  }
+
   const std::size_t start_line = std::min(entry.start_line, lines.size());
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
@@ -321,6 +399,36 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
 
 std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry& entry,
                                                                      bool forward) {
+  if (entry.is_inline) {
+    const std::string& removed = forward ? entry.removed_text : entry.inserted_text;
+    const std::string& inserted = forward ? entry.inserted_text : entry.removed_text;
+    if (removed.empty() && inserted.empty()) {
+      return std::nullopt;
+    }
+    // A coalesced run can leave shared bytes at either end (typing over what the
+    // run itself inserted), so trim to the true delta exactly as the line form
+    // does -- consumers shift markers by this range.
+    const std::size_t max_common = std::min(removed.size(), inserted.size());
+    std::size_t prefix = 0;
+    while (prefix < max_common && removed[prefix] == inserted[prefix]) {
+      ++prefix;
+    }
+    std::size_t suffix = 0;
+    while (suffix < max_common - prefix &&
+           removed[removed.size() - 1 - suffix] == inserted[inserted.size() - 1 - suffix]) {
+      ++suffix;
+    }
+    return AppliedEdit{
+        .range_before =
+            SelectionRange{
+                .start = TextPosition{entry.start_line, entry.start_column + prefix},
+                .end = TextPosition{entry.start_line,
+                                    entry.start_column + removed.size() - suffix},
+            },
+        .replacement_text = inserted.substr(prefix, inserted.size() - prefix - suffix),
+    };
+  }
+
   const std::vector<std::string>& before_lines = forward ? entry.before_lines : entry.after_lines;
   const std::vector<std::string>& after_lines = forward ? entry.after_lines : entry.before_lines;
   if (before_lines.empty() || after_lines.empty()) {
@@ -403,6 +511,18 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
 
 std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLineSpan(
     const Entry& entry, bool forward) {
+  if (entry.is_inline) {
+    if (entry.removed_text == entry.inserted_text) {
+      return std::nullopt;  // no content change
+    }
+    // An in-line splice never changes the line count and touches exactly one line.
+    return AppliedEditLineSpan{
+        .old_start = entry.start_line,
+        .old_end = entry.start_line + 1,
+        .new_end = entry.start_line + 1,
+    };
+  }
+
   const std::vector<std::string>& before = forward ? entry.before_lines : entry.after_lines;
   const std::vector<std::string>& after = forward ? entry.after_lines : entry.before_lines;
 
@@ -456,6 +576,13 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentCha
 }
 
 bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const Entry& next) {
+  // Line-form only. Grouped children are widened before they reach a frame (see
+  // TextViewport::PushHistoryEntry), and the typing run dispatches inline pairs to
+  // CanMergeInlineEntry; anything else that lands here would splice line vectors
+  // that an inline entry does not have.
+  if (aggregate.is_inline || next.is_inline) {
+    return false;
+  }
   const std::size_t aggregate_after_start = aggregate.start_line;
   const std::size_t aggregate_after_end = aggregate.start_line + aggregate.after_lines.size();
   const std::size_t next_start = next.start_line;

@@ -306,6 +306,13 @@ std::size_t TextViewport::cursor_visual_column() const {
                                                tab_size_);
 }
 
+std::size_t TextViewport::VisualColumnAt(std::size_t line, std::size_t column) const {
+  if (document_->lines.empty() || line >= document_->lines.size()) {
+    return 0;
+  }
+  return TextLayout::VisualColumnForTextColumn(document_->lines.LineView(line), column, tab_size_);
+}
+
 std::size_t TextViewport::CurrentLineLength() const {
   if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
     return 0;

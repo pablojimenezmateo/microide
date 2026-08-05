@@ -209,6 +209,16 @@ class TextViewport {
   void DeleteForward();
   bool Undo();
   bool Redo();
+  // Test seam: is the top undo entry the column-scoped form?
+  //
+  // An edit that stays inside one line must record {column, removed, inserted},
+  // not the whole affected line before and after. The two forms are
+  // indistinguishable from the buffer's content, and the line form costs a
+  // multiple of the LINE per keystroke -- which on a file with no line breaks in
+  // it is a multiple of the document (TD-2026-08-05-131). Exposed so a test can
+  // pin the routing instead of trusting it, in the same spirit as
+  // TextBuffer::materialized_line_count().
+  bool TopUndoEntryIsColumnScopedForTesting() const;
   // Merge subsequent edits into one undo stack entry until `EndUndoGroup()`.
   // While a group is active, individual `PushHistoryEntry` calls are suppressed.
   void BeginUndoGroup();
@@ -550,6 +560,12 @@ class TextViewport {
   // on load/reset, so a downgrade after deleting the last non-ASCII content is
   // recovered on the next reload (matching typical editor behavior).
   void UpgradeEncodingForInsertedLines(const std::vector<std::string>& inserted_lines);
+  // Column-scoped counterpart: an in-line splice can only raise the document's
+  // classification through the bytes it actually spliced in. Every other byte on
+  // the line was scanned when it first entered the document, and the line form's
+  // re-scan of the whole rebuilt line is O(line) -- on a file with no line breaks
+  // in it, O(document) per keystroke.
+  void UpgradeEncodingForInsertedText(std::string_view text);
   void EnsureInitialHighlightState() const;
   void EnsureHighlightCaches() const;
   void EnsureHighlightCheckpoints() const;
@@ -588,6 +604,20 @@ class TextViewport {
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
   std::optional<HistoryEntry> BuildRangeHistoryEntry(const SelectionRange& range,
                                                      std::string_view replacement) const;
+  // Column-scoped entry for a one-line-in / one-line-out edit: `replacement`
+  // carries no line break and the range stays on `line`. Reads only the bytes it
+  // replaces, so its cost is the size of the delta rather than the size of the
+  // line. nullopt for an exact no-op.
+  std::optional<HistoryEntry> BuildInlineHistoryEntry(std::size_t line,
+                                                      std::size_t start_column,
+                                                      std::size_t end_column,
+                                                      std::string_view replacement) const;
+  // Rewrite a just-applied inline entry into the line-vector form, for the one
+  // consumer that cannot read the column form (undo-group aggregation). Costs one
+  // copy of the affected line; see PushHistoryEntry.
+  void WidenInlineEntryToLines(HistoryEntry& entry) const;
+  // Visual column of byte `column` on `line` in the live buffer.
+  std::size_t VisualColumnAt(std::size_t line, std::size_t column) const;
   HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
                                      std::size_t end_line,
                                      const std::vector<std::string>& replacement) const;
@@ -658,10 +688,10 @@ class TextViewport {
   void InvalidateVisualColumnCache();
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
-                                        const std::vector<std::string>& inserted_lines);
+                                        std::size_t inserted_count);
   void UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                   std::size_t removed_count,
-                                  const std::vector<std::string>& inserted_lines);
+                                  std::size_t inserted_count);
   std::size_t MaxVisualColumns() const;
   void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();

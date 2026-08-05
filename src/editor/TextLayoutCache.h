@@ -91,9 +91,13 @@ class TextLayoutCache {
   // collapsed folds, or a table that is out of sync / built for different keys)
   // returns false without touching the cache, so the content_revision guard in
   // EnsureWrappedRowLayouts safely triggers a full rebuild on next access.
+  //
+  // `inserted_count` is a COUNT, not the lines themselves: the new rows are
+  // re-wrapped from the live buffer regardless, and an in-line edit's undo entry
+  // no longer carries a materialized copy of the line it changed.
   bool UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                   std::size_t removed_count,
-                                  const std::vector<std::string>& inserted_lines,
+                                  std::size_t inserted_count,
                                   LineSpan lines,
                                   std::size_t tab_size,
                                   std::size_t visible_columns,
@@ -126,9 +130,11 @@ class TextLayoutCache {
   // Maintains the per-line visual-column cache after an in-place line edit.
   // Falls back to a full invalidation if the cache state predates the edit
   // or the tab_size changed.
+  // `inserted_count` is a count; the widths are measured off `lines` (see
+  // UpdateWrappedRowsAfterEdit).
   void UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                         std::size_t removed_count,
-                                        const std::vector<std::string>& inserted_lines,
+                                        std::size_t inserted_count,
                                         LineSpan lines,
                                         std::size_t tab_size,
                                         std::uint64_t content_revision);
