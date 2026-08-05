@@ -2684,6 +2684,49 @@ void TestTextViewportCaretColumnConversionsMatchTheDirectWalk() {
   check_every_column(viewport, "after undoing back to the plain row");
 }
 
+// Typing deep inside a long plain-ASCII line must not walk the line to work out
+// where the caret is -- not once, from any of the caret paths that run per
+// keystroke and per rendered row (TD-2026-08-05-132).
+//
+// The correctness test above cannot see this: a walk and a lookup return the same
+// answer. `editor.visual_column_walk_bytes` counts what the fallback actually
+// read, so "no walk happened" is assertable, and the number is the blind spot's
+// own units -- bytes of line re-read per keystroke.
+void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
+  constexpr std::size_t kLineBytes = 256u * 1024u;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/long-line-caret.txt");
+  viewport.SetViewportSize(40, 120);
+  viewport.MoveCursorTo(0, kLineBytes / 2, false);
+  // Warm the width table the way a rendered frame does.
+  (void)viewport.max_visual_columns();
+  (void)viewport.CaretForLine(0);
+
+  const std::uint64_t before =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes);
+  for (int i = 0; i < 8; ++i) {
+    viewport.InsertText("y");
+    // What a frame asks for: the caret's row decoration and its scroll clamp.
+    (void)viewport.CaretForLine(0);
+    (void)viewport.cursor_visual_column();
+  }
+  const std::uint64_t walked =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes) - before;
+  Expect(walked == 0,
+         "typing in a long plain-ASCII line must not re-walk it for caret columns (walked " +
+             std::to_string(walked) + " bytes)");
+
+  // And the fallback is still reachable -- a counter that can never move is not
+  // evidence. A tab makes the line non-plain, and the very next conversion walks.
+  viewport.InsertText("\t");
+  const std::uint64_t before_tabbed =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes);
+  (void)viewport.cursor_visual_column();
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes) >
+             before_tabbed,
+         "a line that is no longer plain ASCII must fall back to the walk");
+}
+
 void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
   namespace perf = microide::tests::perf;
   microide::editor::TextViewport viewport;
@@ -4605,6 +4648,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportInlineEditDerivesLineWidthFromTheSplice);
   AddTest(tests, "TextViewport/CaretColumnConversionsMatchTheDirectWalk",
           TestTextViewportCaretColumnConversionsMatchTheDirectWalk);
+  AddTest(tests, "TextViewport/TypingInALongLineDoesNotWalkItForCaretColumns",
+          TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns);
   AddTest(tests, "TextViewport/LanguageIdMemoIsAllocationFreeOnASettledBuffer",
           TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer);
   AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnContentChange",

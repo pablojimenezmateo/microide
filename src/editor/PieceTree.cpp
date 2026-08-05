@@ -481,6 +481,14 @@ std::string_view PieceTree::LineView(std::size_t index) const {
   // and re-materializing is wasted work anyway.
   auto it = line_view_cache_.find(index);
   if (it != line_view_cache_.end()) return it->second;
+  // Counted and scoped because this is the one line-sized copy left on the edit
+  // path (TD-2026-08-05-131) and nothing measured it: it is charged to whichever
+  // consumer happens to ask for the edited line first in a frame, so it moved
+  // between scopes in the ranking as the callers around it got faster, and read
+  // as that consumer's own cost. On a line with no newlines in it it is megabytes.
+  util::PerformanceTrace::Scope perf_scope("PieceTree::MaterializeSpanningLine");
+  util::AddPerformanceCounter(util::PerfCounterId::EditorLineMaterializations);
+  util::AddPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes, length);
   std::string& cached = line_view_cache_[index];
   CopyRange(start, length, cached);
   return cached;

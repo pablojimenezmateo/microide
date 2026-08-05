@@ -493,10 +493,12 @@ bool TextViewport::ApplyMultiCaretSoftTab(bool record_undo) {
   for (const TextPosition& position : positions) {
     std::size_t visual_column = 0;
     if (!document_->lines.empty() && position.line < document_->lines.size()) {
+      // LineView + VisualColumnAt, not operator[]: the compatibility accessor
+      // materializes a second copy of the line into the per-revision cache, and
+      // the conversion answers in O(1) on a plain-ASCII line.
       const std::size_t column =
-          TextLayout::ClampTextColumn(document_->lines[position.line], position.column);
-      visual_column = TextLayout::VisualColumnForTextColumn(document_->lines[position.line], column,
-                                                            tab_size_);
+          TextLayout::ClampTextColumn(document_->lines.LineView(position.line), position.column);
+      visual_column = VisualColumnAt(position.line, column);
     }
     const std::size_t remainder = visual_column % safe_indent_width;
     const std::size_t spaces = remainder == 0 ? safe_indent_width : safe_indent_width - remainder;

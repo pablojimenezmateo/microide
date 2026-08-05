@@ -3,6 +3,8 @@
 
 #include <algorithm>
 
+#include "util/PerformanceCounters.h"
+
 namespace microide::editor {
 namespace {
 
@@ -323,7 +325,10 @@ std::size_t TextViewport::VisualColumnAt(std::size_t line, std::size_t column) c
   if (facts.known && facts.plain_ascii) {
     return std::min(column, document_->lines.LineLength(line));
   }
-  return TextLayout::VisualColumnForTextColumn(document_->lines.LineView(line), column, tab_size_);
+  const std::string_view text = document_->lines.LineView(line);
+  util::AddPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes,
+                              std::min(column, text.size()));
+  return TextLayout::VisualColumnForTextColumn(text, column, tab_size_);
 }
 
 std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
@@ -336,8 +341,12 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
   if (facts.known && facts.plain_ascii) {
     return std::min(visual_column, document_->lines.LineLength(line));
   }
-  return TextLayout::TextColumnForVisualColumn(document_->lines.LineView(line), visual_column,
-                                               tab_size_);
+  const std::string_view text = document_->lines.LineView(line);
+  // Counted the same way: this walk stops at the requested visual column, which on
+  // a line of single-cell characters is the same bound as the forward one.
+  util::AddPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes,
+                              std::min(visual_column, text.size()));
+  return TextLayout::TextColumnForVisualColumn(text, visual_column, tab_size_);
 }
 
 std::size_t TextViewport::CurrentLineLength() const {
@@ -451,8 +460,7 @@ std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) con
   if (caret.line >= document_->lines.size()) {
     return 0;
   }
-  const std::size_t visual =
-      TextLayout::VisualColumnForTextColumn(document_->lines.LineView(caret.line), caret.column, tab_size_);
+  const std::size_t visual = VisualColumnAt(caret.line, caret.column);
   if (!soft_wrap_) {
     return visual;
   }
@@ -487,8 +495,7 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) con
   // caret's visual column. The builder wraps at whitespace, so spans are
   // non-uniform — integer division by the wrap width would land on the wrong
   // row whenever a line breaks before its column limit.
-  const std::size_t caret_visual =
-      TextLayout::VisualColumnForTextColumn(document_->lines.LineView(caret.line), caret.column, tab_size_);
+  const std::size_t caret_visual = VisualColumnAt(caret.line, caret.column);
   const auto [first_row, last_row] =
       layout_cache_.WrappedRowRangeForLine(caret.line, document_->lines.size());
   for (std::size_t row = first_row; row < last_row; ++row) {

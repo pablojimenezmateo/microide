@@ -257,8 +257,11 @@ TextViewport::LineCaret TextViewport::CaretForLine(std::size_t line_index) const
   if (line_index != cursor_line_ || line_index >= document_->lines.size()) {
     return {};
   }
-  const std::size_t caret_visual = TextLayout::VisualColumnForTextColumn(
-      document_->lines.LineView(line_index), cursor_column_, tab_size_);
+  // Through VisualColumnAt, not the raw walk: this runs once per rendered row per
+  // frame, so on a line with no newlines in it the raw form re-walked to the caret
+  // -- a megabyte -- on every frame, which is what the render path's remaining
+  // self time turned out to be once the layout and folding passes were fixed.
+  const std::size_t caret_visual = VisualColumnAt(line_index, cursor_column_);
   if (caret_visual >= horizontal_scroll_ &&
       caret_visual <= horizontal_scroll_ + visible_columns_) {
     return LineCaret{true, caret_visual - horizontal_scroll_};
