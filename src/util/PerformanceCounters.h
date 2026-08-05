@@ -66,6 +66,13 @@ namespace microide::util {
   X(SearchProjectLowerLineBytes, "search.project_lower_line_bytes")                             \
   X(SearchProjectCandidateFilesFromIndex, "search.project_candidate_files_from_index")          \
   X(SearchProjectScopeFilteredFiles, "search.project_scope_filtered_files")                     \
+  /* Candidate files the display cap left unclaimed, i.e. never opened or scanned. */           \
+  /* The blind spot this fills: candidate-files-from-index says how much work a search */       \
+  /* was handed and scope-filtered says how much scoping removed, but neither says how */       \
+  /* much the early stop skipped -- so a search that answered from 4% of the project */         \
+  /* and one that scanned all of it read identically. Nonzero here is also exactly the */       \
+  /* condition that makes a result set truncated (ProjectSearchService::RunSearch). */          \
+  X(SearchProjectCapUnscannedFiles, "search.project_cap_unscanned_files")                       \
   X(FileFinderCacheBuildCalls, "search.file_finder_cache_build_calls")                          \
   X(FileFinderCacheEntriesBuilt, "search.file_finder_cache_entries_built")                      \
   X(ProjectFileScannerCollectProjectFilesCalls, "project.collect_project_files_calls")          \

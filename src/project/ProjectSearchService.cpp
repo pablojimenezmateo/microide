@@ -559,9 +559,12 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   //
   // `next_file` is the claim cursor: every index below it was claimed by some
   // worker, and everything from it up to `total_files` was not.
+  const std::size_t claimed_files = next_file.load(std::memory_order_relaxed);
   if (matches_found.load(std::memory_order_relaxed) >= kMaxProjectSearchResults &&
-      next_file.load(std::memory_order_relaxed) < total_files) {
+      claimed_files < total_files) {
     truncated.store(true, std::memory_order_relaxed);
+    util::AddPerformanceCounter(util::PerfCounterId::SearchProjectCapUnscannedFiles,
+                                total_files - claimed_files);
   }
   // Report the exact total only for count-all runs; a default early-stop run does
   // not scan past the cap and therefore cannot know it.
