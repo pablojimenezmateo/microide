@@ -15,6 +15,10 @@ namespace {
 // Bytes read at a time when scanning a line's plain-ASCII prefix.
 constexpr std::size_t kPrefixScanChunkBytes = 4096;
 
+// Largest window the bounded read is worth taking; past it, fall back to the
+// whole-line build. See the use site for why a window can get that big at all.
+constexpr std::size_t kMaxLineWindowBytes = 64u * 1024u;
+
 // Offset of the first tab-or-multibyte byte of line `index` within [0, limit),
 // or `limit` when that prefix is all plain single-cell ASCII.
 //
@@ -104,15 +108,24 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     }
     const std::size_t start_byte = TextLayout::ComputeVisibleLineWindowStart(
         horizontal_scroll, line_length, plain_prefix_end);
-    window = TextLayout::VisibleLineWindow{
-        .bytes = lines.LineWindow(
-            line_index, start_byte,
-            TextLayout::VisibleLineWindowBytes(start_byte, horizontal_scroll, visible_columns),
-            line_window_scratch_),
-        .start_byte = start_byte,
-        .line_length = line_length,
-    };
-    windowed = true;
+    const std::size_t want =
+        TextLayout::VisibleLineWindowBytes(start_byte, horizontal_scroll, visible_columns);
+    // A window only pays when it is small. On a line whose first tab or multibyte
+    // byte comes before the scroll offset, the walk has to start there and cover
+    // every column up to the visible ones, so the window can be the rest of the
+    // line -- and `line_window_scratch_` would then hold a copy of it for the life
+    // of the cache, where the whole-line form's copy lives in the piece tree's
+    // per-revision cache and is dropped by the next edit. A rendered row asks for
+    // one or two kilobytes, so this bound is far above the real case and only the
+    // degenerate one falls through it.
+    if (want <= kMaxLineWindowBytes) {
+      window = TextLayout::VisibleLineWindow{
+          .bytes = lines.LineWindow(line_index, start_byte, want, line_window_scratch_),
+          .start_byte = start_byte,
+          .line_length = line_length,
+      };
+      windowed = true;
+    }
   }
   const auto build_into = [&](LayoutLine& out) {
     if (windowed) {
