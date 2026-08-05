@@ -956,11 +956,95 @@ void TestOverLongLineIsSkippedWithoutReadingIt() {
              FoldingModel::kMaxBracketScanLineBytes,
          "reading the spanning over-cap line whole still copies it (control)");
   util::ResetPerformanceCounters();
+
+  // The indent source is the other half of a refresh and it reads the same lines.
+  // It only needs the leading whitespace, so it must not read the line either.
+  options.use_indent_source = true;
+  FoldingModel indent_model;
+  util::ResetPerformanceCounters();
+  Expect(indent_model.Compute(buffer, options), "the indent pass should complete");
+  const std::uint64_t indent_copied =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes);
+  Expect(indent_copied == 0,
+         "measuring a line's indent must not read the rest of it (copied " +
+             std::to_string(indent_copied) + " bytes)");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorFoldIndentLinesMeasured) > 0,
+         "the indent scan must have run -- otherwise the zero above proves nothing");
+  util::ResetPerformanceCounters();
+}
+
+// TD-2026-08-05-133: the indent scan now reads a line 256 bytes at a time instead
+// of asking for all of it, carrying the running visual column across chunks so a
+// tab still advances to the right stop. That carry is the only thing chunking can
+// break, and it only shows when an indent run crosses a chunk boundary -- so the
+// widths here are chosen to straddle it, with tabs on both sides.
+//
+// The reference computation in FoldingReference.h measures indents with its own
+// independent single-pass scan over the whole line, which is what makes this a
+// real differential rather than the chunked code checking itself.
+void TestDeepIndentCrossingTheScanChunkMatchesTheReference() {
+  FoldingModel::ComputeOptions options = DefaultCStyleOptions();
+  options.bracket_pairs = {};  // isolate the indent source
+
+  // The sharp case, constructed so a wrong carry changes the fold TREE and not
+  // just the numbers. Fold output only compares indents against each other, so a
+  // document whose lines all share one indent string survives any consistent
+  // mis-measurement -- which is how a first attempt at this test passed against a
+  // deliberately broken carry. Here two lines must come out ONE column apart:
+  //
+  //   tab_size 3, chunk 256. Line A is 257 spaces then a tab: 257 % 3 == 2, so the
+  //   tab advances one column, to 258. A scan that restarted its column at the
+  //   chunk boundary would see one space (column 1) then a tab and advance two, to
+  //   259 -- exactly line B's indent, making them siblings instead of nesting.
+  {
+    options.tab_size = 3;
+    const std::vector<std::string> lines = {
+        "root:",
+        std::string(257, ' ') + "\ta",
+        std::string(259, ' ') + "b",
+        "end",
+    };
+    FoldingModel model;
+    Expect(model.Compute(lines, options), "indent compute should complete");
+    ExpectMatchesReference(model, lines, options, "one-column split across the scan chunk");
+  }
+
+  // A tab size that does NOT divide the 256-byte chunk is load-bearing here. With
+  // 4 or 8 the boundary always lands on a tab stop, so a chunked scan that reset
+  // its column at each chunk would produce the right answer anyway and this test
+  // would pass while measuring nothing. 3 and 5 make the carry observable.
+  for (const std::size_t tab_size : {std::size_t{3}, std::size_t{4}, std::size_t{5}}) {
+    options.tab_size = tab_size;
+    // 256 is the chunk size. Straddle it from both sides, and put a tab before it
+    // too so the carried column at the boundary is not simply the byte count.
+    for (const std::size_t leading : {std::size_t{250}, std::size_t{255}, std::size_t{256},
+                                      std::size_t{257}, std::size_t{600}}) {
+      for (const std::string_view tail : {"\t", "\t\t\t", " \t ", ""}) {
+        const std::string indent = "\t " + std::string(leading, ' ') + std::string(tail);
+        const std::vector<std::string> lines = {
+            "outer:",
+            indent + "body",
+            indent + "\tdeeper",
+            std::string(leading + 8, ' '),  // whitespace only, spans two chunks
+            indent + "body again",
+            "next",
+        };
+        FoldingModel model;
+        Expect(model.Compute(lines, options), "indent compute should complete");
+        ExpectMatchesReference(model, lines, options,
+                               "tab_size " + std::to_string(tab_size) + ", indent of " +
+                                   std::to_string(leading) + " spaces + '" + std::string(tail) +
+                                   "'");
+      }
+    }
+  }
 }
 
 }  // namespace
 
 void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorFolding/Indent/DeepIndentCrossingTheScanChunkMatchesTheReference",
+          TestDeepIndentCrossingTheScanChunkMatchesTheReference);
   AddTest(tests, "EditorFolding/Bracket/OverLongLineIsSkippedWithoutReadingIt",
           TestOverLongLineIsSkippedWithoutReadingIt);
   AddTest(tests, "EditorFolding/Bracket/OverLongLineContributesNoBrackets",

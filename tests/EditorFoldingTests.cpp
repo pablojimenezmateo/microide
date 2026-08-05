@@ -114,7 +114,7 @@ void TestFoldingPrefixStateDoesNotSurviveAFullRecompute() {
 
 // The indent scan treats "blank or indent only" as a property of the measured
 // indent (a sentinel value) rather than re-scanning the line's bytes. Those are
-// the same predicate — MeasureIndent returns the sentinel exactly when every byte
+// the same predicate — MeasureLineIndent returns the sentinel exactly when every byte
 // is a space or a tab — but "exactly" is worth a test, because the interesting
 // input is the one that is neither empty nor code: a line of pure whitespace.
 //

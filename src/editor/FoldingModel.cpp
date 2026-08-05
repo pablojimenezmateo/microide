@@ -28,7 +28,7 @@ static_assert(FoldingModel::kMaxBracketScanLineBytes <=
 
 namespace {
 
-// Returned by MeasureIndent for a line whose every byte is a space or a tab
+// Returned by MeasureLineIndent for a line whose every byte is a space or a tab
 // (including an empty line). It doubles as the "blank or indent only" predicate:
 // nothing else can produce it, so callers must not re-derive that separately.
 constexpr std::size_t kSentinelIndent = static_cast<std::size_t>(-1);
@@ -54,33 +54,70 @@ constexpr std::uint32_t kUnmeasuredIndent = kBlankIndent - 1;
 // extra line walking per refresh.
 constexpr std::size_t kTargetBlockLines = 1024;
 
-std::size_t MeasureIndent(std::string_view line, std::size_t tab_size) {
-  if (tab_size == 0) tab_size = 1;
+// Extend an indent measurement over the next `chunk` of a line, carrying the
+// running visual column in `indent`. Returns true when the indent run ENDED
+// inside this chunk (`indent` is then final); false when the chunk was entirely
+// whitespace and the caller must continue with the next one.
+//
+// `indent` is the global visual column, not a chunk-local one, so a tab's stop
+// arithmetic is identical to a single-pass scan across the whole line.
+bool AdvanceIndentOverChunk(std::string_view chunk, std::size_t tab_size, std::size_t& indent) {
   // Count the leading spaces a word at a time. Each space used to contribute one
   // loop iteration and one branch; on deeply nested code that was the whole cost
   // of the scan (the 50k-line fixture averages 131 leading whitespace bytes per
   // line).
-  const std::size_t spaces = util::LeadingByteRun(line, ' ');
-  if (spaces == line.size()) {
-    return kSentinelIndent;  // line is whitespace-only / blank
+  const std::size_t spaces = util::LeadingByteRun(chunk, ' ');
+  indent += spaces;
+  if (spaces == chunk.size()) {
+    return false;  // whitespace all the way to the end of the chunk
   }
-  if (line[spaces] != '\t') {
-    return spaces;  // ordinary space indent, which is almost every line
+  if (chunk[spaces] != '\t') {
+    return true;  // ordinary space indent, which is almost every line
   }
   // A tab appears: fall back to the exact per-character rule from that point,
   // since a tab advances to the next stop rather than by one column.
-  std::size_t indent = spaces;
-  for (std::size_t i = spaces; i < line.size(); ++i) {
-    const char c = line[i];
+  for (std::size_t i = spaces; i < chunk.size(); ++i) {
+    const char c = chunk[i];
     if (c == ' ') {
       ++indent;
     } else if (c == '\t') {
       indent += tab_size - (indent % tab_size);
     } else {
-      return indent;
+      return true;
     }
   }
-  return kSentinelIndent;  // line is whitespace-only / blank
+  return false;
+}
+
+// Bytes of a line read at a time when measuring its indent. An indent this deep
+// is already past anything a real file has, and the loop below extends rather
+// than truncating, so this is a chunk size and not a cap.
+constexpr std::size_t kIndentScanChunkBytes = 256;
+
+// Indent of line `index`, reading only its leading whitespace.
+//
+// `MeasureIndent(lines[index], tab_size)` asked for the whole line to look at its
+// first few bytes; on a piece-tree source that materializes any line that spans
+// pieces -- every edited line -- so a fold refresh copied a minified bundle's
+// single line on every keystroke (TD-2026-08-05-133). The chunked read gives the
+// identical answer: the running visual column carries across chunks, so tab stops
+// land where a single pass would put them.
+std::size_t MeasureLineIndent(LineSpan lines, std::size_t index, std::size_t tab_size) {
+  if (tab_size == 0) tab_size = 1;
+  std::size_t indent = 0;
+  std::size_t offset = 0;
+  std::string scratch;
+  while (true) {
+    const std::string_view chunk =
+        lines.LineWindow(index, offset, kIndentScanChunkBytes, scratch);
+    if (chunk.empty()) {
+      return kSentinelIndent;  // line is whitespace-only / blank
+    }
+    if (AdvanceIndentOverChunk(chunk, tab_size, indent)) {
+      return indent;
+    }
+    offset += chunk.size();
+  }
 }
 
 // Distinct bracket bytes the SWAR skip below can filter on. Real inputs ship 3-4
@@ -323,7 +360,7 @@ std::uint32_t FoldingModel::IndentAt(LineSpan lines, std::size_t line, std::size
   }
   util::AddPerformanceCounter(util::PerfCounterId::EditorFoldIndentLinesMeasured);
   budget.Spend();
-  const std::size_t measured = MeasureIndent(lines[line], tab_size);
+  const std::size_t measured = MeasureLineIndent(lines, line, tab_size);
   // Clamp so a pathological width can never collide with a reserved slot.
   slot = measured == kSentinelIndent
              ? kBlankIndent
