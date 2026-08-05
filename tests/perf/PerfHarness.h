@@ -2,6 +2,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <chrono>
 #include <cstdint>
 #include <filesystem>
@@ -144,6 +145,13 @@ class ScenarioContext {
   bool AssertNoAllocationsDuringDraw(std::string* error = nullptr);
   double Measure(std::string_view phase_name, const std::function<void()>& action);
   std::vector<Iteration::PhaseMetrics> TakePhaseMetrics();
+  // Harness-owned counters, merged into the iteration's `perf_counters` under a
+  // `harness.` prefix. The production counters describe what the *application*
+  // did; on a soak scenario almost none of the measured CPU is application work,
+  // it is the harness's own idle-poll loop and its 1920x1080 software present.
+  // Without these the two are indistinguishable, and an iteration that costs 2x
+  // for identical application counters has no visible explanation at all.
+  std::vector<std::pair<std::string, std::uint64_t>> TakeHarnessCounters();
   std::uint64_t RandomU64();
   void OpenFileFinder();
   void ActivateGitSidebar();
@@ -190,6 +198,24 @@ class ScenarioContext {
   SDL_Renderer* renderer_ = nullptr;
   std::mt19937_64 rng_;
   std::vector<Iteration::PhaseMetrics> phase_metrics_;
+
+  // Fixed slots rather than a name lookup: the idle-wait loop bumps these up to
+  // ~5,600 times per iteration, and a counter that costs a string compare per
+  // bump would become a measurable share of the very budget it is there to
+  // explain.
+  enum class HarnessCounter : std::size_t {
+    kFramesPumped,
+    kIdleWaitPolls,
+    kIdleWaitIdleSleeps,
+    kIdleWaitCaretSleeps,
+    kIdleWaitShortPolls,
+    kIdleWaitHandledWakes,
+    kCount,
+  };
+  void BumpHarnessCounter(HarnessCounter counter, std::uint64_t amount = 1) {
+    harness_counters_[static_cast<std::size_t>(counter)] += amount;
+  }
+  std::array<std::uint64_t, static_cast<std::size_t>(HarnessCounter::kCount)> harness_counters_{};
 };
 
 struct Scenario {

@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
@@ -177,7 +178,26 @@ ScenarioContext::ScenarioContext(workspace::WorkspaceShell& shell,
                                  SDL_Renderer* renderer)
     : shell_(shell), window_(window), renderer_(renderer), rng_(ResolveSeed(std::nullopt)) {}
 
+std::vector<std::pair<std::string, std::uint64_t>> ScenarioContext::TakeHarnessCounters() {
+  static constexpr std::array<std::string_view,
+                              static_cast<std::size_t>(HarnessCounter::kCount)>
+      kNames = {
+          "harness.frames_pumped",         "harness.idle_wait_polls",
+          "harness.idle_wait_idle_sleeps", "harness.idle_wait_caret_sleeps",
+          "harness.idle_wait_short_polls", "harness.idle_wait_handled_wakes",
+      };
+  std::vector<std::pair<std::string, std::uint64_t>> out;
+  for (std::size_t i = 0; i < harness_counters_.size(); ++i) {
+    if (harness_counters_[i] != 0) {
+      out.emplace_back(std::string(kNames[i]), harness_counters_[i]);
+    }
+  }
+  harness_counters_.fill(0);
+  return out;
+}
+
 void ScenarioContext::PumpFrames(std::size_t count) {
+  BumpHarnessCounter(HarnessCounter::kFramesPumped, count);
   for (std::size_t i = 0; i < count; ++i) {
     {
       // The application's whole frame. Named here because the app's own top-level
@@ -263,12 +283,15 @@ std::uint64_t ScenarioContext::Wait(std::chrono::milliseconds duration) {
     const auto now = std::chrono::steady_clock::now();
     const auto remaining = std::chrono::duration_cast<std::chrono::milliseconds>(end - now);
     const auto idle_state = shell_.CurrentIdleWaitState();
+    BumpHarnessCounter(HarnessCounter::kIdleWaitPolls);
     if (idle_state.hint == workspace::WorkspaceShell::IdleHint::Idle) {
+      BumpHarnessCounter(HarnessCounter::kIdleWaitIdleSleeps);
       std::this_thread::sleep_for(std::min(remaining, std::chrono::milliseconds(20)));
       continue;
     }
     if (idle_state.hint == workspace::WorkspaceShell::IdleHint::CaretOnly &&
         idle_state.caret_remaining_ms > 1) {
+      BumpHarnessCounter(HarnessCounter::kIdleWaitCaretSleeps);
       const auto caret_delay = std::chrono::milliseconds(idle_state.caret_remaining_ms);
       std::this_thread::sleep_for(std::min(remaining, caret_delay));
       continue;
@@ -276,10 +299,12 @@ std::uint64_t ScenarioContext::Wait(std::chrono::milliseconds duration) {
 
     const auto wake = shell_.HandleScheduledWake();
     if (wake.handled) {
+      BumpHarnessCounter(HarnessCounter::kIdleWaitHandledWakes);
       ++wake_count;
       PumpFrames(1);
       continue;
     }
+    BumpHarnessCounter(HarnessCounter::kIdleWaitShortPolls);
     std::this_thread::sleep_for(kIdlePollInterval);
   }
   return wake_count;
@@ -643,6 +668,9 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     std::vector<std::pair<std::string, std::uint64_t>> counter_deltas;
     for (const auto& [name, value] : util::NonZeroCounterDelta(counter_before, counter_after)) {
       counter_deltas.emplace_back(std::string(name), value);
+    }
+    for (auto& entry : context.TakeHarnessCounters()) {
+      counter_deltas.push_back(std::move(entry));
     }
     aggregate.iterations.push_back(Iteration{
         .index = i,
