@@ -56,6 +56,10 @@ thread_local struct OccurrenceViewportScanCache {
   std::uint64_t content_revision = 0;
   std::size_t scroll_line = 0;
   std::size_t visible_rows = 0;
+  // The scan is bounded to the columns a row can actually show, so the horizontal
+  // window is part of what the result depends on.
+  std::size_t horizontal_scroll = 0;
+  std::size_t visible_columns = 0;
   bool case_sensitive = false;
   std::string needle_key;
   std::vector<editor::OccurrenceRange> ranges;
@@ -270,6 +274,8 @@ bool OccurrenceScanCacheMatches(const editor::TextViewport& viewport,
          g_occurrence_scan_cache.content_revision == viewport.content_revision() &&
          g_occurrence_scan_cache.scroll_line == scroll_line &&
          g_occurrence_scan_cache.visible_rows == visible_rows &&
+         g_occurrence_scan_cache.horizontal_scroll == viewport.horizontal_scroll() &&
+         g_occurrence_scan_cache.visible_columns == viewport.visible_columns() &&
          g_occurrence_scan_cache.case_sensitive ==
              g_occurrence_seed_cache.case_sensitive &&
          g_occurrence_scan_cache.needle_key == needle_compare;
@@ -289,6 +295,8 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
   scan_cache.content_revision = viewport.content_revision();
   scan_cache.scroll_line = viewport.scroll_line();
   scan_cache.visible_rows = visible_rows;
+  scan_cache.horizontal_scroll = viewport.horizontal_scroll();
+  scan_cache.visible_columns = viewport.visible_columns();
   scan_cache.case_sensitive = occurrences_case_sensitive;
   scan_cache.needle_key = needle;
 
@@ -317,14 +325,17 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
   const auto& lines = viewport.lines();
   const std::string_view needle_view(needle.data(), needle.size());
 
-  auto append_occurrences = [&](std::size_t line_index, std::string_view haystack) {
+  auto append_occurrences = [&](std::size_t line_index, std::string_view haystack,
+                                std::size_t haystack_base) {
     const auto emit = [&](std::size_t match_start, std::size_t match_end) {
-      const bool primary = line_index == seed_line && match_start == seed_start &&
-                           match_end == seed_end;
+      const std::size_t start_column = haystack_base + match_start;
+      const std::size_t end_column = haystack_base + match_end;
+      const bool primary = line_index == seed_line && start_column == seed_start &&
+                           end_column == seed_end;
       scan_cache.ranges.push_back(editor::OccurrenceRange{
           .line_index = line_index,
-          .start_column = match_start,
-          .end_column = match_end,
+          .start_column = start_column,
+          .end_column = end_column,
           .is_primary_seed = primary,
       });
     };
@@ -354,11 +365,42 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
     }
   };
 
+  // An occurrence is only ever painted inside a row's visible window -- the
+  // row-fill loops clip every span to it -- so scanning the whole line produces
+  // matches that are discarded on arrival. On ordinary text that is a few dozen
+  // wasted bytes. On a file with no line breaks in it the "line" is the whole
+  // document, and the scan re-lowercases and re-searches a megabyte every time the
+  // caret moves to a different word, which is every keystroke of word motion
+  // (TD-2026-08-05-132 follow-up, `editor_long_line_horizontal_scroll`).
+  //
+  // Soft wrap lays the whole line out across several rows, so all of it is visible
+  // and the full scan is the right one.
+  const bool bounded_by_window = !viewport.soft_wrap() && viewport.visible_columns() != 0;
+  const std::size_t window_first_visual = viewport.horizontal_scroll();
+  const std::size_t window_last_visual = window_first_visual + viewport.visible_columns();
+  // Pad by the needle so a match straddling either edge is still found; the edge
+  // conversion is a nearest-column mapping, not an exact one.
+  const std::size_t window_pad = std::max<std::size_t>(needle.size(), 1);
+
   for (std::size_t line_index : visible_line_indices) {
     if (line_index >= lines.size()) {
       continue;
     }
-    append_occurrences(line_index, lines.LineView(line_index));
+    const std::string_view line = lines.LineView(line_index);
+    if (!bounded_by_window) {
+      append_occurrences(line_index, line, 0);
+      continue;
+    }
+    const std::size_t first_byte =
+        viewport.TextColumnAtVisualColumn(line_index, window_first_visual);
+    const std::size_t last_byte =
+        viewport.TextColumnAtVisualColumn(line_index, window_last_visual);
+    const std::size_t begin = first_byte > window_pad ? first_byte - window_pad : 0;
+    const std::size_t end = std::min(line.size(), last_byte + window_pad);
+    if (begin >= end) {
+      continue;
+    }
+    append_occurrences(line_index, line.substr(begin, end - begin), begin);
   }
 }
 

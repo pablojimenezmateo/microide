@@ -615,22 +615,35 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
     SoftwareCanvas canvas(400, 60);
     microide::editor::TextViewport viewport;
     viewport.LoadContent(line + "\n", "/tmp/row-fill-occurrences.txt");
-    viewport.SetViewportSize(3, 20);
+    // Size the viewport from the render metrics BEFORE building, exactly as
+    // RenderActiveWorkspaceSurface does. The occurrence scan is bounded by
+    // `viewport.visible_columns()` and the paint clips to the same value, so the
+    // two agree only if the size is applied first -- building against a stale size
+    // would scan a narrower window than the row paints.
+    const microide::editor::EditorViewMetrics build_metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
+                                                             /*show_line_numbers=*/false);
+    viewport.SetViewportSize(build_metrics.visible_rows, build_metrics.visible_columns);
     // Caret inside the "MMMM" of record 9, which is inside the scrolled window, so
     // the seed occurrence and its siblings all land on the row.
     viewport.MoveCursorTo(0, 9 * record.size() + 1, false);
     viewport.SetHorizontalScroll(kScroll);
 
     microide::editor::EditorViewModel vm;
-    builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/3, /*folding_model=*/nullptr,
+    builder.BuildEditorViewModelInto(vm, viewport, build_metrics.visible_rows,
+                                     /*folding_model=*/nullptr,
                                      /*occurrences_highlight_enabled=*/true,
                                      /*occurrences_case_sensitive=*/true,
                                      /*sticky_scroll_enabled=*/false,
                                      /*sticky_max_depth=*/3,
                                      /*render_whitespace_enabled=*/false);
-    Expect(vm.occurrence_ranges.size() >= 8,
-           "the fixture must produce many occurrences for the narrowing to matter (got " +
+    // The scan is itself bounded to the columns the row can paint, so this is the
+    // count the window can show -- not the 40 in the file.
+    Expect(vm.occurrence_ranges.size() >= 3,
+           "the fixture must produce several in-window occurrences for this to test anything (got " +
                std::to_string(vm.occurrence_ranges.size()) + ")");
+    Expect(vm.occurrence_ranges.size() < kRecordCount,
+           "the occurrence scan must stop at the visible window, not scan the whole line");
 
     microide::editor::EditorViewRenderer renderer;
     renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect,

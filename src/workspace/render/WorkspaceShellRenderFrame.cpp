@@ -831,6 +831,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             text_renderer_, *viewport, pane.rect, sticky_rows, line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       }
+      util::PerformanceTrace::Scope vm_scope("WorkspaceShell::Render::BuildEditorViewModel");
       editor_render_builder.BuildEditorViewModelInto(
           tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
           occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
