@@ -80,6 +80,17 @@ class PieceTree {
   std::string_view LineWindow(std::size_t index, std::size_t byte_start, std::size_t byte_len,
                               std::string& scratch) const;
 
+  // The owned copy of line `index` if this revision already had to make one, else
+  // nullptr. Exists so a caller that must hand out a `const std::string&` can
+  // reference the copy the tree already paid for instead of making a second one;
+  // both die at the same mutation, so the lifetime contract is unchanged. Call
+  // `LineView(index)` first -- this only reports what is cached, it does not
+  // materialize.
+  const std::string* LineOwnedIfMaterialized(std::size_t index) const {
+    const auto it = line_view_cache_.find(index);
+    return it != line_view_cache_.end() ? &it->second : nullptr;
+  }
+
   // Copy lines [begin, end) into a fresh vector.
   std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const;
   // Full materialized copy of every line.

@@ -533,6 +533,38 @@ void TestCaretNeighborhoodMatchesWholeLineReading() {
   }
 }
 
+// TD-2026-08-05-133: `TextBuffer::operator[]` must hand out a `const std::string&`,
+// and for a line that spans pieces the tree has already made exactly that string
+// to serve `LineView`. Copying it again doubled the cost of every compatibility
+// read on an edited line. Pin the aliasing by identity, and pin that a contiguous
+// line is still copied (it has no owned form to alias).
+void TestTextBufferOperatorIndexAliasesTheTreesMaterializedLine() {
+  microide::editor::TextBuffer buffer;
+  buffer.ResetFromText("abcdefghij\nplain second line\n");
+  buffer.ReplaceTextRange(0, 4, 0, 4, "WXYZ");  // splits line 0 into three pieces
+
+  const std::string_view view = buffer.LineView(0);
+  const std::string& ref = buffer[0];
+  Expect(ref == "abcdWXYZefghij", "the aliased reference still reads the right bytes");
+  Expect(ref.data() == view.data(),
+         "operator[] on a spanning line must alias the tree's copy, not make a second one");
+  Expect(buffer.materialized_line_count() == 0,
+         "aliasing must not add an entry to the compatibility line cache");
+
+  // A contiguous line has no owned copy to alias, so it still goes through the
+  // cache -- which is what makes the assertion above a real distinction.
+  const std::string& contiguous = buffer[1];
+  Expect(contiguous == "plain second line", "the untouched line reads correctly");
+  Expect(contiguous.data() != buffer.LineView(1).data(),
+         "a contiguous line is served from the compatibility cache, not the tree");
+  Expect(buffer.materialized_line_count() == 1, "the contiguous read materialized one line");
+
+  // The reference contract is unchanged: both caches die at the next mutation.
+  buffer.ReplaceTextRange(1, 0, 1, 0, "x");
+  Expect(buffer.materialized_line_count() == 0, "a mutation clears the compatibility cache");
+  Expect(buffer[0] == "abcdWXYZefghij", "content survives the mutation on the other line");
+}
+
 // TD-2026-07-16-35: a mutation that would push the live document past the byte ceiling
 // must be refused as a no-op (leaving content + line count intact) rather than wrap the
 // uint32 subtree_length and corrupt the tree. Exercised via a lowered test ceiling.
@@ -882,6 +914,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
           TestPieceTreeAppendWholeTextMatchesLineJoin);
   AddTest(tests, "PieceTree/SpanningLineViewStableAcrossReReads",
           TestPieceTreeSpanningLineViewStableAcrossReReads);
+  AddTest(tests, "PieceTree/TextBufferOperatorIndexAliasesTheTreesMaterializedLine",
+          TestTextBufferOperatorIndexAliasesTheTreesMaterializedLine);
   AddTest(tests, "PieceTree/CaretNeighborhoodMatchesWholeLineReading",
           TestCaretNeighborhoodMatchesWholeLineReading);
   AddTest(tests, "PieceTree/LineWindowMatchesSubstring", TestPieceTreeLineWindowMatchesSubstring);

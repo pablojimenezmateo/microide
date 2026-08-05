@@ -126,12 +126,17 @@ class TextBuffer {
   static std::size_t snapshot_build_count() { return s_snapshot_builds_; }
   static void reset_snapshot_build_count() { s_snapshot_builds_ = 0; }
 
-  // Number of lines currently materialized by the `operator[]`/front/back
-  // compatibility accessors. Every entry is a full heap copy of a line that the
-  // piece tree already stores, retained until the next mutation — so a per-line
-  // hot path that reaches for `operator[]` instead of `LineView` quietly
-  // accumulates a second copy of every line it touches. Exposed so a test can
-  // pin "this render path stays zero-copy" rather than trusting the convention.
+  // Number of EXTRA line copies the `operator[]`/front/back compatibility
+  // accessors have forced. Each is a full heap copy of a line the piece tree
+  // already stores, retained until the next mutation — so a per-line hot path
+  // that reaches for `operator[]` instead of `LineView` quietly accumulates a
+  // second copy of every line it touches. Exposed so a test can pin "this render
+  // path stays zero-copy" rather than trusting the convention.
+  //
+  // A line that spans pieces is NOT counted: the tree had to materialize it for
+  // `LineView` anyway and `LineRef` aliases that copy rather than making a
+  // second one. Those are counted by `editor.line_materializations` instead;
+  // this number is specifically the compatibility accessors' own overhead.
   std::size_t materialized_line_count() const { return line_cache_.size(); }
 
   // --- Mutate ---
@@ -191,7 +196,20 @@ class TextBuffer {
   const std::string& LineRef(std::size_t index) const {
     const auto it = line_cache_.find(index);
     if (it != line_cache_.end()) return it->second;
-    return line_cache_.emplace(index, std::string(tree_.LineView(index))).first->second;
+    const std::string_view view = tree_.LineView(index);
+    // A line that spans pieces -- every line an in-line edit has touched -- was
+    // just copied into the tree's own per-revision cache to produce that view.
+    // Copying it a SECOND time into `line_cache_` doubled the cost of every
+    // `operator[]` on an edited line, which on a file with no line breaks in it
+    // is megabytes per call (TD-2026-08-05-133). Alias the tree's copy instead:
+    // both are invalidated by the same mutation, so the reference contract is
+    // identical. The pointer test is what makes this exact -- it aliases only
+    // when the view genuinely IS that slot, never a view into a piece.
+    if (const std::string* owned = tree_.LineOwnedIfMaterialized(index);
+        owned != nullptr && owned->data() == view.data() && owned->size() == view.size()) {
+      return *owned;
+    }
+    return line_cache_.emplace(index, std::string(view)).first->second;
   }
 
   void InvalidateSnapshot() {
