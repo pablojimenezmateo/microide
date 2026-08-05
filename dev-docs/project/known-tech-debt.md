@@ -65,7 +65,8 @@ That removes three of the five copies outright and lets two more go with it:
 line-sized copy is the piece tree materializing the edited line into its
 per-revision cache, which the renderer and the visual-width scan both read as one
 contiguous view — it is shared, not per-caller, and removing it means teaching
-both to consume the line in chunks (see TD-2026-08-05-132).
+both to consume the line in chunks. The visual-width scan stopped needing it in
+TD-2026-08-05-132; the renderer still does (TD-2026-08-05-133).
 
 **Two consumers needed real work rather than a branch.** Undo-group frames
 aggregate by line range, so an in-line child is widened back to the line form on
@@ -111,41 +112,108 @@ mutation clears. The single-caret edit path uses `LineView`/`LineLength`;
 `operator[]` reads that only want a length or a clamp, and no scenario measures
 them with a long line.
 
-### TD-2026-08-05-132 — on a line with no newlines in it, the render and folding paths still scan the whole line per keystroke. OPEN.
+### TD-2026-08-05-132 — on a line with no newlines in it, the render and folding paths still scan the whole line per keystroke. [RESOLVED 2026-08-05.]
 
-What is left after TD-2026-08-05-131, measured with `MICROIDE_PERF_SUMMARY=1` on
-`editor_typing_minified_line` (one ~2 MiB line, 32 keystrokes, self time):
+**`editor_typing_minified_line` 148.7 ms -> 18.9 ms (7.9x), allocations unchanged
+at 4,918.** All three filed items are done, plus a fourth the profile named once
+the first three were gone. What is left after them is one thing, filed as
+TD-2026-08-05-133.
 
-| scope | calls | per call |
+The per-keystroke self time this entry opened with, and what happened to it:
+
+| scope | before | after |
 | --- | --- | --- |
-| `EditorViewRenderer::Render::RowLayout` | 136 | 0.91 ms |
-| `FoldingModel::SyncLineBracketCache` | 64 | 1.25 ms |
-| `FoldingModel::WalkLines` | 64 | 0.57 ms |
-| `TextViewport::ApplyHistoryEntry` | 64 | 0.24 ms |
+| `EditorViewRenderer::Render::RowLayout` | 0.91 ms | 0.0004 ms |
+| `FoldingModel::SyncLineBracketCache` | 1.25 ms | 0.0001 ms |
+| `FoldingModel::WalkLines` | 0.57 ms | 0.00006 ms |
+| `TextViewport::ApplyHistoryEntry` | 0.24 ms | 0.001 ms |
 
-None of these are stray copies; each is a genuine O(line) pass. The edit path's
-own share is now ~0.3 ms of a ~2.4 ms keystroke — the rest is layout and folding
-re-deriving whole-line facts.
+**One fact answers the first two items: is this line plain ASCII?** No tab and no
+byte >= 0x80 means one visual cell per byte, so on such a line visual column IS
+byte column at every offset and every conversion between them is O(1). The width
+table `TextLayoutCache` already keeps per line now carries that bit, packed into
+the existing word (a `bool` member would double a document-sized table to carry
+one bit; widths are bounded by the line's byte length, so the top bit is free).
 
-Three separate things sit behind it, and they want different fixes:
+With it:
 
-1. **`BuildVisibleLineInto` walks from column 0 to the horizontal scroll offset**
-   to find the first visible cell, and computes the full line's visual width for
-   the scrollbar. With the caret a megabyte in, the first is a megabyte of
-   code-point stepping per rendered row.
-2. **`TextLayoutCache::UpdateVisualColumnCacheAfterEdit` re-measures the whole
-   edited line's width.** For an in-line splice the delta is computable from the
-   old width when neither the removed nor the inserted text — nor the rest of the
-   line — contains a tab, but "does the rest of the line contain a tab" is itself
-   the scan being avoided, so this needs a cached per-line flag.
-3. **The folding model's per-line bracket scan is O(line)** and runs on the edited
-   line every keystroke, even though an in-line edit changes the bracket set only
-   within the spliced range.
+1. **`BuildVisibleLineInto`** starts its walk at the line's first
+   tab-or-multibyte byte rather than at column 0, and skips even that scan when the
+   caller hands over the cached facts. Exact for every line, not a fast path for a
+   special case: within that prefix there is nothing to derive.
+2. **`UpdateVisualColumnCacheAfterEdit`** derives the new width from the splice. A
+   plain line stays plain exactly when the inserted text is, and a plain line's
+   width is its byte count — so the update reads the spliced-in bytes and nothing
+   else. `ApplyHistoryEntry` has that splice for every column-scoped entry, which
+   is every keystroke.
+3. **The folding model drops brackets on a line past
+   `kMaxBracketScanLineBytes`**, set equal to `runtime_syntax::kMaxHighlightLineBytes`
+   and tied to it by a `static_assert`. The equality is the point: past the
+   tokenization cap a line has no syntax tokens, so `IsSuppressedBracketAt` cannot
+   tell a brace inside a string literal from a real one, and the folds derived from
+   such a line were arbitrary rather than approximate. Contributing none is cheaper
+   and more honest. This is the VS Code-shaped threshold this entry predicted.
+4. **The caret's own visual column** was the largest remaining cost once those
+   landed — `CaretForLine` runs per rendered row per frame and re-walked to the
+   caret every time. Every caret conversion in the editor now routes through
+   `TextViewport::VisualColumnAt` / `TextColumnAtVisualColumn`, which consult the
+   same per-line facts.
 
-VS Code's answer to this class of problem is a length threshold past which a line
-stops getting whole-line treatment (tokenization, folding, and bracket matching all
-opt out). That is probably the right shape here too, and it is a design decision
-rather than an optimization, which is why this is filed rather than done.
+**Worth carrying forward: the fourth item was invisible until a scope was put on
+the thing next to it.** `PieceTree`'s line materialization is charged to whichever
+consumer asks for the edited line first in a frame, so as the code around it got
+faster the cost moved between scopes in the ranking and read each time as that
+consumer's own. It spent this pass disguised as filetype detection. It has its own
+scope and counters now (`PieceTree::MaterializeSpanningLine`,
+`editor.line_materializations`, `editor.line_materialized_bytes`), and so does the
+caret walk it hid (`editor.visual_column_walk_bytes`) — a walk and a lookup return
+the same answer, so no correctness test can tell them apart and only a counter can.
+
+Coverage: the visible-line build is pinned differentially against a walk from
+column zero, with a tab / 2-byte / 3-byte / lone-invalid byte at every offset of
+lines spanning several eight-byte scan chunks, at every scroll offset, hinted and
+unhinted. The width derivation is pinned against a from-scratch measurement across
+each transition that breaks its precondition. The caret conversions are pinned
+against the direct walk at every column of a plain, tabbed, multibyte and empty
+row, with the width table cold and warm. The fold cap is pinned at the boundary in
+both directions. A debug-only cross-check in `VisibleLineLayoutRefCached`
+re-measures short lines against the width table, so the "every content edit either
+splices this table or drops it" invariant the whole thing now rests on cannot rot
+quietly. Every one of these was confirmed to fail with its fix reverted.
+
+### TD-2026-08-05-133 — the renderer needs the edited line as one contiguous view, which costs a full copy of it per keystroke. OPEN.
+
+The one line-sized copy left on the edit path, deferred here by
+TD-2026-08-05-131 and now the single dominant cost on
+`editor_typing_minified_line`: **7.5 ms of 19 ms of traced self time, one ~2 MiB
+copy per keystroke** (`PieceTree::MaterializeSpanningLine`, 96 calls over 3
+iterations — exactly one per edit).
+
+`PieceTree::LineView` is zero-copy while a line lies inside one piece. An in-line
+edit splits its line into three, so from the first keystroke on the edited line
+spans pieces and every reader of it pays a copy into the per-revision cache. The
+copy is shared — the first caller in a frame pays and the rest hit the cache — so
+removing it means no caller may want the whole line.
+
+Most callers do not, and those are the easy half: `SignatureDetectHead` wants a
+bounded head, `FoldingModel`'s bracket scan and the syntax highlighter both bail on
+length before reading, `MeasureIndent` wants the leading whitespace. Each of those
+reads the line only to throw nearly all of it away, and each can take a bounded
+range instead (`TextBuffer::AppendTextRange` is already that primitive).
+
+Fixing only those moves the copy rather than removing it, because the render path
+genuinely reads the line: `BuildVisibleLineInto` indexes it by absolute byte
+column, and `RowDecorationInput::text` is the whole line for six consumers that use
+`text.size()` as "end of line" and slice windows out of it with their own
+`SliceVisibleColumns` (itself an O(start_column) walk, latent behind
+plugin-decoration and diff paths). Making that path window-based means a
+`LineWindow(line, byte_start, byte_len)` on the buffer plus a base-offset in the
+row-decoration arithmetic — a real refactor of the hottest render loop in the app,
+for a cost that only appears on pathologically long lines.
+
+Filed rather than done for that reason: the priority order puts speed first but
+still ranks correctness above it, and this trades risk on every rendered row of
+every file against a win confined to one file shape.
 
 Gated meanwhile by `editor_typing_minified_line`'s wall-clock baselines.
 

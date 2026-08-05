@@ -25,6 +25,85 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-05 (third pass) closing the render and folding paths on a long line (perf-runner-v1)
+
+The two passes below took the *edit* path on a file with no line breaks in it from
+13x the affected line's bytes to 1x. This pass takes the rest: everything that
+re-derived a whole-line fact per keystroke. **`editor_typing_minified_line`
+148.7 ms -> 18.9 ms (7.9x)**, allocations unchanged at 4,918 (TD-2026-08-05-132).
+
+### One fact replaced four O(line) passes
+
+Is this line plain ASCII — no tab, no byte >= 0x80? If so it spends exactly one
+visual cell per byte, so visual column IS byte column at every offset and every
+conversion between the two is O(1). The per-line width table `TextLayoutCache`
+already maintains now carries that bit, packed into the word it already stored (a
+`bool` member would have doubled a document-sized table to carry one bit; widths
+are bounded by the line's byte length, so the top bit is free).
+
+| what it did per keystroke | now |
+| --- | --- |
+| `BuildVisibleLineInto` stepped code points from column 0 to the horizontal scroll offset, per rendered row | starts at the line's first tab-or-multibyte byte, or skips the scan entirely with the cached facts |
+| ...and re-measured the full line for the scrollbar and end-of-line decorations | takes the cached width |
+| `UpdateVisualColumnCacheAfterEdit` re-measured the edited line | derives the width from the splice: a plain line stays plain exactly when the inserted text is, and its width is its byte count |
+| `CaretForLine` / `PreferredColumnForCaret` / the soft-wrap row lookup walked to the caret | one shared `VisualColumnAt` / `TextColumnAtVisualColumn` pair reading the same facts |
+
+The prefix-skip is worth stating precisely because it reads like a special case and
+is not: the walk starts at the first byte where visual column can stop tracking
+byte offset, which is exact for every line. On an ordinary line both forms do the
+same negligible work.
+
+### Folding got the threshold, not an algorithm
+
+The per-line bracket cache resyncs a whole line at a time — an edit anywhere in a
+line rescans all of it, and there is no summary that can be had for less. On the
+2 MiB fixture that meant re-matching 209,570 bracket events every keystroke.
+
+A line past `FoldingModel::kMaxBracketScanLineBytes` now contributes no brackets,
+and that cap is set equal to `runtime_syntax::kMaxHighlightLineBytes` with a
+`static_assert` holding the ordering. The equality is the argument: past the
+tokenization cap a line has no syntax tokens, so nothing can tell a brace inside a
+string literal from a real one, and the folds derived from such a line were
+arbitrary rather than approximate. Contributing none is both cheaper and more
+honest than contributing wrong ones. This is the same shape mature editors use to
+stop giving very long lines whole-line treatment.
+
+### The thing that hid in plain sight
+
+After the first three fixes the ranking still showed ~0.055 ms per frame of
+unexplained self time in the render row loop, and an equal amount inside *filetype
+detection*. Both were the same cost wearing different names: `PieceTree` copies a
+line that spans pieces into a per-revision cache, and an in-line edit splits its
+line into three pieces — so from the first keystroke the edited line is a copy,
+charged to whichever consumer asks for it first in that frame. As the code around
+it got faster, it kept moving.
+
+**Generalizable:** a shared, cached, first-caller-pays cost is invisible to a
+self-time ranking by construction — it is never where it appears to be. It needs
+its own scope. It has one now (`PieceTree::MaterializeSpanningLine`), plus
+`editor.line_materializations` / `editor.line_materialized_bytes`, and it is the
+whole of TD-2026-08-05-133: 7.5 of the remaining 19 ms.
+
+The caret walk it hid needed its own counter for a different reason — a walk and a
+lookup return the same answer, so no correctness test can distinguish them.
+`editor.visual_column_walk_bytes` counts what the fallback actually re-read, which
+is what makes "typing in a long line does not walk it" a regression test rather
+than a comment.
+
+### Gates
+
+`editor_typing_minified_line` is rebaselined and keeps its 1% allocation tolerance.
+New coverage: the visible-line build against a walk from column zero (special byte
+at every offset across several eight-byte scan chunks, every scroll offset, hinted
+and unhinted); the width derivation against a from-scratch measurement across each
+transition that breaks its precondition; the caret conversions against the direct
+walk on plain / tabbed / multibyte / empty rows with the table cold and warm; the
+fold cap at the boundary in both directions; and a zero-bytes-walked assertion with
+its own reachability check. Each was confirmed to fail with its fix reverted. A
+debug-only cross-check in `VisibleLineLayoutRefCached` re-measures short lines
+against the width table so the "every content edit either splices this table or
+drops it" invariant the pass now rests on cannot rot quietly.
+
 ## 2026-08-05 (second pass) closing the edit path on a long line (perf-runner-v1)
 
 The first pass below took a one-character insert from 13x the affected line's
