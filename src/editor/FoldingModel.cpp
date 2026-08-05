@@ -190,12 +190,30 @@ class FoldingModel::BracketTable {
     return line.size();
   }
 
+  // Append every bracket byte of line `index` to `out`.
+  //
+  // Asks the LENGTH before the BYTES. `ScanLine(lines[index], out)` applied the
+  // cap correctly and still paid for the line: `operator[]` materializes a
+  // piece-tree line that spans pieces (every edited line), so the over-cap line
+  // this exists to skip was copied in full and then dropped, once per keystroke
+  // on a file with no line breaks in it (TD-2026-08-05-133). LineLength is a pair
+  // of offset lookups and reads no text.
+  void ScanLineAt(LineSpan lines, std::size_t index, std::vector<CachedBracket>& out) const {
+    if (lines.LineLength(index) > kMaxBracketScanLineBytes) {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBracketLinesSkippedTooLong);
+      return;
+    }
+    ScanLine(lines[index], out);
+  }
+
   // Append every bracket byte on `line` to `out`.
   //
   // A line past `kMaxBracketScanLineBytes` contributes nothing: see that cap for
   // why folds derived from such a line were arbitrary anyway. This is the single
   // point the cap is applied, so both the incremental splice and the extend path
-  // get it and neither can drift from the other.
+  // get it and neither can drift from the other. Callers holding a `LineSpan`
+  // must go through `ScanLineAt`, which applies the same cap without reading the
+  // line first.
   void ScanLine(std::string_view line, std::vector<CachedBracket>& out) const {
     if (line.size() > kMaxBracketScanLineBytes) {
       util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBracketLinesSkippedTooLong);
@@ -395,7 +413,7 @@ void FoldingModel::SyncLineBracketCache(LineSpan lines, const BracketTable& tabl
   bracket_count_scratch_.clear();
   for (std::size_t line = begin; line < current_end; ++line) {
     const std::size_t before = bracket_event_scratch_.size();
-    table.ScanLine(lines[line], bracket_event_scratch_);
+    table.ScanLineAt(lines, line, bracket_event_scratch_);
     bracket_count_scratch_.push_back(
         static_cast<std::uint32_t>(bracket_event_scratch_.size() - before));
   }
@@ -430,7 +448,7 @@ bool FoldingModel::ExtendBracketCache(LineSpan lines, const BracketTable& table,
         break;
       }
       const std::size_t before = line_brackets_.size();
-      table.ScanLine(lines[bracket_cache_valid_through_], line_brackets_);
+      table.ScanLineAt(lines, bracket_cache_valid_through_, line_brackets_);
       const auto count = static_cast<std::uint32_t>(line_brackets_.size() - before);
       line_bracket_count_.push_back(count);
       added += count;

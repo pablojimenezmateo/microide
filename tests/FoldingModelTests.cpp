@@ -2,7 +2,9 @@
 
 #include "FoldingReference.h"
 #include "editor/FoldingModel.h"
+#include "editor/TextBuffer.h"
 #include "editor/TextViewport.h"
+#include "util/PerformanceCounters.h"
 
 #include <random>
 #include <string>
@@ -917,9 +919,50 @@ void TestOverLongLineContributesNoBrackets() {
   }
 }
 
+// TD-2026-08-05-133: the cap above was applied correctly and still paid for the
+// line. `ScanLine(lines[i], out)` asked the LineSpan for the whole line, which on
+// a piece-tree source materializes a copy of any line that spans pieces -- i.e.
+// every line an in-line edit has touched -- and only then discarded it for being
+// over the cap. So the very lines the cap exists to skip were the expensive ones,
+// once per keystroke. Assert the work: the answer was already right.
+void TestOverLongLineIsSkippedWithoutReadingIt() {
+  FoldingModel::ComputeOptions options = DefaultCStyleOptions();
+  options.use_indent_source = false;
+
+  microide::editor::TextBuffer buffer;
+  std::string over_cap = "{";
+  over_cap.append(FoldingModel::kMaxBracketScanLineBytes, 'x');
+  buffer.ResetFromText(over_cap + "\n  body\n}\n");
+  // Split the over-cap line the way an in-line edit does, so reading it whole can
+  // only be served by a copy.
+  buffer.ReplaceTextRange(0, over_cap.size() / 2, 0, over_cap.size() / 2, "MID");
+
+  FoldingModel model;
+  util::ResetPerformanceCounters();
+  Expect(model.Compute(buffer, options), "resolving an over-cap line should complete");
+  Expect(!model.FoldStartingAt(0).has_value(), "the over-cap line still contributes no brackets");
+  const std::uint64_t copied =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes);
+  Expect(copied == 0,
+         "a line skipped for length must not be read first (copied " + std::to_string(copied) +
+             " bytes)");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorFoldBracketLinesSkippedTooLong) > 0,
+         "the skip counter must have moved -- otherwise the zero above proves nothing");
+
+  // Reachability control: reading the same line whole does copy it, so the
+  // assertion is about this code path and not about this fixture.
+  (void)buffer.LineView(0);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) >
+             FoldingModel::kMaxBracketScanLineBytes,
+         "reading the spanning over-cap line whole still copies it (control)");
+  util::ResetPerformanceCounters();
+}
+
 }  // namespace
 
 void RegisterFoldingModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorFolding/Bracket/OverLongLineIsSkippedWithoutReadingIt",
+          TestOverLongLineIsSkippedWithoutReadingIt);
   AddTest(tests, "EditorFolding/Bracket/OverLongLineContributesNoBrackets",
           TestOverLongLineContributesNoBrackets);
   AddTest(tests, "EditorFolding/Bracket/EmitsOpenerAndCloser",
