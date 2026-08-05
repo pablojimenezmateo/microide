@@ -25,6 +25,77 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-05 (second pass) closing the edit path on a long line (perf-runner-v1)
+
+The first pass below took a one-character insert from 13x the affected line's
+bytes to 5x, and filed the remaining 5x as the data model. This pass closes it:
+**5.00x in 12 allocations -> 1.00x in 9**, and
+`editor_typing_minified_line` **528 ms -> 156 ms (3.4x)**.
+
+### The undo entry now has two shapes
+
+An edit that stays inside one line records
+`{start_line, start_column, removed_text, inserted_text}`. Everything structural
+— line splits and joins, multi-line replaces, grouped/multi-caret aggregates,
+whole-document changes — keeps `{start_line, before_lines, after_lines}`.
+
+Three of the five remaining copies were the entry itself (the pre-edit slice, the
+composed post-edit line, the coalesce's copy of the aggregate). The other two fell
+out with them, because the whole-line shape was what forced them:
+
+- `PieceTree::ReplaceTextRange(start_line, start_column, end_line, end_column, text)`
+  exposes the splice the tree already performed underneath. The line-shaped
+  `ReplaceLineRange` had to join the rebuilt line into a replacement buffer and
+  append that to `add_`; the column-scoped form copies only `text`.
+- The encoding upgrade scans the spliced-in bytes instead of the rebuilt line.
+  Exact, not approximate: every other byte on that line was classified when it
+  entered the document.
+
+The one line-sized allocation left is the piece tree materializing the edited line
+into its per-revision cache. The renderer and the visual-width scan both want the
+line as one contiguous view, and they share that one copy.
+
+### The largest single win was not in the entry model
+
+With the copies gone, `MICROIDE_PERF_SUMMARY=1` named
+`TextViewport::BuildRangeHistoryEntry`'s own **self** time — 164 ms over 64 calls —
+rather than anything it called. `TextLayout::ClampTextColumn` rounded a byte offset
+down to a code-point boundary by **re-tiling the line from byte 0**, one UTF-8
+sequence at a time: an O(1) question at O(column) cost, run four times per
+keystroke (both range endpoints, the preferred column, and `PreviousTextColumn` for
+a backspace). UTF-8 is self-synchronizing, so the answer is at most three bytes
+back. **461 ms -> 160 ms from that one change.**
+
+Worth generalizing: after removing allocations, re-read the profile before
+assuming the next cost is also an allocation. The remaining hot spot had none.
+
+### What is left, and why it is a design decision
+
+Per-keystroke self time on the ~2 MiB line, after all of the above:
+
+| scope | calls | per call |
+| --- | --- | --- |
+| `EditorViewRenderer::Render::RowLayout` | 136 | 0.91 ms |
+| `FoldingModel::SyncLineBracketCache` | 64 | 1.25 ms |
+| `FoldingModel::WalkLines` | 64 | 0.57 ms |
+| `TextViewport::ApplyHistoryEntry` | 64 | 0.24 ms |
+
+The edit path is now ~0.3 ms of a ~2.4 ms keystroke. The rest is layout and folding
+re-deriving whole-line facts, and none of it is a stray copy — each is a real
+O(line) pass. VS Code's answer to this class is a length threshold past which a
+line stops getting whole-line treatment; that is a product decision, filed as
+**TD-2026-08-05-132** rather than done here.
+
+### Gates
+
+`editor_typing_minified_line` keeps its 1% allocation tolerance and is rebaselined.
+`TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine` tightened 6x -> 2x.
+Both, plus a new test that pins which entry shape each edit records, were confirmed
+to fail with the routing reverted. `ClampTextColumn` is pinned against the old
+forward tiling over every offset of every arrangement of 1–4-byte sequences, with
+separate bounded-resync properties for malformed bytes.
+`PieceTreeEquivalenceFuzz` now drives both mutation primitives against one model.
+
 ## 2026-08-05 the edit path on a line with no newlines in it (perf-runner-v1)
 
 A one-character insert allocated **13x the affected line's bytes** in 24
@@ -57,9 +128,9 @@ zero-copy. Hot paths want `LineView`/`LineLength`. The single-caret edit path wa
 converted; `TextViewportMultiCaret.cpp` and `TextViewportLanguageBehavior.cpp`
 still hold ~20 reads that only want a length or a clamp.
 
-The remaining 5x is the whole-line undo model and is filed as **TD-2026-08-05-131**
-with the per-copy breakdown. It needs a column-scoped `HistoryEntry`, which is a
-dedicated pass.
+The remaining 5x is the whole-line undo model and was filed as **TD-2026-08-05-131**
+with the per-copy breakdown. It needed a column-scoped `HistoryEntry`, which is the
+second pass above.
 
 Gated by `editor_typing_minified_line` (new fixture: one ~2 MiB line) at a **1%**
 allocation tolerance — the default 10% would have passed the +7.7% regression the

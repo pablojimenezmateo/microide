@@ -22,7 +22,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-05-131 — a one-character edit still walks its line 5 times, because undo history stores whole lines. OPEN (needs a column-scoped edit model, not a patch).
+### TD-2026-08-05-131 — a one-character edit walked its line 5 times, because undo history stored whole lines. [RESOLVED 2026-08-05.]
 
 Found by adding the first perf fixture in the tree with a long line
 (`editor_essentials_minified`, one ~2 MiB line). Every other editor fixture is
@@ -30,54 +30,124 @@ ordinary line-broken text — the widest line in `large_project` is 20 bytes —
 nothing measured the shape where a per-line cost becomes a per-document cost.
 
 A single-character insert allocated **13x the affected line's bytes** in 24
-allocations. Five of those were bookkeeping and are fixed (commit
-`944de6d0`): the applied-edit record deep-copied the after-lines only to trim
-both ends off them, undo coalescing copied the aggregate entry before knowing
-whether the merge was possible, `PieceTree::ReplaceLineRange` joined without a
-reserve and then reallocated to attach the newline, `SetLine` wrapped its
-argument in a temporary vector, and the compose path built `prefix + replacement
-+ suffix` out of two owned substrings while `Backspace`/`DeleteForward` reached
-for `TextBuffer::operator[]` (which materializes an owned line copy). That took
-it to **5x in 12 allocations, ~22 ms -> ~13 ms per keystroke on an 8 MB line.**
+allocations. Five of those were bookkeeping and were fixed first (commit
+`944de6d0`), taking it to **5x in 12 allocations**. The remaining five were the
+data model itself: `SliceLines` copying the pre-edit line into `before_lines`, the
+composed post-edit line into `after_lines`, `PieceTree`'s replacement buffer, its
+append into `add_`, and `MergeGroupEntry`'s copy of the aggregate when the typing
+run coalesced.
 
-**The remaining 5x is the data model, and each one is load-bearing:**
+**Fix: the undo entry has two shapes.** An edit that stays inside one line records
+`{start_line, start_column, removed_text, inserted_text}`; everything structural —
+line splits and joins, multi-line replaces, grouped/multi-caret aggregates,
+whole-document changes — keeps the line-vector form.
+`Entry::before_line_count()`/`after_line_count()` give the line arithmetic both
+shapes share, so the cache-invalidation and wrapped-row splice callers do not
+branch on the shape.
 
-1. `SliceLines` copies the pre-edit line — the undo entry's `before_lines`.
-2. The composed post-edit line — the entry's `after_lines`.
-3. `PieceTree`'s replacement buffer, and
-4. its append into `add_`.
-5. `MergeGroupEntry`'s copy of `next.after_lines` into the coalesced run.
+That removes three of the five copies outright and lets two more go with it:
 
-`HistoryEntry` is `{start_line, before_lines, after_lines}` — whole lines. For an
-in-line edit the interesting delta is a few bytes at a column, and everything
-else in those vectors is context that both sides already agree on. Closing this
-means a column-scoped entry (offset + removed length + inserted text) with the
-line-vector form kept for the multi-line cases, which touches undo/redo, the
-coalescing rules, `BuildAppliedEdit`, and the LSP incremental-sync bridge. That
-is a dedicated pass with its own test matrix, not an addition to a perf commit.
+- `PieceTree::ReplaceTextRange(start_line, start_column, end_line, end_column, text)`
+  is the splice the tree already performed underneath, now exposed in the editor's
+  coordinates. It copies only `text`, where the line-shaped `ReplaceLineRange` had
+  to join the whole rebuilt line and append it to `add_`. `AppendTextRange` is its
+  read counterpart, for extracting a span without materializing the line.
+- The typing/backspace/delete-forward run coalesces by appending to the entry's
+  two small strings.
+- The encoding upgrade scans the spliced-in bytes rather than the rebuilt line —
+  the companion item in the original entry. Every other byte on the line was
+  classified when it entered the document, so this is exact, not an approximation.
+- The caret's preferred column walks the pre-edit line to the edit point and
+  continues over the replacement (`TextLayout::AdvanceVisualColumnsOver`) instead
+  of re-walking a composed line.
 
-There is a smaller companion item inside it: `UpgradeEncodingForInsertedLines`
-re-scans the whole rebuilt line on every edit (~1 ms of the 13 on an 8 MB line),
-because `ApplyHistoryEntry` only has the entry, not the replacement. The bytes
-that can raise the classification are exactly the inserted ones, and undo/redo
-cannot raise it at all — every line they restore was scanned when it first
-entered the document. Threading the replacement through the five
-`ApplyHistoryEntry` callers would make it O(replacement); it is deferred with
-the rest because it lands in the same code.
+**Measured: 5.00x the line in 12 allocations -> 1.00x in 9.** The one remaining
+line-sized copy is the piece tree materializing the edited line into its
+per-revision cache, which the renderer and the visual-width scan both read as one
+contiguous view — it is shared, not per-caller, and removing it means teaching
+both to consume the line in chunks (see TD-2026-08-05-132).
 
-**Gated meanwhile.** `editor_typing_minified_line` measures this at a 1%
-allocation tolerance (allocations are exact here: a 0.02% spread), and
-`TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine` pins the 5x as a
-byte budget under a perf-harness build. Both were confirmed to fail when a fix is
-reverted, so the ratchet is real rather than assumed.
+**Two consumers needed real work rather than a branch.** Undo-group frames
+aggregate by line range, so an in-line child is widened back to the line form on
+its way into a frame — one line copy, on grouped edits only, never on a keystroke.
+`TextViewport::PushHistoryEntry` is the single point where that can happen and
+carries the invariant. And the layout caches took the inserted *lines* only to read
+their count before re-measuring from the live buffer anyway, so they now take a
+count; that is what lets an in-line entry stop carrying a materialized line at all.
 
-**Also worth remembering: `TextBuffer::operator[]` is not free.** It is the
-compatibility accessor; it materializes an owned copy of the line into a cache
-that the next mutation clears, and its header says so. The single-caret edit path
-now uses `LineView`/`LineLength`. `TextViewportMultiCaret.cpp` and
-`TextViewportLanguageBehavior.cpp` still hold ~20 `operator[]` reads that are
-only asking for a length or a clamp; they were left alone because no scenario
-measures them with a long line, not because they are known to be fine.
+**And the largest win was not in the entry model.** With the copies gone, the perf
+summary named `BuildRangeHistoryEntry`'s own self time — 164 ms over 64 calls —
+rather than anything it called. `TextLayout::ClampTextColumn` was rounding a byte
+offset down to a code-point boundary by re-tiling the line from byte 0, an O(1)
+question at O(column) cost, run four times per keystroke (two range endpoints, the
+preferred column, and `PreviousTextColumn` for a backspace). UTF-8 is
+self-synchronizing, so the answer is at most three bytes back. That one change took
+the scenario from 461 ms to 160 ms.
+
+**Total: `editor_typing_minified_line` 528 ms -> 160 ms (3.3x), allocations
+4,970 -> 4,918.** Ordinary-file scenarios are unmoved, which is the expected shape:
+these are proportional-to-line-length costs.
+
+**Coverage.** A differential run of random in-line edits against a naive string
+model with a full undo walk back and redo walk forward; the entry-shape routing
+pinned directly; all five coalesce compose shapes against sequential application
+(including the contained splice that typing cannot reach); non-contiguous refusal;
+the character-level `AppliedEdit` with prefix/suffix trimming; encoding upgrade
+from the delta alone; grouped in-line children undoing atomically. The
+`ClampTextColumn` change is pinned against the old forward tiling over every offset
+of every arrangement of 1–4-byte sequences, plus bounded-resync properties for
+malformed bytes. `PieceTree::ReplaceTextRange` has a hand-picked span table, a
+randomized equivalence run interleaved with the line form, and `PieceTreeEquivalenceFuzz`
+now drives both primitives against the same model.
+`editor_typing_minified_line`'s 1% allocation tolerance stays, and the byte-budget
+test `TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine` tightened from
+6x to 2x. Both that and the routing test were confirmed to fail with the routing
+reverted.
+
+**Still true, and still unmeasured:** `TextBuffer::operator[]` is a materializer,
+not an accessor — it copies the line into a per-revision cache that the next
+mutation clears. The single-caret edit path uses `LineView`/`LineLength`;
+`TextViewportMultiCaret.cpp` and `TextViewportLanguageBehavior.cpp` still hold ~20
+`operator[]` reads that only want a length or a clamp, and no scenario measures
+them with a long line.
+
+### TD-2026-08-05-132 — on a line with no newlines in it, the render and folding paths still scan the whole line per keystroke. OPEN.
+
+What is left after TD-2026-08-05-131, measured with `MICROIDE_PERF_SUMMARY=1` on
+`editor_typing_minified_line` (one ~2 MiB line, 32 keystrokes, self time):
+
+| scope | calls | per call |
+| --- | --- | --- |
+| `EditorViewRenderer::Render::RowLayout` | 136 | 0.91 ms |
+| `FoldingModel::SyncLineBracketCache` | 64 | 1.25 ms |
+| `FoldingModel::WalkLines` | 64 | 0.57 ms |
+| `TextViewport::ApplyHistoryEntry` | 64 | 0.24 ms |
+
+None of these are stray copies; each is a genuine O(line) pass. The edit path's
+own share is now ~0.3 ms of a ~2.4 ms keystroke — the rest is layout and folding
+re-deriving whole-line facts.
+
+Three separate things sit behind it, and they want different fixes:
+
+1. **`BuildVisibleLineInto` walks from column 0 to the horizontal scroll offset**
+   to find the first visible cell, and computes the full line's visual width for
+   the scrollbar. With the caret a megabyte in, the first is a megabyte of
+   code-point stepping per rendered row.
+2. **`TextLayoutCache::UpdateVisualColumnCacheAfterEdit` re-measures the whole
+   edited line's width.** For an in-line splice the delta is computable from the
+   old width when neither the removed nor the inserted text — nor the rest of the
+   line — contains a tab, but "does the rest of the line contain a tab" is itself
+   the scan being avoided, so this needs a cached per-line flag.
+3. **The folding model's per-line bracket scan is O(line)** and runs on the edited
+   line every keystroke, even though an in-line edit changes the bracket set only
+   within the spliced range.
+
+VS Code's answer to this class of problem is a length threshold past which a line
+stops getting whole-line treatment (tokenization, folding, and bracket matching all
+opt out). That is probably the right shape here too, and it is a design decision
+rather than an optimization, which is why this is filed rather than done.
+
+Gated meanwhile by `editor_typing_minified_line`'s wall-clock baselines.
 
 ### TD-2026-08-04-130 — repeated large multi-line edits grew the resident set without bound. [RESOLVED 2026-08-04.]
 
