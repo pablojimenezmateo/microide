@@ -824,7 +824,30 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       }
 
       // Source-column spans; the builder resolves them against `row_layout`.
-      for (const auto& [match_start, match_end] : cache_it->second) {
+      // Bounded by the row's visible source window for the same reason as the
+      // explicit-fragment and occurrence loops above: the cached match list is for
+      // the whole LINE, which on a file with no line breaks in it is the whole
+      // document. Matches are found left to right, so the slice is contiguous.
+      const auto& line_matches = cache_it->second;
+      auto match_lo = std::lower_bound(
+          line_matches.begin(), line_matches.end(), row_first_source,
+          [](const std::pair<std::size_t, std::size_t>& m, std::size_t column) {
+            return m.first < column;
+          });
+      // Same back-step as the occurrence slice: a match can start before the
+      // window and still reach into it. Deliberately not a bound on the END
+      // column, which would assume every match has the same length.
+      while (match_lo > line_matches.begin() && (match_lo - 1)->second > row_first_source) {
+        --match_lo;
+      }
+      const auto match_hi = std::upper_bound(
+          match_lo, line_matches.end(), row_last_source_plus_one,
+          [](std::size_t column, const std::pair<std::size_t, std::size_t>& m) {
+            return column < m.first;
+          });
+      for (auto match_it = row_shows_source ? match_lo : line_matches.end();
+           match_it < match_hi; ++match_it) {
+        const auto& [match_start, match_end] = *match_it;
         const bool is_active_match =
             active_search_line &&
             match_start == active_search_match->start.column &&

@@ -565,6 +565,47 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
                std::to_string(differing) + " pixels differ)");
   }
 
+  // --- literal search query (the Ctrl+F scan cache) ------------------------
+  {
+    SoftwareCanvas canvas(400, 60);
+    SoftwareCanvas bare_canvas(400, 60);
+    microide::editor::TextViewport viewport;
+    viewport.LoadContent(line + "\n", "/tmp/row-fill-literal.txt");
+    viewport.SetViewportSize(3, 20);
+    viewport.SetHorizontalScroll(kScroll);
+
+    microide::editor::EditorViewRenderer renderer;
+    microide::editor::EditorViewRenderer bare_renderer;
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect,
+                    /*draw_caret=*/false, "mmmm", std::nullopt, std::nullopt, {}, nullptr, false,
+                    false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+    bare_renderer.Render(bare_canvas.renderer(), text_renderer, theme, viewport, rect,
+                         /*draw_caret=*/false, "", std::nullopt, std::nullopt, {}, nullptr, false,
+                         false, false, nullptr, nullptr, nullptr, /*show_line_numbers=*/false);
+
+    const microide::editor::EditorViewMetrics metrics =
+        microide::editor::EditorViewRenderer::ComputeMetrics(text_renderer, viewport, rect, 0,
+                                                             /*show_line_numbers=*/false);
+    std::size_t checked = 0;
+    for (const auto& match : all_matches) {
+      const std::size_t window_end = kScroll + metrics.visible_columns;
+      if (match.end.column <= kScroll || match.start.column >= window_end) {
+        continue;
+      }
+      const std::size_t visible_start = std::max(match.start.column, kScroll);
+      const int x_lo = static_cast<int>(metrics.text_x +
+                                        static_cast<float>(visible_start - kScroll) * char_width);
+      const int x_hi = x_lo + static_cast<int>(char_width);
+      Expect(count_differing_pixels(canvas, bare_canvas, x_lo, x_hi) > 0,
+             "the literal-query match at source column " + std::to_string(match.start.column) +
+                 " is inside the scrolled window and must paint");
+      ++checked;
+    }
+    Expect(checked >= 3,
+           "the window must contain several literal matches for this to test anything (checked " +
+               std::to_string(checked) + ")");
+  }
+
   // --- occurrence highlight (the caret's word) -----------------------------
   {
     microide::workspace::WorkspaceContext ctx;
