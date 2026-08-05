@@ -500,8 +500,17 @@ is what this ledger is for. Not fixed in that pass — low value or hard to reac
     `TerminalSession/DecstbmHomesToTheMarginUnderOriginMode`, which fails if the
     home escapes the margin (it writes at the homed position and checks the row
     above is untouched).
-- `MergeConflictKind` may label a both-modified conflict `LineEndingHeavy` when
-  only one side is line-ending-only; cosmetic (summary text), behavior unchanged.
+- **[RESOLVED 2026-08-05]** `MergeConflictKind` labelled a both-modified conflict
+  `LineEndingHeavy` when only ONE side was line-ending-only. Filed as cosmetic; it
+  is worse than that, because "sides differ only by line endings" is the sentence a
+  user reads before deciding it is safe to take one side whole — and the other side
+  had rewritten real content. "Mainly line endings" now requires both sides.
+  Fixing it surfaced the mirror bug in the same predicate: the both-sides-changed
+  branch required *both* raw sides to be non-normalized, so the common shape (both
+  sides made the same content change, one in LF and one in CRLF) was missed. And
+  the summary claimed "line endings or whitespace" while the detector normalizes
+  line endings and nothing else, so it now says only what it detects. Covered by
+  `MergeConflict/LineEndingHeavyRequiresBothSides`.
 - **[RESOLVED 2026-08-05]** LSP diagnostics version gate after close→reopen
   (`WorkspaceLspClientDispatch`): `DidClose` erased the URI's tracked version and
   `DidOpen` reset it to 1, so a late `publishDiagnostics` from the previous open

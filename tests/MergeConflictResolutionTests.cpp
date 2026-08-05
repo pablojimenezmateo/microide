@@ -402,6 +402,40 @@ void TestCrlfHeavyClassification() {
          "crlf-only differences should classify as line-ending-heavy");
 }
 
+// "Sides differ only by line endings" is the label a user reads before deciding it
+// is safe to take one side whole, so it must not appear when a side rewrote real
+// content. It used to: one side normalizing away was enough (2026-07-10 pass).
+void TestLineEndingHeavyRequiresBothSidesToBeEndingOnly() {
+  const auto one_sided = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = "alpha\nbeta\n",
+      // Incoming only rewrote the endings...
+      .incoming_content = "alpha\r\nbeta\r\n",
+      // ...while current made a genuine content change.
+      .current_content = "alpha\nBETA CHANGED\n",
+  });
+  Expect(one_sided.kind == MergeFileConflictKind::BothModified,
+         "a real content change on one side is not a line-ending conflict");
+
+  // Both sides made the SAME content change and disagree only on endings: that is
+  // still purely an ending conflict, and the old predicate missed it because it
+  // required both raw sides to be non-normalized.
+  const auto agreeing_sides = ClassifyMergeFileConflict(MergeConflictClassificationInput{
+      .base_exists = true,
+      .incoming_exists = true,
+      .current_exists = true,
+      .base_content = "alpha\nbeta\n",
+      .incoming_content = "alpha\nBETA CHANGED\n",
+      .current_content = "alpha\r\nBETA CHANGED\r\n",
+  });
+  Expect(agreeing_sides.kind == MergeFileConflictKind::LineEndingHeavy,
+         "sides that agree on content and differ only in endings are a line-ending conflict");
+  Expect(agreeing_sides.summary.find("whitespace") == std::string::npos,
+         "the summary must not claim whitespace detection the classifier does not do");
+}
+
 // Mark Resolved saves the result (bumping the file mtime) and then validates it.
 // Regression: the resolver must refresh disk_result_tick to the saved file's mtime
 // so its own write is not flagged as an external modification, which previously
@@ -541,6 +575,8 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/RemainingConflictCount", TestRemainingConflictCount);
   AddTest(tests, "MergeConflict/ConflictMarkerDetection", TestConflictMarkerDetection);
   AddTest(tests, "MergeConflict/CrlfHeavyClassification", TestCrlfHeavyClassification);
+  AddTest(tests, "MergeConflict/LineEndingHeavyRequiresBothSides",
+          TestLineEndingHeavyRequiresBothSidesToBeEndingOnly);
 }
 
 }  // namespace microide::tests

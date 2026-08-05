@@ -115,7 +115,9 @@ std::string BuildSummary(MergeFileConflictKind kind) {
     case MergeFileConflictKind::Mode:
       return "File mode conflict; review executable and permission bits.";
     case MergeFileConflictKind::LineEndingHeavy:
-      return "Sides differ mainly by line endings or whitespace.";
+      // "or whitespace" was never true: the detector normalizes line endings and
+      // nothing else, so a whitespace-only conflict does not reach this kind.
+      return "Sides differ only by line endings.";
     case MergeFileConflictKind::Unknown:
       return "Unclassified merge conflict.";
   }
@@ -138,15 +140,24 @@ bool MergeContentIsLineEndingHeavy(std::string_view base,
     return incoming != normalized_incoming || current != normalized_current ||
            base != normalized_base;
   }
+  // "Mainly line endings" has to mean BOTH sides. This used to return true when
+  // just one side's change normalized away, which labelled a conflict whose other
+  // side rewrote real content as "sides differ mainly by line endings" — and that
+  // is the label a user reads before deciding it is safe to take one side whole
+  // (2026-07-10 pass). One side being ending-only and the other not is an ordinary
+  // BothModified conflict; git conflicts because the ending rewrite touched the
+  // same lines, but the content disagreement is genuine.
   const bool incoming_only_endings =
       normalized_incoming == normalized_base && incoming != normalized_incoming;
   const bool current_only_endings =
       normalized_current == normalized_base && current != normalized_current;
-  if (incoming_only_endings || current_only_endings) {
+  if (incoming_only_endings && current_only_endings) {
     return true;
   }
-  return normalized_incoming == normalized_current && incoming != normalized_incoming &&
-         current != normalized_current;
+  // Neither side matches base after normalizing, but the two sides agree on
+  // content and disagree only on endings: still purely an ending conflict.
+  return normalized_incoming == normalized_current &&
+         (incoming != normalized_incoming || current != normalized_current);
 }
 
 MergeFileConflictMetadata ClassifyMergeFileConflict(
