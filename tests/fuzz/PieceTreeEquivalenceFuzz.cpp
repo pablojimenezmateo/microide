@@ -1,8 +1,14 @@
-// Equivalence fuzzer: drives a PieceTree and a naive vector<string> oracle with
-// the same random ReplaceLineRange operations (decoded from the fuzz input) and
-// aborts if any observable -- line count, per-line content/length, or full
-// materialization -- ever diverges. This is the load-bearing safety net for the
-// piece-tree data structure (Phase 3 of the large-file overhaul).
+// Equivalence fuzzer: drives a PieceTree and a naive oracle with the same random
+// mutations (decoded from the fuzz input) and aborts if any observable -- line
+// count, per-line content/length, or full materialization -- ever diverges. This
+// is the load-bearing safety net for the piece-tree data structure (Phase 3 of
+// the large-file overhaul).
+//
+// Both mutation primitives are driven against the SAME document, interleaved:
+// the line-shaped `ReplaceLineRange` (oracle: a vector<string> erase+insert) and
+// the column-scoped `ReplaceTextRange` (oracle: a splice of the '\n'-joined
+// bytes, re-split). The column-scoped form is what the in-line edit path uses,
+// so it carries the same corruption risk and needs the same net.
 
 #include "editor/PieceTree.h"
 
@@ -66,6 +72,50 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   int guard = 0;
   while (!cursor.Done() && guard++ < 512) {
     const std::size_t n = model.size();
+    if (n != 0 && (cursor.Byte() & 1u) != 0u) {
+      // Column-scoped splice. Oracle: replace the byte span in the joined text.
+      const std::size_t start_line = cursor.Bounded(n);
+      const std::size_t start_column = cursor.Bounded(model[start_line].size() + 1);
+      const std::size_t end_line = start_line + cursor.Bounded(n - start_line);
+      const std::size_t end_column = cursor.Bounded(model[end_line].size() + 1);
+      std::string text;
+      for (std::size_t i = 0, count = cursor.Bounded(6); i < count; ++i) {
+        const std::uint8_t byte = cursor.Byte();
+        text.push_back((byte % 8u) == 0u ? '\n' : static_cast<char>('a' + (byte % 26u)));
+      }
+
+      std::string joined;
+      for (std::size_t i = 0; i < model.size(); ++i) {
+        if (i != 0) joined.push_back('\n');
+        joined.append(model[i]);
+      }
+      std::size_t start_base = 0;
+      for (std::size_t i = 0; i < start_line; ++i) start_base += model[i].size() + 1;
+      std::size_t end_base = 0;
+      for (std::size_t i = 0; i < end_line; ++i) end_base += model[i].size() + 1;
+      const std::size_t from = start_base + start_column;
+      const std::size_t raw_to = end_base + end_column;
+      const std::size_t to = raw_to > from ? raw_to : from;
+
+      std::string extracted;
+      tree.AppendTextRange(start_line, start_column, end_line, end_column, extracted);
+      assert(extracted == joined.substr(from, to - from));
+
+      joined.replace(from, to - from, text);
+      model.clear();
+      std::size_t piece_start = 0;
+      for (std::size_t i = 0; i <= joined.size(); ++i) {
+        if (i == joined.size() || joined[i] == '\n') {
+          model.emplace_back(joined.substr(piece_start, i - piece_start));
+          piece_start = i + 1;
+        }
+      }
+
+      tree.ReplaceTextRange(start_line, start_column, end_line, end_column, text);
+      CheckEquivalent(tree, model);
+      continue;
+    }
+
     const std::size_t start = cursor.Bounded(n + 1);
     const std::size_t removed = cursor.Bounded((n - (start < n ? start : n)) + 1);
     const std::size_t insert_count = cursor.Bounded(4);

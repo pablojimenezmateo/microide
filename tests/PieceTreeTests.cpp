@@ -474,6 +474,181 @@ void TestPieceTreeAppendWholeTextMatchesLineJoin() {
   Expect(prefixed == "PREFIX:" + out, "AppendWholeText appends, it does not overwrite");
 }
 
+// ReplaceTextRange is the column-scoped splice the in-line edit path uses instead
+// of rebuilding a whole line through ReplaceLineRange. It has to be EXACTLY
+// equivalent to the line-shaped form for every span, including the multi-line and
+// line-count-changing cases, or an edit silently corrupts the document.
+//
+// Oracle: apply the same span to a plain '\n'-joined string and re-split it.
+void TestPieceTreeReplaceTextRangeMatchesLineForm() {
+  const auto splice = [](std::vector<std::string> lines, std::size_t sl, std::size_t sc,
+                         std::size_t el, std::size_t ec, std::string_view text) {
+    sl = std::min(sl, lines.size() - 1);
+    el = std::clamp(el, sl, lines.size() - 1);
+    sc = std::min(sc, lines[sl].size());
+    ec = std::min(ec, lines[el].size());
+    std::string joined;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      if (i != 0) joined.push_back('\n');
+      joined.append(lines[i]);
+    }
+    std::size_t start_base = 0;
+    for (std::size_t i = 0; i < sl; ++i) start_base += lines[i].size() + 1;
+    std::size_t end_base = 0;
+    for (std::size_t i = 0; i < el; ++i) end_base += lines[i].size() + 1;
+    const std::size_t start = start_base + sc;
+    const std::size_t end = std::max(start, end_base + ec);
+    joined.replace(start, end - start, text);
+    std::vector<std::string> out;
+    std::size_t from = 0;
+    for (std::size_t i = 0; i <= joined.size(); ++i) {
+      if (i == joined.size() || joined[i] == '\n') {
+        out.emplace_back(joined.substr(from, i - from));
+        from = i + 1;
+      }
+    }
+    return out;
+  };
+
+  struct Case {
+    std::vector<std::string> lines;
+    std::size_t start_line;
+    std::size_t start_column;
+    std::size_t end_line;
+    std::size_t end_column;
+    std::string text;
+  };
+  const std::vector<Case> cases = {
+      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 2, "X"},           // pure in-line insert
+      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 4, ""},            // pure in-line delete
+      {{"alpha", "bravo", "charlie"}, 1, 2, 1, 4, "ZZZZ"},        // in-line replace
+      {{"alpha", "bravo", "charlie"}, 0, 5, 1, 0, ""},            // join two lines
+      {{"alpha", "bravo", "charlie"}, 1, 3, 1, 3, "\n"},          // split a line
+      {{"alpha", "bravo", "charlie"}, 0, 1, 2, 3, "mid"},         // multi-line collapse
+      {{"alpha", "bravo", "charlie"}, 0, 0, 2, 7, ""},            // delete everything
+      {{"alpha", "bravo", "charlie"}, 2, 7, 2, 7, "\ntail"},      // append a line at EOF
+      {{"alpha"}, 0, 0, 0, 0, "a\nb\nc"},                          // insert several lines
+      {{""}, 0, 0, 0, 0, "seed"},                                  // empty document seed
+      {{"alpha", "bravo"}, 1, 99, 1, 99, "!"},                     // column clamps to EOL
+      {{"alpha", "bravo"}, 9, 0, 9, 0, "!"},                       // line clamps to last
+      {{"alpha", "bravo"}, 1, 4, 1, 1, "swapped"},                 // end before start
+  };
+
+  for (const Case& c : cases) {
+    PieceTree tree(c.lines);
+    tree.ReplaceTextRange(c.start_line, c.start_column, c.end_line, c.end_column, c.text);
+    const std::vector<std::string> expected = splice(c.lines, c.start_line, c.start_column,
+                                                     c.end_line, c.end_column, c.text);
+    Expect(tree.ToVector() == expected, "ReplaceTextRange must match the joined-string oracle");
+    Expect(tree.LineCount() == expected.size(),
+           "ReplaceTextRange must keep the line count in sync with the content");
+    for (std::size_t i = 0; i < expected.size(); ++i) {
+      Expect(tree.LineView(i) == expected[i], "ReplaceTextRange line content");
+      Expect(tree.LineLength(i) == expected[i].size(), "ReplaceTextRange line length");
+    }
+  }
+}
+
+// Randomized: the two mutation primitives must agree with the naive model over
+// long interleaved runs, including on a tree fragmented into many pieces (which
+// is what makes the byte-offset resolution interesting).
+void TestPieceTreeReplaceTextRangeRandomizedEquivalence() {
+  const std::uint64_t seeds[] = {11u, 97u, 0xFACEu, 0x5EEDu};
+  for (std::uint64_t seed : seeds) {
+    Rng rng(seed);
+    PieceTree tree;
+    VectorModel model;
+    std::vector<std::string> initial;
+    const std::size_t initial_lines = 1 + rng.Below(20);
+    for (std::size_t i = 0; i < initial_lines; ++i) initial.push_back(MakeLine(rng));
+    tree.Reset(initial);
+    model.Reset(initial);
+
+    for (int step = 0; step < 400; ++step) {
+      const std::size_t n = model.lines.size();
+      if (n == 0) {
+        tree.ReplaceLineRange(0, 0, {""});
+        model.ReplaceLineRange(0, 0, {""});
+        continue;
+      }
+      if ((rng.Next() & 3u) == 0u) {
+        // Occasional line-shaped edit, so both primitives share one document.
+        const std::size_t start = rng.Below(n + 1);
+        const std::size_t removed = rng.Below((n - std::min(start, n)) + 1);
+        std::vector<std::string> inserted;
+        for (std::size_t i = 0; i < rng.Below(3); ++i) inserted.push_back(MakeLine(rng));
+        tree.ReplaceLineRange(start, removed, inserted);
+        model.ReplaceLineRange(start, removed, inserted);
+        ExpectEquivalent(tree, model, "after random line replace");
+        continue;
+      }
+
+      const std::size_t start_line = rng.Below(n);
+      const std::size_t start_column = rng.Below(model.lines[start_line].size() + 1);
+      const std::size_t end_line = start_line + rng.Below(n - start_line);
+      const std::size_t end_column = rng.Below(model.lines[end_line].size() + 1);
+      std::string text;
+      for (std::size_t i = 0, count = rng.Below(6); i < count; ++i) {
+        text.push_back((rng.Below(8) == 0) ? '\n'
+                                           : static_cast<char>('a' + static_cast<char>(rng.Below(26))));
+      }
+
+      // Oracle: splice the model's own joined bytes.
+      std::string joined;
+      for (std::size_t i = 0; i < model.lines.size(); ++i) {
+        if (i != 0) joined.push_back('\n');
+        joined.append(model.lines[i]);
+      }
+      std::size_t start_base = 0;
+      for (std::size_t i = 0; i < start_line; ++i) start_base += model.lines[i].size() + 1;
+      std::size_t end_base = 0;
+      for (std::size_t i = 0; i < end_line; ++i) end_base += model.lines[i].size() + 1;
+      const std::size_t from = start_base + start_column;
+      const std::size_t to = std::max(from, end_base + end_column);
+
+      // AppendTextRange must hand back exactly the bytes being replaced.
+      std::string extracted = "KEEP:";
+      tree.AppendTextRange(start_line, start_column, end_line, end_column, extracted);
+      Expect(extracted == "KEEP:" + joined.substr(from, to - from),
+             "AppendTextRange must append exactly the span's bytes");
+
+      joined.replace(from, to - from, text);
+      std::vector<std::string> expected;
+      std::size_t cursor = 0;
+      for (std::size_t i = 0; i <= joined.size(); ++i) {
+        if (i == joined.size() || joined[i] == '\n') {
+          expected.emplace_back(joined.substr(cursor, i - cursor));
+          cursor = i + 1;
+        }
+      }
+
+      tree.ReplaceTextRange(start_line, start_column, end_line, end_column, text);
+      model.lines = expected;
+      ExpectEquivalent(tree, model, "after random text-range replace");
+    }
+  }
+}
+
+// The byte ceiling is a correctness backstop (subtree_length is uint32), so the
+// column-scoped primitive must enforce it too — refusing the whole splice as a
+// no-op rather than wrapping. A ceiling check that only lived on ReplaceLineRange
+// would leave the hot edit path unguarded.
+void TestPieceTreeReplaceTextRangeHonorsByteCeiling() {
+  PieceTree tree({"hello", "world"});
+  const std::vector<std::string> before = tree.ToVector();
+  tree.SetMaxLiveDocumentBytesForTesting(static_cast<std::uint32_t>(tree.ByteSize()));
+
+  tree.ReplaceTextRange(0, 5, 0, 5, "overflow");
+  Expect(tree.LastMutationRejectedForByteCeiling(),
+         "a column-scoped splice past the byte ceiling must be rejected");
+  Expect(tree.ToVector() == before, "a rejected column-scoped splice changes nothing");
+
+  // Shrinking is always allowed, and a same-size replace stays exactly at the cap.
+  tree.ReplaceTextRange(0, 0, 0, 5, "HI");
+  Expect(!tree.LastMutationRejectedForByteCeiling(), "a shrinking splice is never refused");
+  Expect(tree.LineView(0) == "HI", "the shrinking splice applied");
+}
+
 }  // namespace
 
 // LineView/LineLength memoize the byte offset of the last line start they
@@ -573,6 +748,12 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
           TestPieceTreeAppendWholeTextMatchesLineJoin);
   AddTest(tests, "PieceTree/SpanningLineViewStableAcrossReReads",
           TestPieceTreeSpanningLineViewStableAcrossReReads);
+  AddTest(tests, "PieceTree/ReplaceTextRangeMatchesLineForm",
+          TestPieceTreeReplaceTextRangeMatchesLineForm);
+  AddTest(tests, "PieceTree/ReplaceTextRangeRandomizedEquivalence",
+          TestPieceTreeReplaceTextRangeRandomizedEquivalence);
+  AddTest(tests, "PieceTree/ReplaceTextRangeHonorsByteCeiling",
+          TestPieceTreeReplaceTextRangeHonorsByteCeiling);
 }
 
 }  // namespace microide::tests

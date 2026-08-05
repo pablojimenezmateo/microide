@@ -650,6 +650,83 @@ void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
   BumpRevision();
 }
 
+PieceTree::ByteSpan PieceTree::ResolveByteSpan(std::size_t start_line, std::size_t start_column,
+                                               std::size_t end_line,
+                                               std::size_t end_column) const {
+  if (line_count_ == 0) {
+    return ByteSpan{};
+  }
+  start_line = std::min(start_line, line_count_ - 1);
+  end_line = std::clamp(end_line, start_line, line_count_ - 1);
+
+  // Ascending order: LineStartByte's walk state makes line N+1 free once N is
+  // resolved, and the memo makes a same-line span a single descent.
+  const std::uint32_t start_base = LineStartByteMemoized(start_line);
+  const std::uint32_t start_limit = LineEndByte(start_line);
+  const std::uint32_t start =
+      start_base +
+      static_cast<std::uint32_t>(std::min<std::size_t>(start_column, start_limit - start_base));
+
+  std::uint32_t end;
+  if (end_line == start_line) {
+    end = start_base +
+          static_cast<std::uint32_t>(std::min<std::size_t>(end_column, start_limit - start_base));
+  } else {
+    const std::uint32_t end_base = LineStartByteMemoized(end_line);
+    const std::uint32_t end_limit = LineEndByte(end_line);
+    end = end_base +
+          static_cast<std::uint32_t>(std::min<std::size_t>(end_column, end_limit - end_base));
+  }
+  return ByteSpan{.start = start, .end = std::max(start, end)};
+}
+
+void PieceTree::AppendTextRange(std::size_t start_line, std::size_t start_column,
+                                std::size_t end_line, std::size_t end_column,
+                                std::string& out) const {
+  const ByteSpan span = ResolveByteSpan(start_line, start_column, end_line, end_column);
+  CopyRange(span.start, span.end - span.start, out);
+}
+
+void PieceTree::ReplaceTextRange(std::size_t start_line, std::size_t start_column,
+                                 std::size_t end_line, std::size_t end_column,
+                                 std::string_view text) {
+  util::AddPerformanceCounter(util::PerfCounterId::DocumentEdits);
+  if (line_count_ == 0) {
+    return;
+  }
+  const std::size_t clamped_start_line = std::min(start_line, line_count_ - 1);
+  const std::size_t clamped_end_line =
+      std::clamp(end_line, clamped_start_line, line_count_ - 1);
+  const ByteSpan span =
+      ResolveByteSpan(clamped_start_line, start_column, clamped_end_line, end_column);
+
+  // Same live-document byte ceiling as ReplaceLineRange: subtree_length is uint32,
+  // so refuse the whole splice before any mutation runs rather than wrapping it.
+  const std::uint64_t projected = static_cast<std::uint64_t>(ByteSize()) -
+                                  static_cast<std::uint64_t>(span.end - span.start) + text.size();
+  if (projected > max_live_document_bytes_) {
+    last_mutation_rejected_ = true;
+    return;
+  }
+  last_mutation_rejected_ = false;
+
+  std::size_t inserted_newlines = 0;
+  for (const char* cursor = text.data(), *const end = cursor + text.size(); cursor != end;) {
+    const char* newline = static_cast<const char*>(
+        std::memchr(cursor, '\n', static_cast<std::size_t>(end - cursor)));
+    if (newline == nullptr) {
+      break;
+    }
+    ++inserted_newlines;
+    cursor = newline + 1;
+  }
+
+  DeleteRange(span.start, span.end - span.start);
+  InsertText(span.start, text);
+  line_count_ = line_count_ - (clamped_end_line - clamped_start_line) + inserted_newlines;
+  BumpRevision();
+}
+
 void PieceTree::SetLine(std::size_t index, const std::string& value) {
   ReplaceLineRange(index, 1, std::span<const std::string>(&value, 1));
 }

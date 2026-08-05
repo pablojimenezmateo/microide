@@ -133,6 +133,26 @@ class TextBuffer {
     InvalidateSnapshot();
   }
 
+  // Column-scoped splice: replace the bytes between (start_line, start_column)
+  // and (end_line, end_column) with `text`. The primitive an in-line edit wants —
+  // it copies only `text`, where the line-shaped `ReplaceLineRange` copies the
+  // whole affected line twice (see PieceTree::ReplaceTextRange).
+  void ReplaceTextRange(std::size_t start_line, std::size_t start_column,
+                        std::size_t end_line, std::size_t end_column,
+                        std::string_view text) {
+    tree_.ReplaceTextRange(start_line, start_column, end_line, end_column, text);
+    InvalidateSnapshot();
+  }
+
+  // Append the bytes in [(start_line, start_column), (end_line, end_column)) to
+  // `out`. O(range); never materializes a whole line the way LineView does for a
+  // line that spans pieces.
+  void AppendTextRange(std::size_t start_line, std::size_t start_column,
+                       std::size_t end_line, std::size_t end_column,
+                       std::string& out) const {
+    tree_.AppendTextRange(start_line, start_column, end_line, end_column, out);
+  }
+
   void SetLine(std::size_t index, const std::string& value) {
     tree_.SetLine(index, value);
     InvalidateSnapshot();

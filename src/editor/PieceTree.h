@@ -83,6 +83,32 @@ class PieceTree {
                         const std::vector<std::string>& inserted) {
     ReplaceLineRange(start, removed, std::span<const std::string>(inserted));
   }
+
+  // Byte-range splice in (line, column) coordinates: replace the document bytes
+  // between (start_line, start_column) and (end_line, end_column) with `text`.
+  //
+  // This is the mutation the tree actually performs -- a split/insert/merge at two
+  // byte offsets. `ReplaceLineRange` is the line-shaped wrapper around it, and
+  // expressing an in-line edit through that wrapper costs two copies of the whole
+  // affected line: the caller must compose the post-edit line, and this class then
+  // joins it into `replacement` and appends it to `add_`. On a file with no line
+  // breaks in it (a minified bundle) that is two multi-megabyte copies per
+  // keystroke. This form copies only `text`.
+  //
+  // Columns are byte offsets, clamped to their line's length; an `end` that
+  // precedes `start` collapses to an insertion at `start`. `text` may contain
+  // '\n' (the line count is updated from its newline count).
+  void ReplaceTextRange(std::size_t start_line, std::size_t start_column,
+                        std::size_t end_line, std::size_t end_column,
+                        std::string_view text);
+
+  // Append the document bytes in [(start_line, start_column), (end_line, end_column))
+  // to `out`, '\n'-joined exactly as the tree stores them. O(range) -- unlike
+  // LineView it never materializes a whole line that happens to span pieces, which
+  // is every edited line.
+  void AppendTextRange(std::size_t start_line, std::size_t start_column,
+                       std::size_t end_line, std::size_t end_column,
+                       std::string& out) const;
   void SetLine(std::size_t index, const std::string& value);
   void InsertLine(std::size_t index, const std::string& value);
   void EraseLine(std::size_t index);
@@ -204,6 +230,19 @@ class PieceTree {
   void FreeSubtree(NodeId id);
 
   // --- navigation / extraction ---
+  // Clamped byte offsets of a (line, column) span. Resolved through the
+  // sequential line-start memo, in ascending line order, so a same-line span
+  // costs one descent rather than two.
+  struct ByteSpan {
+    std::uint32_t start = 0;
+    std::uint32_t end = 0;
+  };
+  ByteSpan ResolveByteSpan(std::size_t start_line, std::size_t start_column,
+                           std::size_t end_line, std::size_t end_column) const;
+  // Byte offset one past the last byte of `line` (its '\n' excluded).
+  std::uint32_t LineEndByte(std::size_t line) const {
+    return (line + 1 < line_count_) ? LineStartByteMemoized(line + 1) - 1 : TreeLength(root_);
+  }
   std::uint32_t LineStartByte(std::size_t line) const;
   void CopyRange(std::uint32_t pos, std::uint32_t length, std::string& out) const;
   // Append lines [begin_line, end_line) (newlines excluded) to `out` in a single
