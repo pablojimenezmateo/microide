@@ -2492,6 +2492,39 @@ void TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource() {
          "Objective-C source files should still resolve to the Objective-C syntax definition");
 }
 
+// TD-2026-08-05-133: signature detection reads a bounded head of each line, but it
+// used to ASK for the whole line and slice afterwards. On a piece-tree buffer that
+// materializes the line, and detection re-runs on every content revision — so a
+// file with no line breaks in it paid a multi-megabyte copy per keystroke to look
+// at 4 KiB. Assert the work, not the answer: the answer was always right.
+void TestRuntimeSyntaxDetectFiletypeReadsOnlyABoundedHead() {
+  namespace rs = microide::editor::runtime_syntax;
+  constexpr std::size_t kLineBytes = 512u * 1024u;
+  microide::editor::TextBuffer buffer;
+  buffer.ResetFromText("#!/bin/sh\n" + std::string(kLineBytes, 'x'));
+  // Split line 1 the way an in-line edit does, so LineView(1) can only be served
+  // by copying it. Without that the detection path is contiguous and the
+  // assertion below would pass for the wrong reason.
+  buffer.ReplaceTextRange(1, kLineBytes / 2, 1, kLineBytes / 2, "MID");
+
+  util::ResetPerformanceCounters();
+  Expect(rs::DetectFiletype("/tmp/no-extension", buffer) == "shell",
+         "content detection still reads the shebang through the bounded head");
+  const std::uint64_t materialized_bytes =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes);
+  Expect(materialized_bytes == 0,
+         "signature detection must not materialize a line it only reads 4 KiB of (copied " +
+             std::to_string(materialized_bytes) + " bytes)");
+
+  // Reachability control: the same buffer read whole DOES materialize, so the
+  // zero above is a property of the detection path, not of this fixture.
+  (void)buffer.LineView(1);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) >=
+             kLineBytes,
+         "reading the spanning line whole still copies it (control)");
+  util::ResetPerformanceCounters();
+}
+
 void TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists() {
   const std::vector<std::string> lines = {
       "cmake_minimum_required(VERSION 3.25)",
@@ -4642,6 +4675,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestRuntimeSyntaxDetectFiletypeDisambiguatesObjectiveCSource);
   AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeKeepsCMakeLists",
           TestRuntimeSyntaxDetectFiletypeKeepsCMakeLists);
+  AddTest(tests, "TextViewport/RuntimeSyntaxDetectFiletypeReadsOnlyABoundedHead",
+          TestRuntimeSyntaxDetectFiletypeReadsOnlyABoundedHead);
   AddTest(tests, "TextViewport/SingleLineEditAllocatesABoundedMultipleOfTheLine",
           TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine);
   AddTest(tests, "TextViewport/InlineEditDerivesLineWidthFromTheSplice",

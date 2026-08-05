@@ -5,6 +5,7 @@
 #include <vector>
 
 #include "editor/PieceTree.h"
+#include "util/PerformanceCounters.h"
 
 namespace microide::tests {
 namespace {
@@ -176,12 +177,24 @@ void TestPieceTreeRandomAccessOrderMatchesModel() {
         continue;
       }
       // Random order, including repeats and backwards runs.
+      std::string window_scratch;
       for (int probe = 0; probe < 40; ++probe) {
         const std::size_t line = rng.Below(count);
-        Expect(tree.LineView(line) == model.lines[line],
+        // Probe the bounded read FIRST: it takes the same ascending-walk shortcut
+        // as LineView, so it must decline stale state in the same adversarial
+        // orders — and asking it before LineView means it cannot be riding a
+        // cache LineView just warmed.
+        const std::string& expected_line = model.lines[line];
+        const std::size_t start = rng.Below(expected_line.size() + 2);
+        const std::size_t len = rng.Below(expected_line.size() + 2);
+        const std::string expected_window =
+            start >= expected_line.size() ? std::string{} : expected_line.substr(start, len);
+        Expect(tree.LineWindow(line, start, len, window_scratch) == expected_window,
+               "random-order LineWindow must match the model's slice");
+        Expect(tree.LineView(line) == expected_line,
                "random-order LineView must match the model — ascending-walk state must "
                "never answer for a line it does not describe");
-        Expect(tree.LineLength(line) == model.lines[line].size(),
+        Expect(tree.LineLength(line) == expected_line.size(),
                "random-order LineLength must match the model");
       }
       // A descending sweep, which is the exact inverse of what the state expects.
@@ -397,6 +410,63 @@ void TestPieceTreeSpanningLineViewStableAcrossReReads() {
   Expect(first == "abcXYZdef", "the first view is still valid after the second read");
   // The untouched neighbour line is unaffected.
   Expect(tree.LineView(1) == "second", "neighbour line intact");
+}
+
+// TD-2026-08-05-133: `LineWindow` is the bounded read. Two things must hold and
+// they need separate checks, because one is about the answer and the other is
+// about the work: the window must equal the same slice of the whole line at every
+// (line, start, length) including the degenerate ones, AND reading a window of a
+// line that spans pieces must not materialize the line. A walk and a lookup
+// return the same answer, so only the counter can tell them apart.
+void TestPieceTreeLineWindowMatchesSubstring() {
+  // Line 0 is deliberately made to span three pieces; line 1 stays contiguous; a
+  // multi-byte line exercises the "window splits a code point" case (LineWindow
+  // is byte-scoped by contract, so it must return the raw bytes, not round).
+  PieceTree tree({"abcdefghij", "second line", "caf\xc3\xa9 na\xc3\xafve"});
+  tree.InsertTextForTesting(4, "WXYZ");  // "abcd" | "WXYZ" | "efghij"
+
+  std::string scratch;
+  for (std::size_t line = 0; line < tree.LineCount(); ++line) {
+    const std::string whole(tree.LineView(line));
+    // Past the end, exactly at the end, empty, single byte, whole line, and
+    // beyond the end in length -- every clamping corner in one sweep.
+    for (std::size_t start = 0; start <= whole.size() + 2; ++start) {
+      for (std::size_t len = 0; len <= whole.size() + 2; ++len) {
+        const std::string_view window = tree.LineWindow(line, start, len, scratch);
+        const std::string expected =
+            start >= whole.size() ? std::string{} : whole.substr(start, len);
+        Expect(window == expected, "LineWindow must equal the same slice of the whole line");
+      }
+    }
+  }
+}
+
+void TestPieceTreeLineWindowDoesNotMaterializeTheLine() {
+  PieceTree tree({std::string(4096, 'a'), "tail"});
+  // Split line 0 into three pieces, exactly as an in-line edit does. From here on
+  // LineView(0) can only be served by copying the line.
+  tree.InsertTextForTesting(2000, "MID");
+
+  util::ResetPerformanceCounters();
+  std::string scratch;
+  // Windows on both sides of the splice and one straddling it (the straddling one
+  // must copy the WINDOW -- 8 bytes -- not the line).
+  Expect(tree.LineWindow(0, 0, 16, scratch) == std::string(16, 'a'), "prefix window reads");
+  Expect(tree.LineWindow(0, 1996, 8, scratch) == "aaaaMIDa", "straddling window reads");
+  // 2000 'a' + "MID" + 2096 'a' = 4099 bytes, so a 64-byte window at 4090 clamps to 9.
+  Expect(tree.LineWindow(0, 4090, 64, scratch) == std::string(9, 'a'), "suffix window clamps");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializations) == 0,
+         "a bounded window must never materialize the whole line");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializedBytes) == 0,
+         "a bounded window must not copy line-sized byte counts");
+
+  // Reachability control: the same line read whole DOES materialize, so the
+  // assertion above is measuring something that can happen rather than a path
+  // that never runs.
+  (void)tree.LineView(0);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineMaterializations) == 1,
+         "reading the whole spanning line still materializes it (control)");
+  util::ResetPerformanceCounters();
 }
 
 // TD-2026-07-16-35: a mutation that would push the live document past the byte ceiling
@@ -748,6 +818,9 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
           TestPieceTreeAppendWholeTextMatchesLineJoin);
   AddTest(tests, "PieceTree/SpanningLineViewStableAcrossReReads",
           TestPieceTreeSpanningLineViewStableAcrossReReads);
+  AddTest(tests, "PieceTree/LineWindowMatchesSubstring", TestPieceTreeLineWindowMatchesSubstring);
+  AddTest(tests, "PieceTree/LineWindowDoesNotMaterializeTheLine",
+          TestPieceTreeLineWindowDoesNotMaterializeTheLine);
   AddTest(tests, "PieceTree/ReplaceTextRangeMatchesLineForm",
           TestPieceTreeReplaceTextRangeMatchesLineForm);
   AddTest(tests, "PieceTree/ReplaceTextRangeRandomizedEquivalence",

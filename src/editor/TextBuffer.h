@@ -72,6 +72,16 @@ class TextBuffer {
   std::string_view LineView(std::size_t index) const { return tree_.LineView(index); }
   std::size_t LineLength(std::size_t index) const { return tree_.LineLength(index); }
 
+  // Bounded read of part of a line, zero-copy when the window lies inside one
+  // piece and otherwise copying only the window into `scratch`. Use this instead
+  // of `LineView(i).substr(...)` anywhere the caller wants a bounded slice: on a
+  // line that spans pieces (every edited line) `LineView` materializes the WHOLE
+  // line first. See PieceTree::LineWindow.
+  std::string_view LineWindow(std::size_t index, std::size_t byte_start, std::size_t byte_len,
+                              std::string& scratch) const {
+    return tree_.LineWindow(index, byte_start, byte_len, scratch);
+  }
+
   // Per-line compatibility accessors (line-cache backed; see class comment).
   // Materialize only the requested line, not the whole document.
   const std::string& operator[](std::size_t index) const { return LineRef(index); }

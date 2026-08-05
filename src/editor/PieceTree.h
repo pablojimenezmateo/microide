@@ -65,6 +65,21 @@ class PieceTree {
   std::string_view LineView(std::size_t index) const;
   std::size_t LineLength(std::size_t index) const;
 
+  // Bounded read: the bytes of line `index` in [byte_start, byte_start + byte_len),
+  // clamped to the line. Zero-copy when that window lies inside a single piece
+  // (the common case even on an edited line, because an in-line edit splits its
+  // line into exactly three pieces); otherwise the WINDOW -- never the line -- is
+  // copied into `scratch` and viewed from there.
+  //
+  // This is what a caller that only wants part of a line must use. `LineView` on
+  // a line that spans pieces materializes the whole line into a per-revision
+  // cache, so "read the first 4 KiB" spelled as `LineView(i).substr(0, 4096)`
+  // copies megabytes on a minified bundle and merely throws them away
+  // (TD-2026-08-05-133). The returned view is valid until `scratch` is reused or
+  // the tree mutates.
+  std::string_view LineWindow(std::size_t index, std::size_t byte_start, std::size_t byte_len,
+                              std::string& scratch) const;
+
   // Copy lines [begin, end) into a fresh vector.
   std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const;
   // Full materialized copy of every line.

@@ -75,8 +75,14 @@ std::vector<std::string> SignatureDetectHead(LineSpan lines) {
   std::vector<std::string> head;
   const std::size_t head_count = std::min(lines.size(), kSignatureDetectLineLimit);
   head.reserve(head_count);
+  // `lines[i].substr(0, N)` reads bounded but ASKS unbounded: on a piece-tree
+  // source `operator[]` materializes the whole line first, so a file with no line
+  // breaks in it paid a multi-megabyte copy per detection to look at 4 KiB of it,
+  // and detection runs once per content revision — i.e. per keystroke
+  // (TD-2026-08-05-133). LineWindow asks for exactly what is read.
+  std::string scratch;
   for (std::size_t i = 0; i < head_count; ++i) {
-    head.emplace_back(lines[i].substr(0, kSignatureDetectLineBytes));
+    head.emplace_back(lines.LineWindow(i, 0, kSignatureDetectLineBytes, scratch));
   }
   return head;
 }
