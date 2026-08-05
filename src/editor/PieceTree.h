@@ -88,8 +88,7 @@ class PieceTree {
   // materialize.
   const std::string* LineOwnedIfMaterialized(std::size_t index) const {
     const auto it = line_view_cache_.find(index);
-    return (it != line_view_cache_.end() && it->second.revision == revision_) ? &it->second.text
-                                                                             : nullptr;
+    return it != line_view_cache_.end() ? &it->second : nullptr;
   }
 
   // Copy lines [begin, end) into a fresh vector.
@@ -306,13 +305,7 @@ class PieceTree {
   // used to clear `line_view_cache_` inline instead, which is exactly how a
   // second cache silently ends up half-invalidated.
   void BumpRevision() {
-    ++revision_;
-    // Retention is capacity-only: every slot is now stale by revision, so nothing
-    // below can read one. Past the retention bound the map is dropped, which is
-    // also the only thing that ever shrinks it.
-    if (line_view_cache_.size() > kMaxRetainedLineSlots) {
-      line_view_cache_.clear();
-    }
+    line_view_cache_.clear();
     cached_line_start_index_ = kNoCachedLine;
     walk_valid_ = false;
   }
@@ -337,28 +330,13 @@ class PieceTree {
 
   // Spanning-line materialization, valid for the current revision only.
   //
-  // The slot's BUFFER outlives the revision even though its contents do not.
-  // Clearing the map on every mutation freed the line's storage and the next
-  // keystroke allocated it again -- on a file with no line breaks in it, a
-  // multi-megabyte malloc/free pair per typed character, which is page faults and
-  // possibly an mmap/munmap round trip on top of the copy that actually had to
-  // happen (TD-2026-08-05-133). Tagging each slot with the revision it was
-  // written for keeps the capacity and re-copies into it instead.
-  //
-  // `kMaxRetainedLineSlots` bounds what that retention can cost. Worst case is
-  // that many slots at the largest edited line's size -- proportional to what is
-  // being edited, and only for lines that span pieces. It is deliberately not 1 or
-  // 2: an edit region covering three spanning lines would then clear the map every
-  // keystroke and keep none of the capacity this exists to keep. Past the bound
-  // the map is a walk over many lines rather than a hot edit, and is dropped
-  // wholesale.
-  struct CachedLine {
-    std::uint64_t revision = 0;
-    std::string text;
-  };
-  static constexpr std::size_t kMaxRetainedLineSlots = 8;
-  mutable std::unordered_map<std::size_t, CachedLine> line_view_cache_;
-  mutable std::uint64_t revision_ = 1;
+  // Cleared on every mutation. Retaining the slots' capacity across revisions was
+  // tried and reverted: it removed one allocation per keystroke while the render
+  // and edit paths still asked for the whole line, and once they stopped
+  // (TD-2026-08-05-133) a materialization happens about once per file open, so all
+  // it bought was a multi-megabyte buffer held for the life of the document --
+  // +40% resident growth on `editor_long_line_select_all_edit` for no wall change.
+  mutable std::unordered_map<std::size_t, std::string> line_view_cache_;
 
   // Sequential line-start memo (see LineStartByteMemoized). kNoCachedLine marks
   // "empty" — a real line index can never equal it.
