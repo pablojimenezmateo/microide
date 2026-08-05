@@ -532,6 +532,12 @@ void TestCaretNeighborhoodMatchesWholeLineReading() {
       if (at.has_prev) {
         Expect(at.prev == whole[expected_clamped - 1],
                "prev must be the byte before the clamp" + where);
+        const std::size_t expected_prev =
+            microide::editor::TextLayout::PreviousTextColumn(whole, expected_clamped);
+        Expect(at.prev_column == expected_prev,
+               "prev_column must match PreviousTextColumn over the whole line" + where);
+        Expect(at.prev_char == whole[expected_prev],
+               "prev_char must be the byte at prev_column" + where);
       }
     }
   }

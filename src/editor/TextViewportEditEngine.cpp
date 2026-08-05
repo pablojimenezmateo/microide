@@ -125,13 +125,15 @@ void TextViewport::Backspace() {
     // the very next edit clears. On the single hottest path in the editor that is
     // a full line copy per keystroke -- invisible on a 40-character line, the
     // whole document on a file with no newlines in it.
-    const std::string_view line = document_->lines.LineView(cursor_line_);
-    const std::size_t erase_start = TextLayout::PreviousTextColumn(line, cursor_column_);
+    // Everything this needs is the code point immediately before the caret. It
+    // used to read the whole line to find it, which on a file with no line breaks
+    // in it is megabytes per backspace (TD-2026-08-05-133).
+    const CaretNeighborhood at = ReadCaretNeighborhood(cursor_line_, cursor_column_);
+    const std::size_t erase_start = at.has_prev ? at.prev_column : 0;
     const CoalesceHint hint{
         .kind = CoalesceKind::DeleteBackward,
         .changed_is_space =
-            erase_start < line.size() &&
-            util::IsAsciiSpace(static_cast<unsigned char>(line[erase_start])) != 0,
+            at.has_prev && util::IsAsciiSpace(static_cast<unsigned char>(at.prev_char)) != 0,
     };
     (void)ApplyRangeEdit(
         SelectionRange{
@@ -609,9 +611,11 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
   const SelectionRange normalized = NormalizeRange(range);
   const auto clamp_position = [&](TextPosition position) {
     const std::size_t line = std::min(position.line, document_->lines.size() - 1);
+    // Reads a handful of bytes around the column, not the line: this runs twice
+    // per edit, i.e. twice per keystroke (TD-2026-08-05-133).
     return TextPosition{
         .line = line,
-        .column = TextLayout::ClampTextColumn(document_->lines.LineView(line), position.column),
+        .column = ReadCaretNeighborhood(line, position.column).clamped_column,
     };
   };
 
