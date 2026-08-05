@@ -194,6 +194,16 @@ std::optional<SDL_FRect> DiagnosticUnderlineRect(const render::TextRenderer& tex
                                         /*visual_map=*/nullptr);
 }
 
+bool AnyDiagnosticCoversLine(std::span<const PublishedDiagnostic> diagnostics,
+                             std::size_t line_index) {
+  for (const PublishedDiagnostic& diagnostic : diagnostics) {
+    if (DiagnosticCoversLine(diagnostic, line_index)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 void AppendDiagnosticUnderlines(DecoratedTextRow& row,
                                 const render::TextRenderer& text_renderer,
                                 const render::Theme& theme,
@@ -207,6 +217,13 @@ void AppendDiagnosticUnderlines(DecoratedTextRow& row,
                                 std::size_t tab_size,
                                 std::span<const PublishedDiagnostic> diagnostics) {
   if (diagnostics.empty() || line_height <= 0.0f || visible_columns == 0) {
+    return;
+  }
+  // `diagnostics` is the whole file's, so most rows have none -- and the map below
+  // is O(line). Ask before building it: on a file with no line breaks in it that
+  // map is two vectors the size of the document, built per row per frame, for a
+  // row with nothing to underline (TD-2026-08-05-133).
+  if (!AnyDiagnosticCoversLine(diagnostics, line_index)) {
     return;
   }
 

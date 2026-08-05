@@ -458,6 +458,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       left_input.row_visual_start = compare_tab->horizontal_scroll;
       left_input.row_visual_end = compare_tab->horizontal_scroll + surface.left_visible_columns;
       left_input.text = compare_row.left_text;
+      left_input.line_length = left_input.text.size();
       left_input.tokens = cached_tokens;
       left_input.plain_color = selected ? theme_.text_primary : left_color;
       left_input.has_background_fill = true;
@@ -558,6 +559,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       right_input.row_visual_start = compare_tab->horizontal_scroll;
       right_input.row_visual_end = compare_tab->horizontal_scroll + surface.right_visible_columns;
       right_input.text = compare_row.right_text;
+      right_input.line_length = right_input.text.size();
       right_input.tokens = cached_tokens;
       right_input.plain_color = selected ? theme_.text_primary : right_color;
       right_input.visual_map = right_visual_map.has_value() ? &*right_visual_map : nullptr;

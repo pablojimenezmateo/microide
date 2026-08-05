@@ -412,6 +412,82 @@ void TestTextStyleUnderlinesUseGridWhenLayoutSet() {
   Expect(rect.w == 6.0f * 8.0f, "underline width must span the styled cells on the grid");
 }
 
+// TD-2026-08-05-133: a whole-line plugin decoration ends at the LINE's extent, and
+// `RowDecorationInput.text` no longer carries the line on the editor's row path --
+// it is left empty unless the row has a diagnostic, because reading the line to
+// render a row copies any piece-tree line that spans pieces. So whole-line spans
+// read `line_length` instead, and nothing else in the tree pinned them: without
+// this, a plugin whole-line highlight would silently collapse to zero width on
+// every editor row and no test would have noticed.
+//
+// Pinned on both row paths, with `text` empty (the editor's shape) and with `text`
+// present (compare/merge's), which must agree.
+void TestWholeLineDecorationsSpanTheLineWithoutItsBytes() {
+  oracle::EnsureDummyVideo();
+  oracle::OracleCanvas init_canvas(kCanvasWidth, kCanvasHeight);
+  render::TextRenderer text_renderer;
+  text_renderer.EnsureInitialized(init_canvas.renderer());
+  const render::Theme& theme = OracleTheme();
+
+  const std::string text = "let value = compute();";
+  const LayoutLine layout = TextLayout::BuildVisibleLine(text, 0, 40, kTabSize);
+  const std::vector<SyntaxTokenKind> tokens;
+
+  std::vector<editor::TextStyleDecoration> text_styles;
+  editor::TextStyleDecoration whole;
+  whole.line = 0;
+  whole.start_column = 0;
+  whole.end_column = 0;  // ignored for a whole-line decoration
+  whole.background = SDL_Color{40, 90, 40, 255};
+  whole.line_color = SDL_Color{200, 40, 40, 255};
+  whole.flags = editor::kDecorationWholeLine | editor::kDecorationUnderline;
+  text_styles.push_back(whole);
+
+  const auto build = [&](std::string_view row_text, std::size_t line_length) {
+    RowDecorationInput input;
+    input.text_x = 10.0f;
+    input.y = 5.0f;
+    input.char_width = 8.0f;
+    input.line_height = 16.0f;
+    input.row_visual_start = 0;
+    input.row_visual_end = 40;
+    input.text = row_text;
+    input.line_length = line_length;
+    input.tokens = &tokens;
+    input.plain_color = theme.text_secondary;
+    input.layout = &layout;  // grid path, i.e. the editor row
+    input.text_styles = text_styles;
+    input.text_renderer = &text_renderer;
+    input.theme = &theme;
+    DecoratedTextRow row;
+    editor::BuildDecoratedRow(row, input);
+    return row;
+  };
+
+  const DecoratedTextRow without_bytes = build(std::string_view{}, text.size());
+  const DecoratedTextRow with_bytes = build(text, text.size());
+
+  Expect(without_bytes.fills.size() == 1, "the whole-line background is emitted with no bytes");
+  Expect(without_bytes.fills.front().rect.x == 10.0f,
+         "the whole-line background starts at the row origin");
+  Expect(without_bytes.fills.front().rect.w == static_cast<float>(text.size()) * 8.0f,
+         "the whole-line background spans the line, not zero cells");
+  Expect(without_bytes.underlines.size() == 1, "the whole-line underline is emitted");
+  Expect(without_bytes.underlines.front().rect.w == static_cast<float>(text.size()) * 8.0f,
+         "the whole-line underline spans the line");
+
+  Expect(with_bytes.fills.size() == without_bytes.fills.size() &&
+             with_bytes.fills.front().rect.w == without_bytes.fills.front().rect.w &&
+             with_bytes.underlines.size() == without_bytes.underlines.size() &&
+             with_bytes.underlines.front().rect.w == without_bytes.underlines.front().rect.w,
+         "handing the row its bytes must not change a whole-line decoration");
+
+  // And the failure mode this guards: a `line_length` left at zero collapses it.
+  const DecoratedTextRow unset = build(std::string_view{}, 0);
+  Expect(unset.fills.empty() && unset.underlines.empty(),
+         "an unset line_length is what a collapsed whole-line span looks like");
+}
+
 // A mid-line inlay hint must (a) split and shift the real text runs to its right
 // by its whole-cell width, (b) leave text to its left untouched, and (c) emit its
 // own glyph run in the reserved phantom cells. Backend-less TextRenderer => 8px
@@ -557,6 +633,8 @@ void TestDiagnosticUnderlineCacheMatchesUncachedPath() {
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests) {
   AddTest(tests, "RowDecorationBuilder diagnostic underline cache matches uncached path",
           TestDiagnosticUnderlineCacheMatchesUncachedPath);
+  AddTest(tests, "RowDecorationBuilder whole-line decorations span the line without its bytes",
+          TestWholeLineDecorationsSpanTheLineWithoutItsBytes);
   AddTest(tests, "RowDecorationBuilder inlay hints shift runs and draw the glyph",
           TestInlayHintsShiftRunsAndDrawGlyph);
   AddTest(tests, "RowDecorationBuilder text-style underlines use the grid under a layout",

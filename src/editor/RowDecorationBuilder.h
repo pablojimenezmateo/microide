@@ -71,7 +71,16 @@ struct RowDecorationInput {
   // from TextBuffer's `operator[]` -- which materializes a heap copy of the line
   // and keeps it until the next mutation, so painting a large file left a second
   // copy of it resident. Everything downstream only ever read bytes.
+  // The line's bytes. On the editor's row path (`layout` set) the ONLY consumer
+  // is diagnostic underlining, so that path leaves this EMPTY unless the row
+  // actually carries a diagnostic: reading the line to render a row copies any
+  // piece-tree line that spans pieces, which on a file with no line breaks in it
+  // is megabytes per frame (TD-2026-08-05-133). Anything that needs the line's
+  // extent rather than its bytes must read `line_length`, which is always set.
   std::string_view text;
+  // Byte length of the whole line, even when `text` is empty. Whole-line plugin
+  // decorations end here.
+  std::size_t line_length = 0;
   const std::vector<SyntaxTokenKind>* tokens = nullptr;
   SDL_Color plain_color{};
 

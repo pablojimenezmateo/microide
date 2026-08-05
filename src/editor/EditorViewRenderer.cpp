@@ -565,7 +565,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       sticky_input.line_height = metrics.line_height;
       sticky_input.row_visual_start = row_meta.visual_start;
       sticky_input.row_visual_end = row_meta.visual_end;
-      sticky_input.text = lines.LineView(line_index);
+      sticky_input.line_length = lines.LineLength(line_index);
+      // Same rule as the ordinary row path below: the line's bytes are only read
+      // when a diagnostic on this row needs them.
+      sticky_input.text = AnyDiagnosticCoversLine(diagnostics, line_index)
+                              ? lines.LineView(line_index)
+                              : std::string_view{};
       sticky_input.tokens = sticky_tokens;
       sticky_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
       sticky_input.layout = &row_layout;
@@ -1028,7 +1033,14 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     row_input.line_height = metrics.line_height;
     row_input.row_visual_start = row_visual_origin;
     row_input.row_visual_end = row_meta.visual_end;
-    row_input.text = lines.LineView(line_index);
+    row_input.line_length = lines.LineLength(line_index);
+    // Diagnostic underlining is the only consumer of the whole line on this path,
+    // and `diagnostics` covers the whole file, so most rows want none of it.
+    // Reading the line anyway copies any piece-tree line that spans pieces -- on a
+    // file with no line breaks in it, megabytes per frame (TD-2026-08-05-133).
+    row_input.text = AnyDiagnosticCoversLine(diagnostics, line_index)
+                         ? lines.LineView(line_index)
+                         : std::string_view{};
     row_input.tokens = token_kinds;
     row_input.plain_color = selected ? theme.text_primary : theme.text_secondary;
     row_input.layout = &row_layout;

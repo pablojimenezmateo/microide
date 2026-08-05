@@ -166,7 +166,7 @@ void AppendTextStyleUnderlines(DecoratedTextRow& row, const RowDecorationInput& 
     }
     const bool whole = (ts.flags & kDecorationWholeLine) != 0;
     const std::size_t start = whole ? 0 : ts.start_column;
-    const std::size_t end = whole ? in.text.size() : ts.end_column;
+    const std::size_t end = whole ? in.line_length : ts.end_column;
     if (end <= start || end <= window.byte_offset || start >= window_end) {
       continue;
     }
@@ -225,7 +225,7 @@ void AppendTextStyleUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInp
     }
     const bool whole = (ts.flags & kDecorationWholeLine) != 0;
     const std::size_t start_col = whole ? 0 : ts.start_column;
-    const std::size_t end_col = whole ? in.text.size() : ts.end_column;
+    const std::size_t end_col = whole ? in.line_length : ts.end_column;
     if (end_col <= start_col) {
       continue;
     }
@@ -287,7 +287,7 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
     const bool whole = (ts.flags & kDecorationWholeLine) != 0;
     RowFillSpan span{
         .start_column = whole ? 0 : ts.start_column,
-        .end_column = whole ? in.text.size() : ts.end_column,
+        .end_column = whole ? in.line_length : ts.end_column,
         .color = ts.background,
         .geometry = RowFillSpan::Geometry::kRange,
     };
@@ -329,7 +329,7 @@ void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
       }
     }
 
-    if (!in.diagnostics.empty() && !in.text.empty()) {
+    if (!in.diagnostics.empty() && !in.text.empty()) {  // `text` is set only when needed
       AppendDiagnosticUnderlines(row, *in.text_renderer, *in.theme, in.text_x, in.y, in.line_height,
                                  in.text, in.diagnostic_line_index, in.diagnostic_horizontal_scroll,
                                  in.diagnostic_visible_columns, in.tab_size, in.diagnostics);

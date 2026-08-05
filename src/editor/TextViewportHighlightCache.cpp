@@ -9,6 +9,7 @@
 // `kHighlightCheckpointInterval` is shared with TextViewport.cpp via
 // editor/TextViewportInternal.h so InvalidateDerivedCaches stays in lockstep.
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 #include "editor/TextViewportInternal.h"
 
@@ -44,6 +45,23 @@ bool IsCachedHighlightState(const SyntaxState& state) {
   return state.definition_id != 0;
 }
 
+// The line's bytes, or an empty view when it is too long to tokenize.
+//
+// `runtime_syntax::HighlightLine`/`AdvanceState` treat "empty" and "past
+// kMaxHighlightLineBytes" through the SAME branch -- no tokens, region stack
+// carried forward -- so handing them an empty view for an over-cap line is exactly
+// what they would have done with its bytes. The difference is that nobody reads
+// those bytes: on a piece-tree source `LineView` materializes any line that spans
+// pieces, so a file with no line breaks in it copied megabytes per token-cache
+// miss only for the guard to throw it away (TD-2026-08-05-133), which is the same
+// shape as the fold bracket scan's cap.
+std::string_view TokenizableLineView(const TextBuffer& lines, std::size_t line_index) {
+  if (lines.LineLength(line_index) > runtime_syntax::kMaxHighlightLineBytes) {
+    return {};
+  }
+  return lines.LineView(line_index);
+}
+
 }  // namespace
 
 const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
@@ -74,7 +92,7 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   {
     util::PerformanceTrace::Scope highlight_scope(
         "TextViewport::HighlightedLineTokens::HighlightLine");
-    highlighted = SyntaxHighlighter::HighlightLine(document_->lines.LineView(line_index), document_->path,
+    highlighted = SyntaxHighlighter::HighlightLine(TokenizableLineView(document_->lines, line_index), document_->path,
                                                    previous_state);
   }
   // Only record the per-line end state (and advance the validity frontier) when
@@ -247,7 +265,7 @@ void TextViewport::EnsureHighlightCheckpoint(std::size_t checkpoint_index) const
       {
         util::PerformanceTrace::Scope advance_scope(
             "TextViewport::EnsureHighlightCheckpoint::AdvanceState");
-        state = SyntaxHighlighter::AdvanceState(document_->lines.LineView(line), document_->path, state);
+        state = SyntaxHighlighter::AdvanceState(TokenizableLineView(document_->lines, line), document_->path, state);
       }
       line_highlight_states_[line] = state;
       // Contiguous-only advance: a replay resuming from a checkpoint above the
@@ -404,7 +422,7 @@ SyntaxState TextViewport::HighlightStateBeforeLine(std::size_t line_index) const
     {
       util::PerformanceTrace::Scope advance_scope(
           "TextViewport::HighlightStateBeforeLine::AdvanceState");
-      state = SyntaxHighlighter::AdvanceState(document_->lines.LineView(line), document_->path, state);
+      state = SyntaxHighlighter::AdvanceState(TokenizableLineView(document_->lines, line), document_->path, state);
     }
     line_highlight_states_[line] = state;
     // Contiguous-only advance: see the frontier invariant note in TextViewport.h.
