@@ -627,6 +627,22 @@ the committed `.sha256`, and it never rewrites the manifest — if regeneration 
 committed hash it aborts (catching Python/platform drift). Regenerate manually (and refresh the
 committed `.sha256` after intentionally changing a generator) with:
 
+`microide_perf` itself never generates anything. At startup it checks each
+manifest-backed tree against its `.sha256`, hashing **in process** (`util::Sha256` —
+no `python3` on PATH required), and applies one policy to a tree that is not there:
+
+| tree state | default | `--require-fixtures` |
+| --- | --- | --- |
+| absent | integrity check skipped, scenarios skip themselves | hard failure |
+| present, manifest matches | runs | runs |
+| present, manifest differs | hard failure | hard failure |
+
+Absent-is-a-skip is deliberate and matches what the individual scenarios already do
+when their fixture is missing. Verifying unconditionally is what took CI's
+`perf-canary` lane red: that lane runs `microide_perf` directly for one scenario that
+reads no fixture at all, nothing had run the generator, and the empty-tree digest was
+reported as a corruption mismatch.
+
 ```bash
 python3 tests/perf/generate_editor_essentials_perf_fixtures.py --fixture all   # rewrites .sha256
 python3 tests/perf/generate_editor_essentials_perf_fixtures.py --ensure --fixture all  # restore only

@@ -1387,7 +1387,9 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   # The large editor_essentials_* perf fixtures are gitignored and generated on
   # demand (verified against committed .sha256). Regenerate any missing/stale tree
   # before the perf suite runs; --ensure is a no-op when they already match.
-  # python3 is already required by the perf harness (PerfHarness::VerifyFixtureTree).
+  # This setup test is the ONLY thing that generates them: microide_perf itself
+  # hashes in process and skips the integrity check for a tree that is absent, so
+  # a lane that runs the binary directly (perf-canary) neither needs nor gets one.
   add_test(NAME microide_perf_fixtures
            COMMAND python3 tests/perf/generate_editor_essentials_perf_fixtures.py --ensure --fixture all
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

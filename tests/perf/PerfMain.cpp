@@ -1576,31 +1576,44 @@ int main(int argc, char** argv) {
   std::vector<Aggregate> aggregates;
   bool all_passed = true;
   std::size_t selected_count = 0;
+  // Integrity gate for the manifest-backed fixture trees.
+  //
+  // Policy matches EnsureFixtureOrSkip, deliberately, because two different
+  // answers to "the fixture is not here" is how this broke: a tree that is
+  // ENTIRELY ABSENT is a skip (or a hard failure under --require-fixtures), and a
+  // tree that is PRESENT must match its manifest or the run dies. These trees are
+  // gitignored and generated on demand by the ctest `microide_perf_fixtures`
+  // setup, so a fresh checkout legitimately has none of them — and this loop used
+  // to hash them unconditionally and report the empty-tree digest as a corruption
+  // mismatch. That is what took CI's perf-canary lane red: it runs microide_perf
+  // directly for one scenario that reads no fixture at all, so nothing had
+  // generated them and nothing needed them.
+  //
+  // Verifying only what is present also means a filtered run pays only for the
+  // trees it has, rather than rehashing ~17 MB across three trees to run one
+  // fixture-free scenario.
   {
-    std::string fixture_error;
-    if (!PerfHarness::VerifyFixtureTree("tests/perf/fixtures/kernel_sized_project",
-                                        "tests/perf/fixtures/kernel_sized_project.sha256",
-                                        &fixture_error)) {
-      std::cerr << fixture_error << '\n';
-      return 1;
-    }
-  }
-  {
-    std::string fixture_error;
-    if (!PerfHarness::VerifyFixtureTree("tests/perf/fixtures/editor_essentials_50k_cpp",
-                                        "tests/perf/fixtures/editor_essentials_50k_cpp.sha256",
-                                        &fixture_error)) {
-      std::cerr << fixture_error << '\n';
-      return 1;
-    }
-  }
-  {
-    std::string fixture_error;
-    if (!PerfHarness::VerifyFixtureTree("tests/perf/fixtures/editor_essentials_50k_py",
-                                        "tests/perf/fixtures/editor_essentials_50k_py.sha256",
-                                        &fixture_error)) {
-      std::cerr << fixture_error << '\n';
-      return 1;
+    static constexpr std::string_view kManifestBackedFixtures[] = {
+        "tests/perf/fixtures/kernel_sized_project",
+        "tests/perf/fixtures/editor_essentials_50k_cpp",
+        "tests/perf/fixtures/editor_essentials_50k_py",
+    };
+    for (const std::string_view fixture : kManifestBackedFixtures) {
+      const std::filesystem::path root{fixture};
+      if (!DirectoryExistsNoThrow(root)) {
+        if (options->require_fixtures) {
+          std::cerr << "required fixture tree missing: " << root.string()
+                    << " (generate with tests/perf/generate_*.py, or drop --require-fixtures)\n";
+          return 1;
+        }
+        std::cerr << root.string() << ": fixture tree absent, integrity check skipped\n";
+        continue;
+      }
+      std::string fixture_error;
+      if (!PerfHarness::VerifyFixtureTree(root, &fixture_error)) {
+        std::cerr << fixture_error << '\n';
+        return 1;
+      }
     }
   }
 

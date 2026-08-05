@@ -24,6 +24,7 @@
 #include "render/RendererInfo.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
+#include "util/Sha256.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
@@ -782,9 +783,14 @@ void PerfHarness::ShutdownDriver(Driver* driver) {
   driver->isolated_app_root.clear();
 }
 
-bool PerfHarness::VerifyFixtureTree(const std::filesystem::path& root,
-                                    const std::filesystem::path& expected_hash_file,
-                                    std::string* error) {
+std::filesystem::path PerfHarness::FixtureManifestPath(const std::filesystem::path& root) {
+  std::filesystem::path manifest = root;
+  manifest += ".sha256";
+  return manifest;
+}
+
+bool PerfHarness::VerifyFixtureTree(const std::filesystem::path& root, std::string* error) {
+  const std::filesystem::path expected_hash_file = FixtureManifestPath(root);
   std::ifstream expected_in(expected_hash_file);
   if (!expected_in) {
     if (error) {
@@ -800,36 +806,84 @@ bool PerfHarness::VerifyFixtureTree(const std::filesystem::path& root,
     }
     return false;
   }
-  std::ostringstream command;
-  command << "python3 - <<'PY'\n"
-          << "import hashlib\n"
-          << "from pathlib import Path\n"
-          << "root=Path(r'" << root.string() << "')\n"
-          << "d=hashlib.sha256()\n"
-          << "for p in sorted([x for x in root.rglob('*') if x.is_file()]):\n"
-          << "  rel=p.relative_to(root).as_posix().encode('utf-8')\n"
-          << "  d.update(rel); d.update(b'\\0'); d.update(p.read_bytes()); d.update(b'\\0')\n"
-          << "print(d.hexdigest())\n"
-          << "PY";
-  FILE* pipe = popen(command.str().c_str(), "r");
-  if (pipe == nullptr) {
+
+  // In-process, matching the committed manifests written by the generator scripts:
+  // for each regular file under `root`, in ascending relative-POSIX-path order,
+  // feed <relative path> NUL <file bytes> NUL.
+  //
+  // This used to popen a python3 heredoc with the root interpolated into the
+  // script. That is the same subprocess-per-hash pattern TD-2026-07-17-060 removed
+  // from tool-download verification, and it fails the same three ways: it needs a
+  // python3 on PATH to run the perf gate at all, it cannot distinguish "hash
+  // differs" from "the interpreter never produced a line", and it interpolates a
+  // filesystem path into shell+python source. util::Sha256 already exists for
+  // exactly this.
+  std::vector<std::string> relative_paths;
+  std::error_code walk_error;
+  for (std::filesystem::recursive_directory_iterator it(root, walk_error), end; it != end;
+       it.increment(walk_error)) {
+    if (walk_error) {
+      if (error) {
+        *error = "failed to walk fixture tree " + root.string() + ": " + walk_error.message();
+      }
+      return false;
+    }
+    std::error_code kind_error;
+    if (!it->is_regular_file(kind_error) || kind_error) {
+      continue;
+    }
+    relative_paths.push_back(it->path().lexically_relative(root).generic_string());
+  }
+  if (walk_error) {
     if (error) {
-      *error = "failed to compute fixture hash";
+      *error = "failed to walk fixture tree " + root.string() + ": " + walk_error.message();
     }
     return false;
   }
-  char buffer[256] = {0};
-  std::string actual;
-  if (fgets(buffer, sizeof(buffer), pipe) != nullptr) {
-    actual = buffer;
+  // Byte-wise on the relative POSIX string, which is what the generators' `sorted()`
+  // over Path objects reduces to. std::filesystem::path's own operator< compares
+  // element-by-element and orders "a/b" before "a.b" where the string compare orders
+  // them the other way, so sorting paths here would silently disagree with the
+  // committed manifests on any tree holding both.
+  std::sort(relative_paths.begin(), relative_paths.end());
+
+  util::Sha256 digest;
+  constexpr char kSeparator = '\0';
+  std::string file_buffer;
+  for (const std::string& relative : relative_paths) {
+    digest.Update(relative);
+    digest.Update(std::string_view(&kSeparator, 1));
+    std::ifstream file_in(root / relative, std::ios::binary);
+    if (!file_in) {
+      if (error) {
+        *error = "failed to read fixture file: " + (root / relative).string();
+      }
+      return false;
+    }
+    // One reused buffer for the whole tree; the fixtures run to tens of MB.
+    constexpr std::size_t kChunkBytes = 1u << 16;
+    file_buffer.resize(kChunkBytes);
+    while (file_in.read(file_buffer.data(), static_cast<std::streamsize>(kChunkBytes)) ||
+           file_in.gcount() > 0) {
+      digest.Update(std::string_view(file_buffer.data(), static_cast<std::size_t>(file_in.gcount())));
+      if (!file_in) {
+        break;
+      }
+    }
+    if (file_in.bad()) {
+      if (error) {
+        *error = "failed to read fixture file: " + (root / relative).string();
+      }
+      return false;
+    }
+    digest.Update(std::string_view(&kSeparator, 1));
   }
-  pclose(pipe);
-  while (!actual.empty() && (actual.back() == '\n' || actual.back() == '\r')) {
-    actual.pop_back();
-  }
+
+  const std::string actual = digest.FinishHex();
   if (actual != expected) {
     if (error) {
-      *error = "fixture hash mismatch expected=" + expected + " actual=" + actual;
+      *error = "fixture hash mismatch for " + root.string() + " expected=" + expected +
+               " actual=" + actual + " (" + std::to_string(relative_paths.size()) + " files)";
     }
     return false;
   }

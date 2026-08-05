@@ -284,9 +284,12 @@ class PerfHarness {
   static void RegisterScenario(const Scenario& scenario);
   static std::vector<Scenario> RegisteredScenarios();
   static std::optional<Aggregate> RunScenario(const Scenario& scenario, const RunOptions& options);
-  static bool VerifyFixtureTree(const std::filesystem::path& root,
-                                const std::filesystem::path& expected_hash_file,
-                                std::string* error);
+  // Committed manifest for a fixture tree: `<root>.sha256`. Derived rather than
+  // passed so a call site cannot pair a tree with the wrong manifest.
+  static std::filesystem::path FixtureManifestPath(const std::filesystem::path& root);
+  // Integrity check for a fixture tree against its committed manifest. Hashes in
+  // process (util::Sha256); the perf runner needs no interpreter on PATH.
+  static bool VerifyFixtureTree(const std::filesystem::path& root, std::string* error);
   static std::string LastError();
   // SDL driver name the most recent InitializeDriver actually resolved (e.g.
   // "software", "opengl"). Empty before the first driver init. Backs report
