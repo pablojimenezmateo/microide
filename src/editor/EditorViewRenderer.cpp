@@ -353,6 +353,11 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         std::iter_swap(bracket_match_cache_entries_.begin(), cache_it);
       }
     } else {
+      // Scoped: this is a cache MISS, i.e. every caret move next to a bracket, and
+      // the scan behind it is bounded in lines rather than bytes — so on a file
+      // with no line breaks in it one arrow key reads the whole document. It sat
+      // inside Render's self time with everything else that is not a row.
+      util::PerformanceTrace::Scope match_scope("EditorViewRenderer::Render::BracketMatch");
       bracket_match_pair = FindBracketMatch(viewport, caret_line, caret_column);
       last_bracket_match_pair_ = bracket_match_pair;
       auto same_viewport_it = std::find_if(

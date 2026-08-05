@@ -26,19 +26,47 @@ struct WindowLines {
   std::size_t size() const { return base + slice->size(); }
 };
 
-bool IsBracketScanSuppressed(const TextViewport* viewport,
-                             std::size_t line_index,
-                             std::size_t column) {
-  if (viewport == nullptr) {
-    return false;
+// "Is the bracket at this column inside a string or comment?", resolved without a
+// token-cache probe per byte.
+//
+// Suppression is a per-LINE question answered by a per-COLUMN lookup, and the
+// matchers walk a line byte by byte — so every byte used to re-resolve the line's
+// token vector through `TextViewport::HighlightedLineTokens`: a cache probe, a
+// `PerformanceTrace::Scope`, and on a miss a full highlight of the line. On
+// ordinary source that is a few dozen probes and nobody noticed. On a file with no
+// line breaks in it, End puts the caret next to the closing bracket and a single
+// arrow key cost **12.6 million probes** — one per byte of the document, per caret
+// move (`editor_long_line_horizontal_scroll`).
+//
+// The matchers visit lines in a monotonic direction, so holding the current line's
+// span and refetching only when the line changes is exact and O(lines), not
+// O(bytes).
+class LineSuppressionCursor {
+ public:
+  explicit LineSuppressionCursor(const TextViewport* viewport) : viewport_(viewport) {}
+
+  bool SuppressedAt(std::size_t line_index, std::size_t column) {
+    if (viewport_ == nullptr) {
+      return false;
+    }
+    if (tokens_ == nullptr || line_index != line_index_) {
+      // The reference points into the viewport's highlight LRU, which only the
+      // next fetch can evict — and the next fetch is the one that replaces it.
+      tokens_ = &viewport_->HighlightedLineTokens(line_index);
+      line_index_ = line_index;
+    }
+    if (column >= tokens_->size()) {
+      return false;
+    }
+    const SyntaxTokenKind kind = (*tokens_)[column];
+    return kind == SyntaxTokenKind::String || kind == SyntaxTokenKind::Comment;
   }
-  const auto& tokens = viewport->HighlightedLineTokens(line_index);
-  if (tokens.empty() || column >= tokens.size()) {
-    return false;
-  }
-  const SyntaxTokenKind kind = tokens[column];
-  return kind == SyntaxTokenKind::String || kind == SyntaxTokenKind::Comment;
-}
+
+ private:
+  const TextViewport* viewport_ = nullptr;
+  const std::vector<SyntaxTokenKind>* tokens_ = nullptr;
+  std::size_t line_index_ = 0;
+};
 
 constexpr bool IsOpener(char c) {
   return c == '{' || c == '(' || c == '[';
@@ -64,7 +92,7 @@ bool MatchForwardFromOpener(const WindowLines& lines,
                             std::size_t open_line,
                             std::size_t open_col,
                             std::size_t max_lines_each_side,
-                            const TextViewport* syntax_viewport,
+                            LineSuppressionCursor& suppression,
                             BracketMatchPair* out) {
   const char open_ch = lines[open_line][open_col];
   const char close_ch = Opposite(open_ch);
@@ -74,10 +102,14 @@ bool MatchForwardFromOpener(const WindowLines& lines,
 
   std::size_t line = open_line;
   std::size_t col = open_col + 1;
+  std::size_t budget = kMaxBracketMatchScanBytes;
   while (line < end_line) {
     std::string_view text = lines[line];
     while (col < text.size()) {
-      if (IsBracketScanSuppressed(syntax_viewport, line, col)) {
+      if (budget-- == 0) {
+        return false;
+      }
+      if (suppression.SuppressedAt(line, col)) {
         ++col;
         continue;
       }
@@ -106,13 +138,15 @@ bool MatchBackwardFromCloser(const WindowLines& lines,
                              std::size_t close_line,
                              std::size_t close_col,
                              std::size_t max_lines_each_side,
-                             const TextViewport* syntax_viewport,
+                             LineSuppressionCursor& suppression,
                              BracketMatchPair* out) {
   const char close_ch = lines[close_line][close_col];
   const char open_ch = Opposite(close_ch);
   int depth = 1;
 
   std::size_t bottom = close_line >= max_lines_each_side ? close_line - max_lines_each_side : 0;
+  // One budget across both loops below: they are two halves of a single scan.
+  std::size_t budget = kMaxBracketMatchScanBytes;
 
   // First scan the closer's own line to the left of close_col.
   if (close_col > 0) {
@@ -120,7 +154,10 @@ bool MatchBackwardFromCloser(const WindowLines& lines,
     std::size_t col = close_col;
     while (col > 0) {
       --col;
-      if (IsBracketScanSuppressed(syntax_viewport, close_line, col)) {
+      if (budget-- == 0) {
+        return false;
+      }
+      if (suppression.SuppressedAt(close_line, col)) {
         continue;
       }
       char c = text[col];
@@ -147,7 +184,10 @@ bool MatchBackwardFromCloser(const WindowLines& lines,
     std::size_t col = text.size();
     while (col > 0) {
       --col;
-      if (IsBracketScanSuppressed(syntax_viewport, line, col)) {
+      if (budget-- == 0) {
+        return false;
+      }
+      if (suppression.SuppressedAt(line, col)) {
         continue;
       }
       char c = text[col];
@@ -176,6 +216,7 @@ std::optional<BracketMatchPair> FindBracketMatchInWindow(
     const TextViewport* syntax_viewport) {
   if (caret_line >= lines.size()) return std::nullopt;
   std::string_view current = lines[caret_line];
+  LineSuppressionCursor suppression(syntax_viewport);
 
   // Try character at the caret first (caret is to the left of position).
   // `caret_at_opener` follows the matched character, not which probe found it:
@@ -184,19 +225,19 @@ std::optional<BracketMatchPair> FindBracketMatchInWindow(
   // close bracket when it is a closer.
   auto try_at = [&](std::size_t col) -> std::optional<BracketMatchPair> {
     if (col >= current.size()) return std::nullopt;
-    if (IsBracketScanSuppressed(syntax_viewport, caret_line, col)) {
+    if (suppression.SuppressedAt(caret_line, col)) {
       return std::nullopt;
     }
     char c = current[col];
     BracketMatchPair pair;
     if (IsOpener(c)) {
-      if (MatchForwardFromOpener(lines, caret_line, col, max_lines_each_side, syntax_viewport,
+      if (MatchForwardFromOpener(lines, caret_line, col, max_lines_each_side, suppression,
                                   &pair)) {
         pair.caret_at_opener = true;
         return pair;
       }
     } else if (IsCloser(c)) {
-      if (MatchBackwardFromCloser(lines, caret_line, col, max_lines_each_side, syntax_viewport,
+      if (MatchBackwardFromCloser(lines, caret_line, col, max_lines_each_side, suppression,
                                    &pair)) {
         pair.caret_at_opener = false;
         return pair;

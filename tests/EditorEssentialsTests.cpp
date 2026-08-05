@@ -122,6 +122,68 @@ void TestBracketScannerWindowedDeepCaret() {
          "backward absolute closer at line 6 col 0");
 }
 
+// Suppression is a per-LINE question. The matchers walk a line byte by byte, and
+// each byte used to re-resolve that line's token vector through
+// `TextViewport::HighlightedLineTokens` — so a scan cost one highlight-cache probe
+// per BYTE. On a file with no line breaks in it that is one probe per byte of the
+// document, per caret move: 12.6 million of them on the 2 MiB perf fixture.
+//
+// Pinned through the viewport's own highlight-query counter, because the answer is
+// identical either way and only the counter can tell the two apart.
+void TestBracketScannerProbesTokensOncePerLineNotPerByte() {
+  constexpr std::size_t kLineBytes = 64u * 1024u;
+  std::string line = "(";
+  line.append(kLineBytes, 'x');
+  line.push_back(')');
+  TextViewport viewport;
+  viewport.LoadContent(line + "\n", "/tmp/bracket-long-line.cpp");
+
+  // Warm the highlight cache for the line so the count below is probes, not the
+  // one-time highlight behind the first probe.
+  (void)viewport.HighlightedLineTokens(0);
+  viewport.ResetCacheStats();
+
+  const auto match = microide::editor::FindBracketMatch(viewport, 0, 1);
+  Expect(match.has_value(), "the pair spanning the long line should still match");
+  Expect(match->open_column == 0 && match->close_column == kLineBytes + 1,
+         "the matched columns must be the line's own brackets");
+
+  const std::size_t probes = viewport.CacheStats().highlight_queries;
+  // One line was scanned, so a handful of probes is right and anything
+  // proportional to the line's bytes is the regression.
+  Expect(probes <= 8,
+         "a bracket scan must probe the token cache per line, not per byte (probed " +
+             std::to_string(probes) + " times over " + std::to_string(kLineBytes) + " bytes)");
+}
+
+// `max_lines_each_side` bounds the scan in lines, which bounds work only if lines
+// are bounded. `kMaxBracketMatchScanBytes` is the bound in the unit that actually
+// costs; past it the match is reported not-found, exactly as an unbalanced bracket
+// inside the line window already is.
+void TestBracketScannerStopsAtTheScanByteCap() {
+  const std::size_t over_cap = microide::editor::kMaxBracketMatchScanBytes + 1024;
+  std::string line = "(";
+  line.append(over_cap, 'x');
+  line.push_back(')');
+  TextViewport viewport;
+  viewport.LoadContent(line + "\n", "/tmp/bracket-over-cap.cpp");
+
+  Expect(!microide::editor::FindBracketMatch(viewport, 0, 1).has_value(),
+         "a forward scan past the byte cap reports no match");
+  Expect(!microide::editor::FindBracketMatch(viewport, 0, line.size()).has_value(),
+         "a backward scan past the byte cap reports no match");
+
+  // Just under the cap still matches, so the cap bounds work rather than breaking
+  // bracket matching on merely-long lines.
+  std::string under = "(";
+  under.append(microide::editor::kMaxBracketMatchScanBytes / 2, 'x');
+  under.push_back(')');
+  TextViewport under_viewport;
+  under_viewport.LoadContent(under + "\n", "/tmp/bracket-under-cap.cpp");
+  Expect(microide::editor::FindBracketMatch(under_viewport, 0, 1).has_value(),
+         "a scan comfortably inside the byte cap still matches");
+}
+
 void TestShapingMoveLineDown() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\n", "/tmp/sample.txt");
@@ -1338,6 +1400,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestBracketScannerSkipsCommentBraces);
   AddTest(tests, "EditorEssentials/BracketScanner/NoMatchWhenAnchorInsideString",
           TestBracketScannerNoMatchWhenAnchorInsideString);
+  AddTest(tests, "EditorEssentials/BracketScanner/ProbesTokensOncePerLineNotPerByte",
+          TestBracketScannerProbesTokensOncePerLineNotPerByte);
+  AddTest(tests, "EditorEssentials/BracketScanner/StopsAtTheScanByteCap",
+          TestBracketScannerStopsAtTheScanByteCap);
   AddTest(tests, "EditorEssentials/BracketScanner/WindowedDeepCaret",
           TestBracketScannerWindowedDeepCaret);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",

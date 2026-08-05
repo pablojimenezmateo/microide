@@ -32,10 +32,30 @@ inline constexpr BracketDescriptor kDefaultBracketSet[] = {
     {'[', ']'},
 };
 
+// Declared cap on how many bytes one bracket-match scan may read.
+//
+// `max_lines_each_side` bounds the scan in LINES, which is only a bound on work
+// if lines have a bounded length. On a file with no line breaks in it a
+// two-thousand-line window is the whole document, so pressing End next to the
+// closing bracket and then any arrow key made every frame re-read megabytes —
+// measured at 1.7 ms for a single scan on a 2 MiB line, per caret move.
+//
+// 512 KiB is chosen against the widest realistic window this could be asked for:
+// the 50k-line C++ perf fixture averages 163 bytes a line (deliberately wide;
+// this repo's own sources average 43), so its full 2000-line window is ~326 KB.
+// The cap is above that with headroom, so no file whose lines are of ordinary
+// length can reach it, and the pathological shape stops at a quarter of itself.
+//
+// Reaching it means the match is reported as not found, exactly as an unbalanced
+// bracket within the line window already is — the same degradation mature editors
+// apply to bracket matching on very long lines.
+inline constexpr std::size_t kMaxBracketMatchScanBytes = 512u * 1024u;
+
 // Returns the matching bracket pair when the caret is adjacent to a bracket
 // character, scanning forward from open and backward from close. Returns
-// nullopt when no adjacent bracket exists or when the bracket is unbalanced
-// within `max_lines_each_side`.
+// nullopt when no adjacent bracket exists, when the bracket is unbalanced
+// within `max_lines_each_side`, or when the scan reaches
+// `kMaxBracketMatchScanBytes`.
 std::optional<BracketMatchPair> FindBracketMatch(const TextViewport& viewport,
                                                  std::size_t caret_line,
                                                  std::size_t caret_column,

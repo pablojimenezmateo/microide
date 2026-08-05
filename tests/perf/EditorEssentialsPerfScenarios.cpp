@@ -680,6 +680,180 @@ void RunEditorTypingMinifiedLine(ScenarioContext& context) {
   });
 }
 
+// The three scenarios below extend the no-line-breaks coverage from *typing* to
+// the other things a person does with such a file. TD-2026-08-05-130/131/132 all
+// existed because no fixture in the tree had a long line, so a whole class of
+// proportional-to-line-length costs had nowhere to show up; closing that for one
+// interaction leaves the same hole open for every other one.
+//
+// Opens the fixture and returns its viewport, or nullptr when the fixture is
+// absent (the generated trees are gitignored, so a scenario must degrade rather
+// than fail). Shared by the three below so the shape assertion lives once.
+editor::TextViewport* OpenMinifiedFixtureOrSkip(ScenarioContext& context,
+                                                const char* scenario_name) {
+  const std::filesystem::path minified =
+      "tests/perf/fixtures/editor_essentials_minified/bundle.min.js";
+  if (!PathExistsNoThrow(minified)) {
+    std::cerr << scenario_name << ": missing fixture " << minified << "\n";
+    return nullptr;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(minified);
+  editor::TextViewport& viewport = context.ActiveViewport();
+  if (viewport.lines().size() > 2) {
+    throw std::runtime_error(std::string(scenario_name) +
+                             ": fixture is not a single line (regenerate it)");
+  }
+  return &viewport;
+}
+
+// Moving the caret along a line with no line breaks in it, which is what
+// horizontal scrolling IS in this editor -- the scroll offset follows the caret.
+//
+// Nothing measured horizontal scrolling at all before this: every scroll scenario
+// in the suite is vertical, and on ordinary text the horizontal offset never
+// leaves the first screenful. Here End puts it a megabyte in, and every render
+// path that resolves "which byte is the first visible cell" has to answer that
+// from the new offset, on every visible row, on every frame.
+void RunEditorLongLineHorizontalScroll(ScenarioContext& context) {
+  editor::TextViewport* viewport =
+      OpenMinifiedFixtureOrSkip(context, "editor_long_line_horizontal_scroll");
+  if (viewport == nullptr) {
+    return;
+  }
+  viewport->MoveCursorTo(0, 0, false);
+  context.PumpFrames(2);  // warm the visible window's layout/highlight
+
+  // End -> Home is the largest possible jump in the horizontal scroll offset: the
+  // visible-line layout cache is keyed on that offset, so both ends miss.
+  context.Measure("long_line_scroll.end_home_jumps", [&] {
+    for (int i = 0; i < 8; ++i) {
+      context.KeyDown(SDLK_END);
+      context.PumpFrames(1);
+      context.KeyDown(SDLK_HOME);
+      context.PumpFrames(1);
+    }
+  });
+
+  // Word motion from deep in the line: small offset changes, but each one still
+  // re-keys the layout cache, so this is the steady-state cost of reading along a
+  // long line rather than the cost of jumping to its end.
+  context.KeyDown(SDLK_END);
+  context.PumpFrames(2);
+  context.Measure("long_line_scroll.word_motion_burst", [&] {
+    for (int i = 0; i < 24; ++i) {
+      context.KeyDown(SDLK_LEFT, SDL_KMOD_CTRL);
+      context.PumpFrames(1);
+    }
+  });
+}
+
+// Find-in-buffer on a line with no line breaks in it. The buffer search is framed
+// per line, so "search this line" is "search this document", and every match in
+// the file lands on one row -- which is also the row the renderer has to paint the
+// match fills for.
+//
+// Two queries on purpose: one that occurs once (measures the scan) and one that
+// occurs in every record (measures the match set and the per-row fill path,
+// including whatever cap bounds it).
+void RunEditorLongLineBufferSearch(ScenarioContext& context) {
+  editor::TextViewport* viewport =
+      OpenMinifiedFixtureOrSkip(context, "editor_long_line_buffer_search");
+  if (viewport == nullptr) {
+    return;
+  }
+  viewport->MoveCursorTo(0, 0, false);
+  context.PumpFrames(2);
+
+  // A token that appears once, deep in the line: the search has to read the whole
+  // line to find it, and the reveal scrolls a megabyte in.
+  context.Measure("long_line_search.rare_query", [&] {
+    if (!context.ExecuteCommand("search item_12000")) {
+      throw std::runtime_error("editor_long_line_buffer_search: search command failed");
+    }
+    context.PumpFrames(2);
+  });
+
+  // A token in every record: thousands of matches on one row.
+  context.Measure("long_line_search.common_query", [&] {
+    if (!context.ExecuteCommand("search \"name\"")) {
+      throw std::runtime_error("editor_long_line_buffer_search: search command failed");
+    }
+    context.PumpFrames(2);
+  });
+
+  // Enter cycles to the next match with the widget open (VSCode-style). Each step
+  // reveals a different match, which moves the horizontal scroll offset and
+  // repaints the row's fills against it.
+  context.Measure("long_line_search.next_match_burst", [&] {
+    for (int i = 0; i < 16; ++i) {
+      context.KeyDown(SDLK_RETURN);
+      context.PumpFrames(1);
+    }
+  });
+  context.KeyDown(SDLK_ESCAPE);
+  context.PumpFrames(1);
+}
+
+// Whole-document edit verbs on a line with no line breaks in it: select all, cut,
+// paste, undo, redo. The same five the Moby-Dick workout drives, on the file shape
+// where "the affected line" is the whole document -- so the undo entry, the
+// clipboard round-trip and the buffer splice are each megabyte-scale, and an entry
+// that has to be widened from the column form to the line form is a full copy.
+//
+// The net effect is the identity transform, so the byte count must come back
+// unchanged whether or not the headless clipboard round-trips; that doubles as a
+// corruption check.
+void RunEditorLongLineSelectAllEdit(ScenarioContext& context) {
+  editor::TextViewport* viewport =
+      OpenMinifiedFixtureOrSkip(context, "editor_long_line_select_all_edit");
+  if (viewport == nullptr) {
+    return;
+  }
+  const std::size_t original_bytes = viewport->lines().front().size();
+  viewport->MoveCursorTo(0, 0, false);
+  context.PumpFrames(2);
+
+  context.Measure("long_line_edit.select_all", [&] {
+    context.KeyDown(SDLK_A, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("long_line_edit.cut", [&] {
+    context.KeyDown(SDLK_X, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("long_line_edit.paste", [&] {
+    context.KeyDown(SDLK_V, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("long_line_edit.undo", [&] {
+    context.KeyDown(SDLK_Z, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+  context.Measure("long_line_edit.redo", [&] {
+    context.KeyDown(SDLK_Y, SDL_KMOD_CTRL);
+    context.PumpFrames(1);
+  });
+
+  if (viewport->lines().empty() || viewport->lines().front().size() != original_bytes) {
+    throw std::runtime_error(
+        "editor_long_line_select_all_edit: buffer corrupted after select-all/cut/paste/undo/redo");
+  }
+
+  // A grouped edit is the one path that widens a column-scoped undo entry back to
+  // the line form, which costs a full copy of the line. Typing inside a selection
+  // that spans the whole line is the ordinary way to reach it.
+  viewport->MoveCursorTo(0, original_bytes / 2, false);
+  context.PumpFrames(1);
+  context.Measure("long_line_edit.replace_selection_burst", [&] {
+    for (int i = 0; i < 8; ++i) {
+      context.KeyDown(SDLK_LEFT, SDL_KMOD_SHIFT);
+      context.Type("z");
+      context.PumpFrames(1);
+    }
+  });
+}
+
 // Same burst as above, on the FIRST line instead of the middle of the file.
 //
 // This exists because the two were not the same cost and nothing measured the
@@ -1013,6 +1187,36 @@ const ScenarioRegistration g_perf_editor_typing_minified_line({Scenario{
     // it. 1% is 50x the observed noise and still fails on that.
     .tolerance_alloc_p50_percent = 1.0,
     .run = RunEditorTypingMinifiedLine,
+}});
+// The three long-line scenarios share `editor_typing_minified_line`'s reasoning
+// for both settings: one warmup iteration because the project's cold open and the
+// buffer's first layout build dwarf the measured work, and a 1% allocation
+// envelope because allocations are the oracle for this file shape -- they scale
+// with how many times a path walks the line, which is exactly the regression these
+// exist to catch, and the default 10% is wide enough to pass one.
+const ScenarioRegistration g_perf_editor_long_line_horizontal_scroll({Scenario{
+    .name = "editor_long_line_horizontal_scroll",
+    .smoke = false,
+    .baseline_gated = true,
+    .warmup_iterations = 1,
+    .tolerance_alloc_p50_percent = 1.0,
+    .run = RunEditorLongLineHorizontalScroll,
+}});
+const ScenarioRegistration g_perf_editor_long_line_buffer_search({Scenario{
+    .name = "editor_long_line_buffer_search",
+    .smoke = false,
+    .baseline_gated = true,
+    .warmup_iterations = 1,
+    .tolerance_alloc_p50_percent = 1.0,
+    .run = RunEditorLongLineBufferSearch,
+}});
+const ScenarioRegistration g_perf_editor_long_line_select_all_edit({Scenario{
+    .name = "editor_long_line_select_all_edit",
+    .smoke = false,
+    .baseline_gated = true,
+    .warmup_iterations = 1,
+    .tolerance_alloc_p50_percent = 1.0,
+    .run = RunEditorLongLineSelectAllEdit,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",
