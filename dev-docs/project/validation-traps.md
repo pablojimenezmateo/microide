@@ -328,6 +328,57 @@ allocation envelope would have passed the +7.7% regression that
 one fix's worth of the regression and confirm the gate goes red — it did, at
 +1.93%.
 
+### A differential test whose control shares the code path is only a consistency check
+
+On 2026-08-05, three row match-fill loops were changed to narrow their span list by
+the row's visible columns instead of only by its line. The risk of any narrowing is
+the opposite failure — dropping something that should have been drawn — so the
+change came with a pixel differential: render the scrolled row, render the same
+bytes unscrolled as a control, require the two identical.
+
+**Three of four deliberately injected bound bugs passed it.** The control goes
+through the same production narrowing, so a bound that is wrong the *same way on
+both sides* loses the same fills in both renders and the two still match. The
+differential catches asymmetric bugs and is structurally blind to symmetric ones —
+which is the class an off-by-one or a too-tight bound most often produces.
+
+The second attempt was no better: count pixels painted in the highlight color.
+Highlight fills are alpha-blended and then overpainted by glyphs, so the color
+never appears literally and the count is always zero.
+
+What works is an oracle that does not touch the code under test: compute each
+in-window match's cell position from `ComputeMetrics` and the char width, then
+assert each one changed pixels against a render of the same frame with no matches
+at all. All six injected bound bugs fail that.
+
+Generalising: **when a change makes something narrower, the reference has to be
+something that could not have been narrowed.** A second run of the same code with
+different inputs is not one. Ask what would still be true if the new bound were
+wrong in both directions at once — if the test would still pass, it is measuring
+self-consistency, not correctness.
+
+The same run is also the source of the sibling rule in
+`### A bound in lines is not a bound on work` below.
+
+### A bound in lines is not a bound on work
+
+Two independent stalls in the same 2026-08-05 sweep were both "we already bounded
+this", with the bound in the wrong unit:
+
+- `FindBracketMatch` bounds its scan by `max_lines_each_side` (2000). On a file
+  with no line breaks in it, two thousand lines is the whole document, so one
+  arrow key next to the closing bracket read megabytes — 1.7 ms per caret move.
+- The bracket matchers' string/comment suppression is a per-LINE question asked
+  per COLUMN, so a scan cost one highlight-cache probe per BYTE: 12,584,364 of
+  them across 40 frames.
+
+A bound expressed in lines, rows, entries or elements bounds work only if those
+units have bounded size. When the unit is user-controlled — a line, a match, a
+directory entry, a terminal row — state the bound in bytes as well, and size it
+against the widest realistic input rather than a round number
+(`kMaxBracketMatchScanBytes` is 512 KiB because the 50k-line C++ fixture's full
+2000-line window measures ~326 KB).
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit

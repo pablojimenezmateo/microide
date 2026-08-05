@@ -181,6 +181,42 @@ re-measures short lines against the width table, so the "every content edit eith
 splices this table or drops it" invariant the whole thing now rests on cannot rot
 quietly. Every one of these was confirmed to fail with its fix reverted.
 
+### TD-2026-08-05-134 — the long-line coverage sweep: every other interaction with a file that has no line breaks in it. [RESOLVED 2026-08-05.]
+
+TD-2026-08-05-130/131/132 all existed because no fixture in the tree had a long
+line. Closing that for *typing* left the hole open for every other interaction, so
+three scenarios were added first and then read: `editor_long_line_horizontal_scroll`
+(96.2 -> 22.8 ms), `editor_long_line_buffer_search` (33.0 -> 17.8 ms),
+`editor_long_line_select_all_edit` (22.8 -> 17.6 ms). All with byte-identical
+allocation counts, which is what says the wins are algorithmic.
+
+Two mistakes, each made in several places, and both worth recognising by shape:
+
+**A bound in the wrong unit.** Bracket matching bounds its scan by
+`max_lines_each_side`, which bounds work only if lines are bounded — so one arrow
+key next to a minified bundle's closing bracket read the whole file. And its
+string/comment suppression, a per-LINE question, was asked per COLUMN: 12,584,364
+highlight-cache probes across 40 frames, one per byte of the document per caret
+move. Fixed with a per-line cursor and `kMaxBracketMatchScanBytes` (512 KiB,
+sized against the 50k-line fixture's ~326 KB 2000-line window).
+
+**Narrowing by line, on a document with one line.** All three row match-fill loops
+(regex fragments, the literal Ctrl+F cache, occurrences) binary-searched to the
+current line and then resolved every span on it before clipping it away; the
+occurrence *scan* likewise read every visible line end to end for a consumer that
+clips to the window. All four now bound by the row's visible source-byte window.
+
+The testing lesson is the durable part, and it is in
+`dev-docs/project/validation-traps.md`: a pixel differential whose control goes
+through the same production code passes when a bound is wrong the SAME way on both
+sides. Three of four injected bound bugs survived that design. The check that works
+computes each in-window match's cell position independently and asserts it changed
+pixels against a no-matches render.
+
+Instrumentation left behind: `EditorViewRenderer::Render::BracketMatch` and
+`WorkspaceShell::Render::BuildEditorViewModel`, both of which ran every frame, were
+the largest cost in their parent, and had no scope of their own.
+
 ### TD-2026-08-05-133 — the renderer needs the edited line as one contiguous view, which costs a full copy of it per keystroke. OPEN.
 
 The one line-sized copy left on the edit path, deferred here by

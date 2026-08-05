@@ -25,6 +25,100 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-05 (fourth pass) the rest of the long-line interactions (perf-runner-v1)
+
+The three passes below fixed *typing* on a file with no line breaks in it. Nothing
+measured any other interaction with that shape, which is the same coverage hole
+that made TD-2026-08-05-130/131/132 possible in the first place. Three scenarios
+were added first -- horizontal scroll, buffer search, and the whole-document edit
+verbs -- and then read.
+
+| scenario | at first measurement | now |
+| --- | --- | --- |
+| `editor_long_line_horizontal_scroll` | 96.2 ms | 22.8 ms (4.2x) |
+| `editor_long_line_buffer_search` | 33.0 ms | 17.8 ms (1.9x) |
+| `editor_long_line_select_all_edit` | 22.8 ms | 17.6 ms |
+
+Every fix below has **byte-identical allocation counts** before and after, which is
+what says the change is algorithmic rather than machine noise.
+
+### A line-count bound is not a bound on work
+
+The first scenario reported **12,584,364 calls to `HighlightedLineTokens`** across
+40 frames. Whether a bracket is inside a string or comment is a per-LINE question,
+but the bracket matchers walk a line byte by byte and asked it per COLUMN — so
+every byte re-resolved the line's token vector through the highlight LRU. On
+ordinary source that is a few dozen probes. On this shape it is one probe per byte
+of the document, per caret move.
+
+Behind it was the same mistake one level up: `FindBracketMatch` bounds its scan by
+`max_lines_each_side`, which bounds work only if lines are bounded. Press End next
+to a minified bundle's closing bracket and one arrow key read the whole file —
+1.7 ms, per keystroke. `kMaxBracketMatchScanBytes` is that bound in the unit that
+costs, chosen against the widest realistic window: the 50k-line C++ fixture
+averages 163 bytes a line, so its full 2000-line window is ~326 KB, and the cap
+sits at 512 KiB.
+
+**Generalizable:** a bound expressed in lines, rows, or entries is a bound on work
+only if those units have bounded size. Both bugs here were "we already bounded
+this" — and both bounds were in the wrong unit.
+
+### Narrowing by line is not narrowing when there is one line
+
+Three separate loops build a row's match fills (explicit regex fragments, the
+literal Ctrl+F scan cache, and the occurrence highlight). All three binary-searched
+their span list down to the current LINE and then resolved every span on it against
+the row's cell grid before clipping it away. On a one-line document that is every
+match in the file, per visible row, per frame — the whole of `BuildDecoratedRow`'s
+cost at 45 us a row.
+
+All three now bound the slice by the row's visible source-byte window, which
+`row_layout.source_columns` already carries.
+
+The occurrence *scan* had the same shape a level earlier: it read every visible
+line end to end, and its only consumer is the fill loop that clips to the window.
+Since the needle is the word under the caret, a word-motion keystroke re-lowercased
+and re-searched a megabyte. It is now bounded to the same window (soft wrap keeps
+the full scan, because there the whole line really is visible).
+
+### What it took to test the narrowing honestly
+
+The risk of any narrowing is dropping something that should have been drawn, and
+the first two test designs could not see that:
+
+- **A pixel differential against the same text rendered unscrolled passes when the
+  bound is wrong the same way on both sides.** The control goes through the same
+  production code and loses the same fills. Three of four injected bound bugs
+  survived it.
+- **An exact-color pixel count finds nothing**: highlight fills are alpha-blended
+  and then overpainted by glyphs, so the color never appears literally.
+
+What works is computing each in-window match's cell position *independently* — from
+`ComputeMetrics` and the char width, not from the code under test — and asserting
+each one changed pixels against a no-matches render of the same frame. All six
+injected bound bugs fail it.
+
+**Generalizable:** a differential test whose reference shares the code path under
+test is only a consistency check. It catches asymmetric bugs and is blind to
+symmetric ones, which is the class a bounds change most often produces.
+
+### A coupling this created, on purpose
+
+The occurrence scan window and the row paint window are both
+`viewport.visible_columns()`. They agree only because
+`RenderActiveWorkspaceSurface` applies the render metrics to the viewport before
+building the view model. The regression mirrors that ordering explicitly and says
+why — it was previously sizing the viewport by hand and passing for the wrong
+reason, which is how the change caught it.
+
+### Instrumentation added
+
+`EditorViewRenderer::Render::BracketMatch` and
+`WorkspaceShell::Render::BuildEditorViewModel`. Both ran on every frame, both were
+the largest cost in their parent, and both sat inside a parent's self time with no
+scope of their own — which is why a scan reading megabytes per keystroke had never
+appeared in a ranking.
+
 ## 2026-08-05 (third pass) closing the render and folding paths on a long line (perf-runner-v1)
 
 The two passes below took the *edit* path on a file with no line breaks in it from
