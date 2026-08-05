@@ -464,6 +464,43 @@ void TestProjectSearchServiceFlagsTruncatedLargeResultSets() {
          "count-all project search should report every match across all files");
 }
 
+// Regression: the display cap is reached by *filling it exactly*, with candidate
+// files still unclaimed.
+//
+// One match per file, cap+10 files. Whichever worker stores the 200th match leaves
+// `matches_found` sitting at exactly the cap, so every other worker fails the claim
+// loop's guard and exits without ever attempting an over-cap match — the only thing
+// that used to set the flag. Ten files were then never scanned while the sidebar
+// reported a complete result set, and `ReplaceAll` reasoned about a set it had been
+// told was whole. Truncation must now be concluded from the unclaimed files instead.
+//
+// Pinned to ONE worker on purpose. With the machine's full worker count several
+// workers are mid-file when the cap fills, so one of them does attempt an over-cap
+// match and the old in-loop flag fires — the test then passes against the bug and
+// proves nothing (verified: it passed five for five with the fix disabled). A single
+// worker reaches the cap on file 199 and re-tests the claim guard before touching
+// file 200, which is the exact-fill boundary with nothing else to mask it. That is
+// also what TSAN's scheduling produced in CI on the many-worker path.
+void TestProjectSearchServiceFlagsTruncationWhenCapFillsExactly() {
+  const ScopedEnvVar single_worker("MICROIDE_SEARCH_WORKER_LIMIT", "1");
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  constexpr int kMatchFiles = 210;  // kMaxProjectSearchResults (200) + 10
+  for (int i = 0; i < kMatchFiles; ++i) {
+    WriteFile(root / ("m_" + std::to_string(i) + ".txt"), "needle\n");
+  }
+
+  const auto capped = RunProjectSearch(root, "needle");
+  Expect(capped.finished, "exact-cap project search should finish");
+  Expect(capped.error.empty(), "exact-cap project search should not error");
+  Expect(capped.final_total_files == static_cast<std::size_t>(kMatchFiles),
+         "exact-cap project search should be given every match file as a candidate");
+  Expect(capped.results.size() == 200,
+         "exact-cap project search should publish exactly the display cap");
+  Expect(capped.truncated,
+         "filling the display cap with candidate files left unscanned must flag truncation");
+}
+
 // Regression: count-all must report the EXACT total even when the overwhelming
 // majority of matches fall past the display cap. Past the cap the engine counts
 // matches in a per-worker local (folded into the shared counter once at worker exit)
@@ -846,6 +883,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServicePublishesStableResultOrdering);
   AddTest(tests, "ProjectSearchService/FlagsTruncatedLargeResultSets",
           TestProjectSearchServiceFlagsTruncatedLargeResultSets);
+  AddTest(tests, "ProjectSearchService/FlagsTruncationWhenCapFillsExactly",
+          TestProjectSearchServiceFlagsTruncationWhenCapFillsExactly);
   AddTest(tests, "ProjectSearchService/CountAllExactTotalFarPastCap",
           TestProjectSearchServiceCountAllExactTotalFarPastCap);
   AddTest(tests, "ProjectSearchService/RestartPublishesOnlyLatestRun",

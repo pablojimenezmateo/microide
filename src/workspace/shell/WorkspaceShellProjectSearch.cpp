@@ -193,6 +193,12 @@ void WorkspaceShell::ConsumeProjectSearchUpdates() {
 
   for (auto& result : update.results) {
     if (shell_results.size() >= kMaxProjectSearchResults) {
+      // Dropping a published match here IS truncation, whoever noticed first. The
+      // worker caps its own stores at the same number so this should not normally
+      // fire, but a silent `break` would leave the sidebar claiming a complete
+      // result set while discarding matches — the one failure mode the flag exists
+      // to prevent. Flag it at the point of loss rather than trusting the producer.
+      search.truncated = true;
       break;
     }
     shell_results.push_back(std::move(result));

@@ -545,6 +545,24 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
   // Final progress publish so the finish update carries an accurate denominator
   // and a matching searched count.
   PublishProgress(run_id, files_visited.load(std::memory_order_relaxed), total_files);
+  // Truncation by *unclaimed files*, not just by an over-cap match.
+  //
+  // The in-loop flag above only fires when some worker actually attempts a match
+  // while the counter already sits at the cap. When the last stored match fills
+  // the cap exactly, that never happens: every other worker re-tests the claim
+  // loop's `matches_found < kMaxProjectSearchResults` guard, sees it false, and
+  // exits without ever claiming — let alone scanning — the files past the cursor.
+  // Those files were never searched, so the published set is a prefix of the true
+  // result set and the UI must say so. 210 files holding one match each hit this
+  // exactly (WorkspaceShell/ReplaceAllFallsBackWhenResultsTruncated flaked on it
+  // under TSAN's slower scheduling, and it was misread as a test-only race twice).
+  //
+  // `next_file` is the claim cursor: every index below it was claimed by some
+  // worker, and everything from it up to `total_files` was not.
+  if (matches_found.load(std::memory_order_relaxed) >= kMaxProjectSearchResults &&
+      next_file.load(std::memory_order_relaxed) < total_files) {
+    truncated.store(true, std::memory_order_relaxed);
+  }
   // Report the exact total only for count-all runs; a default early-stop run does
   // not scan past the cap and therefore cannot know it.
   return SearchCompletion{
