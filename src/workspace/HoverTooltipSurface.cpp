@@ -67,12 +67,17 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   };
 
   // 1) Project tab strip, 2) editor tab strip: the tab's full path.
-  const auto strip_hit = [&](const SDL_FRect& strip,
-                             const std::vector<VisibleStripTab>& tabs) -> TooltipHit {
+  //
+  // `compute_tabs` is a callable, not a vector: this runs once per painted frame
+  // (RenderHoverTooltip), and passing the vector by value meant both strips were
+  // laid out — one std::vector<VisibleStripTab> with a tooltip-label string per
+  // tab — on every frame, before the containment test that discards them. The
+  // mouse is over a tab strip for a vanishing fraction of frames.
+  const auto strip_hit = [&](const SDL_FRect& strip, auto&& compute_tabs) -> TooltipHit {
     if (!Contains(strip, x, y)) {
       return {};
     }
-    for (const VisibleStripTab& tab : tabs) {
+    for (const VisibleStripTab& tab : compute_tabs()) {
       if (Contains(tab.rect, x, y)) {
         return hit(tab.tooltip_label, tab.rect);
       }
@@ -80,10 +85,12 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     return {};
   };
 
-  TooltipHit found = strip_hit(layout.project_tab_strip,
-                               tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip));
+  TooltipHit found = strip_hit(layout.project_tab_strip, [&] {
+    return tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+  });
   if (!found && !context_.current_project_state.root.empty()) {
-    found = strip_hit(layout.tab_strip, tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip));
+    found = strip_hit(layout.tab_strip,
+                      [&] { return tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip); });
   }
 
   // 3) Breadcrumb status items (plugin-contributed and built-in).

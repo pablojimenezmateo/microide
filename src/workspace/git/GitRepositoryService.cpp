@@ -6,6 +6,7 @@
 #include <utility>
 
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "project/GitCommandUtil.h"
 #include "project/GitCompareService.h"
 #include "project/GitPorcelainV2Parser.h"
 #include "project/GitRepository.h"
@@ -91,7 +92,11 @@ void GitRepositoryService::MarkStale() {
 }
 
 bool GitRepositoryService::IsGitRepoValid(const std::filesystem::path& project_root) {
-  return project::GitRepository(project_root).IsValid();
+  // The marker probe directly, not through a GitRepository: constructing one
+  // copies the path and runs lexically_normal() on it (~12 allocations), and the
+  // status bar calls this once per painted frame for any project with no git
+  // snapshot yet. `exists()` does not care whether the path is normalized.
+  return project::internal::HasGitMarker(project_root);
 }
 
 void GitRepositoryService::SetRepositoryStateProviderForTesting(
