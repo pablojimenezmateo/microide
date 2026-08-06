@@ -44,13 +44,20 @@
 namespace microide::tests::perf {
 namespace {
 
+// Measured iterations per scenario unless --iterations says otherwise, and the
+// floor for writing a baseline. Both uses are the same fact: the committed
+// baselines describe a ten-iteration run, and a metric averaged over a settling
+// series is only comparable against one recorded the same way
+// (TD-2026-08-06-148).
+inline constexpr std::size_t kDefaultIterations = 10;
+
 struct CliOptions {
   std::vector<std::string> scenarios;
   bool update_baseline = false;
   bool smoke = false;
   bool require_fixtures = false;
   bool keep_artifacts = false;
-  std::size_t iterations = 10;
+  std::size_t iterations = kDefaultIterations;
   std::optional<std::filesystem::path> report_json;
   std::optional<std::filesystem::path> report_text;
   std::optional<std::string> reference_runner;
@@ -1524,6 +1531,12 @@ util::JsonValue ToJson(const Aggregate& aggregate,
           {"delta_percent", MetricDeltaPercent(metric)},
           {"envelope_used_percent", EnvelopeUsedPercent(metric)},
           {"passed", metric.passed},
+          // A metric can be measured, reported, and still not decide the run.
+          // A report that records only `passed` cannot tell a gate that held
+          // from one that was declined, which is the whole shape of a vacuous
+          // gate (validation-traps.md).
+          {"enforced", metric.enforced},
+          {"note", metric.note},
       });
     }
     baseline_json = util::JsonObject{
@@ -1643,6 +1656,18 @@ int main(int argc, char** argv) {
     std::cerr << "--update-baseline is only valid on the dummy video reference lane; "
                  "a windowed run (--video=" << run_options.video_driver
               << ") measures window-system present cost and is advisory\n";
+    return 1;
+  }
+  // A baseline recorded over fewer iterations than the gate will run is a gate
+  // that can never be held — the p95s land on a cold pass, and the resident mean
+  // records the settling series (memory: perf-baseline-drift-and-iteration-count,
+  // TD-2026-08-06-148). Same class of mistake as writing baselines from the GPU or
+  // windowed lane, so it is refused the same way rather than warned about.
+  if (options->update_baseline && options->iterations < kDefaultIterations) {
+    std::cerr << "--update-baseline requires at least " << kDefaultIterations
+              << " iterations (got --iterations=" << options->iterations
+              << "); a baseline recorded over a shorter run records the settling passes and "
+                 "cannot be held by a default-length run\n";
     return 1;
   }
   const auto stale_baselines = FindStaleBaselineScenarios(PerfHarness::RegisteredScenarios());
@@ -1823,6 +1848,12 @@ int main(int argc, char** argv) {
       // number that silently meant "measured on a core that happened to be at
       // 5.1 GHz" (TD-2026-08-05-137).
       record.has_calibration = aggregate->metrics.p50_cpu_calibration_ns > 0.0;
+      // What the resident mean was averaged over, so a later short run is
+      // declined instead of gated against an incomparable number
+      // (TD-2026-08-06-148). From the aggregate, not from --iterations: a
+      // scenario that ran fewer iterations than requested must record what it
+      // actually measured.
+      record.iterations = aggregate->iterations.size();
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
         return 1;
@@ -1854,7 +1885,7 @@ int main(int argc, char** argv) {
     // that says nothing about the code.
     bool enforced_failure = false;
     for (const MetricComparison& metric : comparison.metrics) {
-      if (metric.passed) {
+      if (metric.passed || !metric.enforced) {
         continue;
       }
       if (windowed_lane && metric.metric.find("wall") != std::string::npos) {
@@ -1897,13 +1928,25 @@ int main(int argc, char** argv) {
            << "]";
       return note.str();
     }();
+    // Any per-metric annotation the comparison attached: today, a resident gate
+    // that was declined or loosened because this run's iteration count does not
+    // match the baseline's. Printed on every verdict, pass or fail — an
+    // unenforced gate that only shows up in a failing run is a gate nobody knows
+    // stopped gating (TD-2026-08-06-148).
+    std::string metric_notes;
+    for (const MetricComparison& metric : comparison.metrics) {
+      if (metric.note.empty()) {
+        continue;
+      }
+      metric_notes += "  [" + metric.note + "]";
+    }
     std::cerr << "[perf] " << verdict << ' ' << scenario.name << " (p50_wall="
               << aggregate->metrics.p50_wall_ms << "ms, p50_alloc="
               << aggregate->metrics.p50_allocations << ")" << clock_note << calibration_note
-              << "\n";
+              << metric_notes << "\n";
     if (!comparison.passed) {
       for (const MetricComparison& metric : comparison.metrics) {
-        if (metric.passed) {
+        if (metric.passed || !metric.enforced) {
           continue;
         }
         const bool advisory_metric =
@@ -2031,6 +2074,11 @@ int main(int argc, char** argv) {
       for (const MetricComparison& metric : comparison.metrics) {
         if (!metric.passed) {
           continue;  // Already reported in full by the FAIL verdict above.
+        }
+        if (!metric.enforced) {
+          // No envelope to consume: the comparison was declined, and ranking it
+          // by how close it came would read as a gate under pressure.
+          continue;
         }
         const double used = EnvelopeUsedPercent(metric);
         if (used < kEnvelopeNoticePercent) {

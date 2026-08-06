@@ -439,6 +439,21 @@ def _recompute_metrics(iterations: list[dict]) -> dict[str, float]:
         out[f"p50_{key}"] = _percentile(values, 0.50)
         out[f"p95_{key}"] = _percentile(values, 0.95)
         out[f"max_{key}"] = max(values)
+    # The trimmed mean is the ONE resident statistic the gate enforces, and the
+    # merge dropped it: p50 was shown to be both unstable and outright blind for
+    # this metric (0 on a scenario retaining a megabyte an iteration,
+    # TD-2026-08-05-136), so an A/B that reported only the percentiles could not
+    # see a resident regression that the gate would then fail on.
+    #
+    # Same statistic as the harness (mean with the single largest sample dropped),
+    # with one difference worth knowing: a merged side concatenates iterations from
+    # several chunk processes, so it carries several cold passes and only one is
+    # dropped. That biases both sides identically, which is what a comparison
+    # needs; it is not a substitute for the harness's own number.
+    rss = series("rss_growth_bytes")
+    if rss:
+        trimmed = sorted(rss)[:-1] if len(rss) >= 3 else rss
+        out["mean_rss_growth_bytes"] = sum(trimmed) / len(trimmed)
     return out
 
 
@@ -491,6 +506,9 @@ METRICS: list[tuple[str, str]] = [
     ("p50_cpu_ms", "ms"),
     ("p95_cpu_ms", "ms"),
     ("max_cpu_ms", "ms"),
+    # The gated one first: p50/p95/max stay for diagnosis, but the trimmed mean is
+    # the statistic that decides a resident gate, so it is the one to read.
+    ("mean_rss_growth_bytes", "bytes"),
     ("p50_rss_growth_bytes", "bytes"),
     ("p95_rss_growth_bytes", "bytes"),
     ("max_rss_growth_bytes", "bytes"),

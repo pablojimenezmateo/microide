@@ -766,7 +766,57 @@ Note `--update-baseline` rewrites tolerances from the `Scenario` struct, so any
 hand-widened envelope in the four above is reset by the pass — check before, not
 after.
 
-### TD-2026-08-06-148 — `typing_large_file`'s RSS gate rides its envelope, and the verdict depends on `--iterations`. OPEN.
+### TD-2026-08-06-148 — `typing_large_file`'s RSS gate rides its envelope, and the verdict depends on `--iterations`. [RESOLVED 2026-08-06 — item 2 fixed; item 1 folded into 147's rebaseline.]
+
+**What shipped.** The second option the entry offered, not the first: a baseline
+now records the iteration count it was captured over, and a run shorter than that
+does not gate `mean_rss_growth_bytes`.
+
+Making the trim *proportional* was considered and rejected, because it does not
+work. The series settles rather than carrying outliers — per-iteration growth
+decays — so a mean over iterations `1..N-1` falls with `N` no matter what fraction
+is trimmed. Worked through on a harmonic decay, dropping the top 25% instead of the
+top 1 gives 0.2375A at N=6 and 0.1565A at N=10: still a different number, so the
+verdict would still depend on `--iterations`. Nothing short of a tail-only
+statistic is iteration-count-stable, and that throws away the coverage the trimmed
+mean exists for (a scenario that retains on *some* iterations —
+TD-2026-08-05-136). Declining an incomparable comparison is the honest move.
+
+Four parts:
+
+- `BaselineRecord::iterations`, written as `"iterations"` at the root of the
+  baseline JSON. Omitted rather than zeroed when unknown, so a baseline predating
+  the field gates exactly as it did.
+- A short run reports `mean_rss_growth_bytes` and annotates it
+  `NOT ENFORCED: this run averaged 6 iterations against a baseline recorded over
+  10 …`. `MetricComparison` grew `enforced` + `note` for this; an unenforced metric
+  never turns a scenario red, is excluded from the headroom ranking (it has no
+  envelope to consume), and is recorded in `--report-json` — a report that carries
+  only `passed` cannot tell a gate that held from one that was declined.
+- The note prints on **passing** verdict lines too. A longer-than-baseline run
+  stays gated (it can only read low) and gets its own `resident gate is loose` note.
+- `--update-baseline` now refuses `--iterations` below 10 outright, the same way it
+  refuses the GPU and windowed lanes. A baseline recorded short bakes the settling
+  passes into every metric and records p95s the gate can never hold
+  (perf-baseline-drift-and-iteration-count).
+
+**One thing found on the way, and it was the bigger hole.** `tools/perf-compare.py`
+— the vs-main oracle, the tool the whole repo is told to trust over the committed
+baselines — never reported `mean_rss_growth_bytes` at all. Its merge step
+recomputed p50/p95/max from the concatenated iterations and silently dropped the
+mean, so the A/B was blind to a resident regression *in exactly the metric the gate
+enforces*, and TD-2026-08-05-136 had already established that the percentiles it
+did report are unstable (1.76x across three runs of one binary) and sometimes
+outright blind (p50 of 0 on a scenario retaining ~972 KB an iteration). Now
+computed and reported first among the resident rows.
+
+Item 1 — the baseline sitting ~13% below what the code does — is a stale number,
+not a mechanism, and is fixed by [TD-2026-08-06-147](#td-2026-08-06-147)'s
+full-suite rebaseline. That pass is also what puts an `"iterations"` count into the
+committed set; until a baseline is re-recorded the new guard is inert on it, by
+design.
+
+The original entry follows.
 
 `mean_rss_growth_bytes` for `typing_large_file` has a baseline of **80,555** and a
 +25% envelope (100,693). Measured at HEAD, five runs a side, on the same quiet

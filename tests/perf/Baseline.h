@@ -50,6 +50,19 @@ struct BaselineRecord {
   // (`metrics.p50_cpu_calibration_ns`). Baselines written before that field
   // existed did not, and they compare unnormalised exactly as they did before.
   bool has_calibration = false;
+  // How many measured iterations this baseline was recorded over. Zero on a
+  // baseline written before the field existed, which leaves it comparing exactly
+  // as it did.
+  //
+  // Only ONE metric needs it, and it is not a rounding detail:
+  // `mean_rss_growth_bytes` is a trimmed mean over a SETTLING series, so its
+  // value depends on how many iterations the run averaged. typing_large_file
+  // read 84-95 KB at 10 iterations and 100-114 KB at 6 — a red gate at 6 and a
+  // green one at 10, same binary, same box, with the failure line saying
+  // "measured=113869 (+41%)" and nothing about the sample size
+  // (TD-2026-08-06-148). Comparing a short run against a long baseline is not a
+  // measurement, so CompareToBaseline declines to gate it and says why.
+  std::size_t iterations = 0;
 };
 
 // Ceiling on the clock-normalisation factor, in either direction. A machine
@@ -71,6 +84,19 @@ struct MetricComparison {
   // Equal to `actual` for every other metric. Reported so a verdict line can say
   // both what was measured and what it was worth on the baseline's machine state.
   double raw_actual = 0.0;
+  // False when the metric was measured and reported but deliberately NOT gated,
+  // because the run cannot be compared against this baseline for that metric
+  // (today: a resident gate on a run shorter than the baseline it would be
+  // compared against — see BaselineRecord::iterations). `passed` still carries
+  // the raw arithmetic so the number is readable, but an unenforced metric never
+  // turns BaselineComparison::passed red. Callers ranking headroom must skip
+  // these: an unenforced metric has no envelope to consume.
+  bool enforced = true;
+  // Human-readable reason attached to this metric, printed on the verdict line.
+  // Set whenever `enforced` is false, and also on an enforced-but-noteworthy
+  // comparison (a longer run than the baseline, which reads a gate loose).
+  // Empty on the ordinary case, so a clean run says nothing.
+  std::string note;
 };
 
 // How a run's clock compared to the clock the baseline was captured at, and what

@@ -390,6 +390,135 @@ void TestPerfBaselineRssNoiseFloorAbsorbsSubPageJitter() {
          "64 MiB of growth over a zero baseline is a real regression, not noise");
 }
 
+// TD-2026-08-06-148: `mean_rss_growth_bytes` is a trimmed mean over a SETTLING
+// series, so its value depends on how many iterations the run averaged --
+// typing_large_file read 84-95 KB at the default 10 iterations and 100-114 KB at
+// 6, one binary, one quiet box. Against its committed baseline that is green at
+// 10 and red about half the time at 6, and the failure said "measured=113869
+// (+41%)" with nothing about the sample size. A short run is not a measurement
+// against a long baseline, so the gate declines it and says so.
+void TestPerfBaselineDeclinesTheResidentGateOnAShortRun() {
+  const auto run_of = [](std::size_t iteration_count, double mean_growth) {
+    perf::Aggregate aggregate;
+    aggregate.scenario_name = "test";
+    aggregate.metrics.mean_rss_growth_bytes = mean_growth;
+    for (std::size_t index = 0; index < iteration_count; ++index) {
+      perf::Iteration iteration;
+      iteration.index = index;
+      aggregate.iterations.push_back(std::move(iteration));
+    }
+    return aggregate;
+  };
+  const auto resident = [](const perf::BaselineComparison& comparison) {
+    for (const perf::MetricComparison& metric : comparison.metrics) {
+      if (metric.metric == "mean_rss_growth_bytes") {
+        return metric;
+      }
+    }
+    Expect(false, "the comparison must report the resident metric at all");
+    return perf::MetricComparison{};
+  };
+
+  // The real numbers from the entry.
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.has_rss_metrics = true;
+  baseline.metrics.mean_rss_growth_bytes = 80'555.0;
+  baseline.tolerances.rss_mean_percent = 25.0;
+  baseline.iterations = 10;
+
+  // The reading that turned the gate red at six iterations. It is genuinely past
+  // the envelope -- the point is that the comparison is meaningless, not that the
+  // arithmetic is wrong.
+  const perf::BaselineComparison short_run =
+      perf::CompareToBaseline(baseline, run_of(6, 113'869.0));
+  const perf::MetricComparison short_metric = resident(short_run);
+  Expect(!short_metric.passed, "the raw arithmetic must still say the reading is out of envelope");
+  Expect(!short_metric.enforced, "but a six-iteration run must not be gated against a ten's baseline");
+  Expect(short_run.passed, "and the scenario must not go red on a comparison that was declined");
+  Expect(short_metric.note.find("6 iterations") != std::string::npos &&
+             short_metric.note.find("10") != std::string::npos,
+         "the note must name both counts, which is the thing the failure line never said");
+  Expect(short_metric.note.find("TD-2026-08-06-148") != std::string::npos,
+         "and point at the analysis");
+
+  // Everything else in the same short run stays gated. Allocation counts do not
+  // care how many iterations were averaged, and exempting them would turn a
+  // --iterations=6 run into a run with no gate at all.
+  perf::Aggregate short_with_alloc_regression = run_of(6, 113'869.0);
+  short_with_alloc_regression.metrics.p50_allocations = 5'000.0;
+  Expect(!perf::CompareToBaseline(baseline, short_with_alloc_regression).passed,
+         "declining the resident gate must not disarm the allocation gates beside it");
+
+  // At the recorded count the gate is live in both directions.
+  const perf::BaselineComparison at_count =
+      perf::CompareToBaseline(baseline, run_of(10, 113'869.0));
+  Expect(resident(at_count).enforced && !at_count.passed,
+         "at the baseline's own iteration count the same reading must fail");
+  Expect(resident(at_count).note.empty(),
+         "and an ordinary comparison must say nothing at all");
+  Expect(perf::CompareToBaseline(baseline, run_of(10, 92'000.0)).passed,
+         "a reading inside the envelope at the recorded count still passes");
+
+  // A LONGER run reads lower, so the gate can only get looser. Still enforced --
+  // it can only produce false greens, never false reds -- but said out loud,
+  // because a gate nobody knows is loose is how a baseline set goes vacuous.
+  const perf::BaselineComparison long_run =
+      perf::CompareToBaseline(baseline, run_of(25, 113'869.0));
+  Expect(resident(long_run).enforced && !long_run.passed,
+         "a longer run stays gated: it cannot be fooled high by the settling passes");
+  Expect(long_run.metrics.size() == at_count.metrics.size(),
+         "and reports the same metric set");
+  Expect(resident(long_run).note.find("loose") != std::string::npos,
+         "but says the comparison is more permissive than the baseline describes");
+
+  // A baseline written before the field existed carries no count, and must gate
+  // exactly as it did -- otherwise adding the field would silently unenforce the
+  // whole committed set.
+  perf::BaselineRecord unversioned = baseline;
+  unversioned.iterations = 0;
+  const perf::BaselineComparison legacy =
+      perf::CompareToBaseline(unversioned, run_of(6, 113'869.0));
+  Expect(resident(legacy).enforced && !legacy.passed,
+         "a baseline with no recorded iteration count must gate as it always did");
+
+  // Neither must an aggregate that carries only summary metrics (report replay,
+  // and most of the tests in this file) be treated as a zero-iteration run.
+  perf::Aggregate summary_only;
+  summary_only.scenario_name = "test";
+  summary_only.metrics.mean_rss_growth_bytes = 113'869.0;
+  const perf::BaselineComparison replayed = perf::CompareToBaseline(baseline, summary_only);
+  Expect(resident(replayed).enforced && !replayed.passed,
+         "an aggregate with no per-iteration detail must not read as a short run");
+}
+
+// The iteration count survives a Save -> Load round trip, and is omitted rather
+// than zeroed when unknown. A zero that came back as "recorded over 0 iterations"
+// would make every run longer than its baseline and annotate the whole suite.
+void TestPerfBaselineIterationCountRoundTrip() {
+  TemporaryDirectory temp;
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.has_rss_metrics = true;
+  baseline.metrics.mean_rss_growth_bytes = 80'555.0;
+  baseline.iterations = 10;
+
+  const std::filesystem::path path = temp.path() / "iterations.json";
+  Expect(perf::SaveBaseline(path, baseline), "a baseline with an iteration count should save");
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value(), "and load back");
+  Expect(loaded->iterations == 10, "with the iteration count intact");
+
+  perf::BaselineRecord unknown = baseline;
+  unknown.iterations = 0;
+  const std::filesystem::path absent = temp.path() / "no_iterations.json";
+  Expect(perf::SaveBaseline(absent, unknown), "a baseline with no iteration count should save");
+  const std::string text = ReadFile(absent);
+  Expect(text.find("\"iterations\"") == std::string::npos,
+         "an unknown iteration count must be omitted, not written as zero");
+  const std::optional<perf::BaselineRecord> reloaded = perf::LoadBaseline(absent);
+  Expect(reloaded.has_value() && reloaded->iterations == 0,
+         "and come back as unknown rather than as a zero-iteration baseline");
+}
+
 // cpu/rss survive a Save -> Load round trip and come back gated.
 void TestPerfBaselineCpuAndRssRoundTrip() {
   TemporaryDirectory temp;
@@ -808,6 +937,10 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
           TestPerfBaselineGatesCpuAndRssWhenRecorded);
   AddTest(tests, "PerfBaseline/RssNoiseFloorAbsorbsSubPageJitter",
           TestPerfBaselineRssNoiseFloorAbsorbsSubPageJitter);
+  AddTest(tests, "PerfBaseline/DeclinesTheResidentGateOnAShortRun",
+          TestPerfBaselineDeclinesTheResidentGateOnAShortRun);
+  AddTest(tests, "PerfBaseline/IterationCountRoundTrip",
+          TestPerfBaselineIterationCountRoundTrip);
   AddTest(tests, "PerfBaseline/CpuAndRssRoundTrip", TestPerfBaselineCpuAndRssRoundTrip);
   AddTest(tests, "PerfBaseline/UngatedCpuIsOmittedNotZeroed",
           TestPerfBaselineUngatedCpuIsOmittedNotZeroed);

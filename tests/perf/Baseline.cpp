@@ -24,12 +24,15 @@ bool WithinTolerance(double expected, double actual, double tolerance_percent) {
   return actual <= expected + AllowedDelta(expected, tolerance_percent);
 }
 
-void AddMetric(BaselineComparison* out,
-               std::string_view name,
-               double expected,
-               double actual,
-               double tolerance_percent,
-               double raw_actual) {
+// Returns the INDEX of the metric just added, not a reference into the vector:
+// a later AddMetric reallocates, and a caller holding a reference across one is
+// a dangling-pointer bug waiting for the next metric to be added.
+std::size_t AddMetric(BaselineComparison* out,
+                      std::string_view name,
+                      double expected,
+                      double actual,
+                      double tolerance_percent,
+                      double raw_actual) {
   MetricComparison metric{
       .metric = std::string(name),
       .expected = expected,
@@ -42,14 +45,32 @@ void AddMetric(BaselineComparison* out,
     out->passed = false;
   }
   out->metrics.push_back(std::move(metric));
+  return out->metrics.size() - 1;
 }
 
-void AddMetric(BaselineComparison* out,
-               std::string_view name,
-               double expected,
-               double actual,
-               double tolerance_percent) {
-  AddMetric(out, name, expected, actual, tolerance_percent, actual);
+// Stop enforcing a metric that was already added, and say why.
+//
+// The measurement stays in the comparison — it is still the most useful number
+// in the room — but it no longer decides the run. Recomputing `passed` from the
+// remaining enforced metrics rather than flipping the bit keeps one definition
+// of "this scenario is red".
+void Unenforce(BaselineComparison* out, std::size_t index, std::string reason) {
+  out->metrics[index].enforced = false;
+  out->metrics[index].note = std::move(reason);
+  out->passed = true;
+  for (const MetricComparison& entry : out->metrics) {
+    if (entry.enforced && !entry.passed) {
+      out->passed = false;
+    }
+  }
+}
+
+std::size_t AddMetric(BaselineComparison* out,
+                      std::string_view name,
+                      double expected,
+                      double actual,
+                      double tolerance_percent) {
+  return AddMetric(out, name, expected, actual, tolerance_percent, actual);
 }
 
 double ClampNormalizationFactor(double factor, bool* clamped) {
@@ -134,6 +155,53 @@ NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
   return out;
 }
 
+// Decide whether the resident gate is comparable at this run's iteration count,
+// and annotate it either way.
+//
+// `mean_rss_growth_bytes` is a trimmed mean over a series that SETTLES: the first
+// iterations pay arena growth and first-touch faults that later ones do not, so
+// averaging fewer of them reads high. That is not jitter and it does not average
+// out — typing_large_file measured 100-114 KB at `--iterations=6` and 84-95 KB at
+// the default 10, five runs a side on one quiet box, one binary. Against an
+// 80,555 baseline with a +25% envelope that is a red gate half the time at 6 and
+// a comfortable pass at 10, and the failure line said "measured=113869 (+41%)"
+// with nothing to suggest the sample size was the reason (TD-2026-08-06-148).
+//
+// So: a run shorter than the baseline is not compared. Reporting the number and
+// declining to gate it beats a red that means nothing — a developer who drops
+// --iterations to save time gets an explanation, not a bisect.
+//
+// The other direction is left enforced. A LONGER run reads lower, so the gate can
+// only get more permissive, which is a note rather than a failure — but it is
+// still worth saying, because a permissive gate that nobody knows is permissive
+// is how a baseline set goes quietly vacuous (validation-traps.md).
+void AnnotateResidentGateForIterationCount(BaselineComparison* result,
+                                           std::size_t metric_index,
+                                           const BaselineRecord& baseline,
+                                           const Aggregate& aggregate) {
+  const std::size_t measured = aggregate.iterations.size();
+  // Either side unknown: a pre-iteration-count baseline, or an aggregate built
+  // from summary metrics alone (the unit tests, and report replay). Compare as
+  // before rather than inventing a count.
+  if (baseline.iterations == 0 || measured == 0 || measured == baseline.iterations) {
+    return;
+  }
+  std::ostringstream note;
+  if (measured < baseline.iterations) {
+    note << "mean_rss_growth_bytes NOT ENFORCED: this run averaged " << measured
+         << " iterations against a baseline recorded over " << baseline.iterations
+         << ". The statistic is a trimmed mean over a settling series and reads high at "
+            "short counts, so the comparison is not a measurement — rerun with "
+            "--iterations=" << baseline.iterations << " to gate it (TD-2026-08-06-148)";
+    Unenforce(result, metric_index, note.str());
+    return;
+  }
+  note << "resident gate is loose: this run averaged " << measured
+       << " iterations against a baseline recorded over " << baseline.iterations
+       << ", and the trimmed mean falls as iterations rise (TD-2026-08-06-148)";
+  result->metrics[metric_index].note = note.str();
+}
+
 }  // namespace
 
 std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
@@ -199,6 +267,14 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
     record.metrics.p95_rss_growth_bytes = metrics["p95_rss_growth_bytes"].AsDouble();
     record.metrics.max_rss_growth_bytes = metrics["max_rss_growth_bytes"].AsDouble();
   }
+  // How many iterations this baseline averaged. Absent on baselines written
+  // before the field existed; those keep gating the resident mean unconditionally,
+  // exactly as they did, and start declining short runs when they are next
+  // re-recorded.
+  if (IsNumber((*parsed)["iterations"])) {
+    const double iterations = (*parsed)["iterations"].AsDouble();
+    record.iterations = iterations > 0.0 ? static_cast<std::size_t>(iterations) : 0;
+  }
 
   record.tolerances.cpu_p50_percent =
       tolerances["cpu_p50_percent"].AsDouble(record.tolerances.p50_percent);
@@ -239,6 +315,12 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
     metrics["p50_cpu_calibration_ns"] = baseline.metrics.p50_cpu_calibration_ns;
   }
   root["metrics"] = std::move(metrics);
+  // Omitted when unknown, for the same reason the metrics above are: a zero here
+  // would come back as "recorded over 0 iterations", and every run would be
+  // longer than that.
+  if (baseline.iterations > 0) {
+    root["iterations"] = static_cast<std::int64_t>(baseline.iterations);
+  }
   root["tolerances"] = util::JsonObject{
       {"p50_percent", baseline.tolerances.p50_percent},
       {"p95_percent", baseline.tolerances.p95_percent},
@@ -315,7 +397,8 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
     constexpr double kRssNoiseFloorBytes = 64.0 * 1024.0;
     const auto add_rss = [&](std::string_view name, double expected, double actual,
                              double tolerance_percent) {
-      AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual, tolerance_percent);
+      return AddMetric(&result, name, std::max(expected, kRssNoiseFloorBytes), actual,
+                       tolerance_percent);
     };
     // ONE resident gate, on the trimmed mean, deliberately.
     //
@@ -340,8 +423,10 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
     // three runs it is stable where p50 was not: 1.02x on editor_sort_lines_large
     // against 1.14x, 1.12x on editor_surround_multi_caret against 1.68x, 1.001x on
     // merge_scroll_large_fixture. The percentiles stay recorded and reported.
-    add_rss("mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes,
-            aggregate.metrics.mean_rss_growth_bytes, baseline.tolerances.rss_mean_percent);
+    const std::size_t rss_index =
+        add_rss("mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes,
+                aggregate.metrics.mean_rss_growth_bytes, baseline.tolerances.rss_mean_percent);
+    AnnotateResidentGateForIterationCount(&result, rss_index, baseline, aggregate);
   }
   return result;
 }

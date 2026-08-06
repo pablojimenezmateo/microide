@@ -112,6 +112,30 @@ measured. Two more metrics close that:
   `editor_sort_lines_large` against 1.14x, 1.12x on `editor_surround_multi_caret`
   against 1.68x, 1.001x on `merge_scroll_large_fixture`.
 
+  **It is stable across runs, not across `--iterations`.** The series it averages
+  *settles* — the early iterations pay arena growth and first-touch faults later
+  ones do not — so averaging fewer of them reads high. `typing_large_file` measured
+  84–95 KB at the default 10 and 100–114 KB at 6, five runs a side on one quiet box,
+  one binary: green at 10, red about half the time at 6, with the failure line
+  saying `measured=113869 (+41%)` and nothing about the sample size
+  (TD-2026-08-06-148). So the baseline records the count it was captured over
+  (`"iterations"` at the root of the JSON) and the gate uses it:
+
+  - A run **shorter** than the baseline does not gate this metric. It still reports
+    the number, annotated `mean_rss_growth_bytes NOT ENFORCED: …`, on the verdict
+    line of a pass as well as a fail — an unenforced gate that only shows up when
+    something else fails is a gate nobody knows stopped gating.
+  - A run **longer** than the baseline stays gated (it can only read low, i.e.
+    loose) and says so on the verdict line.
+  - `--update-baseline` refuses to run below 10 iterations at all: a baseline
+    recorded over a short run bakes the settling passes into every metric, and the
+    p95s land on a cold pass the gate can then never hold.
+  - A baseline predating the field carries no count and gates exactly as before.
+
+  `tools/perf-compare.py` reports `mean_rss_growth_bytes` too. It did not until
+  TD-2026-08-06-148 — the merge step recomputed only p50/p95/max, so the one A/B
+  oracle in the repo was blind to the one resident statistic the gate enforces.
+
   **Both resident readings are taken on a trimmed heap** (`SettleResidentSet()` →
   `malloc_trim(0)`, at both boundaries, outside the measured window, so it costs
   neither wall nor CPU). Without that the delta measured allocator arena state as
