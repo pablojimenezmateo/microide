@@ -25,6 +25,115 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-06 (sixth pass) opening a file you already have open (perf-runner-v1)
+
+TD-2026-08-06-138 filed a counter reading: `editor.line_width_full_measures` was
+**exactly 2x the document's line count** on ten scenarios that open a large file.
+Its headline said "twice per file open" and it named a hypothesis — indent
+detection landing after the first table is built, so `tab_size` changes and the
+first build is discarded. Both were wrong.
+
+### What the instrumentation said, and why the hypothesis could not have been tested without it
+
+`full_measures` counts lines walked. It cannot distinguish one build from two, and
+it says nothing about what invalidated the previous one. Splitting it fixed that in
+one run: `editor.line_width_table_builds` plus three reason counters that sum to it
+(`_rebuild_cold`, `_rebuild_tab_size`, `_rebuild_line_count`).
+
+`tab_size` never fired. Both builds came out **cold** — the table was *empty* at
+each one, so something wiped it whole in between. And iteration 0 of every scenario
+built it **once**: a genuinely fresh open was never the 2x case.
+
+The perf driver persists across iterations, so iteration 1 onwards *re*-opens a file
+that is already open. That is where the real defect lived.
+
+### Three findings, in order of what they cost
+
+**1. Re-opening an already-open file re-read it from disk.**
+`TabCoordinator::OpenFileInNewTab`'s existing-tab branch called
+`ReloadCleanEditorTabsForPath` unconditionally: read the whole file, build a fresh
+viewport, swap it in, and drop every derived cache the tab held — widths,
+highlights, folds, undo history — to arrive at byte-identical content. That is what
+Ctrl+P to a file you are already looking at did; VSCode focuses the tab. The
+focus-regain sweep `ReloadCleanOpenBuffersFromDisk` paid the same cost once per open
+buffer, on every window focus.
+
+`ReloadEditorTabsForPath` now stats the file first and returns when every open view
+of it already records that signature. mtime+size is the same equality the
+self-write echo suppression in `WorkspaceShellProjectChanges` already trusts. Clean-only
+form only — the from-disk form is the banner's explicit "discard my edits and
+reload", where a dirty buffer's recorded signature can legitimately still match.
+
+**2. A viewport copy deep-copied the width table and then threw it away.**
+`TextViewport`'s copy constructor copied `layout_cache_` and then called
+`InvalidateVisualColumnCache()`. Move construction and move assignment did the same
+to a table they had just stolen for free. The reload copies a viewport twice, which
+is precisely where the second cold build came from.
+
+Widths are a function of the document's bytes and the tab size, and a copy shares
+both — `document_` is a `shared_ptr`. The only thing a copy resets is
+`folding_model_`, and the one product that depends on it is the wrapped-row table
+(also the only place a stale `const FoldingModel*` could alias a later model at the
+same address). So the copy now drops exactly that half, via
+`TextLayoutCache::DropWrappedRowLayouts()`. `SetFoldingModel` had already made this
+distinction, for the same measured reason, one commit family earlier.
+
+**3. `ClampScrollState()` read `MaxVisualColumns()` to clamp an offset already at 0.**
+The clamp can only lower `horizontal_scroll_`, so at 0 the answer is 0 either way —
+but reaching it builds the whole-document table. Every file opens at column 0 and
+every restored background tab stays there without any pane drawing a horizontal
+scrollbar. An early return removed the whole-document walk from six further gated
+scenarios outright.
+
+### Result
+
+p50 wall / p50 allocations for the whole scenario, against the baselines committed
+the same morning:
+
+| scenario | wall | allocations |
+| --- | --- | --- |
+| `editor_add_cursor_next_match` | 5.51ms → 0.26ms | 3,660 → 1,005 |
+| `editor_indent_detect_open` | 3.28ms → 0.81ms | 1,961 → 708 |
+| `large_file_restore_deep_scroll_first_paint` | 9.38ms → 3.24ms | 3,880 → 791 |
+| `editor_column_selection_burst` | 11.14ms → 6.90ms | 2,949 → 278 |
+| `editor_mouse_selection_drag` | 12.19ms → 4.47ms | 5,482 → 2,101 |
+| `editor_occurrences_scan` | 17.51ms → 10.02ms | 4,676 → 1,641 |
+
+`editor.line_width_table_builds` is 0 on every scenario that reopens a file and 1
+where the content genuinely changed. The three diff/staging scenarios and
+`external_change_refresh_open_diff` went from 14,465–14,475 full measures to 0.
+
+### A fourth finding the new counters produced on their own
+
+Counting the widest-line scan separately (`editor.line_width_max_scans` /
+`_max_scan_lines`) showed `editor_toggle_comment_large_selection` doing **16 scans of
+a 50,001-entry table — 800,016 entries walked** per iteration. `max_visual_columns()`
+is memoized as (widest width, which line is widest), and the memo was dropped
+whenever any line an edit wrote came out at least as wide as the current maximum.
+Widening lines is an ordinary edit.
+
+Exactly one case needs the rescan: the widest line *itself* was rewritten or removed,
+because its old width is gone and the runner-up is recorded nowhere. Every other edit
+leaves the old maximum standing, and a line the edit did not touch cannot have
+shrunk — so the maximum can only grow, and it grows to the widest inserted line,
+which is already in hand. 16 scans → 8; the 8 that remain are the un-toggles, which
+shrink the lines they rewrite.
+
+### Three things to carry forward
+
+- **A scenario's counters cover the whole scenario function, not the `Measure(...)`
+  region.** TD-138's table read "per file open" because the open is in the setup and
+  the setup is inside the counter window. Check what the scenario body does before
+  attributing a counter to the measured work.
+- **A counter that aggregates two call sites cannot answer "how many times".**
+  `full_measures` was bumped by both the full rebuild and the incremental edit path,
+  which is why two scenarios were wrongly on TD-138's list and why the doubling had
+  no attributable cause for a day. Count the *event*, then the *volume*.
+- **Removing periodic work removes whatever it was incidentally bounding.** The
+  reload was the only thing resetting a tab's derived caches. Resident-growth
+  baselines moved accordingly, and the ceiling nobody had chosen is now
+  TD-2026-08-06-142.
+
 ## 2026-08-05 (fifth pass) no caller wants the whole line (perf-runner-v1)
 
 TD-2026-08-05-133 was the one line-sized copy left on the keystroke path: an

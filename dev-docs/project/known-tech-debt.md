@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **77 open items.**
+Reviewed 2026-08-06. **78 open items.**
 
 The 2026-08-06 pass closed the three perf-gate-integrity entries filed on
 2026-08-05: TD-2026-08-05-135 (four gated baselines 40-80% looser than the code
@@ -18,6 +18,17 @@ first came out of reading counters during the sweep; the other three were live
 findings sitting in the body of the entry that same sweep *closed*, which is this
 file's own failure mode — work nobody scanning the open items would ever see. A
 finding discovered by a fix does not belong inside the fix's entry.
+
+**138 then closed the same day, and its headline was wrong.** The table is not built
+twice per file *open* — a fresh open builds it once. It was built twice per
+*re*-open, because re-opening a file that was already open re-read it from disk and
+threw every derived cache away first. The entry's own instruction ("confirm the
+trigger, do not go straight to a fix") is what caught it, and its named hypothesis
+(indent detection changing `tab_size` after the first build) never fired once. The
+fix opened two: **142** (a tab's derived caches have no measured ceiling — the
+reload was the only thing bounding them) and **143** (`MaxVisualColumns` stamps a
+fresh content revision onto a table it did not verify, an invariant nothing
+enforces).
 
 The 2026-08-05 burndown closed seven: TD-2026-07-30-001 (search-panel Alt chords),
 TD-2026-07-26-005 (replace-all measured through counters only it writes),
@@ -46,9 +57,9 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-06-138 — the whole-document line-width table is built TWICE per file open. OPEN.
+### TD-2026-08-06-138 — the whole-document line-width table is built TWICE per file open. [RESOLVED 2026-08-06 — and the headline was wrong: it is twice per *re*-open.]
 
-`editor.line_width_full_measures` reads **exactly 2x the document's line count** on
+`editor.line_width_full_measures` read **exactly 2x the document's line count** on
 every scenario that opens a large file, in one iteration:
 
 | scenario | counter | document | 2x? |
@@ -60,11 +71,9 @@ every scenario that opens a large file, in one iteration:
 | `large_file_restore_deep_scroll_first_paint` | 100,002 | 50,001 | ✅ exact |
 | `editor_indent_detect_open` | 25,732 | 12,866 (1mb mixed) | ✅ exact |
 | `editor_save_normalization` | 25,732 | 12,866 | ✅ exact |
-| `diff_next_hunk_large_file` | 28,890 | ~14.4k (large diff) | 2 x 14,445 — which two documents is not established; the compare view holds both sides |
+| `diff_next_hunk_large_file` | 28,890 | ~14.4k (large diff) | 2 x 14,445 |
 | `diff_stage_hunk_large_patch` | 28,890 | ~14.4k | same |
 | `diff_stage_selected_lines` | 28,890 | ~14.4k | same |
-
-Seven scenarios at the exact 2x is what makes this a defect rather than a cost.
 
 **Two scenarios were in the first draft of this table and do NOT belong**, which is
 worth recording so nobody re-adds them: `editor_toggle_comment_large_selection`
@@ -73,31 +82,76 @@ sites in `TextLayoutCache.cpp` — `MaxVisualColumns`'s full rebuild, which walk
 whole document, and the incremental edit path, which bumps by `inserted_count`.
 Toggle-comment opens the same 50k document, but its 16,000 is **16 toggles x 1,000
 selected lines** through the *edit* path, which is that path working exactly as
-designed. `settings_change_many_tabs`'s 20,088 is likewise not a multiple of any one
-document. Check a counter against the document's line count before reading it as a
+designed. Check a counter against the document's line count before reading it as a
 full rebuild.
 
-The doubling above is the full rebuild running twice.
+**[RESOLVED 2026-08-06.]** The entry said "twice per file open" and named a
+hypothesis — indent detection landing after the first table is built, so `tab_size`
+changes and the first build is thrown away. **Both were wrong, and the entry's own
+instruction is what caught it: confirm the trigger before fixing anything.**
 
-Its cache key is `(tab_size, content_revision)` plus a `cached_visual_line_columns_
-.size() != lines.size()` check, so a *second* build means one of those changed
-between the first and the second — and `editor_indent_detect_open` showing the same
-2x points at `tab_size`: **hypothesis, not measurement — indent detection (or
-editorconfig resolution) lands after the first table is already built, and the
-first build is thrown away.**
+One counter per rebuild reason (`editor.line_width_table_builds` plus
+`_rebuild_cold` / `_rebuild_tab_size` / `_rebuild_line_count`, which sum to it)
+answered it in a single run. `tab_size` never fired. Both builds were **cold** —
+i.e. the table was *empty* at each one, so something wiped it whole in between.
 
-**What to do first: confirm the trigger, do not go straight to a fix.** One counter
-or trace scope per rebuild reason (size mismatch vs tab-size change vs revision
-bump) says which it is in a single run. If it is the tab-size ordering, the fix is
-ordering — resolve the indent settings before the first width table is built — and
-it removes an O(document) walk from every large-file open, which is the first-paint
-path and priority #1. If it is something else, the counter says so before anything
-is refactored.
+And a genuinely fresh open builds it **once**. Instrumenting
+`TabCoordinator::OpenFileInNewTab` showed every 2x iteration reached it with
+`existing=1`: the perf driver persists across iterations, so iteration 0 opens the
+file and every iteration after that *re*-opens a file that is already open. Which is
+where the real defect was:
 
-Found by reading counters during the TD-2026-08-05-135 sweep. Nothing gates it
-today: the scenarios above pass their allocation envelopes because both builds were
-already in the baseline when it was recorded, which is exactly how an O(document)
-cost hides in a green suite.
+1. **Re-opening an already-open file re-read it from disk.**
+   `OpenFileInNewTab` called `ReloadCleanEditorTabsForPath` unconditionally on the
+   existing-tab branch: read the whole file, build a fresh viewport, swap it in and
+   drop every derived cache (widths, highlights, folds, undo history) to arrive at
+   byte-identical content. That is what Ctrl+P to a file you are already looking at
+   did. VSCode focuses the tab. The same cost was paid once per open buffer by the
+   focus-regain sweep, `ReloadCleanOpenBuffersFromDisk`.
+   Fix: `ReloadEditorTabsForPath` stats the file and returns when every open view
+   already records that signature — the same mtime+size equality the self-write echo
+   suppression in `WorkspaceShellProjectChanges` already trusts. Clean-only form
+   only; the from-disk form is the banner's explicit "discard my edits and reload".
+
+2. **A viewport copy deep-copied the width table and then threw it away.**
+   `TextViewport`'s copy constructor copied `layout_cache_` and then called
+   `InvalidateVisualColumnCache()`; move construction and move assignment did the
+   same to a table they had just stolen for free. The reload copies a viewport
+   twice, which is exactly where the second cold build came from.
+   Fix: drop only the fold-dependent half (`DropWrappedRowLayouts`). Widths are a
+   function of the document's bytes and the tab size, both of which a copy shares;
+   only `folding_model_` is reset. Same distinction `SetFoldingModel` already makes.
+
+3. **`ClampScrollState()` read `MaxVisualColumns()` to clamp an offset already at 0.**
+   The clamp can only lower `horizontal_scroll_`, so at 0 the answer is 0 either
+   way — but reaching it builds the whole table. Every file opens at column 0 and
+   every restored background tab stays there. Fix: return early.
+
+Measured on perf-runner-v1, p50 wall / p50 allocations for the whole scenario:
+
+| scenario | wall | allocations |
+| --- | --- | --- |
+| `editor_add_cursor_next_match` | 5.51ms → 0.26ms | 3,660 → 1,005 |
+| `editor_indent_detect_open` | 3.28ms → 0.81ms | 1,961 → 708 |
+| `large_file_restore_deep_scroll_first_paint` | 9.38ms → 3.24ms | 3,880 → 791 |
+| `editor_column_selection_burst` | 11.14ms → 6.90ms | 2,949 → 278 |
+| `editor_mouse_selection_drag` | 12.19ms → 4.47ms | 5,482 → 2,101 |
+| `editor_occurrences_scan` | 17.51ms → 10.02ms | 4,676 → 1,641 |
+
+`editor.line_width_table_builds` is 0 across every scenario that reopens a file, and
+1 where the content really did change. The three diff/staging scenarios and
+`external_change_refresh_open_diff` went from 14,465-14,475 full measures to 0.
+
+Two things to carry forward:
+
+- **The counters in a scenario report cover the whole scenario function, not the
+  `Measure(...)` region.** This entry's table read "per file open" because the open
+  is in the setup, and the setup is inside the counter window. Check what the
+  scenario body does before attributing a counter to the measured work.
+- **A trailing regression is not the same as a leading one.** The reload skip means
+  a tab's derived caches now survive across the harness's iterations instead of
+  being reset by each one, and the resident-growth gates moved accordingly. See
+  [TD-2026-08-06-142](#td-2026-08-06-142).
 
 ### TD-2026-08-06-139 — five allocation gates drifted UP, unexplained, and passed. OPEN.
 
@@ -199,6 +253,91 @@ TD-2026-08-05-135, done automatically instead of by hand.
 
 Roughly an hour of work. The thing to get right is that the output must be *read* —
 a scheduled run whose failures nobody sees is the same defect one layer up.
+
+### TD-2026-08-06-142 — a tab's derived caches have no measured ceiling, and nothing caps their sum across tabs. OPEN.
+
+Surfaced by [TD-2026-08-06-138](#td-2026-08-06-138), which stopped re-opening an
+already-open file from re-reading it. The reload was also, incidentally, the thing
+that periodically reset every derived cache a tab holds. Removing it is right — that
+reset was pure waste on a file that had not changed — but it removed the only
+bound anyone was relying on, and nobody had noticed there was no other one.
+
+Measured, `editor_fold_viewport_refresh` (a 50k-line file, 96 scroll steps per
+iteration), `rss_growth_bytes` per iteration over 40 iterations:
+
+```
+23052 3988 4332 4296 4456 3548 1932 1312 1084 1048 1064 280 76 336 320 284 312
+  460 592 1200 1696 2008 1916 296 388 188 164 124 220 420 312 220 240 216 356
+  304 288 192 172 180                                        (KB, 65.4 MB total)
+```
+
+**It converges** — the tail is a few hundred KB per iteration against 23 MB on the
+first — so this is cache warming, not a leak, and the committed baseline
+(`mean_rss_growth_bytes` 99,669) simply described a product that threw the warm
+caches away every iteration. That is the right read of the numbers and it is why
+this is a TD rather than a revert.
+
+What is actually missing:
+
+- **No aggregate cap.** Per tab: a per-line width table (one `size_t` per line —
+  400 KB on the 50k fixture), a 256-entry visible-line `LayoutLine` LRU, a
+  `line_highlight_states_` vector sized to the document, highlight checkpoints, and
+  the fold model's per-line caches. Each is individually bounded *by its document*.
+  Nothing bounds the sum across open tabs, and `kMaxOpenTabsPerGroup` is the only
+  ceiling in the room — it bounds tab count, not bytes.
+- **No measurement.** No counter or scenario reports per-tab derived-cache
+  residency, so "how much does an open tab cost to keep open?" has no answer today.
+  That is the first thing to build; a cap chosen without it would be a guess.
+- **A cheap first cut exists**: the width table and the visible-line LRU of a tab
+  that is not visible are reconstructible in O(document) and O(rows). Dropping them
+  for background tabs past some count trades an open-a-cold-tab rebuild for the
+  memory, which is the trade the priority order (speed, then correctness, then CPU,
+  then memory) says to make only once memory is actually the constraint.
+
+Priority is genuinely low — memory is last, and the growth converges — but the
+entry exists so the next person to read a resident-growth baseline knows why it
+moved and that the ceiling is unmeasured rather than chosen.
+
+### TD-2026-08-06-143 — `MaxVisualColumns` stamps a fresh content revision onto a table it did not verify. OPEN.
+
+`TextLayoutCache` carries `cached_max_visual_columns_content_revision_`, and
+`LineWidthsAreCurrent()` — the freshness predicate every *reader* of the per-line
+width table goes through — checks it. `MaxVisualColumns()` does not:
+
+```cpp
+if (cached_max_visual_columns_tab_size_ != tab_size ||
+    cached_visual_line_columns_.size() != lines.size()) { ...rebuild... }
+// ...scan the (possibly stale) table for its maximum...
+cached_max_visual_columns_content_revision_ = content_revision;   // <-- stamped
+```
+
+An edit that changes content without changing the line count, and whose path does
+not call `UpdateVisualColumnCacheAfterEdit` (nor `InvalidateVisualColumnCache`),
+therefore does two things: it gets a maximum computed from pre-edit widths, and it
+**marks the stale table current for the new revision** — so every later
+`LineFactsIfCurrent` caller believes it, and a caret column conversion or a rendered
+row reads a width for text that is no longer there.
+
+No such path is known today. The invariant ("every content edit either splices the
+table or drops it") is real and every current edit path honours it — it was
+re-checked by hand across `TextViewportEditEngine`, the multi-caret delete, and
+`ResetState` while closing TD-2026-08-06-138. What is missing is anything that
+*keeps* it true:
+
+- The only check is a debug `assert` in `VisibleLineLayoutRefCached`, which fires
+  only for a line that is actually rendered, only under `NDEBUG` off, and only on
+  lines ≤ 4096 bytes.
+- Nothing covers the max itself, or any line the frame did not draw.
+
+Two candidate fixes, in increasing cost: (a) have `MaxVisualColumns` treat a
+revision mismatch as a rebuild reason like the other two — correct by construction,
+at the price of a rebuild on any path that currently gets away with it, which is
+worth measuring before choosing; (b) a debug-only whole-table cross-check behind an
+env flag, so a soak run proves the invariant instead of assuming it.
+
+This became more load-bearing on 2026-08-06: viewport copies used to wipe the width
+table, which masked any staleness at every copy. They no longer do
+([TD-2026-08-06-138](#td-2026-08-06-138)), so a stale table now survives further.
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 

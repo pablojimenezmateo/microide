@@ -39,6 +39,31 @@ project (see [README](README.md)); versions track meaningful shipped work.
 All figures on the project's reference runner. Whole-suite result versus the
 previous release: mean p50 −2.35% across 96 gated scenarios.
 
+- **Opening a file that is already open no longer re-reads it from disk.** The
+  existing-tab branch of "open file" ran a full reload unconditionally: read the
+  whole file, build a fresh buffer, swap it into the tab and drop every derived
+  cache it held — line widths, syntax highlighting, folds, undo history — to
+  arrive at byte-identical content. That is what jumping to a file you already
+  have open did, and what regaining window focus did once per open buffer. The
+  reload now stats the file first and skips when nothing changed underneath it,
+  matching VSCode, which simply focuses the tab. On the 50k-line fixture:
+  reopening it went from 5.51 ms to 0.26 ms (3,660 → 1,005 allocations), and a
+  session-restore jump deep into a large file from 9.38 ms to 3.24 ms (3,880 →
+  791). A file that *did* change on disk still reloads.
+- **Copying an editor view keeps its line-width table.** The copy deep-copied the
+  table and then immediately discarded it, so the next scroll clamp rebuilt the
+  width of every line in the document. Combined with the reload above, a large
+  file went from two whole-document width rebuilds per open to none.
+- **The horizontal scroll clamp no longer measures the whole document to clamp an
+  offset that is already zero** — which is every file when it opens and every
+  restored background tab. Six further gated scenarios stopped walking the
+  document entirely (the three staging scenarios, next-hunk, external-change
+  refresh, compare scroll).
+- **An edit that widens lines no longer rescans the document for its widest
+  line.** The widest line is memoized, and the memo was dropped whenever an edit
+  wrote a line at least as wide as the current maximum — so commenting out 1,000
+  lines of a 50k-line file rescanned 50,000 entries sixteen times over for a
+  maximum that was already in hand.
 - **Held column selection** (`Ctrl+Shift+Alt+Arrow`) no longer reallocates its
   caret set on every keystroke. A 400-step gesture went from 1,200 allocations to
   30. The scratch buffers added in v2.8.1 were being refilled through
