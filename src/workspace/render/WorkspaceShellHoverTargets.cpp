@@ -183,7 +183,9 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
   const float line_y =
       interaction.first_line_y +
       static_cast<float>(*line_index - interaction.scroll_line) * interaction.line_height;
-  const std::string& line = viewport.lines()[*line_index];
+  // LineView, not lines[i]: `operator[]` copies the line into the buffer's line
+  // cache, and this runs per painted frame while the pointer is over the text.
+  const std::string_view line = viewport.lines().LineView(*line_index);
   for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
     const auto rect = editor::DiagnosticUnderlineRect(
         text_renderer_, interaction.text_x, line_y, interaction.line_height, line, *line_index,
@@ -311,7 +313,8 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
   }
 
   // Plain editor: the visible grid row and the document line are the same value.
-  return PluginHoverTargetForLine(viewport.path(), viewport.lines()[*line_index], *line_index,
+  return PluginHoverTargetForLine(viewport.path(), viewport.lines().LineView(*line_index),
+                                  *line_index,
                                   *line_index, viewport.tab_size(), interaction, x, y);
 }
 

@@ -466,7 +466,11 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
       out_row_offsets->push_back(out->size());
       continue;
     }
-    const std::string_view line_text = lines[line_index];
+    // LineView, not lines[i]: `operator[]` goes through `LineRef`, which copies the
+    // line and interns the copy in the buffer's line cache. Here that was two
+    // allocations per visible row per painted frame, 24 % of the whitespace-overlay
+    // scroll phase, for a view that is read and discarded (TD-2026-08-06-159).
+    const std::string_view line_text = lines.LineView(line_index);
     const std::size_t row_start_visual = row_meta.visual_start;
     const std::size_t row_end_visual = row_meta.visual_end;
     std::size_t visual_col = 0;

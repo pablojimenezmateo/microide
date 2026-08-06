@@ -46,6 +46,52 @@ microide::editor::FoldingModel::ComputeOptions DefaultFoldOptions() {
   return options;
 }
 
+// TD-2026-08-06-159: the view-model builder must read lines through the piece
+// tree's zero-copy `LineView`, never through the copying `operator[]` accessor.
+//
+// TextRenderer/EditorViewRendererReadsLinesWithoutMaterializingThem already pins
+// this for `EditorViewRenderer::Render`, which is why nobody noticed that the
+// whitespace-glyph collector — a per-visible-row loop in the BUILDER, one layer
+// up — was doing exactly what that test forbids: two allocations per visible row
+// per painted frame, and a retained second copy of every line ever scrolled past.
+void TestEditorViewModelBuilderReadsLinesWithoutMaterializingThem() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "\tint value_" + std::to_string(i) + " = compute( " + std::to_string(i) + " );\n";
+  }
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/view-model-zero-copy.cpp");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.SetViewportSize(20, 80);
+
+  microide::editor::EditorViewModel vm;
+  // Every feature that walks lines, on: whitespace glyphs, occurrence highlight,
+  // sticky scroll. Scroll across the document exactly as a wheel scroll does.
+  for (std::size_t top = 0; top < 300; top += 20) {
+    viewport.SetScrollLine(top);
+    builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/20, /*folding_model=*/nullptr,
+                                     /*occurrences_highlight_enabled=*/true,
+                                     /*occurrences_case_sensitive=*/false,
+                                     /*sticky_scroll_enabled=*/true,
+                                     /*sticky_max_depth=*/3,
+                                     /*render_whitespace_enabled=*/true);
+  }
+
+  Expect(!vm.whitespace_glyph_runs.empty(),
+         "the fixture must actually produce whitespace runs, else the count below "
+         "proves nothing");
+  const std::size_t materialized = viewport.lines().materialized_line_count();
+  Expect(materialized == 0,
+         "the view-model builder must read lines through LineView, not the copying "
+         "operator[] accessor (materialized " +
+             std::to_string(materialized) + " lines)");
+}
+
 void TestWhitespaceRowOffsetsIndexFlatGlyphRuns() {
   // 2026-05-15 perf deep-dive round 2 Finding 2: whitespace_row_offsets must be a CSR-style index
   // into whitespace_glyph_runs so the per-row paint loop can iterate only its row's runs instead
@@ -684,6 +730,8 @@ void TestRowMatchFillsSurviveHorizontalScrollNarrowing() {
 }  // namespace
 
 void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorRenderViewModel/BuilderReadsLinesWithoutMaterializingThem",
+          TestEditorViewModelBuilderReadsLinesWithoutMaterializingThem);
   AddTest(tests, "EditorRenderViewModel/WhitespaceRowOffsetsIndexFlatGlyphRuns",
           TestWhitespaceRowOffsetsIndexFlatGlyphRuns);
   AddTest(tests, "EditorRenderViewModel/IntoPreservesVectorCapacitiesOnStableFrames",
