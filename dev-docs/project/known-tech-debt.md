@@ -385,7 +385,7 @@ the ranked ones was 9 fixes in 14 phases, so the tail is worth a pass, but a
 smaller one — start from a `--report-json` run of the whole suite sorted by
 phase `p50_allocations` after the pending rebaseline, not from this table.
 
-### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. OPEN.
+### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. RESOLVED 2026-08-07 for the two apply paths; the shaping ops moved to [160](#td-2026-08-07-160).
 
 Found by pointing the phase-scoped tracer at `editor_surround_multi_caret`, the
 next interactive scenario after the two [149](#td-2026-08-06-149) named.
@@ -435,6 +435,62 @@ Instrument first: nothing currently reports the span/edited-line ratio, so there
 is no measurement of how far apart real carets get. A counter on the aggregate
 (`editor.multi_caret_span_lines` vs `editor.multi_caret_edited_lines`) would say
 whether the common case is a 30-line Ctrl+D run or a whole-file select-all.
+
+**Done 2026-08-07.** `Entry::extra_parts` is the multi-range form: each part
+records both its pre- and post-edit start index, and every apply — buffer splice
+and derived-cache update alike — walks the parts highest-first, so a part's
+recorded index is still valid when it is reached. `FinishActiveGroup` stops
+stitching (the frame already held the disjoint set); both multi-caret apply paths
+capture per *footprint* rather than per span, where a footprint is a maximal run
+of overlapping-or-touching caret line ranges — which is what keeps two carets on
+one line in a single capture window, and every window untouched when it opens.
+
+Every consumer that assumed one contiguous splice now asks `is_multi_range()`:
+the coalescing predicates refuse the merge, and `BuildAppliedEdit` /
+`BuildAppliedEditLineSpan` publish nothing — the same decision
+`ApplyMultiCaretEdit` already made for a multi-region edit, so marker consumers
+keep their existing resync fallback rather than dragging markers on preserved
+lines.
+
+    editor_surround_multi_caret   76,456 -> 933 allocations   (8.0 -> 5.1 ms)
+    editor_shaping_multi_caret    57,362 -> 19,952 allocations
+
+The counters this entry asked for shipped as
+`editor.multi_range_undo_lines_kept` / `..._lines_spanned` (plus an entry count).
+On `editor_surround_multi_caret` they read **14 against 16,802** — eight carets
+1,200 lines apart, so the ratio really is the whole-file case, not a 30-line
+Ctrl+D run.
+
+Covered by `TextViewport/MultiCaretUndoMatchesSnapshotOracle` (seven edits mixing
+two-carets-on-one-line, adjacent lines, line-count changes in both directions, a
+plain single-caret edit and a grouped shaping op; buffer snapshotted after each,
+then undo / redo / undo replayed against those snapshots) and
+`MultiCaretUndoEntryDoesNotSpanTheGap` (the cost claim, which the oracle alone
+does not test).
+
+### TD-2026-08-07-160 — a multi-caret shaping op edits every line BETWEEN the carets. OPEN.
+
+Split out of [157](#td-2026-08-06-157), whose fix covered the two multi-caret
+apply paths but not the third shape it named.
+
+`ShapingActions::ResolveLineRange` widens to `min..max` over every caret, and
+`ToggleLineComment` / `IndentSelection` / `OutdentSelection` / `MoveLineUp|Down`
+then rewrite **every line in that range**. With carets on lines 10 and 100 and no
+selection, `Ctrl+/` comments all 91 lines. VSCode comments two.
+
+So this is a fidelity bug first and a cost bug second, and the two have the same
+fix: emit one edit per caret line (or per contiguous run of caret lines) inside an
+undo group, which the group frame already aggregates into the multi-range entry
+157 shipped. The undo side therefore needs no further work — only the ops do.
+
+`editor_shaping_multi_caret` is the measurement: 32 carets 25 lines apart, and it
+still replaces the whole 800-line span twelve times (19,952 allocations after
+157). Expect it to fall to roughly the caret count once the ops stop widening.
+
+Watch for the deliberate case: a op invoked with a genuine SELECTION spanning
+lines must keep operating on the whole selection. The widening is only wrong for
+*carets*, and `ResolveLineRange` currently cannot tell the two apart because it
+folds them into one range.
 
 ### TD-2026-08-06-158 — the status bar probes the filesystem for `.git` on every painted frame. OPEN.
 
