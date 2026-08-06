@@ -2,6 +2,7 @@
 #include "render/SurfacePrimitives.h"
 
 #include <algorithm>
+#include <optional>
 
 namespace microide::editor {
 
@@ -228,12 +229,18 @@ void AppendDiagnosticUnderlines(DecoratedTextRow& row,
   }
 
   // Build the per-line visual-column map ONCE and reuse it for every diagnostic on
-  // this line, instead of two O(column) tab-stop walks per diagnostic.
-  const TextLayout::LineVisualColumnMap visual_map(text, tab_size);
+  // this line, instead of two O(column) tab-stop walks per diagnostic -- and skip
+  // it entirely on a line whose byte offsets already ARE its visual columns, where
+  // the null-map path computes the same answer without the two vectors.
+  const bool needs_map = !TextLayout::VisualColumnsAreIdentity(text);
+  std::optional<TextLayout::LineVisualColumnMap> visual_map;
+  if (needs_map) {
+    visual_map.emplace(text, tab_size);
+  }
   for (const PublishedDiagnostic& diagnostic : diagnostics) {
-    const auto rect = DiagnosticUnderlineRectWithMap(text_renderer, text_x, y, line_height, text,
-                                                     line_index, horizontal_scroll, visible_columns,
-                                                     tab_size, diagnostic, &visual_map);
+    const auto rect = DiagnosticUnderlineRectWithMap(
+        text_renderer, text_x, y, line_height, text, line_index, horizontal_scroll, visible_columns,
+        tab_size, diagnostic, visual_map.has_value() ? &*visual_map : nullptr);
     if (!rect.has_value()) {
       continue;
     }

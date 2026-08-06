@@ -44,6 +44,40 @@ bool IsBoundary(std::string_view line, std::size_t column) {
   return TextLayout::ClampTextColumn(line, column) == column;
 }
 
+// TD-2026-08-06-159: `VisualColumnsAreIdentity` is what lets a row render skip
+// building a whole-line `LineVisualColumnMap` — two heap vectors per row — and use
+// the identity mapping instead. A false positive silently misplaces every
+// selection fill and caret on the row, so this asserts the claim directly at every
+// column of every width class, and asserts the answer is not vacuously "no".
+void TestVisualColumnsAreIdentityMatchesTheWalk() {
+  bool saw_identity = false;
+  bool saw_non_identity = false;
+  for (const char* row : kRows) {
+    const std::string_view line(row);
+    const bool identity = TextLayout::VisualColumnsAreIdentity(line);
+    identity ? saw_identity = true : saw_non_identity = true;
+    if (!identity) {
+      continue;
+    }
+    for (std::size_t column = 0; column <= line.size(); ++column) {
+      const std::size_t walked = TextLayout::VisualColumnForTextColumn(line, column, kTabSize);
+      Expect(walked == column,
+             std::string("identity claimed for '") + row + "' but column " +
+                 std::to_string(column) + " maps to visual " + std::to_string(walked));
+    }
+  }
+  Expect(saw_identity && saw_non_identity,
+         "the fixture must contain both identity and non-identity rows");
+  // The boundary cases the byte scan has to get right.
+  Expect(TextLayout::VisualColumnsAreIdentity(""), "an empty line is trivially identity");
+  Expect(!TextLayout::VisualColumnsAreIdentity("\t"), "a lone tab is not identity");
+  Expect(!TextLayout::VisualColumnsAreIdentity("abc\t"), "a trailing tab is not identity");
+  Expect(!TextLayout::VisualColumnsAreIdentity("\xE4\xB8\xAD"),
+         "a multi-byte code point is not identity");
+  Expect(TextLayout::VisualColumnsAreIdentity(std::string(4096, 'x')),
+         "a long plain-ASCII line is identity");
+}
+
 void TestAdvanceVisualColumnTabStops() {
   Expect(TextLayout::AdvanceVisualColumn(0, '\t', 4) == 4, "tab at 0 -> next stop 4");
   Expect(TextLayout::AdvanceVisualColumn(1, '\t', 4) == 4, "tab at 1 -> next stop 4");
@@ -635,6 +669,8 @@ void TestClampTextColumnBoundsMalformedSequences() {
 }
 
 void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextLayout/VisualColumnsAreIdentityMatchesTheWalk",
+          TestVisualColumnsAreIdentityMatchesTheWalk);
   AddTest(tests, "TextLayout/ClampTextColumnMatchesForwardTiling",
           TestClampTextColumnMatchesForwardTiling);
   AddTest(tests, "TextLayout/ClampTextColumnBoundsMalformedSequences",

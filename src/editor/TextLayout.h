@@ -40,6 +40,14 @@ struct LineLayoutFacts {
 
 class TextLayout {
  public:
+  // True when every byte offset in `line` IS its visual column — no tab (which
+  // expands to a stop) and no byte >= 0x80 (which begins a multi-byte code point).
+  // The identity mapping is then exact, so a caller that would build a
+  // `LineVisualColumnMap` to answer two or three queries can skip it: that is two
+  // heap vectors and an O(line) fill per row, and source lines are overwhelmingly
+  // this shape (TD-2026-08-06-159).
+  static bool VisualColumnsAreIdentity(std::string_view line);
+
   static std::size_t VisualColumnForTextColumn(std::string_view line,
                                                std::size_t text_column,
                                                std::size_t tab_size);

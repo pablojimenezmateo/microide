@@ -505,8 +505,15 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       // caret fall back to the identity column mapping (as the left side already
       // does when it passes no map), keeping compare rendering bounded.
       constexpr std::size_t kMaxCompareVisualMapBytes = 1u << 20;  // 1 MiB
+      // A line with no tab and no multi-byte code point maps byte offset to visual
+      // column exactly, which is what the null-map fallback already computes — so
+      // building the table for it is two heap vectors and an O(line) fill per
+      // visible row for an answer the fallback gets for free. Most source lines are
+      // that shape, and this was 87 % of a compare scroll-with-selection frame's
+      // allocations (TD-2026-08-06-159).
       const bool right_map_allowed =
-          compare_row.right_text.size() <= kMaxCompareVisualMapBytes;
+          compare_row.right_text.size() <= kMaxCompareVisualMapBytes &&
+          !editor::TextLayout::VisualColumnsAreIdentity(compare_row.right_text);
       std::optional<editor::TextLayout::LineVisualColumnMap> right_visual_map;
       auto ensure_right_visual_map = [&]() -> const editor::TextLayout::LineVisualColumnMap* {
         if (!right_map_allowed) {

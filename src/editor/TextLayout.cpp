@@ -66,6 +66,10 @@ std::size_t TextLayout::LineVisualColumnMap::VisualColumnFor(std::size_t text_co
   return visuals_[index];
 }
 
+bool TextLayout::VisualColumnsAreIdentity(std::string_view line) {
+  return FirstNonPlainAsciiByte(line) == line.size();
+}
+
 std::size_t TextLayout::VisualColumnForTextColumn(std::string_view line,
                                                   std::size_t text_column,
                                                   std::size_t tab_size) {
