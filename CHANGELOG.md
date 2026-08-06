@@ -26,6 +26,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **The file finder understands a `/` in the query.** `editor/tv` means "something
+  starting tv, in a directory matching editor", but the query was scored as one
+  string against the whole path — which threw away every filename signal the
+  ranker has, because a `/` cannot appear in a filename. Those queries barely
+  ordered at all: `util/str` scored `StringUtil.h` and `StringUtil.cpp` at exactly
+  the same number. The query is now split at the last separator, matching VSCode:
+  the tail ranks against the filename and the head narrows the directory.
 - **Sustained large multi-line editing no longer grows memory without bound.**
   The piece tree's insert buffer is append-only and nothing reclaimed it below a
   4 GiB backstop that in practice never fires, so a session doing repeated
@@ -78,6 +85,43 @@ previous release: mean p50 −2.35% across 96 gated scenarios.
   was copying every changed line four times over.
 - **The terminal** no longer allocates and frees one buffer per visible row on
   every frame of output or scrolling.
+- **A line operation over a selection is one document edit, not one per line.**
+  Toggle Comment over 1,000 lines performed 1,000 separate piece-tree splices —
+  each with its own joined replacement string, revision bump and line-cache wipe —
+  because a same-count replacement was written line by line, which was the cheap
+  form back when the document was a vector of strings. 89,588 → 33,586
+  allocations, and 2.7x faster.
+- **A multi-caret edit now costs its carets, not the distance between them.** An
+  undo entry could only describe one contiguous line range, so eight carets 1,200
+  lines apart captured 8,401 lines for the before image and 8,401 for the after —
+  and retained both — on every keystroke. `Ctrl+Shift+L` on a common token puts
+  carets across a whole file, which made each keystroke after it copy the file
+  twice. The entry now records the ranges the edit actually touched: 76,456 → 933
+  allocations on the eight-caret scenario.
+- **Opening a diff no longer materialises both files to read sixty-four lines of
+  them.** Syntax-state detection inspects a bounded head, but the compare build
+  handed it whole documents — the left side split into owned strings, the right
+  asked for a full-document snapshot that was then retained. −33% and −42%
+  allocations on the two large-diff scenarios.
+- **Scrolling with a selection stopped building a column-mapping table per row.**
+  On a line with no tab and no multi-byte character, byte offset already IS visual
+  column, so the table is the identity function; it was two heap vectors per
+  visible row, and 87% of a compare scroll frame's allocations. The editor scroll
+  scenarios moved with it (−47% each), through the shared diagnostic-underline
+  path.
+- **Editor hover stopped dispatching a plugin query per frame when no plugin
+  provides hover.** Hover resolution runs on every painted frame the pointer
+  spends over text, and during a scroll the cell under a stationary pointer
+  changes every frame, so it resolved a path and dispatched a worker query whose
+  only possible answer was already known. −33% allocations on indent-guide paint.
+- **The git sidebar's file tree is grouped on path text rather than path
+  algebra.** The sort comparator re-derived each row's key from scratch on both
+  sides of every comparison, and the refresh re-normalised paths that had been
+  normalised on the way in. A 1,000-file status went from 112,519 to 24,710
+  allocations opening its first changed file; the large-repo and many-untracked
+  refreshes and the staged-commit panel all fell by 60-78%.
+- **A git refresh stopped deep-copying the whole repository state twice** — once
+  to publish it and once for a caller that wanted two numbers out of it.
 
 ## [2.8.1] - 2026-08-04
 
