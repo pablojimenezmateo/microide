@@ -548,8 +548,8 @@ std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLine
 }
 
 TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentChange(
-    const std::vector<std::string>& before_lines, const ViewState& before_state,
-    const std::vector<std::string>& after_lines, const ViewState& after_state) {
+    std::vector<std::string> before_lines, const ViewState& before_state,
+    std::vector<std::string> after_lines, const ViewState& after_state) {
   std::size_t prefix = 0;
   while (prefix < before_lines.size() && prefix < after_lines.size() &&
          before_lines[prefix] == after_lines[prefix]) {
@@ -566,10 +566,12 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentCha
 
   Entry entry;
   entry.start_line = prefix;
-  entry.before_lines.assign(before_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-                            before_lines.begin() + static_cast<std::ptrdiff_t>(before_end));
-  entry.after_lines.assign(after_lines.begin() + static_cast<std::ptrdiff_t>(prefix),
-                           after_lines.begin() + static_cast<std::ptrdiff_t>(after_end));
+  entry.before_lines.assign(
+      std::make_move_iterator(before_lines.begin() + static_cast<std::ptrdiff_t>(prefix)),
+      std::make_move_iterator(before_lines.begin() + static_cast<std::ptrdiff_t>(before_end)));
+  entry.after_lines.assign(
+      std::make_move_iterator(after_lines.begin() + static_cast<std::ptrdiff_t>(prefix)),
+      std::make_move_iterator(after_lines.begin() + static_cast<std::ptrdiff_t>(after_end)));
   entry.before_state = before_state;
   entry.after_state = after_state;
   return entry;

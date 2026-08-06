@@ -1149,6 +1149,48 @@ void TestMultiCaretSurroundMultiLineSelections() {
          "undo should restore every multi-line surround atomically");
 }
 
+// The multi-caret aggregate undo entry spans first..last affected caret line, so
+// with far-apart carets it captures the whole gap between them. That capture moved
+// from a per-line `lines[i]` walk to one SliceLines call, and the slices now move
+// into the entry instead of being copied into it — the untouched interior lines
+// must survive the edit, the undo and the redo unchanged.
+void TestMultiCaretSurroundAcrossADistantGap() {
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "line" + std::to_string(i) + "\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/multi-caret-distant-surround.cpp");
+  viewport.SetLanguageContractView(MakeCStyleContractView());
+  viewport.MoveCursorTo(10, 0);
+  viewport.MoveCursorTo(10, 6, /*extend_selection=*/true);
+  viewport.AddSecondaryCaretWithRange(microide::editor::SelectionRange{{390, 0}, {390, 7}});
+  viewport.InsertCharacter('(');
+
+  Expect(viewport.lines().size() == 401, "the surround must not change the line count");
+  Expect(viewport.lines()[10] == "(line10)" && viewport.lines()[390] == "(line390)",
+         "both distant carets should wrap their selection");
+  const auto interior_intact = [&]() {
+    for (std::size_t i = 11; i < 390; ++i) {
+      if (viewport.lines()[i] != "line" + std::to_string(i)) {
+        return false;
+      }
+    }
+    return true;
+  };
+  Expect(interior_intact(), "the lines between the carets must be untouched by the edit");
+
+  Expect(viewport.Undo(), "the distant multi-caret surround should be one undo step");
+  Expect(viewport.lines()[10] == "line10" && viewport.lines()[390] == "line390",
+         "undo should restore both wrapped lines");
+  Expect(interior_intact(), "undo must not disturb the lines between the carets");
+
+  Expect(viewport.Redo(), "the distant multi-caret surround should redo");
+  Expect(viewport.lines()[10] == "(line10)" && viewport.lines()[390] == "(line390)",
+         "redo should re-apply both wrapped lines");
+  Expect(interior_intact(), "redo must not disturb the lines between the carets");
+}
+
 // TD-2026-07-17A-021: surround wraps by touching only the boundary lines (no
 // whole-selection materialization). Verify the inner selection endpoints and a
 // single atomic undo for a multi-line selection that ends mid-line.
@@ -1621,6 +1663,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestSurroundMultiLineSelection);
   AddTest(tests, "EditorEssentials/Surround/MultiCaretMultiLineSelections",
           TestMultiCaretSurroundMultiLineSelections);
+  AddTest(tests, "EditorEssentials/Surround/MultiCaretAcrossADistantGap",
+          TestMultiCaretSurroundAcrossADistantGap);
   AddTest(tests, "EditorEssentials/Surround/BoundaryWrapInnerSelectionAndUndo",
           TestSurroundBoundaryWrapInnerSelectionAndUndo);
   AddTest(tests, "EditorEssentials/Surround/DisabledFallsBackLiteral",

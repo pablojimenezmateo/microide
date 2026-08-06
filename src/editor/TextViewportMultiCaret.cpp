@@ -42,8 +42,10 @@ LineSlice CaptureLineSlice(const TextBuffer& buffer,
   };
 }
 
+// Consumes `slice`: its lines move into the entry rather than being copied into
+// it, which on a multi-caret edit is the whole span between the outermost carets.
 TextViewportUndoHistory::Entry BuildAggregateFromLineSlice(
-    const LineSlice& slice,
+    LineSlice slice,
     std::size_t before_document_line_count,
     const TextViewportUndoHistory::ViewState& before_state,
     const TextBuffer& after_buffer,
@@ -59,12 +61,12 @@ TextViewportUndoHistory::Entry BuildAggregateFromLineSlice(
       std::min(after_document_line_count, slice.start + after_slice_size);
   // Slice only the affected range out of the tree; the whole document is never
   // copied here.
-  std::vector<std::string> after_slice = after_buffer.SliceLines(after_start, after_end);
-
+  const std::size_t slice_start = slice.start;
   TextViewportUndoHistory::Entry aggregate =
-      TextViewportUndoHistory::BuildEntryForDocumentChange(slice.before_lines, before_state,
-                                                           after_slice, after_state);
-  aggregate.start_line += slice.start;
+      TextViewportUndoHistory::BuildEntryForDocumentChange(
+          std::move(slice.before_lines), before_state,
+          after_buffer.SliceLines(after_start, after_end), after_state);
+  aggregate.start_line += slice_start;
   return aggregate;
 }
 
@@ -318,7 +320,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   }
 
   const std::size_t before_document_line_count = document_->lines.size();
-  const LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
+  LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   // Identify the primary by its index in the sorted/deduped vector rather than
@@ -388,8 +390,9 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   document_->dirty = true;
   EnsureCursorVisible();
 
-  const HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
-      before_slice, before_document_line_count, before_state, document_->lines, CaptureViewState());
+  HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
+      std::move(before_slice), before_document_line_count, before_state, document_->lines,
+      CaptureViewState());
   // The aggregate history entry spans first..last affected caret line as one
   // contiguous replace, which is correct for undo/redo but WRONG as an AppliedEdit
   // when 2+ caret sites edited disjoint regions: BuildAppliedEdit only trims equal
@@ -409,7 +412,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     ClearLastAppliedEdit();
   }
   if (record_undo) {
-    PushHistoryEntry(aggregate_entry);
+    PushHistoryEntry(std::move(aggregate_entry));
   } else {
     undo_history_.ClearRedo();
   }

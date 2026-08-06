@@ -162,9 +162,14 @@ class TextViewportUndoHistory {
   // start_line yields the identical span at O(entry) cost. nullopt for a no-op.
   static std::optional<AppliedEditLineSpan> BuildAppliedEditLineSpan(const Entry& entry,
                                                                      bool forward);
-  static Entry BuildEntryForDocumentChange(const std::vector<std::string>& before_lines,
+  // Takes both line vectors BY VALUE and moves the trimmed sub-range out of each.
+  // Every caller slices them out of the piece tree and has no further use for
+  // them, and on a multi-caret edit whose carets sit far apart each vector is the
+  // whole span between the outermost carets — copying them here doubled the cost
+  // of the edit for nothing.
+  static Entry BuildEntryForDocumentChange(std::vector<std::string> before_lines,
                                             const ViewState& before_state,
-                                            const std::vector<std::string>& after_lines,
+                                            std::vector<std::string> after_lines,
                                             const ViewState& after_state);
 
  private:

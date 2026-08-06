@@ -829,7 +829,7 @@ bool TextViewport::DeleteCurrentLine() {
     const std::size_t before_document_line_count = document_->lines.size();
     const std::size_t before_lines_start = lines_to_delete.front();
     const std::size_t before_lines_end = lines_to_delete.back() + 1;
-    const std::vector<std::string> before_lines =
+    std::vector<std::string> before_lines =
         document_->lines.SliceLines(before_lines_start, before_lines_end);
     const ViewState before_state = CaptureViewState();
     for (auto it = lines_to_delete.rbegin(); it != lines_to_delete.rend(); ++it) {
@@ -858,10 +858,9 @@ bool TextViewport::DeleteCurrentLine() {
     const std::size_t after_lines_start = std::min(before_lines_start, document_->lines.size());
     const std::size_t after_lines_end =
         std::min(document_->lines.size(), before_lines_start + after_slice_size);
-    const std::vector<std::string> after_lines =
-        document_->lines.SliceLines(after_lines_start, after_lines_end);
     HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
-        before_lines, before_state, after_lines, CaptureViewState());
+        std::move(before_lines), before_state,
+        document_->lines.SliceLines(after_lines_start, after_lines_end), CaptureViewState());
     aggregate_entry.start_line += before_lines_start;
     // A disjoint multi-line delete cannot be described by one contiguous
     // AppliedEdit; leaving the previous single-caret edit's value in place would

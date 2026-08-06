@@ -503,10 +503,11 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   if (slice_min_line != std::numeric_limits<std::size_t>::max()) {
     slice_max_line = std::min(slice_max_line, document_->lines.size() - 1);
     before_lines_start = slice_min_line;
-    before_lines.reserve(slice_max_line - slice_min_line + 1);
-    for (std::size_t i = slice_min_line; i <= slice_max_line; ++i) {
-      before_lines.push_back(document_->lines[i]);
-    }
+    // One walk of the piece tree for the whole range. The per-line `lines[i]` this
+    // replaced went through TextBuffer::LineRef, which materialises a std::string
+    // AND inserts it into the buffer's line cache — so capturing the span between
+    // two far-apart carets cost two allocations per line and evicted the cache.
+    before_lines = document_->lines.SliceLines(slice_min_line, slice_max_line + 1);
   }
   const std::size_t before_document_line_count = document_->lines.size();
   const ViewState before_state = CaptureViewState();
@@ -684,17 +685,16 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   const std::size_t after_slice_start = std::min(before_lines_start, document_->lines.size());
   const std::size_t after_slice_end =
       std::min(document_->lines.size(), before_lines_start + after_slice_size);
-  std::vector<std::string> after_lines_slice =
-      document_->lines.SliceLines(after_slice_start, after_slice_end);
   HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
-      before_lines, before_state, after_lines_slice, CaptureViewState());
+      std::move(before_lines), before_state,
+      document_->lines.SliceLines(after_slice_start, after_slice_end), CaptureViewState());
   aggregate_entry.start_line += before_lines_start;
   // This path only runs with multiple carets (has_multiple_carets() gate above),
   // so the aggregate always spans disjoint regions. Publishing it as a single
   // contiguous AppliedEdit would drag markers on preserved interior lines to the
   // span's end (see TextViewportMultiCaret). Leave last_applied_edit_ empty (it was
   // reset at entry) so single-range marker consumers take their resync fallback.
-  PushHistoryEntry(aggregate_entry);
+  PushHistoryEntry(std::move(aggregate_entry));
   return true;
 }
 
