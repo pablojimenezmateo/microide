@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include "util/PathMatch.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -32,32 +34,11 @@ struct KeyedRow {
   std::string key;
 };
 
-// True when `text` is not already in lexically-normal form, i.e. when the cheap
-// `generic_string()` above is not the answer and the real thing has to run. A
-// normalized generic path contains no empty, "." or ".." component.
-bool GenericPathNeedsNormalizing(std::string_view text) {
-  if (text.empty()) return false;
-  std::size_t begin = 0;
-  while (begin <= text.size()) {
-    const std::size_t slash = text.find('/', begin);
-    const std::size_t end = slash == std::string_view::npos ? text.size() : slash;
-    const std::string_view component = text.substr(begin, end - begin);
-    // An empty FIRST component is a leading '/' (an absolute path, normal); an
-    // empty LAST one is a trailing '/' (a directory, also normal). Anywhere else
-    // it is a "//" run, which is not.
-    if (component.empty() && begin != 0 && end != text.size()) return true;
-    if (component == "." || component == "..") return true;
-    if (slash == std::string_view::npos) break;
-    begin = slash + 1;
-  }
-  return false;
-}
-
 // `path` as one normalized generic string. One allocation on the overwhelmingly
 // common already-normalized input; the fallback is the authoritative form.
 std::string NormalizedGenericPath(const std::filesystem::path& path) {
   std::string text = path.generic_string();
-  if (!GenericPathNeedsNormalizing(text)) return text;
+  if (!util::PathTextNeedsNormalizing(text)) return text;
   return path.lexically_normal().generic_string();
 }
 

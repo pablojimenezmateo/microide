@@ -7,6 +7,7 @@
 #include <utility>
 
 #include "editor/TextViewport.h"
+#include "util/PathMatch.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -57,15 +58,27 @@ void FlattenDocumentSymbols(const std::vector<plugin::PluginHost::DocumentSymbol
 }
 
 void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
-                             const GitSidebarState::RefreshSnapshot& snapshot,
+                             GitSidebarState::RefreshSnapshot&& snapshot,
                              const std::filesystem::path& project_root) {
   git_state.entries.clear();
   git_state.entries.reserve(snapshot.entries.size());
-  for (const auto& entry : snapshot.entries) {
+  // Loop-invariant, and the only input that can be unnormalized in practice:
+  // every `relative_path` was normalized on ingress by
+  // MakeGitRepositoryPathIdentity, so joining it to a normalized root produces a
+  // normalized absolute path and the per-entry `lexically_normal()` this used to
+  // run was ~6 allocations spent to confirm that (TD-2026-08-06-159).
+  const std::filesystem::path root = util::PathTextNeedsNormalizing(project_root.native())
+                                         ? project_root.lexically_normal()
+                                         : project_root;
+  for (auto& entry : snapshot.entries) {
+    std::filesystem::path absolute = root / entry.relative_path;
+    if (util::PathTextNeedsNormalizing(absolute.native())) {
+      absolute = absolute.lexically_normal();
+    }
     GitSidebarEntry git_entry{
         .section = entry.section,
-        .path = (project_root / entry.relative_path).lexically_normal(),
-        .relative_path = entry.relative_path,
+        .path = std::move(absolute),
+        .relative_path = std::move(entry.relative_path),
         .status = entry.conflicted ? project::GitFileStatus::Conflicted : entry.status,
         .conflicted = entry.conflicted,
         .staged = entry.staged,
@@ -119,7 +132,7 @@ void SidebarCoordinator::RefreshGit() {
             : GitSidebarEntry::Section::Changed;
 
     state_.sidebar.git.selected_index = 0;
-    ApplyGitRefreshSnapshot(state_.sidebar.git, pending_snapshot, project_root_);
+    ApplyGitRefreshSnapshot(state_.sidebar.git, std::move(pending_snapshot), project_root_);
     state_.sidebar.git.refreshing = false;
 
     for (std::size_t i = 0; i < state_.sidebar.git.entries.size(); ++i) {
@@ -174,7 +187,7 @@ void SidebarCoordinator::RefreshGit() {
     state_.directory_tree.ApplyGitStatuses(std::move(snapshot.tree_git_statuses));
   }
 
-  ApplyGitRefreshSnapshot(state_.sidebar.git, snapshot, project_root_);
+  ApplyGitRefreshSnapshot(state_.sidebar.git, std::move(snapshot), project_root_);
   // Preserve refresh-in-flight state when data was rendered from a synchronous
   // fallback while an async refresh request is still pending.
   state_.sidebar.git.refreshing = false;

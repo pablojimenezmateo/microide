@@ -24,6 +24,7 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <string_view>
 
 namespace microide::tests {
 namespace {
@@ -676,6 +677,37 @@ void TestWorkspaceSharedPathMutationHelpers() {
     Expect(NormalizedPathEqualsOrWithin(std::filesystem::path("/tmp/x"),
                                         std::filesystem::path("/")),
            "a '/' root contains every absolute path");
+  }
+
+  // PathTextNeedsNormalizing is the allocation-free "would lexically_normal()
+  // change this?" scan that lets a per-entry loop spend one string instead of one
+  // path (TD-2026-08-06-159). It is only useful if it never says "no" to a path
+  // that lexically_normal() WOULD change, so the check below is against
+  // lexically_normal() itself, over every shape the git and sidebar paths take.
+  // Saying "yes" to an already-normal path is merely a missed optimization; saying
+  // "no" to a non-normal one is a correctness bug, and this catches it.
+  {
+    using microide::util::PathTextNeedsNormalizing;
+    const std::vector<std::string> shapes = {
+        "",         ".",          "..",         "/",         "a",
+        "a/b",      "a/b/c.cpp",  "/a/b/c.cpp", "a/",        "/",
+        "./a",      "a/./b",      "a/../b",     "../a",      "a//b",
+        "//a",      "a/b//",      "a/b/.",      "a/b/..",    "/../a",
+        "a/./",     "./",         "../",        "/.",        "/..",
+        "a/b/c/",   "/a",         "a/b/../../c",
+    };
+    for (const std::string& shape : shapes) {
+      const std::filesystem::path path(shape);
+      const bool changes = path.lexically_normal().native() != path.native();
+      Expect(!changes || PathTextNeedsNormalizing(path.native()),
+             "PathTextNeedsNormalizing must not clear a path lexically_normal() rewrites: '" +
+                 shape + "' -> '" + path.lexically_normal().string() + "'");
+    }
+    Expect(!PathTextNeedsNormalizing(std::string_view("/home/user/project/src/main.cpp")),
+           "an ordinary absolute path is recognized as already normal (else the scan "
+           "saves nothing)");
+    Expect(!PathTextNeedsNormalizing(std::string_view("src/main.cpp")),
+           "an ordinary relative path is recognized as already normal");
   }
 
   Expect(ReplacePathPrefix(nested, root / "src", root / "lib") ==

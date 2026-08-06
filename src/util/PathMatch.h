@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 namespace microide::util {
 
@@ -61,6 +63,51 @@ namespace microide::util {
   // A root that already ends in a separator ("/", "C:\") needs no extra one; any
   // other root must be followed by a separator so "/a/bc" is not "within" "/a/b".
   return is_separator(root_text.back()) || is_separator(candidate_text[root_text.size()]);
+}
+
+// True when `text` — a path's own separator-separated spelling — is NOT already in
+// lexically-normal form, i.e. when `lexically_normal()` would produce something
+// different and therefore has to run.
+//
+// `lexically_normal()` costs ~12 allocations (a fresh path plus a component list
+// with a string per component). Almost every path the workspace holds is already
+// normalized: the git status ingress, the branch-review store and the project
+// catalog all normalize once on the way in. This is the allocation-free scan that
+// confirms it, so a hot loop can spend one string instead of one path per item and
+// still fall back to the authoritative form for anything unusual.
+//
+// A normalized path contains no "." component, no ".." component, and no empty
+// component other than a leading one (the root separator) or a trailing one (the
+// directory-form separator, which `lexically_normal()` preserves).
+[[nodiscard]] inline bool PathTextNeedsNormalizing(std::string_view text) {
+  const auto is_separator = [](char c) {
+#ifdef _WIN32
+    return c == '\\' || c == '/';
+#else
+    return c == '/';
+#endif
+  };
+  if (text.empty()) {
+    return false;
+  }
+  std::size_t begin = 0;
+  while (true) {
+    std::size_t end = begin;
+    while (end < text.size() && !is_separator(text[end])) {
+      ++end;
+    }
+    const std::string_view component = text.substr(begin, end - begin);
+    if (component.empty() && begin != 0 && end != text.size()) {
+      return true;  // an interior "//" run
+    }
+    if (component == "." || component == "..") {
+      return true;
+    }
+    if (end >= text.size()) {
+      return false;
+    }
+    begin = end + 1;
+  }
 }
 
 // True when `candidate` is `root` itself or a path nested under it. Purely
