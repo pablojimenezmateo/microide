@@ -84,7 +84,20 @@ TextViewport::TextViewport(const TextViewport& other)
       last_applied_edit_line_span_(other.last_applied_edit_line_span_),
       folding_model_(nullptr),
       undo_history_(other.undo_history_) {
-  InvalidateVisualColumnCache();
+  // Drop ONLY the fold-dependent half of the layout cache. This used to be a
+  // full InvalidateVisualColumnCache(), which threw away the per-line width
+  // table the copy had just deep-copied -- so every viewport copy handed the new
+  // viewport an empty table that the next ClampScrollState() rebuilt with an
+  // O(document) walk. Reloading an already-open buffer copies a viewport twice,
+  // which is how a 50k-line file measured exactly two whole-document width
+  // rebuilds per open (TD-2026-08-06-138).
+  //
+  // Widths are a function of the document's bytes and the tab size; the copy
+  // shares `document_` and `tab_size_`, so the table and the visible-line LRU
+  // keyed on them are still exactly right. Only `folding_model_` is reset here,
+  // and the one product that depends on it is the wrapped-row table. Same
+  // reasoning as SetFoldingModel, which already refuses to wipe widths.
+  layout_cache_.DropWrappedRowLayouts();
 }
 
 TextViewport& TextViewport::operator=(const TextViewport& other) {
@@ -152,7 +165,9 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
   other.folding_model_ = nullptr;
   other.layout_cache_ = TextLayoutCache{};
   other.undo_history_ = TextViewportUndoHistory{};
-  InvalidateVisualColumnCache();
+  // See the copy constructor: the moved-in width table describes the same
+  // document at the same tab size, so only the fold-dependent half goes.
+  layout_cache_.DropWrappedRowLayouts();
 }
 
 TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
@@ -212,7 +227,9 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   other.folding_model_ = nullptr;
   other.layout_cache_ = TextLayoutCache{};
   other.undo_history_ = TextViewportUndoHistory{};
-  InvalidateVisualColumnCache();
+  // See the copy constructor: the moved-in width table describes the same
+  // document at the same tab size, so only the fold-dependent half goes.
+  layout_cache_.DropWrappedRowLayouts();
   return *this;
 }
 
