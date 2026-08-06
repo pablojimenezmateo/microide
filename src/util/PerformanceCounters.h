@@ -132,6 +132,14 @@ namespace microide::util {
   X(EditorHighlightCacheEvictions, "editor.highlight_cache_evictions")                          \
   X(RenderClipInvocations, "render.clip_invocations")                                           \
   X(WorkspaceScheduledWakes, "workspace.scheduled_wakes")                                       \
+  /* Damage rects queued per event, and how often the per-event list outgrew its  */             \
+  /* inline capacity (kInlineRedrawRects). rects_queued is the input-path work    */             \
+  /* nothing else reports -- a hover that repaints four controls and one that     */             \
+  /* repaints one read identically in every other counter -- and spills is the    */             \
+  /* check on the inline size: nonzero means the common case is paying a heap     */             \
+  /* round-trip per event again, which is exactly what SmallVector removed.       */             \
+  X(WorkspaceRedrawRectsQueued, "workspace.redraw_rects_queued")                                \
+  X(WorkspaceRedrawRectSpills, "workspace.redraw_rect_spills")                                  \
   X(WorkspaceWakeReasonPluginReload, "workspace.wake_reason_plugin_reload")                     \
   X(WorkspaceWakeReasonCaretBlink, "workspace.wake_reason_caret_blink")                         \
   X(WorkspaceWakeReasonNone, "workspace.wake_reason_none")                                      \

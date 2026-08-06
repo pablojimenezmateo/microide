@@ -144,6 +144,7 @@ void RegisterPhase3Tests(std::vector<TestCase>& tests);
 void RegisterPhase4Tests(std::vector<TestCase>& tests);
 void RegisterPhase5Tests(std::vector<TestCase>& tests);
 void RegisterInlineVectorTests(std::vector<TestCase>& tests);
+void RegisterSmallVectorTests(std::vector<TestCase>& tests);
 void RegisterParseTests(std::vector<TestCase>& tests);
 void RegisterJsonValueTests(std::vector<TestCase>& tests);
 void RegisterJsonFormatTests(std::vector<TestCase>& tests);
@@ -446,6 +447,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterSurfaceTextureCacheTests(tests);
   microide::tests::RegisterPluginThreadTests(tests);
   microide::tests::RegisterInlineVectorTests(tests);
+  microide::tests::RegisterSmallVectorTests(tests);
   microide::tests::RegisterParseTests(tests);
   microide::tests::RegisterJsonValueTests(tests);
   microide::tests::RegisterJsonFormatTests(tests);

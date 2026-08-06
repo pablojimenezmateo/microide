@@ -234,7 +234,7 @@ int Application::Run() {
           redraw_reason = "scheduled-full";
         } else {
           full_redraw_pending = false;
-          dirty_rects = scheduled.redraw.rects;
+          dirty_rects.assign(scheduled.redraw.rects.begin(), scheduled.redraw.rects.end());
           redraw_reason = "scheduled-partial";
         }
       }

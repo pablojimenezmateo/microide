@@ -12,6 +12,7 @@
 
 #include "app/BackgroundTaskCounter.h"
 #include "compare/ComparePresentationModel.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/SdlWake.h"
 #include "workspace/render/TabStripAnimation.h"
@@ -134,8 +135,15 @@ const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeStat
 }
 
 WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidation() {
-  const RenderInvalidation result = pending_render_invalidation_;
-  pending_render_invalidation_ = RenderInvalidation{};
+  if (pending_render_invalidation_.rects.spilled()) {
+    util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectSpills);
+  }
+  // Move, not copy. This runs once per handled event; copying the struct out and
+  // then default-constructing over the original meant the rect list was built
+  // twice and freed twice per event for no reason (TD-2026-08-06-145).
+  RenderInvalidation result = std::move(pending_render_invalidation_);
+  pending_render_invalidation_.full = false;
+  pending_render_invalidation_.rects.clear();
   return result;
 }
 
@@ -160,6 +168,7 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   }
   InvalidateCursorKindFingerprint();
   pending_render_invalidation_.rects.push_back(rect);
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectsQueued);
   QueueEditorHoverRefresh();
 }
 
@@ -1041,8 +1050,7 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWake() {
     result.redraw.rects.clear();
     result.handled = true;
   } else if (!pending.rects.empty() && !result.redraw.full) {
-    result.redraw.rects.insert(result.redraw.rects.end(), pending.rects.begin(),
-                               pending.rects.end());
+    result.redraw.rects.append(pending.rects.begin(), pending.rects.end());
     result.handled = true;
   }
   return result;

@@ -1011,6 +1011,7 @@ add_executable(microide_tests
   tests/SurfaceTextureCacheTests.cpp
   tests/PluginThreadTests.cpp
   tests/InlineVectorTests.cpp
+  tests/SmallVectorTests.cpp
   tests/ParseTests.cpp
   tests/JsonValueTests.cpp
   tests/JsonFormatTests.cpp

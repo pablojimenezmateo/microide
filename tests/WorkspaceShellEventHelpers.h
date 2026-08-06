@@ -3,6 +3,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <span>
 #include <vector>
 
 #include "workspace/shell/WorkspaceShell.h"
@@ -21,7 +22,7 @@ inline bool RectsIntersect(const SDL_FRect& lhs, const SDL_FRect& rhs) {
 // "Some dirty rect touches this surface." Correct for a large surface that is
 // only PARTLY repainted (an edited line inside the editor pane). Do NOT use it to
 // assert that a specific small control repainted -- see AnyRectCovers.
-inline bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+inline bool AnyRectIntersects(std::span<const SDL_FRect> rects, const SDL_FRect& target) {
   return std::any_of(rects.begin(), rects.end(),
                      [&](const SDL_FRect& rect) { return RectsIntersect(rect, target); });
 }
@@ -35,14 +36,14 @@ inline bool AnyRectIntersects(const std::vector<SDL_FRect>& rects, const SDL_FRe
 // control the test is asking about -- and neighbouring chrome rects overlap
 // generously. Three assertions written that way were found passing with the code
 // under test compiled out.
-inline bool AnyRectCovers(const std::vector<SDL_FRect>& rects, const SDL_FRect& target) {
+inline bool AnyRectCovers(std::span<const SDL_FRect> rects, const SDL_FRect& target) {
   return std::any_of(rects.begin(), rects.end(), [&](const SDL_FRect& rect) {
     return rect.x <= target.x && rect.y <= target.y &&
            rect.x + rect.w >= target.x + target.w && rect.y + rect.h >= target.y + target.h;
   });
 }
 
-inline float MaxRectHeight(const std::vector<SDL_FRect>& rects) {
+inline float MaxRectHeight(std::span<const SDL_FRect> rects) {
   float max_height = 0.0f;
   for (const SDL_FRect& rect : rects) {
     max_height = std::max(max_height, rect.h);
