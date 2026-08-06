@@ -936,8 +936,13 @@ void RegisterBuiltInScenarios() {
               throw std::runtime_error("file_finder_cold: file index did not finish building");
             }
             context.PumpFrames(2);
-            context.OpenFileFinder();
-            context.PumpFrames(1);
+            // Phased so the allocation tracer can be aimed at the finder rather
+            // than at opening and indexing a 10k-file project, which out-allocates
+            // it by orders of magnitude (TD-2026-08-06-151).
+            context.Measure("file_finder_cold.open_finder", [&] {
+              context.OpenFileFinder();
+              context.PumpFrames(1);
+            });
           },
   });
   // Task 9.4: git_sidebar_activate — open git fixture, activate sidebar, measure first status.
@@ -1024,11 +1029,15 @@ void RegisterBuiltInScenarios() {
                                               std::chrono::seconds(15))) {
               throw std::runtime_error("search_first_result: file index did not build in time");
             }
-            context.StartSearch("symbol_09999");
-            if (!context.WaitForProjectSearchFinished(std::chrono::seconds(15))) {
+            bool search_finished = false;
+            context.Measure("search_first_result.search_to_first_result", [&] {
+              context.StartSearch("symbol_09999");
+              search_finished = context.WaitForProjectSearchFinished(std::chrono::seconds(15));
+              context.PumpFrames(2);
+            });
+            if (!search_finished) {
               throw std::runtime_error("search_first_result: search did not finish in time");
             }
-            context.PumpFrames(2);
           },
   });
   // Wall spread +33% p50 / +23% p95 across four consecutive runs of one
@@ -1079,10 +1088,14 @@ void RegisterBuiltInScenarios() {
             }
             context.PumpFrames(3);
 
-            (void)context.Open(project_a);
-            context.PumpFrames(1);
-            (void)context.Open(project_b);
-            context.PumpFrames(30);
+            // The two project opens above are the setup; this is the switch the
+            // scenario is named for, plus the idle settle after it.
+            context.Measure("switch_and_idle.switch_and_settle", [&] {
+              (void)context.Open(project_a);
+              context.PumpFrames(1);
+              (void)context.Open(project_b);
+              context.PumpFrames(30);
+            });
           },
   });
 
@@ -1132,14 +1145,19 @@ void RegisterBuiltInScenarios() {
             (void)TA::EnsureActiveFoldingModelFresh(context.Shell());
             std::vector<double> samples_us;
             samples_us.reserve(96);
-            for (int i = 0; i < 96; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              context.Scroll(-2);
-              context.PumpFrames(1);
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
-            }
+            // The reserve stays OUTSIDE the phase deliberately: the sample buffer
+            // is the harness's, not the scenario's, and one 96-double allocation
+            // charged to the phase would be the largest thing in an empty trace.
+            context.Measure("editor_fold_viewport_refresh.scroll_frame", [&] {
+              for (int i = 0; i < 96; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                context.Scroll(-2);
+                context.PumpFrames(1);
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+              }
+            });
             EnforceP95Microseconds("editor_fold_viewport_refresh.scroll_frame", samples_us,
                                    30'000.0);
             context.PumpFrames(2);
@@ -1160,14 +1178,16 @@ void RegisterBuiltInScenarios() {
             (void)context.ExecuteCommand("goto 12000 8");
             std::vector<double> samples_us;
             samples_us.reserve(100);
-            for (int i = 0; i < 100; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              context.Scroll(-3);
-              context.PumpFrames(1);
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
-            }
+            context.Measure("editor_sticky_scroll_scroll.fast_scroll_frame", [&] {
+              for (int i = 0; i < 100; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                context.Scroll(-3);
+                context.PumpFrames(1);
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+              }
+            });
             EnforceP95Microseconds("editor_sticky_scroll_scroll.fast_scroll_frame", samples_us,
                                    30'000.0);
             context.PumpFrames(2);
@@ -1185,14 +1205,16 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(18);
             std::vector<double> samples_us;
             samples_us.reserve(80);
-            for (int i = 0; i < 80; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              context.Scroll(((i % 7) & 1) != 0 ? 2 : -2);
-              context.PumpFrames(1);
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
-            }
+            context.Measure("editor_indent_guides_paint.scroll_paint_frame", [&] {
+              for (int i = 0; i < 80; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                context.Scroll(((i % 7) & 1) != 0 ? 2 : -2);
+                context.PumpFrames(1);
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+              }
+            });
             EnforceP95Microseconds("editor_indent_guides_paint.scroll_paint_frame", samples_us,
                                    30'000.0);
             context.PumpFrames(2);
@@ -1209,14 +1231,16 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(18);
             std::vector<double> samples_us;
             samples_us.reserve(80);
-            for (int i = 0; i < 80; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              context.Scroll(-2);
-              context.PumpFrames(1);
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
-            }
+            context.Measure("editor_render_whitespace_paint.scroll_overlay_frame", [&] {
+              for (int i = 0; i < 80; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                context.Scroll(-2);
+                context.PumpFrames(1);
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+              }
+            });
             EnforceP95Microseconds("editor_render_whitespace_paint.scroll_overlay_frame", samples_us,
                                    30'000.0);
             context.PumpFrames(2);
@@ -1250,14 +1274,16 @@ void RegisterBuiltInScenarios() {
                     microide::util::PerfCounterId::EditorLayoutShapeRevisionBumps);
             std::vector<double> samples_us;
             samples_us.reserve(100);
-            for (int i = 0; i < 100; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              context.Scroll((i % 2 == 0) ? -2 : 2);
-              context.PumpFrames(1);
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
-            }
+            context.Measure("editor_scroll_only_no_content_bump.scroll_frame", [&] {
+              for (int i = 0; i < 100; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                context.Scroll((i % 2 == 0) ? -2 : 2);
+                context.PumpFrames(1);
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+              }
+            });
             const std::uint64_t content_after =
                 microide::util::ReadPerformanceCounter(
                     microide::util::PerfCounterId::EditorContentRevisionBumps);
