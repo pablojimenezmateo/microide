@@ -10,6 +10,7 @@
 #   tools/run-checks.sh ubsan   # UndefinedBehavior build + ctest-> /tmp/microide-ubsan.log
 #   tools/run-checks.sh tsan    # ThreadSanitizer build + ctest  -> /tmp/microide-tsan.log
 #   tools/run-checks.sh perf-tests # tests with allocation counting -> /tmp/microide-perf-tests.log
+#   tools/run-checks.sh perf-gate  # full gate + dated drift record -> /tmp/microide-perf-gate.log
 #   tools/run-checks.sh all     # tests, asan, ubsan, tsan in sequence
 #
 # The full console output (build + test) is tee'd to the log file; the script's
@@ -417,10 +418,27 @@ check_coverage() {
   return $rc
 }
 
+# The full perf gate, recorded into the dated drift series.
+#
+# Delegates to tools/perf-gate.sh, which owns the record: this lane exists so the
+# gate is reachable the same way every other check is, rather than being a command
+# line somebody has to remember. Reference-runner only — see the script's header
+# and TD-2026-08-06-141.
+check_perf_gate() {
+  local log="${LOG_DIR}/microide-perf-gate.log"
+  run_logged "$log" tools/perf-gate.sh "${@}"
+  local rc=$?
+  echo "run-checks: perf-gate finished (exit $rc); log at $log"
+  echo "run-checks: the durable record is under \${MICROIDE_PERF_DRIFT_DIR:-~/.local/state/microide/perf-drift}"
+  return $rc
+}
+
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|clang-build|coverage|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|all}" >&2
   echo "       tools/run-checks.sh clang-build   # whole tree, clang, warnings-as-errors" >&2
   echo "       tools/run-checks.sh perf-canary   # prove the perf gate can still fail" >&2
+  echo "       tools/run-checks.sh perf-gate     # run the gate, record it, report drift" >&2
+  echo "       tools/run-checks.sh perf-gate --status  # what the last recorded run said" >&2
   echo "       tools/run-checks.sh coverage      # line coverage + per-area floors" >&2
   echo "       tools/run-checks.sh coverage --update-floors  # re-record the floors" >&2
   echo "       tools/run-checks.sh perf-tests    # tests with allocation counting armed" >&2
@@ -439,6 +457,7 @@ main() {
     fuzz)  check_fuzz "${2:-run}" ;;
     perf-tests) check_perf_tests ;;
     perf-canary) check_perf_canary ;;
+    perf-gate) shift; check_perf_gate "$@" ;;
     clang-build) check_clang_build ;;
     coverage) check_coverage "${2:-}" ;;
     all)

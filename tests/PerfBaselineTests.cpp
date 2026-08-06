@@ -24,6 +24,93 @@ perf::BaselineRecord MakeBaseline() {
   return baseline;
 }
 
+// TD-2026-08-06-139: five allocation gates drifted up and every one reported
+// PASS, because a pass/fail bit cannot distinguish "unchanged" from "one
+// allocation short of red". `EnvelopeUsedPercent` is what the run reports
+// instead, so a near-miss is visible in the run that passed it.
+//
+// The exact case that went unseen is the headline assertion here: +9.4% against
+// a +10% tolerance is 94% of the envelope, and 94 >= the 75% notice threshold.
+void TestPerfEnvelopeConsumptionSeesADriftThatPassed() {
+  const auto metric = [](double expected, double actual, double tolerance) {
+    perf::MetricComparison m;
+    m.metric = "p50_allocations";
+    m.expected = expected;
+    m.actual = actual;
+    m.tolerance_percent = tolerance;
+    m.raw_actual = actual;
+    m.passed = actual <= expected * (1.0 + tolerance / 100.0);
+    return m;
+  };
+
+  // The real numbers from the entry: editor_mouse_selection_drag, 5010 -> 5482
+  // against the default 10% allocation tolerance.
+  const perf::MetricComparison drifted = metric(5010.0, 5482.0, 10.0);
+  Expect(drifted.passed, "the drift under test is one the gate PASSED — that is the point");
+  const double used = perf::EnvelopeUsedPercent(drifted);
+  Expect(used > 90.0 && used < 100.0,
+         "a +9.4% move against a +10% envelope must report as ~94% of the envelope");
+  Expect(used >= perf::kEnvelopeNoticePercent,
+         "the drift that went unnoticed for two days must clear the notice threshold");
+
+  // An unchanged scenario must stay silent, or the notice is noise and gets
+  // ignored — which is the same defect one layer up.
+  Expect(perf::EnvelopeUsedPercent(metric(5010.0, 5010.0, 10.0)) == 0.0,
+         "an unchanged measurement consumes none of its envelope");
+  Expect(perf::EnvelopeUsedPercent(metric(5010.0, 5100.0, 10.0)) < perf::kEnvelopeNoticePercent,
+         "a small move well inside the envelope must not be reported");
+
+  // An improvement reads negative, not as pressure.
+  Expect(perf::EnvelopeUsedPercent(metric(5010.0, 2101.0, 10.0)) < 0.0,
+         "code that got faster must consume negative envelope, not positive");
+
+  // A failure reads above 100, so one number orders passes and failures alike.
+  const perf::MetricComparison failed = metric(5010.0, 6000.0, 10.0);
+  Expect(!failed.passed, "the control must actually fail");
+  Expect(perf::EnvelopeUsedPercent(failed) > 100.0,
+         "a metric past its tolerance must consume more than the whole envelope");
+
+  // Degenerate inputs must not produce infinities that would sort to the top of
+  // the headroom summary forever.
+  Expect(perf::EnvelopeUsedPercent(metric(0.0, 10.0, 10.0)) == 0.0,
+         "a zero baseline has no ratio to report");
+  Expect(perf::EnvelopeUsedPercent(metric(100.0, 110.0, 0.0)) == 0.0,
+         "a zero tolerance has no envelope to consume");
+}
+
+// The gate's own comparison must agree with the envelope arithmetic: a metric
+// reported at <=100% of its envelope has to be a metric the gate passed, and
+// vice versa. Two numbers describing one decision that could disagree is how a
+// summary starts lying (validation-traps.md).
+void TestPerfEnvelopeConsumptionAgreesWithTheGate() {
+  const perf::BaselineRecord baseline = MakeBaseline();
+  for (const double measured : {50.0, 99.0, 100.0, 105.0, 109.9, 110.0, 110.1, 150.0, 300.0}) {
+    perf::Aggregate aggregate;
+    aggregate.scenario_name = "test";
+    aggregate.metrics = perf::MetricSet{
+        .p50_wall_ms = measured,
+        .p95_wall_ms = 100.0,
+        .max_wall_ms = 100.0,
+        .p50_allocations = measured,
+        .p95_allocations = 100.0,
+        .max_allocations = 100.0,
+    };
+    const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, aggregate);
+    for (const perf::MetricComparison& metric : comparison.metrics) {
+      const double used = perf::EnvelopeUsedPercent(metric);
+      // Strictly past the envelope must be a failure; strictly inside must pass.
+      // Exactly 100.0 is the boundary and is left to the comparison to define.
+      if (used > 100.0 + 1e-9) {
+        Expect(!metric.passed,
+               "a metric reported past its whole envelope must be one the gate failed");
+      } else if (used < 100.0 - 1e-9) {
+        Expect(metric.passed,
+               "a metric reported inside its envelope must be one the gate passed");
+      }
+    }
+  }
+}
+
 void TestPerfBaselineComparisonAllowsImprovements() {
   const perf::BaselineRecord baseline = MakeBaseline();
   perf::Aggregate aggregate;
@@ -687,6 +774,10 @@ void TestPerfBaselineCalibrationRoundTrip() {
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/EnvelopeConsumptionSeesADriftThatPassed",
+          TestPerfEnvelopeConsumptionSeesADriftThatPassed);
+  AddTest(tests, "PerfBaseline/EnvelopeConsumptionAgreesWithTheGate",
+          TestPerfEnvelopeConsumptionAgreesWithTheGate);
   AddTest(tests, "PerfBaseline/NormalisesCpuAgainstTheBaselineClock",
           TestPerfBaselineNormalisesCpuAgainstTheBaselineClock);
   AddTest(tests, "PerfBaseline/NormalisesEachIterationAgainstItsOwnClock",

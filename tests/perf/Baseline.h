@@ -122,6 +122,28 @@ CalibrationSpread MeasureCalibrationSpread(const Aggregate& aggregate);
 // should say nothing at all.
 std::string DescribeCalibrationSpread(const CalibrationSpread& spread);
 
+// How far past its baseline a metric landed, as a percentage. Positive means
+// slower / more allocations. Zero when the baseline is zero (nothing to divide
+// by, and a gate on a zero baseline is not measuring a ratio anyway).
+double MetricDeltaPercent(const MetricComparison& metric);
+
+// How much of a gated metric's tolerance the measurement consumed, in percent of
+// the envelope. 0 = exactly on the baseline, 100 = exactly at the limit, >100 =
+// failed, negative = the code got faster than the baseline records.
+//
+// This is the number TD-2026-08-06-139 needed and nobody had. Five allocation
+// gates drifted up (one by 9.4% against a 10% tolerance) and every one of them
+// reported PASS, because a pass/fail bit cannot distinguish "unchanged" from "one
+// allocation short of red". Envelope consumption can, from a single run, without
+// a second report to diff against.
+double EnvelopeUsedPercent(const MetricComparison& metric);
+
+// Envelope consumption at or above which a PASSING gated metric is worth saying
+// out loud. 75% leaves a quarter of the envelope as a warning band: enough margin
+// that a real regression is reported before it turns the suite red, tight enough
+// that an unchanged scenario says nothing at all.
+inline constexpr double kEnvelopeNoticePercent = 75.0;
+
 std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path);
 bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& baseline);
 BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggregate& aggregate);

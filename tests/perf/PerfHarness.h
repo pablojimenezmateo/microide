@@ -161,6 +161,10 @@ struct ReportMetadata {
   std::string provenance;             // "reference" | "advisory"
   std::string isolated_app_root;      // path to the per-run sandbox, if any
   std::string cpu_affinity;           // e.g. "0-3,12-15 (8 cpus @ 5157 MHz)", "off"
+  // When this run happened, ISO-8601 UTC. A --report-json is only a drift record
+  // if it says when it was taken; without it a directory of reports is dated by
+  // mtime, which any copy or rsync destroys (TD-2026-08-06-141).
+  std::string timestamp_utc;
 };
 
 

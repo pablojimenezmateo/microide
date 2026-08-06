@@ -1,3 +1,4 @@
+#include "perf/AllocationCounter.h"
 #include "perf/Baseline.h"
 #include "perf/PerfCpuAffinity.h"
 #include "perf/PerfHarness.h"
@@ -15,6 +16,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <ctime>
 #include <filesystem>
 #include <fstream>
 #include <iostream>
@@ -1460,7 +1462,8 @@ std::vector<std::pair<std::string, std::uint64_t>> AggregateCounterTotals(
   return ordered;
 }
 
-util::JsonValue ToJson(const Aggregate& aggregate) {
+util::JsonValue ToJson(const Aggregate& aggregate,
+                       const std::optional<BaselineComparison>& comparison) {
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wmaybe-uninitialized"
@@ -1502,9 +1505,43 @@ util::JsonValue ToJson(const Aggregate& aggregate) {
 #if defined(__GNUC__) && !defined(__clang__)
 #pragma GCC diagnostic pop
 #endif
+  // The gate's own verdict, recorded next to the measurement it was reached from.
+  // Without it a report says what was measured but not what it was measured
+  // against, so reading drift out of a directory of reports means re-deriving
+  // every envelope from the baselines as they exist *today* -- which is exactly
+  // the information a rebaseline destroys.
+  util::JsonValue baseline_json = util::JsonValue();
+  if (comparison.has_value()) {
+    util::JsonArray metrics_json;
+    metrics_json.reserve(comparison->metrics.size());
+    for (const MetricComparison& metric : comparison->metrics) {
+      metrics_json.push_back(util::JsonObject{
+          {"metric", metric.metric},
+          {"expected", metric.expected},
+          {"actual", metric.actual},
+          {"raw_actual", metric.raw_actual},
+          {"tolerance_percent", metric.tolerance_percent},
+          {"delta_percent", MetricDeltaPercent(metric)},
+          {"envelope_used_percent", EnvelopeUsedPercent(metric)},
+          {"passed", metric.passed},
+      });
+    }
+    baseline_json = util::JsonObject{
+        {"gated", true},
+        {"passed", comparison->passed},
+        {"clock_normalization_applied", comparison->clock.applied},
+        {"clock_normalization_factor", comparison->clock.factor},
+        {"clock_normalization_clamped", comparison->clock.clamped},
+        {"metrics", std::move(metrics_json)},
+    };
+  } else {
+    baseline_json = util::JsonObject{{"gated", false}};
+  }
+
   return util::JsonObject{
       {"scenario", aggregate.scenario_name},
       {"smoke", aggregate.smoke},
+      {"baseline", std::move(baseline_json)},
       {"metrics", util::JsonObject{
                       {"p50_wall_ms", aggregate.metrics.p50_wall_ms},
                       {"p95_wall_ms", aggregate.metrics.p95_wall_ms},
@@ -1633,6 +1670,10 @@ int main(int argc, char** argv) {
     }
   }
   std::vector<Aggregate> aggregates;
+  // Keyed by scenario name so the report can record what each measurement was
+  // gated against, and so the end-of-run summary can rank PASSING metrics by how
+  // much of their envelope they consumed.
+  std::unordered_map<std::string, BaselineComparison> comparisons;
   bool all_passed = true;
   std::size_t selected_count = 0;
   // Integrity gate for the manifest-backed fixture trees.
@@ -1804,6 +1845,7 @@ int main(int argc, char** argv) {
       continue;
     }
     const BaselineComparison comparison = CompareToBaseline(*baseline, *aggregate);
+    comparisons[scenario.name] = comparison;
     // A windowed run measures window-system present cost the baselines never
     // recorded, so its wall numbers are not comparable. Allocation counts are:
     // they came out byte-identical across the dummy and x11 lanes on every
@@ -1866,8 +1908,7 @@ int main(int argc, char** argv) {
         }
         const bool advisory_metric =
             windowed_lane && metric.metric.find("wall") != std::string::npos;
-        const double delta_percent =
-            metric.expected != 0.0 ? (metric.actual / metric.expected - 1.0) * 100.0 : 0.0;
+        const double delta_percent = MetricDeltaPercent(metric);
         // Duration metrics only. An allocation or RSS gate is unaffected by the
         // clock, so annotating those would be actively misleading — allocation
         // counts coming out identical across a clock step is the *evidence* that
@@ -1932,6 +1973,19 @@ int main(int argc, char** argv) {
   metadata.iterations = options->iterations;
   metadata.layout_mode = options->layout_mode.value_or(std::string{});
   {
+    // A drift record has to be self-dating. Filesystem mtime does not survive a
+    // copy, an rsync or a git checkout, and a directory of reports whose order is
+    // guesswork is not a series (TD-2026-08-06-141).
+    const std::time_t now = std::time(nullptr);
+    std::tm utc{};
+    if (gmtime_r(&now, &utc) != nullptr) {
+      char buffer[32] = {};
+      if (std::strftime(buffer, sizeof(buffer), "%Y-%m-%dT%H:%M:%SZ", &utc) > 0) {
+        metadata.timestamp_utc = buffer;
+      }
+    }
+  }
+  {
     const char* seed_env = std::getenv("MICROIDE_PERF_SEED");
     if (seed_env != nullptr && seed_env[0] != '\0') {
       const auto parsed = microide::util::ParseSize(seed_env);
@@ -1952,6 +2006,76 @@ int main(int argc, char** argv) {
     metadata.isolated_app_root = "(per-scenario isolated, cleaned at shutdown)";
   }
 
+  // Envelope-headroom summary.
+  //
+  // TD-2026-08-06-139: five allocation gates drifted up -- one by 9.4% against a
+  // 10% tolerance -- and every one of them printed PASS. The run said nothing,
+  // because a pass/fail bit cannot tell "unchanged" from "one allocation short of
+  // red", and by the time anyone looked the drift had been rebaselined and was
+  // green forever. This is the leading indicator: which PASSING gates are close
+  // to their limit, ranked, in the same run that passed them.
+  //
+  // Allocation counts are the deterministic metrics (identical run to run on the
+  // same binary), so a near-miss there is a real code change and is listed first.
+  // Wall/CPU/RSS carry machine state, so a near-miss there is worth seeing but is
+  // not on its own evidence; they are listed separately and labelled.
+  {
+    struct HeadroomRow {
+      const std::string* scenario = nullptr;
+      const MetricComparison* metric = nullptr;
+      double used = 0.0;
+    };
+    std::vector<HeadroomRow> deterministic;
+    std::vector<HeadroomRow> machine_sensitive;
+    for (const auto& [name, comparison] : comparisons) {
+      for (const MetricComparison& metric : comparison.metrics) {
+        if (!metric.passed) {
+          continue;  // Already reported in full by the FAIL verdict above.
+        }
+        const double used = EnvelopeUsedPercent(metric);
+        if (used < kEnvelopeNoticePercent) {
+          continue;
+        }
+        (metric.metric.find("alloc") != std::string::npos ? deterministic : machine_sensitive)
+            .push_back(HeadroomRow{&name, &metric, used});
+      }
+    }
+    const auto by_used_desc = [](const HeadroomRow& a, const HeadroomRow& b) {
+      return a.used > b.used;
+    };
+    std::sort(deterministic.begin(), deterministic.end(), by_used_desc);
+    std::sort(machine_sensitive.begin(), machine_sensitive.end(), by_used_desc);
+    const auto print_rows = [](const std::vector<HeadroomRow>& rows, const char* suffix) {
+      for (const HeadroomRow& row : rows) {
+        const double delta_percent = MetricDeltaPercent(*row.metric);
+        std::cerr << "[perf]   " << *row.scenario << ' ' << row.metric->metric
+                  << ": baseline=" << row.metric->expected << " measured=" << row.metric->actual
+                  << " (" << (delta_percent >= 0.0 ? "+" : "") << delta_percent << "% of +"
+                  << row.metric->tolerance_percent << "% allowed = " << row.used
+                  << "% of envelope)" << suffix << '\n';
+      }
+    };
+    if (!deterministic.empty()) {
+      std::cerr << "[perf] HEADROOM: " << deterministic.size()
+                << " allocation gate(s) passed while consuming >=" << kEnvelopeNoticePercent
+                << "% of their envelope. Allocation counts are deterministic, so this is a code"
+                   " change, not machine noise — investigate before rebaselining it away"
+                   " (TD-2026-08-06-139).\n";
+      print_rows(deterministic, "");
+    }
+    if (!machine_sensitive.empty()) {
+      std::cerr << "[perf] headroom (duration/resident): " << machine_sensitive.size()
+                << " gate(s) passed while consuming >=" << kEnvelopeNoticePercent
+                << "% of their envelope. These carry machine state; corroborate against the"
+                   " allocation counts before reading them as a regression.\n";
+      print_rows(machine_sensitive, "  [machine-sensitive]");
+    }
+    if (deterministic.empty() && machine_sensitive.empty() && !comparisons.empty()) {
+      std::cerr << "[perf] headroom: every gated metric stayed below " << kEnvelopeNoticePercent
+                << "% of its envelope.\n";
+    }
+  }
+
   // Advisory banner so reviewers can distinguish local runs from gate runs.
   if (metadata.provenance == "advisory") {
     std::cerr << "[perf] advisory run (runner_class=" << metadata.runner_class
@@ -1965,7 +2089,8 @@ int main(int argc, char** argv) {
     if (out) {
       out << "# microide_perf report\n";
       out << "runner_class=" << metadata.runner_class
-          << " provenance=" << metadata.provenance << "\n";
+          << " provenance=" << metadata.provenance
+          << " timestamp_utc=" << metadata.timestamp_utc << "\n";
       out << "sdl_video_driver=" << metadata.sdl_video_driver
           << " renderer_driver=" << metadata.sdl_renderer_driver << "\n";
       out << "iterations=" << metadata.iterations << " seed=" << metadata.seed
@@ -2006,7 +2131,11 @@ int main(int argc, char** argv) {
     microide::util::JsonArray scenarios_json;
     scenarios_json.reserve(aggregates.size());
     for (const Aggregate& aggregate : aggregates) {
-      scenarios_json.push_back(ToJson(aggregate));
+      const auto found = comparisons.find(aggregate.scenario_name);
+      scenarios_json.push_back(ToJson(aggregate, found == comparisons.end()
+                                                     ? std::optional<BaselineComparison>{}
+                                                     : std::optional<BaselineComparison>{
+                                                           found->second}));
     }
     microide::util::JsonArray scenario_names_json;
     scenario_names_json.reserve(metadata.scenarios.size());
@@ -2024,6 +2153,7 @@ int main(int argc, char** argv) {
         {"seed", static_cast<std::int64_t>(metadata.seed)},
         {"scenarios", std::move(scenario_names_json)},
         {"isolated_app_root", metadata.isolated_app_root},
+        {"timestamp_utc", metadata.timestamp_utc},
     };
     microide::util::JsonObject report_json{
         {"metadata", std::move(metadata_json)},
@@ -2035,6 +2165,12 @@ int main(int argc, char** argv) {
                  microide::util::JsonValue(std::move(report_json)));
     }
   }
+
+  // Aggregated allocation-site table, if MICROIDE_PERF_ALLOC_TRACE asked for one.
+  // At the end of the run rather than per scenario, because the interesting
+  // question ("what is doing all these small allocations") is usually asked with
+  // --scenarios= narrowing the run to the one that regressed.
+  Allocations::DumpTracedAllocationSites();
 
   return all_passed ? 0 : 1;
 }

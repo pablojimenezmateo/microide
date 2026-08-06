@@ -454,6 +454,88 @@ even when it is inside its envelope, and gets looked at before its number is
 written. TD-2026-08-05-135 was found exactly this way and is why the drift table
 belongs in the commit message.
 
+## Scheduled Gate Runs And The Drift Record
+
+The rule above only fires when somebody runs the sweep. Nothing did, which is how
+eleven loose gates and five upward regressions accumulated unseen
+(TD-2026-08-06-141): the gate trips on *increases*, so a baseline that has gone
+loose is green forever and a drift inside the envelope is green forever, and
+neither has anything to report until two measurements taken at different times are
+put side by side.
+
+CI cannot do this — the baselines are absolute timings from the pinned
+`perf-runner-v1` host, which is the maintainer's workstation — but the gate does
+not need CI. It needs something to run it on the reference machine and report.
+
+```bash
+tools/perf-gate.sh                 # build, run the full gate, record it, report drift
+tools/perf-gate.sh --install-timer # weekly systemd *user* timer (Sun 04:00, Persistent=true)
+tools/perf-gate.sh --status        # what the last recorded run said
+tools/perf-gate.sh --drift         # re-report drift without running anything
+tools/run-checks.sh perf-gate      # the same thing through the usual check driver
+```
+
+Each run writes a dated, commit-stamped `--report-json` into
+`${MICROIDE_PERF_DRIFT_DIR:-~/.local/state/microide/perf-drift}` — the drift record
+nobody had. **Iterations are not a knob**: a baseline records a p50/p95 captured at
+some iteration count, so re-measuring at a different one compares percentiles of
+differently-sized samples and reads as drift that is not there. `--scenarios=` runs
+are kept in a `subset/` sub-directory for the same reason: a 3-scenario report
+diffed against a 93-scenario one reads every absent scenario as a change.
+
+### Three things make drift visible
+
+**1. Every report records what it was gated against.** Each scenario carries a
+`baseline` block — `expected`, `actual`, `tolerance_percent`, `delta_percent`,
+`envelope_used_percent`, `passed`. Without it a report says what was measured but
+not what it was measured *against*, so reading drift out of an old report means
+re-deriving the envelope from the baselines as they exist today — which is exactly
+the information a rebaseline destroys.
+
+**2. Envelope consumption, printed by the run that passed.** `envelope_used_percent`
+is how much of the tolerance a measurement ate: 0 = on the baseline, 100 = exactly
+at the limit, >100 = failed, negative = faster than the baseline records. Any
+*passing* gate at or above 75% is called out at the end of the run:
+
+```
+[perf] HEADROOM: 1 allocation gate(s) passed while consuming >=75% of their envelope.
+[perf]   editor_mouse_selection_drag p50_allocations: baseline=5010 measured=5482 (+9.42% of +10% allowed = 94.2% of envelope)
+```
+
+That line is the whole point. The drift that started TD-2026-08-06-139 was +9.4%
+against a +10% tolerance — 94% of the envelope, one allocation short of red, and the
+run said `PASS` and nothing else. Allocation gates are listed first and unqualified
+because allocation counts are deterministic run-to-run on the same binary, so a
+near-miss there is a code change. Wall/CPU/RSS are listed separately and labelled
+machine-sensitive; this box can swing 1.44x on the clock alone
+(TD-2026-08-05-137), so a duration near-miss is worth seeing but is not on its own
+evidence.
+
+**3. `tools/perf-drift.py` diffs two measurements.** Report vs report, or report vs
+the committed baselines:
+
+```bash
+tools/perf-drift.py NEWER.json OLDER.json    # two dated runs
+tools/perf-drift.py REPORT.json              # vs the committed baselines
+tools/perf-drift.py --dir <drift-dir>        # the newest two in the record
+```
+
+It splits its findings by what they mean, not by severity: **allocation drift up**
+(deterministic, so every row is a code change whether or not it tripped anything —
+the TD-2026-08-06-139 class), **allocation drift down** (real improvements that were
+never rebaselined, so the gate keeps the old slack), **loose gates** (the
+measurement sits far below the baseline — the TD-2026-08-05-135 class), and
+**envelope pressure** (passing gates near their limit). Reports are ordered by their
+own `metadata.timestamp_utc`, never by mtime, which a copy or an rsync rewrites.
+
+### Getting the output read
+
+A scheduled run whose failures nobody sees is the same defect one layer up. The
+run therefore exits non-zero on a gate failure *or* on flagged deterministic drift,
+writes `latest-summary.txt` next to the reports, and raises a `notify-send`
+desktop notification when either happens. `tools/perf-gate.sh --status` prints that
+summary; put it in a shell profile if it should nag.
+
 ## Configure
 
 ```bash

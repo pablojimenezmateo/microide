@@ -259,6 +259,20 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   return true;
 }
 
+double MetricDeltaPercent(const MetricComparison& metric) {
+  if (metric.expected == 0.0) {
+    return 0.0;
+  }
+  return (metric.actual / metric.expected - 1.0) * 100.0;
+}
+
+double EnvelopeUsedPercent(const MetricComparison& metric) {
+  if (metric.expected == 0.0 || metric.tolerance_percent <= 0.0) {
+    return 0.0;
+  }
+  return MetricDeltaPercent(metric) / metric.tolerance_percent * 100.0;
+}
+
 BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggregate& aggregate) {
   BaselineComparison result;
   result.scenario_name = aggregate.scenario_name;
