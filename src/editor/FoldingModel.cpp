@@ -703,10 +703,23 @@ bool FoldingModel::EnsureBlockSummary(LineSpan lines, const ComputeOptions& opti
     block.last_nonblank = last_nonblank_rel;
   }
 
-  block.bracket_closers.assign(build_bracket_closers_.begin(), build_bracket_closers_.end());
-  block.bracket_openers.assign(build_bracket_openers_.begin(), build_bracket_openers_.end());
-  block.indent_dedents.assign(build_indent_dedents_.begin(), build_indent_dedents_.end());
-  block.indent_openers.assign(build_indent_openers_.begin(), build_indent_openers_.end());
+  // `assign` keeps the destination's existing capacity, so a block rebuilt by a
+  // keystroke costs nothing; the allocation TD-2026-08-06-144 is about is the
+  // FIRST store into each of a fresh block's four lists.
+  //
+  // The two counters are what make the size of that word a measurement rather
+  // than an assumption, and they are the reason the entry's proposed fix was not
+  // taken: `entries / stored` reads ~32 on the 50k-line C++ fixture, so these are
+  // not the tiny lists the entry pictured. See Block in the header.
+  const auto store = [](auto& destination, const auto& source) {
+    destination.assign(source.begin(), source.end());
+    util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBlockWordsStored);
+    util::AddPerformanceCounter(util::PerfCounterId::EditorFoldBlockWordEntries, source.size());
+  };
+  store(block.bracket_closers, build_bracket_closers_);
+  store(block.bracket_openers, build_bracket_openers_);
+  store(block.indent_dedents, build_indent_dedents_);
+  store(block.indent_openers, build_indent_openers_);
   block.valid = true;
   return true;
 }
@@ -1447,9 +1460,10 @@ std::size_t FoldingModel::ApproximateResidentBytes() const {
   bytes += vec_bytes(line_indent_);
   bytes += vec_bytes(blocks_);
   for (const Block& block : blocks_) {
-    // Four heap blocks per block, which is the whole of TD-2026-08-06-144: a
-    // 50k-line document is ~195 blocks and therefore ~780 small allocations held
-    // for the life of the tab. Counted individually so that entry has a number.
+    // Four heap blocks per block, which is what TD-2026-08-06-144 is about: a
+    // 50k-line document is ~196 blocks and therefore ~784 small allocations held
+    // for the life of the tab. Counted individually so that entry has a number --
+    // and the number is why it stays open rather than fixed.
     bytes += vec_bytes(block.bracket_closers);
     bytes += vec_bytes(block.bracket_openers);
     bytes += vec_bytes(block.indent_dedents);

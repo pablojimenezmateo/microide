@@ -636,7 +636,54 @@ This became more load-bearing on 2026-08-06: viewport copies used to wipe the wi
 table, which masked any staleness at every copy. They no longer do
 ([TD-2026-08-06-138](#td-2026-08-06-138)), so a stale table now survives further.
 
-### TD-2026-08-06-144 — `FoldingModel::Block` holds four `std::vector`s, and the struct below it already knows not to. OPEN.
+### TD-2026-08-06-144 — `FoldingModel::Block` holds four `std::vector`s, and the struct below it already knows not to. OPEN — attempted 2026-08-06, and the entry's premise turned out to be wrong.
+
+**Tried, measured, reverted.** The obvious cheap fix — `Block`'s four lists become
+`util::SmallVector<T, N>`, inline storage with a heap spill, which suits them
+exactly (all four word types are trivially copyable PODs, and the sizes are
+unbounded so `InlineVector` would be wrong) — does not work, for a reason the
+entry could not have known without measuring.
+
+Two counters were added to find out: `editor.fold_block_words_stored` and
+`editor.fold_block_word_entries`. Their ratio is the mean word length, and on the
+50k-line C++ fixture it is **~32 entries**, stable across scenarios (32.3 / 32.8 /
+34.2):
+
+```
+editor_fold_recompute        stored=128  entries=4200  mean=32.8
+editor_fold_viewport_refresh stored= 32  entries=1096  mean=34.2
+```
+
+The entry describes "a few hundred **32-byte** allocations", which reads as
+"these lists hold one or two things". They hold thirty-two. That changes every
+conclusion:
+
+- At an inline capacity small enough to be free (6), **three quarters of the
+  words spilled** and the allocation count did not move at all — 25,975 against a
+  25,955 baseline on `editor_fold_viewport_refresh`.
+- An inline capacity large enough to matter (~64) costs `64 × 8 × 4` bytes per
+  block, i.e. **~420 KB per open tab** on a 196-block document, against a fold
+  model that TD-2026-08-06-142's new accounting measures at ~0.83 MB total. A 50 %
+  memory regression to save ~780 allocations that happen **once per file open**.
+
+**The entry's own pooling proposal survives this, but barely.** Four model-owned
+pools plus `(offset, count)` per block would still allocate the same bytes, just
+in ~40 geometric growths instead of 784 discrete blocks — worth ~780 allocations
+(~30 µs) at open and ~12 KB of malloc headers per tab. Against that: a bespoke
+slab allocator with in-place reuse and compaction, living inside the incremental
+fold model, whose correctness needs the cache-free-oracle diff test. The priority
+order (speed, correctness, CPU, memory) does not justify that for 30 µs on an
+operation measured in milliseconds.
+
+**What shipped from the attempt**: the two counters, and one trap recorded in the
+header for whoever tries `SmallVector` here anyway. These word types are nested in
+`FoldingModel`, and a nested class's default member initialisers are parsed only
+once the outermost class is complete — so inside `FoldingModel`'s body
+`is_default_constructible_v<WordCloser>` cannot be answered and GCC answers
+`false`, failing `SmallVector`'s static_assert with a false negative whose error
+message says nothing about the real cause.
+
+The original entry follows.
 
 Found while closing [TD-2026-08-06-139](#td-2026-08-06-139), which bisected a +472
 allocation drift to the incremental fold model and then found the cost was entirely

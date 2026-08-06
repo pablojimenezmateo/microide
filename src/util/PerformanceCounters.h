@@ -38,6 +38,13 @@ namespace microide::util {
   X(EditorFoldBlockWordsApplied, "editor.fold_block_words_applied")                             \
   X(EditorFoldBlockSummariesBuilt, "editor.fold_block_summaries_built")                         \
   X(EditorFoldBlockSummaryLines, "editor.fold_block_summary_lines")                             \
+  /* Block word lists stored, and total entries across them. entries/stored is the    */        \
+  /* mean word length -- ~32 on the 50k-line C++ fixture, not the handful             */        \
+  /* TD-2026-08-06-144 assumed. That measurement is why inlining these into Block     */        \
+  /* was measured and rejected: an inline capacity big enough to matter costs        */        \
+  /* ~420 KB per open tab. Keep both so nobody has to re-derive it.                   */        \
+  X(EditorFoldBlockWordsStored, "editor.fold_block_words_stored")                                \
+  X(EditorFoldBlockWordEntries, "editor.fold_block_word_entries")                                \
   X(EditorFoldBracketLinesScanned, "editor.fold_bracket_lines_scanned")                         \
   X(EditorFoldBracketLinesSkippedTooLong, "editor.fold_bracket_lines_skipped_too_long")         \
   X(EditorBracketMatchLineTooLong, "editor.bracket_match_line_too_long")                       \

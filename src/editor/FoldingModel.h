@@ -342,6 +342,26 @@ class FoldingModel {
   // The reduced word of one run of lines, plus what a walk needs to skip over it:
   // how many lines and bracket events it holds, and where its last non-blank line
   // sits (the closer an indent fold ending in a later block gets).
+  // Four heap blocks per block, and it stays that way deliberately
+  // (TD-2026-08-06-144). Inlining them into `Block` with `util::SmallVector` was
+  // tried and measured: `editor.fold_block_word_entries / words_stored` says a
+  // word averages **32 entries** on the 50k-line C++ fixture, not the handful the
+  // entry assumed, so an inline capacity large enough to matter (~64) would cost
+  // ~420 KB of inline storage per open tab against a fold model that totals
+  // ~0.8 MB — a large memory regression to save ~780 allocations that happen once
+  // per file open. At a capacity small enough to be free (6) three quarters of
+  // the words spilled and the allocation count did not move at all.
+  //
+  // The two counters that say so are kept precisely so the next person to read
+  // this does not have to re-derive it.
+  //
+  // One trap for whoever does try `SmallVector` here anyway: these four word
+  // types are nested in `FoldingModel`, and a nested class's default member
+  // initializers are parsed only once the OUTERMOST class is complete. So inside
+  // `FoldingModel`'s own body `is_default_constructible_v<WordCloser>` cannot be
+  // answered yet and GCC answers `false`, failing `SmallVector`'s static_assert
+  // with what is in fact a false negative. Dropping the `= 0` initialisers makes
+  // it compile; the error itself says nothing about why.
   struct Block {
     std::uint32_t line_count = 0;
     std::uint32_t event_count = 0;
