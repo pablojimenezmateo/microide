@@ -1098,6 +1098,83 @@ statistic needs the mode reported, not averaged. Reproduce with:
 # scenarios[].iterations[].rss_growth_bytes is the series; the summary hides it.
 ```
 
+### TD-2026-08-06-151 — the five biggest interactive scenarios time an inner loop but never declare it as a measured phase. OPEN.
+
+[145](#td-2026-08-06-145) and [149](#td-2026-08-06-149) were both found the same
+way: point `MICROIDE_PERF_ALLOC_TRACE_PHASE` at an interactive scenario's measured
+phase, read the top sites, fix the container. Both times the phase turned out to
+be ~100% removable (960 → 0, 8,000 → 0). The obvious next targets are the largest
+interactive scenarios left — and the instrument cannot be aimed at any of them.
+
+**7 of 93 registered scenarios call `ScenarioContext::Measure`.** The phase trace
+arms *only* inside that call (`PerfHarness.cpp:480`), so a scenario that never
+calls it has no phase to filter on:
+
+```
+$ MICROIDE_PERF_ALLOC_TRACE=1:1000000 \
+  MICROIDE_PERF_ALLOC_TRACE_PHASE=editor_sticky_scroll_scroll \
+  ./build/microide-perf-make/microide/microide_perf --scenarios=editor_sticky_scroll_scroll
+[alloctrace] WARNING: no measured phase name contained "editor_sticky_scroll_scroll"
+             — the table below is empty because the filter never matched, not
+             because nothing allocated
+```
+
+**Credit where due: that warning already exists**, so this is not the silent
+empty-trace trap — the tooling says exactly what is wrong. There is simply
+nothing to point it at.
+
+The five that matter, with their committed `p50_allocations` — **scenario totals,
+which is the whole problem; none of these is a phase number**:
+
+| scenario | p50_allocations (total) |
+| --- | ---: |
+| `editor_sticky_scroll_scroll` | 38,663 |
+| `editor_fold_viewport_refresh` | 37,145 |
+| `editor_render_whitespace_paint` | 32,210 |
+| `editor_indent_guides_paint` | 30,740 |
+| `editor_scroll_only_no_content_bump` | 28,077 |
+
+Each opens the 50k-line C++ fixture, pumps 20 frames, and (for the fold ones)
+builds a folding model before its scroll loop, so an unknown share of those counts
+is setup. On `editor_mouse_selection_drag` the setup out-allocated the measured
+phase by roughly an order of magnitude, which is exactly why 145 needed the phase
+filter built before it could attribute anything.
+
+**What makes this cheap: the region is already delimited, just not to the
+harness.** All five hand-roll a `std::chrono` loop around precisely the frames
+they care about and feed it to `EnforceP95Microseconds`:
+
+```cpp
+for (int i = 0; i < 100; ++i) {
+  const auto t0 = std::chrono::steady_clock::now();
+  context.Scroll(-3);
+  context.PumpFrames(1);
+  samples_us.push_back(/* t1 - t0 */);
+}
+EnforceP95Microseconds("editor_sticky_scroll_scroll.fast_scroll_frame", samples_us, 30'000.0);
+```
+
+Wrapping that loop in `context.Measure("editor_sticky_scroll_scroll.scroll_frames",
+[&]{ … })` is mechanical, changes no behaviour, and is compatible with the
+existing assertion — the inner per-frame `chrono` samples still feed
+`EnforceP95Microseconds`, while `Measure` adds the phase entry that
+`--report-json` and the tracer need. It also makes the per-frame allocation cost
+gate-visible in `phase_metrics`, which is the number a scroll regression would
+actually move.
+
+**Do not blanket-add it to all 86.** For a pure-unit scenario
+(`user_config_record_decode`, `dap_protocol_encode_decode`, …) the whole run *is*
+the work and the total is already the right number; adding a phase there is noise.
+The ones worth phasing are those with expensive setup in front of a repeated
+interactive action — the five above, plus `file_finder_cold` (61,805),
+`switch_and_idle` (50,419) and `search_first_result` (20,190) as second-tier
+candidates.
+
+**This entry claims a measurement gap, not waste.** Whether those loops allocate
+anything worth removing is unknown, and saying otherwise from a scenario total is
+the mistake [138](#td-2026-08-06-138) and [139](#td-2026-08-06-139) already made
+once. Phase them first, then read the trace, then decide.
+
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
 `idle_soak_30s` failed the gate at `p50_cpu_ms: baseline=14.6955 measured=29.8665
