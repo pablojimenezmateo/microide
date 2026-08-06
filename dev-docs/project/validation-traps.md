@@ -702,6 +702,14 @@ emitted identical bytes for an unmodified press.
   fuzz targets break **silently**, because no default flow builds them. Smoke them
   with `tools/run-checks.sh fuzz --list`. Fuzz corpora contents are gitignored, so
   curated seeds need `git add -f`.
+- **`microide_tests` has a curated list too**, and its link errors can hide from
+  the default build. It picks up a handful of `tests/perf/*.cpp` without
+  `PerfHarness.cpp`, so a new file there that CALLS the harness is an undefined
+  reference — which the default build drops on the floor, because `--gc-sections`
+  removes the unreferenced function and its relocations with it. The ASAN lane
+  does not, so the break surfaced there, twenty minutes into a sanitizer sweep.
+  Keep the half a test needs in a translation unit that depends on the metric
+  STRUCTS and nothing else (`tests/perf/ScenarioAggregateWire.cpp` is the shape).
 - **Adding a `WorkspaceCommandSpecs` entry** needs a README bullet and a
   regenerated man page (rebuild the `microide` binary first) or two doc-sync tests
   fail.
