@@ -330,16 +330,20 @@ bool DiagnosticsStore::ReplaceForOwnerFile(std::string_view owner,
 bool DiagnosticsStore::TransformOwnerFile(
     std::string_view owner, const std::filesystem::path& path,
     const std::function<SelectionRange(SelectionRange)>& transform) {
-  if (!transform) {
+  // This runs per keystroke (the edit path reshifts stored ranges), and `PathKey`
+  // is a `lexically_normal()` plus a `generic_string()` — about a dozen
+  // allocations. With no diagnostics stored for this owner there is nothing to
+  // transform, so the key is computed only once past that point
+  // (TD-2026-08-06-159).
+  if (!transform || owner.empty() || path.empty() || diagnostics_by_owner_.empty()) {
     return false;
   }
-  const std::string owner_key(owner);
+  const auto owner_it = diagnostics_by_owner_.find(std::string(owner));
+  if (owner_it == diagnostics_by_owner_.end() || owner_it->second.empty()) {
+    return false;
+  }
   const std::string path_key = PathKey(path);
-  if (owner_key.empty() || path_key.empty()) {
-    return false;
-  }
-  const auto owner_it = diagnostics_by_owner_.find(owner_key);
-  if (owner_it == diagnostics_by_owner_.end()) {
+  if (path_key.empty()) {
     return false;
   }
   const auto file_it = owner_it->second.find(path_key);
