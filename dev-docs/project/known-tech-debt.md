@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **79 open items.**
+Reviewed 2026-08-06. **80 open items.**
 
 The 2026-08-06 measurement-integrity pass closed three — **150** (the resident gate
 is a coin flip), **151** (the biggest interactive scenarios have no measured
@@ -36,10 +36,15 @@ before any cap now exists, and it says a warmed 50k-line tab holds **4.13 MiB**,
 46 % of it in the per-line highlighter state — the component the entry did not
 size, rather than the width table it expected to dominate.
 
-It opened two, both about what the suite still cannot see: **152** (every metric is
-a property of the whole run because all 93 scenarios share one process) and **153**
-(`search_first_result`'s tight allocation gate is 99.3 % project-open, and its
-baseline comment claims the opposite).
+It opened three. Two are about what the suite still cannot see: **152** (every
+metric is a property of the whole run because all 93 scenarios share one process)
+and **153** (`search_first_result`'s tight allocation gate is 99.3 % project-open,
+and its baseline comment claims the opposite). The third, **154**, is the next
+piece of speed work and came from the same instrument aimed at the next declared
+phase: the file finder's cache rebuild costs **4 allocations per indexed file**,
+and the largest of the four is a deep copy of the whole index — taken under a
+lock, for the only caller in the tree, which does not need the two fields that
+force it, while a zero-copy snapshot sits one method below it.
 
 The 2026-08-06 input-path pass closed **145** (a mouse-drag rebuilding the pane
 layout three times per motion event). The drag's measured phase now allocates
@@ -1540,6 +1545,68 @@ just the scenario total — the phase numbers are recorded in `--report-json` to
 and nothing compares them to anything; (2) then rewrite the baseline comment,
 which is currently a claim the measurement does not support. Doing (2) first would
 just move the untested claim.
+
+### TD-2026-08-06-154 — the file finder's cache rebuild costs 4 allocations per indexed file, and the deep copy it starts from is not needed at all. OPEN.
+
+Found by pointing the phase tracer at `file_finder_cold.open_finder`, the phase
+[151](#td-2026-08-06-151) declared. Measured, per rebuild, on the 10,000-file
+fixture — six consecutive iterations, byte-identical after the cold pass:
+
+```
+phase allocations   41,622      phase bytes   2,938,719      entries built  10,000
+```
+
+**Four of the top sites are 40,000 of those 41,622 (96 %), and each is exactly one
+allocation per indexed file:**
+
+| site | per file | bytes/iteration |
+| --- | ---: | ---: |
+| `FileIndex::SnapshotWithVersion()` — the `std::filesystem::path` copy | 1 | 1.04 MB |
+| `path.relative_path.string()` | 1 | 210 KB |
+| `util::Utf8CaseFold(path_string)` → `Utf8CaseFoldInto` | 1 | 310 KB |
+| `FileFinder::Refresh()` (fourth site, same shape) | 1 | 210 KB |
+
+**The first one is free to remove and is the largest.** `SnapshotWithVersion()`
+returns `FileIndexSnapshot{version, std::vector<ProjectFile>}` by **deep copy,
+under the index's shared lock** — and `ProjectFile` carries a
+`std::filesystem::path`, so that is one heap allocation per file before the finder
+has done any work of its own. `FileFinder::EnsureCacheBuilt` reads **only**
+`path.relative_path`; it never touches `ProjectFile::mtime` or `::size`. And the
+zero-copy alternative already exists one method below it:
+`SnapshotPathsWithVersion()` returns a `shared_ptr<const vector<path>>`, whose own
+comment says "consumers can iterate without copying".
+
+`FileFinder` is the **only** caller of `SnapshotWithVersion()` in `src/`. So the
+deep-copying overload exists for exactly one caller, which does not need the two
+fields that force the copy.
+
+**What triggers it — and this is the part to get right, because two entries have
+already been wrong here.** This is **not** a per-Ctrl+P cost, and it is not
+per-keystroke either. `EnsureCacheBuilt` is version-gated (`cache_ready_ &&
+cached_index_version_ == index_->version()`), and that gate was added deliberately:
+its comment records that paying the O(index) copy per character typed "was the
+finder's dominant interactive cost on large repos". A previous pass already fixed
+the per-keystroke case. What remains is **per index-version change**, paid
+synchronously on the shell thread at the next `Refresh()`.
+
+The scenario measures it on every iteration because it is built to
+(`file_finder_cold` waits for the index to reach its last file so the rebuild lands
+inside the measured window every time), which is honest for a *cold* finder and is
+why the number is stable — but it means the scenario total cannot be read as
+"what Ctrl+P costs in a warm session".
+
+**What is not known**, and should be measured before ranking this above other
+speed work: how often the index version actually moves in real use. A watcher
+firing during a build, a git checkout, or a save all bump it, and the latency-
+sensitive case is a version change landing *while the finder is open and the user
+is typing* — a 41,622-allocation rebuild inside one keystroke. `search.file_finder_
+cache_build_calls` already exists and would answer it from an ordinary session.
+
+Order of work: (1) switch to `SnapshotPathsWithVersion()`, which is the largest
+single site, needs no new machinery, and removes a deep copy taken under a lock;
+(2) read `file_finder_cache_build_calls` from a real session before deciding
+whether the remaining three per-file allocations are worth restructuring
+`CachedFileEntry` for.
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
