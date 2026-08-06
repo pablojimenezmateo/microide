@@ -39,11 +39,5 @@ namespace microide::tests::perf {
     const Scenario& scenario, const PerfHarness::RunOptions& options, bool* selected,
     std::string* error);
 
-// The wire codec, exposed so a test can assert the round trip is EXACT rather
-// than merely plausible. Every double crosses the pipe as its bit pattern: a
-// metric that changed in its last mantissa bit because it went through decimal
-// text would read as a real move on a gate whose tolerance is a percentage of it.
-[[nodiscard]] std::string EncodeAggregateForTesting(const Aggregate& aggregate);
-[[nodiscard]] std::optional<Aggregate> DecodeAggregateForTesting(std::string_view bytes);
 
 }  // namespace microide::tests::perf

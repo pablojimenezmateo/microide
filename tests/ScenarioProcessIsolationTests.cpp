@@ -1,6 +1,6 @@
 #include "TestSupport.h"
 
-#include "perf/ScenarioProcessIsolation.h"
+#include "perf/ScenarioAggregateWire.h"
 
 #include <cmath>
 #include <cstring>
@@ -13,8 +13,8 @@ namespace microide::tests {
 namespace {
 
 using microide::tests::perf::Aggregate;
-using microide::tests::perf::DecodeAggregateForTesting;
-using microide::tests::perf::EncodeAggregateForTesting;
+using microide::tests::perf::DecodeScenarioAggregate;
+using microide::tests::perf::EncodeScenarioAggregate;
 using microide::tests::perf::Iteration;
 using microide::tests::perf::MetricSet;
 using microide::tests::perf::PhaseMetricSet;
@@ -98,8 +98,8 @@ bool SameDouble(double a, double b) {
 
 void TestScenarioAggregateSurvivesTheWireExactly() {
   const Aggregate original = MakeWireFixture();
-  const std::string bytes = EncodeAggregateForTesting(original);
-  const auto decoded = DecodeAggregateForTesting(bytes);
+  const std::string bytes = EncodeScenarioAggregate(original);
+  const auto decoded = DecodeScenarioAggregate(bytes);
   Expect(decoded.has_value(), "a well-formed aggregate must decode");
 
   Expect(decoded->scenario_name == original.scenario_name, "scenario name round-trips");
@@ -164,14 +164,14 @@ void TestScenarioAggregateSurvivesTheWireExactly() {
 // A truncated or corrupt stream must be REFUSED, not silently decoded into a
 // half-populated Aggregate — which would be gated as if it were a measurement.
 void TestScenarioAggregateRejectsATruncatedStream() {
-  const std::string bytes = EncodeAggregateForTesting(MakeWireFixture());
+  const std::string bytes = EncodeScenarioAggregate(MakeWireFixture());
   Expect(!bytes.empty(), "the fixture must encode to something");
   for (std::size_t cut = 0; cut < bytes.size(); cut += 7) {
-    const auto decoded = DecodeAggregateForTesting(std::string_view(bytes).substr(0, cut));
+    const auto decoded = DecodeScenarioAggregate(std::string_view(bytes).substr(0, cut));
     Expect(!decoded.has_value(),
            "a stream truncated at " + std::to_string(cut) + " bytes must be refused");
   }
-  Expect(DecodeAggregateForTesting(bytes).has_value(),
+  Expect(DecodeScenarioAggregate(bytes).has_value(),
          "the untruncated stream must still decode, or the loop above proves nothing");
 
   // A length field claiming more than the stream holds must not be trusted.
@@ -179,7 +179,7 @@ void TestScenarioAggregateRejectsATruncatedStream() {
   for (int i = 0; i < 8; ++i) {
     corrupt[static_cast<std::size_t>(i)] = static_cast<char>(0xFF);
   }
-  Expect(!DecodeAggregateForTesting(corrupt).has_value(),
+  Expect(!DecodeScenarioAggregate(corrupt).has_value(),
          "a string length past the end of the stream must be refused");
 }
 

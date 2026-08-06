@@ -1117,7 +1117,7 @@ add_executable(microide_tests
   tests/perf/AllocationCounter.cpp
   tests/perf/Baseline.cpp
   tests/perf/PerfHarnessIsolation.cpp
-  tests/perf/ScenarioProcessIsolation.cpp
+  tests/perf/ScenarioAggregateWire.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
@@ -1357,6 +1357,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/PerfHarness.cpp
     tests/perf/PerfHarnessIsolation.cpp
     tests/perf/ScenarioProcessIsolation.cpp
+    tests/perf/ScenarioAggregateWire.cpp
     tests/perf/Baseline.cpp
     tests/perf/AdvisoryPerfScenarios.cpp
     tests/perf/GitWorkstationPerfScenarios.cpp
