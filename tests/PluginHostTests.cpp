@@ -3755,6 +3755,73 @@ return ide.plugin({
   host.Shutdown();
 }
 
+// TD-2026-08-06-159: with no hover provider registered, QueryHoverAsync must
+// answer "no" on the calling thread without resolving a path or dispatching to the
+// worker. Editor hover resolution runs on every painted frame the pointer spends
+// over text, and during a scroll the cell under a stationary pointer changes every
+// frame — so a dispatch here is a per-frame worker round trip whose only possible
+// answer is the one already known.
+//
+// "Did not dispatch" is pinned by the same signal the test above uses in reverse:
+// synchronous delivery is only possible on the non-dispatching path, and the
+// worker's main-thread queue must have nothing in it afterwards.
+void TestPluginHostQueryHoverAsyncSkipsWorkerWithNoProvider() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path global_plugins = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "src" / "main.js";
+  WriteFile(project_root / "README.md", "no hover fixture\n");
+  WriteFile(source, "x\n");
+
+  // A plugin that registers a command but NO hover provider: the host is live and
+  // enabled, so a fast-reject here is about hover specifically, not about the
+  // runtime being off.
+  WritePluginInit(global_plugins, "no-hover",
+                  R"(local ide = require("microide")
+return ide.plugin({
+  id = "no.hover",
+  setup = function(ctx)
+    ctx.commands.add("no.hover.noop", function() end)
+  end,
+})
+)");
+
+  ScopedPluginConfigHomeEnv config_env(config_home);
+
+  PluginHost host;
+  host.SetCallbacks(MakePluginHostCallbacks());
+  plugin::PluginThread thread;
+  thread.SetWakeEventType(0);
+  host.SetWorker(&thread);
+
+  Expect(host.Reload(project_root), "the provider-less fixture should load");
+
+  bool delivered = false;
+  bool ok = true;
+  host.QueryHoverAsync(source, 1, 1, [&](bool query_ok, PluginHost::HoverResult) {
+    ok = query_ok;
+    delivered = true;
+  });
+  Expect(delivered,
+         "with no hover provider the answer must come back on the calling thread, "
+         "which is only possible if nothing was dispatched");
+  Expect(!ok, "the fast-rejected hover reports no result");
+
+  std::string error_message;
+  std::string feedback;
+  host.ExecuteCommand("no.hover.noop", {}, &error_message, &feedback);
+  Expect(thread.DrainMainThreadActions() == 0,
+         "the worker must have had no hover completion queued");
+
+  thread.Shutdown();
+  host.SetWorker(nullptr);
+  host.Shutdown();
+}
+
 // ExecuteCommandAsync resolves "handled" synchronously (HasCommand) but runs the
 // handler on the worker and delivers its outcome on the UI-thread drain. Verified
 // under TSAN.
@@ -4415,6 +4482,8 @@ void RegisterPluginHostTests(std::vector<TestCase>& tests) {
           TestPluginHostQueryCompletionsAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/QueryHoverAsyncDeliversThroughWorker",
           TestPluginHostQueryHoverAsyncDeliversThroughWorker);
+  AddTest(tests, "PluginHost/QueryHoverAsyncSkipsWorkerWithNoProvider",
+          TestPluginHostQueryHoverAsyncSkipsWorkerWithNoProvider);
   AddTest(tests, "PluginHost/ExecuteCommandAsyncDeliversThroughWorker",
           TestPluginHostExecuteCommandAsyncDeliversThroughWorker);
   AddTest(tests, "PluginHost/ReloadAsyncPublishesOnDrain",

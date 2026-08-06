@@ -426,6 +426,14 @@ struct PluginHost::Impl {
     // its per-keystroke sampling on this, so it must read the published (race-free)
     // value rather than scanning the live `plugins` vector the worker rebuilds.
     PluginHost::EditorEventInterest editor_event_interests;
+    // Whether ANY plugin registers a hover provider. Editor hover resolution runs
+    // per painted frame while the pointer sits over the text, and every miss used
+    // to resolve a runtime path and dispatch a worker query before discovering
+    // there was nothing to ask (TD-2026-08-06-159). Published, so the UI thread can
+    // reject without touching the worker-owned registries; the worker closure still
+    // re-checks the live map, so a provider registered since the last publish is
+    // simply picked up on the next hover, exactly as for sidebar providers.
+    bool has_hover_providers = false;
     // The project root the UI resolves plugin paths against. The live
     // current_project_root is worker-owned and rewritten mid-reload, so UI-thread path
     // resolution (snapshot capture, hover) reads this published copy instead.
@@ -645,6 +653,7 @@ struct PluginHost::Impl {
     snapshot.loaded_plugins = ComputeLoadedPlugins();
     snapshot.status_item_order = status_item_order;
     snapshot.editor_event_interests = ComputeEditorEventInterests();
+    snapshot.has_hover_providers = !hover_provider_order.empty();
     snapshot.project_root = current_project_root;
     snapshot.reload_summary = reload_summary;
     return snapshot;

@@ -864,6 +864,16 @@ void PluginHost::QueryHoverAsync(std::filesystem::path path,
     on_result(false, HoverResult{});
     return;
   }
+  // Fast-reject before resolving anything: with no hover provider registered the
+  // worker query can only answer "no", and hover resolution runs on every painted
+  // frame the pointer spends over text — during a scroll the cell under a
+  // stationary pointer changes every frame, so this fired per frame to resolve a
+  // runtime path, capture a plugin snapshot and dispatch a query that had nothing
+  // to ask (TD-2026-08-06-159). Reads the published view, like SnapshotSidebarAsync.
+  if (!impl_->published_.has_hover_providers) {
+    on_result(false, HoverResult{});
+    return;
+  }
 #if MICROIDE_HAS_LUA_PLUGINS
   const std::filesystem::path resolved_path =
       path_interop::ResolveRuntimePath(impl_->published_.project_root, path).lexically_normal();
