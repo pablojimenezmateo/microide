@@ -582,6 +582,34 @@ cmake --build build/microide-perf-make -j8
 - `MICROIDE_WARNINGS_AS_ERRORS=ON`
 - `MICROIDE_PERF_HARNESS_BUILD=ON`
 
+### Finding *where* a phase allocates
+
+The counters say a phase allocated N times; nothing in them says where. Three
+environment variables answer that, and they narrow along different axes — combine
+them.
+
+| variable | narrows by | use when |
+| --- | --- | --- |
+| `MICROIDE_PERF_BIG_ALLOC_BYTES=<n>` | size floor, one backtrace per hit | a few large allocations ("what is eating memory") |
+| `MICROIDE_PERF_ALLOC_TRACE=<min>[:<max>]` | size **band**, aggregated by stack | many small allocations ("what does this 960 times") |
+| `MICROIDE_PERF_ALLOC_TRACE_PHASE=<substring>` | **when** — only inside a matching `Measure` phase | always, with the one above |
+
+The phase filter is not optional in practice. A scenario's setup out-allocates
+its measured phase by an order of magnitude, so an unfiltered table is dominated
+by sites the phase never executes — and it looks like an answer. Recording is
+armed per thread by `ScenarioContext::Measure`, so background workers allocating
+during the phase are excluded for the same reason the counters are per-thread. A
+filter that matches no phase prints a warning rather than an empty table.
+
+```bash
+MICROIDE_PERF_ALLOC_TRACE=1:1000000 \
+MICROIDE_PERF_ALLOC_TRACE_PHASE=mouse_selection_drag \
+  ./build/microide-perf-make/microide/microide_perf \
+    --scenarios=editor_mouse_selection_drag --iterations=3
+# resolve the frames (-i matters; everything interesting is inlined):
+addr2line -e ./build/microide-perf-make/microide/microide_perf -f -C -p -i 0x330e2c
+```
+
 ## Scenario Authoring
 
 Scenarios are registered in `tests/perf/PerfMain.cpp` and use `ScenarioContext` helpers from

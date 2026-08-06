@@ -325,6 +325,18 @@ Two habits made the instance findable in about an hour, both already in the tree
   after it, `MICROIDE_PERF_ALLOC_TRACE=32:32` named the site in one run. Resolve
   with `addr2line -e <binary> -f -C -p -i <offset>...` — `-i` matters, because
   everything interesting is inlined.
+- `MICROIDE_PERF_ALLOC_TRACE_PHASE=<substring>` scopes that table to the measured
+  phase, and you almost always want it. The band filter narrows by size; this
+  narrows by **when**. Without it the table is whole-*run*, and a scenario's setup
+  out-allocates its measured phase by an order of magnitude: chasing the
+  allocations left in `editor_mouse_selection_drag` after TD-2026-08-06-145, the
+  printed top twelve were all syntax-registry and plugin-reload sites the phase
+  never executes, and the phase's own two sites did not appear at all. The trap is
+  that the table looks like it answered. With the filter set,
+  `ScenarioContext::Measure` arms recording only inside matching phases and the
+  same run named both sites from four rows. A filter that matches no phase says so
+  loudly rather than printing an empty table, which would read exactly like "the
+  phase allocates nothing".
 - `MICROIDE_PERF_SUMMARY=1` ranks `PerformanceTrace::Scope` regions by self time.
   The edit path carried **no scopes at all** — `BuildRangeHistoryEntry`,
   `ApplyHistoryEntry` and the buffer write were unmeasurable — so the first step

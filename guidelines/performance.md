@@ -83,6 +83,21 @@ self-time table would have been wasted work.
 - Keep caches scoped, invalidated explicitly, and justified by measured wins.
 - Push expensive integration work off hot UI paths when that does not compromise correctness.
 - Prefer focused data-flow cleanup over broad cleverness that obscures ownership.
+- A `std::vector` that carries one or two small structs on a per-event path is a
+  heap round-trip for nothing. Two replacements live in `src/util`, and they are
+  **not** interchangeable — picking the first where the second belongs silently
+  drops data:
+  - `util::InlineVector<T, N>` — fixed capacity, no heap fallback. For a cap that
+    is a *design fact* enforced upstream by a shared constant (`kMaxEditorGroups`),
+    where exceeding it is a bug.
+  - `util::SmallVector<T, N>` — inline storage with a heap spill, trivially
+    copyable `T` only. For a size that is usually small but genuinely unbounded
+    (per-event redraw damage).
+  - `util::ReserveGrowing` (`util/ScratchVector.h`) — for a reused `std::vector`
+    scratch buffer whose size grows a little each refill.
+  When you pick an inline capacity, add a counter for the spill and read it from a
+  real scenario. The redraw damage list was sized at 4 by inspection and spilled on
+  *every* menu-hover event; the counter said 7 and it became 8.
 
 ## Reading A Measurement
 

@@ -1,8 +1,22 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **78 open items.**
+Reviewed 2026-08-06. **79 open items.**
 
-The 2026-08-06 perf-integrity pass closed three more: **139** (five allocation
+The 2026-08-06 input-path pass closed **145** (a mouse-drag rebuilding the pane
+layout three times per motion event). The drag's measured phase now allocates
+**nothing** — 960 to 0 — because option (a) removed four of the six per-move
+allocations and the two underneath turned out to be a different bug entirely: a
+copy where a move was meant in `ConsumePendingRenderInvalidation`, plus a
+`std::vector` that could not keep its buffer across events. Attributing those two
+needed the allocation tracer scoped to the measured phase, which it could not do;
+`MICROIDE_PERF_ALLOC_TRACE_PHASE` now does, and named both in one run.
+
+It opened two, both about the gate rather than the code: **147** (the fix left four
+allocation baselines 4-5x loose, so they would pass a complete regression) and
+**148** (`typing_large_file`'s RSS gate rides its envelope, and a non-default
+`--iterations` silently flips the verdict).
+
+The 2026-08-06 perf-integrity pass closed three: **139** (five allocation
 gates drifted up, unexplained), **141** (nothing reruns the gate), and **143**
 (`MaxVisualColumns` stamping a revision onto a table it did not verify). It opened
 three: **144** (`FoldingModel::Block`'s four per-block vectors, the residue of
@@ -576,7 +590,68 @@ cache-free-oracle diff test (see the fold notes in
 `dev-docs/performance/performance-findings.md`) run against it, not a second
 `FoldingModel`.
 
-### TD-2026-08-06-145 — a mouse-drag rebuilds the editor pane layout three times per motion event. OPEN.
+### TD-2026-08-06-145 — a mouse-drag rebuilds the editor pane layout three times per motion event. [RESOLVED 2026-08-06 — and the drag phase now allocates nothing at all.]
+
+**What shipped.** Option (a), then the two allocations it exposed underneath.
+
+*(a) The pane layout is off the heap.* The group count is a structural cap, not a
+data property, so `EditorGroupRectsLayout::groups`, `EditorPaneLayouts` and
+`EditorSplitDividerLayouts` became `util::InlineVector<T, N>` — fixed capacity,
+all slots value-initialised, no heap fallback, no staleness risk. The cap itself
+is now one definition, `workspace::kMaxEditorGroups`, shared by the surface split,
+the per-group tab-strip caches and every inline capacity, so raising it cannot
+leave one of them behind. All seventeen call sites got the fix, not just the drag.
+
+*(b) was not needed.* With (a) in, the memoisation the entry ranked as "strictly
+better and strictly riskier" buys only the arithmetic — three float splits per
+event — against the risk it named (a missed generation bump serving a stale pane
+rect, i.e. a click landing in the wrong editor group). Not worth it. The entry's
+own advice held.
+
+*The other two per move were a different bug.* Attributing them needed the trace
+scoped to the measured phase, which the tracer could not do — a scenario's setup
+out-allocates its phase by an order of magnitude and the phase's own sites were
+not in the printed top twelve at all. `MICROIDE_PERF_ALLOC_TRACE_PHASE=<substring>`
+fixes that (see `dev-docs/performance/perf-harness.md`), and named both in one
+run:
+
+- `ConsumePendingRenderInvalidation` did `const RenderInvalidation result =
+  pending_;` — a **copy** where a move was meant, so the rect list was built twice
+  and freed twice on every handled event, app-wide.
+- `RequestRedrawRect`'s `std::vector` push. The buffer cannot be kept across
+  events because it is handed to the caller inside `EventResult`, so the first
+  push allocates every time to carry 16 bytes.
+
+`RenderInvalidation::rects` is now `util::SmallVector<SDL_FRect, 8>` — inline
+storage **with** a heap spill, unlike `InlineVector`, because damage rects are
+genuinely unbounded and dropping one paints stale pixels. Eight is measured, not
+guessed: two new counters (`workspace.redraw_rects_queued`,
+`workspace.redraw_rect_spills`) report the input path's redraw work, which nothing
+did before — a hover repainting seven controls and one repainting one read
+identically in every other counter. `menu_hover_switch` queues 7 rects per event,
+which is what moved the inline size from 4 (160 spills, every event) to 8 (zero).
+
+| | at HEAD | after (a) | after (b) |
+| --- | ---: | ---: | ---: |
+| `editor_mouse_selection_drag` measured phase | 960 | 320 | **0** |
+| `editor_mouse_selection_drag` p50_allocations | 5,482 | 1,402 | **1,075** |
+| `menu_hover_switch` p50_allocations | 8,352 | — | **8,104** |
+| `typing_large_file` p50_allocations | 366 | — | **350** |
+
+**One thing to reuse.** `InlineVector` and `SmallVector` are both in `src/util`
+and they are not interchangeable: the first is for a cap that is a design fact
+(exceeding it is a bug), the second for a size that is usually small but
+genuinely unbounded. Picking the first where the second belonged is how a
+container silently drops data. `SmallVector` is restricted to trivially copyable
+elements on purpose — that is what keeps growth a raw copy with no lifetime or
+exception-safety window — so it does **not** serve
+[TD-2026-08-06-144](#td-2026-08-06-144), whose `Block` holds `std::string`s.
+
+The four scenarios above are now gated against baselines 4-5x looser than the code
+they gate; see [TD-2026-08-06-147](#td-2026-08-06-147).
+
+The original entry follows.
+
 
 Measured at HEAD with `MICROIDE_PERF_ALLOC_TRACE=32:32` on
 `editor_mouse_selection_drag`: the measured phase is **960 allocations for 160
@@ -656,6 +731,62 @@ Options: pin `CCACHE_COMPRESS`/`CCACHE_COMPRESSLEVEL` consistently, add
 configurations, or have `perf-compare.py` retry once with the cache bypassed and
 say so. Worth one session; the cost today is silent unreliability in the one tool
 used to attribute a regression to a commit.
+
+### TD-2026-08-06-147 — the pane-layout fix left four allocation gates 4-5x loose. OPEN.
+
+[TD-2026-08-06-145](#td-2026-08-06-145) cut `editor_mouse_selection_drag` from
+5,482 `p50_allocations` to 1,075 and moved three other scenarios. The committed
+baselines still carry the pre-fix numbers, so those gates now permit a **complete**
+regression back to the old behaviour and stay green:
+
+| scenario | committed baseline | measured after 145 | slack |
+| --- | ---: | ---: | ---: |
+| `editor_mouse_selection_drag` | 5,482 | 1,075 | **5.1x** |
+| `menu_hover_switch` | 8,352 | 8,104 | 1.03x |
+| `typing_large_file` | 366 | 350 | 1.05x |
+| `menu_popup_hover_rows` | 2,529 | 2,529 | — |
+
+Not rebaselined here on purpose. The committed set was recorded from a full-suite
+run, and standalone numbers differ from in-suite ones for reasons that are a lead
+rather than noise (TD-2026-08-06-139 measured an 680-allocation offset from
+process state alone on one scenario) — so writing four standalone numbers into a
+set recorded in-suite makes those four inconsistent with the other 89. It wants
+one full-suite `--update-baseline` pass on a quiet box, bare, not under xvfb.
+
+Note `--update-baseline` rewrites tolerances from the `Scenario` struct, so any
+hand-widened envelope in the four above is reset by the pass — check before, not
+after.
+
+### TD-2026-08-06-148 — `typing_large_file`'s RSS gate rides its envelope, and the verdict depends on `--iterations`. OPEN.
+
+`mean_rss_growth_bytes` for `typing_large_file` has a baseline of **80,555** and a
++25% envelope (100,693). Measured at HEAD, five runs a side, on the same quiet
+box:
+
+| `--iterations` | readings |
+| --- | --- |
+| 6 | 99,942 / 100,762 / 101,581 / 113,050 / 113,869 — **fails ~half the time** |
+| 10 (default) | 83,740 / 91,477 / 92,388 / 93,753 / 95,118 — passes with ~6% margin |
+
+Pre-existing: the same split reproduces at `08b7f338`, before the
+[145](#td-2026-08-06-145) work, so this is not that change. Both sides of a
+controlled A/B overlap heavily (base 83.7-93.8k, after 91.9-95.1k at 10
+iterations).
+
+Two things are wrong here, and only one of them is the stale baseline.
+
+1. The baseline is ~13% below what the code actually does, so the gate is spending
+   half its envelope on drift and has ~6% left for a real regression.
+2. **A non-default `--iterations` changes the verdict.** `mean_rss_growth_bytes`
+   is a trimmed mean (TD-2026-08-05-136), and at 6 iterations the trim leaves more
+   of the settling passes in. Nothing warns about this: a developer who runs
+   `--iterations=6` to save time gets a red gate that means nothing, and the
+   failure message says "measured=113869 (+41%)" with no hint that the sample size
+   is the reason.
+
+The second is the one worth fixing — either make the trim proportional so the
+metric is iteration-count-stable, or refuse to gate `mean_rss_growth_bytes` below
+the iteration count its baseline was recorded at and say so.
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
