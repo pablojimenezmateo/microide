@@ -161,7 +161,8 @@ LineFilter = Callable[[str], Optional[str]]
 
 
 def run_streaming(argv: list[str], cwd: Path, log_file,
-                  line_filter: Optional[LineFilter] = None) -> int:
+                  line_filter: Optional[LineFilter] = None,
+                  env: Optional[dict[str, str]] = None) -> int:
     """Run argv, stream stdout+stderr lines into log_file, optionally render
     a filtered line to stderr live. Returns process return code."""
     proc = subprocess.Popen(
@@ -170,6 +171,7 @@ def run_streaming(argv: list[str], cwd: Path, log_file,
         stderr=subprocess.STDOUT,
         text=True,
         bufsize=1,
+        env=env,
     )
     assert proc.stdout is not None
     try:
@@ -268,6 +270,32 @@ def prepare_current_worktree(root: Path, out_dir: Path) -> Path:
     return wt
 
 
+# A cached object whose LTO IR section will not decompress, which gcc reports as
+# an internal compiler error at LTO link time (TD-2026-08-06-146):
+#
+#   lto1: internal compiler error: original not compressed with zstd
+#   lto-wrapper: fatal error: /usr/bin/c++ returned 1 exit status
+#
+# It is a toolchain fault, not a source fault, and nothing in the message says so
+# — the commit looks broken. That matters far more than an occasional retry
+# because a `git bisect run` script reports a build failure as `skip` (exit 125),
+# and a bisect that skips a quarter of its candidates converges on a RANGE, or on
+# the wrong commit when the real one is in the skipped set. Both microide-perf and
+# this script build with LTO on, so every walk over history is exposed.
+_CCACHE_LTO_ICE_MARKERS = (
+    "original not compressed with zstd",
+    "lto1: internal compiler error",
+)
+
+
+def _log_has_ccache_lto_ice(log_path: Path) -> bool:
+    try:
+        text = log_path.read_text(errors="replace")
+    except OSError:
+        return False
+    return any(marker in text for marker in _CCACHE_LTO_ICE_MARKERS)
+
+
 def build_side(where: Path, label: str, log_path: Path) -> Path:
     log(label, f"building microide_perf (log: {log_path})")
     last_pct = [-10]
@@ -282,20 +310,46 @@ def build_side(where: Path, label: str, log_path: Path) -> Path:
             return f"{_PREFIX} ({label}) {dim(line)}"
         return None
 
+    # ccache caches PCH-using translation units only when told to tolerate the
+    # pch_defines/time_macros sloppiness. Without it ~99.8% of this tree's
+    # compiles are "could not use precompiled header" and bypass the cache
+    # entirely, which is most of a history walk's wall time.
+    build_env = dict(os.environ)
+    build_env.setdefault("CCACHE_SLOPPINESS", "pch_defines,time_macros")
+
+    def build(env: dict[str, str]) -> int:
+        return run_streaming(
+            ["cmake", "--build", str(BUILD_DIR),
+             "-j", str(os.cpu_count() or 1),
+             "--target", "microide_perf"],
+            cwd=where, log_file=log_file, line_filter=filter_build, env=env,
+        )
+
     with open(log_path, "w") as log_file:
         rc = run_streaming(
             ["cmake", "--preset", "microide-perf"],
-            cwd=where, log_file=log_file,
+            cwd=where, log_file=log_file, env=build_env,
         )
         if rc != 0:
             print_tail(log_path)
             die(f"({label}) cmake configure failed (rc={rc})")
-        rc = run_streaming(
-            ["cmake", "--build", str(BUILD_DIR),
-             "-j", str(os.cpu_count() or 1),
-             "--target", "microide_perf"],
-            cwd=where, log_file=log_file, line_filter=filter_build,
-        )
+        rc = build(build_env)
+        if rc != 0 and _log_has_ccache_lto_ice(log_path):
+            # Retry ONCE with the cache bypassed, and say so loudly. Silence here
+            # would be the whole defect: the point is that this side's numbers
+            # came from a build that had to work around the toolchain, not from a
+            # commit that failed to build.
+            log(label, yellow(
+                "ccache/LTO internal compiler error detected — this is a "
+                "toolchain fault, not a broken commit (TD-2026-08-06-146). "
+                "Rebuilding once with CCACHE_DISABLE=1."))
+            retry_env = dict(build_env)
+            retry_env["CCACHE_DISABLE"] = "1"
+            rc = build(retry_env)
+            if rc == 0:
+                log(label, yellow(
+                    "cache-bypassed rebuild succeeded; the commit is fine. "
+                    "Consider `ccache --clear` if this keeps happening."))
         if rc != 0:
             print_tail(log_path)
             die(f"({label}) build failed (rc={rc})")

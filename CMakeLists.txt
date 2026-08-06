@@ -40,16 +40,30 @@ endif()
 # underlying tool is absent, so a stock toolchain still configures cleanly.
 
 # Compiler cache: dedups recompiles across clean rebuilds, branch switches, and
-# preset toggles. PCH-using TUs only cache when ccache is told to tolerate the
-# pch_defines/time_macros sloppiness (callers also export CCACHE_SLOPPINESS;
-# see tools/run-checks.sh). Disable with -DMICROIDE_USE_CCACHE=OFF.
+# preset toggles. Disable with -DMICROIDE_USE_CCACHE=OFF.
+#
+# The sloppiness is set HERE rather than left to the caller, and that is the
+# whole point of the `cmake -E env` wrapper. ccache refuses to cache a
+# PCH-using translation unit unless told to tolerate pch_defines/time_macros,
+# and this tree compiles almost everything through a PCH -- so a build launched
+# any way other than through tools/run-checks.sh (a bare `cmake --build`, an
+# IDE, tools/perf-compare.py, a bisect script) missed the cache on essentially
+# every file. Measured on this workstation's cache before the fix: 213,864 of
+# 214,295 uncacheable calls were "could not use precompiled header", i.e. 56% of
+# ALL compiles bypassed the cache entirely and the overall hit rate was 6%.
+#
+# The launcher is not written into compile_commands.json, so wrapping it does
+# not disturb clangd.
 option(MICROIDE_USE_CCACHE "Use ccache as the compiler launcher when available" ON)
 if(MICROIDE_USE_CCACHE AND NOT CMAKE_CXX_COMPILER_LAUNCHER)
   find_program(MICROIDE_CCACHE ccache)
   if(MICROIDE_CCACHE)
-    set(CMAKE_CXX_COMPILER_LAUNCHER "${MICROIDE_CCACHE}")
-    set(CMAKE_C_COMPILER_LAUNCHER "${MICROIDE_CCACHE}")
-    message(STATUS "ccache enabled: ${MICROIDE_CCACHE}")
+    set(_microide_ccache_launcher
+        "${CMAKE_COMMAND}" -E env "CCACHE_SLOPPINESS=pch_defines,time_macros"
+        "${MICROIDE_CCACHE}")
+    set(CMAKE_CXX_COMPILER_LAUNCHER "${_microide_ccache_launcher}")
+    set(CMAKE_C_COMPILER_LAUNCHER "${_microide_ccache_launcher}")
+    message(STATUS "ccache enabled: ${MICROIDE_CCACHE} (pch_defines,time_macros)")
   endif()
 endif()
 
