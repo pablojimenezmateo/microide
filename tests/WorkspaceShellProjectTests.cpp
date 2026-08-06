@@ -1661,8 +1661,42 @@ void TestWorkspaceShellReopeningCleanTabDoesNotReloadUnrelatedTabs() {
   util::ResetPerformanceCounters();
   WorkspaceShellTestAccess::OpenFile(shell, alpha);
 
-  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorContentRevisionBumps) == 2,
-         "reopening an already-open clean tab should avoid reloading unrelated clean tabs");
+  // Nothing at all: the file on disk is byte-for-byte what alpha's buffer was
+  // loaded from, so the open activates the tab and stops. It used to re-read the
+  // file and swap in a fresh viewport, which bumped the content revision twice
+  // and dropped every derived cache -- on a large file that is a whole-document
+  // width rebuild for a keystroke that changed nothing (TD-2026-08-06-138).
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorContentRevisionBumps) == 0,
+         "reopening an unchanged already-open clean tab should not reload it at all");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthTableBuilds) == 0,
+         "reopening an unchanged already-open clean tab should not rebuild any width table");
+}
+
+// The other half of the contract above: when the file HAS changed underneath the
+// buffer, reopening it still picks the new content up. Without this the skip
+// could be spelled "never reload" and the test above would not notice.
+void TestWorkspaceShellReopeningCleanTabPicksUpExternalEdits() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  WriteFile(alpha, "alpha\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project should open for external-edit reload regression");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha),
+         "alpha should open for external-edit reload regression");
+
+  // Push the write past the recorded signature. mtime+size is the equality the
+  // skip trusts, and a same-size rewrite inside one filesystem timestamp tick
+  // would be indistinguishable -- so change the size too.
+  WriteFile(alpha, "alpha changed on disk\n");
+
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+
+  const editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(viewport.lines().size() >= 1 && viewport.lines().LineView(0) == "alpha changed on disk",
+         "reopening a clean tab whose file changed on disk should load the new content");
 }
 
 void TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus() {
@@ -5092,6 +5126,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellResolvedKeybindingsAreCachedUntilInputsChange);
   AddTest(tests, "WorkspaceShell/ReopeningCleanTabDoesNotReloadUnrelatedTabs",
           TestWorkspaceShellReopeningCleanTabDoesNotReloadUnrelatedTabs);
+  AddTest(tests, "WorkspaceShell/ReopeningCleanTabPicksUpExternalEdits",
+          TestWorkspaceShellReopeningCleanTabPicksUpExternalEdits);
   AddTest(tests, "WorkspaceShell/OverlayOutsideClickRestoresPrimaryFocus",
           TestWorkspaceShellOverlayOutsideClickRestoresPrimaryFocus);
   AddTest(tests, "WorkspaceShell/TreeCollapseAllowsOpenDescendantsAndReselectReveal",

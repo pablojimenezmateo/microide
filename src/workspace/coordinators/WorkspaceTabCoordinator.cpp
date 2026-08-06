@@ -13,6 +13,7 @@
 #include "util/StartupTrace.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 #include "workspace/git/MergeResultValidation.h"
 #include "workspace/TabReorder.h"
 #include "workspace/WorkspacePathUtils.h"
@@ -512,6 +513,28 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
     return;
   }
 
+  // Nothing changed underneath us: every open view of this path already records
+  // the signature the file has right now, so a reload would read the whole file
+  // off disk only to produce byte-identical content -- and then throw away every
+  // derived cache in the process (widths, highlights, folds, undo history).
+  //
+  // The dominant caller is opening a file that is already open, which is what
+  // Ctrl+P to a file you are already looking at does. VSCode just focuses the
+  // tab there; before this, a 50k-line file paid a full file read plus a
+  // whole-document width rebuild on every such open (TD-2026-08-06-138). The
+  // focus-regain sweep (ReloadCleanOpenBuffersFromDisk) paid it once per open
+  // buffer.
+  //
+  // `clean_only` only: the from-disk form is the banner's explicit "discard my
+  // edits and reload", and a dirty buffer's recorded signature can legitimately
+  // still match the file it was loaded from -- skipping there would silently
+  // refuse to discard. mtime+size is the same equality the self-write echo
+  // suppression in WorkspaceShellProjectChanges already trusts.
+  if (clean_only &&
+      DiskSignatureMatchesOpenView(normalized_path, util::StatFileSignature(normalized_path))) {
+    return;
+  }
+
   editor::TextViewport reopened_view;
   if (!reopened_view.OpenFile(normalized_path)) {
     return;
@@ -557,12 +580,17 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
       restored_view.ApplyRestoredViewState(current_view->cursor_line(), current_view->cursor_column(),
                                            current_view->scroll_line(),
                                            current_view->horizontal_scroll());
-      editor_state.viewport = restored_view;
+      // Moved, not copied: `restored_view` is dead after this and its layout
+      // cache now survives a move, so copying would deep-copy a per-line width
+      // table (one machine word per line of the document) to throw it away one
+      // statement later. Read the restored fields back off the tab's own
+      // viewport, which is where they live now.
+      editor_state.viewport = std::move(restored_view);
       editor_state.restored_path = normalized_path;
-      editor_state.restored_cursor_line = restored_view.cursor_line();
-      editor_state.restored_cursor_column = restored_view.cursor_column();
-      editor_state.restored_scroll_line = restored_view.scroll_line();
-      editor_state.restored_horizontal_scroll = restored_view.horizontal_scroll();
+      editor_state.restored_cursor_line = editor_state.viewport.cursor_line();
+      editor_state.restored_cursor_column = editor_state.viewport.cursor_column();
+      editor_state.restored_scroll_line = editor_state.viewport.scroll_line();
+      editor_state.restored_horizontal_scroll = editor_state.viewport.horizontal_scroll();
       editor_state.needs_restore = false;
       editor_state.folding_model->Clear();
       if (is_focused_group && i == group.active_tab_index) {
