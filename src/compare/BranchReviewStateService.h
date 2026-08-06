@@ -68,6 +68,20 @@ class BranchReviewStateService {
 
   BranchReviewMarkerStatus FileStatus(const BranchReviewStateQueryInput& input) const;
   BranchReviewMarkerStatus HunkStatus(const BranchReviewStateQueryInput& input) const;
+
+  // Resolve the marker status and note flag for EVERY hunk of `input.model` in
+  // one pass, into `out` indexed by hunk. `input.selected_hunk_index` is ignored.
+  //
+  // This exists because the whole-file marker pass (which runs on the compare
+  // tab's derived-state refresh, i.e. on the edit path) wants all of them, and
+  // asking one hunk at a time is quadratic twice over: HunkStatus scans the
+  // target's reviewed-hunk list per hunk, and when a hunk has no entry of its own
+  // it falls back to FileStatus, which walks that list against every model hunk
+  // again. Here each list is walked once — O(hunks + entries + notes) — and no
+  // per-hunk identity (and so no per-hunk path copy) is built at all.
+  void ResolveHunkMarkers(const BranchReviewStateQueryInput& input,
+                          std::vector<BranchReviewHunkMarker>* out) const;
+
   bool HasNote(const BranchReviewStateQueryInput& input, BranchReviewNoteScope scope) const;
   std::optional<std::string> NoteText(const BranchReviewStateQueryInput& input,
                                       BranchReviewNoteScope scope) const;

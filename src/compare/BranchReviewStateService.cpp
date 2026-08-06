@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <unordered_map>
 
 namespace microide::compare {
 
@@ -22,6 +23,66 @@ bool HunkIdentitiesEqual(const BranchReviewHunkIdentity& left,
   return PathsEqual(left.path, right.path) && left.old_start == right.old_start &&
          left.old_count == right.old_count && left.new_start == right.new_start &&
          left.new_count == right.new_count && left.content_hash == right.content_hash;
+}
+
+// A hunk's position in the diff — the pair both the "same hunk, new content" and
+// the exact-match tests key on. Hunks own disjoint line ranges, so within one
+// model this is unique; a pure insertion has old_start 0 and a pure deletion
+// new_start 0, and those still differ in the other half.
+std::uint64_t HunkPositionKey(const int old_start, const int new_start) {
+  return (static_cast<std::uint64_t>(static_cast<std::uint32_t>(old_start)) << 32) |
+         static_cast<std::uint64_t>(static_cast<std::uint32_t>(new_start));
+}
+
+bool ContentKeysEqual(const BranchReviewHunkContentKey& key,
+                      const BranchReviewHunkIdentity& identity) {
+  return key.old_start == identity.old_start && key.old_count == identity.old_count &&
+         key.new_start == identity.new_start && key.new_count == identity.new_count &&
+         key.content_hash == identity.content_hash;
+}
+
+// The model's hunks, indexed by position, computed once per query instead of once
+// per (stored entry x hunk) pair.
+struct ModelHunkIndex {
+  std::vector<BranchReviewHunkContentKey> keys;
+  std::unordered_map<std::uint64_t, std::size_t> by_position;
+};
+
+ModelHunkIndex BuildModelHunkIndex(const CompareModel& model) {
+  ModelHunkIndex index;
+  index.keys.reserve(model.hunks.size());
+  index.by_position.reserve(model.hunks.size());
+  for (std::size_t hunk_index = 0; hunk_index < model.hunks.size(); ++hunk_index) {
+    index.keys.push_back(ComputeBranchReviewHunkContentKey(model, model.hunks[hunk_index]));
+    // First wins, matching the linear scan this replaced, which returned on its
+    // first positional match.
+    index.by_position.emplace(HunkPositionKey(index.keys.back().old_start,
+                                              index.keys.back().new_start),
+                              hunk_index);
+  }
+  return index;
+}
+
+// Does any reviewed-hunk entry for this file sit at a model hunk's position with
+// different content? That is what demotes a reviewed FILE to "changed since
+// reviewed". Walks the entry list once against the prebuilt model index.
+bool AnyReviewedHunkContentMoved(const BranchReviewTargetState& target_state,
+                                 const std::filesystem::path& normalized_path,
+                                 const ModelHunkIndex& index) {
+  for (const BranchReviewHunkReviewEntry& entry : target_state.reviewed_hunks) {
+    if (!PathsEqual(entry.identity.path, normalized_path)) {
+      continue;
+    }
+    const auto it =
+        index.by_position.find(HunkPositionKey(entry.identity.old_start, entry.identity.new_start));
+    if (it == index.by_position.end()) {
+      continue;
+    }
+    if (!ContentKeysEqual(index.keys[it->second], entry.identity)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 }  // namespace
@@ -358,23 +419,98 @@ BranchReviewMarkerStatus BranchReviewStateService::FileStatus(
   if (file_entry->reviewed_snapshot_generation != input.target.snapshot_generation) {
     return BranchReviewMarkerStatus::ChangedSinceReviewed;
   }
-  if (input.model != nullptr) {
-    for (const BranchReviewHunkReviewEntry& hunk_entry : target_state->reviewed_hunks) {
-      if (!PathsEqual(hunk_entry.identity.path, normalized)) {
-        continue;
+  if (input.model != nullptr &&
+      AnyReviewedHunkContentMoved(*target_state, normalized, BuildModelHunkIndex(*input.model))) {
+    // Was a nested walk that recomputed every model hunk's identity — content hash
+    // and all — once per reviewed-hunk entry: O(entries x hunks) hashes of the
+    // whole file's changed text, per call, on a path that is itself called per
+    // hunk by HunkStatus's fallback.
+    return BranchReviewMarkerStatus::ChangedSinceReviewed;
+  }
+  return BranchReviewMarkerStatus::Reviewed;
+}
+
+void BranchReviewStateService::ResolveHunkMarkers(
+    const BranchReviewStateQueryInput& input,
+    std::vector<BranchReviewHunkMarker>* out) const {
+  if (out == nullptr) {
+    return;
+  }
+  out->assign(input.model == nullptr ? 0 : input.model->hunks.size(), BranchReviewHunkMarker{});
+  if (input.model == nullptr || out->empty()) {
+    return;
+  }
+  const BranchReviewTargetState* target_state = FindTarget(input.target);
+  if (target_state == nullptr) {
+    return;
+  }
+  const std::filesystem::path normalized = NormalizeReviewPath(input.path);
+  const ModelHunkIndex index = BuildModelHunkIndex(*input.model);
+
+  // Pass 1 — each hunk's own reviewed entry, if it has one. First entry at a
+  // position wins, matching the per-hunk scan this replaced.
+  std::vector<bool> has_own_entry(out->size(), false);
+  for (const BranchReviewHunkReviewEntry& entry : target_state->reviewed_hunks) {
+    if (!PathsEqual(entry.identity.path, normalized)) {
+      continue;
+    }
+    const auto it =
+        index.by_position.find(HunkPositionKey(entry.identity.old_start, entry.identity.new_start));
+    if (it == index.by_position.end() || has_own_entry[it->second]) {
+      continue;
+    }
+    has_own_entry[it->second] = true;
+    (*out)[it->second].status = ContentKeysEqual(index.keys[it->second], entry.identity)
+                                    ? BranchReviewMarkerStatus::Reviewed
+                                    : BranchReviewMarkerStatus::ChangedSinceReviewed;
+  }
+
+  // Pass 2 — the file-level fallback for every hunk without its own entry. It is
+  // the same answer for all of them, so resolve it once.
+  const bool needs_file_fallback =
+      std::find(has_own_entry.begin(), has_own_entry.end(), false) != has_own_entry.end();
+  if (needs_file_fallback) {
+    BranchReviewMarkerStatus file_status = BranchReviewMarkerStatus::Unreviewed;
+    const BranchReviewFileReviewEntry* file_entry = nullptr;
+    for (const BranchReviewFileReviewEntry& entry : target_state->reviewed_files) {
+      if (PathsEqual(entry.path, normalized)) {
+        file_entry = &entry;
+        break;
       }
-      for (std::size_t hunk_index = 0; hunk_index < input.model->hunks.size(); ++hunk_index) {
-        const BranchReviewHunkIdentity current = ComputeBranchReviewHunkIdentity(
-            *input.model, static_cast<int>(hunk_index), normalized);
-        if (current.old_start == hunk_entry.identity.old_start &&
-            current.new_start == hunk_entry.identity.new_start &&
-            !HunkIdentitiesEqual(hunk_entry.identity, current)) {
-          return BranchReviewMarkerStatus::ChangedSinceReviewed;
+    }
+    if (file_entry != nullptr) {
+      file_status = file_entry->reviewed_snapshot_generation != input.target.snapshot_generation ||
+                            AnyReviewedHunkContentMoved(*target_state, normalized, index)
+                        ? BranchReviewMarkerStatus::ChangedSinceReviewed
+                        : BranchReviewMarkerStatus::Reviewed;
+    }
+    if (file_status != BranchReviewMarkerStatus::Unreviewed) {
+      for (std::size_t i = 0; i < out->size(); ++i) {
+        if (!has_own_entry[i]) {
+          (*out)[i].status = file_status;
         }
       }
     }
   }
-  return BranchReviewMarkerStatus::Reviewed;
+
+  // Pass 3 — hunk-scoped notes. A note matches a hunk only on the full identity,
+  // so a hunk whose content moved keeps its marker but loses its note, exactly as
+  // the per-hunk HasNote resolved it.
+  for (const BranchReviewNote& note : target_state->notes) {
+    if (note.scope != BranchReviewNoteScope::Hunk || !note.hunk_identity.has_value() ||
+        !PathsEqual(note.path, normalized) ||
+        !PathsEqual(note.hunk_identity->path, normalized)) {
+      continue;
+    }
+    const auto it = index.by_position.find(
+        HunkPositionKey(note.hunk_identity->old_start, note.hunk_identity->new_start));
+    if (it == index.by_position.end()) {
+      continue;
+    }
+    if (ContentKeysEqual(index.keys[it->second], *note.hunk_identity)) {
+      (*out)[it->second].has_note = true;
+    }
+  }
 }
 
 BranchReviewMarkerStatus BranchReviewStateService::HunkStatus(

@@ -4,6 +4,7 @@
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "compare/CompareModel.h"
@@ -39,6 +40,13 @@ enum class BranchReviewMarkerStatus {
 enum class BranchReviewNoteScope {
   File,
   Hunk,
+};
+
+// One hunk's resolved review presentation, as produced for a whole file at once
+// by BranchReviewStateService::ResolveHunkMarkers.
+struct BranchReviewHunkMarker {
+  BranchReviewMarkerStatus status = BranchReviewMarkerStatus::Unreviewed;
+  bool has_note = false;
 };
 
 struct BranchReviewHunkIdentity {
@@ -79,7 +87,26 @@ struct BranchReviewTargetState {
   std::uint64_t last_accessed_unix_ms = 0;
 };
 
-std::string BranchReviewMarkerLabel(BranchReviewMarkerStatus status);
+// Static label text; a view because it used to return a fresh std::string per
+// hunk per marker pass.
+std::string_view BranchReviewMarkerLabel(BranchReviewMarkerStatus status);
+
+// The path-free half of a hunk identity — everything that is a function of the
+// compare model alone. A whole-file resolve computes one per hunk and matches it
+// against the stored entries whose path it has already checked once, instead of
+// building a full identity (which copies the path) per hunk per entry.
+struct BranchReviewHunkContentKey {
+  int old_start = 0;
+  int old_count = 0;
+  int new_start = 0;
+  int new_count = 0;
+  std::uint64_t content_hash = 0;
+};
+
+BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
+                                                             const CompareHunk& hunk);
+BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
+                                                             int hunk_index);
 
 BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& model,
                                                          int hunk_index,

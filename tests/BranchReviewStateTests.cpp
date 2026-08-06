@@ -72,6 +72,103 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "edited hunk content should mark changed since reviewed");
                    }});
 
+  // ResolveHunkMarkers is a batched rewrite of "call HunkStatus + HasNote once per
+  // hunk". Diff it against that oracle across the state combinations that select
+  // different branches inside it: no state at all, hunk-only reviews, a reviewed
+  // file supplying the fallback, a reviewed file whose hunks then moved, a stale
+  // snapshot generation, and hunk notes (one live, one whose hunk content moved).
+  tests.push_back({"BranchReviewState/ResolveHunkMarkersMatchesPerHunkOracle",
+                   [] {
+                     std::string left;
+                     std::string right;
+                     for (int i = 0; i < 40; ++i) {
+                       const std::string n = std::to_string(i);
+                       left += "line " + n + " original\n";
+                       right += (i % 5 == 0 ? "line " + n + " MODIFIED\n"
+                                            : "line " + n + " original\n");
+                     }
+                     const auto model = BuildCompareModel(left, right);
+                     Expect(model.hunks.size() >= 4, "the fixture needs several hunks");
+
+                     const std::filesystem::path path("src/a.cpp");
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3);
+                     const BranchReviewTargetIdentity stale_target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 4);
+
+                     // A model whose hunk 1 content moved, so an identity recorded
+                     // against `model` resolves as changed against this one.
+                     std::string moved_right = right;
+                     const std::string moved_marker = "line 5 MODIFIED";
+                     const std::size_t at = moved_right.find(moved_marker);
+                     Expect(at != std::string::npos, "the fixture line should exist");
+                     moved_right.replace(at, moved_marker.size(), "line 5 EDITED-X");
+                     const auto moved_model = BuildCompareModel(left, moved_right);
+
+                     // Vacuity guard: a diff-against-oracle test passes trivially if
+                     // every hunk in every case resolves Unreviewed with no note.
+                     bool saw_reviewed = false;
+                     bool saw_changed = false;
+                     bool saw_unreviewed = false;
+                     bool saw_note = false;
+
+                     const auto check = [&](const char* what,
+                                            const BranchReviewStateService& service,
+                                            const BranchReviewTargetIdentity& query_target,
+                                            const compare::CompareModel& query_model) {
+                       std::vector<compare::BranchReviewHunkMarker> batched;
+                       BranchReviewStateQueryInput query{
+                           .target = query_target,
+                           .path = path,
+                           .model = &query_model,
+                       };
+                       service.ResolveHunkMarkers(query, &batched);
+                       Expect(batched.size() == query_model.hunks.size(),
+                              "the resolve must produce one marker per hunk");
+                       for (std::size_t i = 0; i < query_model.hunks.size(); ++i) {
+                         query.selected_hunk_index = static_cast<int>(i);
+                         Expect(batched[i].status == service.HunkStatus(query),
+                                std::string("batched hunk status must match HunkStatus: ") + what);
+                         Expect(batched[i].has_note ==
+                                    service.HasNote(query, BranchReviewNoteScope::Hunk),
+                                std::string("batched note flag must match HasNote: ") + what);
+                         saw_reviewed |= batched[i].status == BranchReviewMarkerStatus::Reviewed;
+                         saw_changed |=
+                             batched[i].status == BranchReviewMarkerStatus::ChangedSinceReviewed;
+                         saw_unreviewed |=
+                             batched[i].status == BranchReviewMarkerStatus::Unreviewed;
+                         saw_note |= batched[i].has_note;
+                       }
+                     };
+
+                     BranchReviewStateService service;
+                     check("empty state", service, target, model);
+
+                     service.MarkHunkReviewed(
+                         target, ComputeBranchReviewHunkIdentity(model, 1, path));
+                     service.MarkHunkReviewed(
+                         target, ComputeBranchReviewHunkIdentity(model, 3, path));
+                     check("hunk reviews only", service, target, model);
+                     check("hunk reviews, content moved", service, target, moved_model);
+
+                     service.MarkFileReviewed(target, path);
+                     check("file review supplies the fallback", service, target, model);
+                     check("file review, content moved", service, target, moved_model);
+                     check("stale snapshot generation", service, stale_target, model);
+
+                     service.SetNote(target, BranchReviewNoteScope::Hunk, path,
+                                     ComputeBranchReviewHunkIdentity(model, 2, path), "look");
+                     service.SetNote(target, BranchReviewNoteScope::Hunk, path,
+                                     ComputeBranchReviewHunkIdentity(model, 1, path), "and here");
+                     service.SetNote(target, BranchReviewNoteScope::File, path, std::nullopt,
+                                     "file-scoped, must not leak onto a hunk");
+                     check("hunk notes", service, target, model);
+                     check("hunk notes, content moved", service, target, moved_model);
+
+                     Expect(saw_reviewed && saw_changed && saw_unreviewed && saw_note,
+                            "the fixture must exercise every marker status and a live note");
+                   }});
+
   tests.push_back({"BranchReviewState/HunkContentHashSeparatesLeftAndRight",
                    [] {
                      // Two hunks with identical row kind and line ranges whose per-row

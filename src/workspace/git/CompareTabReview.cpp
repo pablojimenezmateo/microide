@@ -145,19 +145,19 @@ void ApplyBranchReviewPresentationMarkers(
   if (compare_tab.review_mode != compare::CompareReviewMode::Branch) {
     return;
   }
-  const compare::BranchReviewStateQueryInput base_query{
+  // Every hunk's marker and note flag in one pass over the review state. Asking
+  // per hunk (memoized per hunk index, which is what this used to do) still walked
+  // the target's reviewed-hunk list once per hunk and fell back to a FileStatus
+  // that walked it again against every model hunk — and copied the query's target
+  // identity and path each time.
+  const compare::BranchReviewStateQueryInput query{
       .target = compare_tab.branch_target,
       .path = compare_tab.path,
       .model = &compare_tab.model,
   };
-  // Hunk status/note state is constant per hunk, but a large compare tab has many
-  // rows per hunk. Memoize the resolved (marker label, has_note) per hunk index so
-  // each hunk's HunkStatus/HasNote scan runs once instead of row_count times.
-  struct HunkMarker {
-    std::string marker_label;
-    bool has_note = false;
-  };
-  std::unordered_map<int, HunkMarker> hunk_markers;
+  review_service.ResolveHunkMarkers(query, &compare_tab.review_hunk_markers);
+  const std::vector<compare::BranchReviewHunkMarker>& markers = compare_tab.review_hunk_markers;
+
   for (compare::ComparePresentationRow& row : compare_tab.presentation.rows) {
     row.review_marker_label.clear();
     row.has_review_note = false;
@@ -169,19 +169,12 @@ void ApplyBranchReviewPresentationMarkers(
     if (row.kind == compare::ComparePresentationRowKind::Model &&
         row.model_row_index < compare_tab.model.rows.size()) {
       const int hunk = compare_tab.model.rows[row.model_row_index].hunk;
-      if (hunk >= 0) {
-        auto it = hunk_markers.find(hunk);
-        if (it == hunk_markers.end()) {
-          compare::BranchReviewStateQueryInput query = base_query;
-          query.selected_hunk_index = hunk;
-          HunkMarker marker{
-              .marker_label = compare::BranchReviewMarkerLabel(review_service.HunkStatus(query)),
-              .has_note = review_service.HasNote(query, compare::BranchReviewNoteScope::Hunk),
-          };
-          it = hunk_markers.emplace(hunk, std::move(marker)).first;
-        }
-        row.review_marker_label = it->second.marker_label;
-        row.has_review_note = it->second.has_note;
+      if (hunk >= 0 && static_cast<std::size_t>(hunk) < markers.size()) {
+        // Assign into the row's existing capacity — the label is one of two short
+        // literals, so after the first pass no row reallocates.
+        const std::string_view label = compare::BranchReviewMarkerLabel(markers[hunk].status);
+        row.review_marker_label.assign(label.begin(), label.end());
+        row.has_review_note = markers[hunk].has_note;
       }
     }
     compare::ComposeComparePresentationDisplaySummary(row);

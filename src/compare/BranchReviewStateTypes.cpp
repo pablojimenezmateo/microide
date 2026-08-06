@@ -2,14 +2,30 @@
 
 #include <cassert>
 #include <chrono>
-#include <sstream>
 
 namespace microide::compare {
 
 namespace {
 
-std::uint64_t HashString(std::string_view text) {
-  return std::hash<std::string_view>{}(text);
+// FNV-1a, accumulated in place. This used to serialize the whole hunk into a
+// std::ostringstream and hash the resulting string — several allocations plus a
+// full copy of the hunk's text, per hunk, on a path that resolves every hunk of a
+// file on the compare tab's derived-state refresh.
+constexpr std::uint64_t kFnvOffsetBasis = 1469598103934665603ULL;
+constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+
+void HashBytes(std::uint64_t* hash, std::string_view bytes) {
+  for (const char byte : bytes) {
+    *hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(byte));
+    *hash *= kFnvPrime;
+  }
+}
+
+void HashInteger(std::uint64_t* hash, std::uint64_t value) {
+  for (int shift = 0; shift < 64; shift += 8) {
+    *hash ^= (value >> shift) & 0xFFULL;
+    *hash *= kFnvPrime;
+  }
 }
 
 void AccumulateHunkLineRanges(const CompareModel& model,
@@ -59,19 +75,21 @@ void AccumulateHunkLineRanges(const CompareModel& model,
 }
 
 std::uint64_t HashHunkContent(const CompareModel& model, const CompareHunk& hunk) {
-  std::ostringstream stream;
+  std::uint64_t hash = kFnvOffsetBasis;
   for (int row = hunk.start_row; row <= hunk.end_row; ++row) {
     if (row < 0 || static_cast<std::size_t>(row) >= model.rows.size()) {
       continue;
     }
     const CompareRow& compare_row = model.rows[static_cast<std::size_t>(row)];
-    stream << static_cast<int>(compare_row.kind) << '\n';
+    HashInteger(&hash, static_cast<std::uint64_t>(static_cast<int>(compare_row.kind)));
     // Length-prefix each field so left/right can't merge into an ambiguous byte
     // stream: ("hello","world") and ("hell","oworld") must hash differently.
-    stream << compare_row.left_text.size() << ':' << compare_row.left_text << '\n';
-    stream << compare_row.right_text.size() << ':' << compare_row.right_text << '\n';
+    HashInteger(&hash, compare_row.left_text.size());
+    HashBytes(&hash, compare_row.left_text);
+    HashInteger(&hash, compare_row.right_text.size());
+    HashBytes(&hash, compare_row.right_text);
   }
-  return HashString(stream.str());
+  return hash;
 }
 
 }  // namespace
@@ -94,7 +112,7 @@ bool BranchReviewHunkIdentity::operator==(const BranchReviewHunkIdentity& other)
          content_hash == other.content_hash;
 }
 
-std::string BranchReviewMarkerLabel(const BranchReviewMarkerStatus status) {
+std::string_view BranchReviewMarkerLabel(const BranchReviewMarkerStatus status) {
   switch (status) {
     case BranchReviewMarkerStatus::Unreviewed:
       return {};
@@ -106,16 +124,36 @@ std::string BranchReviewMarkerLabel(const BranchReviewMarkerStatus status) {
   return {};
 }
 
+BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
+                                                             const CompareHunk& hunk) {
+  BranchReviewHunkContentKey key;
+  AccumulateHunkLineRanges(model, hunk, &key.old_start, &key.old_count, &key.new_start,
+                           &key.new_count);
+  key.content_hash = HashHunkContent(model, hunk);
+  return key;
+}
+
+BranchReviewHunkContentKey ComputeBranchReviewHunkContentKey(const CompareModel& model,
+                                                             const int hunk_index) {
+  if (hunk_index < 0 || static_cast<std::size_t>(hunk_index) >= model.hunks.size()) {
+    return BranchReviewHunkContentKey{};
+  }
+  return ComputeBranchReviewHunkContentKey(model,
+                                           model.hunks[static_cast<std::size_t>(hunk_index)]);
+}
+
 BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& model,
                                                          const CompareHunk& hunk,
                                                          const std::filesystem::path& path) {
-  BranchReviewHunkIdentity identity{
+  const BranchReviewHunkContentKey key = ComputeBranchReviewHunkContentKey(model, hunk);
+  return BranchReviewHunkIdentity{
       .path = path,
+      .old_start = key.old_start,
+      .old_count = key.old_count,
+      .new_start = key.new_start,
+      .new_count = key.new_count,
+      .content_hash = key.content_hash,
   };
-  AccumulateHunkLineRanges(model, hunk, &identity.old_start, &identity.old_count, &identity.new_start,
-                           &identity.new_count);
-  identity.content_hash = HashHunkContent(model, hunk);
-  return identity;
 }
 
 BranchReviewHunkIdentity ComputeBranchReviewHunkIdentity(const CompareModel& model,

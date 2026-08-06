@@ -8,6 +8,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "compare/BranchReviewStateTypes.h"
 #include "compare/CompareModel.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/CompareReviewTypes.h"
@@ -97,6 +98,9 @@ struct CompareTabState {
   compare::CompareSemanticFileMetadata semantic_file;
   compare::ComparePresentationModel presentation;
   CompareReviewHeaderState review_header;
+  // Scratch for the whole-file review-marker resolve, kept on the tab so its
+  // buffer survives across passes instead of being reallocated per refresh.
+  std::vector<compare::BranchReviewHunkMarker> review_hunk_markers;
   std::uint64_t presentation_revision = 0;
   compare::CompareBuildOptions build_options;
   bool show_whitespace = false;
