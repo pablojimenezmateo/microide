@@ -1,6 +1,62 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **80 open items.**
+Reviewed 2026-08-06. **82 open items.**
+
+The 2026-08-06 interactive sweep is [149](#td-2026-08-06-149)'s own instruction
+carried out — "generalise the sweep: the instrument is cheap now, and no
+interactive scenario other than the drag and this one has been read through it."
+Six scenarios read, six fixes, and the two entries the reading opened
+(**157**, **158**).
+
+The largest was not an editor path at all. `ApplyBranchReviewPresentationMarkers`
+runs unconditionally from the compare tab's derived-state refresh — the refresh
+whose *other* half already carries a comment saying it fires from ~10 event sites
+including every mouse move — and it cost **1,418,736 allocations / 28.6 ms** a
+pass. It is **721 / 0.103 ms**, and **0 / 0.0002 ms** when nothing moved:
+
+  - 79 % of it was `PathsEqual` calling `lexically_normal()` on **both** sides of
+    every comparison, inside scans that run per reviewed-hunk entry per hunk per
+    row. Every stored path was already normalised on ingress by the mutators; the
+    persistence bridge is now the last ingress to say so, and the comparison is a
+    string compare.
+  - the rest was asking one hunk at a time: `HunkStatus` scans the entry list per
+    hunk and, for a hunk with no entry of its own, falls back to a `FileStatus`
+    that walks that list against every model hunk **recomputing each hunk's
+    content hash**. `ResolveHunkMarkers` walks each list once. The content hash
+    also stopped serialising the hunk into a `std::ostringstream`.
+  - and then it stopped running at all on a refresh that moved none of its three
+    inputs (row list, review revision, branch target).
+
+The editor half was one shape in two places: **a span captured, then copied
+again**. A multi-caret edit's undo entry spans the first to the last affected
+caret line, so on `editor_surround_multi_caret` (8 carets over 8,400 lines) the
+tracer showed that span materialised **eight times per keystroke**, six
+avoidable — `BuildEntryForDocumentChange` copying both vectors instead of moving
+the trimmed sub-range out, `PushHistoryEntry` copying the finished entry, and a
+per-line `lines[i]` capture that goes through `TextBuffer::LineRef` and so also
+inserted every line of the span into the buffer's line cache. The line ops
+(`Move Line`, `Toggle Comment`, `Sort`, `Indent`) had the same two on their own
+replacement vector.
+
+    editor.surround_multi_caret.insert   67,366 -> 16,979  (-74.8%)
+    move_line_down.multi_caret_burst     56,822 -> 28,924  (-49.1%)
+    toggle_line_comment.1000_lines      105,060 -> 89,044  (-15.2%)
+
+The two the model *requires* — a before and an after image of the whole span,
+including every unchanged line between the carets — are [157](#td-2026-08-06-157).
+
+Two per-frame shell probes fell out of the scroll scenarios, and they moved all
+four at once: `HoveredTooltip` laid out both tab strips before the containment
+test that discards them, and `IsGitRepoValid` built a whole `GitRepository` to
+ask whether `.git` exists.
+
+    editor_scroll_only_no_content_bump.scroll_frame   13,350 -> 7,150   (-46.4%)
+    editor_sticky_scroll_scroll.fast_scroll_frame     22,506 -> 16,306  (-27.5%)
+    editor_fold_viewport_refresh.scroll_frame         22,152 -> 16,200  (-26.9%)
+    editor_render_whitespace_paint.scroll_overlay     19,230 -> 14,270  (-25.8%)
+
+What is left of that probe — one `stat` per painted frame, uncached on purpose —
+is [158](#td-2026-08-06-158).
 
 The 2026-08-06 finder pass closed **153** and **154**, and opened **155** by
 tripping over it.
@@ -173,6 +229,82 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. OPEN.
+
+Found by pointing the phase-scoped tracer at `editor_surround_multi_caret`, the
+next interactive scenario after the two [149](#td-2026-08-06-149) named.
+
+Both multi-caret apply paths (`TextViewport::TryMultiCaretPairInsert`,
+`TextViewport::ApplyMultiCaretEdit`) and every shaping line op
+(`ShapingActions.cpp`, via `ResolveLineRange`) describe the edit as **one
+contiguous line-range replacement** spanning the first to the last affected caret
+line. `TextViewportUndoHistory::Entry` is that shape and only that shape:
+`start_line` plus a `before_lines` / `after_lines` pair.
+
+So the cost of one keystroke is proportional to how far apart the carets are, not
+to how many there are. Eight carets 8,400 lines apart in the 50k-line fixture
+capture 8,401 lines for the before-image and 8,401 for the after-image — and the
+entry **retains** both for the life of the undo stack, against a
+`kMaxHistoryBytes` budget that will then evict real history. `Ctrl+Shift+L` on a
+common token in a large file puts carets across the whole document; every
+keystroke after that copies the whole document twice.
+
+The redundant multiples are gone (four copies on the pair-insert path, two on the
+line-op path — see the 2026-08-06 commits): what is left is the two the model
+requires.
+
+**The interior lines are identical in both images.** `BuildEntryForDocumentChange`
+trims a common prefix and suffix, which cannot touch the middle, and
+`FinishActiveGroup` explicitly *re-fills* the gaps between disjoint group ranges
+from the current buffer — the group frame already carries the edit as a set of
+disjoint ranges (`UndoGroupFrame::disjoint_entries`, whose own comment says it
+exists so a non-contiguous edit never materialises a whole-buffer snapshot) and
+then stitches that set back into one contiguous entry at the end.
+
+**The fix is a multi-range Entry**, which is what VSCode's undo model is (a set of
+`ISingleEditOperation`s, not a line span): keep `Entry`'s existing single-range
+fields as the common case and add a list of additional disjoint ranges, empty for
+every entry except a non-contiguous multi-caret edit. `FinishActiveGroup` then
+stops stitching, and both apply paths stop building a spanning aggregate.
+
+**Why it is filed rather than done.** The consumers of the contiguous assumption
+are not all in the history: `ApplyHistoryEntry`'s replace, `before_line_count()` /
+`after_line_count()` (cache invalidation, wrapped-row splice, group bookkeeping),
+`EntryContentBytes` for the byte budget, the coalescing/merge predicates, and
+`BuildAppliedEditLineSpan`. Undo is the part of an editor where a wrong answer is
+least recoverable, so this wants its own change with a diff-against-oracle test,
+not a ride-along.
+
+Instrument first: nothing currently reports the span/edited-line ratio, so there
+is no measurement of how far apart real carets get. A counter on the aggregate
+(`editor.multi_caret_span_lines` vs `editor.multi_caret_edited_lines`) would say
+whether the common case is a 30-line Ctrl+D run or a whole-file select-all.
+
+### TD-2026-08-06-158 — the status bar probes the filesystem for `.git` on every painted frame. OPEN.
+
+`StatusBarModelService::Refresh` runs from `WorkspaceShell::PrepareFrameOnce`, and
+when there is no git snapshot yet it calls `is_git_repo_valid`, which stats
+`<root>/.git`. That is deliberate and the comment says why — caching it by
+project root went stale after an in-session `git init` or `.git` removal until a
+real git refresh superseded it.
+
+The allocations are gone (it no longer builds a `GitRepository`, which copied the
+path and normalised it), but two things remain:
+
+  - `internal::HasGitMarker` still constructs a `std::filesystem::path` for
+    `root / ".git"` — its own string plus libstdc++'s component list, ~167 bytes
+    across the pair. It is ~1.4 % of `editor_scroll_only_no_content_bump`'s
+    per-frame allocations, and it also runs on the background executor on
+    essentially every git operation.
+  - the **syscall** is still one `stat` per painted frame, which no counter
+    reports and no gate covers.
+
+The durable answer is to stop polling: the project already runs a file-index
+watcher, so `.git` appearing or disappearing is an event, and
+`GitRepositoryService::MarkStale()` is already the "something changed" seam. Wire
+the marker state to that and the probe becomes a bool read. Until then this is a
+stat on a hot dentry, which is cheap but is not nothing at 120 Hz.
 
 ### TD-2026-08-06-138 — the whole-document line-width table is built TWICE per file open. [RESOLVED 2026-08-06 — and the headline was wrong: it is twice per *re*-open.]
 
