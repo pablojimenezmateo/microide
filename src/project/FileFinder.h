@@ -14,7 +14,17 @@
 namespace microide::project {
 
 struct FileFinderResult {
-  std::filesystem::path relative_path;
+  // The project-relative path, as a string. Deliberately NOT a
+  // std::filesystem::path: this struct is materialized for up to kMaxResults
+  // rows on EVERY keystroke, and a path costs two more allocations per row (its
+  // own string plus the component split) for a field only SelectedPath() ever
+  // read — 4,134 of the 13,140 allocations the ten-keystroke
+  // `file_finder_type_query` phase used to make, its single largest site.
+  // SelectedPath() builds the path once, when the user picks a row.
+  //
+  // Not a string_view into the finder's candidate blob either: five call sites
+  // outside this class invalidate that cache without clearing `results_`, so a
+  // view would outlive its bytes.
   std::string path_string;
   int score = 0;
 };

@@ -184,7 +184,6 @@ void FileFinder::Refresh() {
       // Views into the candidate blob, which nothing in this Refresh mutates.
       recent_shown.insert(path);
       results_.push_back(FileFinderResult{
-          .relative_path = std::filesystem::path(path),
           .path_string = std::string(path),
           .score = 0,
       });
@@ -278,7 +277,6 @@ void FileFinder::Refresh() {
   for (std::size_t i = 0; i < keep; ++i) {
     const std::string_view path = PathView(cached_entries_[ranked_refs[i].index]);
     results_.push_back(FileFinderResult{
-        .relative_path = std::filesystem::path(path),
         .path_string = std::string(path),
         .score = ranked_refs[i].score,
     });
@@ -308,7 +306,9 @@ std::optional<std::filesystem::path> FileFinder::SelectedPath() const {
   if (results_.empty() || selected_index_ >= results_.size()) {
     return std::nullopt;
   }
-  return results_[selected_index_].relative_path;
+  // Built here rather than per row: this is the one place a path is needed, and
+  // it runs once, when the user picks a file.
+  return std::filesystem::path(results_[selected_index_].path_string);
 }
 
 int FileFinder::MatchPenalty(std::string_view text, std::string_view original,

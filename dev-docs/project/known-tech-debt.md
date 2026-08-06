@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **79 open items.**
+Reviewed 2026-08-06. **80 open items.**
 
 The 2026-08-06 finder pass closed **153** and **154**, and opened **155** by
 tripping over it.
@@ -26,6 +26,13 @@ scenarios had drifted up 0.1 %, which turned out to be a scenario appending to a
 fixture **in the repository** — 1,361 times, growing a 3-line worktree diff to
 2,725 lines. Those scenarios had been measuring how often the suite had ever been
 run on that checkout.
+
+And the new scenario 155 brought with it — `file_finder_type_query`, the finder's
+interactive path, which had no coverage at all — immediately found **156**: the
+ranking is allocation-free, and then every keystroke deep-copies 512 result rows
+to render twenty. Two thirds of that is gone (the per-row
+`std::filesystem::path` served one function that runs once, on Enter); the
+remaining third is a lifetime problem stated in the entry.
 
 The earlier 2026-08-06 measurement-integrity pass closed three — **150** (the resident gate
 is a coin flip), **151** (the biggest interactive scenarios have no measured
@@ -1543,6 +1550,50 @@ by construction and is now the gate a retention regression trips. What remains
 unfixed is that the RSS gate cannot be tight and that allocation counts have an
 unmeasured prefix sensitivity — real, but no longer the only instrument in the
 room.
+
+### TD-2026-08-06-156 — the finder deep-copies up to 512 result rows on every keystroke to render about twenty of them. PARTIALLY RESOLVED 2026-08-06 — two thirds removed; the rest needs a lifetime change or a smaller cap.
+
+Found by `file_finder_type_query`, the scenario added with
+[155](#td-2026-08-06-155) to cover the finder's interactive path for the first
+time. Ten keystrokes over a 10,000-file project cost **13,140 allocations**, and
+the phase-scoped tracer put **4,134 of them on one line** —
+`FileFinder::Refresh()` materialising `FileFinderResult`s — plus the same count
+again in `std::filesystem::path::_M_split_cmpts` underneath it.
+
+The cause is structural: ranking is allocation-free (it walks views into the
+candidate blob), but every keystroke then deep-copies the top `kMaxResults` =
+**512** rows, while the overlay renders about twenty.
+
+**Fixed: the `std::filesystem::path` per row.** `FileFinderResult::relative_path`
+was read by exactly one function, `SelectedPath()`, which runs once when the user
+picks a file — and cost two allocations per row (the path's own string, and the
+component split) on every keystroke. Dropped; `SelectedPath()` builds the path
+from `path_string` on demand.
+
+| phase | before | after | |
+| --- | ---: | ---: | ---: |
+| `file_finder_type_query.type_and_rank` | 13,140 | 4,872 | −63 % |
+| `file_finder_type_query.backspace_rescan` | 5,087 | 1,941 | −62 % |
+| `file_finder_cold.open_finder` | 1,621 | 597 | −63 % |
+
+**Still there: one `std::string` per row per keystroke**, ~490 allocations for a
+broad query. Two ways out, both with a real cost:
+
+  - Make `path_string` a `std::string_view` into the candidate blob. Blocked
+    today by lifetime, not by design: **five call sites outside the finder**
+    (`WorkspaceShellProjectSearch`, `WorkspaceSidebarCoordinator`,
+    `WorkspaceProjectStateCoordinator`, `WorkspaceShellProjectChanges`,
+    `WorkspaceShellRedraw`) call `InvalidateIndexCache()`, which clears the blob
+    and does **not** clear `results_`. Every one would have to be an operation
+    that either clears results too or cannot run between a Refresh and a paint.
+  - Cap the materialised set at what the overlay can show plus a scroll margin,
+    and materialise more on demand. `kMaxResults` is 512 because the list is
+    scrollable; the ranked refs (index + score, no allocation) are already kept
+    uncapped, so the rows could be built lazily from them.
+
+Neither is urgent now that the per-keystroke cost is a third of what it was, and
+`file_finder_type_query` gates both phases exactly (p50 == max on every
+iteration), so a regression here is now visible.
 
 ### TD-2026-08-06-155 — a perf scenario appended to a fixture in the repository 1,361 times, and every diff scenario reading that tree had been measuring the accumulation. [APPEND LEAK FIXED 2026-08-06; the index mutation is still open.]
 

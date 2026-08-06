@@ -93,8 +93,7 @@ void TestFileFinderPreservesQueryAcrossIndexChanges() {
   Expect(finder.query() == "needle",
          "file finder should preserve query text after index cache rebuild");
   Expect(finder.results().size() == 1 &&
-             finder.results().front().relative_path ==
-                 std::filesystem::path("src/needle_file.cpp"),
+             finder.results().front().path_string == "src/needle_file.cpp",
          "file finder should surface new matches using the existing query");
 }
 
@@ -113,8 +112,7 @@ void TestFileFinderIncludesHiddenIndexedPaths() {
   finder.SetIndex(&index);
   finder.SetQuery("hidden");
   Expect(finder.results().size() == 1 &&
-             finder.results().front().relative_path ==
-                 std::filesystem::path(".hidden/config.json"),
+             finder.results().front().path_string == ".hidden/config.json",
          "file finder hidden-path behavior should remain compatible with indexed hidden entries");
 }
 
@@ -148,7 +146,7 @@ void TestFileFinderWarmRefreshDoesNotRebuildPerKeystroke() {
   Expect(after - before == 1,
          "the finder cache must build once across repeated same-version queries");
   Expect(finder.results().size() == 1 &&
-             finder.results().front().relative_path == std::filesystem::path("src/alpha.cpp"),
+             finder.results().front().path_string == "src/alpha.cpp",
          "warm narrowing must still return correct results");
 }
 
