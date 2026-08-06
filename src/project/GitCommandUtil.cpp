@@ -1,5 +1,7 @@
 #include "project/GitCommandUtil.h"
 
+#include <algorithm>
+#include <array>
 #include <cctype>
 #include <string_view>
 #include <system_error>
@@ -25,13 +27,11 @@ bool HasGitMarker(const std::filesystem::path& root) {
   return std::filesystem::exists(root / ".git", error) && !error;
 }
 
-std::optional<std::filesystem::path> AbsoluteToRelativePath(
+namespace {
+
+std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path) {
-  if (root.empty() || absolute_path.empty()) {
-    return std::nullopt;
-  }
-
   const std::filesystem::path relative =
       absolute_path.lexically_normal().lexically_relative(root.lexically_normal());
   if (relative.empty() ||
@@ -56,6 +56,67 @@ std::optional<std::filesystem::path> AbsoluteToRelativePath(
     return std::nullopt;
   }
   return relative.lexically_normal();
+}
+
+}  // namespace
+
+std::optional<std::filesystem::path> AbsoluteToRelativePath(
+    const std::filesystem::path& root,
+    const std::filesystem::path& absolute_path) {
+  if (root.empty() || absolute_path.empty()) {
+    return std::nullopt;
+  }
+
+  // Memoized because this is on the per-frame render path and it is expensive
+  // out of all proportion to what it does: `lexically_normal` builds a fresh
+  // path component by component, so one call is ~12 allocations, and the inline
+  // blame overlay resolves the SAME two paths three to four times on every frame
+  // it paints (the overlay's own eligibility check, then GitBlameService's
+  // Request and Snapshot). Measured with the phase-scoped allocation tracer that
+  // TD-2026-08-06-151 made aimable: 11 of the top 12 sites in
+  // editor_fold_viewport_refresh's measured phase were this call, ~20% of the
+  // phase's 31,079 allocations.
+  //
+  // Memoizing is correct by construction rather than by convention.
+  // `lexically_normal` and `lexically_relative` are PURELY LEXICAL -- neither
+  // touches the filesystem -- so the result is a pure function of the two
+  // arguments and there is no state it could go stale against. That is the whole
+  // reason the cache needs no invalidation hook, no generation counter, and no
+  // participation in any watcher.
+  //
+  // Per thread, so it needs no lock: the shell thread paints while the
+  // background executor runs git, and both call this. Four entries because a
+  // split editor with two panes plus a git-sidebar refresh touches more than one
+  // (root, path) pair between frames, and a one-entry memo would thrash to a 0%
+  // hit rate exactly when there is most to save.
+  struct Entry {
+    std::filesystem::path root;
+    std::filesystem::path absolute_path;
+    std::optional<std::filesystem::path> result;
+  };
+  constexpr std::size_t kMemoEntries = 4;
+  thread_local std::array<Entry, kMemoEntries> memo{};
+  thread_local std::size_t memo_used = 0;
+
+  for (std::size_t i = 0; i < memo_used; ++i) {
+    if (memo[i].root != root || memo[i].absolute_path != absolute_path) {
+      continue;
+    }
+    if (i != 0) {
+      std::rotate(memo.begin(), memo.begin() + static_cast<std::ptrdiff_t>(i),
+                  memo.begin() + static_cast<std::ptrdiff_t>(i) + 1);
+    }
+    return memo[0].result;
+  }
+
+  Entry entry{.root = root,
+              .absolute_path = absolute_path,
+              .result = ComputeAbsoluteToRelativePath(root, absolute_path)};
+  // Evict the least recently used by rotating it to the back, then overwrite it.
+  std::rotate(memo.begin(), memo.end() - 1, memo.end());
+  memo[0] = std::move(entry);
+  memo_used = std::min(memo_used + 1, kMemoEntries);
+  return memo[0].result;
 }
 
 std::optional<std::string> ResolveHeadId(const std::filesystem::path& root) {

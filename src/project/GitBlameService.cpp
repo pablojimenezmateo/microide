@@ -149,9 +149,40 @@ Span NormalizeWindow(std::size_t visible_start_line,
   return Span{.start = start, .end = end};
 }
 
+// `lexically_normal` costs ~12 allocations and is purely lexical, so it is both
+// expensive and trivially memoizable -- see the note on
+// gitutil::AbsoluteToRelativePath. These two run on the same per-frame path
+// (Request and Snapshot are both called from frame prep whenever the inline
+// blame overlay paints), against a project root and a file path that change at
+// human speed. Per thread, so no lock: the shell thread paints while the
+// background executor runs git.
+const std::string& NormalizedRootText(const std::filesystem::path& root) {
+  thread_local std::filesystem::path cached_root;
+  thread_local std::string cached_text;
+  thread_local bool cached = false;
+  if (!cached || cached_root != root) {
+    cached_root = root;
+    cached_text = root.lexically_normal().string();
+    cached = true;
+  }
+  return cached_text;
+}
+
+const std::filesystem::path& NormalizedPath(const std::filesystem::path& path) {
+  thread_local std::filesystem::path cached_input;
+  thread_local std::filesystem::path cached_result;
+  thread_local bool cached = false;
+  if (!cached || cached_input != path) {
+    cached_input = path;
+    cached_result = path.lexically_normal();
+    cached = true;
+  }
+  return cached_result;
+}
+
 std::string BuildFileKey(const std::filesystem::path& root,
                          const std::filesystem::path& relative_path) {
-  return root.lexically_normal().string() + '\n' + relative_path.generic_string();
+  return NormalizedRootText(root) + '\n' + relative_path.generic_string();
 }
 
 std::string BuildRequestKey(const std::string& file_key,
@@ -416,7 +447,7 @@ struct GitBlameService::Impl {
     // hit rate here is what keeps inline blame off the git subprocess path.
     util::AddPerformanceCounter(util::PerfCounterId::GitBlameQueries);
     GitBlameSnapshot snapshot;
-    snapshot.absolute_path = request.absolute_path.lexically_normal();
+    snapshot.absolute_path = NormalizedPath(request.absolute_path);
     snapshot.visible_start_line = request.visible_start_line;
     snapshot.visible_line_count = request.visible_line_count;
 

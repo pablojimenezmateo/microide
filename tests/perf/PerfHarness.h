@@ -377,6 +377,22 @@ struct Scenario {
   // Baseline.cpp: a metric that measures which iteration got unlucky is not a
   // gate. The numbers are still measured and reported, just not enforced.
   bool gate_cpu_metrics = true;
+  // Whether this scenario's net heap retention is a valid regression signal.
+  //
+  // It is for almost everything -- 52 of 52 scenarios re-measured under three
+  // different suite prefixes reproduced to the byte, and 98 of 99 held across two
+  // full-suite runs on very differently loaded machines (TD-2026-08-06-150). Set
+  // false only where the metric provably measures timing instead of code, and say
+  // what does.
+  //
+  // The one counterexample so far is `multi_project_switch`, and it is
+  // instructive: `bytes_allocated - bytes_freed` is measured on the shell thread
+  // across ONE iteration's window, so a scenario whose window frees structures
+  // the PREVIOUS iteration allocated reports a difference that depends on when
+  // the teardown lands, not on what the code does. Its series spans −21,284 to
+  // +29,061 bytes with `p50_allocations` moving by 14 across the same runs. The
+  // allocation count is the oracle there.
+  bool gate_net_heap_metrics = true;
   std::function<void(ScenarioContext&)> run;
 };
 

@@ -434,11 +434,20 @@ void RegisterBuiltInScenarios() {
   // reports only the shell thread's allocations and reports the same number every
   // run. That tight gate is what would catch a regression like the switch
   // teardown this scenario found (a 79 ms p50 before the inotify retire landed).
+  //
+  // Net heap retention is the one metric this scenario cannot supply, and for a
+  // reason specific to what it does: each iteration's window frees the structures
+  // the PREVIOUS iteration's project allocated, so `bytes_allocated -
+  // bytes_freed` reports where the teardown happened to land rather than what the
+  // code holds. Its per-iteration series spans −21,284 to +29,061 bytes across two
+  // full runs whose `p50_allocations` differed by 14. See
+  // Scenario::gate_net_heap_metrics.
   PerfHarness::RegisterScenario(Scenario{
       .name = "multi_project_switch",
       .smoke = true,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
+      .gate_net_heap_metrics = false,
       .run =
           [](ScenarioContext& context) {
             const std::vector<std::filesystem::path> projects = {
@@ -1875,7 +1884,7 @@ int main(int argc, char** argv) {
       // Always recorded, including at zero: unlike cpu/rss this metric is
       // deterministic, so there is no run in which it is unmeasurable and a zero
       // reading is a real one (TD-2026-08-06-150).
-      record.has_net_heap_metrics = true;
+      record.has_net_heap_metrics = scenario.gate_net_heap_metrics;
       // Record the clock this baseline was captured at, so a later run's CPU
       // numbers can be compared in the same machine state instead of against a
       // number that silently meant "measured on a core that happened to be at
