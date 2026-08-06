@@ -1010,6 +1010,7 @@ add_executable(microide_tests
   tests/PluginSurfaceCoverageTests.cpp
   tests/SurfaceTextureCacheTests.cpp
   tests/PluginThreadTests.cpp
+  tests/InlineVectorTests.cpp
   tests/ParseTests.cpp
   tests/JsonValueTests.cpp
   tests/JsonFormatTests.cpp

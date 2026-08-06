@@ -338,7 +338,6 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         }
         context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
         context_.interaction_state.drag_editor_split_divider_index = divider.divider_index;
-        context_.interaction_state.drag_editor_split_path = divider.node_path;
         return true;
       }
     }

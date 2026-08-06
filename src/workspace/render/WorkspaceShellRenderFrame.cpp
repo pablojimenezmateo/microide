@@ -657,9 +657,9 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   const EditorGroupRectsLayout editor_surface_group_rects =
       render_editor_surface ? ComputeEditorSurfaceGroupRects(layout.editor_surface)
                             : EditorGroupRectsLayout{};
-  const std::vector<EditorPaneLayout> editor_panes =
+  const EditorPaneLayouts editor_panes =
       render_editor_surface ? EditorPaneLayoutsFromGroupRects(editor_surface_group_rects)
-                            : std::vector<EditorPaneLayout>{};
+                            : EditorPaneLayouts{};
   if (active_compare_tab != nullptr) {
     const bool draw_compare_caret =
         project_state.surface.focus == FocusTarget::Editor && active_compare_tab->right_view_active &&
@@ -750,7 +750,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     const int sticky_scroll_max_depth =
         ParseStickyScrollMaxDepthSetting(GetSettingValue("editor.fold.sticky_scroll.max_depth"));
     thread_local editor::EditorViewModel tls_editor_surface_vm;
-    const std::vector<EditorPaneLayout>& panes = editor_panes;
+    const EditorPaneLayouts& panes = editor_panes;
     thread_local std::vector<editor::EditorViewMetrics> tls_pane_scroll_metrics;
     thread_local std::vector<unsigned char> tls_pane_scroll_metrics_valid;
     tls_pane_scroll_metrics.resize(panes.size());
@@ -933,8 +933,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
          EditorSplitDividerLayoutsFromGroupRects(editor_surface_group_rects)) {
       const bool divider_active =
           context_.interaction_state.drag_target == DragTarget::EditorSplitDivider &&
-          divider.divider_index == context_.interaction_state.drag_editor_split_divider_index &&
-          divider.node_path == context_.interaction_state.drag_editor_split_path;
+          divider.divider_index == context_.interaction_state.drag_editor_split_divider_index;
       DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
     }
   }

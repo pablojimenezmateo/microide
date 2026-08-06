@@ -210,7 +210,6 @@ void WorkspaceShell::RebindProjectState(ProjectWorkspaceState& state) {
 void WorkspaceShell::ClearDragState() {
   context_.interaction_state.drag_target = DragTarget::None;
   context_.interaction_state.drag_scrollbar_offset = 0.0f;
-  context_.interaction_state.drag_editor_split_path.clear();
   context_.interaction_state.drag_editor_split_divider_index = 0;
 }
 

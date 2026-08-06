@@ -409,10 +409,16 @@
   };
 
   struct EditorSplitDividerLayout {
-    std::vector<std::size_t> node_path;
     std::size_t divider_index = 0;
     SDL_FRect rect{};
   };
+
+  // At most one divider today (a single split), and at most one pane per editor
+  // group. Both are heap-free for the same reason `EditorGroupRectsLayout::groups`
+  // is: every hit-test and redraw-rect query rebuilds them.
+  using EditorPaneLayouts = util::InlineVector<EditorPaneLayout, kMaxEditorGroups>;
+  using EditorSplitDividerLayouts =
+      util::InlineVector<EditorSplitDividerLayout, kMaxEditorGroups - 1>;
 
   using BottomPanelTabKind = workspace::BottomPanelTabKind;
   using BottomPanelTabModel = workspace::BottomPanelTabModel;
@@ -788,14 +794,14 @@
   editor::TextViewport* ActiveNavigableViewport();
   const editor::TextViewport* ActiveNavigableViewport() const;
   std::filesystem::path ActiveTabPath() const;
-  std::vector<EditorPaneLayout> ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
-  std::vector<EditorSplitDividerLayout> ComputeEditorSplitDividerLayouts(
+  EditorPaneLayouts ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
+  EditorSplitDividerLayouts ComputeEditorSplitDividerLayouts(
       const SDL_FRect& editor_surface) const;
   // Derive pane / divider layouts from already-computed group rects, so a render
   // pass that needs both does not recompute the surface split twice per frame.
-  std::vector<EditorPaneLayout> EditorPaneLayoutsFromGroupRects(
+  EditorPaneLayouts EditorPaneLayoutsFromGroupRects(
       const EditorGroupRectsLayout& group_rects) const;
-  std::vector<EditorSplitDividerLayout> EditorSplitDividerLayoutsFromGroupRects(
+  EditorSplitDividerLayouts EditorSplitDividerLayoutsFromGroupRects(
       const EditorGroupRectsLayout& group_rects) const;
   EditorGroupRectsLayout ComputeEditorSurfaceGroupRects(const SDL_FRect& editor_surface) const;
   // Per-group chrome rects (tab strip / breadcrumb / surface) for the current

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "workspace/services/LayoutModeService.h"
+#include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceOutputChannels.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
@@ -207,9 +208,10 @@ class TabStripService {
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
 
-  // One cache slot per editor group (max 2). Both groups render every frame, so a
-  // single shared slot would thrash; indexing by group keeps each hot.
-  static constexpr std::size_t kMaxEditorGroups = 2;
+  // One cache slot per editor group. Both groups render every frame, so a single
+  // shared slot would thrash; indexing by group keeps each hot. The cap is
+  // `workspace::kMaxEditorGroups` (WorkspaceLayout.h), shared with the surface
+  // split so the two cannot drift.
   mutable std::array<TabStripGeometryCache, kMaxEditorGroups> editor_tab_geometry_cache_;
   mutable std::array<VisibleEditorTabsCache, kMaxEditorGroups> visible_editor_tabs_cache_;
   mutable BottomPanelTabsCache bottom_panel_tabs_cache_;

@@ -12,8 +12,15 @@
 #include "compare/CompareModel.h"
 #include "compare/ComparePresentationModel.h"
 #include "compare/MergeModel.h"
+#include "util/InlineVector.h"
 
 namespace microide::workspace {
+
+// The editor area hosts at most this many groups (one split, two panes). This is
+// the single definition of that cap: the surface split, the per-group tab-strip
+// caches, and the session decoder all read it, and it is the capacity of every
+// per-group inline container, so raising it cannot leave one of them behind.
+inline constexpr std::size_t kMaxEditorGroups = 2;
 
 enum class LayoutMode : std::uint8_t {
   Regular = 0,
@@ -211,7 +218,10 @@ struct EditorGroupRects {
 // `.editor_surface`. For two groups they are split side-by-side (vertical
 // divider) or stacked (horizontal divider) at `first_fraction`.
 struct EditorGroupRectsLayout {
-  std::vector<EditorGroupRects> groups;
+  // Heap-free: this is rebuilt on hit-test, cursor-shape, redraw-rect and render
+  // paths (three times per mouse-motion event during a selection drag), and it
+  // carries one or two 48-byte structs — see TD-2026-08-06-145.
+  util::InlineVector<EditorGroupRects, kMaxEditorGroups> groups;
   std::optional<SDL_FRect> divider;  // present iff two groups
   bool vertical_divider = true;      // true: side-by-side; false: stacked
 };

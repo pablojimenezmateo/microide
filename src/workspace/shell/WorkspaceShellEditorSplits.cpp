@@ -65,7 +65,8 @@ const editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayo
 EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
     const WorkspaceLayout& layout) const {
   const ProjectWorkspaceState& state = context_.current_project_state;
-  const std::size_t group_count = std::min<std::size_t>(state.editor_groups.size(), 2);
+  const std::size_t group_count =
+      std::min<std::size_t>(state.editor_groups.size(), kMaxEditorGroups);
   const bool split = group_count >= 2 &&
                      state.group_split_orientation != EditorSplitOrientation::None;
   const bool vertical = state.group_split_orientation == EditorSplitOrientation::Vertical;
@@ -78,9 +79,9 @@ EditorGroupRectsLayout WorkspaceShell::ComputeEditorSurfaceGroupRects(
   return ComputeEditorGroupRectsForState(SurfaceOnlyLayout(editor_surface));
 }
 
-std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::EditorPaneLayoutsFromGroupRects(
+WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRects(
     const EditorGroupRectsLayout& group_rects) const {
-  std::vector<EditorPaneLayout> panes;
+  EditorPaneLayouts panes;
   const ProjectWorkspaceState& state = context_.current_project_state;
   if (state.editor_groups.empty()) {
     return panes;
@@ -88,7 +89,6 @@ std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::EditorPaneLayoutsF
   const std::size_t focused = state.focused_group_index < group_rects.groups.size()
                                   ? state.focused_group_index
                                   : 0;
-  panes.reserve(group_rects.groups.size());
   for (std::size_t i = 0; i < group_rects.groups.size(); ++i) {
     const bool active = i == focused;
     // The external-change banner belongs to the focused group; trim it from that
@@ -100,18 +100,18 @@ std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::EditorPaneLayoutsF
   return panes;
 }
 
-std::vector<WorkspaceShell::EditorSplitDividerLayout>
+WorkspaceShell::EditorSplitDividerLayouts
 WorkspaceShell::EditorSplitDividerLayoutsFromGroupRects(
     const EditorGroupRectsLayout& group_rects) const {
-  std::vector<EditorSplitDividerLayout> dividers;
+  EditorSplitDividerLayouts dividers;
   if (group_rects.divider.has_value()) {
-    dividers.push_back(EditorSplitDividerLayout{.node_path = {}, .divider_index = 0,
+    dividers.push_back(EditorSplitDividerLayout{.divider_index = 0,
                                                 .rect = *group_rects.divider});
   }
   return dividers;
 }
 
-std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneLayouts(
+WorkspaceShell::EditorPaneLayouts WorkspaceShell::ComputeEditorPaneLayouts(
     const SDL_FRect& editor_surface) const {
   if (context_.current_project_state.editor_groups.empty()) {
     return {};
@@ -119,7 +119,7 @@ std::vector<WorkspaceShell::EditorPaneLayout> WorkspaceShell::ComputeEditorPaneL
   return EditorPaneLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
 }
 
-std::vector<WorkspaceShell::EditorSplitDividerLayout>
+WorkspaceShell::EditorSplitDividerLayouts
 WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface) const {
   return EditorSplitDividerLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
 }

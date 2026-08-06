@@ -80,7 +80,6 @@ struct InteractionState {
   bool mouse_selecting = false;
   DragTarget drag_target = DragTarget::None;
   float drag_scrollbar_offset = 0.0f;
-  std::vector<std::size_t> drag_editor_split_path;
   std::size_t drag_editor_split_divider_index = 0;
   TabDragState tab_drag;
   TabSlideState tab_slide;
