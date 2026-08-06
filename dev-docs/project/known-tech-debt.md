@@ -326,6 +326,65 @@ pass re-reading it.
 is the phase, and they are micro-benchmarks of algorithms that were chosen
 deliberately, not interactive paths anyone waits on.
 
+#### 2026-08-07 pass: the whole table above is now read
+
+Every phase in the worklist was read. Nine fixes landed; the numbers below are
+scenario totals against the committed baseline (which the fixes have now made
+stale everywhere — the suite needs a rebaseline, see
+[153](#td-2026-08-06-153)/[152](#td-2026-08-06-152) for the runner conditions).
+
+| phase | scenario total, baseline → now | what it was |
+| --- | ---: | --- |
+| `toggle_line_comment.1000_lines` | 89,588 → 33,586 | a same-count line replacement written line by line, so an N-line edit paid N piece-tree splices; plus `operator[]` twice per line |
+| `diff.open_first_changed_file` | 112,519 → 24,710 | sort key re-derived per comparison; per-entry `lexically_normal()` on already-normalized paths; two whole-state deep copies per refresh |
+| `commit.open_staged_sidebar` | 91,135 → 20,999 | the same three |
+| `diff.open_large_compare` / `diff.open_large_patch` | 75,789 → 51,067 / 56,922 → 32,876 | both sides materialized whole to feed a 64-line signature scan |
+| `compare_selection.scroll_burst` | 28,515 → 13,642 | a per-row visual-column table built for a line whose columns already are its bytes |
+| `merge_interleaved.scroll_burst` | 9,304 → 4,552 | same (via the shared diagnostics underline path) |
+| `editor_indent_guides_paint.scroll_paint_frame` | 21,224 → 10,003 | the same table, plus a plugin hover query dispatched per frame with no provider registered |
+| `editor_render_whitespace_paint.scroll_overlay_frame` | 22,694 → 11,447 | the same table, plus `operator[]` per visible row in the view-model builder |
+| `editor_sticky_scroll_scroll.fast_scroll_frame` | 27,101 → 14,438 | carried by the shared fixes |
+| `first_line_edit` / `mid_file_edit.enter_backspace_burst` | 14,103 → 13,241 / 11,938 → 11,076 | a path key normalized per keystroke for an owner with nothing stored |
+
+Two more moved without being on the list, from the same shared fixes:
+`editor_scroll_only_no_content_bump` 16,515 → 8,827 and
+`editor_fold_viewport_refresh` 25,955 → 13,640.
+
+**Read, inherent** (no fix; recorded so the next pass does not re-read them):
+
+- `diff.next_hunk_burst` — the compare tokenizer filling its per-row token cache,
+  256 rows a frame. Half of it is `HighlightLine`'s own returned token vector,
+  which is moved into the cache, and half is the second vector an *identical*
+  unchanged row needs because the left and right caches both own their tokens.
+  Removing that half means letting the right row's tokens alias the left's, which
+  changes the render read sites; filed below rather than done.
+- `multi_project.switch_cycles` — directory traversal on the root rebuild:
+  `platform::ListDirectory` and `SymlinkLoopGuard::TryEnter` per directory, flat
+  and equal, plus `DirectoryTree::NormalizePathKey` (which is
+  `std::filesystem::absolute` + `lexically_normal` + `generic_string`, ~226 bytes
+  a call). The traversal is the work a project switch has to do.
+- `merge_interleaved.scroll_burst`'s residue after the fix — small, evenly spread
+  per-frame chrome (status bar model, bottom-panel tab strip, ordered sidebar
+  views), no site above 17 %.
+
+**Still open, found by this pass and deliberately not taken:**
+
+- `LspService::ClearLspCodeLensesForFile` builds a `FileUriForPath` per keystroke
+  before discovering there is no lens to clear. The guard has to reason about
+  which in-flight responses the generation bump is protecting — `NextOverlayGeneration`
+  *creates* the entry, so the obvious "nothing tracked yet" test is one-shot.
+  Worth ~290 allocations per edit-burst iteration.
+- The compare token cache's duplicate vector, above.
+- `internal::HasGitMarker` still shows up on every frame-pumping phase; that is
+  [158](#td-2026-08-06-158), unchanged.
+
+**What is NOT covered by this pass**: the entry's title counts 63 unread
+*phases*, and the table was the ranked subset. The phases below
+`merge_interleaved.scroll_burst`'s 8,928 have never been read. The hit rate on
+the ranked ones was 9 fixes in 14 phases, so the tail is worth a pass, but a
+smaller one — start from a `--report-json` run of the whole suite sorted by
+phase `p50_allocations` after the pending rebaseline, not from this table.
+
 ### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. OPEN.
 
 Found by pointing the phase-scoped tracer at `editor_surround_multi_caret`, the
