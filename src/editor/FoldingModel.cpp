@@ -1436,4 +1436,44 @@ void FoldingModel::Clear() {
   ++layout_revision_;
 }
 
+std::size_t FoldingModel::ApproximateResidentBytes() const {
+  const auto vec_bytes = [](const auto& v) { return v.capacity() * sizeof(v[0]); };
+  std::size_t bytes = 0;
+  bytes += vec_bytes(line_brackets_);
+  bytes += vec_bytes(line_bracket_count_);
+  bytes += vec_bytes(bracket_cache_pairs_);
+  bytes += vec_bytes(bracket_event_scratch_);
+  bytes += vec_bytes(bracket_count_scratch_);
+  bytes += vec_bytes(line_indent_);
+  bytes += vec_bytes(blocks_);
+  for (const Block& block : blocks_) {
+    // Four heap blocks per block, which is the whole of TD-2026-08-06-144: a
+    // 50k-line document is ~195 blocks and therefore ~780 small allocations held
+    // for the life of the tab. Counted individually so that entry has a number.
+    bytes += vec_bytes(block.bracket_closers);
+    bytes += vec_bytes(block.bracket_openers);
+    bytes += vec_bytes(block.indent_dedents);
+    bytes += vec_bytes(block.indent_openers);
+  }
+  bytes += vec_bytes(block_start_line_);
+  bytes += vec_bytes(prefix_states_);
+  bytes += vec_bytes(prefix_bracket_pool_);
+  bytes += vec_bytes(prefix_indent_pool_);
+  bytes += vec_bytes(ranges_);
+  bytes += vec_bytes(range_scratch_);
+  bytes += vec_bytes(range_closer_prefix_max_);
+  bytes += vec_bytes(collapsed_);
+  bytes += vec_bytes(collapsed_hi_prefix_max_);
+  bytes += vec_bytes(walk_.brackets);
+  bytes += vec_bytes(walk_.indents);
+  bytes += vec_bytes(build_bracket_stack_);
+  bytes += vec_bytes(build_indent_stack_);
+  bytes += vec_bytes(build_bracket_closers_);
+  bytes += vec_bytes(build_bracket_openers_);
+  bytes += vec_bytes(build_indent_dedents_);
+  bytes += vec_bytes(build_indent_openers_);
+  bytes += vec_bytes(suppression_lines_scratch_);
+  return bytes;
+}
+
 }  // namespace microide::editor

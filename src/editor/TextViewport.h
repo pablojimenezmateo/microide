@@ -36,6 +36,36 @@ struct TextViewportCacheStats {
   std::size_t highlight_checkpoint_advances = 0;
 };
 
+// What one open tab costs to KEEP open, broken down by which cache is holding
+// it (TD-2026-08-06-142). Every field is heap bytes held by container capacity;
+// the document text itself is deliberately absent, because it is the tab's
+// content and not something a cap could reclaim.
+//
+// The breakdown, not just the total, is the point. All five of these are
+// individually bounded BY THE DOCUMENT and none of them is bounded across tabs,
+// so choosing a ceiling means knowing which one dominates — and until this
+// existed, "how much does an open tab cost to keep open?" had no answer at all.
+struct TextViewportDerivedCacheBytes {
+  // Per-line visual width table, the wrapped-row table, the 256-entry
+  // visible-line LRU and their scratch.
+  std::size_t layout_cache = 0;
+  // Per-line syntax token LRU.
+  std::size_t highlight_tokens = 0;
+  // Per-line highlighter state, sized to the document, plus the periodic
+  // checkpoint chain.
+  std::size_t highlight_states = 0;
+  // Multi-caret mirrors and the box-selection scratch.
+  std::size_t caret_caches = 0;
+  // Undo/redo history. Not a derived cache — it cannot be recomputed — but it
+  // is per-tab retained memory that grows with use, so a ceiling that ignored
+  // it would be measuring the wrong thing.
+  std::size_t undo_history = 0;
+
+  std::size_t total() const {
+    return layout_cache + highlight_tokens + highlight_states + caret_caches + undo_history;
+  }
+};
+
 class TextViewport {
  public:
   using LineEnding = util::LineEnding;
@@ -352,6 +382,13 @@ class TextViewport {
   std::size_t folding_revision() const {
     return folding_model_ != nullptr ? folding_model_->revision() : 0;
   }
+  // Per-tab retained-memory breakdown. Walks container capacities; not called
+  // on any production path (see TextViewportDerivedCacheBytes). The folding
+  // model is deliberately NOT included: it is owned per tab but reachable
+  // through a bare pointer here, and the caller that owns both is the one that
+  // can attribute it without double-counting a shared model.
+  TextViewportDerivedCacheBytes DerivedCacheBytes() const;
+
   std::size_t VisualRowLineIndex(std::size_t visual_row_index) const;
   std::size_t VisualRowForLine(std::size_t line_index) const;
   const std::vector<SyntaxTokenKind>& HighlightedLineTokens(std::size_t line_index) const;

@@ -48,6 +48,24 @@ namespace microide::util {
   X(EditorVisibleLineLayoutPrefixBytesScanned,                                                   \
     "editor.visible_line_layout_prefix_bytes_scanned")                                           \
   X(EditorVisualColumnWalkBytes, "editor.visual_column_walk_bytes")                              \
+  /* What an open editor tab costs to KEEP open, in retained heap bytes, broken   */             \
+  /* down by which cache holds it. Bumped ONLY by the measurement surface         */             \
+  /* (WorkspaceShell::TestAccess::EditorDerivedCacheResidency, driven by the      */             \
+  /* editor_tab_derived_cache_residency perf scenario and its unit tests) -- no   */             \
+  /* production path computes these, so they cost a shipped build nothing.        */             \
+  /* Each is individually bounded BY ITS DOCUMENT and none is bounded across      */             \
+  /* tabs; a cap for the sum cannot be chosen without knowing which dominates,    */             \
+  /* which is what TD-2026-08-06-142 filed and this reports.                      */             \
+  X(EditorTabDerivedCacheBytes, "editor.tab_derived_cache_bytes")                                \
+  X(EditorTabDerivedCacheLayoutBytes, "editor.tab_derived_cache_layout_bytes")                   \
+  X(EditorTabDerivedCacheHighlightTokenBytes,                                                    \
+    "editor.tab_derived_cache_highlight_token_bytes")                                            \
+  X(EditorTabDerivedCacheHighlightStateBytes,                                                    \
+    "editor.tab_derived_cache_highlight_state_bytes")                                            \
+  X(EditorTabDerivedCacheCaretBytes, "editor.tab_derived_cache_caret_bytes")                     \
+  X(EditorTabDerivedCacheUndoBytes, "editor.tab_derived_cache_undo_bytes")                       \
+  X(EditorTabDerivedCacheFoldBytes, "editor.tab_derived_cache_fold_bytes")                       \
+  X(EditorTabDerivedCacheTabs, "editor.tab_derived_cache_tabs")                                  \
   X(EditorLineMaterializations, "editor.line_materializations")                                  \
   X(EditorLineMaterializedBytes, "editor.line_materialized_bytes")                               \
   X(EditorLineWidthFullMeasures, "editor.line_width_full_measures")                              \

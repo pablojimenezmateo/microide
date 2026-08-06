@@ -215,6 +215,20 @@ class TextLayoutCache {
     visible_line_evictions_ = 0;
   }
 
+  // Heap bytes this cache is HOLDING, by container capacity rather than size --
+  // a vector that shrank still owns its buffer, and "how much does an open tab
+  // cost to keep open?" is a question about what is retained, not about what is
+  // currently in use.
+  //
+  // Approximate on purpose, and it says so in the name. `std::deque` and
+  // `std::unordered_map` do not expose their allocation shape, so those two are
+  // estimated from element count and a per-node overhead; everything else is
+  // exact. It exists because nothing answered the question at all
+  // (TD-2026-08-06-142), and an estimate that tracks the real curve is what a
+  // ceiling gets chosen from. It is NOT called on any production path -- see
+  // the perf scenario and WorkspaceShell::TestAccess.
+  std::size_t ApproximateResidentBytes() const;
+
 #ifndef NDEBUG
   std::size_t wrapped_row_layout_build_count_for_debug() const {
     return wrapped_row_layout_build_count_;

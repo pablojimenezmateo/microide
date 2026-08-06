@@ -630,6 +630,66 @@
   static std::size_t GroupTabCount(WorkspaceShell& shell, std::size_t gi) {
     return shell.context_.current_project_state.editor_groups[gi].open_tabs.size();
   }
+  // Per-tab retained memory, summed across every open editor tab in every group,
+  // plus the per-tab folding models the viewport cannot attribute to itself.
+  //
+  // Answers the question TD-2026-08-06-142 opened with — "how much does an open
+  // tab cost to keep open?" — which had no answer at all before this. It is a
+  // measurement surface, not a product path: nothing in the shell calls it, so
+  // it costs a shipped build nothing. The perf scenario
+  // `editor_tab_derived_cache_residency` and the unit tests are the callers.
+  //
+  // The `editor.tab_derived_cache_*` counters are published from HERE rather than
+  // from the perf scenario, and that is the point rather than a convenience: a
+  // counter whose only producer lives in tests/ reads zero forever in any dump
+  // taken from the real app, which is exactly what
+  // CheckEveryPerfCounterHasAProducer exists to prevent. Publishing at the point
+  // of measurement means any future production caller — a memory-pressure hook, a
+  // diagnostics dump — reports the same numbers through the same names without
+  // anyone having to remember to wire it up.
+  struct DerivedCacheResidency {
+    editor::TextViewportDerivedCacheBytes viewports;
+    std::size_t folding_models = 0;
+    std::size_t editor_tabs = 0;
+
+    std::size_t total() const { return viewports.total() + folding_models; }
+  };
+  static DerivedCacheResidency EditorDerivedCacheResidency(const WorkspaceShell& shell) {
+    DerivedCacheResidency out;
+    for (const auto& group : shell.context_.current_project_state.editor_groups) {
+      for (const auto& tab : group.open_tabs) {
+        if (!tab.editor_state.has_value()) {
+          continue;
+        }
+        ++out.editor_tabs;
+        const editor::TextViewportDerivedCacheBytes bytes =
+            tab.editor_state->viewport.DerivedCacheBytes();
+        out.viewports.layout_cache += bytes.layout_cache;
+        out.viewports.highlight_tokens += bytes.highlight_tokens;
+        out.viewports.highlight_states += bytes.highlight_states;
+        out.viewports.caret_caches += bytes.caret_caches;
+        out.viewports.undo_history += bytes.undo_history;
+        if (tab.editor_state->folding_model != nullptr) {
+          out.folding_models += tab.editor_state->folding_model->ApproximateResidentBytes();
+        }
+      }
+    }
+    const auto publish = [](util::PerfCounterId id, std::size_t value) {
+      util::AddPerformanceCounter(id, static_cast<std::uint64_t>(value));
+    };
+    publish(util::PerfCounterId::EditorTabDerivedCacheBytes, out.total());
+    publish(util::PerfCounterId::EditorTabDerivedCacheLayoutBytes, out.viewports.layout_cache);
+    publish(util::PerfCounterId::EditorTabDerivedCacheHighlightTokenBytes,
+            out.viewports.highlight_tokens);
+    publish(util::PerfCounterId::EditorTabDerivedCacheHighlightStateBytes,
+            out.viewports.highlight_states);
+    publish(util::PerfCounterId::EditorTabDerivedCacheCaretBytes, out.viewports.caret_caches);
+    publish(util::PerfCounterId::EditorTabDerivedCacheUndoBytes, out.viewports.undo_history);
+    publish(util::PerfCounterId::EditorTabDerivedCacheFoldBytes, out.folding_models);
+    publish(util::PerfCounterId::EditorTabDerivedCacheTabs, out.editor_tabs);
+    return out;
+  }
+
   static std::vector<std::filesystem::path> GroupTabPaths(WorkspaceShell& shell, std::size_t gi) {
     std::vector<std::filesystem::path> paths;
     for (const auto& tab : shell.context_.current_project_state.editor_groups[gi].open_tabs) {

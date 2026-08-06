@@ -18,6 +18,7 @@
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 
 #include "editor/SnippetEngine.h"
+#include "util/PerformanceCounters.h"
 
 #include <algorithm>
 #include <array>

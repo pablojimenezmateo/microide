@@ -503,6 +503,63 @@ void TestTextViewportSameLineCountUndoOnLargeFilePreservesContent() {
 
 // TD-2026-07-17A-092: a range replacement whose text equals the covered content is a
 // no-op. It must not bump content_revision, dirty the buffer, or create an undo entry.
+// TD-2026-08-06-142: nothing reported what an open tab costs to keep open, so a
+// cap for the sum across tabs could only ever have been a guess.
+//
+// The test that matters is not "the number is plausible" -- it is that the
+// accounting RESPONDS to each cache independently. A total that silently omits
+// one of five components still returns a number, and a number is exactly what
+// makes an omission invisible. So each assertion drives one cache and checks
+// that its own field moved.
+void TestTextViewportDerivedCacheBytesTracksEachCache() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  viewport.LoadContent(content, "/tmp/derived-cache.cpp");
+
+  const auto empty = viewport.DerivedCacheBytes();
+  Expect(empty.undo_history == 0, "a freshly loaded buffer holds no undo history");
+
+  // Width table + visible-line LRU: measuring the widest line is what builds the
+  // per-line width table, and painting rows is what fills the LRU.
+  viewport.SetViewportSize(40, 120);
+  (void)viewport.max_visual_columns();
+  for (std::size_t row = 0; row < 40; ++row) {
+    (void)viewport.VisibleLineLayout(row);
+  }
+  const auto warmed = viewport.DerivedCacheBytes();
+  Expect(warmed.layout_cache > empty.layout_cache,
+         "warming the width table and the visible-line LRU must move layout_cache");
+
+  // Highlight token LRU and the per-line state chain, which is sized to the
+  // document rather than to the window.
+  for (std::size_t line = 0; line < 200; ++line) {
+    (void)viewport.HighlightedLineTokens(line);
+  }
+  const auto highlighted = viewport.DerivedCacheBytes();
+  Expect(highlighted.highlight_tokens > warmed.highlight_tokens,
+         "highlighting lines must move highlight_tokens");
+  Expect(highlighted.highlight_states > 0,
+         "the per-line highlighter state chain is sized to the document");
+
+  // Undo history. It is the one component with a declared per-tab ceiling and
+  // the one that grows with use rather than with document size.
+  viewport.MoveCursorTo(0, 0, false);
+  for (int i = 0; i < 8; ++i) {
+    viewport.InsertCharacter('x');
+  }
+  const auto edited = viewport.DerivedCacheBytes();
+  Expect(edited.undo_history > 0, "typing must move undo_history");
+
+  Expect(edited.total() == edited.layout_cache + edited.highlight_tokens +
+                               edited.highlight_states + edited.caret_caches +
+                               edited.undo_history,
+         "total() must be the sum of every reported component, or a component "
+         "that stops being counted disappears silently");
+}
+
 void TestTextViewportNoOpRangeReplaceDoesNotDirty() {
   TextViewport viewport;
   viewport.LoadContent("hello world\nsecond line\n", "/tmp/noop-range.txt");
@@ -4894,6 +4951,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSyntaxConfigForcesHighlightCacheMiss);
   AddTest(tests, "TextViewport/Tiers/ContentEditInvalidatesBracketAndHighlightCaches",
           TestTextViewportContentEditInvalidatesBracketAndHighlightCaches);
+  AddTest(tests, "TextViewport/DerivedCacheBytesTracksEachCache",
+          TestTextViewportDerivedCacheBytesTracksEachCache);
   AddTest(tests, "TextViewport/NoOpRangeReplaceDoesNotDirty",
           TestTextViewportNoOpRangeReplaceDoesNotDirty);
   AddTest(tests, "TextViewport/NoOpLineReplaceDoesNotDirty",

@@ -581,6 +581,61 @@ void RegisterBuiltInScenarios() {
   // win. Advisory only (no portable baseline); run it via
   //   microide_perf --scenarios=editor_scroll_fresh_content_large --renderer=auto
   PerfHarness::RegisterScenario(Scenario{
+      // TD-2026-08-06-142 — "how much does an open tab cost to keep open?" had
+      // no answer, so a cap for the sum across tabs could only have been a
+      // guess. This is the answer, reported rather than gated: one 50k-line
+      // C++ tab, every derived cache warmed the way real use warms it (a full
+      // scroll sweep for the width table and the visible-line LRU, folding on
+      // for the fold model, edits for the highlight chain and the undo stack),
+      // with the breakdown in the `editor.tab_derived_cache_*` counters.
+      //
+      // Advisory on purpose. A gate here would be a cap, and the entry is
+      // explicit that a cap chosen before the measurement exists is the mistake.
+      // Read the counters, then choose.
+      .name = "editor_tab_derived_cache_residency",
+      .smoke = false,
+      .baseline_gated = false,
+      .run =
+          [](ScenarioContext& context) {
+            using TA = microide::workspace::WorkspaceShell::TestAccess;
+            (void)TA::SetSettingValue(context.Shell(), "editor.fold.enabled", "true");
+            OpenEditorEssentials50kCppOrThrow(context);
+            context.PumpFrames(8);
+            (void)TA::EnsureActiveFoldingModelFresh(context.Shell());
+            // Sweep the whole document so the per-line width table, the
+            // wrapped-row table, the visible-line LRU and the highlight-state
+            // chain are all populated to their steady state rather than to
+            // whatever the first screen touched.
+            for (int i = 0; i < 320; ++i) {
+              context.KeyDown(SDLK_PAGEDOWN);
+              context.PumpFrames(1);
+            }
+            // A short typing run, so the undo stack is not empty. It is the one
+            // component here with a declared per-tab ceiling (256 MiB), and the
+            // one that grows with use rather than with document size.
+            for (int i = 0; i < 24; ++i) {
+              context.Type("x");
+              context.PumpFrames(1);
+            }
+            // Publishes the editor.tab_derived_cache_* counters as a side effect;
+            // the report picks them up from the per-iteration counter delta.
+            const TA::DerivedCacheResidency residency =
+                TA::EditorDerivedCacheResidency(context.Shell());
+            if (residency.editor_tabs == 0) {
+              throw std::runtime_error(
+                  "editor_tab_derived_cache_residency: no editor tab was open, so the "
+                  "reported bytes describe nothing");
+            }
+            if (residency.total() == 0) {
+              throw std::runtime_error(
+                  "editor_tab_derived_cache_residency: a warmed 50k-line tab reported "
+                  "zero retained bytes, which means the accounting is not reaching the "
+                  "caches");
+            }
+            context.PumpFrames(2);
+          },
+  });
+  PerfHarness::RegisterScenario(Scenario{
       .name = "editor_scroll_fresh_content_large",
       .smoke = false,
       .baseline_gated = false,

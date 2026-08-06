@@ -246,6 +246,13 @@ class FoldingModel {
   // just because a scroll resolved a different window.
   std::size_t layout_revision() const { return layout_revision_; }
 
+  // Heap bytes this model is HOLDING (container capacity, not size). Part of the
+  // per-tab derived-cache accounting TD-2026-08-06-142 asked for; not called on
+  // any production path. Exact rather than approximate -- everything here is a
+  // std::vector -- except that a Block's four word vectors are walked
+  // individually, which is also the cost TD-2026-08-06-144 is about.
+  std::size_t ApproximateResidentBytes() const;
+
   bool IsFresh(const Fingerprint& fingerprint) const {
     return !dirty_ && fingerprint_ == fingerprint;
   }

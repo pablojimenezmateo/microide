@@ -515,4 +515,32 @@ void TextViewport::InstallHighlightCheckpoints(const HighlightCheckpointResult& 
   }
 }
 
+TextViewportDerivedCacheBytes TextViewport::DerivedCacheBytes() const {
+  TextViewportDerivedCacheBytes out;
+  out.layout_cache = layout_cache_.ApproximateResidentBytes();
+
+  out.highlight_tokens = highlight_cache_.bucket_count() * sizeof(void*);
+  for (const auto& [line, tokens] : highlight_cache_) {
+    out.highlight_tokens +=
+        sizeof(std::size_t) + sizeof(std::vector<SyntaxTokenKind>) + sizeof(void*) * 2;
+    out.highlight_tokens += tokens.capacity() * sizeof(SyntaxTokenKind);
+  }
+  // The FIFO that keys the LRU. libstdc++ deques allocate in 512-byte chunks.
+  out.highlight_tokens += ((highlight_cache_order_.size() * sizeof(std::size_t) + 511) / 512) * 512;
+
+  // Sized to the DOCUMENT, not to a window: this is the per-tab cost that grows
+  // with file size rather than with what is on screen, and on the 50k-line
+  // fixture it is the largest single entry here.
+  out.highlight_states = line_highlight_states_.capacity() * sizeof(SyntaxState);
+  out.highlight_states += highlight_checkpoints_.capacity() * sizeof(SyntaxState);
+
+  out.caret_caches = secondary_carets_.capacity() * sizeof(SecondaryCaret);
+  out.caret_caches += secondary_caret_positions_cache_.capacity() * sizeof(TextPosition);
+  out.caret_caches += box_ranges_scratch_.capacity() * sizeof(SelectionRange);
+  out.caret_caches += secondary_caret_candidates_scratch_.capacity() * sizeof(SecondaryCaret);
+
+  out.undo_history = undo_history_.ApproximateResidentBytes();
+  return out;
+}
+
 }  // namespace microide::editor

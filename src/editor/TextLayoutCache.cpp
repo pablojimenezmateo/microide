@@ -816,6 +816,37 @@ void TextLayoutCache::DropWrappedRowLayouts() {
   wrapped_row_layouts_fold_no_wrap_ = false;
 }
 
+std::size_t TextLayoutCache::ApproximateResidentBytes() const {
+  // libstdc++ allocates a deque in fixed 512-byte chunks (or one element, for a
+  // larger element), so an element count converts to bytes exactly enough for a
+  // ceiling to be chosen from it. The map node overhead is the conventional
+  // estimate: one node per element plus one bucket pointer.
+  constexpr std::size_t kDequeChunkBytes = 512;
+  const auto deque_bytes = [](std::size_t elements, std::size_t element_size) {
+    if (elements == 0) {
+      return std::size_t{0};
+    }
+    const std::size_t per_chunk = std::max<std::size_t>(1, kDequeChunkBytes / element_size);
+    return ((elements + per_chunk - 1) / per_chunk) * per_chunk * element_size;
+  };
+
+  std::size_t bytes = 0;
+  bytes += deque_bytes(cached_visual_line_columns_.size(), sizeof(PackedLineWidth));
+  bytes += inserted_columns_scratch_.capacity() * sizeof(PackedLineWidth);
+  bytes += wrapped_row_layouts_.capacity() * sizeof(WrappedRow);
+  bytes += wrapped_line_row_offsets_.capacity() * sizeof(std::size_t);
+  bytes += line_window_scratch_.capacity();
+  bytes += deque_bytes(visible_line_cache_order_.size(), sizeof(VisibleLineCacheKey));
+  bytes += visible_line_cache_.bucket_count() * sizeof(void*);
+  for (const auto& [key, layout] : visible_line_cache_) {
+    bytes += sizeof(VisibleLineCacheKey) + sizeof(LayoutLine) + sizeof(void*) * 2;
+    bytes += layout.text.capacity();
+    bytes += layout.source_columns.capacity() * sizeof(std::size_t);
+    bytes += layout.text_offsets.capacity() * sizeof(std::size_t);
+  }
+  return bytes;
+}
+
 void TextLayoutCache::InvalidateAll() {
   // Delegate both halves rather than repeating them. InvalidateAll had drifted
   // from its own contract: it documented "wipes every cache + every cache key"

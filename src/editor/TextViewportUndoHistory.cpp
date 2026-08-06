@@ -652,4 +652,44 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::MergeGroupEntry(Entry ag
   return merged;
 }
 
+namespace {
+
+std::size_t ViewStateBytes(const TextViewportUndoHistory::ViewState& state) {
+  return state.secondary_carets.capacity() *
+         sizeof(TextViewportUndoHistory::SecondaryCaret);
+}
+
+std::size_t EntryBytes(const TextViewportUndoHistory::Entry& entry) {
+  std::size_t bytes = sizeof(TextViewportUndoHistory::Entry);
+  bytes += entry.removed_text.capacity();
+  bytes += entry.inserted_text.capacity();
+  for (const std::string& line : entry.before_lines) {
+    bytes += sizeof(std::string) + line.capacity();
+  }
+  for (const std::string& line : entry.after_lines) {
+    bytes += sizeof(std::string) + line.capacity();
+  }
+  bytes += ViewStateBytes(entry.before_state);
+  bytes += ViewStateBytes(entry.after_state);
+  return bytes;
+}
+
+}  // namespace
+
+std::size_t TextViewportUndoHistory::ApproximateResidentBytes() const {
+  std::size_t bytes = 0;
+  for (const Entry& entry : undo_stack_) {
+    bytes += EntryBytes(entry);
+  }
+  for (const Entry& entry : redo_stack_) {
+    bytes += EntryBytes(entry);
+  }
+  for (const UndoGroupFrame& frame : group_stack_) {
+    for (const Entry& entry : frame.disjoint_entries) {
+      bytes += EntryBytes(entry);
+    }
+  }
+  return bytes;
+}
+
 }  // namespace microide::editor

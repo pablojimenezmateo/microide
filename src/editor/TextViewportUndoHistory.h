@@ -136,6 +136,14 @@ class TextViewportUndoHistory {
   // reports the buffer as differing from disk.
   void MarkSaved();
 
+  // Heap bytes both stacks are holding, including the group scratch. Part of
+  // the per-tab retention accounting TD-2026-08-06-142 asked for, and the one
+  // component here that already HAS a declared ceiling: kMaxHistoryBytes, 256
+  // MiB, per tab. That cap is what makes the aggregate question sharp rather
+  // than academic -- nothing bounds the sum across open tabs, so the declared
+  // worst case is kMaxOpenTabsPerGroup times this.
+  std::size_t ApproximateResidentBytes() const;
+
   // End any open typing/deletion coalesce run so the next edit starts a fresh
   // undo entry. Called when the user explicitly moves the caret (arrow keys,
   // Home/End): without it, typing `a`, moving away and back to the same column,
