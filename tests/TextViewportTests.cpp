@@ -1162,6 +1162,64 @@ void TestTextViewportInLineEditsRecordColumnScopedUndoEntries() {
 // inserted -- is defensive, mirroring the line form's contained-splice case, so
 // drive all three through the history's own API rather than leaving one untested.
 //
+// TD-2026-08-06-157: `ApplyEntryToBuffer` is a public static that takes ANY entry,
+// and the live undo path reaches multi-range entries through TextViewport (which
+// interleaves each part's splice with its cache update). That leaves this helper's
+// multi-range branch unexercised by the viewport tests — and a version of it that
+// silently applied only the primary range would corrupt a buffer rather than fail
+// loudly. Drive it directly, in both directions, with parts whose line counts
+// change so a coordinate that ignored the shift shows up.
+void TestApplyEntryToBufferAppliesEveryDisjointPart() {
+  using microide::editor::TextBuffer;
+  using microide::editor::TextViewportUndoHistory;
+
+  // Joined WITHOUT a trailing newline: one would add a final empty line and make
+  // every index below off by nothing but the comparison off by one row.
+  const auto load = [](TextBuffer& buffer, const std::vector<std::string>& lines) {
+    std::string text;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      if (i != 0) text.push_back('\n');
+      text += lines[i];
+    }
+    buffer.ResetFromText(std::move(text));
+  };
+  const auto dump = [](const TextBuffer& buffer) {
+    std::vector<std::string> out;
+    for (std::size_t i = 0; i < buffer.size(); ++i) {
+      out.emplace_back(buffer.LineView(i));
+    }
+    return out;
+  };
+
+  // line0..line9. Three disjoint edits: line 1 -> two lines (+1), line 5 -> one
+  // line (0), line 8 -> nothing (-1). Their after-coordinates therefore differ
+  // from their before-coordinates by +1 and 0 respectively.
+  const std::vector<std::string> before = {"line0", "line1", "line2", "line3", "line4",
+                                           "line5", "line6", "line7", "line8", "line9"};
+  const std::vector<std::string> after = {"line0", "ONE-a", "ONE-b", "line2", "line3",
+                                          "line4", "FIVE",  "line6", "line7", "line9"};
+
+  TextViewportUndoHistory::Entry entry;
+  entry.start_line = 1;
+  entry.before_lines = {"line1"};
+  entry.after_lines = {"ONE-a", "ONE-b"};
+  entry.extra_parts.push_back(TextViewportUndoHistory::DisjointPart{
+      .before_start = 5, .after_start = 6, .before_lines = {"line5"}, .after_lines = {"FIVE"}});
+  entry.extra_parts.push_back(TextViewportUndoHistory::DisjointPart{
+      .before_start = 8, .after_start = 9, .before_lines = {"line8"}, .after_lines = {}});
+  Expect(entry.is_multi_range(), "the fixture entry must actually be multi-range");
+
+  TextBuffer buffer;
+  load(buffer, before);
+  TextViewportUndoHistory::ApplyEntryToBuffer(buffer, entry, /*forward=*/true);
+  Expect(dump(buffer) == after,
+         "applying a multi-range entry forward must apply every part, not just the first");
+
+  TextViewportUndoHistory::ApplyEntryToBuffer(buffer, entry, /*forward=*/false);
+  Expect(dump(buffer) == before,
+         "applying it backward must restore every part");
+}
+
 // Oracle: applying the coalesced entry must give the same buffer as applying the
 // two entries in sequence, and undoing it must give back the original.
 void TestInlineUndoEntriesCoalesceLikeSequentialApplication() {
@@ -4917,6 +4975,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportGroupedInlineEditsUndoAtomically);
   AddTest(tests, "TextViewport/InlineCoalescedEntryRestampsItsByteSize",
           TestInlineCoalescedEntryRestampsItsByteSize);
+  AddTest(tests, "TextViewport/ApplyEntryToBufferAppliesEveryDisjointPart",
+          TestApplyEntryToBufferAppliesEveryDisjointPart);
   AddTest(tests, "TextViewport/MultiCaretUndoMatchesSnapshotOracle",
           TestTextViewportMultiCaretUndoMatchesSnapshotOracle);
   AddTest(tests, "TextViewport/MultiCaretUndoEntryDoesNotSpanTheGap",
