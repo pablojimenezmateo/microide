@@ -554,6 +554,64 @@ void TestFileFinderMatchesAcrossPathSeparators() {
 }
 
 
+// A query containing '/' names a DIRECTORY and a FILE, and the tail past the last
+// separator has to be scored against the basename with the full filename
+// signal — the exact-name bonus, the prefix bonus, the filename-length term.
+//
+// Before the split, a separator query could only ever land in the path-only class
+// (a '/' cannot appear in a filename), which threw all of that away: `editor/tv`
+// scored `TextViewportInternal.h` within two points of `TextViewport.cpp`, and
+// `util/str` tied `StringUtil.h` with `StringUtil.cpp` exactly. VSCode splits at
+// the last separator for the same reason.
+void TestFileFinderSplitsQueryAtTheLastSeparator() {
+  RankingFixture fixture({
+      "src/editor/TextViewport.cpp",
+      "src/editor/TextViewport.h",
+      "src/editor/TextViewportInternal.h",
+      "src/editor/TextViewportEditEngine.cpp",
+      "src/editor/TextViewportMultiCaret.cpp",
+      "tests/TextViewportTests.cpp",
+  });
+  // The tail is a filename PREFIX of TextViewport.*, and only a scattered
+  // interior match of the longer names.
+  fixture.ExpectRanksAbove("editor/tv", "src/editor/TextViewport.h",
+                           "src/editor/TextViewportInternal.h");
+  fixture.ExpectRanksAbove("editor/tv", "src/editor/TextViewportInternal.h",
+                           "src/editor/TextViewportEditEngine.cpp");
+  // The head still filters: a file whose directory cannot match is excluded even
+  // though its basename does.
+  Expect(fixture.RankOf("editor/textviewport", "tests/TextViewportTests.cpp") ==
+             std::numeric_limits<std::size_t>::max(),
+         "the directory half of a separator query must exclude a non-matching directory");
+  Expect(fixture.RankOf("tests/textviewport", "tests/TextViewportTests.cpp") == 0,
+         "the file whose directory AND basename both match leads");
+  Expect(fixture.RankOf("tests/textviewport", "src/editor/TextViewport.cpp") ==
+             std::numeric_limits<std::size_t>::max(),
+         "a better basename under a non-matching directory is still excluded");
+}
+
+// A separator query must still outrank the same files reached without one, i.e.
+// the split must not demote a match into the path-only class. `util/str` used to
+// tie `StringUtil.h` and `StringUtil.cpp` at exactly the same path-only score,
+// because neither the filename length nor the prefix bonus was in play.
+void TestFileFinderSeparatorQueryKeepsFilenameOrdering() {
+  RankingFixture fixture({
+      "src/util/StringUtil.cpp",
+      "src/util/StringUtil.h",
+      "src/util/PathMatch.h",
+      "src/util/Parse.h",
+  });
+  // Shorter basename first, as it is for the same query without a directory.
+  fixture.ExpectRanksAbove("util/str", "src/util/StringUtil.h", "src/util/StringUtil.cpp");
+  // A basename match beats a directory-only match, which is what "label before
+  // description" means.
+  fixture.ExpectRanksAbove("src/util", "src/util/StringUtil.h", "src/util/Parse.h");
+  // A trailing separator has no filename half at all and stays a pure directory
+  // filter, so everything under it still matches.
+  Expect(fixture.RankOf("util/", "src/util/Parse.h") != std::numeric_limits<std::size_t>::max(),
+         "a trailing-separator query stays a directory filter");
+}
+
 void TestFileFinderReportsTruncatedIndex() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -674,6 +732,10 @@ void RegisterFileFinderTests(std::vector<TestCase>& tests) {
           TestFileFinderPrefersFilenameMatchesOverPathMatches);
   AddTest(tests, "FileFinder/PrefersWordStartsAndExactNames",
           TestFileFinderPrefersWordStartsAndExactNames);
+  AddTest(tests, "FileFinder/SplitsQueryAtTheLastSeparator",
+          TestFileFinderSplitsQueryAtTheLastSeparator);
+  AddTest(tests, "FileFinder/SeparatorQueryKeepsFilenameOrdering",
+          TestFileFinderSeparatorQueryKeepsFilenameOrdering);
   AddTest(tests, "FileFinder/MatchesAcrossPathSeparators",
           TestFileFinderMatchesAcrossPathSeparators);
   AddTest(tests, "FileFinder/PresenceMaskNeverRejectsAMatch",

@@ -132,7 +132,7 @@ class FileFinder {
   // `original` is the pre-fold bytes when they align byte for byte with `text`,
   // empty otherwise — see CachedFileEntry::fold_preserves_offsets.
   static int MatchPenalty(std::string_view text, std::string_view original,
-                          const std::string& query);
+                          std::string_view query);
   int RankMatchCached(const CachedFileEntry& entry, const std::string& query,
                       std::uint64_t query_mask) const;
   // Append one indexed path to the blobs and push its entry. Returns false when

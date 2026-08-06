@@ -59,6 +59,17 @@ constexpr int kFilenamePrefixBonus = 30;
 // cross it: penalties are bounded by 4 * path length, and the index caps paths
 // far below 250,000 bytes.
 constexpr int kPathOnlyBase = 1'000'000;
+// A query with a '/' in it names a directory AND a file: `editor/tv` means "tv…
+// in a directory whose path matches editor". Scoring the whole query against the
+// whole path instead threw away every filename signal — the exact-name bonus, the
+// prefix bonus, the filename-length term — because the '/' cannot appear in a
+// filename, so those queries could only ever land in the path-only class.
+// `src/editor/tv` therefore ranked `TextViewportInternal.h` all but level with
+// `TextViewport.cpp`. VSCode splits at the LAST separator for the same reason.
+//
+// The directory half is worth less than the filename half: the user is
+// disambiguating with it, not naming with it.
+constexpr int kDirectoryPenaltyDivisor = 2;
 
 bool IsSeparatorByte(char c) {
   return c == '/' || c == '\\' || c == '_' || c == '-' || c == '.' || c == ' ';
@@ -312,7 +323,7 @@ std::optional<std::filesystem::path> FileFinder::SelectedPath() const {
 }
 
 int FileFinder::MatchPenalty(std::string_view text, std::string_view original,
-                             const std::string& query) {
+                             std::string_view query) {
   if (query.empty()) {
     return 0;
   }
@@ -427,17 +438,50 @@ int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string&
   const int shape = static_cast<int>(entry.path_size) / kPathLengthDivisor +
                     static_cast<int>(entry.path_segments) * kSegmentWeight;
 
-  if (filename_possible) {
-    const int filename_penalty = MatchPenalty(lower_filename, original_filename, query);
-    if (filename_penalty != kNoMatch) {
-      int score = filename_penalty + shape +
-                  static_cast<int>(lower_filename.size()) * kFilenameLengthWeight;
-      if (lower_filename == query) {
-        score -= kExactFilenameBonus;
-      } else if (lower_filename.rfind(query, 0) == 0) {
-        score -= kFilenamePrefixBonus;
+  // Filename class: the query (or its tail past the last '/') matches the
+  // basename. Everything here sorts ahead of every path-only match.
+  const std::size_t query_slash = query.find_last_of('/');
+  if (query_slash == std::string::npos) {
+    if (filename_possible) {
+      const int filename_penalty = MatchPenalty(lower_filename, original_filename, query);
+      if (filename_penalty != kNoMatch) {
+        int score = filename_penalty + shape +
+                    static_cast<int>(lower_filename.size()) * kFilenameLengthWeight;
+        if (lower_filename == query) {
+          score -= kExactFilenameBonus;
+        } else if (lower_filename.rfind(query, 0) == 0) {
+          score -= kFilenamePrefixBonus;
+        }
+        return score;
       }
-      return score;
+    }
+  } else if (query_slash + 1 < query.size()) {
+    // `dir/name`: the tail names the file, the head narrows the directory. A
+    // trailing '/' (`editor/`) has no tail and is a pure directory filter, which
+    // falls through to the whole-path match below.
+    const std::string_view name_query(query.data() + query_slash + 1,
+                                      query.size() - query_slash - 1);
+    const std::string_view dir_query(query.data(), query_slash);
+    const int name_penalty = MatchPenalty(lower_filename, original_filename, name_query);
+    if (name_penalty != kNoMatch) {
+      // The directory prefix WITHOUT its trailing separator, so `editor` matches
+      // `src/editor` at a word start rather than against `src/editor/`.
+      const std::size_t dir_size =
+          entry.lower_filename_offset == 0 ? 0 : entry.lower_filename_offset - 1;
+      const std::string_view lower_dir = lower_path.substr(0, dir_size);
+      const std::string_view original_dir =
+          original_path.empty() ? std::string_view{} : original_path.substr(0, dir_size);
+      const int dir_penalty = MatchPenalty(lower_dir, original_dir, dir_query);
+      if (dir_penalty != kNoMatch) {
+        int score = name_penalty + dir_penalty / kDirectoryPenaltyDivisor + shape +
+                    static_cast<int>(lower_filename.size()) * kFilenameLengthWeight;
+        if (lower_filename == name_query) {
+          score -= kExactFilenameBonus;
+        } else if (lower_filename.rfind(name_query, 0) == 0) {
+          score -= kFilenamePrefixBonus;
+        }
+        return score;
+      }
     }
   }
 
