@@ -764,14 +764,18 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
 }
 
 void WorkspaceShell::InvalidateStaleMergeTabs() {
-  const project::GitRepositoryState repository_state = git_repository_service_.CurrentState();
+  // Two numbers, not the whole state: this runs on every git sidebar refresh, and
+  // `CurrentState()` deep-copies the entry list and the tree-status map. The
+  // conflicted count is also loop-invariant — it used to be recomputed inside the
+  // per-tab loop (TD-2026-08-06-159).
+  const GitRepositoryService::Summary repository = git_repository_service_.CurrentSummary();
   for (TabEntry& tab : context_.current_project_state.focused_group().open_tabs) {
     if (!tab.merge.has_value()) {
       continue;
     }
     MergeTabState& merge_tab = tab.merge.value();
     if (merge_tab.open_index_generation != 0 &&
-        merge_tab.open_index_generation != repository_state.generation) {
+        merge_tab.open_index_generation != repository.generation) {
       merge_tab.index_stale = true;
       merge_tab.marked_resolved = false;
     }
@@ -786,13 +790,7 @@ void WorkspaceShell::InvalidateStaleMergeTabs() {
         merge_tab.marked_resolved = false;
       }
     }
-    std::size_t remaining_files = 0;
-    for (const project::GitRepositoryEntry& entry : repository_state.entries) {
-      if (entry.conflicted) {
-        ++remaining_files;
-      }
-    }
-    merge_tab.remaining_conflicted_files = remaining_files;
+    merge_tab.remaining_conflicted_files = repository.conflicted_entry_count;
   }
 }
 

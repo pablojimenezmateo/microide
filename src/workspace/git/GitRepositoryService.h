@@ -24,7 +24,23 @@ class GitRepositoryService {
   void SetWakeCallbacks(WakeCallbacks callbacks);
   void Reset();
 
+  // The whole state, by value — `entries` plus the tree-status map, so this is
+  // thousands of allocations on a large repository. Use it only where the caller
+  // genuinely needs the entry list (opening a merge tab, staging a commit).
   project::GitRepositoryState CurrentState() const;
+
+  // The scalar facts a per-refresh caller usually wants, read under the same lock
+  // without copying anything. `InvalidateStaleMergeTabs` runs on every git sidebar
+  // refresh and was deep-copying the entire state to read two numbers
+  // (TD-2026-08-06-159).
+  struct Summary {
+    std::uint64_t generation = 0;
+    std::size_t conflicted_entry_count = 0;
+    bool repo_available = false;
+    bool stale = false;
+  };
+  Summary CurrentSummary() const;
+
   bool IsRefreshing() const;
 
   void MarkStale();

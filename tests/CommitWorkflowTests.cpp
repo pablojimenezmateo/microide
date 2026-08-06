@@ -337,6 +337,78 @@ void TestExecuteCommitPreservesShellSignificantAndLargeBody() {
          "the long body must be recorded verbatim (argv limits bypassed)");
 }
 
+// TD-2026-08-06-159: `CurrentSummary()` replaced a `CurrentState()` deep copy on
+// the per-refresh path (`InvalidateStaleMergeTabs` needed two numbers and was
+// copying the entry list and the tree-status map to get them). It has to keep
+// agreeing with the state it summarizes, including across a conflicted merge —
+// which is the case that makes `conflicted_entry_count` non-zero, and the only
+// consumer of it.
+void TestGitRepositorySummaryAgreesWithFullState() {
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  using microide::project::GitRepositoryState;
+  using microide::project::ProjectBackgroundExecutor;
+  using microide::workspace::GitRepositoryService;
+  using microide::workspace::GitSidebarRefreshScope;
+  using microide::workspace::OutgoingBaseChoice;
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path repo = temp_dir.path() / "repo";
+  InitializeGitRepo(repo);
+  WriteFile(repo / "shared.txt", "base\n");
+  CommitAll(repo, "base", "base");
+  RequireGitCommandSuccess(repo, {"checkout", "-b", "theirs"}, "branch for conflict");
+  WriteFile(repo / "shared.txt", "theirs\n");
+  CommitAll(repo, "theirs", "theirs");
+  RequireGitCommandSuccess(repo, {"checkout", "main"}, "back to the base branch");
+  WriteFile(repo / "shared.txt", "ours\n");
+  CommitAll(repo, "ours", "ours");
+  // Expected to fail: that is what leaves the conflicted entry in the index.
+  RunGitCommand(repo, {"merge", "theirs"});
+
+  ProjectBackgroundExecutor executor;
+  GitRepositoryService git_service(executor);
+
+  const auto check = [&](const char* stage) {
+    const GitRepositoryState state = git_service.CurrentState();
+    const GitRepositoryService::Summary summary = git_service.CurrentSummary();
+    std::size_t conflicted = 0;
+    for (const auto& entry : state.entries) {
+      if (entry.conflicted) ++conflicted;
+    }
+    Expect(summary.generation == state.generation,
+           std::string(stage) + ": summary generation matches the full state");
+    Expect(summary.repo_available == state.repo_available,
+           std::string(stage) + ": summary repo_available matches the full state");
+    Expect(summary.stale == state.stale, std::string(stage) + ": summary stale matches");
+    Expect(summary.conflicted_entry_count == conflicted,
+           std::string(stage) + ": summary conflicted count matches the full state (" +
+               std::to_string(summary.conflicted_entry_count) + " vs " +
+               std::to_string(conflicted) + ")");
+    return conflicted;
+  };
+
+  check("before any refresh");
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+  Expect(git_service.CurrentState().repo_available, "fixture repo should be available");
+  Expect(check("after the conflicted refresh") > 0,
+         "the fixture must actually leave a conflicted entry, else the count proves nothing");
+
+  // A refresh must still install the state it built: the publish moved after the
+  // snapshot build, so a broken ordering would leave CurrentState() on the old
+  // generation while the sidebar snapshot advanced.
+  const std::uint64_t first_generation = git_service.CurrentState().generation;
+  RequireGitCommandSuccess(repo, {"checkout", "--ours", "shared.txt"}, "resolve the conflict");
+  RequireGitCommandSuccess(repo, {"add", "shared.txt"}, "stage the resolution");
+  git_service.RunRefreshSynchronouslyForTesting(repo, GitSidebarRefreshScope::Full,
+                                                OutgoingBaseChoice{}, false);
+  Expect(git_service.CurrentState().generation != first_generation,
+         "the second refresh must install its own state, not leave the first one behind");
+  Expect(check("after resolving") == 0, "the resolved tree reports no conflicted entries");
+}
+
 // Regression: the background commit result must be published to the shared
 // CommitWorkflowState on the MAIN thread, never mutated on the worker thread
 // (which would race the render thread reading subject/body/status_message).
@@ -736,6 +808,8 @@ void TestCancelledWarningConfirmationCommitsNothing() {
 }  // namespace
 
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "CommitWorkflow/GitRepositorySummaryAgreesWithFullState",
+          TestGitRepositorySummaryAgreesWithFullState);
   AddTest(tests, "CommitWorkflow/ConflictMarkerScanGate", TestConflictMarkerScanGate);
   AddTest(tests, "CommitWorkflow/CompletionSurvivesStateDestruction",
           TestCommitCompletionSurvivesStateDestruction);

@@ -81,6 +81,20 @@ project::GitRepositoryState GitRepositoryService::CurrentState() const {
   return current_state_;
 }
 
+GitRepositoryService::Summary GitRepositoryService::CurrentSummary() const {
+  std::lock_guard lock(mutex_);
+  Summary summary;
+  summary.generation = current_state_.generation;
+  summary.repo_available = current_state_.repo_available;
+  summary.stale = current_state_.stale;
+  for (const project::GitRepositoryEntry& entry : current_state_.entries) {
+    if (entry.conflicted) {
+      ++summary.conflicted_entry_count;
+    }
+  }
+  return summary;
+}
+
 bool GitRepositoryService::IsRefreshing() const {
   std::lock_guard lock(mutex_);
   return refresh_in_flight_ || current_state_.refreshing;
@@ -368,35 +382,41 @@ void GitRepositoryService::ScheduleRefresh(RefreshRequest request) {
       "git-repository-refresh",
       [this, request = std::move(request)]() mutable {
         project::GitRepositoryState repository_state = BuildRepositoryState(request);
-        bool superseded = false;
-        {
-          std::lock_guard lock(mutex_);
-          if (request.generation != refresh_generation_) {
-            superseded = true;
-          } else {
-            current_state_ = repository_state;
-          }
-        }
-        if (superseded) {
-          HandleSupersededRefresh();
-          return;
-        }
         // Best-effort early-out: skip building a snapshot that a newer refresh
         // has already superseded. Read the generation under the lock — every
         // other access is mutex-guarded, so an unlocked read here is a data race
         // (PublishSnapshot still re-checks authoritatively under the lock).
-        bool generation_current = false;
+        bool superseded = false;
         {
           std::lock_guard lock(mutex_);
-          generation_current = request.generation == refresh_generation_;
+          superseded = request.generation != refresh_generation_;
         }
-        if (!generation_current) {
+        if (superseded) {
           HandleSupersededRefresh();
           return;
         }
 
         GitSidebarState::RefreshSnapshot snapshot =
             BuildSidebarSnapshot(repository_state, request);
+        // Publish the state by MOVE, after the snapshot that reads it is built.
+        // This used to deep-copy the whole state — entries plus the tree-status
+        // map — under the lock, before the snapshot build, which is one full copy
+        // of every path in the repository per refresh (TD-2026-08-06-159). A
+        // refresh superseded between the two checks now leaves `current_state_`
+        // on the older value instead of installing a state that is already stale,
+        // and the follow-up refresh overwrites it either way.
+        {
+          std::lock_guard lock(mutex_);
+          if (request.generation != refresh_generation_) {
+            superseded = true;
+          } else {
+            current_state_ = std::move(repository_state);
+          }
+        }
+        if (superseded) {
+          HandleSupersededRefresh();
+          return;
+        }
         PublishSnapshot(std::move(snapshot), request.generation);
       });
 }
@@ -498,12 +518,12 @@ void GitRepositoryService::RunRefreshSynchronouslyForTesting(
   // cleared under the lock above, so a completing worker won't re-post a job.
   background_executor_.Drain();
 
-  const project::GitRepositoryState repository_state = BuildRepositoryState(request);
+  project::GitRepositoryState repository_state = BuildRepositoryState(request);
+  GitSidebarState::RefreshSnapshot snapshot = BuildSidebarSnapshot(repository_state, request);
   {
     std::lock_guard lock(mutex_);
-    current_state_ = repository_state;
+    current_state_ = std::move(repository_state);
   }
-  GitSidebarState::RefreshSnapshot snapshot = BuildSidebarSnapshot(repository_state, request);
   // This synchronous test path bypasses ProjectBackgroundExecutor entirely, so it
   // is counter-neutral: it neither enqueues a job nor manually touches the global
   // background-task counter.
