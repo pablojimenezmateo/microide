@@ -393,9 +393,32 @@ const ScenarioRegistration g_perf_git_workstation_diff_next_hunk_large_file({
 // zero on odd iterations, ~200-400 KB on even ones — and the size of the growing
 // half moves run to run: diff_stage_hunk_large_patch measured a trimmed mean of
 // 174 / 157 / 227 KB across three full runs of one unchanged binary (1.45x), the
-// other two 1.23x and 1.15x. That is page-granular placement of a ~300 KB working
-// set, not the code, and it is stable enough to gate at 60% while a scenario that
-// starts retaining a megabyte an iteration still trips.
+// other two 1.23x and 1.15x.
+//
+// 60% was not enough, and TD-2026-08-06-150 chased down why rather than widening
+// again. `mean_rss_growth_bytes` for these is not a property of the scenario at
+// all — it is a property of WHAT RAN BEFORE IT IN THE PROCESS. One unchanged
+// binary, diff_stage_selected_lines, trimmed mean per iteration:
+//
+//   solo run                              33 / 37 / 61 KB
+//   after a 26-scenario prefix            79 KB
+//   after a 24-scenario prefix            265 KB
+//   after the full 52-scenario prefix     239 KB
+//   full suite (TD-2026-08-06-147)        174 / 273 KB
+//
+// An 8x range, and the app's actual retention is IDENTICAL across every one of
+// them: `p50_net_heap_bytes` reads exactly 28,470 in all of them, as it does for
+// 52 of 52 scenarios re-measured under three different prefixes (worst spread 9
+// bytes). The 8x is glibc failing to trim a heap that 61,761 allocations per
+// iteration have fragmented differently depending on who fragmented it first.
+//
+// So the split is: `p50_net_heap_bytes` is the gate that a retention regression
+// trips, byte-exactly and prefix-independently; this one stays as an
+// order-of-magnitude backstop for growth that never went through `operator new`
+// (mmap, SDL, Lua, PCRE2, libc) and is invisible to the byte-exact gate. 150%
+// covers the 1.56x same-prefix draw with margin. It deliberately does NOT try to
+// cover the 8x cross-prefix swing — no envelope should, and a suite edit that
+// re-levels these is expected to go red and be rebaselined, not absorbed.
 //
 // Widened HERE and not in the JSON on purpose: --update-baseline rewrites every
 // tolerance in a baseline from this struct, so a hand-edit to the file survives
@@ -405,7 +428,7 @@ const ScenarioRegistration g_perf_git_workstation_diff_stage_hunk_large_patch({
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    .tolerance_rss_percent = 60.0,
+    .tolerance_rss_percent = 150.0,
     .run = RunDiffStageHunkLargePatch,
 });
 const ScenarioRegistration g_perf_git_workstation_diff_stage_selected_lines({
@@ -413,7 +436,7 @@ const ScenarioRegistration g_perf_git_workstation_diff_stage_selected_lines({
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    .tolerance_rss_percent = 60.0,
+    .tolerance_rss_percent = 150.0,
     .run = RunDiffStageSelectedLines,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(merge_open_many_conflicts, RunMergeOpenManyConflicts);
@@ -466,7 +489,7 @@ const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_d
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
-    .tolerance_rss_percent = 60.0,
+    .tolerance_rss_percent = 150.0,
     .run = RunExternalChangeRefreshOpenDiff,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(external_change_refresh_open_merge,

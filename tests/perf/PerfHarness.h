@@ -88,6 +88,26 @@ struct MetricSnapshot {
   // attributable to the scenario. Growth is. Clamped at zero when the iteration
   // gives memory back.
   std::uint64_t rss_growth_bytes = 0;
+  // `bytes_allocated - bytes_freed` across the measured window: the bytes this
+  // iteration allocated through the counting `operator new` and did NOT hand back
+  // before the window closed. Signed, because a scenario whose setup allocates
+  // and whose measured window releases is legitimately negative
+  // (debug_session_stop_to_variables reads -141,047 every iteration).
+  //
+  // This is the DETERMINISTIC retention instrument, and it is the reason the
+  // resident gate stopped being a coin flip (TD-2026-08-06-150). Measured across
+  // three process states whose heaps could not have been more different -- a
+  // solo run, a 26-scenario prefix, a 52-scenario prefix -- 52 of 52 scenarios
+  // reported the SAME value, worst spread 9 bytes. Over the same three states
+  // `rss_growth_bytes` for one of them (diff_stage_selected_lines) read 21 KB,
+  // 79 KB and 239 KB per iteration for a byte-identical 28,470 bytes of actual
+  // retention: RSS is a 7x-amplifying, prefix-dependent view of this number.
+  //
+  // It is not a superset of RSS and does not replace it. `operator new` is the
+  // only allocator it sees, so malloc from Lua, PCRE2, SDL and libc, and anything
+  // mmap'd, are invisible here and visible there. Both are gated, for different
+  // things.
+  std::int64_t net_heap_bytes = 0;
 };
 
 struct MetricSet {
@@ -108,6 +128,11 @@ struct MetricSet {
   // diagnosis. See CompareToBaseline for why a percentile is the wrong
   // instrument for this metric.
   double mean_rss_growth_bytes = 0.0;
+  // Median per-iteration `net_heap_bytes`. The median rather than the mean
+  // because iteration 0 pays the scenario's one-time cold retention (8 MB on the
+  // diff fixtures against 28 KB steady state) and would own an average; the
+  // steady-state value is the one that reproduces to the byte.
+  double p50_net_heap_bytes = 0.0;
   // Median of the per-iteration calibration probe. Recorded INTO the
   // baseline, which is what makes a duration gate machine-state-independent: the
   // baseline knows what clock it was captured at, so a later run can be compared
@@ -331,6 +356,12 @@ struct Scenario {
   // nothing in the diff to read except three numbers changing in a generated file.
   // A tolerance that is not expressed in code is a comment.
   double tolerance_rss_percent = 25.0;
+  // Net-heap-retention envelope, written into this scenario's baseline at
+  // --update-baseline time for the same reason the resident one is: a tolerance
+  // that lives only in the committed JSON does not survive a rebaseline.
+  //
+  // Tight by default because the metric is deterministic (TD-2026-08-06-150).
+  double tolerance_net_heap_percent = 10.0;
   // Whether this scenario's iteration CPU time is a valid regression signal.
   //
   // Set false only where it provably is not, and say what replaces it. cpu_ms is

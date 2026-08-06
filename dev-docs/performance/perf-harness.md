@@ -149,6 +149,41 @@ measured. Two more metrics close that:
   back, which is a real cost now carried uniformly rather than by whichever
   iteration got unlucky.
 
+  **`mean_rss_growth_bytes` is a property of the whole run, not of the scenario,
+  and the envelope cannot fix that.** Trimming the heap removes the *within-run*
+  coin flip; it does not remove the dependence on what ran EARLIER in the process.
+  One unchanged binary, `diff_stage_selected_lines`, trimmed mean per iteration:
+  33 / 37 / 61 KB run solo, 79 KB after a 26-scenario prefix, 239–265 KB after a
+  50-scenario prefix, 174 / 273 KB on two full-suite runs. An 8x range with the
+  scenario's actual retention identical throughout — glibc simply cannot trim a
+  heap that 61,761 allocations per iteration have fragmented differently depending
+  on who fragmented it first (TD-2026-08-06-150). So this gate is an
+  **order-of-magnitude backstop**, and its job is growth that never went through
+  `operator new` (mmap, SDL, Lua, PCRE2, libc), which the metric below cannot see.
+  The three scenarios in that family carry a 150 % envelope for this reason; a
+  suite edit that re-levels them is expected to go red and be rebaselined, not
+  absorbed.
+
+- **`p50_net_heap_bytes`** — median of `bytes_allocated - bytes_freed` across the
+  measured window: what the iteration allocated through the counting `operator
+  new` and had not handed back when the window closed. **Signed**, because a
+  scenario whose setup allocates and whose measured window releases is legitimately
+  negative (`debug_session_stop_to_variables` reads −141,047 every iteration).
+
+  This is the **deterministic** retention gate, and it is the one a retention
+  regression is expected to trip. Re-measured across three process states whose
+  heaps could not have been more different — a solo run, a 26-scenario prefix, a
+  52-scenario prefix — **52 of 52 scenarios reported the same value, worst spread
+  9 bytes**. So it gets an allocation-class envelope (10 %, `Scenario::
+  tolerance_net_heap_percent`, in code for the same reason the resident one is)
+  with a 4 KiB floor: a scenario that nets exactly zero is the desirable reading
+  and a percentage envelope has zero width there.
+
+  It also sees things RSS cannot. `reference_snippet_file_window` nets 1.65 MB per
+  measured window with `mean_rss_growth_bytes` reading exactly **0**, because the
+  allocator had the space already. The two metrics are not a superset of one
+  another in either direction, which is why both are gated.
+
 This is separate from the existing hard RSS ceiling in `AdvisoryPerfScenarios.cpp`
 (256 MiB idle, 160 MiB growth). That is a ceiling; these are ratchets. A change
 taking idle RSS from 60 MB to 250 MB passed the ceiling silently and now does not.
@@ -633,6 +668,37 @@ MICROIDE_PERF_ALLOC_TRACE_PHASE=mouse_selection_drag \
 # resolve the frames (-i matters; everything interesting is inlined):
 addr2line -e ./build/microide-perf-make/microide/microide_perf -f -C -p -i 0x330e2c
 ```
+
+**A scenario the filter cannot be aimed at is a blind spot, not a clean one.**
+Only a scenario that calls `ScenarioContext::Measure` has a phase to filter on, so
+for a long time the five biggest interactive scroll scenarios could not be traced
+at all — they hand-rolled a `std::chrono` loop around exactly the frames they cared
+about and fed it to `EnforceP95Microseconds` without ever declaring it to the
+harness. Wrapping that loop in `Measure` is mechanical, changes no behaviour, and
+composes with the existing assertion: the inner per-frame samples still feed
+`EnforceP95Microseconds` while `Measure` adds the phase entry `--report-json` and
+the tracer need (TD-2026-08-06-151). Do it for any scenario with expensive setup in
+front of a repeated interactive action; do **not** do it for a pure-unit scenario
+(`user_config_record_decode`, `dap_protocol_encode_decode`, …), where the whole run
+is the work and the total is already the right number.
+
+Two things fell straight out of doing it, and they are the reason it was worth
+doing:
+
+| scenario | measured phase | share of total |
+| --- | ---: | ---: |
+| `editor_fold_viewport_refresh.scroll_frame` | 31,079 | 84 % |
+| `editor_sticky_scroll_scroll.fast_scroll_frame` | 31,806 | 82 % |
+| `editor_render_whitespace_paint.scroll_overlay_frame` | 26,500 | 82 % |
+| `editor_scroll_only_no_content_bump.scroll_frame` | 22,650 | 81 % |
+| `search_first_result.search_to_first_result` | 145 | **0.7 %** |
+
+The scroll scenarios were mostly measuring what they claimed. `search_first_result`
+was not: its "deterministic 20,207-allocation oracle" is 99.3 % project-open and
+index build, and the search itself is 145 allocations. And with the filter finally
+aimable at the scroll phase, 11 of its top 12 allocation sites turned out to be one
+purely-lexical path normalisation the inline-blame overlay redid three times a
+frame — ~30 % of every editor scroll scenario's allocations, removed by a memo.
 
 ## Scenario Authoring
 

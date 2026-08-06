@@ -1504,6 +1504,7 @@ util::JsonValue ToJson(const Aggregate& aggregate,
     iteration_json["cpu_ms"] = iteration.metrics.cpu_ms;
     iteration_json["rss_growth_bytes"] =
         static_cast<std::int64_t>(iteration.metrics.rss_growth_bytes);
+    iteration_json["net_heap_bytes"] = iteration.metrics.net_heap_bytes;
     iteration_json["phase_durations_ms"] = std::move(phase_duration_json);
     iteration_json["phase_metrics"] = std::move(phase_metrics_json);
     iteration_json["perf_counters"] = std::move(counters_json);
@@ -1569,6 +1570,7 @@ util::JsonValue ToJson(const Aggregate& aggregate,
                       {"p95_rss_growth_bytes", aggregate.metrics.p95_rss_growth_bytes},
                       {"max_rss_growth_bytes", aggregate.metrics.max_rss_growth_bytes},
                       {"mean_rss_growth_bytes", aggregate.metrics.mean_rss_growth_bytes},
+                      {"p50_net_heap_bytes", aggregate.metrics.p50_net_heap_bytes},
                       {"p50_cpu_calibration_ns", aggregate.metrics.p50_cpu_calibration_ns},
                   }},
       {"iterations", std::move(iterations_json)},
@@ -1839,10 +1841,15 @@ int main(int argc, char** argv) {
                          // From the scenario, not the struct default: see
                          // Scenario::tolerance_rss_percent for the rebaseline that
                          // silently reset a deliberate widening.
-                         .rss_mean_percent = scenario.tolerance_rss_percent},
+                         .rss_mean_percent = scenario.tolerance_rss_percent,
+                         .net_heap_percent = scenario.tolerance_net_heap_percent},
       };
       record.has_cpu_metrics = scenario.gate_cpu_metrics;
       record.has_rss_metrics = true;
+      // Always recorded, including at zero: unlike cpu/rss this metric is
+      // deterministic, so there is no run in which it is unmeasurable and a zero
+      // reading is a real one (TD-2026-08-06-150).
+      record.has_net_heap_metrics = true;
       // Record the clock this baseline was captured at, so a later run's CPU
       // numbers can be compared in the same machine state instead of against a
       // number that silently meant "measured on a core that happened to be at

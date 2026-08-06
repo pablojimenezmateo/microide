@@ -90,17 +90,20 @@ MetricSet AggregateMetrics(const std::vector<Iteration>& iterations) {
   std::vector<double> allocations;
   std::vector<double> cpu_ms;
   std::vector<double> rss_growth_bytes;
+  std::vector<double> net_heap_bytes;
   std::vector<double> calibration_ns;
   wall_ms.reserve(iterations.size());
   allocations.reserve(iterations.size());
   cpu_ms.reserve(iterations.size());
   rss_growth_bytes.reserve(iterations.size());
+  net_heap_bytes.reserve(iterations.size());
   calibration_ns.reserve(iterations.size());
   for (const Iteration& iteration : iterations) {
     wall_ms.push_back(iteration.metrics.wall_ms);
     allocations.push_back(static_cast<double>(iteration.metrics.allocations));
     cpu_ms.push_back(iteration.metrics.cpu_ms);
     rss_growth_bytes.push_back(static_cast<double>(iteration.metrics.rss_growth_bytes));
+    net_heap_bytes.push_back(static_cast<double>(iteration.metrics.net_heap_bytes));
     if (iteration.metrics.cpu_calibration_ns != 0) {
       calibration_ns.push_back(static_cast<double>(iteration.metrics.cpu_calibration_ns));
     }
@@ -119,6 +122,7 @@ MetricSet AggregateMetrics(const std::vector<Iteration>& iterations) {
   out.p95_rss_growth_bytes = Percentile(rss_growth_bytes, 0.95);
   out.max_rss_growth_bytes = MaxOr0(rss_growth_bytes);
   out.mean_rss_growth_bytes = TrimmedMeanOr0(rss_growth_bytes);
+  out.p50_net_heap_bytes = Percentile(net_heap_bytes, 0.50);
   out.p50_cpu_calibration_ns = Percentile(calibration_ns, 0.50);
   return out;
 }
@@ -840,6 +844,9 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
                 .cpu_ms = std::max(0.0, cpu_ms_after - cpu_ms_before),
                 .cpu_calibration_ns = calibration_ns,
                 .rss_growth_bytes = rss_after > rss_before ? rss_after - rss_before : 0,
+                // Signed and unclamped, unlike the two byte counters above: the
+                // sign is the measurement. See MetricSnapshot::net_heap_bytes.
+                .net_heap_bytes = delta.bytes_allocated - delta.bytes_freed,
             },
         .phase_metrics = context.TakePhaseMetrics(),
         .perf_counters = std::move(counter_deltas),

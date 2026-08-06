@@ -48,6 +48,43 @@ std::size_t AddMetric(BaselineComparison* out,
   return out->metrics.size() - 1;
 }
 
+// AddMetric for a gate whose allowance is an absolute quantity rather than a
+// percentage of the baseline.
+//
+// Every other metric here is non-negative and far from zero, so `expected *
+// tolerance%` is both the allowance and a readable description of it. Net heap
+// retention is neither: it is signed, and its most desirable value is exactly
+// zero, where a percentage envelope has zero width. The tolerance is still
+// REPORTED as a percentage (the equivalent one) so verdict lines, the JSON report
+// and the headroom ranking keep one vocabulary -- but at expected == 0 there is
+// no such percentage, and reporting 0% there would read as "gated to the byte"
+// when the gate is a page wide. That case reports the allowance's own scale.
+//
+// Known limit, stated rather than hidden: `EnvelopeUsedPercent` divides by
+// `expected`, so a gate whose baseline is exactly zero contributes nothing to the
+// headroom ranking. That is tolerable HERE and only here -- a scenario recorded
+// at zero net retention that starts retaining does not creep toward a 4 KB
+// allowance, it blows past it by orders of magnitude and fails outright.
+std::size_t AddMetricWithAllowance(BaselineComparison* out,
+                                   std::string_view name,
+                                   double expected,
+                                   double actual,
+                                   double allowance) {
+  MetricComparison metric{
+      .metric = std::string(name),
+      .expected = expected,
+      .actual = actual,
+      .tolerance_percent = std::abs(expected) > 0.0 ? allowance / std::abs(expected) * 100.0 : 100.0,
+      .passed = actual <= expected + allowance,
+      .raw_actual = actual,
+  };
+  if (!metric.passed) {
+    out->passed = false;
+  }
+  out->metrics.push_back(std::move(metric));
+  return out->metrics.size() - 1;
+}
+
 // Stop enforcing a metric that was already added, and say why.
 //
 // The measurement stays in the comparison — it is still the most useful number
@@ -267,6 +304,13 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
     record.metrics.p95_rss_growth_bytes = metrics["p95_rss_growth_bytes"].AsDouble();
     record.metrics.max_rss_growth_bytes = metrics["max_rss_growth_bytes"].AsDouble();
   }
+  // Net heap retention. Same rule again: absent on every baseline written before
+  // the metric existed, and those stay ungated on it rather than being compared
+  // against an implicit zero.
+  record.has_net_heap_metrics = IsNumber(metrics["p50_net_heap_bytes"]);
+  if (record.has_net_heap_metrics) {
+    record.metrics.p50_net_heap_bytes = metrics["p50_net_heap_bytes"].AsDouble();
+  }
   // How many iterations this baseline averaged. Absent on baselines written
   // before the field existed; those keep gating the resident mean unconditionally,
   // exactly as they did, and start declining short runs when they are next
@@ -283,6 +327,7 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   record.tolerances.cpu_max_percent =
       tolerances["cpu_max_percent"].AsDouble(record.tolerances.max_percent);
   record.tolerances.rss_mean_percent = tolerances["rss_mean_percent"].AsDouble(25.0);
+  record.tolerances.net_heap_percent = tolerances["net_heap_percent"].AsDouble(10.0);
   return record;
 }
 
@@ -314,6 +359,12 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   if (baseline.has_calibration && baseline.metrics.p50_cpu_calibration_ns > 0.0) {
     metrics["p50_cpu_calibration_ns"] = baseline.metrics.p50_cpu_calibration_ns;
   }
+  // Written whenever the run recorded it, INCLUDING when it is exactly zero: zero
+  // net retention is a real and desirable reading, and the loader keys on
+  // presence rather than on the value.
+  if (baseline.has_net_heap_metrics) {
+    metrics["p50_net_heap_bytes"] = baseline.metrics.p50_net_heap_bytes;
+  }
   root["metrics"] = std::move(metrics);
   // Omitted when unknown, for the same reason the metrics above are: a zero here
   // would come back as "recorded over 0 iterations", and every run would be
@@ -332,6 +383,7 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"cpu_p95_percent", baseline.tolerances.cpu_p95_percent},
       {"cpu_max_percent", baseline.tolerances.cpu_max_percent},
       {"rss_mean_percent", baseline.tolerances.rss_mean_percent},
+      {"net_heap_percent", baseline.tolerances.net_heap_percent},
   };
   std::ofstream out(path);
   if (!out) {
@@ -427,6 +479,26 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
         add_rss("mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes,
                 aggregate.metrics.mean_rss_growth_bytes, baseline.tolerances.rss_mean_percent);
     AnnotateResidentGateForIterationCount(&result, rss_index, baseline, aggregate);
+  }
+  if (baseline.has_net_heap_metrics) {
+    // The deterministic half of the memory gate (TD-2026-08-06-150). Unlike the
+    // resident mean this reproduces to the byte across process states, so it gets
+    // an allocation-class envelope and it is the gate that a retention regression
+    // is expected to trip.
+    //
+    // The floor exists for the same reason the resident one does, at a different
+    // scale. A scenario that nets exactly zero -- the desirable reading -- would
+    // otherwise get a zero-width gate and fail on the first byte, and "retains
+    // nothing" is precisely the state worth being able to record. One page of
+    // allowance is ~450x the worst cross-process spread ever measured for this
+    // metric (9 bytes) and still fails a scenario that newly holds 4 KB per
+    // iteration.
+    constexpr double kNetHeapNoiseFloorBytes = 4096.0;
+    const double expected = baseline.metrics.p50_net_heap_bytes;
+    AddMetricWithAllowance(
+        &result, "p50_net_heap_bytes", expected, aggregate.metrics.p50_net_heap_bytes,
+        std::max(std::abs(expected) * (baseline.tolerances.net_heap_percent / 100.0),
+                 kNetHeapNoiseFloorBytes));
   }
   return result;
 }

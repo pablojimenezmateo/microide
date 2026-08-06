@@ -33,6 +33,13 @@ struct Tolerances {
   // as an allocation count (page granularity, allocator arena behavior), so it
   // sits between the two.
   double rss_mean_percent = 25.0;
+  // Net-heap-retention envelope, for `p50_net_heap_bytes`. Deterministic to the
+  // byte across process states (52 of 52 scenarios reproduced exactly across
+  // three different suite prefixes; worst spread 9 bytes), so this is an
+  // allocation-class envelope, not an RSS-class one. It still gets a percentage
+  // rather than an equality check because a scenario is allowed to change size
+  // for a legitimate reason; what it may not do is change silently.
+  double net_heap_percent = 10.0;
 };
 
 struct BaselineRecord {
@@ -46,6 +53,11 @@ struct BaselineRecord {
   // deliberate act like any other rebaseline.
   bool has_cpu_metrics = false;
   bool has_rss_metrics = false;
+  // Whether the baseline file carried `p50_net_heap_bytes`. Same
+  // start-gating-when-re-recorded rule as cpu/rss: a baseline written before the
+  // metric existed compares exactly as it did, rather than gating a measured
+  // 28,470 against an implicit 0.
+  bool has_net_heap_metrics = false;
   // Whether the baseline recorded the clock it was captured at
   // (`metrics.p50_cpu_calibration_ns`). Baselines written before that field
   // existed did not, and they compare unnormalised exactly as they did before.
