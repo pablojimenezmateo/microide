@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **73 open items.**
+Reviewed 2026-08-06. **77 open items.**
 
 The 2026-08-06 pass closed the three perf-gate-integrity entries filed on
 2026-08-05: TD-2026-08-05-135 (four gated baselines 40-80% looser than the code
@@ -9,6 +9,15 @@ state), and TD-2026-08-05-137 (a CPU gate decided by the governor). All three we
 the same failure in different metrics — a green run that was green for a reason
 having nothing to do with the code — and all three are now measured rather than
 worked around.
+
+It opened four: **138** (the whole-document width table is built twice per file
+open), **139** (five allocation gates drifted up, unexplained, and passed), **140**
+(the wall gate cannot catch a regression under 2x, and now has the data to), and
+**141** (nothing reruns the gate, so drift is only ever found by accident). The
+first came out of reading counters during the sweep; the other three were live
+findings sitting in the body of the entry that same sweep *closed*, which is this
+file's own failure mode — work nobody scanning the open items would ever see. A
+finding discovered by a fix does not belong inside the fix's entry.
 
 The 2026-08-05 burndown closed seven: TD-2026-07-30-001 (search-panel Alt chords),
 TD-2026-07-26-005 (replace-all measured through counters only it writes),
@@ -36,6 +45,160 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-06-138 — the whole-document line-width table is built TWICE per file open. OPEN.
+
+`editor.line_width_full_measures` reads **exactly 2x the document's line count** on
+every scenario that opens a large file, in one iteration:
+
+| scenario | counter | document | 2x? |
+| --- | ---: | --- | --- |
+| `editor_mouse_selection_drag` | 100,002 | 50,001 (50k_cpp) | ✅ exact |
+| `editor_occurrences_scan` | 100,002 | 50,001 | ✅ exact |
+| `editor_add_cursor_next_match` | 100,002 | 50,001 | ✅ exact |
+| `editor_column_selection_burst` | 100,002 | 50,001 | ✅ exact |
+| `large_file_restore_deep_scroll_first_paint` | 100,002 | 50,001 | ✅ exact |
+| `editor_indent_detect_open` | 25,732 | 12,866 (1mb mixed) | ✅ exact |
+| `editor_save_normalization` | 25,732 | 12,866 | ✅ exact |
+| `diff_next_hunk_large_file` | 28,890 | ~14.4k (large diff) | 2 x 14,445 — which two documents is not established; the compare view holds both sides |
+| `diff_stage_hunk_large_patch` | 28,890 | ~14.4k | same |
+| `diff_stage_selected_lines` | 28,890 | ~14.4k | same |
+
+Seven scenarios at the exact 2x is what makes this a defect rather than a cost.
+
+**Two scenarios were in the first draft of this table and do NOT belong**, which is
+worth recording so nobody re-adds them: `editor_toggle_comment_large_selection`
+(16,000) and `settings_change_many_tabs` (20,088). The counter is bumped from *two*
+sites in `TextLayoutCache.cpp` — `MaxVisualColumns`'s full rebuild, which walks the
+whole document, and the incremental edit path, which bumps by `inserted_count`.
+Toggle-comment opens the same 50k document, but its 16,000 is **16 toggles x 1,000
+selected lines** through the *edit* path, which is that path working exactly as
+designed. `settings_change_many_tabs`'s 20,088 is likewise not a multiple of any one
+document. Check a counter against the document's line count before reading it as a
+full rebuild.
+
+The doubling above is the full rebuild running twice.
+
+Its cache key is `(tab_size, content_revision)` plus a `cached_visual_line_columns_
+.size() != lines.size()` check, so a *second* build means one of those changed
+between the first and the second — and `editor_indent_detect_open` showing the same
+2x points at `tab_size`: **hypothesis, not measurement — indent detection (or
+editorconfig resolution) lands after the first table is already built, and the
+first build is thrown away.**
+
+**What to do first: confirm the trigger, do not go straight to a fix.** One counter
+or trace scope per rebuild reason (size mismatch vs tab-size change vs revision
+bump) says which it is in a single run. If it is the tab-size ordering, the fix is
+ordering — resolve the indent settings before the first width table is built — and
+it removes an O(document) walk from every large-file open, which is the first-paint
+path and priority #1. If it is something else, the counter says so before anything
+is refactored.
+
+Found by reading counters during the TD-2026-08-05-135 sweep. Nothing gates it
+today: the scenarios above pass their allocation envelopes because both builds were
+already in the baseline when it was recorded, which is exactly how an O(document)
+cost hides in a green suite.
+
+### TD-2026-08-06-139 — five allocation gates drifted UP, unexplained, and passed. OPEN.
+
+From the same sweep as [TD-2026-08-05-135](#td-2026-08-05-135), and the half a
+blind rebaseline would have buried. Measured against the committed baselines
+before they were rewritten:
+
+`p50_allocations`, as committed before the sweep against what is recorded now:
+
+| scenario | pre-sweep | now recorded | delta |
+| --- | ---: | ---: | ---: |
+| `editor_mouse_selection_drag` | 5,010 | 5,482 | **+9.4%** |
+| `diff_stage_selected_lines` | 60,528 | 61,935 | +2.3% |
+| `external_change_refresh_open_diff` | 61,652 | 63,060 | +2.3% |
+| `diff_stage_hunk_large_patch` | 62,447 | 63,854 | +2.3% |
+| `diff_next_hunk_large_file` | 85,505 | 86,912 | +1.6% |
+
+Two separate things. The four diff/staging scenarios took a **flat +1,407-1,408
+allocations each** — the same absolute number on four scenarios with different
+workloads and different totals, so it is one shared change in the diff/staging path
+and not four regressions. (It measured a flat +1,326 in the first sweep run and
++1,407 in the one that recorded these; the shared-constant shape is the signal, not
+the exact value.) `editor_mouse_selection_drag` is its own: +472 over 160 mouse
+moves, ~3 allocations per move, on a drag path that should be allocation-free per
+move.
+
+All five passed their envelopes (the default 10% allocation tolerance), which is why
+nobody saw them. They are now recorded at their measured values, so this is drift
+that has been *accepted into the baseline* — the gate will not catch it again.
+
+**Bisectable cheaply**: both scenarios run in seconds and each step has an exact
+oracle (`--scenarios=<name> --iterations=10`, compare `p50_allocations` against the
+numbers above). The window is `932ad5d2..a460e6cf` — from the 2026-08-04 commit that
+last recorded these baselines to the 2026-08-06 sweep that rewrote them — which is
+**90 commits**, so ~7 bisect steps at roughly two minutes each (ccache-warm rebuild
+plus a one-scenario run). Script it rather than doing it by hand.
+
+No candidate commit is named here on purpose. The obvious-looking drag refactors
+(`d6b38b5d`, `57eff4c3`) both land on 2026-07-30, i.e. **before** the baseline
+commit, so they are already inside the recorded number and cannot be the cause —
+which is the trap this note exists to close. Check `git merge-base --is-ancestor
+932ad5d2 <candidate>` before spending a session on a suspect.
+
+### TD-2026-08-06-140 — the wall gate cannot catch a regression under 2x, and now has the data to. OPEN.
+
+Wall envelopes sit at 100/150/200% because wall carries everything the code does not:
+scheduler jitter, the 1.44x per-thread clock swing measured in
+[TD-2026-08-05-137](#td-2026-08-05-137), and sleep. A 100% p50 envelope does not
+detect a constant-factor regression under 2x, and the harness doc is explicit that
+this is given up on purpose.
+
+That trade was made when the harness could not tell those apart. It now can:
+
+- the calibration probe says what the machine's clock was, per iteration, and every
+  baseline records the clock it was captured at;
+- `cpu_ms / wall_ms` per scenario says what fraction of a scenario's wall time is
+  actually work — `idle_soak_30s` is ~0.0005 (it sleeps for 27 of its 30 seconds),
+  ordinary editor scenarios are ~1.0.
+
+So wall can be normalised the same way CPU is, scaled by how much of it is work:
+`expected * (1 + (clock_factor - 1) * cpu_fraction)`. Full correction where wall is
+work, none where wall is sleep, decided per scenario from measured data rather than
+from a per-scenario opt-out.
+
+The point of doing it is what comes after: with the machine's contribution removed,
+the wall envelope can come down from 100% to something that gates. **That second
+step is the risky one** — it needs its own rebaseline plus a per-scenario review of
+the new envelopes, and a too-tight wall gate is how a suite becomes red on half its
+runs and stops being read at all. Do the normalisation and the tightening as two
+changes, with a multi-run stability measurement between them.
+
+Deliberately not bundled into the 2026-08-06 pass: CPU normalisation is a strict
+improvement that needed no envelope changes, and mixing an envelope re-cut into the
+same rebaseline would have made both unreadable.
+
+### TD-2026-08-06-141 — nothing reruns the perf gate, so drift is only ever found by accident. OPEN.
+
+The process half of [TD-2026-08-05-135](#td-2026-08-05-135). Baselines drifted
+40-80% loose, and eleven gates plus five upward regressions accumulated, because the
+full gate only runs when somebody decides to run it — and the failure mode is silent
+by construction: gates trip on *increases*, so a baseline that has gone loose is
+green forever.
+
+CI cannot re-measure (baselines are absolute timings from the pinned
+`perf-runner-v1` host, which is the maintainer's workstation — see the "Hosted perf
+gating" note in `active-work.md`), and that is not changing. But the gate does not
+need CI to run on a schedule; it needs *something* to run it on the reference
+machine and report:
+
+```
+./build/microide-perf-make/microide/microide_perf --iterations=10 \
+    --reference-runner=perf-runner-v1 --report-json=<dated path>
+```
+
+It already exits non-zero on failure and prints a per-scenario verdict, and a
+scheduled run has a second, larger payoff: a dated series of `--report-json` files
+is the drift record nobody has today. Comparing two of them is the sweep that closed
+TD-2026-08-05-135, done automatically instead of by hand.
+
+Roughly an hour of work. The thing to get right is that the output must be *read* —
+a scheduled run whose failures nobody sees is the same defect one layer up.
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
@@ -228,14 +391,10 @@ Wall, same sweep: `git_sidebar_refresh_large_repo` 0.54, `commit_open_with_large
 
 **And the sweep found drift in the other direction, which is the part a blind
 rebaseline would have buried.** Five scenarios measured OVER their committed
-allocation baseline: `diff_stage_hunk_large_patch`, `diff_stage_selected_lines` and
-`external_change_refresh_open_diff` all +2.1% (a flat +1,326 allocations on each —
-one shared change in the diff/staging path, not three), `diff_next_hunk_large_file`
-+1.5%, and `editor_mouse_selection_drag` **+9.4%** (5,010 → 5,482 over 160 mouse
-moves, ~3 allocations per move). All five are inside their envelopes and none is
-explained; they are recorded at their measured values, so the next drift in that
-direction starts from a number somebody looked at. The rule that keeps this honest
-is now in the harness doc: **rebaseline down, investigate up.**
+allocation baseline; they are recorded at their measured values so the next move in
+that direction starts from a number somebody looked at, and the unexplained rise
+itself is filed as **[TD-2026-08-06-139](#td-2026-08-06-139)**. The rule that keeps
+this honest is now in the harness doc: **rebaseline down, investigate up.**
 
 **On "when did it drift":** part of the wall column is not code at all. Grouping
 the sweep's scenarios by the calibration probe they were measured at, the ten that
@@ -243,12 +402,14 @@ ran at ~675 us have a median wall ratio of 1.08 against 0.98 for the 86 that ran
 ~482 us — the same machine, the same run, a 1.4x clock difference decided by
 whether the scenario before them kept the core busy (see
 [TD-2026-08-05-137](#td-2026-08-05-137)). That is why the CPU gate now normalises
-against the recorded clock and why the wall gate stays at 100%.
+against the recorded clock; extending that to wall is
+**[TD-2026-08-06-140](#td-2026-08-06-140)**.
 
-The process gap the entry names is real and unfixed by a sweep: nothing reruns the
-gate on a schedule, so drift accumulates silently until somebody rebaselines. What
-this pass adds is that a rebaseline now records the machine state it was captured
-in, so the next sweep can tell drift from the governor without guessing.
+The process gap the entry names is real and NOT fixed by a sweep: nothing reruns
+the gate on a schedule, so drift accumulates silently until somebody rebaselines.
+Filed as **[TD-2026-08-06-141](#td-2026-08-06-141)**. What this pass adds is that a
+rebaseline now records the machine state it was captured in, so the next sweep can
+tell drift from the governor without guessing.
 
 ### TD-2026-08-05-136 — `editor_long_line_select_all_edit`'s resident-growth gate is a coin flip. [RESOLVED 2026-08-06.]
 
