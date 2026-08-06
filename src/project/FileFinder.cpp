@@ -18,6 +18,75 @@ namespace {
 // full match set is still tracked (uncapped) for forward-typing narrowing.
 constexpr std::size_t kMaxResults = 512;
 
+// Ranking weights. Lower is better throughout, so a "bonus" subtracts.
+//
+// The shape is VSCode's quick open, which ranks on match QUALITY rather than on
+// where the first character happened to land: a contiguous run beats a scattered
+// subsequence, a match at a word start beats one mid-word, and an equally good
+// match on a shorter, shallower path wins. The previous scorer had only two
+// terms (first-match index + total gap), so `src/config/parse_config.cpp` beat
+// `config.cpp` for "config" — the directory hit starts earlier.
+constexpr int kNoMatch = std::numeric_limits<int>::max();
+// Per character of text skipped before the match starts.
+constexpr int kStartWeight = 1;
+// Per character skipped BETWEEN two matched characters.
+constexpr int kGapWeight = 4;
+// Multiplied by the position within a contiguous run (1st, 2nd, 3rd ... adjacent
+// character), so the reward for a run of length L grows as L(L-1)/2.
+constexpr int kRunUnit = 4;
+// A matched character at a word start: after a separator, or a camelCase hump.
+constexpr int kWordStartBonus = 6;
+// Extra for matching the very first character of the text.
+constexpr int kFirstCharBonus = 6;
+// Two length terms, weighted differently on purpose. The FILENAME counts at full
+// weight: with two equally good matches, `FileFinder.cpp` is the one meant, not
+// `FileFinderTests.cpp` — the query covers more of the shorter name. The
+// DIRECTORY prefix counts at a quarter, enough to break a tie toward the
+// shallower file without letting a deep path outrank a better name match. VSCode
+// orders the same two ways round (label first, then path).
+constexpr int kFilenameLengthWeight = 1;
+constexpr int kPathLengthDivisor = 4;
+// Per directory component. A file at the root outranks the same filename buried
+// five directories deep.
+constexpr int kSegmentWeight = 2;
+// The folded filename IS the query.
+constexpr int kExactFilenameBonus = 100;
+// The folded filename starts with the query.
+constexpr int kFilenamePrefixBonus = 30;
+// Every filename match sorts ahead of every path-only match, which is VSCode's
+// rule (label before description) and the behaviour people mean by "it finds the
+// file I typed". Large enough that no penalty spread inside either class can
+// cross it: penalties are bounded by 4 * path length, and the index caps paths
+// far below 250,000 bytes.
+constexpr int kPathOnlyBase = 1'000'000;
+
+bool IsSeparatorByte(char c) {
+  return c == '/' || c == '\\' || c == '_' || c == '-' || c == '.' || c == ' ';
+}
+
+// True when `index` starts a word in `text`.
+//
+// `original` is the pre-fold bytes when they align with `text` byte for byte,
+// empty otherwise. It is what makes a camelCase hump visible: the fold has
+// already destroyed the case that defines one, so `ParseConfig` -> `parseconfig`
+// has no boundary at 'c' unless the original is consulted.
+bool IsWordStart(std::string_view text, std::string_view original, std::size_t index) {
+  if (index == 0) {
+    return true;
+  }
+  if (IsSeparatorByte(text[index - 1])) {
+    return true;
+  }
+  if (original.size() != text.size() || index >= original.size()) {
+    return false;
+  }
+  const unsigned char current = static_cast<unsigned char>(original[index]);
+  const unsigned char previous = static_cast<unsigned char>(original[index - 1]);
+  const bool current_upper = current >= 'A' && current <= 'Z';
+  const bool previous_lower =
+      (previous >= 'a' && previous <= 'z') || (previous >= '0' && previous <= '9');
+  return current_upper && previous_lower;
+}
 }  // namespace
 
 void FileFinder::SetIndex(const FileIndex* index) {
@@ -242,37 +311,80 @@ std::optional<std::filesystem::path> FileFinder::SelectedPath() const {
   return results_[selected_index_].relative_path;
 }
 
-int FileFinder::SubsequenceScore(std::string_view text, const std::string& query) {
+int FileFinder::MatchPenalty(std::string_view text, std::string_view original,
+                             const std::string& query) {
   if (query.empty()) {
     return 0;
   }
 
-  int first_match = -1;
-  int previous_index = -1;
-  int total_gap = 0;
-
-  for (char query_char : query) {
-    bool matched = false;
-    for (int i = previous_index + 1; i < static_cast<int>(text.size()); ++i) {
-      if (text[static_cast<std::size_t>(i)] != query_char) {
-        continue;
-      }
-      if (first_match < 0) {
-        first_match = i;
-      }
-      if (previous_index >= 0) {
-        total_gap += i - previous_index - 1;
-      }
-      previous_index = i;
-      matched = true;
+  // Pass 1, forward greedy: does the query appear as a subsequence at all, and
+  // where is the earliest position its LAST character can land?
+  std::size_t forward = 0;
+  std::size_t end = 0;
+  for (std::size_t i = 0; i < text.size(); ++i) {
+    if (text[i] != query[forward]) {
+      continue;
+    }
+    if (++forward == query.size()) {
+      end = i;
       break;
     }
-    if (!matched) {
-      return std::numeric_limits<int>::max();
+  }
+  if (forward != query.size()) {
+    return kNoMatch;
+  }
+
+  // Pass 2, backward greedy from `end`: pull the START as late as it can go for
+  // that end. This is the whole reason the old scorer misranked — a plain
+  // left-to-right greedy match takes the FIRST occurrence of every query
+  // character, so "config" against `src/config/parse_config.cpp` scored the
+  // scattered directory hit instead of the exact filename word two components
+  // later. Two linear passes buy the tightest window; fzf's v1 algorithm does
+  // the same thing for the same reason.
+  std::size_t backward = query.size();
+  std::size_t start = 0;
+  for (std::size_t i = end + 1; i-- > 0;) {
+    if (text[i] != query[backward - 1]) {
+      continue;
+    }
+    if (--backward == 0) {
+      start = i;
+      break;
     }
   }
 
-  return total_gap + first_match;
+  // Pass 3, features over the tightened window. Everything here is a VSCode
+  // quick-open behaviour restated as arithmetic: contiguous runs win, word
+  // starts win, an early match wins, and gaps cost.
+  int penalty = static_cast<int>(start) * kStartWeight;
+  std::size_t previous = text.size();
+  std::size_t query_index = 0;
+  int run = 0;
+  for (std::size_t i = start; i < text.size() && query_index < query.size(); ++i) {
+    if (text[i] != query[query_index]) {
+      continue;
+    }
+    if (previous != text.size()) {
+      if (i == previous + 1) {
+        // Superlinear on purpose: a six-character contiguous hit must beat two
+        // three-character ones, or "finder" ranks `find_error.cpp` over
+        // `FileFinder.cpp`.
+        penalty -= kRunUnit * ++run;
+      } else {
+        run = 0;
+        penalty += kGapWeight * static_cast<int>(i - previous - 1);
+      }
+    }
+    if (IsWordStart(text, original, i)) {
+      penalty -= kWordStartBonus;
+    }
+    if (i == 0) {
+      penalty -= kFirstCharBonus;
+    }
+    previous = i;
+    ++query_index;
+  }
+  return penalty;
 }
 
 std::uint64_t FileFinder::CharPresenceMask(std::string_view text) {
@@ -289,36 +401,51 @@ int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string&
     return static_cast<int>(entry.path_size);
   }
 
-  // O(1) reject before the O(path length * query length) scans. The filename is
-  // a suffix component of the path, so its folded bytes are a subset of the
-  // path's — a path-mask miss means BOTH scans would fail, which is the common
-  // case for any query narrow enough to be useful.
+  // O(1) reject before the linear scans. The filename is a suffix component of
+  // the path, so its folded bytes are a subset of the path's — a path-mask miss
+  // means BOTH scans would fail, which is the common case for any query narrow
+  // enough to be useful.
   if ((entry.lower_path_mask & query_mask) != query_mask) {
-    return std::numeric_limits<int>::max();
+    return kNoMatch;
   }
   const bool filename_possible = (entry.lower_filename_mask & query_mask) == query_mask;
 
+  const std::string_view lower_path = LowerPathView(entry);
   const std::string_view lower_filename = LowerFilenameView(entry);
-  const int path_score = SubsequenceScore(LowerPathView(entry), query);
-  const int file_score = filename_possible ? SubsequenceScore(lower_filename, query)
-                                           : std::numeric_limits<int>::max();
-  if (path_score == std::numeric_limits<int>::max() &&
-      file_score == std::numeric_limits<int>::max()) {
-    return std::numeric_limits<int>::max();
-  }
+  // The original bytes, only when the fold left every offset where it was (see
+  // CachedFileEntry::fold_preserves_offsets). Empty otherwise, which disables
+  // the camelCase bonus for that entry rather than reading a shifted byte.
+  const std::string_view original_path =
+      entry.fold_preserves_offsets ? PathView(entry) : std::string_view{};
+  const std::string_view original_filename =
+      entry.fold_preserves_offsets ? PathView(entry).substr(entry.lower_filename_offset)
+                                   : std::string_view{};
 
-  int score = path_score == std::numeric_limits<int>::max()
-                  ? std::numeric_limits<int>::max() / 2
-                  : path_score * 3 + static_cast<int>(entry.path_size);
+  // With equal match quality the shorter, shallower path wins. This is the term
+  // the finder was missing next to VSCode: `a/index.ts` and
+  // `a/b/c/d/e/index.ts` scored identically on a filename match.
+  const int shape = static_cast<int>(entry.path_size) / kPathLengthDivisor +
+                    static_cast<int>(entry.path_segments) * kSegmentWeight;
 
-  if (file_score != std::numeric_limits<int>::max()) {
-    score = std::min(score, file_score - 20 + static_cast<int>(lower_filename.size()));
-    if (lower_filename.rfind(query, 0) == 0) {
-      score -= 30;
+  if (filename_possible) {
+    const int filename_penalty = MatchPenalty(lower_filename, original_filename, query);
+    if (filename_penalty != kNoMatch) {
+      int score = filename_penalty + shape +
+                  static_cast<int>(lower_filename.size()) * kFilenameLengthWeight;
+      if (lower_filename == query) {
+        score -= kExactFilenameBonus;
+      } else if (lower_filename.rfind(query, 0) == 0) {
+        score -= kFilenamePrefixBonus;
+      }
+      return score;
     }
   }
 
-  return score;
+  const int path_penalty = MatchPenalty(lower_path, original_path, query);
+  if (path_penalty == kNoMatch) {
+    return kNoMatch;
+  }
+  return kPathOnlyBase + path_penalty + shape;
 }
 
 bool FileFinder::AppendCacheEntry(std::string_view relative_path) {
@@ -351,6 +478,14 @@ bool FileFinder::AppendCacheEntry(std::string_view relative_path) {
       separator == std::string_view::npos ? 0u : static_cast<std::uint32_t>(separator + 1);
   entry.lower_path_mask = CharPresenceMask(lower_path);
   entry.lower_filename_mask = CharPresenceMask(lower_path.substr(entry.lower_filename_offset));
+  // Ranking terms the build can compute once instead of per keystroke: how deep
+  // the path is, and whether the fold left the original bytes aligned with the
+  // folded ones (which is what lets the scorer see camelCase humps).
+  entry.path_segments = static_cast<std::uint16_t>(std::min<std::size_t>(
+      std::count(lower_path.begin(), lower_path.end(), '/') +
+          std::count(lower_path.begin(), lower_path.end(), '\\'),
+      std::numeric_limits<std::uint16_t>::max()));
+  entry.fold_preserves_offsets = entry.lower_size == entry.path_size;
   cached_entries_.push_back(entry);
   return true;
 }

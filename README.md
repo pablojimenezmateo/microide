@@ -100,7 +100,9 @@ for what is actually measured, and what is not.
 - Count-all totals with match highlighting; replace-in-project in literal and regex modes (regex expands capture groups)
 - In-file find & replace with match case (Alt+C), whole word (Alt+W) and regex (Alt+R) — the same
   first two toggles the terminal find bar carries, and all three apply in literal and regex mode
-- File finder overlay with cached index
+- File finder overlay with a cached index and quality-ranked fuzzy matching: contiguous runs, word
+  starts and camelCase humps rank above scattered matches, filename matches above path-only ones, and
+  the shorter, shallower path wins an otherwise-equal match
 - Standalone `microide_search_bench` for repeatable timing
 
 ### Terminal

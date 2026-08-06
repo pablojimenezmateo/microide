@@ -427,6 +427,135 @@ void TestFileFinderCapsRecentsOnEmptyQuery() {
 // The finder reports its backing index's truncation so the overlay can flag an
 // incomplete result set instead of presenting a prefix of a huge tree as the
 // authoritative file list (TD-2026-07-17-008/033).
+// Drives the real finder over a fixed path set and reports the ranked order, so
+// a ranking assertion reads as "this path must come before that one" rather than
+// as arithmetic on scores nobody can check by eye.
+class RankingFixture {
+ public:
+  explicit RankingFixture(const std::vector<std::filesystem::path>& paths) {
+    root_ = temp_.path() / "workspace";
+    WriteFile(root_ / "README.md", "root\n");
+    Expect(index_.SetRoot(root_, FileIndex::RootPopulationMode::Deferred),
+           "ranking fixture should initialize a deferred index root");
+    Expect(index_.ApplyBatch(MakeInitialBatchFromPaths(paths)),
+           "ranking fixture should apply its initial batch");
+    finder_.SetIndex(&index_);
+  }
+
+  // Position of `path` in the ranked results, or a large sentinel when absent —
+  // an assertion comparing two positions then fails loudly on a missing match
+  // instead of passing on two equal sentinels.
+  std::size_t RankOf(const std::string& query, const std::string& path) {
+    finder_.SetQuery("");  // full scan, not the narrowing path
+    finder_.SetQuery(query);
+    const auto& results = finder_.results();
+    for (std::size_t i = 0; i < results.size(); ++i) {
+      if (results[i].path_string == path) {
+        return i;
+      }
+    }
+    return std::numeric_limits<std::size_t>::max();
+  }
+
+  void ExpectRanksAbove(const std::string& query, const std::string& better,
+                        const std::string& worse) {
+    const std::size_t better_rank = RankOf(query, better);
+    const std::size_t worse_rank = RankOf(query, worse);
+    Expect(better_rank != std::numeric_limits<std::size_t>::max(),
+           ("query '" + query + "' should match '" + better + "' at all").c_str());
+    Expect(worse_rank != std::numeric_limits<std::size_t>::max(),
+           ("query '" + query + "' should match '" + worse + "' at all").c_str());
+    Expect(better_rank < worse_rank,
+           ("query '" + query + "': '" + better + "' should rank above '" + worse + "'").c_str());
+  }
+
+ private:
+  TemporaryDirectory temp_;
+  std::filesystem::path root_;
+  FileIndex index_;
+  FileFinder finder_;
+};
+
+// The old scorer had two terms — where the first matched character landed, and
+// the total gap — so a query that appears CONTIGUOUSLY late in a name lost to
+// one scattered across an earlier one. Contiguity is the strongest signal a
+// quick-open has, so the run bonus is superlinear in run length.
+void TestFileFinderRanksContiguousMatchesFirst() {
+  RankingFixture fixture({
+      "src/project/FileFinder.cpp",
+      "src/foo/find_error.cpp",
+      "src/f/i/n/d/e/r.cpp",
+  });
+  fixture.ExpectRanksAbove("finder", "src/project/FileFinder.cpp", "src/foo/find_error.cpp");
+  fixture.ExpectRanksAbove("finder", "src/project/FileFinder.cpp", "src/f/i/n/d/e/r.cpp");
+}
+
+// The user-visible complaint that started this: with two equally good filename
+// matches, the shorter and shallower path is the one that was meant.
+void TestFileFinderPrefersShorterShallowerPaths() {
+  RankingFixture fixture({
+      "index.ts",
+      "app/index.ts",
+      "app/features/deeply/nested/area/index.ts",
+  });
+  fixture.ExpectRanksAbove("index", "index.ts", "app/index.ts");
+  fixture.ExpectRanksAbove("index", "app/index.ts",
+                           "app/features/deeply/nested/area/index.ts");
+}
+
+// camelCase initials are how people type a long identifier-shaped filename. The
+// fold destroys the case that defines a hump, so this only works because the
+// entry keeps the original bytes and the scorer reads them when the fold left
+// the offsets aligned.
+void TestFileFinderRanksCamelCaseInitials() {
+  RankingFixture fixture({
+      "src/FooBarConfig.cpp",
+      "src/fabric_cache.cpp",
+  });
+  fixture.ExpectRanksAbove("fbc", "src/FooBarConfig.cpp", "src/fabric_cache.cpp");
+}
+
+// A match on the filename outranks a match that only exists across the path.
+// VSCode's rule (label before description), and what people mean when they say a
+// finder "found the wrong file".
+void TestFileFinderPrefersFilenameMatchesOverPathMatches() {
+  RankingFixture fixture({
+      "src/utils/index.ts",
+      "src/deeply/nested/area/utils.ts",
+  });
+  fixture.ExpectRanksAbove("utils", "src/deeply/nested/area/utils.ts", "src/utils/index.ts");
+}
+
+// A word start beats mid-word, and an exact filename beats everything.
+void TestFileFinderPrefersWordStartsAndExactNames() {
+  RankingFixture fixture({
+      "src/config.ts",
+      "src/preconfigured.ts",
+      "src/config_loader.ts",
+  });
+  fixture.ExpectRanksAbove("config", "src/config.ts", "src/preconfigured.ts");
+  fixture.ExpectRanksAbove("config", "src/config.ts", "src/config_loader.ts");
+
+  RankingFixture exact({
+      "README.md",
+      "docs/readme_generator.md",
+      "docs/old/README.md.bak",
+  });
+  exact.ExpectRanksAbove("readme.md", "README.md", "docs/old/README.md.bak");
+  exact.ExpectRanksAbove("readme", "README.md", "docs/readme_generator.md");
+}
+
+// A query that spans a separator is a path query; it must still find the file.
+void TestFileFinderMatchesAcrossPathSeparators() {
+  RankingFixture fixture({
+      "src/project/FileFinder.cpp",
+      "src/projection/file_finder_helper.cpp",
+  });
+  fixture.ExpectRanksAbove("project/filefinder", "src/project/FileFinder.cpp",
+                           "src/projection/file_finder_helper.cpp");
+}
+
+
 void TestFileFinderReportsTruncatedIndex() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "workspace";
@@ -538,6 +667,17 @@ void TestFileFinderPresenceMaskNeverRejectsAMatch() {
 }
 
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/RanksContiguousMatchesFirst",
+          TestFileFinderRanksContiguousMatchesFirst);
+  AddTest(tests, "FileFinder/PrefersShorterShallowerPaths",
+          TestFileFinderPrefersShorterShallowerPaths);
+  AddTest(tests, "FileFinder/RanksCamelCaseInitials", TestFileFinderRanksCamelCaseInitials);
+  AddTest(tests, "FileFinder/PrefersFilenameMatchesOverPathMatches",
+          TestFileFinderPrefersFilenameMatchesOverPathMatches);
+  AddTest(tests, "FileFinder/PrefersWordStartsAndExactNames",
+          TestFileFinderPrefersWordStartsAndExactNames);
+  AddTest(tests, "FileFinder/MatchesAcrossPathSeparators",
+          TestFileFinderMatchesAcrossPathSeparators);
   AddTest(tests, "FileFinder/PresenceMaskNeverRejectsAMatch",
           TestFileFinderPresenceMaskNeverRejectsAMatch);
   AddTest(tests, "FileFinder/ReportsTruncatedIndex", TestFileFinderReportsTruncatedIndex);

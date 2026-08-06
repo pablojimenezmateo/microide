@@ -80,6 +80,17 @@ class FileFinder {
     // component it bounds in the original -- true even for a fold that changes a
     // component's byte length.
     std::uint32_t lower_filename_offset = 0;
+    // Directory components ahead of the filename. Precomputed because it is a
+    // ranking term (a shallower path wins an otherwise-equal match) and counting
+    // separators per candidate per keystroke is a scan the build can do once.
+    std::uint16_t path_segments = 0;
+    // True when the case fold preserved byte offsets, i.e. `lower` and the
+    // original path align byte for byte. Only then can the scorer read the
+    // ORIGINAL bytes at a folded offset, which is what makes camelCase humps
+    // visible ("fbc" -> FooBarConfig). A fold that changes a component's byte
+    // length (U+0130) turns the bonus off for that entry rather than reading the
+    // wrong byte.
+    bool fold_preserves_offsets = false;
     // Presence bitmask over the folded bytes (see CharPresenceMask). A query
     // whose mask is not a subset of these cannot possibly be a subsequence, so
     // the O(len * query) scan below is skipped outright.
@@ -106,7 +117,12 @@ class FileFinder {
   // rejects it. Cheap enough to run over the whole index per keystroke.
   static std::uint64_t CharPresenceMask(std::string_view text);
 
-  static int SubsequenceScore(std::string_view text, const std::string& query);
+  // Match `query` (already folded) against `text` (folded) and return a penalty:
+  // lower is better, `kNoMatch` when the query is not a subsequence at all.
+  // `original` is the pre-fold bytes when they align byte for byte with `text`,
+  // empty otherwise — see CachedFileEntry::fold_preserves_offsets.
+  static int MatchPenalty(std::string_view text, std::string_view original,
+                          const std::string& query);
   int RankMatchCached(const CachedFileEntry& entry, const std::string& query,
                       std::uint64_t query_mask) const;
   // Append one indexed path to the blobs and push its entry. Returns false when
