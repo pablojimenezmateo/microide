@@ -316,6 +316,15 @@ Two habits made the instance findable in about an hour, both already in the tree
   or above `n` (`tests/perf/AllocationCounter.cpp`). Resolve the frames with
   `addr2line -e <binary> -f -C <offset>`. It named all five sites directly;
   no profiler is needed and none works on this host anyway.
+- `MICROIDE_PERF_ALLOC_TRACE=<min>[:<max>]` is its complement, and the one to
+  reach for when the problem is *many small* allocations rather than a few large
+  ones. It captures a stack for every allocation in the size **band** and
+  **aggregates** by stack, printing the table most-frequent-first at the end of the
+  run. One backtrace per hit is unreadable at 960 hits, and a floor cannot express
+  "exactly 32 bytes". TD-2026-08-06-139 needed a 90-commit bisect for want of this;
+  after it, `MICROIDE_PERF_ALLOC_TRACE=32:32` named the site in one run. Resolve
+  with `addr2line -e <binary> -f -C -p -i <offset>...` — `-i` matters, because
+  everything interesting is inlined.
 - `MICROIDE_PERF_SUMMARY=1` ranks `PerformanceTrace::Scope` regions by self time.
   The edit path carried **no scopes at all** — `BuildRangeHistoryEntry`,
   `ApplyHistoryEntry` and the buffer write were unmeasurable — so the first step

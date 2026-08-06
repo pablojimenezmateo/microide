@@ -14,6 +14,7 @@
 # Usage:
 #   tools/perf-gate.sh                 # build, run the gate, record, report drift
 #   tools/perf-gate.sh --scenarios=a,b # a subset (does not become the drift record)
+#   tools/perf-gate.sh --force         # measure even on a busy machine (advisory)
 #   tools/perf-gate.sh --install-timer # install a weekly systemd user timer
 #   tools/perf-gate.sh --status        # what the last recorded run said
 #   tools/perf-gate.sh --drift         # re-report drift without running anything
@@ -24,6 +25,7 @@
 #   MICROIDE_PERF_ITERATIONS iterations per scenario (default 10 — the count the
 #                            baselines were recorded at; see the note below)
 #   MICROIDE_PERF_RUNNER     reference runner id (default perf-runner-v1)
+#   MICROIDE_PERF_MAX_LOAD   refuse to measure above this 1-min load (default 2.0)
 #   MICROIDE_BUILD_JOBS      build parallelism (default nproc)
 #
 # Iterations: 10 is not a tuning knob. A baseline records a p50/p95 captured at
@@ -144,12 +146,81 @@ EOF
 # The run
 # ---------------------------------------------------------------------------
 
+# Refuse to measure on a machine that is already busy.
+#
+# The first recorded run of this script landed while an unrelated 24-job compile
+# was running, and produced 17 wall/CPU "failures" that all disappeared on a quiet
+# machine. That is worse than no run: it writes a contended measurement into the
+# drift series, where every later comparison reads it as history. The baselines are
+# absolute timings from a pinned 8-CPU set; a load average of 20 means those cores
+# are shared, and no amount of clock normalisation recovers that.
+#
+# Load average, not a process scan: it costs nothing, it catches every competitor
+# (another build, a container, a browser) rather than a list of names, and it is
+# the number that actually describes the contention. --force overrides for a
+# deliberate advisory run.
+MAX_LOAD="${MICROIDE_PERF_MAX_LOAD:-2.0}"
+
+current_load() {
+  awk '{print $1}' /proc/loadavg 2>/dev/null
+}
+
+machine_is_quiet() {
+  local load
+  load=$(current_load)
+  [[ -z "$load" ]] && return 0  # cannot tell; do not block on a missing /proc
+  awk -v l="$load" -v m="$MAX_LOAD" 'BEGIN { exit !(l <= m) }'
+}
+
+require_quiet_machine() {
+  if machine_is_quiet; then
+    return 0
+  fi
+  local load
+  load=$(current_load)
+  cat >&2 <<MSG
+perf-gate: REFUSING TO MEASURE — the machine is busy (1-min load $load, limit $MAX_LOAD).
+
+  The gate compares against absolute timings captured on an idle pinned core set.
+  A contended run does not produce a slightly-noisy result; it produces wall and
+  CPU failures on scenarios that are fine, and writes them into the drift series
+  as history. Wait for the machine, or:
+
+    MICROIDE_PERF_MAX_LOAD=<n> tools/perf-gate.sh   # raise the limit
+    tools/perf-gate.sh --force                      # measure anyway (advisory)
+
+  Top consumers right now:
+MSG
+  ps -eo pcpu,pid,comm --sort=-pcpu --no-headers 2>/dev/null | head -5 | sed 's/^/    /' >&2
+  notify normal "microide perf gate" "skipped: machine busy (load $load)"
+  return 1
+}
+
 cmd_run() {
-  local extra_args=("$@")
+  # `"${a[@]:-}"` on an EMPTY array expands to one empty-string argument, which
+  # microide_perf rejects as an unknown option -- so the no-argument form, i.e.
+  # the scheduled one, was the only form that could not run. `${a[@]+"${a[@]}"}`
+  # expands to nothing when the array is empty and to the elements otherwise.
+  local extra_args=()
   local subset=0
-  for arg in "${extra_args[@]:-}"; do
-    [[ "$arg" == --scenarios=* ]] && subset=1
+  local force=0
+  for arg in "$@"; do
+    case "$arg" in
+      --force) force=1 ;;
+      --scenarios=*) subset=1; extra_args+=("$arg") ;;
+      *) extra_args+=("$arg") ;;
+    esac
   done
+
+  local contended=0
+  if ! machine_is_quiet; then
+    contended=1
+    if (( ! force )); then
+      require_quiet_machine
+      return 3
+    fi
+    echo "perf-gate: --force on a busy machine (load $(current_load)); this run is ADVISORY" >&2
+  fi
 
   local commit dirty stamp
   commit=$(git rev-parse --short=12 HEAD 2>/dev/null || echo unknown)
@@ -157,14 +228,22 @@ cmd_run() {
   git diff --quiet HEAD 2>/dev/null || dirty="-dirty"
   stamp=$(date -u +%Y%m%dT%H%M%SZ)
 
+  # Only a full, uncontended run joins the series. Everything else is a
+  # diagnostic, and a diagnostic filed as history is worse than no history:
+  #
+  # - a subset run diffed against a 93-scenario one reads every absent scenario
+  #   as a change;
+  # - a --force run on a busy machine records wall and CPU numbers that describe
+  #   the other process, and every later comparison then reads them as the
+  #   product's past. The first run of this script did exactly that: 17 wall
+  #   failures, all of which passed on a quiet machine an hour later.
   local run_dir="$DRIFT_DIR"
-  # A subset run is a diagnostic, not a drift record: comparing a 3-scenario
-  # report against a 93-scenario one reads every absent scenario as a change.
-  # Keep it out of the series.
   if (( subset )); then
     run_dir="$DRIFT_DIR/subset"
-    mkdir -p "$run_dir"
+  elif (( contended )); then
+    run_dir="$DRIFT_DIR/contended"
   fi
+  mkdir -p "$run_dir"
 
   local report="$run_dir/${stamp}-${commit}${dirty}.json"
   local log="$run_dir/${stamp}-${commit}${dirty}.log"
@@ -204,7 +283,7 @@ PY
 
   echo "perf-gate: running the gate at ${ITERATIONS} iterations (runner=$RUNNER)"
   "$BIN" --iterations="$ITERATIONS" --reference-runner="$RUNNER" \
-    --report-json="$report" "${extra_args[@]:-}" 2>&1 | tee -a "$log"
+    --report-json="$report" ${extra_args[@]+"${extra_args[@]}"} 2>&1 | tee -a "$log"
   local gate_rc=${PIPESTATUS[0]}
 
   if [[ ! -f "$report" ]]; then
@@ -226,6 +305,14 @@ PY
     echo "  verdict: $([[ $gate_rc -eq 0 ]] && echo PASS || echo FAIL)"
     echo "  report:  $report"
     echo "  log:     $log"
+    if (( subset )); then
+      echo "  NOTE:    subset run — diagnostic only, not part of the drift series"
+    fi
+    if (( contended )); then
+      echo "  NOTE:    ADVISORY — measured on a busy machine (--force). Wall and CPU"
+      echo "           numbers describe the contention, not the code. Not part of the"
+      echo "           drift series; allocation counts are still trustworthy."
+    fi
     echo
     # The gate's own near-miss summary, which is where a drift that has not yet
     # tripped anything shows up in a SINGLE run.

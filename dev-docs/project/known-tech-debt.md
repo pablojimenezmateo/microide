@@ -2,6 +2,24 @@
 
 Reviewed 2026-08-06. **78 open items.**
 
+The 2026-08-06 perf-integrity pass closed three more: **139** (five allocation
+gates drifted up, unexplained), **141** (nothing reruns the gate), and **143**
+(`MaxVisualColumns` stamping a revision onto a table it did not verify). It opened
+three: **144** (`FoldingModel::Block`'s four per-block vectors, the residue of
+139's real half), **145** (a mouse-drag rebuilding the pane layout three times per
+motion event, found by the tracer 141 added), and **146** (ccache + LTO ICEs, so an
+A/B over history skips commits — the toolchain problem that made 139 expensive to
+attribute).
+
+**139 is the second entry in three days whose headline was wrong**, after 138.
+Both were wrong the same way: a number attributed to the work the scenario is named
+after, when it came from the scenario's setup. `p50_allocations` covers the whole
+iteration; `phase_metrics` in `--report-json` is what covers the measured phase,
+and it read 960 allocations at every commit across 139's 90-commit window. Four of
+139's five drifts turned out never to have happened at all — they do not reproduce
+in a controlled A/B of the two endpoints, so they were a property of the full run,
+not of the code.
+
 The 2026-08-06 pass closed the three perf-gate-integrity entries filed on
 2026-08-05: TD-2026-08-05-135 (four gated baselines 40-80% looser than the code
 they gate), TD-2026-08-05-136 (a resident-growth gate decided by allocator arena
@@ -153,7 +171,82 @@ Two things to carry forward:
   being reset by each one, and the resident-growth gates moved accordingly. See
   [TD-2026-08-06-142](#td-2026-08-06-142).
 
-### TD-2026-08-06-139 — five allocation gates drifted UP, unexplained, and passed. OPEN.
+### TD-2026-08-06-139 — five allocation gates drifted UP, unexplained, and passed. [RESOLVED 2026-08-06 — one was real and is a deliberate trade; the other four never happened.]
+
+**[RESOLVED 2026-08-06.]** Both halves were bisected. The entry's headline reading
+of the drag half — "~3 allocations per move, on a drag path that should be
+allocation-free per move" — **is wrong**, and the way it is wrong is the reusable
+lesson: `p50_allocations` is the whole *iteration*, and this scenario opens a
+50k-line file before it moves the mouse 160 times.
+
+**The drag: +472, real, and the trade is right.**
+
+Reproduced exactly at both window endpoints, standalone, 10 iterations:
+`932ad5d2` = 5,024 and `a460e6cf` = 5,496. Bisected in seven steps
+(`--scenarios=editor_mouse_selection_drag --iterations=10`, oracle > 5,200) to
+**`f2284f38` "perf(fold): derive folds incrementally from block words instead of
+rescanning"**, which measured 7,030 (+2,006); later commits in the same window
+brought it back to the +472 the entry recorded.
+
+**The measured phase never moved.** `mouse_selection_drag.160_moves` reads
+**960 allocations / 30,720 bytes at every commit in the window** — both endpoints,
+the first bad commit, and every bisect step. The drag path is unchanged. The whole
++472 is scenario *setup*: `FoldingModel`'s block partition, built when the file is
+opened. `Block` holds four `std::vector`s (bracket closers/openers, indent
+dedents/openers) and the 50k fixture is ~195 blocks of 256 lines, so building the
+partition is a few hundred small heap allocations. `PrefixState`, the struct
+immediately below it in the header, already avoids exactly this — "sliced out of
+shared pools so a document with thousands of blocks does not hold thousands of
+small vectors" — and `Block` did not get the same treatment. Filed as
+[TD-2026-08-06-144](#td-2026-08-06-144).
+
+It stands as measured. ~472 one-time 32-byte allocations at file open bought the
+removal of an O(document) fold rescan from *every keystroke* (the commit measures
+that at ~26% of `mid_file_edit_latency_large_file` on the same fixture). Speed
+first, then correctness, then CPU, then memory: that is the trade the priority
+order names, made in the right direction.
+
+**The four diff/staging scenarios: not code, and not in that window.**
+`diff_next_hunk_large_file` measures **87,421 `p50_allocations` at both endpoints,
+byte-identical**, standalone at 10 iterations against the same fixture. A flat
++1,407 appearing on four scenarios that a controlled A/B cannot reproduce is a
+property of the *run*, not of the code — both numbers in the entry's table came
+from full 93-scenario runs, and these scenarios are demonstrably context-sensitive:
+measured today at HEAD, the same scenario reads **86,741 in-suite against 87,421
+standalone**, a 680-allocation offset from process state alone.
+
+The mechanism is not a mystery either. **Six scenarios were added to the suite
+inside that window** — `editor_long_line_buffer_search`,
+`editor_long_line_horizontal_scroll`, `editor_long_line_select_all_edit`,
+`editor_typing_minified_line`, `merge_model_build_interleaved`, `perf_gate_canary`
+— four of which drive the minified fixture, one line of megabytes, whose resident
+behaviour is documented as allocator-placement-sensitive in
+[TD-2026-08-05-136](#td-2026-08-05-136). The heap the diff group meets is not the
+heap it met before they existed.
+
+The "shared-constant shape" reasoning in the original entry was sound — one cause,
+not four. The conclusion that the cause was a shared *code* change was not; the
+same shape is exactly what a changed run context produces.
+
+**What made this expensive, and what fixed it.** Attributing the drag half took a
+90-commit bisect because the harness could measure the regression but not point at
+it: the counters said a phase allocated 960 times and nothing said where.
+`MICROIDE_PERF_BIG_ALLOC_BYTES` could not help — it traces the *largest*
+allocations one backtrace per hit, and this was hundreds of 32-byte ones. The
+aggregating allocation-site tracer added with
+[TD-2026-08-06-141](#td-2026-08-06-141)
+(`MICROIDE_PERF_ALLOC_TRACE=<min>[:<max>]`) answers the same question in one run,
+and answering "which sites allocate in this phase" is how the *remaining* 960 got
+attributed to `ComputeEditorPaneLayouts` — see
+[TD-2026-08-06-145](#td-2026-08-06-145).
+
+**Two things to reuse.** *(1)* Check whether a counter moved inside the measured
+phase before attributing it to the measured work; a scenario's `p50_allocations`
+covers its setup too, and `phase_metrics` in `--report-json` is where the answer
+is. *(2)* A drift that a controlled A/B of the two endpoints cannot reproduce is
+not a code change, however clean its shape looks in a table.
+
+The original entry follows.
 
 From the same sweep as [TD-2026-08-05-135](#td-2026-08-05-135), and the half a
 blind rebaseline would have buried. Measured against the committed baselines
@@ -227,7 +320,73 @@ Deliberately not bundled into the 2026-08-06 pass: CPU normalisation is a strict
 improvement that needed no envelope changes, and mixing an envelope re-cut into the
 same rebaseline would have made both unreadable.
 
-### TD-2026-08-06-141 — nothing reruns the perf gate, so drift is only ever found by accident. OPEN.
+### TD-2026-08-06-141 — nothing reruns the perf gate, so drift is only ever found by accident. [RESOLVED 2026-08-06.]
+
+**[RESOLVED 2026-08-06.]** The entry asked for a scheduled run plus a dated series
+of `--report-json` files. Both shipped, and so did the part the entry warned about
+("the thing to get right is that the output must be *read*").
+
+- **`tools/perf-gate.sh`** builds, runs the full gate with
+  `--reference-runner=perf-runner-v1`, and writes a dated commit-stamped report
+  into `${MICROIDE_PERF_DRIFT_DIR:-~/.local/state/microide/perf-drift}`.
+  `--install-timer` installs a weekly systemd **user** timer with
+  `Persistent=true`, so a machine that was off on the scheduled day runs on next
+  boot — a missed week is otherwise indistinguishable from a clean one in the
+  record, which is this entry's own failure mode one level down. `--status` prints
+  the last summary; `--drift` re-reports without running anything. Reachable as
+  `tools/run-checks.sh perf-gate`.
+- **`tools/perf-drift.py`** is the sweep that closed
+  [TD-2026-08-05-135](#td-2026-08-05-135), automated: report vs report, or report
+  vs the committed baselines, split by what a finding *means* — allocation drift up
+  (deterministic, so every row is a code change), allocation drift down
+  (improvements the gate is still handing slack for), loose gates, envelope
+  pressure. Reports are ordered by their own `metadata.timestamp_utc`, never by
+  mtime, which a copy or an rsync rewrites.
+- **Each report now records what it was gated against** — a per-scenario `baseline`
+  block with expected / actual / tolerance / delta / `envelope_used_percent` /
+  passed. Without it an old report says what was measured but not what it was
+  measured *against*, and re-deriving the envelope from today's baselines is
+  exactly the information a rebaseline destroys.
+- **A single run now reports envelope pressure.** Any *passing* gate at or above
+  75% of its tolerance is printed at the end of the run, allocation gates first and
+  unqualified (deterministic ⇒ a near-miss is a code change), duration/resident
+  gates separately and labelled machine-sensitive. This is the leading indicator
+  [TD-2026-08-06-139](#td-2026-08-06-139) needed: its drag drift was 94% of its
+  envelope and the run printed `PASS` and nothing else.
+- **The run exits non-zero** on a gate failure *or* on flagged deterministic drift,
+  writes `latest-summary.txt`, and raises a `notify-send` notification.
+
+One more piece of instrumentation came out of using it:
+`MICROIDE_PERF_ALLOC_TRACE=<min>[:<max>]` aggregates call stacks for every
+allocation in a size band and prints the table most-frequent-first. The counters
+could say a phase allocated 960 times and nothing could say where, which is why
+TD-2026-08-06-139 needed a 90-commit bisect.
+
+**The first recorded run found the gap in the runner itself.** It landed while an
+unrelated 24-job compile was running and reported 17 wall/CPU failures across 8
+scenarios — every one of which passed on a quiet machine an hour later. That is
+worse than no run: it writes a contended measurement into the series, where every
+later comparison reads it as the product's past. The calibration probe did *not*
+catch it (only 9.5% of iterations sat above 1.25x the run's own median; the probe
+is short enough to slip between a competitor's slices), so the guard is a
+1-minute-load check before the run rather than a post-hoc statistic:
+`MICROIDE_PERF_MAX_LOAD` (default 2.0), and the script refuses to measure above it
+and names what is competing. `--force` measures anyway and files the result under
+`contended/`, out of the series — the same treatment `--scenarios=` runs get under
+`subset/`. Allocation counts are unaffected by contention and stay trustworthy in
+both.
+
+Three things NOT done, on purpose. The timer is installed by an explicit
+`--install-timer`, not by the build — a check that installs a scheduler as a side
+effect of a `cmake` run is worse than no scheduler. The iteration count is fixed at
+10 rather than exposed as a tuning knob: a baseline records a p50/p95 captured at
+some sample size, so re-measuring at another one compares percentiles of
+differently-sized samples and reads as drift that is not there. And the first
+authoritative run is **deferred until the machine is idle** rather than taken from
+the contended one — the whole point of the series is that its first entry is not a
+guess.
+
+The original entry follows.
 
 The process half of [TD-2026-08-05-135](#td-2026-08-05-135). Baselines drifted
 40-80% loose, and eleven gates plus five upward regressions accumulated, because the
@@ -298,7 +457,39 @@ Priority is genuinely low — memory is last, and the growth converges — but t
 entry exists so the next person to read a resident-growth baseline knows why it
 moved and that the ceiling is unmeasured rather than chosen.
 
-### TD-2026-08-06-143 — `MaxVisualColumns` stamps a fresh content revision onto a table it did not verify. OPEN.
+### TD-2026-08-06-143 — `MaxVisualColumns` stamps a fresh content revision onto a table it did not verify. [RESOLVED 2026-08-06.]
+
+**[RESOLVED 2026-08-06.]** Fix (a), the correct-by-construction one, and it cost
+nothing: `MaxVisualColumns` now goes through `LineWidthsAreCurrent` — the same
+three-term predicate every other reader of the width table already used — instead
+of checking two of its three terms and then stamping the third.
+
+The measured worry ("at the price of a rebuild on any path that currently gets
+away with it") did not materialise, and the reason is structural rather than
+lucky: every edit path either splices the table through
+`UpdateVisualColumnCacheAfterEdit`, which stamps the *post*-edit revision because
+the invalidation that bumps it runs first, or drops the table whole. The three
+non-`TextViewportEditEngine` `ContentEdit` sites all take the second route.
+
+Both halves of the entry's proposal shipped, because the predicate and a
+cross-check answer different questions:
+
+- **The predicate** proves the table is never *read* at a revision it was not built
+  for. Its silence is auditable rather than assumed:
+  `editor.line_width_rebuild_stale_revision` is a fourth rebuild-reason counter
+  that must read 0 in every run, and a non-zero value names the offending path.
+- **`MICROIDE_VERIFY_LINE_WIDTH_TABLE`** is the entry's option (b): a debug-only,
+  opt-in, whole-table cross-check of every entry (and the memoized maximum) against
+  a fresh measurement. The predicate cannot prove the entries are *right*, because
+  the splice path derives widths instead of measuring them; this is what a soak run
+  can falsify.
+
+The regression test mutates the lines behind the cache's back on purpose — the
+defect is the absence of a guard, not the presence of a caller — and carries an
+unchanged-revision control so it cannot pass for a cache that simply rebuilds every
+time.
+
+The original entry follows.
 
 `TextLayoutCache` carries `cached_max_visual_columns_content_revision_`, and
 `LineWidthsAreCurrent()` — the freshness predicate every *reader* of the per-line
@@ -338,6 +529,133 @@ env flag, so a soak run proves the invariant instead of assuming it.
 This became more load-bearing on 2026-08-06: viewport copies used to wipe the width
 table, which masked any staleness at every copy. They no longer do
 ([TD-2026-08-06-138](#td-2026-08-06-138)), so a stale table now survives further.
+
+### TD-2026-08-06-144 — `FoldingModel::Block` holds four `std::vector`s, and the struct below it already knows not to. OPEN.
+
+Found while closing [TD-2026-08-06-139](#td-2026-08-06-139), which bisected a +472
+allocation drift to the incremental fold model and then found the cost was entirely
+in the block partition built at file open.
+
+```cpp
+struct Block {                          // one per ~256 lines
+  ...
+  std::vector<WordCloser> bracket_closers;
+  std::vector<WordOpener> bracket_openers;
+  std::vector<WordDedent> indent_dedents;
+  std::vector<WordIndent> indent_openers;
+};
+
+// The walk state at a block boundary, sliced out of shared pools so a document
+// with thousands of blocks does not hold thousands of small vectors.
+struct PrefixState { std::uint32_t bracket_offset, bracket_count, ...; };
+```
+
+`PrefixState` is the next struct in the file and it already carries the answer in
+its own doc comment. `Block` did not get the same treatment, so a 50k-line document
+(~195 blocks) pays a few hundred 32-byte allocations to build the partition, and
+holds four vector headers plus four heap blocks per block for the life of the tab.
+Measured: **+472 allocations** on the `editor_mouse_selection_drag` fixture, all at
+open.
+
+The build side is already pooled — `AppendBlockWord` fills four
+`build_*_` scratch members and then `assign`s them into the block, which is four
+allocations away from being free. What is missing is the storage side: four
+model-owned pools plus `(offset, count)` per block.
+
+**Why this is low priority and not a bug.** The cost is one-time per file open and
+buys the removal of an O(document) fold rescan from every keystroke — the trade the
+priority order names, in the right direction. ~472 allocations is ~20 µs against a
+file open measured in milliseconds.
+
+**The one thing that makes it non-trivial**, and the reason it is filed rather than
+done: blocks are rebuilt *individually* (a keystroke rebuilds the one block it
+lands in), and a rebuilt block's word can change size, so pooled slices need either
+in-place reuse when the new word fits plus append-and-compact when it does not, or
+a fixed per-block capacity. That is a small allocator, and it needs the
+cache-free-oracle diff test (see the fold notes in
+`dev-docs/performance/performance-findings.md`) run against it, not a second
+`FoldingModel`.
+
+### TD-2026-08-06-145 — a mouse-drag rebuilds the editor pane layout three times per motion event. OPEN.
+
+Measured at HEAD with `MICROIDE_PERF_ALLOC_TRACE=32:32` on
+`editor_mouse_selection_drag`: the measured phase is **960 allocations for 160
+mouse moves — six per move, every one exactly 32 bytes**, allocated and freed
+inside the phase. Four of the six resolve to one call, reached three times per
+motion event:
+
+```
+WorkspaceShell::ComputeEditorPaneLayouts(SDL_FRect const&)   WorkspaceShellEditorSplits.cpp:119
+  <- EditorMouseCoordinator::HandleSelectionMotion            WorkspaceEditorMouseCoordinator.cpp:568
+  <- WorkspaceShell::CurrentFocusedEditorRedrawRect           WorkspaceShellRedraw.cpp:607
+       <- WorkspaceShell::RequestFocusedEditorRedraw          WorkspaceShellRedraw.cpp:258
+  <- the coordinator's pane-layout callback                   WorkspaceEditorMouseCoordinator.cpp:671
+```
+
+Each call allocates twice: `ComputeEditorSurfaceGroupRects` returns an
+`EditorGroupRectsLayout` holding a `std::vector<EditorGroupRects>`, and
+`EditorPaneLayoutsFromGroupRects` returns a `std::vector<EditorPaneLayout>`. Both
+are almost always **one element** — the common case is a single editor group — so
+this is two heap round-trips per call to carry one struct.
+
+This is **not** new and not the TD-2026-08-06-139 drift: the phase measured
+960 allocations at every commit across that entry's 90-commit window. It is
+pre-existing per-input-event work on a path where the whole point is that a drag
+tracks the pointer.
+
+Sixteen more call sites take the same function (`WorkspaceShellHoverTargets.cpp`
+alone has four; `WorkspaceShellMouse.cpp`, `WorkspaceShellCursor.cpp`,
+`CaretRedraw.cpp`, `WorkspaceShellRedraw.cpp` have the rest), so a fix here is
+worth more than the drag.
+
+Two shapes, in increasing risk:
+
+- **(a) Stop allocating.** The vectors are 1-2 elements in every real
+  configuration. An inline-capacity small vector, or `*Into(rect, out&)` overloads
+  writing into reusable shell scratch, removes the heap traffic without changing
+  when anything is computed. No staleness risk.
+- **(b) Stop recomputing.** Memoize on `editor_surface` plus a layout generation
+  bumped by `editor_groups` / `focused_group_index` / banner-visibility changes.
+  Strictly better, and strictly riskier: a missed bump serves a stale rect, and
+  a stale pane rect is a click landing in the wrong editor group.
+
+Start with (a). It is the whole allocation win and none of the staleness risk, and
+it leaves (b) available with a measurement to justify it.
+
+### TD-2026-08-06-146 — ccache + `-flto=auto` ICEs, so an A/B over history skips commits. OPEN.
+
+Bisecting [TD-2026-08-06-139](#td-2026-08-06-139) hit this on roughly one commit in
+four:
+
+```
+lto1: internal compiler error: original not compressed with zstd
+lto-wrapper: fatal error: /usr/bin/c++ returned 1 exit status
+```
+
+It is a ccache/LTO interaction (a cached object stored under different compression
+settings than the one the LTO link expects), not a source problem: the same commit
+builds clean with `-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF` or with ccache
+disabled. Both the `microide-perf` preset and `tools/perf-compare.py` build with
+LTO on, so **any** walk over history is affected, not just a hand-rolled bisect.
+
+Why it matters more than an occasional retry: a `git bisect run` script reports
+these as `skip` (exit 125), and a bisect that skips a quarter of its candidates can
+converge on a range rather than a commit, or on the wrong commit if the real one is
+in the skipped set. Nothing about the failure says "this is your toolchain" — it
+looks like the commit is broken.
+
+Worked around for that bisect by configuring with
+`-DCMAKE_INTERPROCEDURAL_OPTIMIZATION=OFF` and **verifying both window endpoints
+re-measured identically** (5,024 / 5,496 with and without LTO), which is the check
+that makes the workaround honest: an allocation count does not depend on inlining
+decisions, but that has to be shown rather than assumed for the metric being
+bisected. A wall-time bisect cannot use this workaround.
+
+Options: pin `CCACHE_COMPRESS`/`CCACHE_COMPRESSLEVEL` consistently, add
+`-fno-fat-lto-objects` handling to the ccache config, disable ccache for LTO
+configurations, or have `perf-compare.py` retry once with the cache bypassed and
+say so. Worth one session; the cost today is silent unreliability in the one tool
+used to attribute a regression to a commit.
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 

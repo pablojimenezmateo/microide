@@ -413,6 +413,20 @@ An earlier version of this guidance said a `--scenarios=X` number is never
 comparable to a committed baseline. That is too strong and it cost a session —
 most scenarios reproduce their baseline standalone just fine.
 
+**It runs the other way too: an in-suite delta with no standalone delta is not a
+code change.** Four diff/staging scenarios were recorded as taking a flat
++1,407 allocations each between two baseline sweeps — the same absolute number on
+four different workloads, which reads exactly like one shared regression
+(TD-2026-08-06-139). A standalone A/B of the two endpoint commits gave
+**byte-identical** numbers, so nothing in the diff path had changed. What had
+changed was the suite: six scenarios were added between the sweeps, four of them
+driving a megabyte-per-line minified fixture, and the diff group now meets a
+differently-shaped heap. Measured at HEAD, `diff_next_hunk_large_file` reads 86,741
+in-suite against 87,421 standalone — a 680-allocation offset from process state
+alone. **Before attributing an in-suite move to code, reproduce it standalone at
+both endpoints.** It is two builds and two one-scenario runs, and it is the
+difference between a real finding and a bisect that cannot converge.
+
 ### Percentiles land on the cold pass
 
 At `--iterations=8`, p95 lands on iteration 0's cold pass (font/atlas fill,
@@ -479,9 +493,28 @@ Each run writes a dated, commit-stamped `--report-json` into
 `${MICROIDE_PERF_DRIFT_DIR:-~/.local/state/microide/perf-drift}` — the drift record
 nobody had. **Iterations are not a knob**: a baseline records a p50/p95 captured at
 some iteration count, so re-measuring at a different one compares percentiles of
-differently-sized samples and reads as drift that is not there. `--scenarios=` runs
-are kept in a `subset/` sub-directory for the same reason: a 3-scenario report
-diffed against a 93-scenario one reads every absent scenario as a change.
+differently-sized samples and reads as drift that is not there.
+
+### Only a full, uncontended run joins the series
+
+A diagnostic filed as history is worse than no history, so two kinds of run are
+kept out of the series and written to sub-directories instead:
+
+- `--scenarios=` runs go to `subset/`. A 3-scenario report diffed against a
+  93-scenario one reads every absent scenario as a change.
+- Runs on a busy machine go to `contended/`, and only happen with `--force`.
+  Below 1-minute load `MICROIDE_PERF_MAX_LOAD` (default 2.0) the script
+  **refuses to measure at all** and says what is competing.
+
+That second guard is not hypothetical: the very first recorded run of
+`perf-gate.sh` landed while an unrelated 24-job compile was running, and reported
+**17 wall/CPU failures across 8 scenarios, every one of which passed on a quiet
+machine an hour later**. The baselines are absolute timings from an idle pinned
+8-CPU set; at load 20 those cores are shared, and no amount of clock normalisation
+recovers that — the calibration probe barely moved (9.5% of iterations above 1.25x
+the run's own median), because the probe is short enough to slip between the
+competitor's slices. Allocation counts, as always, were unaffected and remain
+trustworthy in a contended run.
 
 ### Three things make drift visible
 
