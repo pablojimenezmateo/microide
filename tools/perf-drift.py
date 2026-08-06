@@ -175,8 +175,33 @@ def pct(new: float, old: float) -> float | None:
     return (new / old - 1.0) * 100.0
 
 
+# Metrics that describe the MACHINE, not the product. Comparing them tells you
+# what the box was doing, which is worth printing as context and is never a
+# finding: a run on a faster core reads as an improvement in every one of them.
+MACHINE_METRICS = ("p50_cpu_calibration_ns",)
+
+# Smallest movement worth calling a loose gate, per metric family. A resident
+# growth of 455 bytes dropping to 0 is -100% and means nothing -- it is a
+# fraction of one page, and it dominated the first real run's output. Below these
+# floors a percentage is not a measurement.
+ABSOLUTE_FLOORS = {
+    "rss": 4096.0,   # one page
+    "wall": 0.5,     # ms
+    "cpu": 0.5,      # ms
+}
+
+
+def below_absolute_floor(metric: str, old: float, new: float) -> bool:
+    for key, floor in ABSOLUTE_FLOORS.items():
+        if key in metric:
+            return max(abs(old), abs(new)) < floor
+    return False
+
+
 def tolerance_for(metric: str, tolerances: dict[str, Any]) -> float | None:
     """The envelope a committed baseline records for one metric name."""
+    if metric in MACHINE_METRICS:
+        return None
     kind = "alloc_" if "allocations" in metric else ""
     if "cpu_ms" in metric:
         kind = "cpu_"
@@ -208,8 +233,12 @@ def analyse(
         for metric in sorted(new):
             if metric.startswith("__") or metric not in old:
                 continue
+            if metric in MACHINE_METRICS:
+                continue
             delta = pct(new[metric], old[metric])
             if delta is None:
+                continue
+            if below_absolute_floor(metric, old[metric], new[metric]):
                 continue
             row = {
                 "scenario": scenario,
