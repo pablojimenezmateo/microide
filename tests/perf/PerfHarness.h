@@ -13,6 +13,7 @@
 #include <random>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "workspace/shell/WorkspaceShell.h"
@@ -168,12 +169,101 @@ struct Iteration {
   std::vector<std::pair<std::string, std::uint64_t>> perf_counters;
 };
 
+// One measured phase, aggregated across a scenario's measured iterations.
+//
+// A scenario total answers "what did this whole iteration cost", which for most
+// scenarios is dominated by setup: search_first_result's 20,192 allocations are
+// 20,047 of project-open-and-index-build and 145 of the search the scenario is
+// named after, so its tight total gate would not notice the search doubling
+// (TD-2026-08-06-153). The phase is the thing the scenario claims to measure, so
+// the phase is what has to be gated.
+//
+// ALLOCATIONS are the gated statistic, for the same reason they are at scenario
+// level: they are deterministic run to run and they scale with the work done.
+// Wall is recorded for diagnosis only -- a 2 ms phase carries the whole of this
+// runner's scheduler jitter.
+struct PhaseMetricSet {
+  std::string name;
+  // Per-iteration allocation count for this phase: the SUM over every Measure()
+  // call that used this name in that iteration, then percentiled across
+  // iterations. Summing matters because a scenario is free to call Measure with
+  // one name several times per iteration, and gating one arbitrary call of a
+  // repeated phase would be a gate on which call happened to be last.
+  double p50_allocations = 0.0;
+  double max_allocations = 0.0;
+  double p50_wall_ms = 0.0;
+  // Measured iterations that recorded this phase at all. A phase inside a
+  // conditional shows up here as a count below the run's iteration count, which
+  // is worth seeing before trusting its percentile.
+  std::size_t iterations = 0;
+};
+
 struct Aggregate {
   std::string scenario_name;
   std::vector<Iteration> iterations;
   MetricSet metrics;
+  // Aggregated per-phase metrics, in first-appearance order.
+  std::vector<PhaseMetricSet> phases;
   bool smoke = false;
 };
+
+// Aggregate the per-iteration phase records into one entry per phase name.
+// Header-inline because both binaries need it: microide_perf produces it from a
+// run, and microide_tests (which does not link the harness TU) builds Aggregates
+// the same way to test the gate.
+inline std::vector<PhaseMetricSet> AggregatePhaseMetrics(const std::vector<Iteration>& iterations) {
+  // First-appearance order, kept deliberately: a scenario's phases read as a
+  // timeline, and sorting them alphabetically would scramble that in every
+  // report and every baseline diff.
+  std::vector<PhaseMetricSet> phases;
+  std::vector<std::vector<double>> allocation_samples;
+  std::vector<std::vector<double>> wall_samples;
+  // Keyed on the iteration's own strings, which outlive this call.
+  std::unordered_map<std::string_view, std::size_t> index_by_name;
+
+  for (const Iteration& iteration : iterations) {
+    // Sum repeats WITHIN an iteration before percentiling ACROSS iterations: a
+    // scenario may call Measure() with one name several times in a single pass,
+    // and each of those calls is part of what that iteration cost.
+    std::vector<double> iteration_allocations(phases.size(), 0.0);
+    std::vector<double> iteration_wall(phases.size(), 0.0);
+    std::vector<bool> present(phases.size(), false);
+    for (const Iteration::PhaseMetrics& phase : iteration.phase_metrics) {
+      auto [it, inserted] = index_by_name.emplace(std::string_view(phase.name), phases.size());
+      if (inserted) {
+        phases.push_back(PhaseMetricSet{.name = phase.name});
+        allocation_samples.emplace_back();
+        wall_samples.emplace_back();
+        iteration_allocations.push_back(0.0);
+        iteration_wall.push_back(0.0);
+        present.push_back(false);
+      }
+      const std::size_t index = it->second;
+      iteration_allocations[index] += static_cast<double>(phase.allocations);
+      iteration_wall[index] += phase.wall_ms;
+      present[index] = true;
+    }
+    for (std::size_t index = 0; index < phases.size(); ++index) {
+      if (!present[index]) {
+        continue;
+      }
+      allocation_samples[index].push_back(iteration_allocations[index]);
+      wall_samples[index].push_back(iteration_wall[index]);
+    }
+  }
+
+  for (std::size_t index = 0; index < phases.size(); ++index) {
+    phases[index].p50_allocations = Percentile(allocation_samples[index], 0.50);
+    phases[index].max_allocations =
+        allocation_samples[index].empty()
+            ? 0.0
+            : *std::max_element(allocation_samples[index].begin(),
+                                allocation_samples[index].end());
+    phases[index].p50_wall_ms = Percentile(wall_samples[index], 0.50);
+    phases[index].iterations = allocation_samples[index].size();
+  }
+  return phases;
+}
 
 struct ReportMetadata {
   std::string runner_class;           // e.g. "perf-runner-v1" or "local-advisory"

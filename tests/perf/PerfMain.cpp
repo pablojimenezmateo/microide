@@ -1052,18 +1052,26 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "search_first_result",
       .smoke = false,
+      // WHAT GATES THIS SCENARIO IS THE PHASE, NOT THE TOTAL. The scenario total
+      // is ~20,192 allocations and 20,047 of them are opening a 10k-file fixture
+      // and building its index; the search this scenario is named after is 145.
+      // The total is deterministic and tightly gated and it would not notice the
+      // search doubling — a +0.7% move inside a +10% envelope. That claim used to
+      // live here as "the authoritative, precise regression signal", which was a
+      // statement about project open (TD-2026-08-06-153). The oracle is
+      // `phase[search_first_result.search_to_first_result].p50_allocations`, and
+      // the total is now a coarse backstop for the setup around it.
+      //
       // Warm up until the process reaches steady state: the first pass builds the
       // 10k-file index cold, and background subsystems (index watcher initial
       // scan, etc.) keep allocating for several more passes before quiescing.
       // Discarding those settling passes — combined with the single search worker,
-      // index-ready wait, and drain-once below — makes the measured MEDIAN a fully
-      // deterministic 20,207 allocations every run, so the tight p50 gate below is
-      // the authoritative, precise regression signal. Every iteration measures the
-      // same steady-state value, so p95/max are the same metric under noise: their
-      // razor-thin baseline (also 20,207) has no headroom, so a lone iteration
+      // index-ready wait, and drain-once below — is what makes both the phase and
+      // the total reproduce run to run. Every iteration measures the same
+      // steady-state value, so the total's p95/max are the same metric under
+      // noise: their razor-thin baseline has no headroom, so a lone iteration
       // spilled by an incidental background wake would trip them. Widen p95/max to
-      // absorb that irreducible global-counter tail noise rather than false-positive
-      // — the deterministic allocation p50 already catches any genuine regression.
+      // absorb that irreducible tail noise rather than false-positive.
       //
       // That determinism is the ALLOCATION count, not the wall: the measured phase
       // is ~2.5 ms and four consecutive runs of one unchanged binary spread its
@@ -1642,10 +1650,34 @@ util::JsonValue ToJson(const Aggregate& aggregate,
     baseline_json = util::JsonObject{{"gated", false}};
   }
 
+  // The aggregated phases, next to the scenario totals they are a share of.
+  // The per-iteration phase records were already in the report and nothing
+  // compared them to anything; this is the summary the gate reads
+  // (TD-2026-08-06-153).
+  util::JsonArray phases_json;
+  phases_json.reserve(aggregate.phases.size());
+  for (const PhaseMetricSet& phase : aggregate.phases) {
+    phases_json.push_back(util::JsonObject{
+        {"name", phase.name},
+        {"p50_allocations", phase.p50_allocations},
+        {"max_allocations", phase.max_allocations},
+        {"p50_wall_ms", phase.p50_wall_ms},
+        {"iterations", static_cast<std::int64_t>(phase.iterations)},
+        // What share of the scenario total this phase is. The number that made
+        // search_first_result's "authoritative regression signal" read as 0.7%
+        // of its own gate.
+        {"share_of_scenario_allocations",
+         aggregate.metrics.p50_allocations > 0.0
+             ? phase.p50_allocations / aggregate.metrics.p50_allocations
+             : 0.0},
+    });
+  }
+
   return util::JsonObject{
       {"scenario", aggregate.scenario_name},
       {"smoke", aggregate.smoke},
       {"baseline", std::move(baseline_json)},
+      {"phases", std::move(phases_json)},
       {"metrics", util::JsonObject{
                       {"p50_wall_ms", aggregate.metrics.p50_wall_ms},
                       {"p95_wall_ms", aggregate.metrics.p95_wall_ms},
@@ -1932,8 +1964,21 @@ int main(int argc, char** argv) {
                          // Scenario::tolerance_rss_percent for the rebaseline that
                          // silently reset a deliberate widening.
                          .rss_mean_percent = scenario.tolerance_rss_percent,
-                         .net_heap_percent = scenario.tolerance_net_heap_percent},
+                         .net_heap_percent = scenario.tolerance_net_heap_percent,
+                         // Phase allocation counts are a subset of the scenario
+                         // total measured on the same thread, so they inherit the
+                         // scenario's *resolved* allocation envelope rather than
+                         // the struct default -- a scenario that widened its
+                         // allocation gate for a reason widened it for its phases
+                         // too.
+                         .phase_alloc_p50_percent = resolve_alloc(
+                             scenario.tolerance_alloc_p50_percent,
+                             scenario.tolerance_p50_percent)},
       };
+      // What the scenario actually measures, gated per phase (TD-2026-08-06-153).
+      // Written from the run, so a scenario with no Measure() call writes no
+      // phases and gates on its total exactly as before.
+      record.phases = aggregate->phases;
       record.has_cpu_metrics = scenario.gate_cpu_metrics;
       record.has_rss_metrics = true;
       // Always recorded, including at zero: unlike cpu/rss this metric is
@@ -2255,7 +2300,19 @@ int main(int argc, char** argv) {
       for (const Aggregate& aggregate : aggregates) {
         out << aggregate.scenario_name << " p50=" << aggregate.metrics.p50_wall_ms
             << "ms p95=" << aggregate.metrics.p95_wall_ms << "ms max="
-            << aggregate.metrics.max_wall_ms << "ms\n";
+            << aggregate.metrics.max_wall_ms << "ms alloc_p50="
+            << aggregate.metrics.p50_allocations << "\n";
+        // What share of the total each measured phase is. Printed because the
+        // answer is routinely nothing like what the scenario's name implies:
+        // search_first_result's search is 0.7% of its own scenario total
+        // (TD-2026-08-06-153), and that is only visible next to the total.
+        for (const PhaseMetricSet& phase : aggregate.phases) {
+          out << "  phase " << phase.name << ": alloc_p50=" << phase.p50_allocations
+              << " (" << (aggregate.metrics.p50_allocations > 0.0
+                              ? phase.p50_allocations / aggregate.metrics.p50_allocations * 100.0
+                              : 0.0)
+              << "% of scenario) wall_p50=" << phase.p50_wall_ms << "ms\n";
+        }
         const auto totals = AggregateCounterTotals(aggregate);
         if (!totals.empty()) {
           out << "  counters:";

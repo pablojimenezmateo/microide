@@ -900,9 +900,221 @@ void TestPerfBaselineCalibrationRoundTrip() {
          "and must come back unnormalised rather than gated against a zero clock");
 }
 
+// TD-2026-08-06-153: `search_first_result`'s allocation gate is real, tight,
+// deterministic — and 99.3% of what it gates is opening a 10k-file fixture. The
+// search it is named after is 145 of its 20,192 allocations, so the search could
+// DOUBLE and the scenario total would move 0.7%, well inside a 10% envelope.
+//
+// These are that scenario's real numbers. The first assertion is the defect: the
+// total gate passes a doubled search. The second is the fix.
+void TestPerfPhaseGateCatchesWhatTheTotalCannot() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.metrics.p50_allocations = 20192.0;
+  baseline.tolerances.alloc_p50_percent = 10.0;
+  baseline.tolerances.phase_alloc_p50_percent = 10.0;
+  baseline.phases.push_back(perf::PhaseMetricSet{
+      .name = "search_first_result.search_to_first_result",
+      .p50_allocations = 145.0,
+      .max_allocations = 145.0,
+      .p50_wall_ms = 2.5,
+      .iterations = 10,
+  });
+
+  // The search doubles; everything else is unchanged.
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "test";
+  aggregate.metrics = perf::MetricSet{
+      .p50_wall_ms = 100.0,
+      .p95_wall_ms = 100.0,
+      .max_wall_ms = 100.0,
+      .p50_allocations = 20192.0 + 145.0,
+      .p95_allocations = 100.0,
+      .max_allocations = 100.0,
+  };
+  aggregate.phases.push_back(perf::PhaseMetricSet{
+      .name = "search_first_result.search_to_first_result",
+      .p50_allocations = 290.0,
+      .max_allocations = 290.0,
+      .p50_wall_ms = 5.0,
+      .iterations = 10,
+  });
+
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, aggregate);
+  const auto find = [&](std::string_view name) -> const perf::MetricComparison* {
+    for (const perf::MetricComparison& metric : comparison.metrics) {
+      if (metric.metric == name) {
+        return &metric;
+      }
+    }
+    return nullptr;
+  };
+
+  const perf::MetricComparison* total = find("p50_allocations");
+  Expect(total != nullptr && total->passed,
+         "the defect under test is that the SCENARIO TOTAL passes a doubled search — "
+         "if this ever fails, the premise of TD-2026-08-06-153 has changed");
+
+  const perf::MetricComparison* phase =
+      find("phase[search_first_result.search_to_first_result].p50_allocations");
+  Expect(phase != nullptr, "the phase the baseline records must be gated");
+  Expect(!phase->passed && phase->enforced,
+         "a doubled measured phase must fail an enforced gate, not merely be reported");
+  Expect(!comparison.passed, "a failed phase gate must turn the scenario red");
+}
+
+// A Measure() call deleted or renamed in a refactor silently removes a gate. A
+// gate that disappears without a word is how this suite went quietly vacuous
+// before (validation-traps.md), so a baseline phase the run did not measure is a
+// failure, not an absence.
+void TestPerfPhaseGateFailsWhenAPhaseStopsBeingMeasured() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.phases.push_back(perf::PhaseMetricSet{
+      .name = "scenario.the_phase", .p50_allocations = 145.0, .iterations = 10});
+
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "test";
+  aggregate.metrics = baseline.metrics;
+  // Renamed, which is the realistic shape: the work still happens, under a name
+  // nothing gates.
+  aggregate.phases.push_back(perf::PhaseMetricSet{
+      .name = "scenario.the_phase_renamed", .p50_allocations = 145.0, .iterations = 10});
+
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, aggregate);
+  Expect(!comparison.passed, "a baseline phase that stopped being measured must fail the run");
+  bool found_missing = false;
+  bool found_ungated_note = false;
+  for (const perf::MetricComparison& metric : comparison.metrics) {
+    if (metric.metric == "phase[scenario.the_phase].p50_allocations") {
+      found_missing = true;
+      Expect(!metric.passed && metric.enforced && !metric.note.empty(),
+             "the missing phase must fail with an explanation, not pass on a zero measurement");
+    }
+    if (metric.metric == "phases_not_in_baseline") {
+      found_ungated_note = true;
+      Expect(!metric.enforced,
+             "a phase with no baseline must be reported, not enforced against nothing");
+      Expect(metric.note.find("scenario.the_phase_renamed") != std::string::npos,
+             "the note must name the ungated phase so it can be acted on");
+    }
+  }
+  Expect(found_missing, "the comparison must carry a metric for the missing phase");
+  Expect(found_ungated_note, "a measured phase with no baseline must be reported as ungated");
+}
+
+// Every baseline written before phase gating existed has no "phases" key. Those
+// scenarios must compare exactly as they did — and must say on the verdict line
+// that their phases are ungated, because an ungated phase nobody knows about is
+// the entire subject of the entry.
+void TestPerfPhaseGateIsSilentUntilTheBaselineRecordsPhases() {
+  const perf::BaselineRecord baseline = MakeBaseline();  // no phases
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "test";
+  aggregate.metrics = baseline.metrics;
+  aggregate.phases.push_back(perf::PhaseMetricSet{
+      .name = "scenario.phase", .p50_allocations = 900000.0, .iterations = 10});
+
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, aggregate);
+  Expect(comparison.passed,
+         "a pre-phase-gating baseline must keep passing on its totals alone");
+  bool noted = false;
+  for (const perf::MetricComparison& metric : comparison.metrics) {
+    Expect(metric.metric.rfind("phase[", 0) != 0,
+           "no phase may be gated when the baseline records none");
+    if (metric.metric == "phases_not_in_baseline") {
+      noted = true;
+    }
+  }
+  Expect(noted, "the ungated phase must still be announced");
+}
+
+void TestPerfPhaseBaselineRoundTrip() {
+  TemporaryDirectory temp;
+  const std::filesystem::path path = temp.path() / "phase_baseline.json";
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.tolerances.phase_alloc_p50_percent = 15.0;
+  baseline.phases.push_back(perf::PhaseMetricSet{.name = "a.first",
+                                                 .p50_allocations = 145.0,
+                                                 .max_allocations = 151.0,
+                                                 .p50_wall_ms = 2.5,
+                                                 .iterations = 10});
+  baseline.phases.push_back(perf::PhaseMetricSet{.name = "a.second",
+                                                 .p50_allocations = 0.0,
+                                                 .max_allocations = 0.0,
+                                                 .p50_wall_ms = 0.125,
+                                                 .iterations = 10});
+  Expect(perf::SaveBaseline(path, baseline), "baseline should save");
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value(), "baseline should reload");
+  Expect(loaded->phases.size() == 2, "both phases must round-trip");
+  // First-appearance order is the scenario's timeline; a reordered baseline diff
+  // would be unreadable.
+  Expect(loaded->phases[0].name == "a.first" && loaded->phases[1].name == "a.second",
+         "phase order must round-trip");
+  Expect(loaded->phases[0].p50_allocations == 145.0 && loaded->phases[0].max_allocations == 151.0,
+         "phase allocation numbers must round-trip");
+  Expect(loaded->phases[0].iterations == 10, "the phase's iteration count must round-trip");
+  Expect(loaded->tolerances.phase_alloc_p50_percent == 15.0,
+         "a hand-set phase tolerance must survive a save/load cycle");
+  // A phase recorded at exactly zero allocations is a real, desirable reading —
+  // "this phase allocates nothing" — and must come back gated, not dropped.
+  Expect(loaded->phases[1].p50_allocations == 0.0, "a zero-allocation phase must round-trip");
+}
+
+// A scenario may call Measure() with the same name several times in one
+// iteration (a per-frame phase inside a loop). Gating one arbitrary call would
+// be a gate on which call happened to be recorded last; the iteration's total is
+// what the iteration cost.
+void TestPerfPhaseAggregationSumsRepeatsWithinAnIteration() {
+  std::vector<perf::Iteration> iterations;
+  for (std::size_t i = 0; i < 4; ++i) {
+    perf::Iteration iteration;
+    iteration.index = i;
+    iteration.phase_metrics.push_back(
+        perf::Iteration::PhaseMetrics{.name = "s.frame", .wall_ms = 1.0, .allocations = 10});
+    iteration.phase_metrics.push_back(
+        perf::Iteration::PhaseMetrics{.name = "s.frame", .wall_ms = 1.0, .allocations = 30});
+    iteration.phase_metrics.push_back(
+        perf::Iteration::PhaseMetrics{.name = "s.settle", .wall_ms = 0.5, .allocations = 7});
+    iterations.push_back(std::move(iteration));
+  }
+  const std::vector<perf::PhaseMetricSet> phases = perf::AggregatePhaseMetrics(iterations);
+  Expect(phases.size() == 2, "one entry per distinct phase name");
+  Expect(phases[0].name == "s.frame" && phases[1].name == "s.settle",
+         "phases must keep first-appearance order");
+  Expect(phases[0].p50_allocations == 40.0,
+         "repeated Measure() calls in one iteration must sum, not overwrite");
+  Expect(phases[0].p50_wall_ms == 2.0, "repeated phase wall time must sum too");
+  Expect(phases[0].iterations == 4 && phases[1].iterations == 4,
+         "every iteration recorded both phases");
+
+  // A phase recorded on only some iterations reports the count it was seen on,
+  // so a conditional phase is visible as one rather than reading as a scenario
+  // that got cheaper.
+  perf::Iteration sparse;
+  sparse.index = 4;
+  sparse.phase_metrics.push_back(
+      perf::Iteration::PhaseMetrics{.name = "s.rare", .wall_ms = 9.0, .allocations = 99});
+  iterations.push_back(std::move(sparse));
+  const std::vector<perf::PhaseMetricSet> with_sparse = perf::AggregatePhaseMetrics(iterations);
+  Expect(with_sparse.size() == 3, "the late phase must appear");
+  Expect(with_sparse[2].name == "s.rare" && with_sparse[2].iterations == 1,
+         "a phase seen once must report one iteration, not five");
+  Expect(with_sparse[2].p50_allocations == 99.0,
+         "a sparse phase percentiles over the iterations that recorded it");
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/PhaseGateCatchesWhatTheTotalCannot",
+          TestPerfPhaseGateCatchesWhatTheTotalCannot);
+  AddTest(tests, "PerfBaseline/PhaseGateFailsWhenAPhaseStopsBeingMeasured",
+          TestPerfPhaseGateFailsWhenAPhaseStopsBeingMeasured);
+  AddTest(tests, "PerfBaseline/PhaseGateIsSilentUntilTheBaselineRecordsPhases",
+          TestPerfPhaseGateIsSilentUntilTheBaselineRecordsPhases);
+  AddTest(tests, "PerfBaseline/PhaseBaselineRoundTrip", TestPerfPhaseBaselineRoundTrip);
+  AddTest(tests, "PerfBaseline/PhaseAggregationSumsRepeatsWithinAnIteration",
+          TestPerfPhaseAggregationSumsRepeatsWithinAnIteration);
   AddTest(tests, "PerfBaseline/EnvelopeConsumptionSeesADriftThatPassed",
           TestPerfEnvelopeConsumptionSeesADriftThatPassed);
   AddTest(tests, "PerfBaseline/EnvelopeConsumptionAgreesWithTheGate",

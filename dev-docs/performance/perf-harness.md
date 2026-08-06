@@ -700,6 +700,40 @@ aimable at the scroll phase, 11 of its top 12 allocation sites turned out to be 
 purely-lexical path normalisation the inline-blame overlay redid three times a
 frame — ~30 % of every editor scroll scenario's allocations, removed by a memo.
 
+### Phases are gated, not just recorded
+
+A phase that is measured and compared to nothing is a diagnostic, not a gate —
+and the scenario total it sits inside is dominated by setup on almost every shell
+scenario. So each phase carries its own allocation gate (TD-2026-08-06-153):
+
+```json
+"phases": [
+  {"name": "file_finder_cold.open_finder", "p50_allocations": 41622,
+   "max_allocations": 41622, "p50_wall_ms": 9.4, "iterations": 10}
+]
+```
+
+- **Allocations only.** Wall for a 2 ms phase is this runner's jitter, not the
+  code; the phase's wall is recorded for diagnosis and never enforced.
+- **`phase_alloc_p50_percent`** (in `tolerances`) is the envelope, inheriting the
+  scenario's resolved allocation p50 tolerance at `--update-baseline` time. A
+  phase count is a strict subset of the scenario total measured on the same
+  thread, so it is at least as deterministic as the total.
+- **Repeats sum.** A scenario may call `Measure` with one name several times per
+  iteration; the iteration's total for that name is what is percentiled.
+- **A baseline phase the run does not measure FAILS.** Deleting or renaming a
+  `Measure` call removes a gate, and a gate that disappears silently is how this
+  suite went vacuous before (`validation-traps.md`). Renaming a phase is a
+  rebaseline.
+- **A measured phase with no baseline is reported, not enforced** — one
+  `N measured phase(s) NOT GATED (...)` note on the scenario's verdict line, so
+  the transition state is loud instead of invisible.
+
+`--report-json` carries the aggregated phases (including
+`share_of_scenario_allocations`) alongside the totals, and `--report-text` prints
+each phase's share under its scenario. Read that share before trusting a
+scenario's total as evidence about the thing the scenario is named after.
+
 ## Scenario Authoring
 
 Scenarios are registered in `tests/perf/PerfMain.cpp` and use `ScenarioContext` helpers from

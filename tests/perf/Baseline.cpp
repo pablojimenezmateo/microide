@@ -239,6 +239,96 @@ void AnnotateResidentGateForIterationCount(BaselineComparison* result,
   result->metrics[metric_index].note = note.str();
 }
 
+// Gate every phase the baseline recorded, and say out loud when a phase the run
+// measured has no baseline to be gated against.
+//
+// This is the instrument TD-2026-08-06-153 was filed for. A scenario total is
+// dominated by setup on almost every shell scenario -- search_first_result's
+// tight, deterministic 20,192-allocation gate is 99.3% project-open, so the
+// search it is named after could decuple without moving it past its envelope.
+// The phase is what the scenario claims to measure.
+//
+// Two failure modes, both deliberate:
+//
+//  - A baseline phase MISSING from the run fails. That is not pedantry: a
+//    Measure() call deleted or renamed in a refactor silently removes a gate,
+//    and a gate that disappears without a word is exactly how this suite went
+//    quietly vacuous before (validation-traps.md). Renaming a phase is a
+//    rebaseline, like every other deliberate change to what is measured.
+//  - A measured phase with NO baseline is reported, unenforced, as one note per
+//    scenario. It is not a failure (a new phase must be addable without a red
+//    run), but it must not be invisible either -- an ungated phase that nobody
+//    knows is ungated is the whole subject of the entry.
+void ComparePhaseAllocations(BaselineComparison* out,
+                             const BaselineRecord& baseline,
+                             const Aggregate& aggregate) {
+  const auto find_measured = [&](std::string_view name) -> const PhaseMetricSet* {
+    for (const PhaseMetricSet& phase : aggregate.phases) {
+      if (phase.name == name) {
+        return &phase;
+      }
+    }
+    return nullptr;
+  };
+
+  for (const PhaseMetricSet& expected : baseline.phases) {
+    const std::string metric_name = "phase[" + expected.name + "].p50_allocations";
+    const PhaseMetricSet* measured = find_measured(expected.name);
+    if (measured == nullptr) {
+      MetricComparison missing{
+          .metric = metric_name,
+          .expected = expected.p50_allocations,
+          .actual = 0.0,
+          .tolerance_percent = baseline.tolerances.phase_alloc_p50_percent,
+          .passed = false,
+          .raw_actual = 0.0,
+      };
+      missing.note = "phase '" + expected.name +
+                     "' is gated by the baseline but was not measured by this run: the gate is "
+                     "gone, not passing. Restore the Measure() call or rebaseline the scenario "
+                     "(TD-2026-08-06-153)";
+      out->passed = false;
+      out->metrics.push_back(std::move(missing));
+      continue;
+    }
+    AddMetric(out, metric_name, expected.p50_allocations, measured->p50_allocations,
+              baseline.tolerances.phase_alloc_p50_percent);
+  }
+
+  std::string ungated;
+  std::size_t ungated_count = 0;
+  for (const PhaseMetricSet& measured : aggregate.phases) {
+    const bool gated = std::any_of(baseline.phases.begin(), baseline.phases.end(),
+                                   [&](const PhaseMetricSet& expected) {
+                                     return expected.name == measured.name;
+                                   });
+    if (gated) {
+      continue;
+    }
+    if (++ungated_count <= 3) {
+      ungated += (ungated.empty() ? "" : ", ") + measured.name;
+    }
+  }
+  if (ungated_count == 0) {
+    return;
+  }
+  MetricComparison note{
+      .metric = "phases_not_in_baseline",
+      .expected = 0.0,
+      .actual = static_cast<double>(ungated_count),
+      .tolerance_percent = 0.0,
+      .passed = true,
+      .raw_actual = static_cast<double>(ungated_count),
+      .enforced = false,
+  };
+  note.note = std::to_string(ungated_count) + " measured phase(s) NOT GATED (" + ungated +
+              (ungated_count > 3 ? ", ..." : "") +
+              "): this baseline predates phase gating, so only the scenario total is enforced — "
+              "rerun --update-baseline to gate what the scenario actually measures "
+              "(TD-2026-08-06-153)";
+  out->metrics.push_back(std::move(note));
+}
+
 }  // namespace
 
 std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
@@ -328,6 +418,29 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
       tolerances["cpu_max_percent"].AsDouble(record.tolerances.max_percent);
   record.tolerances.rss_mean_percent = tolerances["rss_mean_percent"].AsDouble(25.0);
   record.tolerances.net_heap_percent = tolerances["net_heap_percent"].AsDouble(10.0);
+  record.tolerances.phase_alloc_p50_percent =
+      tolerances["phase_alloc_p50_percent"].AsDouble(record.tolerances.alloc_p50_percent);
+
+  // Per-phase allocation baselines. Absent on every baseline written before
+  // phase gating existed; those keep gating on the scenario total alone, and
+  // CompareToBaseline says on the verdict line that the phases went ungated
+  // rather than letting the omission be silent.
+  const util::JsonValue& phases = (*parsed)["phases"];
+  if (phases.IsArray()) {
+    for (const util::JsonValue& phase : phases.AsArray()) {
+      if (!phase.IsObject() || !phase["name"].IsString()) {
+        continue;
+      }
+      PhaseMetricSet entry;
+      entry.name = phase["name"].AsString();
+      entry.p50_allocations = phase["p50_allocations"].AsDouble();
+      entry.max_allocations = phase["max_allocations"].AsDouble();
+      entry.p50_wall_ms = phase["p50_wall_ms"].AsDouble();
+      const double iterations = phase["iterations"].AsDouble();
+      entry.iterations = iterations > 0.0 ? static_cast<std::size_t>(iterations) : 0;
+      record.phases.push_back(std::move(entry));
+    }
+  }
   return record;
 }
 
@@ -372,6 +485,23 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   if (baseline.iterations > 0) {
     root["iterations"] = static_cast<std::int64_t>(baseline.iterations);
   }
+  // Written whenever the run measured phases at all. A scenario with no
+  // Measure() call writes no "phases" key, which is the same state as a
+  // pre-phase-gating baseline and compares the same way.
+  if (!baseline.phases.empty()) {
+    util::JsonArray phases;
+    phases.reserve(baseline.phases.size());
+    for (const PhaseMetricSet& phase : baseline.phases) {
+      phases.push_back(util::JsonObject{
+          {"name", phase.name},
+          {"p50_allocations", phase.p50_allocations},
+          {"max_allocations", phase.max_allocations},
+          {"p50_wall_ms", phase.p50_wall_ms},
+          {"iterations", static_cast<std::int64_t>(phase.iterations)},
+      });
+    }
+    root["phases"] = std::move(phases);
+  }
   root["tolerances"] = util::JsonObject{
       {"p50_percent", baseline.tolerances.p50_percent},
       {"p95_percent", baseline.tolerances.p95_percent},
@@ -384,6 +514,7 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"cpu_max_percent", baseline.tolerances.cpu_max_percent},
       {"rss_mean_percent", baseline.tolerances.rss_mean_percent},
       {"net_heap_percent", baseline.tolerances.net_heap_percent},
+      {"phase_alloc_p50_percent", baseline.tolerances.phase_alloc_p50_percent},
   };
   std::ofstream out(path);
   if (!out) {
@@ -500,6 +631,7 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
         std::max(std::abs(expected) * (baseline.tolerances.net_heap_percent / 100.0),
                  kNetHeapNoiseFloorBytes));
   }
+  ComparePhaseAllocations(&result, baseline, aggregate);
   return result;
 }
 

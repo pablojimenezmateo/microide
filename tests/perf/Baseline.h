@@ -40,6 +40,12 @@ struct Tolerances {
   // rather than an equality check because a scenario is allowed to change size
   // for a legitimate reason; what it may not do is change silently.
   double net_heap_percent = 10.0;
+  // Per-phase allocation envelope, for the `phase[<name>].p50_allocations`
+  // gates. A phase count is a strict subset of the scenario total measured on
+  // the same thread, so it is at least as deterministic as the total and gets
+  // the same class of envelope. Defaults to the scenario's allocation p50
+  // tolerance when a baseline omits it.
+  double phase_alloc_p50_percent = 10.0;
 };
 
 struct BaselineRecord {
@@ -58,6 +64,12 @@ struct BaselineRecord {
   // metric existed compares exactly as it did, rather than gating a measured
   // 28,470 against an implicit 0.
   bool has_net_heap_metrics = false;
+  // Per-phase allocation baselines, in the order the scenario measures them.
+  // Empty on a baseline written before phase gating existed, which leaves that
+  // scenario gated on its total alone exactly as it was — and says so on the
+  // verdict line, because a phase that is measured and not gated is precisely
+  // the state TD-2026-08-06-153 was filed about.
+  std::vector<PhaseMetricSet> phases;
   // Whether the baseline recorded the clock it was captured at
   // (`metrics.p50_cpu_calibration_ns`). Baselines written before that field
   // existed did not, and they compare unnormalised exactly as they did before.

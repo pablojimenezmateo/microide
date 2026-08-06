@@ -13,6 +13,7 @@
 #include <string_view>
 #include <system_error>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #if defined(__unix__)
@@ -858,6 +859,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     util::PerformanceTrace::WriteSummary(stderr);
   }
   aggregate.metrics = AggregateMetrics(aggregate.iterations);
+  aggregate.phases = AggregatePhaseMetrics(aggregate.iterations);
   ShutdownDriver(&driver);
   return aggregate;
 }

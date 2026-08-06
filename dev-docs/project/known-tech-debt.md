@@ -1519,7 +1519,37 @@ unfixed is that the RSS gate cannot be tight and that allocation counts have an
 unmeasured prefix sensitivity — real, but no longer the only instrument in the
 room.
 
-### TD-2026-08-06-153 — `search_first_result`'s "authoritative, precise regression signal" is 99.3% project open. OPEN.
+### TD-2026-08-06-153 — `search_first_result`'s "authoritative, precise regression signal" is 99.3% project open. [MECHANISM LANDED 2026-08-06; the gates arm at the next rebaseline.]
+
+**What shipped.** Both items, in the order the entry demanded.
+
+(1) Every measured phase now carries its own allocation gate. `Aggregate` and
+`BaselineRecord` carry a `phases` list (`p50_allocations`, `max_allocations`,
+`p50_wall_ms`, `iterations`), `--update-baseline` writes it, and
+`CompareToBaseline` adds one `phase[<name>].p50_allocations` metric per recorded
+phase under a `phase_alloc_p50_percent` envelope that inherits the scenario's
+resolved allocation tolerance. Allocations only: a 2 ms phase's wall is this
+runner's jitter. Repeats of one name within an iteration SUM before the
+percentile, so a per-frame phase in a loop is gated on what the iteration cost
+rather than on whichever call landed last.
+
+Two deliberate asymmetries, both about vacuity:
+
+  - A baseline phase the run does **not** measure FAILS, loudly, with the reason.
+    A renamed or deleted `Measure` call would otherwise remove a gate in silence.
+  - A measured phase with no baseline is **reported and not enforced** — one
+    `N measured phase(s) NOT GATED (...)` note per verdict line. Adding a phase
+    must not turn a run red, but it must not be invisible either.
+
+(2) The `search_first_result` comment now says what the measurement supports: the
+oracle is the phase, and the total is a coarse backstop for the setup around it.
+
+**What is not done until the next rebaseline.** Every committed baseline predates
+the `phases` key, so today every scenario prints the NOT GATED note and gates on
+its total alone. The gate becomes real when `--update-baseline` next sweeps the
+suite on the reference runner; until then this entry is mechanism, not coverage.
+
+### TD-2026-08-06-153 (original entry)
 
 Found by [151](#td-2026-08-06-151) the moment the scenario got a measured phase,
 and it is exactly the mistake [138](#td-2026-08-06-138) and 139 made, sitting
