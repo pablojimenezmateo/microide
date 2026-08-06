@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <string_view>
 
 namespace microide::tests::perf {
 
@@ -47,6 +48,21 @@ class Allocations {
   // help: it traces the LARGEST allocations, and this class of regression is
   // hundreds of 32-byte ones.
   static void DumpTracedAllocationSites();
+
+  // Substring set by MICROIDE_PERF_ALLOC_TRACE_PHASE, or empty when unset.
+  //
+  // An unfiltered trace is whole-RUN, and a scenario's setup out-allocates its
+  // measured phase by an order of magnitude: attributing the 320 allocations
+  // left in `editor_mouse_selection_drag` after TD-2026-08-06-145 meant reading
+  // past twelve syntax-registry and plugin-reload sites that the phase never
+  // touched. With this set, only allocations made inside a matching
+  // `ScenarioContext::Measure` phase are recorded, so the table IS the phase.
+  static std::string_view PhaseTraceFilter();
+
+  // Arm/disarm site recording for the calling thread. No-op unless a phase
+  // filter is set. `ScenarioContext::Measure` owns the calls; nothing else
+  // should need them.
+  static void SetPhaseTraceActive(bool active);
 };
 
 }  // namespace microide::tests::perf

@@ -105,6 +105,30 @@ const TraceBand g_trace_band = [] {
   return TraceBand{.min_bytes = min_bytes, .max_bytes = max_bytes, .enabled = true};
 }();
 
+// Optional phase scoping, off unless MICROIDE_PERF_ALLOC_TRACE_PHASE is set.
+//
+// The band filter above narrows by SIZE; this narrows by WHEN. Without it the
+// table is whole-run, and a scenario's setup buries its measured phase: the
+// residual 320 allocations in `editor_mouse_selection_drag` sat under twelve
+// syntax-registry and plugin-reload sites with 10x the count, none of which the
+// phase executes. With it, `ScenarioContext::Measure` arms recording only for
+// phases whose name contains this substring, so the table is the phase.
+//
+// A raw `const char*` from getenv, compared by hand: this is read inside
+// operator new, so it may not own a std::string.
+const char* const g_trace_phase_filter = [] {
+  const char* env = std::getenv("MICROIDE_PERF_ALLOC_TRACE_PHASE");
+  return (env == nullptr || env[0] == '\0') ? nullptr : env;
+}();
+
+// Armed by Measure, per thread — the same reason the counters are per-thread: a
+// worker allocating during the phase is not the shell-thread cost being chased.
+thread_local bool t_trace_phase_active = false;
+// Whether any phase ever matched the filter. A filter that matches nothing
+// prints an empty table indistinguishable from "the phase allocates nothing",
+// which is the vacuity trap `dev-docs/project/validation-traps.md` exists for.
+std::atomic<bool> g_trace_phase_matched{false};
+
 TraceBucket g_trace_table[kTraceBuckets];
 std::atomic<std::uint64_t> g_trace_dropped{0};
 std::mutex g_trace_mutex;
@@ -169,7 +193,8 @@ inline void RecordAlloc(std::size_t size) {
     ::backtrace_symbols_fd(frames, count, 2);
   }
   if (g_trace_band.enabled && size >= g_trace_band.min_bytes &&
-      size <= g_trace_band.max_bytes) [[unlikely]] {
+      size <= g_trace_band.max_bytes &&
+      (g_trace_phase_filter == nullptr || t_trace_phase_active)) [[unlikely]] {
     RecordAllocationSite(size);
   }
 }
@@ -205,9 +230,34 @@ AllocationDelta Allocations::DeltaSince(const AllocationSnapshot& before) {
   };
 }
 
+std::string_view Allocations::PhaseTraceFilter() {
+  return g_trace_phase_filter == nullptr ? std::string_view{}
+                                         : std::string_view(g_trace_phase_filter);
+}
+
+void Allocations::SetPhaseTraceActive(bool active) {
+  if (g_trace_phase_filter == nullptr) {
+    return;
+  }
+  t_trace_phase_active = active;
+  if (active) {
+    g_trace_phase_matched.store(true, std::memory_order_relaxed);
+  }
+}
+
 void Allocations::DumpTracedAllocationSites() {
   if (!g_trace_band.enabled) {
     return;
+  }
+  if (g_trace_phase_filter != nullptr &&
+      !g_trace_phase_matched.load(std::memory_order_relaxed)) {
+    // Loud, not empty: an unmatched filter and a phase that allocates nothing
+    // produce the same table, and only one of them is a result.
+    std::fprintf(stderr,
+                 "[alloctrace] WARNING: no measured phase name contained \"%s\" — the table "
+                 "below is empty because the filter never matched, not because nothing "
+                 "allocated\n",
+                 g_trace_phase_filter);
   }
   const std::lock_guard<std::mutex> guard(g_trace_mutex);
   // Index the non-empty buckets rather than sorting the table: TraceBucket is

@@ -478,11 +478,23 @@ bool ScenarioContext::AssertNoAllocationsDuringDraw(std::string* error) {
 }
 
 double ScenarioContext::Measure(std::string_view phase_name, const std::function<void()>& action) {
+  // Scope the allocation-site trace to this phase when the run asked for it. The
+  // name test happens once per phase, not per allocation, and is a no-op when
+  // MICROIDE_PERF_ALLOC_TRACE_PHASE is unset.
+  const std::string_view trace_filter = Allocations::PhaseTraceFilter();
+  const bool trace_this_phase =
+      !trace_filter.empty() && phase_name.find(trace_filter) != std::string_view::npos;
+  if (trace_this_phase) {
+    Allocations::SetPhaseTraceActive(true);
+  }
   const AllocationSnapshot before = Allocations::Snapshot();
   const auto start = std::chrono::steady_clock::now();
   action();
   const auto end = std::chrono::steady_clock::now();
   const AllocationDelta delta = Allocations::DeltaSince(before);
+  if (trace_this_phase) {
+    Allocations::SetPhaseTraceActive(false);
+  }
   const double elapsed_ms = std::chrono::duration<double, std::milli>(end - start).count();
   phase_metrics_.push_back(Iteration::PhaseMetrics{
       .name = std::string(phase_name),
