@@ -143,8 +143,29 @@ void ApplyBranchReviewPresentationMarkers(
     CompareTabState& compare_tab,
     const compare::BranchReviewStateService& review_service) {
   if (compare_tab.review_mode != compare::CompareReviewMode::Branch) {
+    compare_tab.review_markers_valid = false;
     return;
   }
+  // This runs from the compare tab's derived-state refresh, which fires from ~10
+  // event sites — every mouse move over the tab included — and it walks every
+  // presentation row. Its inputs are exactly three: the row list (which only
+  // RefreshCompareTabPresentation rebuilds, bumping presentation_revision), the
+  // review state (whose every mutation bumps revision()), and the branch target
+  // the rows were resolved against. If none moved, the rows already hold the
+  // answer.
+  const std::uint64_t review_revision = review_service.revision();
+  if (compare_tab.review_markers_valid &&
+      compare_tab.review_markers_built_presentation_revision ==
+          compare_tab.presentation_revision &&
+      compare_tab.review_markers_built_review_revision == review_revision &&
+      compare_tab.review_markers_built_target == compare_tab.branch_target) {
+    return;
+  }
+  compare_tab.review_markers_valid = true;
+  compare_tab.review_markers_built_presentation_revision = compare_tab.presentation_revision;
+  compare_tab.review_markers_built_review_revision = review_revision;
+  compare_tab.review_markers_built_target = compare_tab.branch_target;
+
   // Every hunk's marker and note flag in one pass over the review state. Asking
   // per hunk (memoized per hunk index, which is what this used to do) still walked
   // the target's reviewed-hunk list once per hunk and fell back to a FileStatus

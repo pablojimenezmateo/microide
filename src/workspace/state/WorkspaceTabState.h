@@ -101,6 +101,13 @@ struct CompareTabState {
   // Scratch for the whole-file review-marker resolve, kept on the tab so its
   // buffer survives across passes instead of being reallocated per refresh.
   std::vector<compare::BranchReviewHunkMarker> review_hunk_markers;
+  // What the rows' review markers were last composed from. The marker pass is
+  // O(presentation rows) and runs from the derived-state refresh, which fires on
+  // every mouse move; these let it skip the events that moved none of its inputs.
+  compare::BranchReviewTargetIdentity review_markers_built_target;
+  std::uint64_t review_markers_built_presentation_revision = 0;
+  std::uint64_t review_markers_built_review_revision = 0;
+  bool review_markers_valid = false;
   std::uint64_t presentation_revision = 0;
   compare::CompareBuildOptions build_options;
   bool show_whitespace = false;

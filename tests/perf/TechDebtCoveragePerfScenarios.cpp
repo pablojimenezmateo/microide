@@ -452,6 +452,21 @@ void RunBranchReviewPresentationMarkers(ScenarioContext& context) {
 
   context.Measure("branch_review.presentation_markers", [&]() {
     for (int iter = 0; iter < 12; ++iter) {
+      // The pass skips when none of its inputs moved. Bump the presentation
+      // revision so each iteration measures a real resolve — that is what the
+      // phase's name claims, and a phase that silently became 11 no-ops and one
+      // resolve would keep passing its gate while measuring nothing.
+      ++tab.presentation_revision;
+      workspace::ApplyBranchReviewPresentationMarkers(tab, service);
+      volatile std::size_t sink = tab.presentation.rows.size();
+      (void)sink;
+    }
+  });
+
+  // The other half: the mouse-move case, where nothing moved. This is what the
+  // derived-state refresh actually does most of the time, and it must stay O(1).
+  context.Measure("branch_review.presentation_markers_unchanged", [&]() {
+    for (int iter = 0; iter < 12; ++iter) {
       workspace::ApplyBranchReviewPresentationMarkers(tab, service);
       volatile std::size_t sink = tab.presentation.rows.size();
       (void)sink;

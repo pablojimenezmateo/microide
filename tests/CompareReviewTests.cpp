@@ -183,6 +183,103 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
                 "a reviewed hunk must place a review marker on its model rows");
        }});
 
+  // The marker pass skips when none of its three inputs moved, because it runs
+  // from the derived-state refresh that fires on every mouse move. Each of those
+  // inputs must actually invalidate it — a stale skip shows a hunk as reviewed
+  // after it was unreviewed, which is worse than the cost the skip saves.
+  tests.push_back(
+      {"CompareReview/BranchMarkerCacheInvalidatesOnEveryInput",
+       [] {
+         using microide::compare::BranchReviewNoteScope;
+         using microide::compare::BranchReviewStateService;
+         using microide::compare::ComputeBranchReviewHunkIdentity;
+         using microide::compare::MakeBranchReviewTargetIdentity;
+         using microide::workspace::ApplyBranchReviewPresentationMarkers;
+         using microide::workspace::RefreshCompareTabPresentation;
+
+         const std::filesystem::path path("a.cpp");
+         CompareTabState compare_tab;
+         compare_tab.review_mode = CompareReviewMode::Branch;
+         compare_tab.path = path;
+         compare_tab.branch_target =
+             MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3);
+         compare_tab.model = BuildCompareModel("old line\n", "new line\n");
+         RefreshCompareTabPresentation(compare_tab);
+
+         const auto marked_rows = [&]() {
+           std::size_t count = 0;
+           for (const auto& row : compare_tab.presentation.rows) {
+             if (row.kind == ComparePresentationRowKind::Model &&
+                 !row.review_marker_label.empty()) {
+               ++count;
+             }
+           }
+           return count;
+         };
+         const auto noted_rows = [&]() {
+           std::size_t count = 0;
+           for (const auto& row : compare_tab.presentation.rows) {
+             if (row.has_review_note) {
+               ++count;
+             }
+           }
+           return count;
+         };
+
+         BranchReviewStateService service;
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(marked_rows() == 0, "no review state means no markers");
+
+         // Input 1: the review state. A mutation bumps revision(), so the next
+         // pass must re-resolve even though the rows and target did not move.
+         service.MarkHunkReviewed(compare_tab.branch_target,
+                                  ComputeBranchReviewHunkIdentity(compare_tab.model, 0, path));
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         const std::size_t reviewed_rows = marked_rows();
+         Expect(reviewed_rows > 0, "marking a hunk reviewed must re-resolve the markers");
+
+         service.MarkHunkUnreviewed(compare_tab.branch_target,
+                                    ComputeBranchReviewHunkIdentity(compare_tab.model, 0, path));
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(marked_rows() == 0, "unmarking must clear the markers, not serve a stale skip");
+
+         service.SetNote(compare_tab.branch_target, BranchReviewNoteScope::Hunk, path,
+                         ComputeBranchReviewHunkIdentity(compare_tab.model, 0, path), "look");
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(noted_rows() > 0, "adding a hunk note must re-resolve the markers");
+
+         // Input 2: the row list. A presentation rebuild clears every row's marker,
+         // so a pass that skipped after it would drop the markers entirely.
+         service.MarkHunkReviewed(compare_tab.branch_target,
+                                  ComputeBranchReviewHunkIdentity(compare_tab.model, 0, path));
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(marked_rows() == reviewed_rows, "the reviewed markers should be back");
+         RefreshCompareTabPresentation(compare_tab);
+         Expect(marked_rows() == 0, "a presentation rebuild clears the row markers");
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(marked_rows() == reviewed_rows,
+                "a presentation rebuild must invalidate the marker cache");
+
+         // Input 3: the branch target. A different target has its own review state.
+         compare_tab.branch_target =
+             MakeBranchReviewTargetIdentity("/repo", "other-base", "HEAD", "other-base", 3);
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(marked_rows() == 0,
+                "switching the branch target must invalidate the marker cache");
+
+         // And the skip itself has to happen, or the guard is not being tested.
+         compare_tab.branch_target =
+             MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3);
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(marked_rows() == reviewed_rows, "switching back must re-resolve");
+         for (auto& row : compare_tab.presentation.rows) {
+           row.review_marker_label.clear();
+         }
+         ApplyBranchReviewPresentationMarkers(compare_tab, service);
+         Expect(marked_rows() == 0,
+                "with no input moved the pass must skip, leaving the rows untouched");
+       }});
+
   tests.push_back({"CompareReview/WorkingTreeMode",
                    [] {
                      Expect(InferCompareReviewMode("HEAD", "WORKTREE", false) ==
