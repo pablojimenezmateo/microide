@@ -52,6 +52,18 @@ namespace microide::util {
   X(EditorLineMaterializedBytes, "editor.line_materialized_bytes")                               \
   X(EditorLineWidthFullMeasures, "editor.line_width_full_measures")                              \
   X(EditorLineWidthSpliceUpdates, "editor.line_width_splice_updates")                            \
+  /* Why the whole-document width table was rebuilt. full_measures alone says how many  */       \
+  /* lines were walked but not whether that was one build or three, nor what invalidated */      \
+  /* the previous one -- which is how a large-file open paid the O(document) walk twice   */      \
+  /* with nothing to point at (TD-2026-08-06-138). Exactly one reason counter is bumped   */      \
+  /* per build, so the three sum to table_builds.                                          */     \
+  X(EditorLineWidthTableBuilds, "editor.line_width_table_builds")                                \
+  /* No table at all: first build for this tab, or the first after an invalidation. */           \
+  X(EditorLineWidthRebuildCold, "editor.line_width_rebuild_cold")                                \
+  /* A table existed and described the same document, but at a different tab size. */            \
+  X(EditorLineWidthRebuildTabSize, "editor.line_width_rebuild_tab_size")                         \
+  /* A table existed for a different line count -- an edit the incremental path dropped. */      \
+  X(EditorLineWidthRebuildLineCount, "editor.line_width_rebuild_line_count")                     \
   X(EditorContentRevisionBumps, "editor.content_revision_bumps")                                \
   X(EditorSyntaxRevisionBumps, "editor.syntax_revision_bumps")                                  \
   X(EditorLayoutShapeRevisionBumps, "editor.layout_shape_revision_bumps")                       \

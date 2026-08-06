@@ -563,6 +563,18 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
   if (cached_max_visual_columns_tab_size_ != tab_size ||
       cached_visual_line_columns_.size() != lines.size()) {
     util::PerformanceTrace::Scope s("TextLayoutCache::BuildVisualLineColumns");
+    // One reason per build, so the three reasons sum to the build count. Cold is
+    // checked first because an empty table is simultaneously a tab-size and a
+    // line-count mismatch, and attributing it to either would hide the real
+    // repeat-build shapes (TD-2026-08-06-138).
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthTableBuilds);
+    if (cached_visual_line_columns_.empty()) {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildCold);
+    } else if (cached_max_visual_columns_tab_size_ != tab_size) {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildTabSize);
+    } else {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildLineCount);
+    }
     cached_visual_line_columns_.assign(lines.size(), PackedLineWidth{});
     util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthFullMeasures, lines.size());
     for (std::size_t index = 0; index < lines.size(); ++index) {
@@ -714,14 +726,7 @@ bool TextLayoutCache::has_wrapped_line_row_offsets(std::size_t lines_size) const
   return wrapped_line_row_offsets_.size() == lines_size;
 }
 
-void TextLayoutCache::InvalidateAll() {
-  // Delegate the visible-line + max-columns half rather than repeating it. These
-  // two functions shared five lines verbatim, and InvalidateAll had drifted from
-  // its own contract: it documented "wipes every cache + every cache key" but
-  // left visible_line_cache_/_order_ populated. TextViewport's copy and move
-  // constructors call this precisely to hand the new viewport clean derived
-  // state, so "every cache" has to actually mean every cache.
-  ClearVisibleLineAndMaxColumns();
+void TextLayoutCache::DropWrappedRowLayouts() {
   wrapped_row_layouts_.clear();
   wrapped_line_row_offsets_.clear();
   wrapped_row_layouts_tab_size_ = 0;
@@ -733,6 +738,15 @@ void TextLayoutCache::InvalidateAll() {
   wrapped_row_layouts_content_revision_ = 0;
   wrapped_row_layouts_trivial_ = false;
   wrapped_row_layouts_fold_no_wrap_ = false;
+}
+
+void TextLayoutCache::InvalidateAll() {
+  // Delegate both halves rather than repeating them. InvalidateAll had drifted
+  // from its own contract: it documented "wipes every cache + every cache key"
+  // but left visible_line_cache_/_order_ populated, so "every cache" now
+  // actually means every cache.
+  ClearVisibleLineAndMaxColumns();
+  DropWrappedRowLayouts();
 }
 
 }  // namespace microide::editor

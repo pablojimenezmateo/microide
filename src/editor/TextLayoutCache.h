@@ -182,6 +182,17 @@ class TextLayoutCache {
   // changes, where the wrapped-row table is separately re-keyed via
   // layout_shape_revision and rebuilt lazily on the next access).
   void ClearVisibleLineAndMaxColumns();
+  // Drops just the wrapped-row table and every key it is validated against.
+  //
+  // This is the half a viewport copy/move has to give up: the new viewport comes
+  // out with `folding_model_ == nullptr`, so a table built against the source's
+  // fold model describes a fold state the copy does not have — and the cached
+  // `const FoldingModel*` could later be compared against an unrelated model that
+  // reused the address. The other half (per-line widths + the visible-line LRU)
+  // depends on the document's bytes and the tab size, both of which the copy
+  // shares, so it survives. See TextViewport's copy constructor
+  // (TD-2026-08-06-138) and SetFoldingModel, which makes the same distinction.
+  void DropWrappedRowLayouts();
   // Per-line partial invalidation of the visible-line LRU: removes every
   // cache entry whose `line_index >= start_line`. Used by
   // InvalidateDerivedCaches for content-tier edits.
