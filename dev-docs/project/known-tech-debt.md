@@ -1,6 +1,45 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **80 open items.**
+Reviewed 2026-08-06. **79 open items.**
+
+The 2026-08-06 measurement-integrity pass closed three — **150** (the resident gate
+is a coin flip), **151** (the biggest interactive scenarios have no measured
+phase), and **146** (ccache + LTO ICEs, so a history walk skips commits) — and the
+theme is that two of them were instruments, not code, and both paid off
+immediately.
+
+150 asked whether the resident swing was process state or a bimodal fixture. It is
+process state, an 8x range driven by which scenarios fragmented the heap first —
+while `bytes_allocated - bytes_freed` across the measured window reproduced **to
+the byte for 52 of 52 scenarios across three completely different suite prefixes**.
+That number was already being recorded per iteration and thrown away. It is now
+`p50_net_heap_bytes`, the deterministic retention gate, and the resident mean was
+demoted to the job it can still do (growth that never went through `operator new`).
+
+151 wrapped eight scenarios' existing timed loops in `ScenarioContext::Measure` so
+the phase-scoped allocation tracer could be aimed at them at all. The first trace
+found that the inline-blame overlay re-normalises the same two paths three to four
+times **per painted frame** — 11 of the top 12 sites in one phase. A memo on a
+purely-lexical, therefore un-staleable, function took **~30 % of the allocations off
+every editor scroll scenario**.
+
+The memo is not confined to the scenario that found it: **41 of 99 gated scenarios
+moved**, `linter_on_save` by 52 % and `editor_scroll_only_no_content_bump` by
+41 %. The suite was rebaselined whole rather than patched — leaving 41 gates 30 %
+loose is the defect [147](#td-2026-08-06-147) exists about — on a confirmed-idle
+perf-runner-v1 with **zero clock-drift warnings across all 99 scenarios**, then
+re-gated against what it wrote: **99 PASS, 0 FAIL, every gated metric below 75 %
+of its envelope** (the previous set had one sitting at 94 %).
+
+It also took **142** most of the way: the measurement that entry said had to come
+before any cap now exists, and it says a warmed 50k-line tab holds **4.13 MiB**,
+46 % of it in the per-line highlighter state — the component the entry did not
+size, rather than the width table it expected to dominate.
+
+It opened two, both about what the suite still cannot see: **152** (every metric is
+a property of the whole run because all 93 scenarios share one process) and **153**
+(`search_first_result`'s tight allocation gate is 99.3 % project-open, and its
+baseline comment claims the opposite).
 
 The 2026-08-06 input-path pass closed **145** (a mouse-drag rebuilding the pane
 layout three times per motion event). The drag's measured phase now allocates
@@ -436,7 +475,51 @@ TD-2026-08-05-135, done automatically instead of by hand.
 Roughly an hour of work. The thing to get right is that the output must be *read* —
 a scheduled run whose failures nobody sees is the same defect one layer up.
 
-### TD-2026-08-06-142 — a tab's derived caches have no measured ceiling, and nothing caps their sum across tabs. OPEN.
+### TD-2026-08-06-142 — a tab's derived caches have no measured ceiling, and nothing caps their sum across tabs. PARTIALLY RESOLVED 2026-08-06 — the measurement exists; the cap is still unchosen, deliberately.
+
+**The entry's first ask, in the order it insisted on**: "That is the first thing
+to build; a cap chosen without it would be a guess." So the measurement shipped
+and the cap did not.
+
+`TextViewport::DerivedCacheBytes()` reports retained heap by container
+**capacity** — a vector that shrank still owns its buffer, and the question is
+about what is retained, not what is in use — broken down by which cache holds it.
+`FoldingModel` and `TextViewportUndoHistory` get the same accounting;
+`TestAccess::EditorDerivedCacheResidency` sums across every open tab in every
+group and publishes `editor.tab_derived_cache_*`.
+
+The answer, from the new advisory scenario `editor_tab_derived_cache_residency`
+— one 50k-line C++ tab, folding on, a full 320-page scroll sweep and a typing run
+so every cache reaches steady state rather than whatever the first screen touched:
+
+| component | bytes | share | bounded by |
+| --- | ---: | ---: | --- |
+| highlight states | 1.92 MiB | 46 % | the **document** (one `SyntaxState` per line) |
+| layout cache | 1.21 MiB | 29 % | the document (width table) + 256 rows (LRU) |
+| fold model | 0.83 MiB | 20 % | the document |
+| highlight tokens | 0.17 MiB | 4 % | the token LRU |
+| undo history | 1.1 KiB | — | **use**, not size; capped at 256 MiB per tab |
+| **total** | **4.13 MiB** | | nothing, across tabs |
+
+So the unbounded sum the entry names is ~4 MiB per warmed large tab against
+`kMaxOpenTabsPerGroup` = 512 and `kMaxEditorGroups` = 2. The entry's guess that
+the width table would dominate ("400 KB on the 50k fixture") was low and pointed
+at the wrong component: the per-line **highlighter state** is the biggest single
+holder, and it is the one the entry did not size.
+
+**Reported, not gated, on purpose.** A gate here would be a cap, and the entry is
+right that a cap chosen before the measurement exists is a guess. What is now
+possible and was not: pick a ceiling from the table above, and use the counters
+to check that dropping a background tab's caches actually buys what it is
+supposed to.
+
+**Still open**, and unchanged by this: no aggregate cap, and no eviction of a
+background tab's reconstructible caches. The entry's "cheap first cut" (drop the
+width table and the visible-line LRU for tabs past some count) is now a 1.2 MiB-
+per-tab decision with a number attached rather than an intuition — but memory is
+last in the priority order and the growth converges, so it stays low priority.
+
+The original entry follows.
 
 Surfaced by [TD-2026-08-06-138](#td-2026-08-06-138), which stopped re-opening an
 already-open file from re-reading it. The reload was also, incidentally, the thing
@@ -706,7 +789,54 @@ Two shapes, in increasing risk:
 Start with (a). It is the whole allocation win and none of the staleness risk, and
 it leaves (b) available with a measurement to justify it.
 
-### TD-2026-08-06-146 — ccache + `-flto=auto` ICEs, so an A/B over history skips commits. OPEN.
+### TD-2026-08-06-146 — ccache + `-flto=auto` ICEs, so an A/B over history skips commits. [RESOLVED 2026-08-06 — the walk recovers and says so, and the cache stopped thrashing.]
+
+**Two fixes, because the entry named two different costs.**
+
+*1. The walk no longer silently loses a commit.* `tools/perf-compare.py` matches
+the ICE signature in its own build log (`original not compressed with zstd`,
+`lto1: internal compiler error`), retries the build **once** with
+`CCACHE_DISABLE=1`, and prints what it did in both directions — that it worked
+around a toolchain fault rather than measuring a broken commit, and that the
+commit is fine. Silence there would have been the whole defect restated one layer
+up: the point is not that the retry succeeds, it is that the numbers this side
+produced are attributable.
+
+*2. The cache stopped thrashing, which is where the corruption pressure came
+from.* `ccache -sv` on this workstation before the fix:
+
+```
+Hits:                                    10016 / 164477 ( 6.09%)
+Uncacheable calls:                      214295 / 378952 (56.55%)
+  Could not use precompiled header:     213864 / 214295 (99.80%)
+Cache size (GiB):                          5.0 /    5.0 (99.76%)
+Cleanups:                                27408
+Errors:                                    180
+  Input file modified during compilation:  180
+```
+
+**56 % of every compile in this tree bypassed the cache entirely**, because ccache
+refuses a PCH-using translation unit unless told to tolerate
+`pch_defines,time_macros` — and that was exported by `tools/run-checks.sh` only.
+A bare `cmake --build`, an IDE, `perf-compare.py`, a bisect script: all missed.
+The sloppiness now lives in the build itself (`CMAKE_CXX_COMPILER_LAUNCHER`
+becomes `cmake -E env CCACHE_SLOPPINESS=… ccache`), so every caller gets it. The
+launcher is not written into `compile_commands.json`, so clangd is undisturbed.
+`max_size` was still at the stock 5 GiB despite `CLAUDE.md` telling everyone to
+raise it — 27,408 cleanups against 7,916 live files is a cache evicting itself
+continuously — and is now 20 GiB on the reference runner.
+
+**What the evidence actually supports, stated narrowly.** The GCC message comes
+from `ZSTD_getFrameContentSize` rejecting an LTO section that is not a valid zstd
+frame, which is what a truncated or torn object file looks like. The 180
+`Input file modified during compilation` errors are direct evidence of source
+churning underneath a running build on this box (see the standing rule in
+`validation-traps.md` about editing during a build), and a cache at 99.8 % capacity
+with 27k evictions is the condition under which a torn entry is most likely to be
+both written and read. That is a coherent account, not a proven root cause — which
+is exactly why fix 1 exists: it does not depend on the diagnosis being right.
+
+The original entry follows.
 
 Bisecting [TD-2026-08-06-139](#td-2026-08-06-139) hit this on roughly one commit in
 four:
@@ -1045,7 +1175,66 @@ a measured 8,104, so the gate will register this fix — unlike the four scenari
 in [TD-2026-08-06-147](#td-2026-08-06-147). Watch the *phase* number regardless;
 the scenario total buries a 50-per-event change in setup noise.
 
-### TD-2026-08-06-150 — the resident gate is a coin flip for a scenario that retains on *alternate* iterations. OPEN.
+### TD-2026-08-06-150 — the resident gate is a coin flip for a scenario that retains on *alternate* iterations. [RESOLVED 2026-08-06 — it was process state, and there was a deterministic instrument sitting unused.]
+
+**The entry's step (1), done, and it answered the question.** Per-iteration
+`rss_growth_bytes` for `diff_stage_selected_lines`, one unchanged binary, five
+process states:
+
+| what ran before it | trimmed mean |
+| --- | ---: |
+| nothing (solo, three runs) | 33 / 37 / 61 KB |
+| a 26-scenario prefix | 79 KB |
+| a 24-scenario prefix | 265 KB |
+| the full 52-scenario prefix | 239 KB |
+| the whole suite (the entry's two runs) | 174 / 273 KB |
+
+Solo is stable, and the entry said what that means: **it is process state, and the
+fix is scenario isolation, not the envelope.** It is not one culprit scenario
+either — the response is cumulative and dose-dependent, which is heap
+fragmentation, not a leak upstream. Nor does it converge: at 40 iterations behind
+a fragmenting prefix the scenario retains ~185 KB per iteration indefinitely,
+against ~21 KB solo.
+
+**What the entry did not anticipate: the app's behaviour is identical in every one
+of those states, and the harness was already recording the proof and discarding
+it.** `bytes_allocated - bytes_freed` across the measured window reads **28,470
+bytes, exactly, in all five**. Re-measured across three different suite prefixes
+for every scenario that runs in them: **52 of 52 reproduced to the byte, worst
+spread 9 bytes.** The 8x swing is glibc failing to trim a heap that 61,761
+allocations per iteration have fragmented differently depending on who fragmented
+it first — a fact about the allocator, not about staging a hunk.
+
+**So the gate split in two rather than being widened.**
+
+- **`p50_net_heap_bytes` is the new deterministic retention gate** (10 % envelope,
+  4 KiB floor for the zero case, `Scenario::tolerance_net_heap_percent`, written
+  into every baseline). It is the gate a retention regression is now expected to
+  trip, and it is prefix-independent, machine-independent and clock-independent.
+  It also sees what RSS cannot: `reference_snippet_file_window` nets 1.65 MB per
+  measured window while `mean_rss_growth_bytes` reads exactly **0**.
+- **`mean_rss_growth_bytes` keeps a job the new metric cannot do** — growth that
+  never went through `operator new` (mmap, SDL, Lua, PCRE2, libc) — and gets the
+  envelope that job needs: 150 % on the three git-workstation scenarios. The entry
+  rejected widening because it would "hide the thing worth understanding". The
+  thing is now understood and measured, and the byte-exact gate carries the signal
+  the wide one no longer can.
+
+**Deliberately NOT done: full per-scenario process isolation.** It is the complete
+fix — it would make every metric a property of the scenario, and would also remove
+TD-2026-08-06-139's 680-allocation process-state offset — but it is a fork-per-
+scenario harness rewrite plus a whole-suite rebaseline, and the deterministic gate
+buys the accuracy without either. Filed as
+[TD-2026-08-06-152](#td-2026-08-06-152).
+
+**Predicted and then observed.** The entry said "the next ordinary run flips it
+red". The next ordinary full run did exactly that:
+`diff_stage_selected_lines mean_rss_growth_bytes: expected=174308 actual=291271
+(+67.1%, tolerance +60%)` — the only resident failure in the suite, with every
+allocation gate green. Under the new envelope it passes, and its
+`p50_net_heap_bytes` was 28,470 on that run too.
+
+The original entry follows.
 
 Found by [TD-2026-08-06-147](#td-2026-08-06-147)'s verification run, and found the
 way it is supposed to be found — the headroom instrument reported it on a gate
@@ -1098,7 +1287,70 @@ statistic needs the mode reported, not averaged. Reproduce with:
 # scenarios[].iterations[].rss_growth_bytes is the series; the summary hides it.
 ```
 
-### TD-2026-08-06-151 — the five biggest interactive scenarios time an inner loop but never declare it as a measured phase. OPEN.
+### TD-2026-08-06-151 — the five biggest interactive scenarios time an inner loop but never declare it as a measured phase. [RESOLVED 2026-08-06 — and the first trace it made possible took 30% off every editor scroll scenario.]
+
+**What shipped.** The five named scenarios plus all three second-tier candidates
+(`file_finder_cold`, `switch_and_idle`, `search_first_result`) now wrap their
+existing timed region in `ScenarioContext::Measure`. Mechanical, no behaviour
+change, and compatible with the assertion as the entry predicted: the inner
+per-frame `chrono` samples still feed `EnforceP95Microseconds` while `Measure`
+adds the phase entry. `samples_us.reserve` stays deliberately outside the phase —
+that buffer is the harness's, and one 96-double allocation charged to the phase
+would be the largest thing in an otherwise-empty trace. The eight scenario totals
+moved by **+2 allocations** each (the phase record itself), and all eight still
+pass.
+
+**The entry was right to claim a measurement gap and not waste, and right to
+refuse to guess which.** The answer was one of each:
+
+| phase | allocations | share of the scenario total |
+| --- | ---: | ---: |
+| `editor_fold_viewport_refresh.scroll_frame` | 31,079 | 84 % |
+| `editor_sticky_scroll_scroll.fast_scroll_frame` | 31,806 | 82 % |
+| `editor_render_whitespace_paint.scroll_overlay_frame` | 26,500 | 82 % |
+| `editor_indent_guides_paint.scroll_paint_frame` | 24,700 | 80 % |
+| `editor_scroll_only_no_content_bump.scroll_frame` | 22,650 | 81 % |
+| `switch_and_idle.switch_and_settle` | 19,158 | 38 % |
+| `file_finder_cold.open_finder` | 41,622 | 67 % |
+| `search_first_result.search_to_first_result` | **145** | **0.7 %** |
+
+The five scroll scenarios were mostly measuring what they claimed, so the fear
+that drove the entry (setup burying the phase, as on
+`editor_mouse_selection_drag`) did not hold for them. It held completely for
+`search_first_result`, whose baseline comment calls its 20,207 allocations "the
+authoritative, precise regression signal" for a search — 20,062 of which are
+opening a 10k-file project and building its index. That gate would not notice the
+search doubling.
+
+**And then the instrument earned its keep on the first use.** With the filter
+finally aimable at `editor_fold_viewport_refresh.scroll_frame`, **11 of the top 12
+sites were the same call**: `std::filesystem::path::lexically_normal`, reached from
+`EditorBlameOverlayService::BuildEditorOverlay` inside `RenderClip`. The inline
+blame overlay resolves the same (project root, file path) pair three to four times
+on **every painted frame** — its own eligibility check, then `GitBlameService`'s
+`Request` and `Snapshot` — and one `lexically_normal` is ~12 allocations.
+
+Memoized, which is correct by construction rather than by convention:
+`lexically_normal` and `lexically_relative` are purely lexical, touch no
+filesystem, and are therefore pure functions of their arguments — no invalidation
+hook, no generation counter, nothing to go stale against. Four entries, thread-local
+so it needs no lock (the shell thread paints while the background executor runs
+git), sized for a split editor plus a concurrent sidebar refresh rather than the
+one-entry memo that would thrash to a 0 % hit rate exactly when there is most to
+save.
+
+| scenario | phase before | phase after | total before | total after |
+| --- | ---: | ---: | ---: | ---: |
+| `editor_fold_viewport_refresh` | 31,079 | 22,151 | 37,147 | **25,955** |
+| `editor_sticky_scroll_scroll` | 31,806 | 22,506 | 38,665 | **27,101** |
+| `editor_render_whitespace_paint` | 26,500 | 19,060 | 32,211 | **22,693** |
+| `editor_indent_guides_paint` | 24,700 | 17,260 | 30,741 | **21,223** |
+| `editor_scroll_only_no_content_bump` | 22,650 | 13,350 | 28,079 | **16,515** |
+
+~30 % of every editor scroll scenario's allocations, on the hottest interactive
+path in the product, and none of it was reachable before the phase existed.
+
+The original entry follows.
 
 [145](#td-2026-08-06-145) and [149](#td-2026-08-06-149) were both found the same
 way: point `MICROIDE_PERF_ALLOC_TRACE_PHASE` at an interactive scenario's measured
@@ -1174,6 +1426,73 @@ candidates.
 anything worth removing is unknown, and saying otherwise from a scenario total is
 the mistake [138](#td-2026-08-06-138) and [139](#td-2026-08-06-139) already made
 once. Phase them first, then read the trace, then decide.
+
+### TD-2026-08-06-152 — every perf metric is a property of the suite, not of the scenario, because all 93 run in one process. OPEN.
+
+Split out of [150](#td-2026-08-06-150), whose fix works around this rather than
+removing it, and it is the same defect [139](#td-2026-08-06-139) hit from the
+other side.
+
+`PerfHarness::RunScenario` runs every scenario's warmup and measured iterations in
+the one `microide_perf` process, in registration order. So a scenario's numbers
+carry whatever the ~50 scenarios before it left in the process:
+
+- **Resident growth, 8x.** `diff_stage_selected_lines` reads a trimmed mean of
+  33 KB per iteration solo and 265 KB behind a 50-scenario prefix, with its actual
+  retention byte-identical in both (150). The committed baseline is therefore only
+  comparable against a run whose prefix is byte-for-byte the same suite — so
+  *adding, removing or reordering a scenario silently re-levels every downstream
+  resident gate*, and the only signal is a red gate on unrelated code.
+- **Allocations, 680.** 139 measured a 680-allocation offset from process state
+  alone. Allocation counts are the suite's deterministic oracle; they are
+  deterministic *given the prefix*, which is a weaker claim than the one the gate
+  is read as making.
+
+The fix is one child process per scenario: fork before any SDL or thread
+initialisation (the parent must stay a pure driver, since fork in a multithreaded
+process is not safe), run that scenario's iterations, serialise the `Aggregate`
+back over a pipe. Every metric then means what its name says, and the whole class
+of "which scenario ran before this one" goes away — including 139's offset and
+150's 8x.
+
+**Cost, honestly.** It is a harness rewrite plus a whole-suite rebaseline: both the
+resident numbers (which will drop to their solo values) and, per 139, the
+allocation counts will move. That rebaseline needs the reference runner quiet, and
+the run that writes it must be re-gated against itself before it is trusted
+(memory: `perf-baseline-drift-and-iteration-count`).
+
+**Why it can wait.** 150 shipped `p50_net_heap_bytes`, which is prefix-independent
+by construction and is now the gate a retention regression trips. What remains
+unfixed is that the RSS gate cannot be tight and that allocation counts have an
+unmeasured prefix sensitivity — real, but no longer the only instrument in the
+room.
+
+### TD-2026-08-06-153 — `search_first_result`'s "authoritative, precise regression signal" is 99.3% project open. OPEN.
+
+Found by [151](#td-2026-08-06-151) the moment the scenario got a measured phase,
+and it is exactly the mistake [138](#td-2026-08-06-138) and 139 made, sitting
+undetected in a baseline comment that claims the opposite:
+
+```
+search_first_result.search_to_first_result   145 allocations
+search_first_result (scenario total)      20,192 allocations
+```
+
+The comment on the registration says the median 20,207 is "a fully deterministic
+… authoritative, precise regression signal" and widens p95/max so the tight p50
+allocation gate can be the oracle. It is a precise, deterministic gate on
+**opening a 10k-file fixture and building its index** — the search itself is 145
+allocations, 0.7 % of it, and could double or decuple without moving the number
+by more than rounding.
+
+The same reading applies, less severely, to `file_finder_cold` (67 % phase) and
+`switch_and_idle` (38 %).
+
+Two things to do, and the order matters: (1) gate `phase_metrics` allocations, not
+just the scenario total — the phase numbers are recorded in `--report-json` today
+and nothing compares them to anything; (2) then rewrite the baseline comment,
+which is currently a claim the measurement does not support. Doing (2) first would
+just move the untested claim.
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
