@@ -255,4 +255,106 @@ inline void ResolveMultiCaretRemapSites(std::vector<MultiCaretRemapSite>& sites)
   }
 }
 
+// Collects the disjoint before/after images of a multi-caret edit while it is
+// applied high-to-low, so the recorded undo entry is the SET of edited ranges
+// instead of one range spanning the outermost carets (TD-2026-08-06-157).
+//
+// Eight carets 8,400 lines apart used to capture 8,401 lines for the before image
+// and 8,401 for the after, and retain both, on every keystroke — the cost of one
+// keystroke was the DISTANCE between the carets, not their number.
+//
+// Every capture happens at the moment its footprint is untouched: the walk is
+// highest-first, so when a footprint opens, everything above it is already edited
+// (and is above, so its indices do not move) and everything below is still
+// original. That is what makes `before_start` the true pre-edit index.
+class DisjointEditCapture {
+ public:
+  explicit DisjointEditCapture(const TextBuffer& buffer) : buffer_(&buffer) {}
+
+  // Call immediately BEFORE applying the highest edit of a footprint.
+  void BeginFootprint(std::size_t start, std::size_t end_exclusive) {
+    open_start_ = std::min(start, buffer_->size());
+    open_before_size_ = std::clamp(end_exclusive, open_start_, buffer_->size()) - open_start_;
+    document_size_at_begin_ = buffer_->size();
+    open_before_lines_ = buffer_->SliceLines(open_start_, open_start_ + open_before_size_);
+    open_ = true;
+  }
+
+  // Call immediately AFTER applying the lowest edit of the footprint.
+  void EndFootprint() {
+    if (!open_) {
+      return;
+    }
+    open_ = false;
+    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(buffer_->size()) -
+                                 static_cast<std::ptrdiff_t>(document_size_at_begin_);
+    const std::size_t after_size = static_cast<std::size_t>(std::max<std::ptrdiff_t>(
+        0, static_cast<std::ptrdiff_t>(open_before_size_) + delta));
+    const std::size_t after_end = std::min(buffer_->size(), open_start_ + after_size);
+    parts_.push_back(Captured{
+        .before_start = open_start_,
+        .before_lines = std::move(open_before_lines_),
+        .after_lines = buffer_->SliceLines(std::min(open_start_, after_end), after_end),
+    });
+  }
+
+  bool empty() const { return parts_.empty(); }
+
+  // Parts were pushed highest-first; this reverses them into the ascending order
+  // the entry stores, trims each one's identical head/tail, and drops any that
+  // turned out to be a no-op.
+  TextViewportUndoHistory::Entry Build(
+      const TextViewportUndoHistory::ViewState& before_state,
+      const TextViewportUndoHistory::ViewState& after_state) {
+    std::reverse(parts_.begin(), parts_.end());
+    TextViewportUndoHistory::Entry aggregate;
+    aggregate.before_state = before_state;
+    aggregate.after_state = after_state;
+    std::ptrdiff_t shift = 0;
+    bool have_primary = false;
+    for (Captured& part : parts_) {
+      TextViewportUndoHistory::Entry trimmed =
+          TextViewportUndoHistory::BuildEntryForDocumentChange(
+              std::move(part.before_lines), before_state, std::move(part.after_lines), after_state);
+      if (trimmed.before_lines.empty() && trimmed.after_lines.empty()) {
+        continue;  // this footprint's edits cancelled out
+      }
+      const std::size_t before_start = part.before_start + trimmed.start_line;
+      const std::ptrdiff_t part_delta = static_cast<std::ptrdiff_t>(trimmed.after_lines.size()) -
+                                        static_cast<std::ptrdiff_t>(trimmed.before_lines.size());
+      if (!have_primary) {
+        aggregate.start_line = before_start;
+        aggregate.before_lines = std::move(trimmed.before_lines);
+        aggregate.after_lines = std::move(trimmed.after_lines);
+        have_primary = true;
+      } else {
+        aggregate.extra_parts.push_back(TextViewportUndoHistory::DisjointPart{
+            .before_start = before_start,
+            .after_start = static_cast<std::size_t>(
+                static_cast<std::ptrdiff_t>(before_start) + shift),
+            .before_lines = std::move(trimmed.before_lines),
+            .after_lines = std::move(trimmed.after_lines),
+        });
+      }
+      shift += part_delta;
+    }
+    return aggregate;
+  }
+
+ private:
+  struct Captured {
+    std::size_t before_start = 0;
+    std::vector<std::string> before_lines;
+    std::vector<std::string> after_lines;
+  };
+
+  const TextBuffer* buffer_;
+  std::vector<Captured> parts_;
+  std::vector<std::string> open_before_lines_;
+  std::size_t open_start_ = 0;
+  std::size_t open_before_size_ = 0;
+  std::size_t document_size_at_begin_ = 0;
+  bool open_ = false;
+};
+
 }  // namespace microide::editor::detail

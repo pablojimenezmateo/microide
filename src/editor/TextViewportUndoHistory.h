@@ -79,6 +79,23 @@ class TextViewportUndoHistory {
   // line, the tree's replacement buffer, its add-buffer append, and the typing
   // run's coalesce. Three of those are gone with the column-scoped form, and the
   // other two with the piece tree's column-scoped splice (TD-2026-08-05-131).
+  //
+  // A LINE-VECTOR entry may also be MULTI-RANGE: see `Entry::extra_parts`.
+
+  // One additional disjoint line-range replacement inside a LINE-VECTOR entry.
+  struct DisjointPart {
+    // Where this part's `before_lines` sit in the PRE-edit document, and where its
+    // `after_lines` sit in the POST-edit document. The two differ by the net line
+    // delta of every part BELOW this one, which is why both are stored: a forward
+    // apply walks the parts highest-first using `before_start`, an undo walks them
+    // highest-first using `after_start`, and in each direction the parts still to
+    // come sit below and are therefore unshifted by the ones already applied.
+    std::size_t before_start = 0;
+    std::size_t after_start = 0;
+    std::vector<std::string> before_lines;
+    std::vector<std::string> after_lines;
+  };
+
   struct Entry {
     std::size_t start_line = 0;
     bool is_inline = false;
@@ -87,6 +104,23 @@ class TextViewportUndoHistory {
     std::string inserted_text;
     std::vector<std::string> before_lines;
     std::vector<std::string> after_lines;
+    // Disjoint ranges this entry ALSO replaces, strictly above the primary range
+    // and sorted ascending. Empty for every entry except a non-contiguous
+    // multi-caret or grouped edit (TD-2026-08-06-157).
+    //
+    // The line form can only say "these lines became those lines at this index",
+    // so a multi-caret edit used to be recorded as one replacement spanning first
+    // caret line to last: eight carets 8,400 lines apart captured 8,401 lines for
+    // the before image and 8,401 for the after, and RETAINED both against the
+    // history byte budget, on every keystroke. Ctrl+Shift+L on a common token puts
+    // carets across the whole document, which made each subsequent keystroke copy
+    // it twice. The interior lines are identical in both images by construction —
+    // the group frame already carried the edit as a disjoint set and then stitched
+    // it back into one span — so this is that set, kept.
+    //
+    // The primary range is always the LOWEST, which is what makes `start_line`
+    // valid in both coordinate frames (nothing below it moves).
+    std::vector<DisjointPart> extra_parts;
     ViewState before_state;
     ViewState after_state;
     // Cached content byte size, stamped when the entry enters the undo stack so
@@ -99,6 +133,26 @@ class TextViewportUndoHistory {
     // instead of the vectors' sizes.
     std::size_t before_line_count() const { return is_inline ? 1 : before_lines.size(); }
     std::size_t after_line_count() const { return is_inline ? 1 : after_lines.size(); }
+
+    // A multi-range entry. Every consumer that treats an entry as ONE contiguous
+    // splice — the coalescing predicates, the applied-edit span published to
+    // marker consumers — has to ask this and take its conservative branch.
+    bool is_multi_range() const { return !extra_parts.empty(); }
+
+    // The parts in apply order (highest first), as
+    // (start, removed_count, inserted_lines). The buffer splice and the derived
+    // caches must walk them in this order so each part's index is still valid
+    // when it is reached. `forward` selects the direction.
+    template <typename Fn>
+    void ForEachPartInApplyOrder(bool forward, Fn&& fn) const {
+      for (std::size_t i = extra_parts.size(); i-- > 0;) {
+        const DisjointPart& part = extra_parts[i];
+        fn(forward ? part.before_start : part.after_start,
+           forward ? part.before_lines : part.after_lines,
+           forward ? part.after_lines : part.before_lines);
+      }
+      fn(start_line, forward ? before_lines : after_lines, forward ? after_lines : before_lines);
+    }
   };
 
   // Grouping ------------------------------------------------------------
@@ -117,8 +171,7 @@ class TextViewportUndoHistory {
   // Closes the innermost group. Returns the aggregate Entry the caller
   // should push onto the undo stack via RecordEntryDirect (or nullopt if
   // the group ended up as a no-op).
-  std::optional<Entry> FinishActiveGroup(const TextBuffer& current_lines,
-                                          ViewState after_state);
+  std::optional<Entry> FinishActiveGroup(ViewState after_state);
 
   // Undo / redo stack access -------------------------------------------
   const Entry* TopUndoEntry() const { return undo_stack_.empty() ? nullptr : &undo_stack_.back(); }
@@ -179,8 +232,10 @@ class TextViewportUndoHistory {
     // all expressed in the current buffer's after-coordinates. A wholly contiguous
     // group keeps a single element (the old fast path); non-contiguous grouped
     // edits (multi-caret/snippet across gaps) accumulate as separate ranges instead
-    // of collapsing to a whole-buffer snapshot. FinishActiveGroup stitches them
-    // into one undo Entry, reading only the untouched gap lines.
+    // of collapsing to a whole-buffer snapshot. FinishActiveGroup hands them
+    // straight to the Entry as its primary range plus `extra_parts`; it used to
+    // stitch them into one contiguous range by re-reading every untouched gap line
+    // into both images (TD-2026-08-06-157).
     std::vector<Entry> disjoint_entries;
   };
 

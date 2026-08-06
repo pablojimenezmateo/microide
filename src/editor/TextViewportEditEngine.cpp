@@ -543,7 +543,7 @@ void TextViewport::EndUndoGroup() { FlushActiveUndoGroup(); }
 
 void TextViewport::FlushActiveUndoGroup() {
   std::optional<HistoryEntry> aggregate =
-      undo_history_.FinishActiveGroup(document_->lines, CaptureViewState());
+      undo_history_.FinishActiveGroup(CaptureViewState());
   if (!aggregate.has_value()) {
     return;
   }
@@ -562,6 +562,38 @@ void TextViewport::FlushActiveUndoGroup() {
 
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   util::PerformanceTrace::Scope perf_scope("TextViewport::ApplyHistoryEntry");
+
+  // A multi-range entry (TD-2026-08-06-157) is several disjoint splices. Each
+  // part's buffer edit and its derived-cache update travel together, highest part
+  // first: applying every splice and only then every cache update would have the
+  // cache updates reasoning about indices that the earlier splices already moved.
+  // Highest-first keeps every part still to come below what has been touched, so
+  // its recorded index is still the right one in both structures.
+  if (entry.is_multi_range()) {
+    {
+      util::PerformanceTrace::Scope scope("TextViewport::ApplyHistoryEntry::ApplyEntryToBuffer");
+      entry.ForEachPartInApplyOrder(
+          forward, [this](std::size_t start, const std::vector<std::string>& removed,
+                          const std::vector<std::string>& inserted) {
+            const std::size_t clamped = std::min(start, document_->lines.size());
+            document_->lines.ReplaceLineRange(clamped, removed.size(), inserted);
+            UpgradeEncodingForInsertedLines(inserted);
+            InvalidateDerivedCaches(
+                InvalidationReason::ContentEdit, clamped,
+                ContentSplice{.removed = removed.size(), .inserted = inserted.size()});
+            UpdateVisualColumnCacheAfterEdit(clamped, removed.size(), inserted.size(),
+                                             InlineLineSplice{});
+            UpdateWrappedRowsAfterEdit(clamped, removed.size(), inserted.size());
+          });
+      if (document_->lines.empty()) {
+        document_->lines.PushBackLine("");
+      }
+    }
+    RestoreViewState(forward ? entry.after_state : entry.before_state);
+    EnsureCursorVisible();
+    return;
+  }
+
   const std::size_t start_line = std::min(entry.start_line, document_->lines.size());
   const std::size_t removed_count =
       forward ? entry.before_line_count() : entry.after_line_count();

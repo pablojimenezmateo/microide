@@ -23,53 +23,6 @@ namespace microide::editor {
 
 namespace {
 
-struct LineSlice {
-  std::size_t start = 0;
-  std::vector<std::string> before_lines;
-};
-
-// Capture only the affected line range straight from the piece tree -- never
-// materialize the whole document. Mirrors the range-scoped SliceLines capture
-// used by the single-caret / range edit paths (see TextViewport.cpp).
-LineSlice CaptureLineSlice(const TextBuffer& buffer,
-                           std::size_t start,
-                           std::size_t end_exclusive) {
-  const std::size_t clamped_start = std::min(start, buffer.size());
-  const std::size_t clamped_end = std::clamp(end_exclusive, clamped_start, buffer.size());
-  return LineSlice{
-      .start = clamped_start,
-      .before_lines = buffer.SliceLines(clamped_start, clamped_end),
-  };
-}
-
-// Consumes `slice`: its lines move into the entry rather than being copied into
-// it, which on a multi-caret edit is the whole span between the outermost carets.
-TextViewportUndoHistory::Entry BuildAggregateFromLineSlice(
-    LineSlice slice,
-    std::size_t before_document_line_count,
-    const TextViewportUndoHistory::ViewState& before_state,
-    const TextBuffer& after_buffer,
-    const TextViewportUndoHistory::ViewState& after_state) {
-  const std::size_t after_document_line_count = after_buffer.size();
-  const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(after_document_line_count) -
-                                    static_cast<std::ptrdiff_t>(before_document_line_count);
-  const std::size_t after_slice_size =
-      static_cast<std::size_t>(std::max<std::ptrdiff_t>(
-          0, static_cast<std::ptrdiff_t>(slice.before_lines.size()) + line_delta));
-  const std::size_t after_start = std::min(slice.start, after_document_line_count);
-  const std::size_t after_end =
-      std::min(after_document_line_count, slice.start + after_slice_size);
-  // Slice only the affected range out of the tree; the whole document is never
-  // copied here.
-  const std::size_t slice_start = slice.start;
-  TextViewportUndoHistory::Entry aggregate =
-      TextViewportUndoHistory::BuildEntryForDocumentChange(
-          std::move(slice.before_lines), before_state,
-          after_buffer.SliceLines(after_start, after_end), after_state);
-  aggregate.start_line += slice_start;
-  return aggregate;
-}
-
 // One caret's planned edit, computed from the pre-edit buffer. The reverse walk
 // applies higher (later) carets first, and those edits never touch the content
 // at a lower caret, so planning every edit up front from the original buffer is
@@ -297,8 +250,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
 
   std::vector<std::optional<PlannedCaretEdit>> planned;
   planned.reserve(carets.size());
-  std::size_t affected_start = std::numeric_limits<std::size_t>::max();
-  std::size_t affected_end = 0;
   bool has_candidate_edit = false;
   for (std::size_t caret_index = 0; caret_index < carets.size(); ++caret_index) {
     const MultiCaretSite& caret = carets[caret_index];
@@ -309,8 +260,6 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         distribute ? std::string_view((*per_caret_insert)[caret_index]) : insert_text;
     std::optional<PlannedCaretEdit> edit = plan_edit(line, column, caret.selection, caret_insert);
     if (edit.has_value()) {
-      affected_start = std::min(affected_start, edit->removed.start.line);
-      affected_end = std::max(affected_end, edit->removed.end.line + 1);
       has_candidate_edit = true;
     }
     planned.push_back(std::move(edit));
@@ -319,8 +268,44 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return false;
   }
 
-  const std::size_t before_document_line_count = document_->lines.size();
-  LineSlice before_slice = CaptureLineSlice(document_->lines, affected_start, affected_end);
+  // Footprints: maximal runs of planned edits whose line ranges overlap or touch.
+  // Two carets on the same line share one footprint, which is what keeps each
+  // footprint's capture window untouched until it opens. Carets are already sorted
+  // ascending, so their ranges are too (TD-2026-08-06-157).
+  struct Footprint {
+    std::size_t start = 0;
+    std::size_t end_exclusive = 0;
+    std::size_t first_caret = 0;
+    std::size_t last_caret = 0;
+  };
+  std::vector<Footprint> footprints;
+  for (std::size_t i = 0; i < planned.size(); ++i) {
+    if (!planned[i].has_value()) {
+      continue;
+    }
+    const std::size_t range_start = planned[i]->removed.start.line;
+    const std::size_t range_end = planned[i]->removed.end.line + 1;
+    if (!footprints.empty() && range_start <= footprints.back().end_exclusive) {
+      footprints.back().end_exclusive = std::max(footprints.back().end_exclusive, range_end);
+      footprints.back().last_caret = i;
+      continue;
+    }
+    footprints.push_back(Footprint{.start = range_start,
+                                   .end_exclusive = range_end,
+                                   .first_caret = i,
+                                   .last_caret = i});
+  }
+  // caret index -> footprint index, so the descending apply walk below can open a
+  // footprint at its highest caret and close it at its lowest.
+  constexpr std::size_t kNoFootprint = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> footprint_opens_at(planned.size(), kNoFootprint);
+  std::vector<std::size_t> footprint_closes_at(planned.size(), kNoFootprint);
+  for (std::size_t f = 0; f < footprints.size(); ++f) {
+    footprint_opens_at[footprints[f].last_caret] = f;
+    footprint_closes_at[footprints[f].first_caret] = f;
+  }
+  detail::DisjointEditCapture capture(document_->lines);
+
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
   // Identify the primary by its index in the sorted/deduped vector rather than
@@ -341,6 +326,10 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   std::vector<detail::MultiCaretRemapSite> sites(carets.size());
   bool changed = false;
   for (std::size_t i = carets.size(); i-- > 0;) {
+    if (footprint_opens_at[i] != kNoFootprint) {
+      const Footprint& f = footprints[footprint_opens_at[i]];
+      capture.BeginFootprint(f.start, f.end_exclusive);
+    }
     const std::size_t line = std::min(carets[i].position.line, document_->lines.size() - 1);
     const std::size_t column =
         TextLayout::ClampTextColumn(document_->lines[line], carets[i].position.column);
@@ -349,17 +338,20 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
                                : std::nullopt;
     if (!entry.has_value()) {
       sites[i] = detail::MultiCaretRemapSite{.landed = TextPosition{line, column}};
-      continue;
+    } else {
+      changed = true;
+      ApplyHistoryEntry(*entry, true);
+      const TextPosition landed = planned[i]->landed_override.value_or(
+          TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column});
+      sites[i] = detail::MultiCaretRemapSite{
+          .landed = landed,
+          .has_edit = true,
+          .removed = planned[i]->removed,
+          .shape = detail::ComputeReplacementShape(planned[i]->replacement)};
     }
-    changed = true;
-    ApplyHistoryEntry(*entry, true);
-    const TextPosition landed = planned[i]->landed_override.value_or(
-        TextPosition{entry->after_state.cursor_line, entry->after_state.cursor_column});
-    sites[i] = detail::MultiCaretRemapSite{
-        .landed = landed,
-        .has_edit = true,
-        .removed = planned[i]->removed,
-        .shape = detail::ComputeReplacementShape(planned[i]->replacement)};
+    if (footprint_closes_at[i] != kNoFootprint) {
+      capture.EndFootprint();
+    }
   }
 
   if (!changed) {
@@ -390,23 +382,19 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   document_->dirty = true;
   EnsureCursorVisible();
 
-  HistoryEntry aggregate_entry = BuildAggregateFromLineSlice(
-      std::move(before_slice), before_document_line_count, before_state, document_->lines,
-      CaptureViewState());
-  // The aggregate history entry spans first..last affected caret line as one
-  // contiguous replace, which is correct for undo/redo but WRONG as an AppliedEdit
-  // when 2+ caret sites edited disjoint regions: BuildAppliedEdit only trims equal
-  // whole lines at the ends, so an unchanged interior line between carets stays
-  // inside the "replaced" span, and single-range marker consumers (BreakpointStore,
-  // LSP diagnostic shifting) drag markers on those preserved lines to the span's
-  // end. Only publish the AppliedEdit for a single edited region; for a true
-  // multi-region edit leave it empty so those consumers take their resync fallback
+  HistoryEntry aggregate_entry = capture.Build(before_state, CaptureViewState());
+  // Only publish an AppliedEdit for a single edited region. A multi-region edit is
+  // not one replaced span, and single-range marker consumers (BreakpointStore, LSP
+  // diagnostic shifting) would drag markers on the preserved lines between carets
+  // to the span's end; leaving it empty makes them take their resync fallback
   // (breakpoints stay put, diagnostics re-request) instead of mis-collapsing.
+  // `is_multi_range()` is now the direct test — the entry itself says whether it
+  // covers one region or several (TD-2026-08-06-157).
   std::size_t edited_region_count = 0;
   for (const std::optional<PlannedCaretEdit>& plan : planned) {
     if (plan.has_value()) ++edited_region_count;
   }
-  if (edited_region_count <= 1) {
+  if (!aggregate_entry.is_multi_range() && edited_region_count <= 1) {
     SetLastAppliedEditFromEntry(aggregate_entry, true);
   } else {
     ClearLastAppliedEdit();

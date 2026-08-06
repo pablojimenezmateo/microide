@@ -276,6 +276,15 @@ namespace microide::util {
   /* is O(span) per Right keystroke, so it is the one repeated cost the keyboard */             \
   /* gesture adds over the mouse one.                                            */             \
   X(EditorBoxSelectionSpanLinesScanned, "editor.box_selection_span_lines_scanned")             \
+  /* Multi-range undo entries (TD-2026-08-06-157) and the two line counts that   */             \
+  /* say what the shape is worth: `lines_kept` is what the entry actually holds  */             \
+  /* (both images of every edited range), `lines_spanned` is what the old        */             \
+  /* one-contiguous-range model would have held for the same edit. Their ratio   */             \
+  /* is the span/edited ratio nothing reported before, and it is what says       */             \
+  /* whether real carets sit 30 lines or a whole file apart.                     */             \
+  X(EditorMultiRangeUndoEntries, "editor.multi_range_undo_entries")                             \
+  X(EditorMultiRangeUndoLinesKept, "editor.multi_range_undo_lines_kept")                        \
+  X(EditorMultiRangeUndoLinesSpanned, "editor.multi_range_undo_lines_spanned")                  \
   /* --- text document model ---------------------------------------------- */                 \
   X(DocumentEdits, "document.edits")                                                            \
   X(DocumentAddBufferCompactions, "document.add_buffer_compactions")                            \

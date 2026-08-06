@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "editor/TextViewport.h"
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
 namespace microide::editor {
@@ -15,11 +16,16 @@ std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
     return entry.removed_text.size() + entry.inserted_text.size();
   }
   std::size_t bytes = 0;
-  for (const std::string& line : entry.before_lines) {
-    bytes += line.size() + 1;
-  }
-  for (const std::string& line : entry.after_lines) {
-    bytes += line.size() + 1;
+  const auto add_lines = [&bytes](const std::vector<std::string>& lines) {
+    for (const std::string& line : lines) {
+      bytes += line.size() + 1;
+    }
+  };
+  add_lines(entry.before_lines);
+  add_lines(entry.after_lines);
+  for (const auto& part : entry.extra_parts) {
+    add_lines(part.before_lines);
+    add_lines(part.after_lines);
   }
   return bytes;
 }
@@ -28,6 +34,24 @@ std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
 
 void TextViewportUndoHistory::AppendUndoEntry(Entry entry) {
   entry.byte_size = EntryContentBytes(entry);
+  if (entry.is_multi_range()) {
+    // What the entry holds vs what a single contiguous range would have held for
+    // the same edit — the span/edited ratio TD-2026-08-06-157 asked for, which
+    // nothing reported. `lines_spanned` counts both images, matching `lines_kept`.
+    std::size_t kept = entry.before_lines.size() + entry.after_lines.size();
+    std::size_t highest_before_end = entry.start_line + entry.before_lines.size();
+    std::size_t highest_after_end = entry.start_line + entry.after_lines.size();
+    for (const DisjointPart& part : entry.extra_parts) {
+      kept += part.before_lines.size() + part.after_lines.size();
+      highest_before_end = std::max(highest_before_end, part.before_start + part.before_lines.size());
+      highest_after_end = std::max(highest_after_end, part.after_start + part.after_lines.size());
+    }
+    util::AddPerformanceCounter(util::PerfCounterId::EditorMultiRangeUndoEntries, 1);
+    util::AddPerformanceCounter(util::PerfCounterId::EditorMultiRangeUndoLinesKept, kept);
+    util::AddPerformanceCounter(
+        util::PerfCounterId::EditorMultiRangeUndoLinesSpanned,
+        (highest_before_end - entry.start_line) + (highest_after_end - entry.start_line));
+  }
   undo_stack_.push_back(std::move(entry));
   EnforceHistoryBudget();
 }
@@ -222,6 +246,10 @@ bool TextViewportUndoHistory::TryCoalesceWithTop(const Entry& next, CoalesceHint
   if (top.is_inline != next.is_inline) {
     return false;
   }
+  // A multi-range entry is never a typing-run continuation (TD-2026-08-06-157).
+  if (top.is_multi_range() || next.is_multi_range()) {
+    return false;
+  }
   if (top.is_inline) {
     if (!CanMergeInlineEntry(top, next)) {
       return false;
@@ -257,8 +285,7 @@ void TextViewportUndoHistory::RecordEntryDirect(Entry entry) {
 }
 
 std::optional<TextViewportUndoHistory::Entry>
-TextViewportUndoHistory::FinishActiveGroup(const TextBuffer& current_lines,
-                                           ViewState after_state) {
+TextViewportUndoHistory::FinishActiveGroup(ViewState after_state) {
   if (group_stack_.empty()) {
     return std::nullopt;
   }
@@ -270,38 +297,40 @@ TextViewportUndoHistory::FinishActiveGroup(const TextBuffer& current_lines,
     return std::nullopt;
   }
 
-  Entry agg;
-  if (parts.size() == 1) {
-    agg = std::move(parts.front());  // frame is local + popped; safe to move out
-  } else {
-    // Stitch the disjoint ranges into one contiguous undo entry. The untouched gap
-    // lines between consecutive ranges are read from the current buffer (also their
-    // pre-group content, since no child edited them) — bounded by the touched span,
-    // never a whole-buffer snapshot.
-    agg.start_line = parts.front().start_line;
-    for (std::size_t i = 0; i < parts.size(); ++i) {
+  // The frame already carries the edit as a disjoint set, and the entry now keeps
+  // it that way. This used to stitch the ranges into one contiguous replacement by
+  // re-reading every untouched gap line out of the buffer into BOTH images — so a
+  // group whose children sat far apart recorded, and retained, two copies of
+  // everything between them (TD-2026-08-06-157).
+  //
+  // The lowest range is the primary; its start_line is valid in both coordinate
+  // frames because nothing below it moves. Each higher range keeps the
+  // after-coordinate the frame maintained plus the before-coordinate derived by
+  // undoing the net line delta of every range below it.
+  Entry agg = std::move(parts.front());  // frame is local + popped; safe to move out
+  agg.extra_parts.clear();
+  if (parts.size() > 1) {
+    agg.extra_parts.reserve(parts.size() - 1);
+    std::ptrdiff_t shift = static_cast<std::ptrdiff_t>(agg.after_lines.size()) -
+                           static_cast<std::ptrdiff_t>(agg.before_lines.size());
+    for (std::size_t i = 1; i < parts.size(); ++i) {
       Entry& part = parts[i];
-      const std::size_t part_after_end = part.start_line + part.after_lines.size();
-      agg.before_lines.insert(agg.before_lines.end(),
-                              std::make_move_iterator(part.before_lines.begin()),
-                              std::make_move_iterator(part.before_lines.end()));
-      agg.after_lines.insert(agg.after_lines.end(),
-                             std::make_move_iterator(part.after_lines.begin()),
-                             std::make_move_iterator(part.after_lines.end()));
-      if (i + 1 < parts.size()) {
-        const std::size_t gap_end = parts[i + 1].start_line;
-        for (std::size_t ln = part_after_end; ln < gap_end && ln < current_lines.size(); ++ln) {
-          std::string gap_line(current_lines.LineView(ln));
-          agg.before_lines.push_back(gap_line);
-          agg.after_lines.push_back(std::move(gap_line));
-        }
-      }
+      const std::size_t after_start = part.start_line;
+      DisjointPart extra;
+      extra.after_start = after_start;
+      extra.before_start = static_cast<std::size_t>(
+          std::max<std::ptrdiff_t>(0, static_cast<std::ptrdiff_t>(after_start) - shift));
+      extra.before_lines = std::move(part.before_lines);
+      extra.after_lines = std::move(part.after_lines);
+      shift += static_cast<std::ptrdiff_t>(extra.after_lines.size()) -
+               static_cast<std::ptrdiff_t>(extra.before_lines.size());
+      agg.extra_parts.push_back(std::move(extra));
     }
   }
   agg.before_state = frame.state;
   agg.after_state = std::move(after_state);
 
-  if (agg.before_lines.empty() && agg.after_lines.empty()) {
+  if (agg.before_lines.empty() && agg.after_lines.empty() && agg.extra_parts.empty()) {
     return std::nullopt;
   }
   return agg;
@@ -379,6 +408,22 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
     return;
   }
 
+  // A multi-range entry replaces several disjoint spans. Walk them highest-first
+  // (ForEachPartInApplyOrder) so each part's recorded index is still valid when it
+  // is reached: the parts still to come sit below and are unmoved by the ones
+  // already spliced (TD-2026-08-06-157).
+  if (entry.is_multi_range()) {
+    entry.ForEachPartInApplyOrder(
+        forward, [&lines](std::size_t start, const std::vector<std::string>& removed,
+                          const std::vector<std::string>& inserted) {
+          lines.ReplaceLineRange(std::min(start, lines.size()), removed.size(), inserted);
+        });
+    if (lines.empty()) {
+      lines.PushBackLine("");
+    }
+    return;
+  }
+
   const std::size_t start_line = std::min(entry.start_line, lines.size());
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
@@ -399,6 +444,10 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
 
 std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry& entry,
                                                                      bool forward) {
+  // See BuildAppliedEditLineSpan: a multi-range entry has no single replaced range.
+  if (entry.is_multi_range()) {
+    return std::nullopt;
+  }
   if (entry.is_inline) {
     const std::string& removed = forward ? entry.removed_text : entry.inserted_text;
     const std::string& inserted = forward ? entry.inserted_text : entry.removed_text;
@@ -511,6 +560,14 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
 
 std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLineSpan(
     const Entry& entry, bool forward) {
+  // A multi-range entry is not one span. Publishing the union would drag markers
+  // on the untouched lines between its parts to the union's end, which is exactly
+  // the miscollapse ApplyMultiCaretEdit already refuses to publish for the same
+  // shape; leaving it empty makes single-range consumers (BreakpointStore, LSP
+  // diagnostic shifting) take their resync fallback instead (TD-2026-08-06-157).
+  if (entry.is_multi_range()) {
+    return std::nullopt;
+  }
   if (entry.is_inline) {
     if (entry.removed_text == entry.inserted_text) {
       return std::nullopt;  // no content change
@@ -583,6 +640,12 @@ bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const E
   // CanMergeInlineEntry; anything else that lands here would splice line vectors
   // that an inline entry does not have.
   if (aggregate.is_inline || next.is_inline) {
+    return false;
+  }
+  // Single-range only. A multi-range entry (TD-2026-08-06-157) describes several
+  // disjoint splices, and every index test below assumes exactly one; refusing the
+  // merge costs at most one extra undo step.
+  if (aggregate.is_multi_range() || next.is_multi_range()) {
     return false;
   }
   const std::size_t aggregate_after_start = aggregate.start_line;
@@ -665,11 +728,18 @@ std::size_t EntryBytes(const TextViewportUndoHistory::Entry& entry) {
   std::size_t bytes = sizeof(TextViewportUndoHistory::Entry);
   bytes += entry.removed_text.capacity();
   bytes += entry.inserted_text.capacity();
-  for (const std::string& line : entry.before_lines) {
-    bytes += sizeof(std::string) + line.capacity();
-  }
-  for (const std::string& line : entry.after_lines) {
-    bytes += sizeof(std::string) + line.capacity();
+  const auto add_lines = [&bytes](const std::vector<std::string>& lines) {
+    bytes += lines.capacity() * sizeof(std::string);
+    for (const std::string& line : lines) {
+      bytes += line.capacity();
+    }
+  };
+  add_lines(entry.before_lines);
+  add_lines(entry.after_lines);
+  bytes += entry.extra_parts.capacity() * sizeof(TextViewportUndoHistory::DisjointPart);
+  for (const auto& part : entry.extra_parts) {
+    add_lines(part.before_lines);
+    add_lines(part.after_lines);
   }
   bytes += ViewStateBytes(entry.before_state);
   bytes += ViewStateBytes(entry.after_state);

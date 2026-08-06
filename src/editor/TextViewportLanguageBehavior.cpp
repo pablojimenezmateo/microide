@@ -478,9 +478,20 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
               return detail::PositionLess(slot_sort_end(a), slot_sort_end(b));
             });
 
-  std::size_t slice_min_line = std::numeric_limits<std::size_t>::max();
-  std::size_t slice_max_line = 0;
-  for (const Slot& slot : slots) {
+  // Footprints: maximal runs of slots whose line ranges overlap or touch. Each is
+  // captured independently as the walk below reaches it, so the recorded entry is
+  // the SET of edited ranges rather than one range spanning the outermost carets
+  // (TD-2026-08-06-157). Slots are sorted by selection end and selections cannot
+  // overlap (checked above), so their line ranges arrive ascending.
+  struct Footprint {
+    std::size_t start = 0;
+    std::size_t end_exclusive = 0;
+    std::size_t first_slot = 0;
+    std::size_t last_slot = 0;
+  };
+  std::vector<Footprint> footprints;
+  for (std::size_t i = 0; i < slots.size(); ++i) {
+    const Slot& slot = slots[i];
     std::size_t lo = 0;
     std::size_t hi = 0;
     if (slot.selection.has_value()) {
@@ -494,22 +505,24 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
       lo = std::min(slot.reference.line, document_->lines.size() - 1);
       hi = lo;
     }
-    slice_min_line = std::min(slice_min_line, lo);
-    slice_max_line = std::max(slice_max_line, hi);
+    hi = std::min(hi, document_->lines.size() - 1);
+    if (!footprints.empty() && lo <= footprints.back().end_exclusive) {
+      footprints.back().end_exclusive = std::max(footprints.back().end_exclusive, hi + 1);
+      footprints.back().last_slot = i;
+      continue;
+    }
+    footprints.push_back(
+        Footprint{.start = lo, .end_exclusive = hi + 1, .first_slot = i, .last_slot = i});
   }
+  constexpr std::size_t kNoFootprint = std::numeric_limits<std::size_t>::max();
+  std::vector<std::size_t> footprint_opens_at(slots.size(), kNoFootprint);
+  std::vector<std::size_t> footprint_closes_at(slots.size(), kNoFootprint);
+  for (std::size_t f = 0; f < footprints.size(); ++f) {
+    footprint_opens_at[footprints[f].last_slot] = f;
+    footprint_closes_at[footprints[f].first_slot] = f;
+  }
+  detail::DisjointEditCapture capture(document_->lines);
 
-  std::vector<std::string> before_lines;
-  std::size_t before_lines_start = 0;
-  if (slice_min_line != std::numeric_limits<std::size_t>::max()) {
-    slice_max_line = std::min(slice_max_line, document_->lines.size() - 1);
-    before_lines_start = slice_min_line;
-    // One walk of the piece tree for the whole range. The per-line `lines[i]` this
-    // replaced went through TextBuffer::LineRef, which materialises a std::string
-    // AND inserts it into the buffer's line cache — so capturing the span between
-    // two far-apart carets cost two allocations per line and evicted the cache.
-    before_lines = document_->lines.SliceLines(slice_min_line, slice_max_line + 1);
-  }
-  const std::size_t before_document_line_count = document_->lines.size();
   const ViewState before_state = CaptureViewState();
 
   // Record each slot's post-edit caret (and selection anchor) plus its edit
@@ -525,6 +538,22 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
   bool caret_changed = false;
 
   for (std::size_t slot_index = slots.size(); slot_index-- > 0;) {
+    if (footprint_opens_at[slot_index] != kNoFootprint) {
+      const Footprint& open = footprints[footprint_opens_at[slot_index]];
+      capture.BeginFootprint(open.start, open.end_exclusive);
+    }
+    // The body below leaves through a dozen `continue`s; a guard closes the
+    // footprint on every one of them.
+    struct CloseFootprint {
+      detail::DisjointEditCapture* capture;
+      bool close;
+      ~CloseFootprint() {
+        if (close) {
+          capture->EndFootprint();
+        }
+      }
+    } close_guard{&capture, footprint_closes_at[slot_index] != kNoFootprint};
+
     const Slot& slot = slots[slot_index];
     const std::size_t line = std::min(slot.reference.line, document_->lines.size() - 1);
     // Same bounded read as the single-caret pair paths: everything this loop asks
@@ -677,18 +706,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
 
   document_->placeholder = false;
   document_->dirty = true;
-  const std::ptrdiff_t line_delta = static_cast<std::ptrdiff_t>(document_->lines.size()) -
-                                    static_cast<std::ptrdiff_t>(before_document_line_count);
-  const std::size_t after_slice_size =
-      static_cast<std::size_t>(std::max<std::ptrdiff_t>(
-          0, static_cast<std::ptrdiff_t>(before_lines.size()) + line_delta));
-  const std::size_t after_slice_start = std::min(before_lines_start, document_->lines.size());
-  const std::size_t after_slice_end =
-      std::min(document_->lines.size(), before_lines_start + after_slice_size);
-  HistoryEntry aggregate_entry = TextViewportUndoHistory::BuildEntryForDocumentChange(
-      std::move(before_lines), before_state,
-      document_->lines.SliceLines(after_slice_start, after_slice_end), CaptureViewState());
-  aggregate_entry.start_line += before_lines_start;
+  HistoryEntry aggregate_entry = capture.Build(before_state, CaptureViewState());
   // This path only runs with multiple carets (has_multiple_carets() gate above),
   // so the aggregate always spans disjoint regions. Publishing it as a single
   // contiguous AppliedEdit would drag markers on preserved interior lines to the

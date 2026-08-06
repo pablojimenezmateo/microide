@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "editor/ShapingActions.h"
 #include "editor/SyntaxDefinitionLoader.h"
 #include "editor/FoldingModel.h"
 #include "editor/RuntimeSyntaxRegistry.h"
@@ -1449,6 +1450,143 @@ void TestTextViewportMultiCaretInsertAndUndoAreAtomic() {
   Expect(viewport.lines()[0] == "abc" && viewport.lines()[1] == "def" &&
              viewport.lines()[2] == "ghi",
          "undo should revert all multi-caret insertions atomically");
+}
+
+// TD-2026-08-06-157: a multi-caret / grouped edit records the SET of ranges it
+// touched, not one range spanning the outermost carets. Undo is the part of an
+// editor where a wrong answer is least recoverable, so this checks the model
+// against an oracle rather than against itself: the buffer's own content, snapshot
+// after every step, then replayed backwards through Undo and forwards through Redo.
+//
+// The edit sequence deliberately mixes the shapes that break a naive
+// disjoint-range model — two carets on ONE line (their footprints must merge, or
+// the second capture reads the first's edit), carets on ADJACENT lines, edits that
+// change the line count in the middle of the document (Enter, and a Backspace at
+// column 0 that joins two lines), and an ordinary single-caret edit in between so
+// the multi-range entries sit inside a normal history.
+void TestTextViewportMultiCaretUndoMatchesSnapshotOracle() {
+  auto whole_document = [](const TextViewport& viewport) {
+    std::string out;
+    for (std::size_t i = 0; i < viewport.lines().size(); ++i) {
+      out += viewport.lines().LineView(i);
+      out.push_back('\n');
+    }
+    return out;
+  };
+
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "line_" + std::to_string(i) + " value = " + std::to_string(i) + ";\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/multi-caret-undo-oracle.cpp");
+
+  std::vector<std::string> snapshots;
+  snapshots.push_back(whole_document(viewport));
+  const auto step = [&](const char* what, auto&& action) {
+    action();
+    const std::string now = whole_document(viewport);
+    Expect(now != snapshots.back(), std::string(what) + " must change the buffer");
+    snapshots.push_back(now);
+  };
+
+  // 1. Far-apart carets, one character each.
+  step("scattered insert", [&] {
+    viewport.MoveCursorTo(10, 0);
+    viewport.SetSecondaryCarets({{120, 2}, {250, 4}, {399, 0}});
+    viewport.InsertText("X");
+  });
+  // 2. Two carets on the SAME line plus one far away.
+  step("two carets on one line", [&] {
+    viewport.MoveCursorTo(30, 1);
+    viewport.SetSecondaryCarets({{30, 5}, {300, 0}});
+    viewport.InsertText("Y");
+  });
+  // 3. Adjacent lines.
+  step("adjacent lines", [&] {
+    viewport.MoveCursorTo(60, 0);
+    viewport.SetSecondaryCarets({{61, 0}, {62, 0}});
+    viewport.InsertText("Z");
+  });
+  // 4. Line-count changes in the middle: Enter at scattered carets.
+  step("scattered newline", [&] {
+    viewport.MoveCursorTo(15, 3);
+    viewport.SetSecondaryCarets({{150, 3}, {280, 3}});
+    viewport.InsertNewline();
+  });
+  // 5. A Backspace at column 0 joins lines — a negative line delta per caret.
+  step("scattered joining backspace", [&] {
+    viewport.MoveCursorTo(20, 0);
+    viewport.SetSecondaryCarets({{200, 0}, {330, 0}});
+    viewport.Backspace();
+  });
+  // 6. An ordinary single-caret edit, so the multi-range entries are not the only
+  //    thing on the stack.
+  step("single caret typing", [&] {
+    viewport.SetSecondaryCarets({});
+    viewport.MoveCursorTo(5, 0);
+    viewport.InsertText("plain");
+  });
+  // 7. A grouped shaping op across scattered carets (the FinishActiveGroup path,
+  //    which builds its multi-range entry differently from ApplyMultiCaretEdit).
+  step("grouped indent across carets", [&] {
+    viewport.MoveCursorTo(40, 0);
+    viewport.SetSecondaryCarets({{140, 0}, {340, 0}});
+    Expect(microide::editor::IndentSelection(viewport), "indent should change the buffer");
+  });
+
+  const std::size_t steps = snapshots.size() - 1;
+  Expect(steps == 7, "the fixture must have performed every step");
+
+  // Backwards: each Undo must land on the snapshot before it.
+  for (std::size_t i = steps; i-- > 0;) {
+    Expect(viewport.Undo(), "undo " + std::to_string(i) + " should succeed");
+    Expect(whole_document(viewport) == snapshots[i],
+           "undo " + std::to_string(i) + " must restore the recorded document exactly");
+  }
+  // Forwards again.
+  for (std::size_t i = 0; i < steps; ++i) {
+    Expect(viewport.Redo(), "redo " + std::to_string(i) + " should succeed");
+    Expect(whole_document(viewport) == snapshots[i + 1],
+           "redo " + std::to_string(i) + " must reproduce the recorded document exactly");
+  }
+  // And back once more, so a one-shot coordinate error that only shows on the
+  // second traversal is caught too.
+  for (std::size_t i = steps; i-- > 0;) {
+    Expect(viewport.Undo(), "second-pass undo " + std::to_string(i) + " should succeed");
+    Expect(whole_document(viewport) == snapshots[i],
+           "second-pass undo " + std::to_string(i) + " must restore the document exactly");
+  }
+}
+
+// The cost claim: an entry for carets far apart must be proportional to what the
+// carets edited, not to the distance between them. Without this the oracle test
+// above passes just as happily on the old spanning-range model.
+void TestTextViewportMultiCaretUndoEntryDoesNotSpanTheGap() {
+  std::string content;
+  for (int i = 0; i < 4000; ++i) {
+    content += "line_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/multi-caret-undo-span.cpp");
+  viewport.MoveCursorTo(10, 0);
+  viewport.SetSecondaryCarets({{1000, 0}, {2000, 0}, {3900, 0}});
+
+  const std::size_t before_bytes = viewport.DerivedCacheBytes().undo_history;
+  viewport.InsertText("X");
+  const std::size_t entry_bytes = viewport.DerivedCacheBytes().undo_history - before_bytes;
+
+  // Four one-line ranges: about 4 x 2 x (line length) bytes of content. The span
+  // between the outermost carets is 3,891 lines, which the old model captured
+  // twice — well over 100 KB.
+  Expect(entry_bytes < 4096,
+         "an undo entry for four far-apart carets must cost its four ranges, not the "
+         "3,891-line span between them (held " +
+             std::to_string(entry_bytes) + " bytes)");
+  Expect(viewport.Undo(), "the edit must still undo");
+  Expect(viewport.lines().LineView(10) == "line_10 = 10;" &&
+             viewport.lines().LineView(3900) == "line_3900 = 3900;",
+         "undo restores every caret's line");
 }
 
 void TestTextViewportMultiCaretBackspaceAndDeleteForward() {
@@ -4779,6 +4917,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportGroupedInlineEditsUndoAtomically);
   AddTest(tests, "TextViewport/InlineCoalescedEntryRestampsItsByteSize",
           TestInlineCoalescedEntryRestampsItsByteSize);
+  AddTest(tests, "TextViewport/MultiCaretUndoMatchesSnapshotOracle",
+          TestTextViewportMultiCaretUndoMatchesSnapshotOracle);
+  AddTest(tests, "TextViewport/MultiCaretUndoEntryDoesNotSpanTheGap",
+          TestTextViewportMultiCaretUndoEntryDoesNotSpanTheGap);
   AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
           TestTextViewportMultiCaretInsertAndUndoAreAtomic);
   AddTest(tests, "TextViewport/MultiCaretBackspaceAndDeleteForward",
