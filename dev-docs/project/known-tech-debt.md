@@ -1,12 +1,16 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **82 open items.**
+Reviewed 2026-08-06. **83 open items.**
 
 The 2026-08-06 interactive sweep is [149](#td-2026-08-06-149)'s own instruction
 carried out — "generalise the sweep: the instrument is cheap now, and no
 interactive scenario other than the drag and this one has been read through it."
-Six scenarios read, six fixes, and the two entries the reading opened
-(**157**, **158**).
+Seven phases read, six fixes, and the three entries the reading opened
+(**157**, **158**, **159**).
+
+It read 7 of 70. **159** is the remaining 63, with the worklist, the method, a
+definition of done, and one lead already open (toggle-comment costs 89 allocations
+per line and only ~8 of them are accounted for).
 
 The largest was not an editor path at all. `ApplyBranchReviewPresentationMarkers`
 runs unconditionally from the compare tab's derived-state refresh — the refresh
@@ -250,6 +254,77 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN.
+
+[149](#td-2026-08-06-149) ended with an instruction — "generalise the sweep: the
+instrument is cheap now, and no interactive scenario other than the drag and this
+one has been read through it." The 2026-08-06 sweep did **7 of 70**. Every one of
+the seven had something, and six became fixes worth 15–99.95 % of their phase.
+
+That hit rate is the entry. A phase nobody has aimed the tracer at is not a clean
+phase; it is an unread one, and the six fixes so far were all the same two shapes
+(work computed before the guard that discards it; a value copied N times where the
+algorithm needs one or two) rather than anything subtle.
+
+**The unread worklist**, ranked by committed `p50_allocations`. Note the baselines
+below are pre-sweep for the two the shared fixes already moved
+(`editor_sticky_scroll_scroll.fast_scroll_frame` is now 16,306,
+`editor_render_whitespace_paint.scroll_overlay_frame` 14,270) and the whole table
+is stale until the pending rebaseline lands:
+
+| phase | p50 allocations | p50 wall |
+| --- | ---: | ---: |
+| `diff.open_first_changed_file` | 112,175 | 17 ms |
+| `commit.open_staged_sidebar` | 91,135 | 16 ms |
+| `toggle_line_comment.1000_lines` | 89,044 | 22 ms |
+| `diff.open_large_compare` | 51,039 | 14 ms |
+| `diff.open_large_patch` | 50,972 | 12 ms |
+| `diff.next_hunk_burst` | 24,597 | 44 ms |
+| `editor_sticky_scroll_scroll.fast_scroll_frame` | 22,506 | 89 ms |
+| `multi_project.switch_cycles` | 19,855 | 17 ms |
+| `editor_render_whitespace_paint.scroll_overlay_frame` | 19,230 | 85 ms |
+| `compare_selection.scroll_burst` | 17,178 | 94 ms |
+| `editor_indent_guides_paint.scroll_paint_frame` | 17,082 | 67 ms |
+| `first_line_edit.enter_backspace_burst` | 13,816 | 23 ms |
+| `mid_file_edit.enter_backspace_burst` | 11,633 | 24 ms |
+| `merge_interleaved.scroll_burst` | 8,928 | 108 ms |
+
+**One lead is already open.** `toggle_line_comment.1000_lines` is **89 allocations
+per line** on a 1,000-line selection. Reading `ShapingActions::ToggleLineComment`
+accounts for about five of them — it walks the range twice through
+`TextBuffer::LineRef`, and the uncomment branch takes two `substr`s per line — and
+the before/install/after of the replace is three more. The other ~80 per line are
+unexplained, which is the exact signature that preceded the last four finds. That
+number is *after* the 2026-08-06 line-op fix took 15 % off it.
+
+**Method** (see `dev-docs/performance/perf-harness.md` § Finding *where* a phase
+allocates):
+
+```bash
+MICROIDE_PERF_ALLOC_TRACE=1:1000000 MICROIDE_PERF_ALLOC_TRACE_PHASE=<phase> \
+  ./build/microide-perf-make/microide/microide_perf --scenarios=<scenario> --iterations=2
+addr2line -e ./build/microide-perf-make/microide/microide_perf -f -C -p -i <addr>
+```
+
+The `-i` matters — everything interesting is inlined, and without it every frame
+resolves to the outermost non-inlined caller. Divide each site's count by
+(iterations × inner-loop count) before believing it. **Flat, roughly-equal sites
+are the tell**: N sites of identical size usually means one value materialised N
+times, so count them and subtract the ones the algorithm actually needs, rather
+than looking for a cheaper algorithm.
+
+**Definition of done**, so this does not become an open-ended chore: every phase in
+the table above read once, each read either producing a fix or a one-line note in
+this entry saying what the allocations are and why they are irreducible. A phase
+recorded as "read, inherent" is a real result — `git.refresh_dispatch` was one
+(flat sites, ~3 allocations per sidebar entry, no defect) — and it stops the next
+pass re-reading it.
+
+**Do not read these**: the pure-unit scenarios (`user_config_record_decode`,
+`dap_protocol_encode_decode`, …). Their whole run is the work, the total already
+is the phase, and they are micro-benchmarks of algorithms that were chosen
+deliberately, not interactive paths anyone waits on.
 
 ### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. OPEN.
 
