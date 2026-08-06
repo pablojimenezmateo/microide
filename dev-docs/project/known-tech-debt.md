@@ -1,6 +1,6 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **79 open items.**
+Reviewed 2026-08-06. **80 open items.**
 
 The 2026-08-06 input-path pass closed **145** (a mouse-drag rebuilding the pane
 layout three times per motion event). The drag's measured phase now allocates
@@ -11,10 +11,19 @@ copy where a move was meant in `ConsumePendingRenderInvalidation`, plus a
 needed the allocation tracer scoped to the measured phase, which it could not do;
 `MICROIDE_PERF_ALLOC_TRACE_PHASE` now does, and named both in one run.
 
-It opened two, both about the gate rather than the code: **147** (the fix left four
-allocation baselines 4-5x loose, so they would pass a complete regression) and
+It opened three. Two are about the gate rather than the code: **147** (the fix left
+four allocation baselines 4-5x loose, so they would pass a complete regression) and
 **148** (`typing_large_file`'s RSS gate rides its envelope, and a non-default
 `--iterations` silently flips the verdict).
+
+The third, **149**, is the next pass's work and came from pointing 145's own
+instrument at the next interactive scenario: a menu-bar hover costs **50
+allocations per motion event** — 25x what the drag cost *before* 145 — and every
+site in the printed table bottoms out in one function, `ComputeVisibleMenuBarItems`,
+reached three independent ways per event. It is 145's shape one subsystem over,
+down to a `std::function<std::vector<...>(const SDL_FRect&)>` coordinator callback.
+**Generalise the sweep**: the instrument is cheap now, and no interactive scenario
+other than the drag and this one has been read through it.
 
 The 2026-08-06 perf-integrity pass closed three: **139** (five allocation
 gates drifted up, unexplained), **141** (nothing reruns the gate), and **143**
@@ -787,6 +796,86 @@ Two things are wrong here, and only one of them is the stale baseline.
 The second is the one worth fixing — either make the trim proportional so the
 metric is iteration-count-stable, or refuse to gate `mean_rss_growth_bytes` below
 the iteration count its baseline was recorded at and say so.
+
+### TD-2026-08-06-149 — a menu-bar hover rebuilds the whole menu-bar layout ~10 times per motion event. OPEN.
+
+The same shape as [TD-2026-08-06-145](#td-2026-08-06-145), one subsystem over,
+and an order of magnitude worse. Found by pointing 145's own instrument
+(`MICROIDE_PERF_ALLOC_TRACE_PHASE`) at the next interactive scenario.
+
+Measured at `34bcb510` with
+`MICROIDE_PERF_ALLOC_TRACE=1:1000000 MICROIDE_PERF_ALLOC_TRACE_PHASE=menu_hover_switch`:
+
+```
+phase menu_hover_switch.160_moves: 8,000 allocations, 678 KB, 160 hover events
+                                   -> 50 allocations per motion event
+```
+
+That is the **measured phase**, not the scenario total (8,104) — the distinction
+that made 138's and 139's headlines wrong, so it is stated here rather than left
+to be re-derived.
+
+**Every one of the printed top-12 sites — 20,480 of the traced allocations —
+bottoms out in the same function**, `ComputeVisibleMenuBarItems`
+(`WorkspaceShellMenu.cpp:33`), reached from at least three independent chains per
+event:
+
+```
+ComputeVisibleMenuBarItems(SDL_FRect const&)              WorkspaceShellMenu.cpp:33
+  <- ComputePopupMenuRect <- CurrentChromeRedrawRect <- RequestChromeRedraw
+  <- the chrome coordinator's menu-bar-items callback   WorkspaceChromeMouseCoordinator.cpp:590
+       <- ChromeMouseCoordinator::HandleMenuMotion
+  <- CursorKindForPosition <- UpdateMouseCursor <- HandleMouseMotion
+```
+
+~32 of the 50 allocations per event are that one function. Eight further call
+sites take it (`WorkspaceShellMenu.cpp:108`/`:275`, `WorkspaceShellCursor.cpp:120`/
+`:324`, `WorkspaceShellRenderChrome.cpp:62`, two test-access helpers), so as with
+145 the fix is worth more than the one scenario.
+
+**Why it allocates three times per call.** It returns
+`std::vector<VisibleMenuBarItem>`, builds a `std::vector<std::pair<MenuId, float>>
+measured` (with a hard-coded `reserve(8)`), and calls
+`ComputeVisibleWindowControlButtons`, which returns another vector. Every one of
+them carries a handful of PODs — `VisibleMenuBarItem` is 24 bytes — and the item
+count is bounded by the static `WorkspaceMenuSpecs()` table, i.e. **a structural
+cap, exactly the precondition `util::InlineVector` exists for**. The coordinator
+callback is even declared `std::function<std::vector<VisibleMenuBarItem>(const
+SDL_FRect&)>`, byte-for-byte the pattern that
+`compute_editor_pane_layouts` was before 145.
+
+Note what is *already* cached here and was not enough: the function memoises
+per-label `MeasureWidth` in a thread-local map keyed by label pointer ("round-4
+Finding 6", with a metrics-generation invalidation beside it). Someone has
+measured this path before and fixed the width lookups while leaving the three
+vectors — which is the reason to state the remaining cost in allocations rather
+than in wall time.
+
+**Two shapes, same as 145, and take (a) first for the same reason:**
+
+- **(a) Stop allocating.** `InlineVector` for all three, capacity from a shared
+  constant derived from the menu-spec table, plus `*Into(rect, out&)` for the
+  window-control buttons. No behaviour change, no staleness risk, and it is most
+  of the win.
+- **(b) Stop recomputing.** The menu bar's layout only changes on window resize,
+  layout-mode switch, font-metrics change, or a menu opening/closing — far less
+  often than a pointer moves. Memoising it is the bigger win and carries 145(b)'s
+  risk in a worse place: a stale menu-bar rect means a click opening the wrong
+  menu. Do it only with a measurement that (a) did not already cover.
+
+**Reproduce** (seconds, exact oracle):
+
+```bash
+MICROIDE_PERF_ALLOC_TRACE=1:1000000 MICROIDE_PERF_ALLOC_TRACE_PHASE=menu_hover_switch \
+  ./build/microide-perf-make/microide/microide_perf \
+    --scenarios=menu_hover_switch --iterations=3 --report-json=/tmp/menu.json
+# phase_metrics.menu_hover_switch.160_moves.allocations is the number to move.
+```
+
+Gating note: `menu_hover_switch`'s committed allocation baseline is 8,352 against
+a measured 8,104, so the gate will register this fix — unlike the four scenarios
+in [TD-2026-08-06-147](#td-2026-08-06-147). Watch the *phase* number regardless;
+the scenario total buries a 50-per-event change in setup noise.
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
