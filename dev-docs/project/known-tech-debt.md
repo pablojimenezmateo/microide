@@ -1854,7 +1854,7 @@ anything worth removing is unknown, and saying otherwise from a scenario total i
 the mistake [138](#td-2026-08-06-138) and [139](#td-2026-08-06-139) already made
 once. Phase them first, then read the trace, then decide.
 
-### TD-2026-08-06-152 — every perf metric is a property of the suite, not of the scenario, because all 93 run in one process. OPEN.
+### TD-2026-08-06-152 — every perf metric is a property of the suite, not of the scenario, because all 93 run in one process. RESOLVED 2026-08-07.
 
 Split out of [150](#td-2026-08-06-150), whose fix works around this rather than
 removing it, and it is the same defect [139](#td-2026-08-06-139) hit from the
@@ -1893,6 +1893,34 @@ by construction and is now the gate a retention regression trips. What remains
 unfixed is that the RSS gate cannot be tight and that allocation counts have an
 unmeasured prefix sensitivity — real, but no longer the only instrument in the
 room.
+
+**Done 2026-08-07.** `RunScenarioInChildProcess` forks per scenario and brings
+the `Aggregate` back over a pipe. The parent never initialises SDL, the shell or
+a thread — every scenario runs in a child that does all of that from scratch —
+which is what makes the fork safe, and the child `_exit`s so no atexit handler or
+static destructor of the parent's runs twice. Unselected scenarios are skipped in
+the parent rather than costing a fork whose child would decline them, so a
+single-scenario run still launches one process, not a hundred. `--no-isolate`
+restores the shared-process form for attaching a debugger or profiler.
+
+The wire is length-prefixed little-endian binary, not JSON, because a gate
+compares doubles against doubles with a percentage tolerance: a value that lost
+its last mantissa bit on the way back would read as a real move.
+`ScenarioProcessIsolation/AggregateSurvivesTheWireExactly` pins that with values
+chosen to break a lazy codec (a denormal, -0.0, a `uint64` at its maximum, a
+negative `net_heap_bytes`, an empty phase name, a phase name with an embedded
+NUL), and `...RejectsATruncatedStream` pins that a short or corrupt stream is
+refused rather than decoded into a half-populated Aggregate that would then be
+gated as if it were a measurement.
+
+The allocation tracer dumps in the child before it exits, so
+`MICROIDE_PERF_ALLOC_TRACE` output is unchanged.
+
+**The rebaseline this forced is the interesting part** — see the commit that
+re-records the suite. Every scenario now starts cold, so wall p95/max and
+`p50_net_heap_bytes` move on scenarios that used to inherit a warm allocator and
+a warm page cache from whatever ran before them. That is the number becoming
+true, not a regression.
 
 ### TD-2026-08-06-156 — the finder deep-copies up to 512 result rows on every keystroke to render about twenty of them. PARTIALLY RESOLVED 2026-08-06 — two thirds removed; the rest needs a lifetime change or a smaller cap.
 

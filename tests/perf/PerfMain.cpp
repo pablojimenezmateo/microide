@@ -2,6 +2,7 @@
 #include "perf/Baseline.h"
 #include "perf/PerfCpuAffinity.h"
 #include "perf/PerfHarness.h"
+#include "perf/ScenarioProcessIsolation.h"
 
 #include "editor/BracketScanner.h"
 #include "editor/RuntimeSyntaxRegistry.h"
@@ -72,6 +73,12 @@ struct CliOptions {
   // CPU set to measure on (see PerfCpuAffinity.h). "auto" pins to the fastest
   // cluster on a heterogeneous machine and is a no-op elsewhere.
   std::string pin_cores = "auto";
+  // Run each scenario in its own child process (TD-2026-08-06-152). On by
+  // default: without it every metric is a property of the suite rather than of
+  // the scenario, because all ~100 share one process. `--no-isolate` restores the
+  // old single-process run, which is what a tracer session wants (the allocation
+  // tracer's output has to come from the process you are watching).
+  bool isolate_scenarios = true;
 };
 
 // Set by main() after CLI parse so scenario lambdas registered at static-init
@@ -298,6 +305,10 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
       if (options.pin_cores.empty()) {
         return std::nullopt;
       }
+      continue;
+    }
+    if (arg == "--no-isolate") {
+      options.isolate_scenarios = false;
       continue;
     }
     return std::nullopt;
@@ -1801,7 +1812,7 @@ int main(int argc, char** argv) {
                  "[--layout-mode=auto|regular|compact] "
                  "[--renderer=software|auto|<sdl-driver>] "
                  "[--video=dummy|auto|<sdl-driver>] "
-                 "[--pin-cores=auto|off|<cpu-list>]\n";
+                 "[--pin-cores=auto|off|<cpu-list>] [--no-isolate]\n";
     return 1;
   }
 
@@ -1836,6 +1847,13 @@ int main(int argc, char** argv) {
   // baselines (mirrors the DAP advisory scenarios). The software lane stays the
   // authoritative, baseline-gated reference.
   const bool gpu_lane = run_options.renderer_driver != "software";
+  // Isolation needs fork; on a platform without it the run silently falls back to
+  // the shared-process form rather than refusing to run at all, and says so.
+  const bool isolate_scenarios = options->isolate_scenarios && ScenarioProcessIsolationAvailable();
+  if (options->isolate_scenarios && !isolate_scenarios) {
+    std::cerr << "[perf] per-scenario process isolation unavailable on this platform; "
+                 "metrics carry the whole suite's process state (TD-2026-08-06-152)\n";
+  }
   if (gpu_lane && options->update_baseline) {
     std::cerr << "--update-baseline is only valid on the software reference lane; "
                  "the GPU lane (--renderer=" << run_options.renderer_driver
@@ -1962,11 +1980,31 @@ int main(int argc, char** argv) {
       std::cerr << "[perf] running scenario " << run_index << "/" << selected_count << ": "
                 << scenario.name << '\n';
     }
-    const auto aggregate = PerfHarness::RunScenario(scenario, run_options);
+    // One child process per scenario when isolation is on, so a metric means
+    // what its name says instead of "this scenario, behind these fifty others"
+    // (TD-2026-08-06-152). The parent never initialises SDL or the shell and so
+    // stays single-threaded, which is what makes the fork safe.
+    std::string isolation_error;
+    std::optional<Aggregate> aggregate;
+    // `selected` mirrors ShouldRunScenario exactly (see above), so an unselected
+    // scenario is skipped here rather than costing a fork whose child would
+    // immediately decline it — a named single-scenario run would otherwise pay
+    // ~99 pointless process launches.
+    if (isolate_scenarios && selected) {
+      bool child_selected = true;
+      aggregate = RunScenarioInChildProcess(scenario, run_options, &child_selected,
+                                            &isolation_error);
+      if (!aggregate.has_value() && !child_selected) {
+        isolation_error.clear();
+      }
+    } else {
+      aggregate = PerfHarness::RunScenario(scenario, run_options);
+      isolation_error = PerfHarness::LastError();
+    }
     if (!aggregate.has_value()) {
       if (selected) {
-        std::cerr << "scenario failed to run: " << scenario.name
-                  << " (" << PerfHarness::LastError() << ")\n";
+        std::cerr << "scenario failed to run: " << scenario.name << " (" << isolation_error
+                  << ")\n";
         return 1;
       }
       continue;
@@ -2446,7 +2484,12 @@ int main(int argc, char** argv) {
   // At the end of the run rather than per scenario, because the interesting
   // question ("what is doing all these small allocations") is usually asked with
   // --scenarios= narrowing the run to the one that regressed.
-  Allocations::DumpTracedAllocationSites();
+  // Under isolation each child dumped its own table before exiting; the parent's
+  // table is empty by construction, and printing it would emit the "filter never
+  // matched" warning for a process that never ran a phase.
+  if (!isolate_scenarios) {
+    Allocations::DumpTracedAllocationSites();
+  }
 
   return all_passed ? 0 : 1;
 }

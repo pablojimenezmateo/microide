@@ -1113,9 +1113,11 @@ add_executable(microide_tests
   tests/AllocationCounterTests.cpp
   tests/PerfBaselineTests.cpp
   tests/PerfHarnessIsolationTests.cpp
+  tests/ScenarioProcessIsolationTests.cpp
   tests/perf/AllocationCounter.cpp
   tests/perf/Baseline.cpp
   tests/perf/PerfHarnessIsolation.cpp
+  tests/perf/ScenarioProcessIsolation.cpp
 )
 
 if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
@@ -1354,6 +1356,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/PerfCpuAffinity.cpp
     tests/perf/PerfHarness.cpp
     tests/perf/PerfHarnessIsolation.cpp
+    tests/perf/ScenarioProcessIsolation.cpp
     tests/perf/Baseline.cpp
     tests/perf/AdvisoryPerfScenarios.cpp
     tests/perf/GitWorkstationPerfScenarios.cpp

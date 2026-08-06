@@ -446,9 +446,20 @@ Prefer a same-session A/B against a `main` worktree.
 
 ### Standalone vs full-suite gaps are a lead, not a known artifact
 
+**Since 2026-08-07 each scenario runs in its OWN CHILD PROCESS** (`--no-isolate`
+turns it off), so the class of gap this section describes is gone by
+construction: there is no prefix for a scenario to inherit, and the numbers below
+are the history of why. The section stays because the reasoning — diff the
+`perf_counters` block, reproduce standalone before attributing a move to code —
+is what you still do when two runs disagree for any other reason.
+
+`MICROIDE_PERF_ALLOC_TRACE` works either way — the child dumps its own table
+before exiting, and the output is identical. `--no-isolate` is for attaching a
+debugger or a profiler to the run, where a `fork` per scenario is in the way.
+
 Scenarios in one `microide_perf` process share process-global state (SDL, fonts,
-the glyph atlas, the heap), so a scenario can measure differently standalone than
-in the full suite. Two examples:
+the glyph atlas, the heap), so a scenario could measure differently standalone
+than in the full suite. Two examples:
 
 - `cold_startup_no_project`: 590 p50 allocations standalone vs 165 in-suite (165
   is its committed baseline). Warm-vs-cold process state.
