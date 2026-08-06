@@ -1,48 +1,85 @@
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
 
 #include <algorithm>
+#include <cstddef>
+#include <functional>
 #include <map>
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace microide::workspace {
 
 namespace {
 
+// The tree is keyed on '/'-separated generic text, not on `std::filesystem::path`.
+// Every path in a row arrives normalized (`MakeGitRepositoryPathIdentity` does it
+// on ingress), and a normalized generic path IS its text — so the whole grouping
+// is substring work over one string per row instead of `parent_path()`,
+// `lexically_normal()` and `generic_string()` temporaries per ancestor level
+// (TD-2026-08-06-159; same shape as the status-refresh fix in a43cbb10).
 struct GitSidebarTreeNode {
-  std::filesystem::path path;
-  std::map<std::string, GitSidebarTreeNode> directories;
-  std::vector<const GitSidebarRowViewModel*> files;
+  std::string path;  // generic, '/'-joined, no leading or trailing separator
+  std::map<std::string, GitSidebarTreeNode, std::less<>> directories;
+  std::vector<const struct KeyedRow*> files;
 };
 
-std::vector<std::string> ParentPathSegments(const std::filesystem::path& relative_path) {
-  std::vector<std::string> segments;
-  const std::filesystem::path parent = relative_path.parent_path().lexically_normal();
-  for (const auto& segment : parent) {
-    const std::string label = segment.generic_string();
-    if (label.empty() || label == "." || label == "/") {
-      continue;
-    }
-    segments.push_back(label);
+// A row paired with its sort/group key, computed ONCE. The comparator used to
+// derive this key from scratch on both sides of every comparison, which made the
+// sort O(n log n) path normalizations for an O(n) amount of distinct text.
+struct KeyedRow {
+  const GitSidebarRowViewModel* row = nullptr;
+  std::string key;
+};
+
+// True when `text` is not already in lexically-normal form, i.e. when the cheap
+// `generic_string()` above is not the answer and the real thing has to run. A
+// normalized generic path contains no empty, "." or ".." component.
+bool GenericPathNeedsNormalizing(std::string_view text) {
+  if (text.empty()) return false;
+  std::size_t begin = 0;
+  while (begin <= text.size()) {
+    const std::size_t slash = text.find('/', begin);
+    const std::size_t end = slash == std::string_view::npos ? text.size() : slash;
+    const std::string_view component = text.substr(begin, end - begin);
+    // An empty FIRST component is a leading '/' (an absolute path, normal); an
+    // empty LAST one is a trailing '/' (a directory, also normal). Anywhere else
+    // it is a "//" run, which is not.
+    if (component.empty() && begin != 0 && end != text.size()) return true;
+    if (component == "." || component == "..") return true;
+    if (slash == std::string_view::npos) break;
+    begin = slash + 1;
   }
-  return segments;
+  return false;
 }
 
-std::string FileLeafLabel(const GitSidebarRowViewModel& row) {
+// `path` as one normalized generic string. One allocation on the overwhelmingly
+// common already-normalized input; the fallback is the authoritative form.
+std::string NormalizedGenericPath(const std::filesystem::path& path) {
+  std::string text = path.generic_string();
+  if (!GenericPathNeedsNormalizing(text)) return text;
+  return path.lexically_normal().generic_string();
+}
+
+std::string FileLeafLabel(const GitSidebarRowViewModel& row, std::string_view normalized_key) {
   if (!row.primary_label.empty()) {
-    return row.primary_label;
+    return std::string(row.primary_label);
   }
-  const std::filesystem::path normalized = row.relative_path.lexically_normal();
-  const std::string leaf = normalized.filename().string();
+  const std::size_t slash = normalized_key.find_last_of('/');
+  const std::string_view leaf =
+      slash == std::string_view::npos ? normalized_key : normalized_key.substr(slash + 1);
   if (!leaf.empty()) {
-    return leaf;
+    return std::string(leaf);
   }
-  return normalized.empty() ? "." : normalized.generic_string();
+  return normalized_key.empty() ? "." : std::string(normalized_key);
 }
 
-std::string DirectoryNodeKey(GitSidebarEntry::Section section, const std::filesystem::path& path) {
-  const std::string path_key = path.lexically_normal().generic_string();
-  return std::to_string(static_cast<int>(section)) + "|" + path_key;
+std::string DirectoryNodeKey(GitSidebarEntry::Section section, std::string_view path) {
+  std::string key = std::to_string(static_cast<int>(section));
+  key.reserve(key.size() + 1 + path.size());
+  key.push_back('|');
+  key.append(path);
+  return key;
 }
 
 void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
@@ -68,11 +105,12 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
       EmitGitSidebarTreeLines(child, section, depth + 1, collapsed_directory_keys, lines);
     }
   }
-  for (const GitSidebarRowViewModel* row : node.files) {
-    if (row == nullptr) {
+  for (const KeyedRow* keyed : node.files) {
+    if (keyed == nullptr || keyed->row == nullptr) {
       continue;
     }
-    std::string leaf = FileLeafLabel(*row);
+    const GitSidebarRowViewModel* row = keyed->row;
+    std::string leaf = FileLeafLabel(*row, keyed->key);
     // Assemble the render-ready primary text once here (with the branch-review
     // "[<marker>] " prefix) so the sidebar render TU draws it directly instead of
     // rebuilding it per paint (TD-2026-07-17A-008).
@@ -148,30 +186,21 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
       continue;
     }
 
-    std::vector<const GitSidebarRowViewModel*> sorted_rows;
+    std::vector<KeyedRow> sorted_rows;
     sorted_rows.reserve(section.rows.size());
     for (const GitSidebarRowViewModel& row : section.rows) {
-      sorted_rows.push_back(&row);
+      sorted_rows.push_back(KeyedRow{.row = &row, .key = NormalizedGenericPath(row.relative_path)});
     }
     std::sort(sorted_rows.begin(), sorted_rows.end(),
-              [](const GitSidebarRowViewModel* lhs, const GitSidebarRowViewModel* rhs) {
-                if (lhs == nullptr || rhs == nullptr) {
-                  return lhs != nullptr;
+              [](const KeyedRow& lhs, const KeyedRow& rhs) {
+                if (lhs.key != rhs.key) {
+                  return lhs.key < rhs.key;
                 }
-                const std::string lhs_path = lhs->relative_path.lexically_normal().generic_string();
-                const std::string rhs_path = rhs->relative_path.lexically_normal().generic_string();
-                if (lhs_path != rhs_path) {
-                  return lhs_path < rhs_path;
-                }
-                return lhs->entry_index < rhs->entry_index;
+                return lhs.row->entry_index < rhs.row->entry_index;
               });
 
     GitSidebarTreeNode root;
-    for (const GitSidebarRowViewModel* row : sorted_rows) {
-      if (row == nullptr) {
-        continue;
-      }
-      const std::filesystem::path normalized = row->relative_path.lexically_normal();
+    for (const KeyedRow& keyed : sorted_rows) {
       GitSidebarTreeNode* node = &root;
       // Cap tree depth. A hostile repo can contain a pathologically deep path;
       // descending one node per segment builds a chain that then overflows the
@@ -179,18 +208,34 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
       // is grouped at the capped depth (a shallow display for absurd paths).
       constexpr int kMaxGitSidebarTreeDepth = 64;
       int depth = 0;
-      for (const std::string& segment : ParentPathSegments(normalized)) {
-        if (depth >= kMaxGitSidebarTreeDepth) {
-          break;
+      // Every '/'-separated component except the last names an ancestor
+      // directory. An empty component is a leading '/' or a trailing one and
+      // names nothing, matching what the path-iterator form skipped.
+      const std::string_view key = keyed.key;
+      const std::size_t last_slash = key.find_last_of('/');
+      std::size_t begin = 0;
+      while (last_slash != std::string_view::npos && begin < last_slash &&
+             depth < kMaxGitSidebarTreeDepth) {
+        const std::size_t slash = key.find('/', begin);
+        const std::string_view segment = key.substr(begin, slash - begin);
+        begin = slash + 1;
+        if (segment.empty() || segment == "." || segment == "/") {
+          continue;
         }
-        GitSidebarTreeNode& child = node->directories[segment];
+        const auto existing = node->directories.find(segment);
+        GitSidebarTreeNode& child = existing != node->directories.end()
+                                        ? existing->second
+                                        : node->directories[std::string(segment)];
         if (child.path.empty()) {
-          child.path = node->path / segment;
+          child.path = node->path;
+          child.path.reserve(node->path.size() + 1 + segment.size());
+          if (!child.path.empty()) child.path.push_back('/');
+          child.path.append(segment);
         }
         node = &child;
         ++depth;
       }
-      node->files.push_back(row);
+      node->files.push_back(&keyed);
     }
 
     EmitGitSidebarTreeLines(root, section.section, 0, collapsed_directory_keys, &lines);

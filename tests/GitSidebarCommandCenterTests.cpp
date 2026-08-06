@@ -1,8 +1,13 @@
 #include "TestSupport.h"
 
+#include <algorithm>
+#include <cstddef>
 #include <cstdint>
+#include <filesystem>
 #include <functional>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "workspace/git/GitSidebarCommandCenter.h"
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
@@ -128,6 +133,160 @@ void TestGitSidebarViewModelGrouping() {
          "grouped line specs should include a directory row before nested file entries");
   Expect(lines[2].kind == GitSidebarLineKind::Entry && lines[2].depth == 1,
          "nested file entries should be indented under their directory");
+}
+
+// TD-2026-08-06-159: the sidebar tree is grouped on '/'-separated generic text
+// instead of `std::filesystem::path` algebra, and each row's key is computed once
+// rather than derived from scratch on both sides of every sort comparison.
+//
+// The reference below is the ORIGINAL path-algebra formulation, spelled out here
+// rather than called through, so this compares the new grouping against an
+// independent implementation instead of against itself. It must stay written in
+// terms of `parent_path()` / `lexically_normal()` / `generic_string()`.
+namespace tree_reference {
+
+std::vector<std::string> ParentPathSegments(const std::filesystem::path& relative_path) {
+  std::vector<std::string> segments;
+  const std::filesystem::path parent = relative_path.parent_path().lexically_normal();
+  for (const auto& segment : parent) {
+    const std::string label = segment.generic_string();
+    if (label.empty() || label == "." || label == "/") {
+      continue;
+    }
+    segments.push_back(label);
+  }
+  return segments;
+}
+
+std::string DirectoryNodeKey(int section, const std::filesystem::path& path) {
+  return std::to_string(section) + "|" + path.lexically_normal().generic_string();
+}
+
+// (kind, label, tree_node_key, depth, entry_index) per emitted line, in order.
+struct Line {
+  int kind = 0;
+  std::string label;
+  std::string tree_node_key;
+  int depth = 0;
+  int entry_index = -1;
+  bool operator==(const Line&) const = default;
+};
+
+struct Node {
+  std::filesystem::path path;
+  std::map<std::string, Node> directories;
+  std::vector<const microide::workspace::GitSidebarRowViewModel*> files;
+};
+
+void Emit(const Node& node, int section, int depth, std::vector<Line>* out) {
+  for (const auto& [label, child] : node.directories) {
+    out->push_back(Line{.kind = static_cast<int>(microide::workspace::GitSidebarLineKind::Directory),
+                        .label = label,
+                        .tree_node_key = DirectoryNodeKey(section, child.path),
+                        .depth = depth});
+    Emit(child, section, depth + 1, out);
+  }
+  for (const auto* row : node.files) {
+    std::string leaf = row->primary_label;
+    if (leaf.empty()) {
+      const std::filesystem::path normalized = row->relative_path.lexically_normal();
+      leaf = normalized.filename().string();
+      if (leaf.empty()) {
+        leaf = normalized.empty() ? "." : normalized.generic_string();
+      }
+    }
+    out->push_back(Line{.kind = static_cast<int>(microide::workspace::GitSidebarLineKind::Entry),
+                        .label = leaf,
+                        .tree_node_key = {},
+                        .depth = depth,
+                        .entry_index = row->entry_index});
+  }
+}
+
+std::vector<Line> Build(const microide::workspace::GitSidebarSectionViewModel& section) {
+  std::vector<const microide::workspace::GitSidebarRowViewModel*> sorted;
+  for (const auto& row : section.rows) sorted.push_back(&row);
+  std::sort(sorted.begin(), sorted.end(),
+            [](const microide::workspace::GitSidebarRowViewModel* lhs,
+               const microide::workspace::GitSidebarRowViewModel* rhs) {
+              const std::string l = lhs->relative_path.lexically_normal().generic_string();
+              const std::string r = rhs->relative_path.lexically_normal().generic_string();
+              if (l != r) return l < r;
+              return lhs->entry_index < rhs->entry_index;
+            });
+  Node root;
+  for (const auto* row : sorted) {
+    Node* node = &root;
+    int depth = 0;
+    for (const std::string& segment : ParentPathSegments(row->relative_path.lexically_normal())) {
+      if (depth >= 64) break;
+      Node& child = node->directories[segment];
+      if (child.path.empty()) child.path = node->path / segment;
+      node = &child;
+      ++depth;
+    }
+    node->files.push_back(row);
+  }
+  std::vector<Line> out;
+  Emit(root, static_cast<int>(section.section), 0, &out);
+  return out;
+}
+
+}  // namespace tree_reference
+
+void TestGitSidebarTreeGroupingMatchesPathAlgebra() {
+  using microide::workspace::GitSidebarRowViewModel;
+  using microide::workspace::GitSidebarSectionViewModel;
+
+  // Awkward shapes on purpose: unnormalized dot components, a "//" run, a
+  // parent-climb, an absolute path, a trailing separator, a bare filename, two
+  // rows whose keys tie (so the entry_index tiebreak is exercised), and a path
+  // past the 64-level depth cap.
+  std::string deep;
+  for (int i = 0; i < 80; ++i) deep += "d" + std::to_string(i) + "/";
+  deep += "leaf.cpp";
+  const std::vector<std::string> paths = {
+      "src/z.cpp",   "src/./a.cpp",  "src//b.cpp", "src/sub/../c.cpp", "/abs/d.cpp",
+      "bare.cpp",    "src/sub/e.cpp", "dir/",      "src/z.cpp",        deep,
+      "../up.cpp",   "./dot.cpp",
+  };
+
+  GitSidebarSectionViewModel section;
+  section.section = GitSidebarEntry::Section::Changed;
+  section.header_label = "Changed";
+  for (std::size_t i = 0; i < paths.size(); ++i) {
+    GitSidebarRowViewModel row;
+    row.entry_index = static_cast<int>(i);
+    row.relative_path = paths[i];
+    // Left deliberately empty so FileLeafLabel's derive-from-path branch runs;
+    // in the shipping path BuildGitSidebarViewModel always fills it.
+    section.rows.push_back(row);
+  }
+  GitSidebarViewModel view_model;
+  view_model.sections = {section};
+  view_model.sections[0].show_header = false;
+
+  const auto produced = BuildGitSidebarLineSpecs(view_model);
+  const auto expected = tree_reference::Build(view_model.sections[0]);
+  Expect(produced.size() == expected.size(),
+         "the tree emits the same number of lines as the path-algebra reference (" +
+             std::to_string(produced.size()) + " vs " + std::to_string(expected.size()) + ")");
+  const std::size_t common = std::min(produced.size(), expected.size());
+  for (std::size_t i = 0; i < common; ++i) {
+    const tree_reference::Line actual{.kind = static_cast<int>(produced[i].kind),
+                                      .label = produced[i].label,
+                                      .tree_node_key = produced[i].tree_node_key,
+                                      .depth = produced[i].depth,
+                                      .entry_index = produced[i].entry_index};
+    Expect(actual == expected[i],
+           "line " + std::to_string(i) + " matches the reference (got label='" + actual.label +
+               "' key='" + actual.tree_node_key + "' depth=" + std::to_string(actual.depth) +
+               " entry=" + std::to_string(actual.entry_index) + "; want label='" +
+               expected[i].label + "' key='" + expected[i].tree_node_key +
+               "' depth=" + std::to_string(expected[i].depth) + " entry=" +
+               std::to_string(expected[i].entry_index) + ")");
+  }
+  Expect(expected.size() > 20, "the fixture must actually produce a tree, not one flat row");
 }
 
 // TD-2026-07-17A-008: entry rows carry a render-ready display_label with the
@@ -587,6 +746,8 @@ void RegisterGitSidebarCommandCenterTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitSidebarCommandCenter/SectionClassification",
           TestGitSidebarSectionClassification);
   AddTest(tests, "GitSidebarCommandCenter/ViewModelGrouping", TestGitSidebarViewModelGrouping);
+  AddTest(tests, "GitSidebarCommandCenter/TreeGroupingMatchesPathAlgebra",
+          TestGitSidebarTreeGroupingMatchesPathAlgebra);
   AddTest(tests, "GitSidebarCommandCenter/EntryDisplayLabelCarriesReviewMarker",
           TestGitSidebarEntryDisplayLabelCarriesReviewMarker);
   AddTest(tests, "GitSidebarCommandCenter/ConflictRowsDisableStageUnstage",
