@@ -29,6 +29,29 @@ green look especially authoritative.
   into one `bash -c`, so a build failure fails the run. Prefer it for anything
   conclusive.
 
+### `run-checks.sh` logs live at fixed paths, so a stale one reads as this run's result
+
+`tools/run-checks.sh <lane>` writes to `/tmp/microide-<lane>.log`, deterministically
+and without a timestamp in the name. That is the point — you can read a result back
+without rerunning it — but the file **outlives the session that produced it**, and
+nothing in its contents says when it was written.
+
+Hit on 2026-08-06: a watcher tailing `/tmp/microide-{asan,ubsan,tsan}.log` reported
+`100% tests passed, 0 tests failed out of 24` on all three lanes within seconds of
+the sequence starting. The three lanes had not started — the sequence was still on a
+prerequisite build. The logs were another session's, over an hour old, and the green
+they carried was for a different tree. This is the previous trap one level up: there
+the stale artifact was a binary, here it is the log *about* a binary, and neither
+announces itself.
+
+- **`rm -f /tmp/microide-<lane>.log` before starting the lane** if anything is going
+  to read it programmatically. A missing file is unambiguous; a stale one is not.
+- Otherwise check `ls -la` on the log against the wall clock before believing it,
+  and confirm the lane actually ran (`run-checks: <lane> finished (exit N)` is the
+  last line the wrapper writes).
+- The same applies to `/tmp/microide-perf-*.log`, `--report-json` output paths, and
+  any other fixed-path artifact reused across sessions.
+
 ### Editing source while a build or sanitizer run is in flight
 
 This produces an object set where some TUs saw the old class layout and some the
