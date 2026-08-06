@@ -58,6 +58,27 @@ ask whether `.git` exists.
 What is left of that probe — one `stat` per painted frame, uncached on purpose —
 is [158](#td-2026-08-06-158).
 
+**Not yet done: the rebaseline.** These moves left their allocation gates loose by
+between 1.2x and 1,967x — `branch_review.presentation_markers` is gated at
+1,418,736 and costs 721 — which is exactly the defect
+[147](#td-2026-08-06-147) is about: a gate that loose passes a complete
+regression. The rebaseline was deliberately NOT taken in this pass because the
+runner was busy (load average 9-25), and a baseline recorded on a loaded box
+records the load, not the code. It also has to arm the one new phase, which the
+run reports as `NOT GATED` until then:
+
+```
+tools/run-checks.sh tests   # confirm green first
+# on an IDLE perf-runner-v1, at the DEFAULT iteration count, bare (no xvfb):
+./build/microide-perf-make/microide/microide_perf --update-baseline \
+    --reference-runner=perf-runner-v1
+# then re-gate against what it just wrote — a rebaseline is not evidence of itself:
+./build/microide-perf-make/microide/microide_perf --reference-runner=perf-runner-v1
+```
+
+Certify with `harness.cpu_calibration_ns` (not load average) and check for
+clock-drift warnings on the verdict lines before committing the result.
+
 The 2026-08-06 finder pass closed **153** and **154**, and opened **155** by
 tripping over it.
 
