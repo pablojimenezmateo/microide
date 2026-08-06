@@ -247,9 +247,9 @@ bool TextViewport::ReplaceRange(const SelectionRange& range,
 
 bool TextViewport::ReplaceLines(std::size_t start_line,
                                 std::size_t end_line,
-                                const std::vector<std::string>& replacement,
+                                std::vector<std::string> replacement,
                                 bool record_undo) {
-  return ApplyLineEdit(start_line, end_line, replacement, record_undo);
+  return ApplyLineEdit(start_line, end_line, std::move(replacement), record_undo);
 }
 
 std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view replacement) {
@@ -783,11 +783,11 @@ void TextViewport::WidenInlineEntryToLines(HistoryEntry& entry) const {
 TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
     std::size_t start_line,
     std::size_t end_line,
-    const std::vector<std::string>& replacement) const {
+    std::vector<std::string> replacement) const {
   const std::size_t clamped_start = std::min(start_line, document_->lines.size());
   const std::size_t clamped_end = std::clamp(end_line, clamped_start, document_->lines.size());
 
-  std::vector<std::string> after_lines = replacement;
+  std::vector<std::string> after_lines = std::move(replacement);
   if (after_lines.empty()) {
     after_lines.push_back("");
   }
@@ -843,14 +843,14 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
 
 bool TextViewport::ApplyLineEdit(std::size_t start_line,
                                  std::size_t end_line,
-                                 const std::vector<std::string>& replacement,
+                                 std::vector<std::string> replacement,
                                  bool record_undo) {
   EnsureDocument();
   if (document_->lines.empty()) {
     document_->lines.PushBackLine("");
   }
 
-  HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, replacement);
+  HistoryEntry entry = BuildLineHistoryEntry(start_line, end_line, std::move(replacement));
   // Exact no-op: the lines this edit would install are byte-for-byte identical to the
   // span it would replace, so applying it leaves the buffer unchanged. Reject it
   // centrally so line-level operations (Sort Lines on an already-sorted selection —

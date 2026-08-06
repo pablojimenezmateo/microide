@@ -584,16 +584,17 @@ void CompareInteractionCoordinator::ApplyMergeChoice(compare::MergeChoice choice
     return;
   }
 
-  const std::vector<std::string> replacement_lines =
+  std::vector<std::string> replacement_lines =
       compare::MergeChoiceLines(merge_tab->model.hunks[conflict.hunk_index], choice);
+  const std::size_t replacement_line_count = replacement_lines.size();
   const std::size_t previous_end = conflict.end_line;
   if (!merge_tab->result_viewport.ReplaceLines(conflict.start_line, previous_end,
-                                               replacement_lines)) {
+                                               std::move(replacement_lines))) {
     return;
   }
 
   merge_tab->model.hunks[conflict.hunk_index].choice = choice;
-  conflict.end_line = conflict.start_line + replacement_lines.size();
+  conflict.end_line = conflict.start_line + replacement_line_count;
   conflict.last_choice = choice;
   conflict.valid = true;
   conflict.resolved = true;

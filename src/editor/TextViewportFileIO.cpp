@@ -233,7 +233,7 @@ bool TextViewport::Save() {
     // pre-normalization view and restore it afterwards, then clamp every caret and
     // anchor back into the (possibly trimmed) content.
     const ViewState pre_normalize_view = CaptureViewState();
-    ReplaceLines(0, document_->lines.size(), normalized, /*record_undo=*/true);
+    ReplaceLines(0, document_->lines.size(), std::move(normalized), /*record_undo=*/true);
     RestoreViewState(pre_normalize_view);
     const auto clamp_position = [this](TextPosition& position) {
       if (document_->lines.empty()) {

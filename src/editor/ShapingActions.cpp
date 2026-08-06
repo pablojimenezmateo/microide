@@ -154,7 +154,8 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
       updated.push_back(std::move(out));
     }
   }
-  return viewport.ReplaceLines(range.first, range.last + 1, updated, /*record_undo=*/true);
+  return viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
+                               /*record_undo=*/true);
 }
 
 bool ToggleBlockComment(TextViewport& viewport,
@@ -293,16 +294,24 @@ bool MoveLineUp(TextViewport& viewport) {
   const auto& lines = viewport.lines();
   if (range.last >= lines.size()) return false;
   const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  // One piece-tree walk for the moved block. The per-line `lines[i]` this replaced
+  // goes through TextBuffer::LineRef, which materialises a string AND inserts it
+  // into the buffer's line cache — and a multi-caret line op covers every line
+  // between the outermost carets, so it also evicted the cache across that span.
   std::vector<std::string> updated;
   updated.reserve(range.last - range.first + 2);
-  for (std::size_t i = range.first; i <= range.last; ++i) updated.push_back(lines[i]);
-  updated.push_back(lines[range.first - 1]);
+  {
+    std::vector<std::string> block = lines.SliceLines(range.first, range.last + 1);
+    updated.insert(updated.end(), std::make_move_iterator(block.begin()),
+                   std::make_move_iterator(block.end()));
+  }
+  updated.push_back(std::string(lines.LineView(range.first - 1)));
   // Wrap the replace + caret restore in one undo group so the aggregate entry's
   // after_state is captured AFTER RestoreCaretsAfterLineMove — otherwise the
   // ReplaceLines entry snaps after_state to (range_first, 0) and redo loses the
   // real column and every secondary caret.
   viewport.BeginUndoGroup();
-  if (!viewport.ReplaceLines(range.first - 1, range.last + 1, updated,
+  if (!viewport.ReplaceLines(range.first - 1, range.last + 1, std::move(updated),
                              /*record_undo=*/true)) {
     viewport.EndUndoGroup();
     return false;
@@ -317,13 +326,17 @@ bool MoveLineDown(TextViewport& viewport) {
   const auto& lines = viewport.lines();
   if (range.last + 1 >= lines.size()) return false;
   const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  // See MoveLineUp for why this is one SliceLines walk and not a per-line read.
   std::vector<std::string> updated;
   updated.reserve(range.last - range.first + 2);
-  updated.push_back(lines[range.last + 1]);
-  for (std::size_t i = range.first; i <= range.last; ++i) updated.push_back(lines[i]);
+  updated.push_back(std::string(lines.LineView(range.last + 1)));
+  std::vector<std::string> block = lines.SliceLines(range.first, range.last + 1);
+  updated.insert(updated.end(), std::make_move_iterator(block.begin()),
+                 std::make_move_iterator(block.end()));
   // See MoveLineUp: group the replace + caret restore so redo keeps the carets.
   viewport.BeginUndoGroup();
-  if (!viewport.ReplaceLines(range.first, range.last + 2, updated, /*record_undo=*/true)) {
+  if (!viewport.ReplaceLines(range.first, range.last + 2, std::move(updated),
+                             /*record_undo=*/true)) {
     viewport.EndUndoGroup();
     return false;
   }
@@ -348,7 +361,8 @@ bool DuplicateSelection(TextViewport& viewport) {
   std::size_t line_index = viewport.cursor_line();
   if (line_index >= lines.size()) return false;
   std::vector<std::string> updated{lines[line_index], lines[line_index]};
-  return viewport.ReplaceLines(line_index, line_index + 1, updated, /*record_undo=*/true);
+  return viewport.ReplaceLines(line_index, line_index + 1, std::move(updated),
+                               /*record_undo=*/true);
 }
 
 bool DeleteLine(TextViewport& viewport) {
@@ -443,12 +457,15 @@ bool IndentSelection(TextViewport& viewport) {
   std::vector<std::ptrdiff_t> per_line_delta;
   per_line_delta.reserve(range.last - range.first + 1);
   for (std::size_t i = range.first; i <= range.last; ++i) {
-    if (lines[i].empty()) {
-      updated.push_back(lines[i]);
+    // LineView, not lines[i]: LineRef would also insert every line of the span
+    // into the buffer's line cache (see MoveLineUp).
+    const std::string_view source = lines.LineView(i);
+    if (source.empty()) {
+      updated.emplace_back();
       per_line_delta.push_back(0);
     } else {
       std::string line = indent_unit;
-      line += lines[i];
+      line += source;
       updated.push_back(std::move(line));
       per_line_delta.push_back(static_cast<std::ptrdiff_t>(indent_unit.size()));
     }
@@ -459,7 +476,7 @@ bool IndentSelection(TextViewport& viewport) {
   // Group the replace + caret restore so the aggregate undo entry's after_state
   // captures the restored carets (else redo snaps to (first,0) and drops carets).
   viewport.BeginUndoGroup();
-  const bool changed = viewport.ReplaceLines(range.first, range.last + 1, updated,
+  const bool changed = viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
                                              /*record_undo=*/true);
   if (changed) {
     if (multi || !had_selection) {
@@ -510,7 +527,7 @@ bool OutdentSelection(TextViewport& viewport) {
   const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
   // See IndentSelection: group the replace + caret restore so redo keeps carets.
   viewport.BeginUndoGroup();
-  const bool changed = viewport.ReplaceLines(range.first, range.last + 1, updated,
+  const bool changed = viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
                                              /*record_undo=*/true);
   if (changed) {
     if (multi || !had_selection) {
@@ -528,15 +545,15 @@ bool SortLines(TextViewport& viewport, bool ascending) {
   if (range.first == range.last) return false;
   const auto& lines = viewport.lines();
   if (range.last >= lines.size()) return false;
-  std::vector<std::string> sorted;
-  sorted.reserve(range.last - range.first + 1);
-  for (std::size_t i = range.first; i <= range.last; ++i) sorted.push_back(lines[i]);
+  // See MoveLineUp for why this is one SliceLines walk and not a per-line read.
+  std::vector<std::string> sorted = lines.SliceLines(range.first, range.last + 1);
   if (ascending) {
     std::sort(sorted.begin(), sorted.end());
   } else {
     std::sort(sorted.begin(), sorted.end(), std::greater<std::string>());
   }
-  return viewport.ReplaceLines(range.first, range.last + 1, sorted, /*record_undo=*/true);
+  return viewport.ReplaceLines(range.first, range.last + 1, std::move(sorted),
+                               /*record_undo=*/true);
 }
 
 }  // namespace microide::editor

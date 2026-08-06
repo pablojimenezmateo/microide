@@ -258,9 +258,13 @@ class TextViewport {
   bool ReplaceRange(const SelectionRange& range,
                     std::string_view replacement,
                     bool record_undo = true);
+  // `replacement` is taken BY VALUE and moved into the history entry's
+  // after-image. A line op over a multi-caret span builds one replacement vector
+  // covering every line between the outermost carets, and copying it here was one
+  // full copy of that span per edit.
   bool ReplaceLines(std::size_t start_line,
                     std::size_t end_line,
-                    const std::vector<std::string>& replacement,
+                    std::vector<std::string> replacement,
                     bool record_undo = true);
   std::size_t ReplaceAll(std::string_view needle, std::string_view replacement);
   // Apply a precomputed, ascending-sorted set of single-line match ranges as one
@@ -667,7 +671,7 @@ class TextViewport {
   void WidenInlineEntryToLines(HistoryEntry& entry) const;
   HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
                                      std::size_t end_line,
-                                     const std::vector<std::string>& replacement) const;
+                                     std::vector<std::string> replacement) const;
   // The three multi-caret edit fan-outs share one pipeline (collect+sort+dedup
   // carets, capture the affected slice, reverse-walk applying one history entry
   // per caret with position remap, then commit one aggregate undo entry). Only
@@ -703,7 +707,7 @@ class TextViewport {
                                std::string_view close);
   bool ApplyLineEdit(std::size_t start_line,
                      std::size_t end_line,
-                     const std::vector<std::string>& replacement,
+                     std::vector<std::string> replacement,
                      bool record_undo);
   std::string AutoIndentForNewline(std::size_t line, std::size_t column) const;
   std::string IndentUnit() const;

@@ -150,7 +150,8 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           }
         }
       }
-      if (viewport->ReplaceLines(0, viewport->line_count(), new_lines, /*record_undo=*/true)) {
+      if (viewport->ReplaceLines(0, viewport->line_count(), std::move(new_lines),
+                                 /*record_undo=*/true)) {
         context_.NotifyEditorViewportChanged(/*last_change=*/true);
       }
       return DispatchResult::Handled;
