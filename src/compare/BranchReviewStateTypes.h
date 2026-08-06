@@ -11,6 +11,25 @@
 
 namespace microide::compare {
 
+// Every path stored inside a BranchReviewTargetState — file-entry paths, hunk
+// identity paths, note paths — is normalized through this on the way in, by the
+// service's mutators and by the persistence bridge. That invariant is what lets
+// the query scans compare paths as plain strings instead of re-normalizing both
+// sides of every comparison (~12 allocations a call, in loops that run per
+// reviewed-hunk entry per hunk per row). A new ingress point must normalize here.
+std::filesystem::path NormalizeReviewPath(const std::filesystem::path& path);
+
+// Debug-only guard for the invariant above: a path that reaches a comparison
+// un-normalized would silently compare unequal to its own stored form, which
+// reads as "this hunk was never reviewed" rather than as a crash.
+#ifdef NDEBUG
+#define MICROIDE_ASSERT_NORMALIZED_REVIEW_PATH(path) ((void)0)
+#else
+#define MICROIDE_ASSERT_NORMALIZED_REVIEW_PATH(path) \
+  ::microide::compare::AssertNormalizedReviewPath(path)
+void AssertNormalizedReviewPath(const std::filesystem::path& path);
+#endif
+
 enum class BranchReviewMarkerStatus {
   Unreviewed,
   Reviewed,

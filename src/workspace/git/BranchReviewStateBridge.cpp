@@ -16,10 +16,14 @@ PersistedBranchReviewHunkIdentity ToPersistedHunkIdentity(
   };
 }
 
+// The persistence file is the one ingress into the review state that does not go
+// through a service mutator, so it is where the "stored paths are normalized"
+// invariant (see compare::NormalizeReviewPath) has to be re-established: a config
+// written by an older build, or hand-edited, can carry "./src/foo.cpp".
 compare::BranchReviewHunkIdentity FromPersistedHunkIdentity(
     const PersistedBranchReviewHunkIdentity& identity) {
   return compare::BranchReviewHunkIdentity{
-      .path = identity.path,
+      .path = compare::NormalizeReviewPath(identity.path),
       .old_start = identity.old_start,
       .old_count = identity.old_count,
       .new_start = identity.new_start,
@@ -86,7 +90,7 @@ compare::BranchReviewTargetState FromPersistedTarget(const PersistedBranchReview
   };
   for (const PersistedBranchReviewFileEntry& file : persisted.reviewed_files) {
     target_state.reviewed_files.push_back(compare::BranchReviewFileReviewEntry{
-        .path = file.path,
+        .path = compare::NormalizeReviewPath(file.path),
         .reviewed_snapshot_generation = file.reviewed_snapshot_generation,
         .reviewed_at_unix_ms = file.reviewed_at_unix_ms,
     });
@@ -105,7 +109,7 @@ compare::BranchReviewTargetState FromPersistedTarget(const PersistedBranchReview
     target_state.notes.push_back(compare::BranchReviewNote{
         .scope = note.scope == "hunk" ? compare::BranchReviewNoteScope::Hunk
                                       : compare::BranchReviewNoteScope::File,
-        .path = note.path,
+        .path = compare::NormalizeReviewPath(note.path),
         .hunk_identity = hunk_identity,
         .text = note.text,
         .updated_at_unix_ms = note.updated_at_unix_ms,

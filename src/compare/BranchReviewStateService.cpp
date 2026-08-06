@@ -7,12 +7,14 @@ namespace microide::compare {
 
 namespace {
 
-std::filesystem::path NormalizeReviewPath(const std::filesystem::path& path) {
-  return path.lexically_normal();
-}
-
 bool PathsEqual(const std::filesystem::path& left, const std::filesystem::path& right) {
-  return NormalizeReviewPath(left) == NormalizeReviewPath(right);
+  // Both sides are normalized already — see NormalizeReviewPath's contract — so
+  // this is a string compare. It used to call lexically_normal() on BOTH sides on
+  // every comparison, which is ~12 allocations a call inside loops that run per
+  // reviewed-hunk entry per hunk per row: 79% of a branch-review marker pass.
+  MICROIDE_ASSERT_NORMALIZED_REVIEW_PATH(left);
+  MICROIDE_ASSERT_NORMALIZED_REVIEW_PATH(right);
+  return left.native() == right.native();
 }
 
 bool HunkIdentitiesEqual(const BranchReviewHunkIdentity& left,

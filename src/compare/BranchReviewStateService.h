@@ -26,6 +26,10 @@ class BranchReviewStateService {
   static constexpr std::size_t kMaxNotesPerTarget = 256;
 
   const std::vector<BranchReviewTargetState>& targets() const { return targets_; }
+  // Mutable access exists for the persistence bridge (its only caller), which
+  // replaces the whole vector on load. Anything written through it must satisfy
+  // the same ingress invariant the mutators do: every stored path normalized
+  // through NormalizeReviewPath.
   std::vector<BranchReviewTargetState>& targets() { return targets_; }
 
   // Monotonic counter bumped on every state mutation. Consumers that derive cached

@@ -1,5 +1,6 @@
 #include "compare/BranchReviewStateTypes.h"
 
+#include <cassert>
 #include <chrono>
 #include <sstream>
 
@@ -74,6 +75,18 @@ std::uint64_t HashHunkContent(const CompareModel& model, const CompareHunk& hunk
 }
 
 }  // namespace
+
+std::filesystem::path NormalizeReviewPath(const std::filesystem::path& path) {
+  return path.lexically_normal();
+}
+
+#ifndef NDEBUG
+void AssertNormalizedReviewPath(const std::filesystem::path& path) {
+  assert(path.native() == path.lexically_normal().native() &&
+         "branch-review paths must be normalized on ingress");
+  (void)path;
+}
+#endif
 
 bool BranchReviewHunkIdentity::operator==(const BranchReviewHunkIdentity& other) const {
   return path == other.path && old_start == other.old_start && old_count == other.old_count &&

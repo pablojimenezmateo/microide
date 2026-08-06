@@ -141,6 +141,80 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                             "reloaded review state should restore reviewed file");
                    }});
 
+  // Regression: query scans compare stored paths as plain strings now, which is
+  // only correct because every ingress normalizes. The persistence file is the one
+  // ingress that does not run through a mutator — a config written by an older
+  // build (or hand-edited) can hold "./src/a.cpp", and an un-normalized entry
+  // would compare unequal to the query's "src/a.cpp" and silently read as
+  // "never reviewed".
+  tests.push_back({"BranchReviewState/PersistedUnnormalizedPathsNormalizeOnLoad",
+                   [] {
+                     using microide::workspace::PersistedBranchReviewFileEntry;
+                     using microide::workspace::PersistedBranchReviewHunkEntry;
+                     using microide::workspace::PersistedBranchReviewHunkIdentity;
+                     using microide::workspace::PersistedBranchReviewNote;
+                     using microide::workspace::PersistedBranchReviewState;
+                     using microide::workspace::PersistedBranchReviewTarget;
+
+                     const BranchReviewTargetIdentity target =
+                         MakeBranchReviewTargetIdentity("/repo", "base", "HEAD", "base", 3);
+                     PersistedBranchReviewHunkIdentity hunk_identity{
+                         .path = std::filesystem::path("./src/./a.cpp"),
+                         .old_start = 1,
+                         .old_count = 2,
+                         .new_start = 1,
+                         .new_count = 2,
+                         .content_hash = 0x1234,
+                     };
+                     PersistedBranchReviewTarget persisted_target{
+                         .repository_root = target.repository_root,
+                         .base_commit = target.base_commit,
+                         .head_commit = target.head_commit,
+                         .merge_base_commit = target.merge_base_commit,
+                         .snapshot_generation = target.snapshot_generation,
+                         .last_accessed_unix_ms = 1,
+                         .reviewed_files = {PersistedBranchReviewFileEntry{
+                             .path = std::filesystem::path("./src/./a.cpp"),
+                             .reviewed_snapshot_generation = target.snapshot_generation,
+                             .reviewed_at_unix_ms = 1,
+                         }},
+                         .reviewed_hunks = {PersistedBranchReviewHunkEntry{
+                             .identity = hunk_identity,
+                             .reviewed_at_unix_ms = 1,
+                         }},
+                         .notes = {PersistedBranchReviewNote{
+                             .scope = "file",
+                             .path = std::filesystem::path("./src/./a.cpp"),
+                             .hunk_identity = std::nullopt,
+                             .text = "look again",
+                             .updated_at_unix_ms = 1,
+                         }},
+                     };
+                     PersistedBranchReviewState persisted;
+                     persisted.targets.push_back(std::move(persisted_target));
+
+                     BranchReviewStateService service;
+                     LoadBranchReviewStateFromPersisted(persisted, &service);
+                     const compare::BranchReviewTargetState* loaded = service.FindTarget(target);
+                     Expect(loaded != nullptr, "the persisted target should load");
+                     Expect(loaded->reviewed_files[0].path == std::filesystem::path("src/a.cpp"),
+                            "a persisted file path must be normalized on load");
+                     Expect(loaded->reviewed_hunks[0].identity.path ==
+                                std::filesystem::path("src/a.cpp"),
+                            "a persisted hunk identity path must be normalized on load");
+                     Expect(loaded->notes[0].path == std::filesystem::path("src/a.cpp"),
+                            "a persisted note path must be normalized on load");
+
+                     const BranchReviewStateQueryInput query{
+                         .target = target,
+                         .path = std::filesystem::path("src/a.cpp"),
+                     };
+                     Expect(service.FileStatus(query) == BranchReviewMarkerStatus::Reviewed,
+                            "a normalized query must match a persisted un-normalized entry");
+                     Expect(service.HasNote(query, BranchReviewNoteScope::File),
+                            "a normalized query must find a persisted un-normalized note");
+                   }});
+
   tests.push_back({"BranchReviewState/HighBitContentHashSurvivesRoundTrip",
                    [] {
                      // Regression: content_hash is a full-range std::hash result, so
