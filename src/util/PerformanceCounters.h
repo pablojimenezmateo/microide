@@ -140,6 +140,16 @@ namespace microide::util {
   /* round-trip per event again, which is exactly what SmallVector removed.       */             \
   X(WorkspaceRedrawRectsQueued, "workspace.redraw_rects_queued")                                \
   X(WorkspaceRedrawRectSpills, "workspace.redraw_rect_spills")                                  \
+  /* How many times the menu bar was laid out, and how many label widths that     */             \
+  /* actually measured. The layout runs from at least three independent chains    */             \
+  /* per pointer motion (hit test, cursor kind, chrome redraw rect) -- about ten  */             \
+  /* rebuilds an event -- and nothing counted it: the cost was only visible under */             \
+  /* an allocation trace, which is how it survived a previous optimisation pass   */             \
+  /* on the same function (TD-2026-08-06-149). Layouts is the recompute rate that */             \
+  /* a memo would have to beat; label_measures is the check that the width cache  */             \
+  /* is holding, and should stay at zero after the first frame.                   */             \
+  X(WorkspaceMenuBarLayouts, "workspace.menu_bar_layouts")                                      \
+  X(WorkspaceMenuBarLabelMeasures, "workspace.menu_bar_label_measures")                         \
   X(WorkspaceWakeReasonPluginReload, "workspace.wake_reason_plugin_reload")                     \
   X(WorkspaceWakeReasonCaretBlink, "workspace.wake_reason_caret_blink")                         \
   X(WorkspaceWakeReasonNone, "workspace.wake_reason_none")                                      \

@@ -1,5 +1,7 @@
 #pragma once
 
+#include <SDL3/SDL.h>
+
 #include <array>
 #include <cstddef>
 #include <span>
@@ -7,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/InlineVector.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
 
@@ -72,6 +75,38 @@ struct MenuSpec {
   std::string_view label;
   std::span<const MenuItemSpec> items;
 };
+
+// Hard cap on menu-bar entries, and on `WorkspaceMenuSpecs()` itself.
+//
+// The menu bar's length is a property of the static spec table, not of any data
+// the user can produce, which is exactly the precondition `util::InlineVector`
+// exists for: laying it out is heap-free. Before that, a single pointer motion
+// over the bar rebuilt three `std::vector`s about ten times — 32 of the 50
+// allocations per motion event were this one function (TD-2026-08-06-149).
+//
+// ONE constant so raising it cannot leave a container behind, and it bounds the
+// whole table rather than the menu-bar-visible subset: `IsMenuBarTopLevelMenu`
+// lives in another translation unit, so the table is what can be checked at
+// compile time, and it is the larger number. Asserted against the table in
+// WorkspaceMenuRegistry.cpp.
+inline constexpr std::size_t kMaxMenuBarItems = 24;
+
+// Window control buttons (minimize / maximize / close) drawn when the custom
+// window chrome is on. Not a budget — the set is spelled out in one array in
+// ComputeVisibleWindowControlButtons.
+inline constexpr std::size_t kWindowControlButtonCount = 3;
+
+// One laid-out menu-bar entry. Menu vocabulary rather than shell state: the
+// registry owns MenuId and the cap the container below is sized from, and the
+// shell aliases both.
+struct VisibleMenuBarItem {
+  MenuId id = MenuId::None;
+  SDL_FRect rect{};
+  bool active = false;
+};
+
+using VisibleMenuBarItems = util::InlineVector<VisibleMenuBarItem, kMaxMenuBarItems>;
+using MenuBarOverflowIds = util::InlineVector<MenuId, kMaxMenuBarItems>;
 
 std::span<const MenuSpec> WorkspaceMenuSpecs();
 const MenuSpec* FindWorkspaceMenuSpec(MenuId id);

@@ -384,17 +384,21 @@
   using VisibleStripTab = workspace::VisibleStripTab;
   using TabStripOverflowControls = workspace::TabStripOverflowControls;
 
-  struct VisibleMenuBarItem {
-    MenuId id = MenuId::None;
-    SDL_FRect rect{};
-    bool active = false;
-  };
+  using VisibleMenuBarItem = workspace::VisibleMenuBarItem;
 
   struct VisibleWindowControlButton {
     WindowControlButtonId id = WindowControlButtonId::Minimize;
     SDL_FRect rect{};
     bool hovered = false;
   };
+
+  // Heap-free: the menu bar's length is a property of the static spec table, and
+  // a pointer motion over it used to rebuild these ~10 times per event through
+  // three independent call chains (TD-2026-08-06-149).
+  using VisibleMenuBarItems = workspace::VisibleMenuBarItems;
+  using MenuBarOverflowIds = workspace::MenuBarOverflowIds;
+  using VisibleWindowControlButtons =
+      util::InlineVector<VisibleWindowControlButton, kWindowControlButtonCount>;
 
   struct VisibleStatusItem {
     StatusItemView item;
@@ -539,14 +543,13 @@
   static const MenuSpec* FindMenuSpec(MenuId id);
   std::span<const MenuItemSpec> MenuItems(MenuId id) const;
   static std::span<const MenuItemSpec> TreeContextMenuItems(TreeContextTargetKind target);
-  std::vector<VisibleMenuBarItem> ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
-  std::vector<MenuId> ComputeOverflowMenuBarItems(const SDL_FRect& menu_bar) const;
+  VisibleMenuBarItems ComputeVisibleMenuBarItems(const SDL_FRect& menu_bar) const;
+  MenuBarOverflowIds ComputeOverflowMenuBarItems(const SDL_FRect& menu_bar) const;
   // True when a top-level menu should appear in the menu bar / hamburger overflow.
   // Gates MenuId::Debug on the `debug.enabled` setting.
   bool IsMenuBarMenuVisible(MenuId id) const;
   std::optional<SDL_FRect> MenuOverflowChevronRect(const SDL_FRect& menu_bar) const;
-  std::vector<VisibleWindowControlButton> ComputeVisibleWindowControlButtons(
-      const SDL_FRect& menu_bar) const;
+  VisibleWindowControlButtons ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) const;
   std::optional<SDL_FRect> ComputePopupMenuRect(const SDL_FRect& anchor_rect,
                                                 std::span<const MenuItemSpec> items,
                                                 const SDL_FRect& bounds) const;

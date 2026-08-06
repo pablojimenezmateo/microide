@@ -196,6 +196,18 @@
     }
     return labels;
   }
+  // Drive the three menu-bar layout functions and return only counts.
+  //
+  // Exists so an allocation test can put the layout in a loop without the probe
+  // itself allocating around it — VisibleMenuBarLabels builds strings, and
+  // CurrentLayout is a whole layout pass. The counts are returned rather than
+  // discarded so the call cannot be optimised away (TD-2026-08-06-149).
+  static std::size_t LayOutMenuBar(WorkspaceShell& shell, const SDL_FRect& menu_bar) {
+    return shell.ComputeVisibleMenuBarItems(menu_bar).size() +
+           shell.ComputeOverflowMenuBarItems(menu_bar).size() +
+           shell.ComputeVisibleWindowControlButtons(menu_bar).size();
+  }
+  static SDL_FRect MenuBarRect(WorkspaceShell& shell) { return CurrentLayout(shell).menu_bar; }
   static std::optional<SDL_FRect> MenuOverflowChevronRect(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.MenuOverflowChevronRect(layout.menu_bar);

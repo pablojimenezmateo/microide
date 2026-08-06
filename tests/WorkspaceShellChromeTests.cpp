@@ -4,6 +4,7 @@
 
 #include "TerminalSessionTestAccess.h"
 #include "render/Theme.h"
+#include "perf/AllocationCounter.h"
 #include "util/PerformanceCounters.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -152,6 +153,57 @@ void TestWorkspaceShellMenuBarOmitsRemovedMenus() {
          "menu bar should expose the Terminal top-level menu");
   Expect(std::find(labels.begin(), labels.end(), "Help") != labels.end(),
          "menu bar should expose the Help top-level menu");
+}
+
+// TD-2026-08-06-149: laying out the menu bar returned three std::vectors, and a
+// single pointer motion over the bar re-ran it about ten times through three
+// independent chains (hit test, cursor kind, chrome redraw rect). That was 32 of
+// the 50 allocations per motion event, and it survived an earlier optimisation
+// pass on this very function — the pass fixed the width lookups and left the
+// vectors, because nothing was counting.
+//
+// The scenario gate (`menu_hover_switch`) measures the same thing end to end, but
+// only on a perf-harness build against a baseline that can drift. This is the
+// unit-level oracle: warm, then a hundred layouts must touch the heap zero times.
+void TestWorkspaceShellMenuBarLayoutIsAllocationFree() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
+  const SDL_FRect menu_bar = WorkspaceShellTestAccess::MenuBarRect(shell);
+  // Warm the label-width cache and the font metrics behind it; the first layout
+  // after a metrics change legitimately measures.
+  Expect(WorkspaceShellTestAccess::LayOutMenuBar(shell, menu_bar) > 0,
+         "the menu bar should lay out to a non-empty set of items");
+
+  const std::uint64_t measures_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLabelMeasures);
+  const std::uint64_t layouts_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLayouts);
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationSnapshot before =
+      microide::tests::perf::Allocations::Snapshot();
+#endif
+  std::size_t total = 0;
+  for (int i = 0; i < 100; ++i) {
+    total += WorkspaceShellTestAccess::LayOutMenuBar(shell, menu_bar);
+  }
+#if MICROIDE_PERF_HARNESS_BUILD
+  const microide::tests::perf::AllocationDelta delta =
+      microide::tests::perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0 && delta.bytes_allocated == 0,
+         "a warm menu-bar layout must not touch the heap");
+#endif
+  Expect(total > 0, "the layout results must be observed, not optimised away");
+  // The width cache is what keeps the layout cheap; if it stopped holding, the
+  // layout would still be allocation-free and quietly ten times slower.
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLabelMeasures) ==
+             measures_before,
+         "a warm menu-bar layout must not re-measure any label width");
+  // Each iteration lays out the bar twice directly plus once inside the overflow
+  // pass; the point of the counter is that this rate is now visible at all.
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLayouts) >
+             layouts_before + 100,
+         "workspace.menu_bar_layouts must count every layout, including nested ones");
 }
 
 void TestWorkspaceShellMenuBarShowsChevronWhenTruncated() {
@@ -3269,6 +3321,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestClosingTabsWhileScrolledRecomputesOverflowImmediately);
   AddTest(tests, "WorkspaceShell/MenuBarOmitsRemovedMenus",
           TestWorkspaceShellMenuBarOmitsRemovedMenus);
+  AddTest(tests, "WorkspaceShell/MenuBarLayoutIsAllocationFree",
+          TestWorkspaceShellMenuBarLayoutIsAllocationFree);
   AddTest(tests, "WorkspaceShell/MenuBarShowsChevronWhenTruncated",
           TestWorkspaceShellMenuBarShowsChevronWhenTruncated);
   AddTest(tests, "WorkspaceShell/CompactMenuOverflowButtonIsInteractive",

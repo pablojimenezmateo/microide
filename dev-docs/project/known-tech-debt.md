@@ -847,7 +847,66 @@ The second is the one worth fixing — either make the trim proportional so the
 metric is iteration-count-stable, or refuse to gate `mean_rss_growth_bytes` below
 the iteration count its baseline was recorded at and say so.
 
-### TD-2026-08-06-149 — a menu-bar hover rebuilds the whole menu-bar layout ~10 times per motion event. OPEN.
+### TD-2026-08-06-149 — a menu-bar hover rebuilds the whole menu-bar layout ~10 times per motion event. [RESOLVED 2026-08-06 — the hover phase now allocates nothing at all.]
+
+**What shipped.** Option (a) only, and it was the whole win.
+
+| | at `34bcb510` | after |
+| --- | ---: | ---: |
+| `menu_hover_switch` measured phase (160 moves) | 8,000 | **0** |
+| `menu_hover_switch` p50_allocations | 8,104 | **54** |
+| `menu_popup_hover_rows` p50_allocations | 2,529 | **74** |
+
+The phase is not "mostly fixed", it is zero: every allocation the 160 hover events
+made was one of the three vectors, so removing all three removed all fifty per
+event rather than the ~32 the trace attributed to the top function. The two extra
+call chains the entry listed were carrying the other eighteen through the same
+containers.
+
+- `VisibleMenuBarItem` and its two containers (`VisibleMenuBarItems`,
+  `MenuBarOverflowIds`) moved to `WorkspaceMenuRegistry.h` as
+  `util::InlineVector<…, kMaxMenuBarItems>`. The registry already owns `MenuId`
+  and the spec table, so the cap and the containers sized from it now sit
+  together, with a `static_assert` next to the table — adding a sixteenth menu
+  past the cap would otherwise have been dropped from the bar in a release build
+  and asserted only in debug. `ComputeVisibleWindowControlButtons` returns
+  `InlineVector<…, kWindowControlButtonCount>`, asserted against the array it
+  fills.
+- The label-width memo lost its `unordered_map<const char*, float>`. `MenuSpecs()`
+  is a static table whose order never changes, so the spec's POSITION is a valid
+  key and a free one; the map was eight hash lookups per call and ~80 per motion
+  event. The label pointer is still compared per slot, so a table that did change
+  re-measures instead of serving a stale width.
+
+**(b) was not needed, and now there is an instrument to say so.** Two counters,
+`workspace.menu_bar_layouts` and `workspace.menu_bar_label_measures`. The first
+confirms the entry's headline from an ordinary run — 1,610 layouts across 160
+hover events, ~10 an event — and the second is the check that the width cache is
+holding (it should read zero after the first frame; a layout that stopped
+allocating but started re-measuring would otherwise be invisible). With the
+allocations gone, memoising the layout buys arithmetic against the risk the entry
+named: a stale menu-bar rect is a click opening the wrong menu. If it is ever
+worth revisiting, `menu_bar_layouts` is the recompute rate a memo has to beat, and
+it is now reported rather than needing an allocation trace to find.
+
+**Coverage.** `WorkspaceShell/MenuBarLayoutIsAllocationFree` is the unit-level
+oracle: a hundred warm layouts, zero heap allocations (under the perf-harness
+build), zero label re-measures, and the layout counter must move — the scenario
+gate measures the same thing end to end but only against a baseline that can
+drift, which is exactly how the previous optimisation pass on this function left
+the vectors behind.
+
+**One measurement note.** The four scenarios re-run after this change reported
+wall failures of +100% to +1000% while their allocation counts fell 20-150x. That
+was a second Claude session compiling at `-j24` on the same box, and the harness
+said so itself without being asked: `harness.cpu_calibration_ns` spread 739-9778us
+(13.2x) on the same run. Allocation counts being *down* across a clock that moved
+that far is the tell (memory: `cpu-ms-measures-the-governor`,
+`perf-gate-video-lane`). Only the allocation counts above are claimed from that
+run; they are deterministic and do not depend on the clock. Wall is re-measured on
+a quiet box by [TD-2026-08-06-147](#td-2026-08-06-147)'s rebaseline pass.
+
+The original entry follows.
 
 The same shape as [TD-2026-08-06-145](#td-2026-08-06-145), one subsystem over,
 and an order of magnitude worse. Found by pointing 145's own instrument

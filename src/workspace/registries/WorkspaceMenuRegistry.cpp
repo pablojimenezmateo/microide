@@ -282,6 +282,12 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuSpec{MenuId::TerminalTabContext, "Terminal", kTerminalTabContextItems},
       MenuSpec{MenuId::ProjectTabContext, "Project", kProjectTabContextItems},
   });
+  // The cap the menu-bar layout's inline storage is sized from. Adding a menu
+  // past this without raising the constant would silently drop it from the bar
+  // in a release build (InlineVector asserts in debug and clamps in release), so
+  // it is checked here, next to the table, rather than trusted.
+  static_assert(std::tuple_size_v<decltype(kMenus)> <= kMaxMenuBarItems,
+                "raise kMaxMenuBarItems: the menu-bar layout's inline storage is sized from it");
   return kMenus;
 }
 

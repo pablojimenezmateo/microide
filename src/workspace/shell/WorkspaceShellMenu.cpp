@@ -2,6 +2,7 @@
 
 #include <algorithm>
 
+#include "util/PerformanceCounters.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 
@@ -30,9 +31,10 @@ bool WorkspaceShell::IsMenuBarMenuVisible(MenuId id) const {
   return IsMenuBarTopLevelMenu(id);
 }
 
-std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMenuBarItems(
+WorkspaceShell::VisibleMenuBarItems WorkspaceShell::ComputeVisibleMenuBarItems(
     const SDL_FRect& menu_bar) const {
-  std::vector<VisibleMenuBarItem> items;
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLayouts);
+  VisibleMenuBarItems items;
   if (layout_mode_service_.CurrentMode() == LayoutMode::Compact) {
     return items;  // hamburger only — every top-level menu reaches the popup
   }
@@ -46,37 +48,53 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
                                     : window_buttons.front().rect.x - 8.0f;
 
   // First pass: measure widths and determine whether all items fit.
-  // MenuSpec::label is a `string_view` over static storage, so the measured
-  // width is stable for the lifetime of the process (until the font reloads).
-  // Cache by label-data pointer to avoid 8 width-cache map lookups per
-  // ComputeVisibleMenuBarItems call — `menu_hover_switch` hits this path many
-  // times per frame (round-4 Finding 6).
-  static thread_local std::unordered_map<const char*, float> spec_label_width_cache;
+  //
+  // MenuSpec::label is a `string_view` over static storage, so the measured width
+  // is stable for the lifetime of the process (until the font reloads), and
+  // MenuSpecs() is a static table whose order never changes. That makes the spec's
+  // POSITION a valid cache key and a free one — this was an
+  // `unordered_map<const char*, float>` (round-4 Finding 6), which is eight hash
+  // lookups per call and ~80 per pointer-motion event across the three chains that
+  // reach this function. The label pointer is still compared, so a table that did
+  // change cannot be served a stale width; it just re-measures.
+  struct SpecWidth {
+    const char* label = nullptr;
+    float raw_width = 0.0f;
+  };
+  static thread_local std::array<SpecWidth, kMaxMenuBarItems> spec_label_width_cache{};
   // Drop the cache when glyph metrics change (a runtime font size/family or scale
   // change) — a cached MeasureWidth is only valid for the metrics it was taken at, so
   // without this the menu bar keeps laying out labels at the OLD font width (clipping,
   // wrong overflow threshold) until restart.
   static thread_local std::size_t spec_label_cache_generation = 0;
   if (text_renderer_.MetricsGeneration() != spec_label_cache_generation) {
-    spec_label_width_cache.clear();
+    spec_label_width_cache = {};
     spec_label_cache_generation = text_renderer_.MetricsGeneration();
   }
-  std::vector<std::pair<MenuId, float>> measured;
-  measured.reserve(8);
+  util::InlineVector<std::pair<MenuId, float>, kMaxMenuBarItems> measured;
   float total_x = x;
   bool any_overflow = false;
+  std::size_t spec_index = 0;
   for (const MenuSpec& spec : MenuSpecs()) {
+    const std::size_t index = spec_index++;
     if (!IsMenuBarMenuVisible(spec.id)) {
       continue;
     }
     const char* key = spec.label.data();
-    auto cached = spec_label_width_cache.find(key);
+    // The static_assert in WorkspaceMenuRegistry.cpp bounds the table by the cap.
+    // The guard is here anyway because that assert is in another TU: a table that
+    // outgrew it must re-measure, not read past the array.
     float raw_width;
-    if (cached != spec_label_width_cache.end()) {
-      raw_width = cached->second;
+    if (index < spec_label_width_cache.size()) {
+      SpecWidth& slot = spec_label_width_cache[index];
+      if (slot.label != key) {
+        util::AddPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLabelMeasures);
+        slot = SpecWidth{.label = key, .raw_width = text_renderer_.MeasureWidth(spec.label)};
+      }
+      raw_width = slot.raw_width;
     } else {
+      util::AddPerformanceCounter(util::PerfCounterId::WorkspaceMenuBarLabelMeasures);
       raw_width = text_renderer_.MeasureWidth(spec.label);
-      spec_label_width_cache.emplace(key, raw_width);
     }
     const float width = std::clamp(raw_width + 28.0f, 56.0f, 116.0f);
     measured.emplace_back(spec.id, width);
@@ -103,10 +121,10 @@ std::vector<WorkspaceShell::VisibleMenuBarItem> WorkspaceShell::ComputeVisibleMe
   return items;
 }
 
-std::vector<MenuId> WorkspaceShell::ComputeOverflowMenuBarItems(
+WorkspaceShell::MenuBarOverflowIds WorkspaceShell::ComputeOverflowMenuBarItems(
     const SDL_FRect& menu_bar) const {
   const auto visible = ComputeVisibleMenuBarItems(menu_bar);
-  std::vector<MenuId> overflow;
+  MenuBarOverflowIds overflow;
   std::size_t consumed = 0;
   for (const MenuSpec& spec : MenuSpecs()) {
     if (!IsMenuBarMenuVisible(spec.id)) {
@@ -137,9 +155,9 @@ std::optional<SDL_FRect> WorkspaceShell::MenuOverflowChevronRect(
   return MakeRect(x, y, kWorkspaceMenuOverflowChevronWidth, height);
 }
 
-std::vector<WorkspaceShell::VisibleWindowControlButton>
-WorkspaceShell::ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) const {
-  std::vector<VisibleWindowControlButton> buttons;
+WorkspaceShell::VisibleWindowControlButtons WorkspaceShell::ComputeVisibleWindowControlButtons(
+    const SDL_FRect& menu_bar) const {
+  VisibleWindowControlButtons buttons;
   if (!CurrentWindowChromeState().custom_enabled) {
     return buttons;
   }
@@ -156,6 +174,8 @@ WorkspaceShell::ComputeVisibleWindowControlButtons(const SDL_FRect& menu_bar) co
       WindowControlButtonId::Maximize,
       WindowControlButtonId::Close,
   });
+  static_assert(kButtonIds.size() == kWindowControlButtonCount,
+                "kWindowControlButtonCount sizes the inline storage this loop fills");
 
   float x = start_x;
   for (WindowControlButtonId id : kButtonIds) {

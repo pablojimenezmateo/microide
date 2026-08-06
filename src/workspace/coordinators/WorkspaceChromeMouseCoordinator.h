@@ -22,11 +22,15 @@ class ChromeMouseCoordinator {
     std::function<void(std::string_view)> activate_sidebar_view;
     std::function<void()> request_chrome_redraw;
     std::function<void(const SDL_FRect&)> request_redraw_rect;
-    std::function<std::vector<WorkspaceShell::VisibleMenuBarItem>(const SDL_FRect&)>
+    // Heap-free returns: these three run ~10 times per pointer-motion event over
+    // the menu bar, and returning std::vector made that 32 of the 50 allocations
+    // an event (TD-2026-08-06-149).
+    std::function<WorkspaceShell::VisibleMenuBarItems(const SDL_FRect&)>
         compute_visible_menu_bar_items;
-    std::function<std::vector<MenuId>(const SDL_FRect&)> compute_overflow_menu_bar_items;
+    std::function<WorkspaceShell::MenuBarOverflowIds(const SDL_FRect&)>
+        compute_overflow_menu_bar_items;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&)> menu_overflow_chevron_rect;
-    std::function<std::vector<WorkspaceShell::VisibleWindowControlButton>(const SDL_FRect&)>
+    std::function<WorkspaceShell::VisibleWindowControlButtons(const SDL_FRect&)>
         compute_visible_window_control_buttons;
     std::function<void(WorkspaceShell::WindowAction)> set_pending_window_action;
     std::function<void()> request_quit;
