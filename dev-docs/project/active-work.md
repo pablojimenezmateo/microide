@@ -111,6 +111,13 @@ The emulator covers the full-screen and shell workflows exercised so far.
 
 ### 6. Testing and performance discipline
 
+- **the committed perf baselines are stale and the whole set needs re-recording
+  on an idle perf-runner-v1** — TD-2026-08-07-161 carries the command and the
+  conditions. Until it is taken, a green perf run is not evidence: most
+  allocation gates are loose enough to pass a complete regression
+- each scenario runs in its own child process (TD-2026-08-06-152), so a metric is
+  a property of the scenario rather than of whatever ran before it. `--no-isolate`
+  restores the shared-process form for a debugger or profiler
 - add regression coverage with every bug fix; never rely on "should be covered
   already"
 - every `ScenarioContext::Measure` phase carries its own allocation gate

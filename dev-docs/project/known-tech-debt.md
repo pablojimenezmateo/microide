@@ -255,6 +255,45 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-07-161 — the whole baseline set is stale in three independent ways. OPEN.
+
+Nothing in `tests/perf/baselines/` describes what `microide_perf` now measures,
+and the gaps are large enough that most allocation gates would pass a complete
+regression — [147](#td-2026-08-06-147)'s exact defect, across the suite rather
+than in six scenarios.
+
+Three separate causes, all from 2026-08-07:
+
+1. **[159](#td-2026-08-06-159)'s nine fixes.** Every editor-scroll, compare, diff
+   and git scenario moved, several by 45-78 %. `editor_surround_multi_caret` went
+   76,456 -> 933 after [157](#td-2026-08-06-157) — a gate 82x loose.
+2. **[152](#td-2026-08-06-152)'s per-scenario child process.** Every scenario now
+   starts cold, so wall p95/max and `p50_net_heap_bytes` move on anything that
+   used to inherit a warm allocator and page cache from the scenario before it.
+   `typing_small_file` p95_allocations read 2,142 in-suite and 3,417 isolated.
+   This one is not a code move at all: it is the number becoming true.
+3. **The finder's separator split**, which changes what `file_finder_*` rank.
+
+**Not taken in this session** because the runner was busy — load average 13-20
+from three unrelated processes at ~95 % CPU each — and a baseline recorded on a
+loaded box records the load. On an idle perf-runner-v1:
+
+```
+tools/run-checks.sh tests   # confirm green first
+# DEFAULT iteration count, bare (no xvfb), nothing else running:
+./build/microide-perf-make/microide/microide_perf --update-baseline \
+    --reference-runner=perf-runner-v1
+# then re-gate against what it just wrote — a rebaseline is not evidence of itself:
+./build/microide-perf-make/microide/microide_perf --reference-runner=perf-runner-v1
+```
+
+Certify with `harness.cpu_calibration_ns` (not load average) and check the
+verdict lines for clock-drift warnings before committing the result. Expect the
+resident numbers to DROP to their solo values and the allocation counts to move
+by the amounts 152 predicted; both are the point of that change, not a regression
+to investigate.
+
+
 ### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN.
 
 [149](#td-2026-08-06-149) ended with an instruction — "generalise the sweep: the
