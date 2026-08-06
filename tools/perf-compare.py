@@ -508,7 +508,34 @@ def _recompute_metrics(iterations: list[dict]) -> dict[str, float]:
     if rss:
         trimmed = sorted(rss)[:-1] if len(rss) >= 3 else rss
         out["mean_rss_growth_bytes"] = sum(trimmed) / len(trimmed)
+    # The deterministic retention gate (TD-2026-08-06-150). It reproduces to the
+    # byte across process states, which makes it the memory number an A/B can
+    # actually read -- and it was missing here, so the one vs-main oracle in the
+    # repo could not see a regression the gate would fail on. Same defect the
+    # resident mean had above, one metric later.
+    net_heap = series("net_heap_bytes")
+    if net_heap:
+        out["p50_net_heap_bytes"] = _percentile(net_heap, 0.50)
+    # Per-phase allocations, under the same key the gate uses
+    # (`phase[<name>].p50_allocations`, TD-2026-08-06-153). A scenario total is
+    # mostly setup on almost every shell scenario, so an A/B that compares only
+    # totals can miss a doubled measured phase entirely -- search_first_result's
+    # search is 0.7% of its own scenario.
+    for name, values in _phase_series(iterations).items():
+        out[f"phase[{name}].p50_allocations"] = _percentile(values, 0.50)
     return out
+
+
+def _phase_series(iterations: list[dict]) -> dict[str, list[float]]:
+    """Per-iteration allocation totals for each measured phase, keyed by name."""
+    series: dict[str, list[float]] = {}
+    for iteration in iterations:
+        for name, values in (iteration.get("phase_metrics") or {}).items():
+            try:
+                series.setdefault(name, []).append(float(values.get("allocations", 0)))
+            except (TypeError, ValueError):
+                continue
+    return series
 
 
 def merge_side_reports(side: SideRun, json_out: Path) -> None:
@@ -566,7 +593,26 @@ METRICS: list[tuple[str, str]] = [
     ("p50_rss_growth_bytes", "bytes"),
     ("p95_rss_growth_bytes", "bytes"),
     ("max_rss_growth_bytes", "bytes"),
+    # Deterministic across process states, unlike every RSS row above it, so this
+    # is the memory line to read first.
+    ("p50_net_heap_bytes", "bytes"),
 ]
+
+
+def phase_metrics_for(*scenario_reports: Optional[dict]) -> list[tuple[str, str]]:
+    """Phase-allocation rows present on either side, in a stable order.
+
+    Phases are per scenario, so they cannot live in the fixed METRICS list; they
+    are appended per scenario instead. A phase present on only one side still
+    gets a row — that is a scenario whose measured phase appeared or vanished,
+    which is exactly what the gate treats as a failure rather than an absence.
+    """
+    names: set[str] = set()
+    for report in scenario_reports:
+        for key in ((report or {}).get("metrics") or {}):
+            if key.startswith("phase[") and key.endswith("].p50_allocations"):
+                names.add(key)
+    return [(name, "") for name in sorted(names)]
 
 
 def fmt_value(value, unit: str) -> str:
@@ -593,10 +639,19 @@ def _samples_for_metric(scenario_report: Optional[dict], metric: str) -> list[fl
     if not scenario_report:
         return []
     iters = scenario_report.get("iterations", [])
+    # Phase rows FIRST: `phase[x].p50_allocations` also ends in "_allocations",
+    # and falling through would band a phase against the whole scenario's
+    # per-iteration spread — a number tens of times larger, which reads every
+    # phase move as noise.
+    if metric.startswith("phase[") and metric.endswith("].p50_allocations"):
+        name = metric[len("phase["):-len("].p50_allocations")]
+        return _phase_series(iters).get(name, [])
     if metric.endswith("_wall_ms"):
         key = "wall_ms"
     elif metric.endswith("_allocations"):
         key = "allocations"
+    elif metric.endswith("_net_heap_bytes"):
+        key = "net_heap_bytes"
     else:
         return []
     return [float(it[key]) for it in iters if key in it]
@@ -667,7 +722,7 @@ def render_comparison(current_report: dict, target_report: dict,
     for scenario in scenarios:
         cur_s = cur_scen.get(scenario)
         tgt_s = tgt_scen.get(scenario)
-        for metric, unit in METRICS:
+        for metric, unit in METRICS + phase_metrics_for(cur_s, tgt_s):
             cv = (cur_s or {}).get("metrics", {}).get(metric)
             tv = (tgt_s or {}).get("metrics", {}).get(metric)
             pct = delta_pct(cv, tv)

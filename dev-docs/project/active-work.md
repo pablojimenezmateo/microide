@@ -113,6 +113,14 @@ The emulator covers the full-screen and shell workflows exercised so far.
 
 - add regression coverage with every bug fix; never rely on "should be covered
   already"
+- every `ScenarioContext::Measure` phase carries its own allocation gate
+  (114 of them across 82 baselines). A scenario total is mostly setup, so the
+  phase is the number that means what the scenario's name says; a baseline phase
+  the run stops measuring FAILS rather than disappearing quietly
+  (TD-2026-08-06-153)
+- a scenario must leave the fixture tree exactly as it found it. One that did not
+  had grown a fixture's worktree diff from 3 lines to 2,725 over 1,361 runs, and
+  four gated scenarios had been measuring the accumulation (TD-2026-08-06-155)
 - keep retained-redraw comparison tests serial under SDL dummy video — they
   share global SDL state
 - measure with `MICROIDE_PERF_TRACE=1` before and after; code review does not

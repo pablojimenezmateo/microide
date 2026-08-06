@@ -1632,9 +1632,29 @@ util::JsonValue ToJson(const Aggregate& aggregate,
   for (const Iteration& iteration : aggregate.iterations) {
     util::JsonObject phase_duration_json;
     util::JsonObject phase_metrics_json;
+    // Repeats of one phase name within an iteration SUM, exactly as the gate
+    // aggregates them. Keying a JSON object by name and assigning meant the last
+    // call of a repeated phase silently replaced every earlier one, so a report
+    // consumer (tools/perf-compare.py) recomputing from these would disagree
+    // with the gate about what the iteration cost.
+    std::unordered_map<std::string, Iteration::PhaseMetrics> phase_totals;
+    std::vector<std::string> phase_order;
     for (const Iteration::PhaseMetrics& phase : iteration.phase_metrics) {
-      phase_duration_json[phase.name] = phase.wall_ms;
-      phase_metrics_json[phase.name] = util::JsonObject{
+      auto [it, inserted] = phase_totals.emplace(phase.name, Iteration::PhaseMetrics{});
+      if (inserted) {
+        it->second.name = phase.name;
+        phase_order.push_back(phase.name);
+      }
+      it->second.wall_ms += phase.wall_ms;
+      it->second.allocations += phase.allocations;
+      it->second.frees += phase.frees;
+      it->second.bytes_allocated += phase.bytes_allocated;
+      it->second.bytes_freed += phase.bytes_freed;
+    }
+    for (const std::string& name : phase_order) {
+      const Iteration::PhaseMetrics& phase = phase_totals[name];
+      phase_duration_json[name] = phase.wall_ms;
+      phase_metrics_json[name] = util::JsonObject{
           {"wall_ms", phase.wall_ms},
           {"allocations", static_cast<std::int64_t>(phase.allocations)},
           {"frees", static_cast<std::int64_t>(phase.frees)},
