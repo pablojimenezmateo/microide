@@ -110,12 +110,15 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
 
   // Determine whether all non-blank lines in range start with the marker
   // (after leading whitespace). If yes, uncomment; otherwise, comment.
-  std::string marker(line_marker);
+  const std::string_view marker = line_marker;
   bool all_commented = true;
   bool any_non_blank = false;
   std::size_t min_indent = std::string::npos;
   for (std::size_t i = range.first; i <= range.last; ++i) {
-    const std::string& line = lines[i];
+    // LineView, not lines[i]: LineRef copies the line and interns it in the
+    // buffer's line cache, so the two passes below cost two allocations per line
+    // before any of the work the toggle actually needs (TD-2026-08-06-159).
+    const std::string_view line = lines.LineView(i);
     if (LineIsEmptyOrWhitespace(line)) continue;
     any_non_blank = true;
     std::size_t lead = LeadingWhitespaceCount(line);
@@ -130,19 +133,24 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
   std::vector<std::string> updated;
   updated.reserve(range.last - range.first + 1);
   for (std::size_t i = range.first; i <= range.last; ++i) {
-    const std::string& line = lines[i];
+    const std::string_view line = lines.LineView(i);
     if (LineIsEmptyOrWhitespace(line)) {
-      updated.push_back(line);
+      updated.emplace_back(line);
       continue;
     }
     if (all_commented) {
-      // Strip first occurrence of marker after leading whitespace.
+      // Strip first occurrence of marker after leading whitespace. Built into one
+      // exactly-sized buffer: the previous form took a `substr` for the head, a
+      // second for the tail, and grew the head to fit it -- three allocations to
+      // produce one string.
       std::size_t lead = LeadingWhitespaceCount(line);
-      std::string out = line.substr(0, lead);
       std::size_t pos = lead + marker.size();
       // Strip a single space after marker if present (common style).
       if (pos < line.size() && line[pos] == ' ') ++pos;
-      out += line.substr(pos);
+      std::string out;
+      out.reserve(lead + (line.size() - pos));
+      out.append(line, 0, lead);
+      out.append(line, pos, line.size() - pos);
       updated.push_back(std::move(out));
     } else {
       std::string out;
@@ -500,9 +508,10 @@ bool OutdentSelection(TextViewport& viewport) {
   per_line_delta.reserve(range.last - range.first + 1);
   bool any_change = false;
   for (std::size_t i = range.first; i <= range.last; ++i) {
-    const std::string& line = lines[i];
+    // LineView, not lines[i]: see IndentSelection.
+    const std::string_view line = lines.LineView(i);
     if (line.empty()) {
-      updated.push_back(line);
+      updated.emplace_back();
       per_line_delta.push_back(0);
       continue;
     }
@@ -513,7 +522,7 @@ bool OutdentSelection(TextViewport& viewport) {
       while (strip < indent_width && strip < line.size() && line[strip] == ' ') ++strip;
     }
     if (strip == 0) {
-      updated.push_back(line);
+      updated.emplace_back(line);
       per_line_delta.push_back(0);
     } else {
       updated.emplace_back(line.substr(strip));

@@ -383,15 +383,15 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
   const std::size_t removed_count = forward ? entry.before_lines.size() : entry.after_lines.size();
   const auto& inserted_lines = forward ? entry.after_lines : entry.before_lines;
 
-  const bool same_count_replacement = removed_count > 0 && removed_count == inserted_lines.size() &&
-                                      start_line + removed_count <= lines.size();
-  if (same_count_replacement) {
-    for (std::size_t i = 0; i < removed_count; ++i) {
-      lines.SetLine(start_line + i, inserted_lines[i]);
-    }
-  } else {
-    lines.ReplaceLineRange(start_line, removed_count, inserted_lines);
-  }
+  // One bulk splice, never a per-line loop. A same-count replacement used to be
+  // written line by line, which was the cheap form back when the document WAS a
+  // `std::vector<std::string>` and `SetLine` was an assignment. Against the piece
+  // tree it is the expensive form: `SetLine` is itself a `ReplaceLineRange`, so an
+  // N-line replacement paid N delete+insert splices, N joined-replacement string
+  // allocations, N revision bumps and N line-cache wipes to install what one
+  // splice installs. Toggle Comment over a 1,000-line selection was 1,000 of them
+  // (TD-2026-08-06-159).
+  lines.ReplaceLineRange(start_line, removed_count, inserted_lines);
   if (lines.empty()) {
     lines.PushBackLine("");
   }

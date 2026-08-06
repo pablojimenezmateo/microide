@@ -241,6 +241,55 @@ void TestBracketScannerRefusesALineTooLongToTokenize() {
   util::ResetPerformanceCounters();
 }
 
+// A line operation over an N-line selection is ONE splice, not N.
+//
+// `ApplyEntryToBuffer` used to write a same-count replacement line by line, which
+// was the cheap form when the document was a `std::vector<std::string>`. Against
+// the piece tree every `SetLine` is a full `ReplaceLineRange` -- its own joined
+// replacement string, delete+insert, revision bump and line-cache wipe -- so a
+// 1,000-line Toggle Comment cost 1,000 of them (TD-2026-08-06-159). Pinned with
+// the document-edit counter because the buffer contents are identical either way:
+// only the cost tells the two apart.
+void TestShapingLineOpAppliesOneDocumentSplice() {
+  constexpr std::size_t kLines = 200;
+  std::string content;
+  for (std::size_t i = 0; i < kLines; ++i) {
+    content += "    int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/line-op-one-splice.cpp");
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(kLines - 1, viewport.lines().LineView(kLines - 1).size(), true);
+
+  util::ResetPerformanceCounters();
+  Expect(microide::editor::ToggleLineComment(viewport, "//"),
+         "toggling the whole selection must change the buffer");
+  const std::uint64_t edits =
+      util::ReadPerformanceCounter(util::PerfCounterId::DocumentEdits);
+  Expect(edits == 1, "a " + std::to_string(kLines) +
+                         "-line toggle must be one document splice, not one per line (was " +
+                         std::to_string(edits) + ")");
+  Expect(viewport.lines().LineView(0) == "    // int value_0 = 0;",
+         "the comment marker goes in at the common indent");
+
+  // The uncomment branch is the one that was rebuilt to a single exact-sized
+  // buffer; round-tripping proves it still strips exactly what it inserted.
+  util::ResetPerformanceCounters();
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(kLines - 1, viewport.lines().LineView(kLines - 1).size(), true);
+  Expect(microide::editor::ToggleLineComment(viewport, "//"), "untoggling must change the buffer");
+  const std::uint64_t undo_edits =
+      util::ReadPerformanceCounter(util::PerfCounterId::DocumentEdits);
+  Expect(undo_edits == 1, "the uncomment pass is one splice too (was " +
+                              std::to_string(undo_edits) + ")");
+  for (std::size_t i = 0; i < kLines; ++i) {
+    Expect(viewport.lines().LineView(i) ==
+               "    int value_" + std::to_string(i) + " = " + std::to_string(i) + ";",
+           "line " + std::to_string(i) + " round-trips through comment/uncomment");
+  }
+  util::ResetPerformanceCounters();
+}
+
 void TestShapingMoveLineDown() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\n", "/tmp/sample.txt");
@@ -1565,6 +1614,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestBracketScannerRefusesALineTooLongToTokenize);
   AddTest(tests, "EditorEssentials/BracketScanner/WindowedDeepCaret",
           TestBracketScannerWindowedDeepCaret);
+  AddTest(tests, "EditorEssentials/Shaping/LineOpAppliesOneDocumentSplice",
+          TestShapingLineOpAppliesOneDocumentSplice);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",
           TestShapingMoveLineDown);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownKeepsWholeLineSelection",
