@@ -741,7 +741,66 @@ configurations, or have `perf-compare.py` retry once with the cache bypassed and
 say so. Worth one session; the cost today is silent unreliability in the one tool
 used to attribute a regression to a commit.
 
-### TD-2026-08-06-147 — the pane-layout fix left four allocation gates 4-5x loose. OPEN.
+### TD-2026-08-06-147 — the pane-layout fix left four allocation gates 4-5x loose. [RESOLVED 2026-08-06 — full-suite rebaseline, 69 allocation gates tightened.]
+
+**What shipped.** One full-suite `microide_perf --iterations=10
+--reference-runner=perf-runner-v1 --update-baseline` pass, bare, on
+perf-runner-v1, exactly as the entry asked. 99 of 100 baselines rewritten
+(`editor_moby_dick_workout` is opt-in and did not run).
+
+It found far more than the four scenarios the entry named. **69 allocation
+baselines were loose, every single one of them, and not one had drifted the other
+way** — 51,488 allocations of slack removed from the committed set:
+
+| scenario | was | now | gate was this loose |
+| --- | ---: | ---: | ---: |
+| `menu_hover_switch` | 8,910 | 54 | **165x** |
+| `menu_popup_hover_rows` | 3,015 | 74 | **41x** |
+| `editor_mouse_selection_drag` | 2,101 | 1,035 | 2.0x |
+| `cold_startup_no_project` | 166 | 101 | 1.6x |
+| `scroll_large_file` | 1,375 | 899 | 1.5x |
+| …64 more | | | 1.05-1.2x |
+
+The long tail matters as much as the headline. Sixty-four gates sitting 5-20%
+loose is a suite that cannot see a 5-20% regression anywhere, which is most of
+what an allocation gate is for.
+
+**The pre-flight check the entry demanded, done before the pass, not after.**
+`--update-baseline` rewrites every tolerance from the `Scenario` struct, so a
+hand-widened envelope living only in the JSON vanishes silently. Audited all 100
+committed files against the tolerances the code would write — resolving the named
+constants (`tolerance::kJitterWallP95` = 250, `kJitterWallMax` = 400), which is
+the step that makes the audit mean anything — and **every committed tolerance was
+already expressed in code**. Nothing was lost.
+
+**How the run was certified, given the box was not quiet.** Another session held
+an interactive process pinned to cpu15, inside the harness's own affinity set
+(0-3, 12-15). Rather than guess, the run was judged by the instrument built for
+exactly this: `harness.cpu_calibration_ns`, recorded per iteration. 25 scenarios
+showed a within-run probe spread ≥1.10x (up to 2.00x) — individual iterations
+getting preempted — but the per-scenario *medians* held at 481-506k ns across the
+whole suite, and p50 wall/cpu are medians. Allocation counts, the metric this
+entry exists for, are deterministic and cannot move for this reason at all.
+
+**And then it was checked rather than argued.** A second, completely independent
+full-suite gate run against the newly written baselines: **99 PASS, 0 FAIL**. A
+rebaseline that produces a gate the next run cannot hold is the documented failure
+mode (memory: `perf-baseline-drift-and-iteration-count`); this one holds.
+
+Two things fell out of the verification run:
+
+- Every new baseline records `"iterations": 10`, so
+  [TD-2026-08-06-148](#td-2026-08-06-148)'s short-run guard is now live across the
+  suite instead of inert. Zero `NOT ENFORCED` notes at the default count, which is
+  the guard behaving.
+- `typing_large_file`'s resident baseline went 80,555 → 83,285, which is 148's
+  item 1: the gate had been spending half its envelope on drift.
+- One gate came back at 94% of its envelope, and the headroom instrument said so
+  in the run that passed it. Filed as
+  [TD-2026-08-06-150](#td-2026-08-06-150) — it is a real property of that
+  scenario, not this pass.
+
+The original entry follows.
 
 [TD-2026-08-06-145](#td-2026-08-06-145) cut `editor_mouse_selection_drag` from
 5,482 `p50_allocations` to 1,075 and moved three other scenarios. The committed
@@ -985,6 +1044,59 @@ Gating note: `menu_hover_switch`'s committed allocation baseline is 8,352 agains
 a measured 8,104, so the gate will register this fix — unlike the four scenarios
 in [TD-2026-08-06-147](#td-2026-08-06-147). Watch the *phase* number regardless;
 the scenario total buries a 50-per-event change in setup noise.
+
+### TD-2026-08-06-150 — the resident gate is a coin flip for a scenario that retains on *alternate* iterations. OPEN.
+
+Found by [TD-2026-08-06-147](#td-2026-08-06-147)'s verification run, and found the
+way it is supposed to be found — the headroom instrument reported it on a gate
+that **passed**:
+
+```
+[perf] headroom (duration/resident): 1 gate(s) passed while consuming >=75% of their envelope.
+[perf]   diff_stage_selected_lines mean_rss_growth_bytes: baseline=174308 measured=272612
+         (+56.4% of +60% allowed = 93.99% of envelope)
+```
+
+Two consecutive full-suite runs of **one unchanged binary**, per-iteration
+`rss_growth_bytes`:
+
+| run | series | trimmed mean |
+| --- | --- | ---: |
+| rebaseline | 7405568, 610304, 0, 335872, 0, 217088, 0, 200704, 0, 204800 | 174,308 |
+| verify | 7245824, 843776, 0, 434176, 0, 405504, 0, 397312, 0, 372736 | 272,612 |
+
+`diff_stage_hunk_large_patch` does the same thing (190,692 → 267,605).
+
+**The alternation is not the problem, and this is the part worth getting right.**
+Both runs alternate identically — retain, zero, retain, zero — so the *shape* is
+deterministic and the trimmed mean handles it exactly as
+[TD-2026-08-05-136](#td-2026-08-05-136) intended (p50 would report **0** here,
+which is why it was abandoned). What moved is the *magnitude per retaining
+iteration*: ~200-340 KB in one run and ~370-434 KB in the next, near-uniformly
+across every retaining iteration. That is not a sampling artifact of the
+statistic; something about the allocator's or the diff pipeline's steady state
+settles differently per process. Two possibilities and no evidence yet for either:
+arena layout carried in from whichever scenarios ran before it in the suite
+(TD-2026-08-06-139 measured a 680-allocation offset from process state alone), or
+a genuine bimodal retention the fixture can land in.
+
+Why it matters now rather than later: the rebaseline happened to record the low
+draw, so the gate is at 94% of a +60% envelope and the next ordinary run flips it
+red. A red gate that means nothing is how a suite stops being read.
+
+**Deliberately not fixed by widening the tolerance.** 60% already does not cover a
+1.56x swing, and picking 100% would hide the thing worth understanding. The order
+of work: (1) run these two standalone and in-suite and diff the per-iteration
+series — if standalone is stable, it is process state and the fix is scenario
+isolation, not the envelope; (2) if it is bimodal within one process, the
+statistic needs the mode reported, not averaged. Reproduce with:
+
+```bash
+./build/microide-perf-make/microide/microide_perf \
+  --scenarios=diff_stage_selected_lines,diff_stage_hunk_large_patch \
+  --iterations=10 --report-json=/tmp/stage.json
+# scenarios[].iterations[].rss_growth_bytes is the series; the summary hides it.
+```
 
 ### TD-2026-08-05-137 — `cpu_ms` is a duration, and nothing normalised it against the machine's clock. [RESOLVED 2026-08-06.]
 
