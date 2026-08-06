@@ -1399,6 +1399,15 @@ SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines) {
   };
 }
 
+SyntaxState DetectState(const std::filesystem::path& path, std::string_view text) {
+  // Bounded head only, as views into `text`. The alternative — splitting the whole
+  // blob into owned lines at the call site — was one allocation per line of the
+  // document to feed a scan that reads sixty-four of them.
+  const std::vector<std::string_view> head =
+      util::SplitLineViews(text, kSignatureDetectLineLimit);
+  return DetectState(path, LineSpan(head));
+}
+
 std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines) {
   const Registry& registry = GetRegistry();
   // Signature detection inspects at most kSignatureDetectLineLimit lines, so

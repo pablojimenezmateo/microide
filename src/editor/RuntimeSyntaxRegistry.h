@@ -60,6 +60,11 @@ std::size_t RegistryRevision();
 // inspects a bounded head (signature/shebang scan), so passing a LineSpan over
 // the live buffer never materializes the whole file.
 SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines);
+// Same, for a caller holding the document as one text blob rather than as lines.
+// It splits only the bounded head into views instead of making the caller
+// materialize the whole document into owned lines to hand over sixty-four of them
+// (TD-2026-08-06-159).
+SyntaxState DetectState(const std::filesystem::path& path, std::string_view text);
 // Filetype detection only inspects the path and a bounded head of the document
 // (signature/shebang scan). Pass a LineSpan over the live buffer; only the head
 // is read, so no whole-document materialization happens on per-frame callers.

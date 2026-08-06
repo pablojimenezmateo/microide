@@ -32,6 +32,17 @@ class LineSpan {
         length_fn_(&VectorLength),
         window_fn_(&VectorWindow) {}
 
+  // Views into a text blob the caller already holds — what `util::SplitLineViews`
+  // produces. This is the source to reach for when the lines exist only as offsets
+  // into one buffer: splitting into owned strings just to hand them over costs one
+  // allocation per line of the document (TD-2026-08-06-159).
+  LineSpan(const std::vector<std::string_view>& lines)  // NOLINT(google-explicit-constructor)
+      : source_(&lines),
+        size_fn_(&ViewVectorSize),
+        at_fn_(&ViewVectorAt),
+        length_fn_(&ViewVectorLength),
+        window_fn_(&ViewVectorWindow) {}
+
   LineSpan(const TextBuffer& buffer)  // NOLINT(google-explicit-constructor)
       : source_(&buffer),
         size_fn_(&BufferSize),
@@ -73,6 +84,21 @@ class LineSpan {
     const std::string& line = (*static_cast<const std::vector<std::string>*>(p))[i];
     if (byte_start >= line.size()) return {};
     return std::string_view(line).substr(byte_start, byte_len);
+  }
+  static std::size_t ViewVectorSize(const void* p) {
+    return static_cast<const std::vector<std::string_view>*>(p)->size();
+  }
+  static std::string_view ViewVectorAt(const void* p, std::size_t i) {
+    return (*static_cast<const std::vector<std::string_view>*>(p))[i];
+  }
+  static std::size_t ViewVectorLength(const void* p, std::size_t i) {
+    return (*static_cast<const std::vector<std::string_view>*>(p))[i].size();
+  }
+  static std::string_view ViewVectorWindow(const void* p, std::size_t i, std::size_t byte_start,
+                                           std::size_t byte_len, std::string&) {
+    const std::string_view line = (*static_cast<const std::vector<std::string_view>*>(p))[i];
+    if (byte_start >= line.size()) return {};
+    return line.substr(byte_start, byte_len);
   }
   static std::size_t BufferSize(const void* p) {
     return static_cast<const TextBuffer*>(p)->size();

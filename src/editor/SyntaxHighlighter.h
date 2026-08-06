@@ -63,6 +63,8 @@ class SyntaxHighlighter {
   // inspects a bounded head, so passing a TextBuffer here never materializes the
   // whole file. See runtime_syntax::DetectState.
   static SyntaxState InitialState(const std::filesystem::path& path, LineSpan lines);
+  // For a caller holding the document as one blob: splits only the bounded head.
+  static SyntaxState InitialState(const std::filesystem::path& path, std::string_view text);
   static HighlightedLine HighlightLine(std::string_view line,
                                        const std::filesystem::path& path,
                                        const SyntaxState& state = {},

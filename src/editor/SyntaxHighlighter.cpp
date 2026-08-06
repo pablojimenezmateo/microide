@@ -10,6 +10,12 @@ SyntaxState SyntaxHighlighter::InitialState(const std::filesystem::path& path, L
   return runtime_syntax::DetectState(path, lines);
 }
 
+SyntaxState SyntaxHighlighter::InitialState(const std::filesystem::path& path,
+                                            std::string_view text) {
+  util::PerformanceTrace::Scope perf_scope("SyntaxHighlighter::InitialState");
+  return runtime_syntax::DetectState(path, text);
+}
+
 HighlightedLine SyntaxHighlighter::HighlightLine(std::string_view line,
                                                  const std::filesystem::path& path,
                                                  const SyntaxState& state,

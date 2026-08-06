@@ -1680,6 +1680,53 @@ void TestWorkspaceShellPlainCompareBuildsStickyEditableTab() {
          "review mode should stay Plain across a derived-state refresh");
 }
 
+// TD-2026-08-06-159: opening a compare tab must not materialize either side of the
+// document as owned lines. Syntax-state detection reads a bounded head (64 lines),
+// and the build used to split the whole left blob into owned strings and ask the
+// right buffer for a whole-document `Snapshot()` to hand that head over — together
+// about a third of a large compare's open, and the snapshot is retained afterwards.
+//
+// Both are invisible in the output, so this pins the two counters that see them:
+// the buffer's snapshot-build count for the right side, and a shebang on line 1
+// with a contradicting extension for the left, which proves the head was actually
+// read rather than the detection quietly skipped.
+void TestWorkspaceShellCompareOpenDoesNotMaterializeEitherSide() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path left_path = root / "left.txt";
+  const std::filesystem::path right_path = root / "right.txt";
+  std::string left = "#!/usr/bin/env python3\n";
+  std::string right = "#!/usr/bin/env python3\n";
+  for (int i = 0; i < 4000; ++i) {
+    left += "value_" + std::to_string(i) + " = " + std::to_string(i) + "\n";
+    right += "value_" + std::to_string(i) + " = " + std::to_string(i % 97) + "\n";
+  }
+  WriteFile(left_path, left);
+  WriteFile(right_path, right);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  microide::editor::TextBuffer::reset_snapshot_build_count();
+  Expect(WorkspaceShellTestAccess::OpenPlainComparison(shell,
+                                                       MakeFileCompareInput(left_path, false),
+                                                       MakeFileCompareInput(right_path, true)),
+         "the large plain comparison should open");
+  const std::size_t snapshots = microide::editor::TextBuffer::snapshot_build_count();
+  Expect(snapshots == 0,
+         "opening a compare tab must not build a whole-document snapshot (built " +
+             std::to_string(snapshots) + ")");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(!compare.model.hunks.empty(), "the fixture must actually differ");
+  // The `.txt` extension says nothing; only the shebang can produce a definition,
+  // so a non-empty id proves the head reached the detector on both sides.
+  Expect(compare.left_initial_syntax_state.definition_id != 0,
+         "the left side's syntax state must still be detected from its shebang");
+  Expect(compare.right_initial_syntax_state.definition_id ==
+             compare.left_initial_syntax_state.definition_id,
+         "both sides detect the same definition from the same shebang");
+}
+
 void TestWorkspaceShellPlainCompareBufferSidesAreReadOnly() {
   WorkspaceShell shell;
   // Buffer (untitled, no path) on the right, clipboard on the left: neither is a
@@ -1870,6 +1917,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellComparePickerOpensAsyncAndDropsStaleResult);
   AddTest(tests, "WorkspaceShell/PlainCompareBuildsStickyEditableTab",
           TestWorkspaceShellPlainCompareBuildsStickyEditableTab);
+  AddTest(tests, "WorkspaceShell/CompareOpenDoesNotMaterializeEitherSide",
+          TestWorkspaceShellCompareOpenDoesNotMaterializeEitherSide);
   AddTest(tests, "WorkspaceShell/PlainCompareBufferSidesAreReadOnly",
           TestWorkspaceShellPlainCompareBufferSidesAreReadOnly);
   AddTest(tests, "WorkspaceShell/PlainCompareDedupsSameFilePair",
