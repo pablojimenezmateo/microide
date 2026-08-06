@@ -301,6 +301,16 @@ class TextLayoutCache {
            cached_visual_line_columns_.size() == lines_size;
   }
 
+#ifndef NDEBUG
+  // Cross-checks every entry of the per-line width table (and the memoized
+  // widest line) against a fresh measurement, but only when the table claims to
+  // be current AND MICROIDE_VERIFY_LINE_WIDTH_TABLE is set in the environment.
+  // See the definition for why this exists alongside the freshness predicate.
+  void VerifyLineWidthTableIfRequested(LineSpan lines,
+                                       std::size_t tab_size,
+                                       std::uint64_t content_revision) const;
+#endif
+
   // Appends the wrapped rows for a single logical line to `out` (always at
   // least one row, even for an empty line). Shared by the full-table build and
   // the incremental post-edit update so both use one wrap implementation.

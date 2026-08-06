@@ -468,6 +468,53 @@ void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
   }
 }
 
+// TD-2026-08-06-143: MaxVisualColumns rebuilt on a tab-size or line-count change
+// but NOT on a content-revision change — and then stamped the new revision onto
+// the table it had just declined to verify. `LineWidthsAreCurrent`, the predicate
+// every reader of the per-line width table goes through, checks all three, so a
+// content edit that kept the line count and did not splice the table left it
+// stale AND marked current: the max came from pre-edit widths, and every later
+// LineFactsIfCurrent caller believed a width for text that was no longer there.
+//
+// No edit path in the tree does that today, which is exactly why this has to be
+// tested at the cache boundary — the defect is that nothing STOPS one, not that
+// one exists. Mutating the lines behind the cache's back is the point.
+void TestTextLayoutCacheStaleContentRevisionRebuildsWidthTable() {
+  std::vector<std::string> lines = {"aaaa", "bbbbbbbb", "cc"};
+  microide::editor::TextLayoutCache cache;
+
+  Expect(cache.MaxVisualColumns(lines, kTabSize, /*content_revision=*/1) == 8,
+         "the first build must measure the widest line");
+  Expect(cache.LineFactsIfCurrent(lines.size(), 1, kTabSize, /*content_revision=*/1)
+                 .visual_columns == 8,
+         "the width table must describe the line it was built from");
+
+  // A content change that keeps the line count, with no splice and no
+  // invalidation — i.e. the shape of the path this entry exists to make safe.
+  lines[1] = "b";
+
+  util::ResetPerformanceCounters();
+  Expect(cache.MaxVisualColumns(lines, kTabSize, /*content_revision=*/2) == 4,
+         "a new content revision must not be answered from pre-edit widths");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildStaleRevision) == 1,
+         "the rebuild must be attributed to the stale revision, not silently folded into "
+         "another reason — this counter is what makes such a path findable in a perf run");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthTableBuilds) == 1,
+         "exactly one build, and its reason counter must sum to it");
+  Expect(cache.LineFactsIfCurrent(lines.size(), 1, kTabSize, /*content_revision=*/2)
+                 .visual_columns == 1,
+         "the rebuilt table must describe the post-edit line");
+
+  // Control: the same query at an unchanged revision must NOT rebuild, or the
+  // assertion above would pass for a cache that simply rebuilds every time.
+  util::ResetPerformanceCounters();
+  Expect(cache.MaxVisualColumns(lines, kTabSize, /*content_revision=*/2) == 4,
+         "an unchanged revision must be served from the memoized maximum");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthTableBuilds) == 0,
+         "an unchanged revision must not rebuild the width table");
+  util::ResetPerformanceCounters();
+}
+
 void TestTextLayoutCacheInvalidateAllClearsVisibleLineCache() {
   const std::vector<std::string> lines = {"alpha alpha", "bravo bravo", "charlie charlie"};
   microide::editor::TextLayoutCache cache;
@@ -594,6 +641,8 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
           TestClampTextColumnBoundsMalformedSequences);
   AddTest(tests, "TextLayoutCache/InvalidateAllClearsVisibleLineCache",
           TestTextLayoutCacheInvalidateAllClearsVisibleLineCache);
+  AddTest(tests, "TextLayoutCache/StaleContentRevisionRebuildsWidthTable",
+          TestTextLayoutCacheStaleContentRevisionRebuildsWidthTable);
   AddTest(tests, "TextLayout/RecycledEntriesMatchFreshBuilds",
           TestTextLayoutCacheRecycledEntriesMatchFreshBuilds);
   AddTest(tests, "TextLayout/VisibleWorkingSetDoesNotEvict",

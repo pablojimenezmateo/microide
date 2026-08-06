@@ -56,7 +56,7 @@ namespace microide::util {
   /* lines were walked but not whether that was one build or three, nor what invalidated */      \
   /* the previous one -- which is how a large-file open paid the O(document) walk twice   */      \
   /* with nothing to point at (TD-2026-08-06-138). Exactly one reason counter is bumped   */      \
-  /* per build, so the three sum to table_builds.                                          */     \
+  /* per build, so the four sum to table_builds.                                           */     \
   X(EditorLineWidthTableBuilds, "editor.line_width_table_builds")                                \
   /* No table at all: first build for this tab, or the first after an invalidation. */           \
   X(EditorLineWidthRebuildCold, "editor.line_width_rebuild_cold")                                \
@@ -64,6 +64,13 @@ namespace microide::util {
   X(EditorLineWidthRebuildTabSize, "editor.line_width_rebuild_tab_size")                         \
   /* A table existed for a different line count -- an edit the incremental path dropped. */      \
   X(EditorLineWidthRebuildLineCount, "editor.line_width_rebuild_line_count")                     \
+  /* A table existed, same tab size and same line count, but was stamped for an older     */     \
+  /* content revision -- i.e. the document changed under it and no edit path spliced or   */     \
+  /* dropped it. Every edit path in the tree does one or the other, so this MUST read 0;  */     \
+  /* a non-zero value names a path that mutates content without maintaining the table     */     \
+  /* (TD-2026-08-06-143). Before that entry, MaxVisualColumns did not check the revision  */     \
+  /* and stamped the stale table as current, so such a path was silent forever.           */     \
+  X(EditorLineWidthRebuildStaleRevision, "editor.line_width_rebuild_stale_revision")             \
   /* The widest-line scan over the width table. Separate from the build because it also  */      \
   /* runs on its own, whenever an edit invalidated the memoized max without invalidating */      \
   /* the table -- an O(document) deque walk that nothing counted. scans minus            */      \

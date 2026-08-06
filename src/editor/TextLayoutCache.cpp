@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cassert>
+#include <cstdlib>
 
 #include "editor/FoldingModel.h"
 #include "util/PerformanceCounters.h"
@@ -552,18 +553,73 @@ std::size_t TextLayoutCache::WrappedLineRowOffset(std::size_t line_index) const 
   return wrapped_line_row_offsets_[line_index];
 }
 
+#ifndef NDEBUG
+void TextLayoutCache::VerifyLineWidthTableIfRequested(LineSpan lines,
+                                                      std::size_t tab_size,
+                                                      std::uint64_t content_revision) const {
+  // Opt-in, debug-only, O(document): the second half of TD-2026-08-06-143. Making
+  // the freshness predicate whole (below) proves the table is never READ at a
+  // revision it was not built for; it cannot prove the entries themselves are
+  // right, because the incremental splice path derives widths rather than
+  // measuring them. This is what turns "every edit path maintains the table
+  // correctly" from a comment into something a soak run can falsify.
+  //
+  // Off by default and never compiled into a release build, so it costs nothing
+  // unless MICROIDE_VERIFY_LINE_WIDTH_TABLE is set.
+  static const bool enabled = [] {
+    const char* value = std::getenv("MICROIDE_VERIFY_LINE_WIDTH_TABLE");
+    return value != nullptr && value[0] != '\0' && value[0] != '0';
+  }();
+  if (!enabled || !LineWidthsAreCurrent(lines.size(), tab_size, content_revision)) {
+    return;
+  }
+  for (std::size_t index = 0; index < lines.size(); ++index) {
+    const LineLayoutFacts fresh = TextLayout::MeasureLineFacts(lines[index], tab_size);
+    const LineLayoutFacts cached = cached_visual_line_columns_[index].facts();
+    assert(cached.visual_columns == fresh.visual_columns &&
+           "width table entry disagrees with the line it claims to describe");
+    assert(cached.plain_ascii == fresh.plain_ascii &&
+           "width table plain-ASCII bit disagrees with the line it claims to describe");
+  }
+  if (cached_max_visual_columns_.has_value()) {
+    std::size_t widest = 0;
+    for (std::size_t index = 0; index < cached_visual_line_columns_.size(); ++index) {
+      widest = std::max(widest, cached_visual_line_columns_[index].visual_columns());
+    }
+    assert(*cached_max_visual_columns_ == widest &&
+           "memoized widest line disagrees with the width table it was derived from");
+  }
+}
+#endif
+
 std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
                                               std::size_t tab_size,
                                               std::uint64_t content_revision) const {
+#ifndef NDEBUG
+  VerifyLineWidthTableIfRequested(lines, tab_size, content_revision);
+#endif
   if (cached_max_visual_columns_.has_value() && cached_max_visual_columns_tab_size_ == tab_size &&
       cached_max_visual_columns_content_revision_ == content_revision) {
     return *cached_max_visual_columns_;
   }
 
-  if (cached_max_visual_columns_tab_size_ != tab_size ||
-      cached_visual_line_columns_.size() != lines.size()) {
+  // The width table is only reusable when it describes THIS document at THIS tab
+  // size -- which is exactly `LineWidthsAreCurrent`, the predicate every reader of
+  // the table already goes through. MaxVisualColumns used to check two of its three
+  // terms and skip the content revision, then stamp the revision it had not
+  // verified, so a content edit that kept the line count and did not splice the
+  // table left it stale AND marked current: the max came from pre-edit widths, and
+  // every later LineFactsIfCurrent caller (caret column conversion, rendered rows)
+  // believed a width for text that was no longer there (TD-2026-08-06-143).
+  //
+  // Sharing one predicate costs nothing on any live path: every edit path either
+  // splices the table through UpdateVisualColumnCacheAfterEdit (which stamps the
+  // post-edit revision, because the invalidation that bumps it runs first) or drops
+  // the table whole. A stale-revision rebuild is therefore both correct and, today,
+  // never taken -- and its counter is what says so out loud instead of by comment.
+  if (!LineWidthsAreCurrent(lines.size(), tab_size, content_revision)) {
     util::PerformanceTrace::Scope s("TextLayoutCache::BuildVisualLineColumns");
-    // One reason per build, so the three reasons sum to the build count. Cold is
+    // One reason per build, so the four reasons sum to the build count. Cold is
     // checked first because an empty table is simultaneously a tab-size and a
     // line-count mismatch, and attributing it to either would hide the real
     // repeat-build shapes (TD-2026-08-06-138).
@@ -572,8 +628,10 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
       util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildCold);
     } else if (cached_max_visual_columns_tab_size_ != tab_size) {
       util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildTabSize);
-    } else {
+    } else if (cached_visual_line_columns_.size() != lines.size()) {
       util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildLineCount);
+    } else {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthRebuildStaleRevision);
     }
     cached_visual_line_columns_.assign(lines.size(), PackedLineWidth{});
     util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthFullMeasures, lines.size());
