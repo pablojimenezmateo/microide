@@ -340,6 +340,12 @@ class ScenarioContext {
   void MoveMergeConflict(int delta);
   void ApplyMergeChoice(compare::MergeChoice choice);
   void SimulateExternalFileChange(const std::filesystem::path& path, std::string_view appended_text);
+  // Truncate every file SimulateExternalFileChange appended to back to the size
+  // it had before this iteration touched it. Called by the harness after each
+  // iteration (measured and warmup alike), outside the measured window, and on
+  // the exception path too — a fixture left grown makes every later run of every
+  // scenario reading that tree measure something else (TD-2026-08-06-155).
+  void RestoreExternalFileChanges();
   void StartSearch(std::string_view query);
   void OpenTerminal(std::string_view command);
   // Push bytes straight into the active terminal's emulator, exactly as the
@@ -373,6 +379,9 @@ class ScenarioContext {
   SDL_Renderer* renderer_ = nullptr;
   std::mt19937_64 rng_;
   std::vector<Iteration::PhaseMetrics> phase_metrics_;
+  // (path, size before this iteration's first append) for every fixture file
+  // SimulateExternalFileChange touched. See RestoreExternalFileChanges.
+  std::vector<std::pair<std::filesystem::path, std::uintmax_t>> external_file_restores_;
 
   // Fixed slots rather than a name lookup: the idle-wait loop bumps these up to
   // ~5,600 times per iteration, and a counter that costs a string compare per

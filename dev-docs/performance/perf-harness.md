@@ -757,7 +757,7 @@ coverage and a clear owner.
 | Startup (no project, small, large) | `cold_startup_no_project`, `cold_startup_small_project`, `cold_startup_large_project` | p50/p95/max wall time, allocation counts | app bootstrap, session restore, workspace init |
 | Editing and render throughput | `typing_small_file`, `typing_large_file`, `scroll_large_file`, `large_file_open_first_paint`, `multi_tab_cycle` | p50/p95/max wall time, allocation counts | editor, text viewport, render view-model pipeline |
 | Large-file workout (opt-in) | `editor_moby_dick_workout` | per-phase p50/p95/max wall time, allocation counts | editor, text viewport, clipboard, undo history, resize/relayout |
-| Search and indexing | `project_search_literal`, `project_search_regex`, `search_first_result`, `file_finder_cold` | p50/p95/max wall time | project search, file finder, background executor |
+| Search and indexing | `project_search_literal`, `project_search_regex`, `search_first_result`, `file_finder_cold`, `file_finder_type_query` | p50/p95/max wall time, allocation counts (per phase) | project search, file finder, background executor |
 | Shell surfaces | `compare_tab_open`, `merge_tab_open`, `compare_scroll_large_fixture`, `merge_scroll_large_fixture`, `merge_scroll_interleaved_hunks`, `compare_scroll_selection`, `git_sidebar_activate` | p50/p95/max wall time, allocation counts | compare/merge services, sidebar services |
 | Git workstation | `git_sidebar_refresh_large_repo`, `git_sidebar_refresh_many_untracked`, `diff_open_1000_file_changes`, `diff_next_hunk_large_file`, `diff_stage_hunk_large_patch`, `diff_stage_selected_lines`, `merge_open_many_conflicts`, `merge_next_conflict_large_file`, `merge_accept_hunk_interleaved`, `merge_edit_result_then_scroll`, `commit_open_with_large_staged_set`, `external_change_refresh_open_diff`, `external_change_refresh_open_merge` | p50/p95/max wall time, allocation counts, per-iteration `perf_counters` | `GitRepositoryService`, compare/merge services, staging, commit workflow, file watchers |
 | Repo-open memory | `repo_open_rss_idle` | open-to-idle wall time, allocation counts, enforced steady-state RSS budget | workspace init, project catalog, tree/index startup |
@@ -1038,6 +1038,19 @@ Current notable scenarios:
     - `tests/perf/fixtures/file_finder_large/`
   - baseline:
     - `tests/perf/baselines/file_finder_cold.json`
+  - skips gracefully when fixture directory is absent
+
+- `file_finder_type_query` (gate): opens the finder over the same 10 000-file fixture and types a
+  ten-character query one keystroke at a time, then backspaces four times
+  - two phases: `type_and_rank` (the narrowing path — each keystroke re-ranks a candidate set the
+    previous one shrank) and `backspace_rescan` (a shrinking query cannot narrow, so it falls back to
+    a full scan of the index and is the worst-case keystroke)
+  - this is the loop the match scorer runs in; `file_finder_cold` measures the once-per-index-version
+    cache rebuild and never touches it, so a scoring change had no gate before this scenario
+  - fixture root:
+    - `tests/perf/fixtures/file_finder_large/`
+  - baseline:
+    - `tests/perf/baselines/file_finder_type_query.json`
   - skips gracefully when fixture directory is absent
 
 - `git_sidebar_activate` (gate): opens the pre-seeded 1 000-file git fixture project, activates

@@ -1,8 +1,33 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **80 open items.**
+Reviewed 2026-08-06. **79 open items.**
 
-The 2026-08-06 measurement-integrity pass closed three — **150** (the resident gate
+The 2026-08-06 finder pass closed **153** and **154**, and opened **155** by
+tripping over it.
+
+153 said a phase that is measured and compared to nothing is not a gate. Every
+`Measure` phase now carries its own allocation gate, written into the baseline
+and enforced: **114 phase gates across 82 baselines**, certified by a whole-suite
+rebaseline re-gated against itself (**100 PASS, 0 FAIL, zero ungated phases**).
+`search_first_result` gates its search at 145 allocations instead of gating
+20,192 allocations of project-open and calling that "the authoritative signal". A
+baseline phase the run stops measuring now FAILS — a deleted `Measure` call must
+not remove a gate in silence.
+
+154 then used it. The file finder's cache rebuild was **41,622 allocations** on a
+10,000-file project; it is **1,621**. The index deep-copy is gone (and so is the
+deep-copying accessor, which had exactly one caller), and `CachedFileEntry` owns
+no strings at all — path bytes and their fold live in two blobs and the entry is
+five 32-bit offsets. The scan the finder runs per keystroke now walks two
+contiguous buffers instead of 20,000 heap nodes.
+
+The rebaseline that armed the phase gates is what found **155**: four git
+scenarios had drifted up 0.1 %, which turned out to be a scenario appending to a
+fixture **in the repository** — 1,361 times, growing a 3-line worktree diff to
+2,725 lines. Those scenarios had been measuring how often the suite had ever been
+run on that checkout.
+
+The earlier 2026-08-06 measurement-integrity pass closed three — **150** (the resident gate
 is a coin flip), **151** (the biggest interactive scenarios have no measured
 phase), and **146** (ccache + LTO ICEs, so a history walk skips commits) — and the
 theme is that two of them were instruments, not code, and both paid off
@@ -1519,7 +1544,63 @@ unfixed is that the RSS gate cannot be tight and that allocation counts have an
 unmeasured prefix sensitivity — real, but no longer the only instrument in the
 room.
 
-### TD-2026-08-06-153 — `search_first_result`'s "authoritative, precise regression signal" is 99.3% project open. [MECHANISM LANDED 2026-08-06; the gates arm at the next rebaseline.]
+### TD-2026-08-06-155 — a perf scenario appended to a fixture in the repository 1,361 times, and every diff scenario reading that tree had been measuring the accumulation. [APPEND LEAK FIXED 2026-08-06; the index mutation is still open.]
+
+Found while auditing a +0.1 % allocation move on four git scenarios during the
+2026-08-06 rebaseline — the kind of drift the "investigate up" rule exists to
+catch, and it was not noise.
+
+`ScenarioContext::SimulateExternalFileChange` appends to a file **in the fixture
+tree** and nothing ever undid it. Two scenarios use it, and on this checkout:
+
+```
+git_large_diff_project/src/large.cpp     1,361 appended "// external refresh diff" markers
+git_many_conflicts_project/current.cpp   1,337 appended "// external refresh merge" markers
+```
+
+The generator writes `src/large.cpp` with a **3-line** worktree delta. It had a
+**2,725-line** one. Every scenario that opens that file's diff —
+`diff_next_hunk_large_file`, `diff_stage_hunk_large_patch`,
+`diff_stage_selected_lines`, `external_change_refresh_open_diff` — was measuring
+a diff whose size is *a function of how many times the suite had ever been run on
+that checkout*, and their committed baselines had been ratcheting up with it, one
+run at a time, each increase far too small to trip a gate.
+
+It also means those numbers were never portable: a fresh checkout measures the
+3-line diff, not the 2,725-line one.
+
+Fixed by recording each touched file's size before the first append and
+truncating back after every iteration — measured and warmup alike, and on the
+exception path — outside the measured window. Verified by running both scenarios
+for ten iterations and confirming the fixture still reports 3 insertions.
+
+Regenerated the fixtures and re-recorded the four scenarios, which is what the
+accumulation had been hiding:
+
+| scenario | polluted | clean | |
+| --- | ---: | ---: | ---: |
+| `diff_next_hunk_large_file` | 81,372 | 75,789 | −6.9 % |
+| `diff_stage_hunk_large_patch` | 62,450 | 56,922 | −8.9 % |
+| `external_change_refresh_open_diff` | 61,759 | 56,208 | −9.0 % |
+| `diff_stage_selected_lines` | 60,834 | 55,306 | −9.1 % |
+
+**Still open, and the reason this entry is not RESOLVED.** The append was the
+unbounded case, not the only one. `diff_stage_hunk_large_patch` and
+`diff_stage_selected_lines` run `git add` against the fixture repository, so they
+mutate its **index** — bounded (staging the same hunk twice is idempotent) but
+still shared state a scenario leaves behind for every later run, and the harness
+cannot restore it without encoding each fixture's intended index state
+(`git_large_diff_project` wants nothing staged; `git_large_staged_project` wants
+800 files staged, which is its whole point).
+
+The durable fix is that a fixture tree is a read-only input: copy it into the
+per-run sandbox the harness already creates and let the scenario mutate the copy.
+That costs a 1,000-file copy per scenario and will move every git baseline, so it
+is its own change. Until then, a rebaseline of the staging scenarios should start
+from a freshly generated fixture
+(`bash tests/perf/generate_git_workstation_fixtures.sh`).
+
+### TD-2026-08-06-153 — `search_first_result`'s "authoritative, precise regression signal" is 99.3% project open. [RESOLVED 2026-08-06 — 114 phase gates armed across 82 baselines.]
 
 **What shipped.** Both items, in the order the entry demanded.
 
@@ -1544,10 +1625,15 @@ Two deliberate asymmetries, both about vacuity:
 (2) The `search_first_result` comment now says what the measurement supports: the
 oracle is the phase, and the total is a coarse backstop for the setup around it.
 
-**What is not done until the next rebaseline.** Every committed baseline predates
-the `phases` key, so today every scenario prints the NOT GATED note and gates on
-its total alone. The gate becomes real when `--update-baseline` next sweeps the
-suite on the reference runner; until then this entry is mechanism, not coverage.
+**Armed.** The suite was rebaselined whole on perf-runner-v1 and re-gated against
+what it wrote: **100 PASS, 0 FAIL, zero NOT GATED notes**, with **114 phase gates
+across 82 baselines** (the other 19 are pure-unit scenarios with no `Measure`
+call, where the total already is the phase). `search_first_result` now gates its
+search at **145 allocations** — p50 145, max 146 across ten iterations, so the
+phase is as deterministic as the total it was hiding inside.
+
+The rebaseline also found what a phase-blind suite could not: four git scenarios
+had been measuring an ever-growing fixture, which is [155](#td-2026-08-06-155).
 
 ### TD-2026-08-06-153 (original entry)
 

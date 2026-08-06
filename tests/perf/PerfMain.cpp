@@ -1009,6 +1009,60 @@ void RegisterBuiltInScenarios() {
             });
           },
   });
+  // Typing IN the finder, which is the interactive path and had no scenario at
+  // all: file_finder_cold measures the rebuild that happens once per index
+  // version change, and nothing measured the per-keystroke rank over the whole
+  // 10k-file candidate set. That is the loop the match scorer runs in, so a
+  // scoring change (TD-2026-08-06-154's ranking follow-up) had no gate.
+  //
+  // Each character is its own frame, as typing is. The first characters are the
+  // expensive ones: "f" matches nearly the whole index, and the forward-typing
+  // narrowing then shrinks the candidate set every keystroke — the counters
+  // (search.file_finder_candidates_scanned vs file_finder_refresh_calls) are
+  // what say by how much.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "file_finder_type_query",
+      .smoke = false,
+      // The cache build lands in the first pass; discard it so every measured
+      // iteration is the warm, version-stable typing path.
+      .warmup_iterations = 1,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
+      .run =
+          [](ScenarioContext& context) {
+            const std::filesystem::path fixture =
+                std::filesystem::path("tests/perf/fixtures/file_finder_large");
+            if (!EnsureFixtureOrSkip(fixture, "file_finder_type_query")) {
+              return;
+            }
+            if (!context.Open(fixture)) {
+              throw std::runtime_error("file_finder_type_query: failed to open fixture");
+            }
+            if (!context.WaitForFileIndexPath("src_49/file_09999.cpp",
+                                              std::chrono::seconds(20))) {
+              throw std::runtime_error(
+                  "file_finder_type_query: file index did not finish building");
+            }
+            context.PumpFrames(2);
+            context.OpenFileFinder();
+            context.PumpFrames(1);
+            context.Measure("file_finder_type_query.type_and_rank", [&] {
+              for (const char letter : std::string_view("file_09999")) {
+                context.Type(std::string_view(&letter, 1));
+                context.PumpFrames(1);
+              }
+            });
+            // Backspacing is the case narrowing cannot serve: a shrinking query
+            // falls back to a full scan of the index, so it is the worst-case
+            // keystroke and the one a scoring regression shows up in first.
+            context.Measure("file_finder_type_query.backspace_rescan", [&] {
+              for (int i = 0; i < 4; ++i) {
+                context.KeyDown(SDLK_BACKSPACE);
+                context.PumpFrames(1);
+              }
+            });
+          },
+  });
   // Task 9.4: git_sidebar_activate — open git fixture, activate sidebar, measure first status.
   PerfHarness::RegisterScenario(Scenario{
       .name = "git_sidebar_activate",

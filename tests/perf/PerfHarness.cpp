@@ -626,6 +626,29 @@ void ScenarioContext::SimulateExternalFileChange(const std::filesystem::path& pa
     resolved = workspace::WorkspaceShell::TestAccess::ProjectRoot(shell_) / path;
   }
   resolved = std::filesystem::absolute(resolved, error).lexically_normal();
+  // Record what to truncate back to, ONCE per path, before the first append.
+  //
+  // This append lands in a fixture tree that lives in the repository and is
+  // shared by every scenario reading it, and nothing ever undid it: the two
+  // external-change scenarios had appended 1,361 and 1,337 times on this
+  // checkout, growing `git_large_diff_project/src/large.cpp`'s worktree diff
+  // from the 3 lines its generator writes to 2,725. Every diff and merge
+  // scenario on those fixtures was measuring a diff whose size is a function of
+  // how many times the suite had ever been run here, and their committed
+  // baselines had been ratcheting up with it (TD-2026-08-06-155).
+  const std::uintmax_t original_size = std::filesystem::file_size(resolved, error);
+  if (!error) {
+    bool already_recorded = false;
+    for (const auto& [recorded_path, recorded_size] : external_file_restores_) {
+      if (recorded_path == resolved) {
+        already_recorded = true;
+        break;
+      }
+    }
+    if (!already_recorded) {
+      external_file_restores_.emplace_back(resolved, original_size);
+    }
+  }
   std::ofstream output(resolved, std::ios::binary | std::ios::app);
   if (!output) {
     throw std::runtime_error("SimulateExternalFileChange: failed to open " + resolved.string());
@@ -636,6 +659,20 @@ void ScenarioContext::SimulateExternalFileChange(const std::filesystem::path& pa
   }
   (void)workspace::WorkspaceShell::TestAccess::ReloadProjectIfFilesChanged(shell_, true);
   PumpFrames(2);
+}
+
+void ScenarioContext::RestoreExternalFileChanges() {
+  for (const auto& [path, size] : external_file_restores_) {
+    std::error_code error;
+    std::filesystem::resize_file(path, size, error);
+    if (error) {
+      // Loud, not silent: a fixture left grown is a measurement that drifts on
+      // every later run, which is exactly the failure this exists to end.
+      std::cerr << "[perf] WARNING: could not restore fixture file " << path << " to " << size
+                << " bytes: " << error.message() << '\n';
+    }
+  }
+  external_file_restores_.clear();
 }
 
 void ScenarioContext::StartSearch(std::string_view query) {
@@ -760,14 +797,20 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     try {
       scenario.run(warmup_context);
     } catch (const std::exception& ex) {
+      warmup_context.RestoreExternalFileChanges();
       HarnessError() = std::string("scenario threw during warmup: ") + ex.what();
       ShutdownDriver(&driver);
       return std::nullopt;
     } catch (...) {
+      warmup_context.RestoreExternalFileChanges();
       HarnessError() = "scenario threw unknown exception during warmup";
       ShutdownDriver(&driver);
       return std::nullopt;
     }
+    // Every iteration must start from the same fixture bytes, warmups included:
+    // an append left in place makes iteration N+1 measure a bigger diff than
+    // iteration N (TD-2026-08-06-155).
+    warmup_context.RestoreExternalFileChanges();
   }
 
   // MICROIDE_PERF_SUMMARY=1 folds every trace scope into a ranked self-time
@@ -809,10 +852,12 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     try {
       scenario.run(context);
     } catch (const std::exception& ex) {
+      context.RestoreExternalFileChanges();
       HarnessError() = std::string("scenario threw exception: ") + ex.what();
       ShutdownDriver(&driver);
       return std::nullopt;
     } catch (...) {
+      context.RestoreExternalFileChanges();
       HarnessError() = "scenario threw unknown exception";
       ShutdownDriver(&driver);
       return std::nullopt;
@@ -823,6 +868,10 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     SettleResidentSet();
     const std::uint64_t rss_after = ProcessResidentBytes();
     const util::PerfCounterSnapshot counter_after = util::CapturePerformanceCounters();
+    // After every measurement is captured, so the filesystem work is charged to
+    // nothing, and before the next iteration starts, so each one sees the same
+    // fixture bytes (TD-2026-08-06-155).
+    context.RestoreExternalFileChanges();
     std::vector<std::pair<std::string, std::uint64_t>> counter_deltas;
     for (const auto& [name, value] : util::NonZeroCounterDelta(counter_before, counter_after)) {
       counter_deltas.emplace_back(std::string(name), value);
