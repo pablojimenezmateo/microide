@@ -51,30 +51,53 @@ class FileFinder {
   std::optional<std::filesystem::path> SelectedPath() const;
 
  private:
-  // One per indexed file, rebuilt whole whenever the index version moves -- so
-  // every field here costs one allocation per file in the project, on the shell
-  // thread, and its own resident bytes for as long as the finder is alive. It used
-  // to carry the same path four times (a std::filesystem::path, its string, the
-  // folded string, and the folded filename); it carries it twice now.
+  // One per indexed file, rebuilt whole whenever the index version moves. Every
+  // heap allocation in here is paid per file in the project, on the shell thread,
+  // at the next Refresh() after the index version moves — so the entry owns NO
+  // strings at all: the path bytes and their case-folded form live back to back
+  // in two blobs (`path_blob_`, `lower_blob_`) and the entry is offsets into them.
+  //
+  // The history is the argument. This carried the same path four times (a
+  // std::filesystem::path, its string, the folded string, and the folded
+  // filename), then twice, and two strings per entry still meant 20,000
+  // allocations to index 10,000 files on top of the 10,000 the index snapshot
+  // copy cost (TD-2026-08-06-154). Two blobs make the whole rebuild a handful of
+  // geometric growths, whose capacity the NEXT rebuild reuses — and they put the
+  // bytes the per-keystroke scan walks in contiguous memory instead of 20,000
+  // separate heap nodes.
+  //
+  // 32-bit offsets bound the blobs at 4 GiB. The index truncates long before
+  // that (a 4 GiB path blob is ~40 million paths), and BuildCacheEntry stops
+  // adding entries rather than wrapping if it is ever reached.
   struct CachedFileEntry {
-    std::string path_string;
-    std::string lower_path;
+    std::uint32_t path_offset = 0;
+    std::uint32_t path_size = 0;
+    std::uint32_t lower_offset = 0;
+    std::uint32_t lower_size = 0;
     // The folded filename is a suffix of the folded path, so it is an offset, not
-    // a fourth string. Path separators are ASCII and case folding never adds or
+    // a separate string. Path separators are ASCII and case folding never adds or
     // removes one, so the last separator in the FOLDED path bounds the same
     // component it bounds in the original -- true even for a fold that changes a
     // component's byte length.
-    std::size_t lower_filename_offset = 0;
+    std::uint32_t lower_filename_offset = 0;
     // Presence bitmask over the folded bytes (see CharPresenceMask). A query
     // whose mask is not a subset of these cannot possibly be a subsequence, so
     // the O(len * query) scan below is skipped outright.
     std::uint64_t lower_path_mask = 0;
     std::uint64_t lower_filename_mask = 0;
-
-    std::string_view lower_filename() const {
-      return std::string_view(lower_path).substr(lower_filename_offset);
-    }
   };
+
+  std::string_view PathView(const CachedFileEntry& entry) const {
+    return std::string_view(path_blob_).substr(entry.path_offset, entry.path_size);
+  }
+  std::string_view LowerPathView(const CachedFileEntry& entry) const {
+    return std::string_view(lower_blob_).substr(entry.lower_offset, entry.lower_size);
+  }
+  std::string_view LowerFilenameView(const CachedFileEntry& entry) const {
+    return std::string_view(lower_blob_)
+        .substr(entry.lower_offset + entry.lower_filename_offset,
+                entry.lower_size - entry.lower_filename_offset);
+  }
 
   // 64-bucket presence set: bit (byte % 64) for every byte of `text`. Subsequence
   // matching requires every query byte to APPEAR in the candidate, so
@@ -84,8 +107,12 @@ class FileFinder {
   static std::uint64_t CharPresenceMask(std::string_view text);
 
   static int SubsequenceScore(std::string_view text, const std::string& query);
-  static int RankMatchCached(const CachedFileEntry& entry, const std::string& query,
-                             std::uint64_t query_mask);
+  int RankMatchCached(const CachedFileEntry& entry, const std::string& query,
+                      std::uint64_t query_mask) const;
+  // Append one indexed path to the blobs and push its entry. Returns false when
+  // the blob bound is reached, which stops the rebuild instead of truncating an
+  // offset.
+  bool AppendCacheEntry(std::string_view relative_path);
   void EnsureCacheBuilt();
 
   const FileIndex* index_ = nullptr;
@@ -93,6 +120,11 @@ class FileFinder {
   std::vector<std::filesystem::path> recent_relative_paths_;
   std::vector<FileFinderResult> results_;
   std::vector<CachedFileEntry> cached_entries_;
+  // The candidate bytes, packed. Cleared (capacity retained) and refilled by a
+  // rebuild, so a steady-state finder over a project whose index keeps moving
+  // allocates nothing at all for them after the first build.
+  std::string path_blob_;
+  std::string lower_blob_;
   bool cache_ready_ = false;
   std::uint64_t cached_index_version_ = 0;
   std::size_t selected_index_ = 0;

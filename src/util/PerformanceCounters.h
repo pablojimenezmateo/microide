@@ -145,6 +145,18 @@ namespace microide::util {
   X(SearchProjectReplaceFilesRead, "search.project_replace_files_read")                         \
   X(FileFinderCacheBuildCalls, "search.file_finder_cache_build_calls")                          \
   X(FileFinderCacheEntriesBuilt, "search.file_finder_cache_entries_built")                      \
+  /* Bytes the finder's candidate blobs hold after a rebuild (path + folded     */              \
+  /* path, packed). The finder's resident cost used to be invisible: it was two */              \
+  /* std::strings per indexed file and nothing counted them (TD-2026-08-06-154).*/              \
+  X(FileFinderCacheBytes, "search.file_finder_cache_bytes")                                     \
+  /* Per-keystroke ranking work. `candidates_scanned` is what the scan actually  */             \
+  /* looked at, so `scanned / (refreshes * indexed)` is how much the             */             \
+  /* forward-typing narrowing is worth; `mask_rejects` is the share of those the */             \
+  /* O(1) presence mask killed before any subsequence scan.                      */             \
+  X(FileFinderRefreshCalls, "search.file_finder_refresh_calls")                                 \
+  X(FileFinderCandidatesScanned, "search.file_finder_candidates_scanned")                       \
+  X(FileFinderMaskRejects, "search.file_finder_mask_rejects")                                   \
+  X(FileFinderNarrowedRefreshes, "search.file_finder_narrowed_refreshes")                       \
   X(ProjectFileScannerCollectProjectFilesCalls, "project.collect_project_files_calls")          \
   X(RenderTextWidthCacheQueries, "render.text_width_cache_queries")                             \
   X(RenderTextWidthCacheHits, "render.text_width_cache_hits")                                   \

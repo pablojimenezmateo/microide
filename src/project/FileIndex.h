@@ -23,11 +23,6 @@ struct ProjectFile {
   bool operator==(const ProjectFile&) const = default;
 };
 
-struct FileIndexSnapshot {
-  std::uint64_t version = 0;
-  std::vector<ProjectFile> files;
-};
-
 // Immutable, shared list of relative paths produced by FileIndex.
 using SharedPathList = std::shared_ptr<const std::vector<std::filesystem::path>>;
 
@@ -102,11 +97,27 @@ class FileIndex {
   bool ApplyBatch(const platform::IndexUpdateBatch& batch,
                   const std::function<bool()>& is_cancelled = {});
   std::vector<ProjectFile> Snapshot() const;
-  FileIndexSnapshot SnapshotWithVersion() const;
   FilePathSnapshot SnapshotPathsWithVersion(
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
   std::vector<std::filesystem::path> SnapshotPaths(
       ProjectFileScanMode mode = ProjectFileScanMode::ExcludeHidden) const;
+  // Visit every indexed relative path in `mode`, in sorted order, and return the
+  // version the visit observed. Nothing is copied: `visit` sees the index's own
+  // paths.
+  //
+  // For a consumer that builds its own derived structure from the paths and
+  // throws the intermediate away. The file finder used to reach the same set
+  // through SnapshotWithVersion(), whose deep copy cost one heap allocation per
+  // indexed file — 10,000 of them on the 10k-file fixture — for two fields
+  // (`mtime`, `size`) it never reads (TD-2026-08-06-154).
+  //
+  // `visit` runs WITH the index's shared lock held, so it must not call back
+  // into this index (a nested unique_lock would deadlock) and should stay pure
+  // CPU work: a writer — the watcher thread applying a batch — blocks for its
+  // duration. That is the same window the deep copy held, doing more work.
+  std::uint64_t VisitRelativePaths(
+      ProjectFileScanMode mode,
+      const std::function<void(const std::filesystem::path&)>& visit) const;
   std::uint64_t version() const;
 
   const std::filesystem::path& root() const { return root_; }

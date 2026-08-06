@@ -290,14 +290,6 @@ std::vector<ProjectFile> FileIndex::Snapshot() const {
   return files_;
 }
 
-FileIndexSnapshot FileIndex::SnapshotWithVersion() const {
-  std::shared_lock lock(files_mutex_);
-  return FileIndexSnapshot{
-      .version = version_,
-      .files = files_,
-  };
-}
-
 FilePathSnapshot FileIndex::SnapshotPathsWithVersion(ProjectFileScanMode mode) const {
   std::unique_lock lock(files_mutex_);
   CacheBucket& cache = CacheIndex(mode) == 0 ? exclude_hidden_cache_ : include_hidden_cache_;
@@ -313,6 +305,29 @@ FilePathSnapshot FileIndex::SnapshotPathsWithVersion(ProjectFileScanMode mode) c
 std::vector<std::filesystem::path> FileIndex::SnapshotPaths(ProjectFileScanMode mode) const {
   const FilePathSnapshot snapshot = SnapshotPathsWithVersion(mode);
   return snapshot.files ? *snapshot.files : std::vector<std::filesystem::path>{};
+}
+
+std::uint64_t FileIndex::VisitRelativePaths(
+    ProjectFileScanMode mode,
+    const std::function<void(const std::filesystem::path&)>& visit) const {
+  util::PerformanceTrace::Scope perf_scope("FileIndex::VisitRelativePaths");
+  std::shared_lock lock(files_mutex_);
+  if (visit) {
+    for (const ProjectFile& file : files_) {
+      // The same two filters RebuildCacheLocked applies, and for the same
+      // reasons: hidden paths are a mode question, and an in-flight atomic-write
+      // staging temp exists only between a save's write and its rename, so
+      // surfacing it only ever shows the user a file that is already gone.
+      if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(file.relative_path)) {
+        continue;
+      }
+      if (IsTemporaryStagingRelativePath(file.relative_path)) {
+        continue;
+      }
+      visit(file.relative_path);
+    }
+  }
+  return version_;
 }
 
 std::uint64_t FileIndex::version() const {

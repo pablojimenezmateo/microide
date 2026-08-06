@@ -50,14 +50,13 @@ void TestFileIndexInitialBatchPopulatesSortedUniqueFilesAndVersion() {
   batch.changes.push_back(MakeCreateChange(".git/index", 100));
   Expect(index.ApplyBatch(batch), "initial batch should populate the file index");
 
-  const auto snapshot = index.SnapshotWithVersion();
-  Expect(snapshot.version == set_root_version + 1,
+  const auto files = index.Snapshot();
+  Expect(index.version() == set_root_version + 1,
          "applying a changed initial batch should increment the file index version once");
-  Expect(snapshot.files.size() == 3,
-         "initial batch should keep unique non-.git files");
-  Expect(snapshot.files[0].relative_path == std::filesystem::path(".hidden.cpp") &&
-             snapshot.files[1].relative_path == std::filesystem::path("src/a.cpp") &&
-             snapshot.files[2].relative_path == std::filesystem::path("src/b.cpp"),
+  Expect(files.size() == 3, "initial batch should keep unique non-.git files");
+  Expect(files[0].relative_path == std::filesystem::path(".hidden.cpp") &&
+             files[1].relative_path == std::filesystem::path("src/a.cpp") &&
+             files[2].relative_path == std::filesystem::path("src/b.cpp"),
          "initial batch should normalize and sort stored relative paths");
 
   const auto with_hidden = index.SnapshotPaths(ProjectFileScanMode::IncludeHidden);

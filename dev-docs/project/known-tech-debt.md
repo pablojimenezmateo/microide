@@ -1576,7 +1576,62 @@ and nothing compares them to anything; (2) then rewrite the baseline comment,
 which is currently a claim the measurement does not support. Doing (2) first would
 just move the untested claim.
 
-### TD-2026-08-06-154 — the file finder's cache rebuild costs 4 allocations per indexed file, and the deep copy it starts from is not needed at all. OPEN.
+### TD-2026-08-06-154 — the file finder's cache rebuild costs 4 allocations per indexed file, and the deep copy it starts from is not needed at all. [RESOLVED 2026-08-06 — 41,622 allocations became 1,621.]
+
+**Measured, on the same 10,000-file fixture the entry was written from:**
+
+| | before | after |
+| --- | ---: | ---: |
+| `file_finder_cold.open_finder` (phase) | 41,622 | **1,621** |
+| `file_finder_cold` (scenario total) | 61,807 | **21,806** |
+
+That is 96 % of the phase and 65 % of the scenario, and it took two changes
+rather than the one the entry proposed.
+
+**(1) The snapshot copy is gone, and so is the method.** `FileIndex` grew
+`VisitRelativePaths(mode, visit)`, which walks its own paths under the shared
+lock and returns the version it observed — nothing is materialised at all. The
+entry's suggestion, `SnapshotPathsWithVersion()`, would have swapped one
+per-file allocation for another: its cache bucket is built lazily, and the
+finder's rebuild is triggered by exactly the version change that invalidates it,
+so the bucket would have been rebuilt (one `std::filesystem::path` per file)
+every time the finder needed it. Zero-copy only reads as zero-copy when the
+cache is already warm, which here it never is.
+
+`SnapshotWithVersion()` and `FileIndexSnapshot` are deleted: the finder was the
+only caller, and leaving a deep-copying accessor in place is how the next
+consumer pays the same cost.
+
+Two behaviour changes fall out, both fixes. The visit filters in-flight
+atomic-write staging temps (the raw file list did not, so a save landing during
+a rebuild could leave a phantom row in the finder until the next full rescan),
+and it is explicitly `IncludeHidden`, because a `.gitignore` or a
+`.github/workflows/*` is a file people open — matching what the raw list did and
+what VSCode shows.
+
+**(2) `CachedFileEntry` owns no strings.** The remaining three per-file
+allocations were the entry's own two `std::string`s plus the path's `.string()`.
+The path bytes and their fold now live back to back in two blobs
+(`path_blob_`, `lower_blob_`) and the entry is five 32-bit offsets — so a
+rebuild is a handful of geometric growths whose capacity the NEXT rebuild
+reuses, and `path.native()` (POSIX) hands the bytes over without a copy. The
+per-keystroke scan also stopped walking 20,000 separate heap nodes for what is
+now two contiguous buffers.
+
+The entry's item (2) said to read `file_finder_cache_build_calls` from a real
+session before deciding whether to restructure the entry. That measurement is
+still worth having, but it stopped being the deciding input once the
+restructure turned out to be a strictly smaller, faster, and more contiguous
+representation rather than a trade.
+
+**Instrumentation, since the entry was found by measurement and the finder had
+blind spots.** `search.file_finder_cache_bytes` (what the candidate cache
+retains — previously invisible), plus `file_finder_refresh_calls`,
+`candidates_scanned`, `mask_rejects` and `narrowed_refreshes`, which together
+say how much the forward-typing narrowing and the presence-mask prefilter are
+actually worth per keystroke.
+
+### TD-2026-08-06-154 (original entry)
 
 Found by pointing the phase tracer at `file_finder_cold.open_finder`, the phase
 [151](#td-2026-08-06-151) declared. Measured, per rebuild, on the 10,000-file

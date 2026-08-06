@@ -205,6 +205,11 @@ char32_t SimpleFoldCodepoint(char32_t cp);
 // verbatim so a caller mapping matches back to the source keeps byte alignment.
 // Reuses `out`'s capacity for hot per-line loops.
 void Utf8CaseFoldInto(std::string_view text, std::string& out);
+// Utf8CaseFoldInto without the clear: appends the fold of `text` to whatever
+// `out` already holds. For callers packing many folded strings back to back into
+// one buffer (the file finder's candidate blob), which is one allocation for the
+// whole set instead of one per string.
+void Utf8CaseFoldAppend(std::string_view text, std::string& out);
 std::string Utf8CaseFold(std::string_view text);
 // True if `text` has any scalar whose simple fold differs from itself (i.e. an
 // uppercase letter in a covered script). The Unicode-aware analogue of

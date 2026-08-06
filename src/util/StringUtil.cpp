@@ -474,12 +474,11 @@ char32_t SimpleFoldCodepoint(char32_t cp) {
   return cp;
 }
 
-void Utf8CaseFoldInto(std::string_view text, std::string& out) {
-  out.clear();
+void Utf8CaseFoldAppend(std::string_view text, std::string& out) {
   // A folded string is never longer than a byte-wise ASCII-lowered one for the
   // ranges we cover (each folded scalar occupies the same UTF-8 length), so a
   // size hint avoids reallocations on the common path.
-  out.reserve(text.size());
+  out.reserve(out.size() + text.size());
   std::size_t offset = 0;
   while (offset < text.size()) {
     const unsigned char lead = static_cast<unsigned char>(text[offset]);
@@ -506,6 +505,11 @@ void Utf8CaseFoldInto(std::string_view text, std::string& out) {
     }
     offset += length;
   }
+}
+
+void Utf8CaseFoldInto(std::string_view text, std::string& out) {
+  out.clear();
+  Utf8CaseFoldAppend(text, out);
 }
 
 std::string Utf8CaseFold(std::string_view text) {
