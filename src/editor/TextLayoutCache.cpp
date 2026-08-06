@@ -587,6 +587,9 @@ std::size_t TextLayoutCache::MaxVisualColumns(LineSpan lines,
   }
 
   util::PerformanceTrace::Scope sm("TextLayoutCache::ScanVisualLineColumnsMax");
+  util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxScans);
+  util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMaxScanLines,
+                              cached_visual_line_columns_.size());
   std::size_t max_columns = 0;
   std::size_t max_line = 0;
   for (std::size_t index = 0; index < cached_visual_line_columns_.size(); ++index) {

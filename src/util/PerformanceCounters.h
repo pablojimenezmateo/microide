@@ -64,6 +64,12 @@ namespace microide::util {
   X(EditorLineWidthRebuildTabSize, "editor.line_width_rebuild_tab_size")                         \
   /* A table existed for a different line count -- an edit the incremental path dropped. */      \
   X(EditorLineWidthRebuildLineCount, "editor.line_width_rebuild_line_count")                     \
+  /* The widest-line scan over the width table. Separate from the build because it also  */      \
+  /* runs on its own, whenever an edit invalidated the memoized max without invalidating */      \
+  /* the table -- an O(document) deque walk that nothing counted. scans minus            */      \
+  /* table_builds is exactly how many of those standalone rescans happened.              */      \
+  X(EditorLineWidthMaxScans, "editor.line_width_max_scans")                                      \
+  X(EditorLineWidthMaxScanLines, "editor.line_width_max_scan_lines")                             \
   X(EditorContentRevisionBumps, "editor.content_revision_bumps")                                \
   X(EditorSyntaxRevisionBumps, "editor.syntax_revision_bumps")                                  \
   X(EditorLayoutShapeRevisionBumps, "editor.layout_shape_revision_bumps")                       \

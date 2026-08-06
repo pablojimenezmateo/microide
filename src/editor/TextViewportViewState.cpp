@@ -387,6 +387,17 @@ void TextViewport::ClampScrollState() {
     horizontal_scroll_ = 0;
     return;
   }
+  if (horizontal_scroll_ == 0) {
+    // Nothing to clamp: the clamp below can only lower the offset, and it is
+    // already at the floor. Reading MaxVisualColumns() to reach that conclusion
+    // builds the whole-document per-line width table -- an O(document) walk for
+    // an answer that is 0 either way. Every file opens at column 0, and every
+    // restored background tab stays there without any pane ever drawing a
+    // horizontal scrollbar, so this was the single most common trigger of that
+    // build (TD-2026-08-06-138). The table is still built lazily by whoever
+    // genuinely needs it: the scrollbar geometry of a pane that is on screen.
+    return;
+  }
   const std::size_t max_visual_columns = MaxVisualColumns();
   const std::size_t max_horizontal_scroll =
       max_visual_columns > visible_columns_ ? max_visual_columns - visible_columns_ : 0;
