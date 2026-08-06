@@ -679,24 +679,39 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
         inserted_columns.begin(), inserted_columns.end());
   }
 
-  const bool max_line_erased =
-      cached_max_visual_columns_line_index_.has_value() &&
-      *cached_max_visual_columns_line_index_ >= clamped_start &&
-      *cached_max_visual_columns_line_index_ < clamped_start + removed_count;
-  const bool candidate_expands_max =
-      std::any_of(inserted_columns.begin(), inserted_columns.end(), [&](PackedLineWidth width) {
-        return !cached_max_visual_columns_.has_value() ||
-               width.visual_columns() >= *cached_max_visual_columns_;
-      });
-  if (max_line_erased || candidate_expands_max || !cached_max_visual_columns_.has_value()) {
+  // Maintain the memoized widest line rather than dropping it. Dropping it costs
+  // a whole-document rescan of the width table on the next reader -- and an edit
+  // that WIDENS lines was the common way to trigger that, so commenting out 1000
+  // lines of a 50k-line file measured 16 rescans of 50k entries each (800k), for
+  // a new maximum that was sitting in `inserted_columns` the whole time.
+  //
+  // Exactly one case genuinely needs the rescan: the widest line itself was
+  // rewritten or removed. Its old width is gone and the runner-up is not recorded
+  // anywhere, so nothing here can name the new maximum. Every other edit leaves
+  // the old maximum standing, and a line the edit did not touch cannot have
+  // shrunk -- so the maximum can only grow, and it grows to the widest inserted
+  // line, which is known without reading any other line.
+  const std::size_t affected_end = clamped_start + removed_count;
+  const bool max_line_replaced = cached_max_visual_columns_line_index_.has_value() &&
+                                 *cached_max_visual_columns_line_index_ >= clamped_start &&
+                                 *cached_max_visual_columns_line_index_ < affected_end;
+  if (!cached_max_visual_columns_.has_value() ||
+      !cached_max_visual_columns_line_index_.has_value() || max_line_replaced) {
     cached_max_visual_columns_.reset();
     cached_max_visual_columns_line_index_.reset();
-  } else if (cached_max_visual_columns_line_index_.has_value() &&
-             *cached_max_visual_columns_line_index_ >= clamped_start) {
-    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(inserted_columns.size()) -
-                                 static_cast<std::ptrdiff_t>(removed_count);
-    *cached_max_visual_columns_line_index_ = static_cast<std::size_t>(
-        static_cast<std::ptrdiff_t>(*cached_max_visual_columns_line_index_) + delta);
+  } else {
+    if (*cached_max_visual_columns_line_index_ >= affected_end) {
+      const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(inserted_columns.size()) -
+                                   static_cast<std::ptrdiff_t>(removed_count);
+      *cached_max_visual_columns_line_index_ = static_cast<std::size_t>(
+          static_cast<std::ptrdiff_t>(*cached_max_visual_columns_line_index_) + delta);
+    }
+    for (std::size_t i = 0; i < inserted_columns.size(); ++i) {
+      if (inserted_columns[i].visual_columns() > *cached_max_visual_columns_) {
+        cached_max_visual_columns_ = inserted_columns[i].visual_columns();
+        cached_max_visual_columns_line_index_ = clamped_start + i;
+      }
+    }
   }
   cached_max_visual_columns_content_revision_ = content_revision;
 }

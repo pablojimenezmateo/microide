@@ -15,6 +15,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <functional>
 #include <string>
 #include <thread>
 #include <vector>
@@ -2656,6 +2657,111 @@ void TestTextViewportInlineEditDerivesLineWidthFromTheSplice() {
   expect_width_matches_a_fresh_measure("redoing a multibyte insert re-measures the line");
 }
 
+// max_visual_columns() is memoized as (widest width, which line is widest), and an
+// edit maintains that pair instead of dropping it -- dropping it costs a
+// whole-document rescan of the width table on the next reader, and an edit that
+// WIDENS lines used to be the common way to trigger one (commenting out 1000 lines
+// of a 50k-line file measured 16 rescans of 50k entries each).
+//
+// Two things have to hold together, so this checks both on every step: the answer
+// still equals a from-scratch scan, and the rescan only happens for the one edit
+// that genuinely needs it -- rewriting or deleting the widest line itself, whose
+// old width is gone and whose successor is not recorded anywhere.
+void TestTextViewportWidestLineIsMaintainedAcrossEdits() {
+  using microide::editor::TextLayout;
+  using microide::util::PerfCounterId;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("short\nthe widest line in this buffer\nmid\ntiny\n",
+                       "/tmp/widest-line.txt");
+  const std::size_t tab_size = viewport.tab_size();
+
+  const auto fresh_widest = [&] {
+    std::size_t widest = 0;
+    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+      widest = std::max(
+          widest, TextLayout::MeasureLineFacts(viewport.lines()[i], tab_size).visual_columns);
+    }
+    return widest;
+  };
+  // Returns how many whole-table max scans the edit + read cost.
+  const auto scans_for = [&](const char* what, const std::function<void()>& edit) {
+    edit();
+    const std::uint64_t before =
+        microide::util::ReadPerformanceCounter(PerfCounterId::EditorLineWidthMaxScans);
+    const std::size_t reported = viewport.max_visual_columns();
+    Expect(reported == fresh_widest(), what);
+    return microide::util::ReadPerformanceCounter(PerfCounterId::EditorLineWidthMaxScans) - before;
+  };
+
+  (void)viewport.max_visual_columns();  // warm the table + the memo
+
+  // A narrower line growing, but staying under the widest: nothing moves.
+  Expect(scans_for("widening a narrow line keeps the recorded maximum",
+                   [&] {
+                     viewport.MoveCursorTo(0, 5);
+                     viewport.InsertText("er");
+                   }) == 0,
+         "an edit that cannot beat the maximum must not rescan the table");
+
+  // A narrow line growing PAST the widest. The new maximum is the line just
+  // written, which is known without looking at any other line.
+  Expect(scans_for("a line growing past the maximum becomes the new maximum",
+                   [&] {
+                     viewport.MoveCursorTo(2, 3);
+                     viewport.InsertText("this middle line is now the longest one here");
+                   }) == 0,
+         "an edit that raises the maximum must not rescan the table");
+
+  // Inserting lines ABOVE the widest line shifts its index. If the shift is
+  // wrong the memo names some other line and the next edit to the real widest
+  // line goes unnoticed -- which the following step is what catches.
+  Expect(scans_for("splitting a line above the maximum keeps the maximum",
+                   [&] {
+                     viewport.MoveCursorTo(0, 2);
+                     viewport.InsertText("\n");
+                   }) == 0,
+         "a line-count change above the maximum must not rescan the table");
+
+  // Now shrink the widest line itself. Its old width is gone and the second
+  // widest is unrecorded, so this one legitimately rescans.
+  Expect(scans_for("shrinking the widest line falls back to a rescan",
+                   [&] {
+                     viewport.MoveCursorTo(3, 3);
+                     viewport.MoveCursorTo(3, viewport.lines().LineView(3).size(), true);
+                     Expect(viewport.DeleteSelectedText(), "the widest line's tail should delete");
+                   }) == 1,
+         "rewriting the widest line has to rescan -- nothing else knows the runner-up");
+
+  // Deleting the widest line outright is the same story.
+  Expect(scans_for("deleting the widest line falls back to a rescan",
+                   [&] {
+                     std::size_t widest_index = 0;
+                     std::size_t widest = 0;
+                     for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+                       const std::size_t w =
+                           TextLayout::MeasureLineFacts(viewport.lines()[i], tab_size)
+                               .visual_columns;
+                       if (w > widest) {
+                         widest = w;
+                         widest_index = i;
+                       }
+                     }
+                     viewport.MoveCursorTo(widest_index, 0);
+                     Expect(viewport.DeleteCurrentLine(), "the widest line should delete");
+                   }) == 1,
+         "deleting the widest line has to rescan");
+
+  // And undo/redo across all of it stays exact.
+  for (int i = 0; i < 6 && viewport.Undo(); ++i) {
+    Expect(viewport.max_visual_columns() == fresh_widest(),
+           "undoing back through the edits keeps the maximum exact");
+  }
+  while (viewport.Redo()) {
+    Expect(viewport.max_visual_columns() == fresh_widest(),
+           "redoing forward through the edits keeps the maximum exact");
+  }
+}
+
 // The caret's byte column <-> visual column conversions answer in O(1) on a
 // plain-ASCII line by reading the layout cache's per-line facts instead of walking
 // the line (TD-2026-08-05-132). That shortcut is only correct while the facts are
@@ -4728,6 +4834,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSingleLineEditAllocatesABoundedMultipleOfTheLine);
   AddTest(tests, "TextViewport/InlineEditDerivesLineWidthFromTheSplice",
           TestTextViewportInlineEditDerivesLineWidthFromTheSplice);
+  AddTest(tests, "TextViewport/WidestLineIsMaintainedAcrossEdits",
+          TestTextViewportWidestLineIsMaintainedAcrossEdits);
   AddTest(tests, "TextViewport/CaretColumnConversionsMatchTheDirectWalk",
           TestTextViewportCaretColumnConversionsMatchTheDirectWalk);
   AddTest(tests, "TextViewport/TypingInALongLineDoesNotWalkItForCaretColumns",
