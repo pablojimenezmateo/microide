@@ -6,6 +6,163 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [2.9.0] - 2026-08-07
+
+### Performance
+
+All figures are from the project's reference runner. Measured against v2.8.1
+across the 92 gated scenarios present in both releases and unchanged in what
+they measure: **median p50 allocations −49.4%**, and 7.18M → 2.92M allocations
+in aggregate (−59.3%). 75 scenarios improved, 16 are flat, and one moved up —
+`git_sidebar_activate`, because the harness now runs every scenario in its own
+cold child process with an isolated app-root instead of letting it inherit warm
+allocator and config state.
+
+Two scenarios are excluded from that comparison rather than counted as
+regressions: `terminal_alt_screen_toggle` and `terminal_scroll_long_output` used
+to scroll and toggle an *empty* buffer, because the harness never spawns a real
+shell, so they measured a terminal holding one blank line. They now feed 4,000
+lines through the emulator and measure what they are named for. No suite-wide
+wall-clock figure is quoted: v2.8.1's baselines predate the per-iteration clock
+calibration the harness now records, so the two sets are not comparable on
+duration.
+
+- **Four interactive models stopped rebuilding themselves from scratch.** Reading
+  the allocation tracer across the perf suite's unread phases turned up the same
+  shape four times: a row list cleared and re-pushed, so every string every row
+  owns is freed and reallocated on the next pass — which for a search box is the
+  next keystroke — plus hash maps built per pass over keys that are already dense
+  array indices. Typing in the Settings search box allocated 417,644 times per
+  rebuild and now allocates 6,153; the Breakpoints panel 110,604 and now 2,706;
+  a keystroke inside a snippet with many mirrors 23,430 and now 3,634. The
+  Breakpoints panel also stopped deep-copying every file's whole breakpoint vector
+  (88 KB a pass) just to walk it once.
+- **A multi-caret edit stopped copying the caret set once per caret per
+  keystroke.** Every edit recorded inside an undo group captured the editor's view
+  state three times, each capture deep-copying the whole secondary-caret vector,
+  and the group discards all of them. With one edit per caret that is quadratic: a
+  256-caret grouped indent allocated 12.9 MB and now allocates 381 KB.
+
+- **Opening a file that is already open no longer re-reads it from disk.** The
+  existing-tab branch of "open file" ran a full reload unconditionally: read the
+  whole file, build a fresh buffer, swap it into the tab and drop every derived
+  cache it held — line widths, syntax highlighting, folds, undo history — to
+  arrive at byte-identical content. That is what jumping to a file you already
+  have open did, and what regaining window focus did once per open buffer. The
+  reload now stats the file first and skips when nothing changed underneath it,
+  matching VSCode, which simply focuses the tab. On the 50k-line fixture:
+  reopening it went from 5.51 ms to 0.26 ms (3,660 → 1,005 allocations), and a
+  session-restore jump deep into a large file from 9.38 ms to 3.24 ms (3,880 →
+  791). A file that *did* change on disk still reloads.
+- **Copying an editor view keeps its line-width table.** The copy deep-copied the
+  table and then immediately discarded it, so the next scroll clamp rebuilt the
+  width of every line in the document. Combined with the reload above, a large
+  file went from two whole-document width rebuilds per open to none.
+- **The horizontal scroll clamp no longer measures the whole document to clamp an
+  offset that is already zero** — which is every file when it opens and every
+  restored background tab. Six further gated scenarios stopped walking the
+  document entirely (the three staging scenarios, next-hunk, external-change
+  refresh, compare scroll).
+- **An edit that widens lines no longer rescans the document for its widest
+  line.** The widest line is memoized, and the memo was dropped whenever an edit
+  wrote a line at least as wide as the current maximum — so commenting out 1,000
+  lines of a 50k-line file rescanned 50,000 entries sixteen times over for a
+  maximum that was already in hand.
+- **Held column selection** (`Ctrl+Shift+Alt+Arrow`) no longer reallocates its
+  caret set on every keystroke. A 400-step gesture went from 1,200 allocations to
+  30. The scratch buffers added in v2.8.1 were being refilled through
+  `reserve()`, which allocates exactly what is asked for rather than growing
+  geometrically, so a set that grows by one line per keystroke reallocated every
+  time.
+- **Scrolling a large file** reuses the evicted line-layout entry instead of
+  destroying it and building a fresh one: −5.7% allocations and −8.6% wall on
+  sticky-scroll, −8.2% on fold-viewport refresh, −7.5% on indent-guide paint.
+- **Opening a merge tab** builds its model in roughly half the time (40.7 →
+  22.5 ms on a many-hunk merge); the hunk-grouping phase alone is 5x faster. It
+  was copying every changed line four times over.
+- **The terminal** no longer allocates and frees one buffer per visible row on
+  every frame of output or scrolling.
+- **A line operation over a selection is one document edit, not one per line.**
+  Toggle Comment over 1,000 lines performed 1,000 separate piece-tree splices —
+  each with its own joined replacement string, revision bump and line-cache wipe —
+  because a same-count replacement was written line by line, which was the cheap
+  form back when the document was a vector of strings. 89,588 → 33,586
+  allocations, and 2.7x faster.
+- **A multi-caret edit now costs its carets, not the distance between them.** An
+  undo entry could only describe one contiguous line range, so eight carets 1,200
+  lines apart captured 8,401 lines for the before image and 8,401 for the after —
+  and retained both — on every keystroke. `Ctrl+Shift+L` on a common token puts
+  carets across a whole file, which made each keystroke after it copy the file
+  twice. The entry now records the ranges the edit actually touched: 76,456 → 933
+  allocations on the eight-caret scenario.
+- **Opening a diff no longer materialises both files to read sixty-four lines of
+  them.** Syntax-state detection inspects a bounded head, but the compare build
+  handed it whole documents — the left side split into owned strings, the right
+  asked for a full-document snapshot that was then retained. −33% and −42%
+  allocations on the two large-diff scenarios.
+- **Scrolling with a selection stopped building a column-mapping table per row.**
+  On a line with no tab and no multi-byte character, byte offset already IS visual
+  column, so the table is the identity function; it was two heap vectors per
+  visible row, and 87% of a compare scroll frame's allocations. The editor scroll
+  scenarios moved with it (−47% each), through the shared diagnostic-underline
+  path.
+- **Editor hover stopped dispatching a plugin query per frame when no plugin
+  provides hover.** Hover resolution runs on every painted frame the pointer
+  spends over text, and during a scroll the cell under a stationary pointer
+  changes every frame, so it resolved a path and dispatched a worker query whose
+  only possible answer was already known. −33% allocations on indent-guide paint.
+- **The git sidebar's file tree is grouped on path text rather than path
+  algebra.** The sort comparator re-derived each row's key from scratch on both
+  sides of every comparison, and the refresh re-normalised paths that had been
+  normalised on the way in. A 1,000-file status went from 112,519 to 24,710
+  allocations opening its first changed file; the large-repo and many-untracked
+  refreshes and the staged-commit panel all fell by 60-78%.
+- **A git refresh stopped deep-copying the whole repository state twice** — once
+  to publish it and once for a caller that wanted two numbers out of it.
+
+### Changed
+
+- **Code folding was rewritten to be incremental.** Fold ranges used to be
+  re-derived for the whole document on every keystroke, which was ~26% of a
+  keystroke on a 50k-line file and O(document) by construction. The document is
+  now partitioned into ~256-line blocks, each holding a reduced summary of the
+  brackets and indent levels it leaves open, and ranges are resolved for the
+  viewport's line window rather than materialised for the entire file. Typing
+  deep in a large file measured 20% faster overall.
+
+  Two behaviours changed with it. A construct whose closer sits far below the
+  viewport now gets its fold marker on the first frame instead of only once you
+  scroll near the closer (constructs spanning more than 8192 lines still wait
+  until the viewport is nearer). And a collapsed fold outside the resolved part
+  of a very large file no longer silently re-expands after an edit.
+
+### Fixed
+
+- **A multi-caret shaping op now edits the caret lines, not everything between
+  them.** With carets on lines 10 and 100 and no selection, `Ctrl+/` commented all
+  91 lines, `Tab` indented all 91, and `Alt+Down` dragged all 91 past line 101.
+  VSCode does two. The line range is resolved as a set of disjoint regions — one
+  per caret, with overlapping or adjacent ones merged — and each op emits one edit
+  per region inside a single undo step. Each region also decides for itself, again
+  matching VSCode: a caret sitting in a commented block uncomments while a caret in
+  an uncommented one comments, and each region comments at its own indent. A
+  selection spanning lines is unaffected: it is one region and still applies to
+  every line it covers.
+- **The file finder understands a `/` in the query.** `editor/tv` means "something
+  starting tv, in a directory matching editor", but the query was scored as one
+  string against the whole path — which threw away every filename signal the
+  ranker has, because a `/` cannot appear in a filename. Those queries barely
+  ordered at all: `util/str` scored `StringUtil.h` and `StringUtil.cpp` at exactly
+  the same number. The query is now split at the last separator, matching VSCode:
+  the tail ranks against the filename and the head narrows the directory.
+- **Sustained large multi-line editing no longer grows memory without bound.**
+  The piece tree's insert buffer is append-only and nothing reclaimed it below a
+  4 GiB backstop that in practice never fires, so a session doing repeated
+  large-selection edits (toggle-comment, multi-caret line moves, formatting) grew
+  its resident set forever with no way to get it back short of restarting.
+  Measured at ~2.7 MB per sixteen 1,000-line toggles. Retained edit history is now
+  bounded relative to the live document.
+
 ## [2.8.1] - 2026-08-04
 
 A packaging fix that matters more than everything else here combined — every
