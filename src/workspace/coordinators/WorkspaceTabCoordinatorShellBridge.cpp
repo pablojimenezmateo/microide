@@ -368,27 +368,52 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t index) const {
   return TabDisplayTitle(context_.current_project_state.focused_group_index, index);
 }
 
-WorkspaceTabTextModel WorkspaceShell::TabTextModel(std::size_t group_index,
-                                                   std::size_t index) const {
+namespace {
+
+// The file a tab's labels should name. A compare or merge tab's own `path` is not
+// it — those carry the surface's identity, not the document's. Returned by
+// reference so the label builders do not copy a path just to read it.
+const std::filesystem::path& TabLabelPath(const TabEntry& tab) {
+  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
+    return tab.compare->path;
+  }
+  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
+    return tab.merge->output_path;
+  }
+  return tab.path;
+}
+
+}  // namespace
+
+const TabEntry* WorkspaceShell::TabForLabels(std::size_t group_index, std::size_t index) const {
   const ProjectWorkspaceState& state = context_.current_project_state;
   if (group_index >= state.editor_groups.size() ||
       index >= state.editor_groups[group_index].open_tabs.size()) {
+    return nullptr;
+  }
+  return &state.editor_groups[group_index].open_tabs[index];
+}
+
+WorkspaceTabTextModel WorkspaceShell::TabTextModel(std::size_t group_index,
+                                                   std::size_t index) const {
+  const TabEntry* tab = TabForLabels(group_index, index);
+  if (tab == nullptr) {
     return {};
   }
-  const TabEntry& tab = state.editor_groups[group_index].open_tabs[index];
-  // A compare or merge tab's `path` is not the file the label should name.
-  std::filesystem::path path = tab.path;
-  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    path = tab.compare->path;
-  } else if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-    path = tab.merge->output_path;
-  }
-  return BuildWorkspaceTabTextModel(state.root, path, tab.title,
-                                    TabCoordinator::TabStateIsDirty(tab));
+  return BuildWorkspaceTabTextModel(context_.current_project_state.root, TabLabelPath(*tab),
+                                    tab->title, TabCoordinator::TabStateIsDirty(*tab));
 }
 
 std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t index) const {
-  return TabTextModel(group_index, index).display_title;
+  // NOT `TabTextModel(...).display_title`: that also resolves the tooltip's
+  // project-relative label, which the tab strip asks for through its own provider
+  // anyway — so every tab paid for it twice (TD-2026-08-06-159).
+  const TabEntry* tab = TabForLabels(group_index, index);
+  if (tab == nullptr) {
+    return {};
+  }
+  return BuildWorkspaceTabDisplayTitle(TabLabelPath(*tab), tab->title,
+                                       TabCoordinator::TabStateIsDirty(*tab));
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
@@ -396,7 +421,12 @@ std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t group_index, std::size_t index) const {
-  return TabTextModel(group_index, index).tooltip_label;
+  const TabEntry* tab = TabForLabels(group_index, index);
+  if (tab == nullptr) {
+    return {};
+  }
+  return BuildWorkspaceTabTooltipLabel(context_.current_project_state.root, TabLabelPath(*tab),
+                                       tab->title);
 }
 
 std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndices() const {

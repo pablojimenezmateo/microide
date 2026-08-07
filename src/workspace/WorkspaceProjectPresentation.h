@@ -26,6 +26,16 @@ SDL_Color ResolveProjectTabBadgeColor(const ProjectWorkspaceState& state,
                                       const std::filesystem::path& project_root);
 void HydrateProjectBaseColorFromConfig(ProjectWorkspaceState& state,
                                        const PersistenceService& persistence_service);
+// The two halves separately, because the tab strip asks for them separately and
+// the tooltip is the expensive one: it resolves a project-relative label, and
+// building it to answer "what is this tab called" was the top allocation site of
+// both `multi_tab.open_tabs` and `switch_and_idle.switch_and_settle`
+// (TD-2026-08-06-159).
+std::string BuildWorkspaceTabDisplayTitle(const std::filesystem::path& path,
+                                          std::string_view fallback_title, bool dirty);
+std::string BuildWorkspaceTabTooltipLabel(const std::filesystem::path& project_root,
+                                          const std::filesystem::path& path,
+                                          std::string_view fallback_title);
 WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,
                                                  const std::filesystem::path& path,
                                                  std::string_view fallback_title,

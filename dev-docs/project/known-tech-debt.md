@@ -648,6 +648,56 @@ comparison sites stop materialising a `std::filesystem::path` per tab as well �
 copying one costs about what normalising one does (a pathname string plus a
 component list holding a path per component).
 
+#### 2026-08-07: the tab strip asked for one label and built two
+
+    switch_and_idle.switch_and_settle   16,034 -> 12,307  (-23.2 %)
+    multi_tab.open_tabs                  6,414 ->  5,992
+    resize.compact_to_regular            1,824 ->  1,512  (-17.1 %)
+
+`RelativePathLabel` inside `TabTextModel` was the single top allocation site of
+both `multi_tab.open_tabs` and `switch_and_idle.switch_and_settle`, appearing
+**twice per tab** on every tab-strip geometry rebuild. Two independent causes:
+
+  - `TabDisplayTitle(...)` was `TabTextModel(...).display_title` — it built the
+    whole text model, including the tooltip's project-relative label, and returned
+    one field. The tab strip asks for the title and the tooltip through *separate*
+    providers, so every tab resolved its relative label twice.
+    `BuildWorkspaceTabDisplayTitle` / `BuildWorkspaceTabTooltipLabel` split it,
+    and `TabForLabels` + `TabLabelPath` share the lookup by reference so neither
+    entry point copies a `std::filesystem::path` to read it.
+  - `RelativePathLabel` itself spent ~30 allocations arriving at what is, for
+    already-normalized inputs, a substring: two `lexically_normal`s, a
+    `lexically_relative`, a third `lexically_normal`, a `generic_string` — each
+    materialising a component list. It now takes the substring directly when both
+    spellings are already normal (`util::PathTextNeedsNormalizing`) and the path
+    sits under the root (`util::NormalizedPathEqualsOrWithin`), and falls back to
+    the general form otherwise. A `"."` root is excluded: its members carry no
+    `./` prefix once normalized, so there is nothing to trim.
+
+#### 2026-08-07: `OrderedSidebarViews` ran per frame and built a hash map to do it
+
+The scaffolding audit ([163](#td-2026-08-07-163)) turns out to double as
+[159](#td-2026-08-06-159)'s ranked worklist: it records each phase's top *product*
+sites, so summing them across all 115 phases gives a cross-phase table of where
+the suite allocates. `OrderedSidebarViews` came out of that — not the largest
+single site, but present in **every frame-pumping phase** (`compare_selection`,
+`diff.next_hunk_burst`, `editor_indent_guides_paint`,
+`editor_scroll_only_no_content_bump`, …) because `SidebarModeRow` calls it on the
+frame path.
+
+Per call it built four containers to answer a question about six built-in views:
+`SidebarViews(...)`'s vector, an `unordered_map` index over the policy list (one
+heap node per policy, plus its bucket array), an `ordered` vector, and the result
+— and `resolve()` returned a whole `SidebarViewPolicy` **by value**, so the
+not-found branch constructed a `std::string` from the id to fill a field the
+caller never reads.
+
+The map is gone (both sides are bounded by the sidebar view set, so a linear scan
+is a few dozen `string_view` compares against no allocation); `resolve` returns
+the two fields that are read; and the ordered list is built inline from the two
+sources rather than from a third vector that is immediately filtered and dropped.
+Two allocations a call instead of ~10.
+
 **Read, inherent** (grep hits that are not this shape, recorded so the next pass
 does not re-open them):
 

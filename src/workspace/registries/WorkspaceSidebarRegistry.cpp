@@ -4,7 +4,6 @@
 #include <array>
 #include <limits>
 #include <string_view>
-#include <unordered_map>
 
 #include "workspace/WorkspaceCommandParsing.h"
 
@@ -130,38 +129,60 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
 std::vector<SidebarViewInfo> OrderedSidebarViews(
     const plugin::PluginHost& plugin_host,
     const std::vector<SidebarViewPolicy>& policies) {
-  std::vector<SidebarViewInfo> all = SidebarViews(plugin_host);
-
-  // Pre-index policies by view id (first entry wins, matching
-  // EffectiveSidebarViewPolicy) so each view resolves its policy once instead of
-  // re-scanning `policies` inside every filter/sort comparison — the previous
-  // shape was O(views log views * policies) per rebuild.
-  std::unordered_map<std::string_view, const SidebarViewPolicy*> policy_by_id;
-  policy_by_id.reserve(policies.size());
-  for (const SidebarViewPolicy& p : policies) {
-    policy_by_id.emplace(std::string_view(p.view_id), &p);
-  }
-  const auto resolve = [&](std::string_view id) -> SidebarViewPolicy {
-    if (auto it = policy_by_id.find(id); it != policy_by_id.end()) {
-      return *it->second;
+  // First entry wins, matching EffectiveSidebarViewPolicy. This used to pre-index
+  // `policies` into an `unordered_map` to avoid re-scanning it inside every
+  // filter/sort comparison — but the sort no longer resolves anything (the order
+  // is cached per view below), so the scan is once per view, and the map was one
+  // heap node per policy plus a bucket array **per call**. `SidebarModeRow` runs
+  // this on the frame path, so that was ~10 allocations a frame on every scroll
+  // scenario (TD-2026-08-06-159). Both sides are bounded by the sidebar view set
+  // — a handful of built-ins plus the capped plugin contributions — so a linear
+  // scan is a few dozen `string_view` compares against no allocation at all.
+  //
+  // Returns only the two fields the caller reads. Returning a `SidebarViewPolicy`
+  // by value meant a `std::string` copy per view, and the not-found branch built
+  // one from the id purely to fill a field nobody looked at.
+  struct ResolvedPolicy {
+    bool hidden;
+    int order;
+  };
+  const auto resolve = [&](std::string_view id) -> ResolvedPolicy {
+    for (const SidebarViewPolicy& p : policies) {
+      if (p.view_id == id) {
+        return ResolvedPolicy{p.hidden, p.order};
+      }
     }
-    return SidebarViewPolicy{std::string(id), false, std::numeric_limits<int>::max()};
+    return ResolvedPolicy{false, std::numeric_limits<int>::max()};
   };
 
   // Resolve each surviving view's effective order once, then stable-sort on the
   // cached key (views with no explicit policy entry sort at order = INT_MAX).
+  //
+  // Built inline from the two sources rather than from `SidebarViews(...)`: that
+  // helper materialises a whole third vector this function would immediately
+  // filter and drop, and `SidebarViewInfo` is two string_views and an enum, so
+  // there is nothing to reuse from it.
   struct Ordered {
     SidebarViewInfo info;
     int order;
   };
+  const auto builtins = BuiltinSidebarViewSpecs();
+  const auto& plugin_providers = plugin_host.SidebarProviders();
   std::vector<Ordered> ordered;
-  ordered.reserve(all.size());
-  for (SidebarViewInfo& info : all) {
-    const SidebarViewPolicy policy = resolve(info.id);
+  ordered.reserve(builtins.size() + plugin_providers.size());
+  const auto consider = [&](SidebarViewInfo info) {
+    const ResolvedPolicy policy = resolve(info.id);
     if (policy.hidden) {
-      continue;
+      return;
     }
-    ordered.push_back(Ordered{std::move(info), policy.order});
+    ordered.push_back(Ordered{info, policy.order});
+  };
+  for (const SidebarViewSpec& spec : builtins) {
+    consider(SidebarViewInfo{.id = spec.id, .label = spec.label, .mode = spec.mode});
+  }
+  for (const auto& provider : plugin_providers) {
+    consider(SidebarViewInfo{
+        .id = provider.id, .label = provider.label, .mode = SidebarMode::Plugin});
   }
   std::stable_sort(ordered.begin(), ordered.end(),
                    [](const Ordered& a, const Ordered& b) { return a.order < b.order; });

@@ -737,6 +737,10 @@
   // Title and tooltip for one editor tab come from the same text model; this
   // resolves the tab (including a compare/merge tab's real path) and builds it
   // once. Empty model for an out-of-range group or tab index.
+  // The tab a label request names, or nullptr when the indices are stale. Shared
+  // by the three label entry points so each builds only the string it was asked
+  // for (TD-2026-08-06-159).
+  const TabEntry* TabForLabels(std::size_t group_index, std::size_t index) const;
   WorkspaceTabTextModel TabTextModel(std::size_t group_index, std::size_t index) const;
   std::string TabDisplayTitle(std::size_t index) const;
   std::string TabDisplayTitle(std::size_t group_index, std::size_t index) const;

@@ -101,21 +101,32 @@ void HydrateProjectBaseColorFromConfig(ProjectWorkspaceState& state,
   }
 }
 
-WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,
-                                                 const std::filesystem::path& path,
-                                                 std::string_view fallback_title,
-                                                 bool dirty) {
+std::string BuildWorkspaceTabDisplayTitle(const std::filesystem::path& path,
+                                          std::string_view fallback_title, bool dirty) {
   std::string title = path.filename().string();
   if (title.empty()) {
     title = fallback_title.empty() ? "untitled" : std::string(fallback_title);
   }
+  return dirty ? "*" + title : title;
+}
 
-  WorkspaceTabTextModel model;
-  model.display_title = dirty ? "*" + title : title;
-  model.tooltip_label =
-      path.empty() ? (fallback_title.empty() ? "untitled" : std::string(fallback_title))
-                   : RelativePathLabel(project_root, path);
-  return model;
+std::string BuildWorkspaceTabTooltipLabel(const std::filesystem::path& project_root,
+                                          const std::filesystem::path& path,
+                                          std::string_view fallback_title) {
+  if (path.empty()) {
+    return fallback_title.empty() ? "untitled" : std::string(fallback_title);
+  }
+  return RelativePathLabel(project_root, path);
+}
+
+WorkspaceTabTextModel BuildWorkspaceTabTextModel(const std::filesystem::path& project_root,
+                                                 const std::filesystem::path& path,
+                                                 std::string_view fallback_title,
+                                                 bool dirty) {
+  return WorkspaceTabTextModel{
+      .display_title = BuildWorkspaceTabDisplayTitle(path, fallback_title, dirty),
+      .tooltip_label = BuildWorkspaceTabTooltipLabel(project_root, path, fallback_title),
+  };
 }
 
 std::string BuildEditorBreadcrumbLabel(const std::filesystem::path& project_root,
