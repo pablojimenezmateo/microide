@@ -277,7 +277,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-07-161 — the whole baseline set is stale in three independent ways. PARTLY RESOLVED 2026-08-07: the deterministic half is rerecorded; the timing/resident half still needs an idle runner.
+### TD-2026-08-07-161 — the whole baseline set is stale in three independent ways. RESOLVED 2026-08-07: both halves rerecorded; the timing/resident half on an idle runner.
 
 Nothing in `tests/perf/baselines/` describes what `microide_perf` now measures,
 and the gaps are large enough that most allocation gates would pass a complete
@@ -334,22 +334,46 @@ were `branch_review_presentation_markers` -99.6 %, `editor_surround_multi_caret`
 `menu_hover_switch` 54 -> 314): that is cause 2, the number becoming true, and it
 was confirmed by running each one both isolated and with `--no-isolate`.
 
-**Still open — the timing and resident half.** Wall, CPU, `p50_cpu_calibration_ns`
-and `mean_rss_growth_bytes` are all still pre-isolation. That is not only "loose":
-`editor_snippet_expand` FAILS its resident gate today at 103,310 bytes against a
-baseline of 81,465 (+26.8 % against a +25 % tolerance), reproducibly, and it fails
-identically at the commit before this session's code changes — it is the stale
-baseline, not a regression. Expect more of the same across the suite. Run the full
-`--update-baseline` recipe above on an idle runner.
+**2026-08-07, later: the timing and resident half is done too, on an idle box.**
 
-**One anomaly worth chasing before trusting the next full-suite number.** Two
-full-suite isolated runs, an hour apart, disagreed by exactly +80 allocations on
-both `menu_hover_switch` (234 vs 314) and `menu_popup_hover_rows` (254 vs 334).
-Only the higher value reproduces: 4/4 standalone, and identical when measured from
-a worktree at the commit before this session's code changes. So it is not a code
-move and the committed 314/334 is the isolated property — but a full-suite run
-that reads 80 lower is a lead, not noise (memory: perf-scenario-context-dependence).
-Diff the `perf_counters` block of the two runs if it recurs.
+The prediction above held. Gated bare on an idle perf-runner-v1 at the default
+iteration count, the pre-rebaseline suite read **99 PASS / 1 FAIL / 3 advisory**:
+`typing_large_file` failed `mean_rss_growth_bytes` at 103,310 bytes against 79,644
+(+29.7 % against +25 % allowed), and `editor_snippet_expand` passed at 91.6 % of
+the same envelope. Both are resident gates whose baselines predate per-scenario
+process isolation, exactly as called.
+
+**No allocation gate was anywhere near its limit in that run** — zero deterministic
+headroom notices. That is what separates "the baseline is stale" from "the code
+regressed", and it is the check to repeat before believing any future rebaseline:
+rerecording a suite whose deterministic gates are tight would be rebaselining a
+regression away.
+
+The full `--update-baseline` was then run under the same conditions (clock steady
+at ~0.94x the previous baselines' calibration, apart from the soak/idle scenarios
+which lose the boost by construction) and re-gated against what it wrote:
+**100 PASS / 0 FAIL, every gated metric below 75 % of its envelope.** Tolerances
+were diffed field by field afterwards and none moved — `--update-baseline` is
+documented to reset hand-edited ones, so that is a check, not an assumption.
+
+The deterministic metrics moved slightly in that rewrite (±4–8 on the git/diff
+scenarios, +91 on `linter_on_save`). That is **not** harness nondeterminism: the
+deterministic half was recorded at `0d52373f`, six code commits before HEAD,
+including `b4bac8e0` (the [165](#td-2026-08-07-165) app-root isolation fix, which
+by design changes what state the shell reads). `git_sidebar_activate` reads 733 in
+6/6 standalone runs and in both full-suite runs; the committed 729 was simply older
+code.
+
+**The +80 menu anomaly did not recur.** Two full-suite isolated runs, an hour
+apart, had disagreed by exactly +80 allocations on both `menu_hover_switch`
+(234 vs 314) and `menu_popup_hover_rows` (254 vs 334). Across the two full-suite
+runs on the idle box they agree exactly — 54 and 74, matching their committed
+baselines and each other. Both scenarios fell to those values in `384f238d`, which
+stopped the tab strip and the sidebar rail rebuilding per frame, so the surface
+that carried the disagreement is substantially less work now. Left recorded rather
+than deleted: a full-suite run that disagrees with a standalone one is a lead, not
+noise (memory: perf-scenario-context-dependence). Diff the `perf_counters` block of
+the two runs if it returns.
 
 
 ### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN.

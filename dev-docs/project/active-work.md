@@ -111,17 +111,16 @@ The emulator covers the full-screen and shell workflows exercised so far.
 
 ### 6. Testing and performance discipline
 
-- **the perf baselines' TIMING and RESIDENT half is still stale and needs
-  re-recording on an idle perf-runner-v1** — TD-2026-08-07-161 carries the command
-  and the conditions. The deterministic half (allocation counts, per-phase
-  allocation counts, net heap) was rerecorded on 2026-08-07 with
+- **the perf baselines are fully rerecorded as of 2026-08-07** (TD-2026-08-07-161,
+  now resolved). The deterministic half went first with
   `--update-baseline=deterministic`, which rewrites only the metrics that do not
-  depend on machine state, and re-recorded again on 2026-08-07 after
-  TD-2026-08-07-165 (the old numbers were inflated by state the harness should
-  never have been reading); those gates are now honest. The rest are not merely
-  loose — some are RED (`editor_snippet_expand` fails its resident gate purely
-  because its baseline predates per-scenario process isolation), so a perf run's
-  wall/cpu/rss failures need checking against that entry before they are believed
+  depend on machine state; the timing and resident half followed on an idle
+  perf-runner-v1 with the full `--update-baseline`. The suite re-gates 100 PASS /
+  0 FAIL with every gated metric below 75 % of its envelope, so a wall/cpu/rss
+  failure is now evidence again rather than something to check against a stale
+  record first. Rebaseline the same way: confirm no *allocation* gate is near its
+  envelope before rewriting, because those are deterministic and a tight one means
+  the code moved — rerecording then buries a regression instead of closing drift
 - a scenario must not read the developer's home directory. Every scenario's shell
   loaded `~/.local/state/microide/recents` until 2026-08-07, because
   `PerfHarness::Driver` holds a `WorkspaceShell` **by value** and the isolated
