@@ -277,6 +277,40 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-07-167 — nothing records that a scenario changed what it measures, so cross-release perf claims are computed from incomparable numbers. OPEN.
+
+Cutting v2.9.0 needed one number: how much faster is this release than v2.8.1.
+The obvious way to get it — diff `p50_allocations` across the two tags'
+`tests/perf/baselines/` — reported three regressions, and all three were
+artifacts:
+
+- `terminal_alt_screen_toggle` +172.6 % and `terminal_scroll_long_output`
+  +112.3 %. Neither is a regression. `f38ef7fd` changed what those scenarios
+  *do*: they used to scroll and toggle an empty buffer (the harness never spawns
+  a real shell, so `yes`/`bash -lc` left a terminal holding one blank line), and
+  they now feed 4,000 lines through the emulator. Different measurement, and the
+  only way to know is to read the commit that moved the baseline.
+- `git_sidebar_activate` +17.5 %, from `23ccb088` (per-scenario cold child
+  process) and `b4bac8e0` (isolated app-root) — harness changes that move counts
+  for anything that used to inherit warm state, in both directions.
+
+A baseline file records the value and nothing about whether the value means the
+same thing it did last release. The changelog for v2.9.0 works around this by
+naming the two excluded scenarios in prose, which is exactly the kind of fact
+that survives one release and is then lost.
+
+Worth fixing, cheaply: give a baseline a `measurement_revision` (or a
+`definition_hash` over the scenario body) that the author bumps when the scenario
+changes what it does, and have any cross-release comparison refuse to difference
+two baselines whose revisions differ. The same field would let the harness say
+"3 scenarios not comparable" instead of silently reporting them as regressions.
+
+Related: **wall-clock cannot be compared across v2.8.1 at all** — those baselines
+predate `p50_cpu_calibration_ns`, so there is no way to normalise for the machine
+clock state, and the release note had to drop the duration figure entirely and
+lead on allocations. That one ages out on its own as tags accumulate; the
+scenario-identity gap does not.
+
 ### TD-2026-08-07-161 — the whole baseline set is stale in three independent ways. RESOLVED 2026-08-07: both halves rerecorded; the timing/resident half on an idle runner.
 
 Nothing in `tests/perf/baselines/` describes what `microide_perf` now measures,
