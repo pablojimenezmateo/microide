@@ -101,6 +101,10 @@ class DebugBreakpointsModel {
   bool seeded_ = false;
   std::vector<dap_protocol::DapExceptionFilter> advertised_;
   std::vector<DebugBreakpointRowView> rows_;
+  // Reused across rebuilds so the non-owning file walk allocates nothing in
+  // steady state. Views are only live inside Rebuild(); nothing reads this
+  // between calls.
+  mutable std::vector<editor::BreakpointStore::FileBreakpointsView> file_views_scratch_;
 };
 
 }  // namespace microide::workspace

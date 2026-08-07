@@ -212,6 +212,22 @@ std::vector<BreakpointStore::FileBreakpoints> BreakpointStore::SnapshotAll() con
   return files;
 }
 
+void BreakpointStore::FillSortedFileViews(std::vector<FileBreakpointsView>* out) const {
+  if (out == nullptr) {
+    return;
+  }
+  out->clear();
+  out->reserve(by_path_.size());
+  for (const auto& [key, entry] : by_path_) {
+    out->push_back(FileBreakpointsView{.path = &entry.path, .breakpoints = entry.breakpoints});
+  }
+  // Same ordering rule as SnapshotAll, so the two agree on what "first file" means.
+  std::sort(out->begin(), out->end(),
+            [](const FileBreakpointsView& lhs, const FileBreakpointsView& rhs) {
+              return lhs.path->native() < rhs.path->native();
+            });
+}
+
 void BreakpointStore::ApplyVerification(const std::filesystem::path& path,
                                         const std::vector<VerifiedBreakpoint>& results) {
   std::vector<Breakpoint>* breakpoints = MutableForKey(PathKey(path));

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -98,6 +99,22 @@ class BreakpointStore {
 
   // Every file with at least one breakpoint (for the launch snapshot).
   std::vector<FileBreakpoints> SnapshotAll() const;
+
+  // Non-owning sibling of SnapshotAll, in the same deterministic path order.
+  //
+  // SnapshotAll deep-copies every file's whole breakpoint vector, which is right
+  // for a caller that keeps the result across store mutations (the launch
+  // snapshot, session persistence) and pure waste for one that walks it once and
+  // drops it — the Breakpoints panel rebuild was copying 88 KB per pass to read
+  // 500 breakpoints (TD-2026-08-06-159). Views are valid until the next mutating
+  // call on this store.
+  //
+  // Fills a caller-owned buffer so a repeated rebuild keeps its capacity.
+  struct FileBreakpointsView {
+    const std::filesystem::path* path = nullptr;
+    std::span<const Breakpoint> breakpoints;
+  };
+  void FillSortedFileViews(std::vector<FileBreakpointsView>* out) const;
 
   // Reflect adapter verification for one file. Each result is matched to a stored
   // breakpoint by its (requested) line — NOT by array index — so a setBreakpoints

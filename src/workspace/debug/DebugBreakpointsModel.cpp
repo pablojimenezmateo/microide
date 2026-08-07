@@ -132,15 +132,30 @@ std::vector<std::pair<std::string, std::string>> DebugBreakpointsModel::EnabledF
 void DebugBreakpointsModel::Rebuild(
     const editor::BreakpointStore& breakpoints,
     const editor::FunctionBreakpointStore& function_breakpoints) {
-  rows_.clear();
+  // Rows are OVERWRITTEN in place rather than cleared and re-pushed. Every row
+  // owns four strings and a std::filesystem::path, and clearing frees all of them
+  // so the next rebuild has to allocate them again -- 500 breakpoints across 20
+  // files cost ~500 path allocations a pass, on a list that is unchanged between
+  // most rebuilds. `kEmptyRow` is COPY-assigned (never moved from a temporary):
+  // copy-assigning an empty string or path clears the target and keeps its
+  // capacity, which is the whole point (TD-2026-08-06-159).
+  static const DebugBreakpointRowView kEmptyRow{};
+  std::size_t out = 0;
+  const auto next_row = [&]() -> DebugBreakpointRowView& {
+    if (out == rows_.size()) {
+      rows_.emplace_back();
+    }
+    DebugBreakpointRowView& row = rows_[out++];
+    row = kEmptyRow;
+    return row;
+  };
 
   if (!advertised_.empty()) {
-    DebugBreakpointRowView header;
+    DebugBreakpointRowView& header = next_row();
     header.kind = DebugBreakpointRowView::Kind::Header;
     header.display = "Exception Breakpoints";
-    rows_.push_back(std::move(header));
     for (const dap_protocol::DapExceptionFilter& filter : advertised_) {
-      DebugBreakpointRowView row;
+      DebugBreakpointRowView& row = next_row();
       row.kind = DebugBreakpointRowView::Kind::ExceptionFilter;
       row.display = filter.label;
       row.filter_id = filter.filter;
@@ -150,19 +165,17 @@ void DebugBreakpointsModel::Rebuild(
           it != filter_conditions_.end() && !it->second.empty()) {
         row.secondary = "when " + it->second;
       }
-      rows_.push_back(std::move(row));
     }
   }
 
   const std::vector<editor::FunctionBreakpoint>& functions = function_breakpoints.All();
   if (!functions.empty()) {
-    DebugBreakpointRowView header;
+    DebugBreakpointRowView& header = next_row();
     header.kind = DebugBreakpointRowView::Kind::Header;
     header.display = "Function Breakpoints";
-    rows_.push_back(std::move(header));
     for (std::size_t i = 0; i < functions.size(); ++i) {
       const editor::FunctionBreakpoint& fn = functions[i];
-      DebugBreakpointRowView row;
+      DebugBreakpointRowView& row = next_row();
       row.kind = DebugBreakpointRowView::Kind::FunctionBreakpoint;
       row.display = fn.name;
       row.function_name = fn.name;
@@ -184,20 +197,21 @@ void DebugBreakpointsModel::Rebuild(
         row.failed = UnverifiedReasonIsFailure(reason);
         row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
       }
-      rows_.push_back(std::move(row));
     }
   }
 
-  const std::vector<editor::BreakpointStore::FileBreakpoints> files = breakpoints.SnapshotAll();
-  if (!files.empty()) {
-    DebugBreakpointRowView header;
+  // Views, not SnapshotAll: this pass reads each file's breakpoints once and keeps
+  // nothing, so the owning snapshot's deep copy of every file's whole vector was
+  // 88 KB of memcpy per rebuild for nothing.
+  breakpoints.FillSortedFileViews(&file_views_scratch_);
+  if (!file_views_scratch_.empty()) {
+    DebugBreakpointRowView& header = next_row();
     header.kind = DebugBreakpointRowView::Kind::Header;
     header.display = "Breakpoints";
-    rows_.push_back(std::move(header));
-    for (const editor::BreakpointStore::FileBreakpoints& file : files) {
-      const std::string filename = file.path.filename().string();
+    for (const editor::BreakpointStore::FileBreakpointsView& file : file_views_scratch_) {
+      const std::string filename = file.path->filename().string();
       for (const editor::Breakpoint& breakpoint : file.breakpoints) {
-        DebugBreakpointRowView row;
+        DebugBreakpointRowView& row = next_row();
         row.kind = DebugBreakpointRowView::Kind::Breakpoint;
         // 1-based line for display; the buffer index stays 0-based for nav.
         row.display = filename + ':' + std::to_string(breakpoint.line + 1);
@@ -222,12 +236,14 @@ void DebugBreakpointsModel::Rebuild(
           row.failed = UnverifiedReasonIsFailure(reason);
           row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
         }
-        row.path = file.path;
+        row.path = *file.path;
         row.line = breakpoint.line;
-        rows_.push_back(std::move(row));
       }
     }
   }
+  // The only place capacity is given back: anything past the last row this pass
+  // produced is destroyed, so a shrinking list does not keep rows it no longer shows.
+  rows_.resize(out);
 }
 
 }  // namespace microide::workspace

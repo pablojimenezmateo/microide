@@ -108,14 +108,25 @@ void RunPluginStatusItemUpdate(ScenarioContext& context) {
   }
   std::unordered_map<std::string, std::size_t> index;
 
+  // Built OUTSIDE the measured window. Composing `"plugin.status.item_" +
+  // std::to_string(...)` per call was two allocations per update against a lookup
+  // that makes none, so 95% of this phase's 168,001 allocations were the scenario
+  // building its own input — a gate on operator+ wearing ApplyStatusItemUpdate's
+  // name, which a real regression in the lookup could not have moved (TD-2026-08-06-159).
+  std::vector<plugin::registry_interop::StatusItemUpdate> updates;
+  updates.reserve(kItems);
+  for (int i = 0; i < kItems; ++i) {
+    plugin::registry_interop::StatusItemUpdate update;
+    // Scatter the target so a linear-scan regression pays the full walk.
+    update.full_id = "plugin.status.item_" + std::to_string((i * 2654435761u) % kItems);
+    update.has_text = true;
+    update.text = "busy";
+    updates.push_back(std::move(update));
+  }
+
   context.Measure("status_registry.apply_update", [&]() {
     for (int iter = 0; iter < 40; ++iter) {
-      for (int i = 0; i < kItems; ++i) {
-        plugin::registry_interop::StatusItemUpdate update;
-        // Scatter the target so a linear-scan regression pays the full walk.
-        update.full_id = "plugin.status.item_" + std::to_string((i * 2654435761u) % kItems);
-        update.has_text = true;
-        update.text = "busy";
+      for (const plugin::registry_interop::StatusItemUpdate& update : updates) {
         const bool ok =
             plugin::registry_interop::ApplyStatusItemUpdate(update, &order, &index);
         volatile bool sink = ok;

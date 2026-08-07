@@ -2228,6 +2228,65 @@ void TestDebugBreakpointsModelPendingIsNotFailed() {
   Expect(saw_pending && saw_failed, "both breakpoint rows should be present");
 }
 
+// TD-2026-08-06-159: Rebuild reuses its row objects instead of freeing and
+// reallocating four strings and a filesystem::path per row. Reusing storage is
+// exactly how a stale field survives into a row that should not have it, so what
+// a SHRINKING rebuild produces is the thing worth asserting.
+void TestDebugBreakpointsModelRebuildReusesRows() {
+  using microide::workspace::DebugBreakpointsModel;
+  using microide::workspace::DebugBreakpointRowView;
+
+  editor::BreakpointStore store;
+  const std::filesystem::path a = "/proj/alpha.cpp";
+  const std::filesystem::path b = "/proj/beta.cpp";
+  for (std::size_t line = 0; line < 6; ++line) {
+    store.Set(a, line);
+    store.Set(b, line);
+  }
+  store.SetCondition(a, 3, std::string("x > 0"));
+  editor::FunctionBreakpointStore functions;
+  functions.Add("main");
+
+  DebugBreakpointsModel model;
+  model.Rebuild(store, functions);
+  const std::size_t wide_rows = model.RowCount();
+  Expect(wide_rows == 1 + 1 + 1 + 12, "one function header+row, one breakpoint header, 12 rows");
+
+  // Shrink: beta.cpp goes away entirely, and alpha's conditioned breakpoint loses
+  // its condition. A reused row must show neither the dropped file's path nor the
+  // dropped condition's trailer.
+  store.ClearFile(b);
+  store.SetCondition(a, 3, std::nullopt);
+  model.Rebuild(store, functions);
+  Expect(model.RowCount() == 1 + 1 + 1 + 6, "the shrunken rebuild drops beta's six rows");
+  for (const DebugBreakpointRowView& row : model.Rows()) {
+    if (row.kind != DebugBreakpointRowView::Kind::Breakpoint) {
+      continue;
+    }
+    Expect(row.path == a, "no row keeps the path of a file that is no longer in the store");
+    Expect(row.display.find("alpha.cpp") != std::string::npos,
+           "no row keeps a display string built for a different file");
+    Expect(row.secondary.empty(),
+           "a reused row must not keep the trailer of whatever occupied it before");
+  }
+
+  // Grow back: the rows that return must be fully rebuilt, not half-populated.
+  for (std::size_t line = 0; line < 6; ++line) {
+    store.Set(b, line);
+  }
+  model.Rebuild(store, functions);
+  Expect(model.RowCount() == wide_rows, "growing back restores every row");
+  std::size_t beta_rows = 0;
+  for (const DebugBreakpointRowView& row : model.Rows()) {
+    if (row.kind == DebugBreakpointRowView::Kind::Breakpoint && row.path == b) {
+      ++beta_rows;
+      Expect(row.display.find("beta.cpp") != std::string::npos,
+             "a re-grown row carries its own display string");
+    }
+  }
+  Expect(beta_rows == 6, "every beta breakpoint comes back");
+}
+
 void TestDebugBreakpointsModelBehavior() {
   using microide::workspace::DebugBreakpointsModel;
   using microide::workspace::DebugBreakpointRowView;
@@ -3438,6 +3497,8 @@ void RegisterDebugServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "DebugService/GdbRealFunctionBreakpointsE2E", TestGdbRealFunctionBreakpointsE2E);
   AddTest(tests, "DebugService/BreakpointsModelPendingIsNotFailed",
           TestDebugBreakpointsModelPendingIsNotFailed);
+  AddTest(tests, "DebugService/BreakpointsModelRebuildReusesRows",
+          TestDebugBreakpointsModelRebuildReusesRows);
   AddTest(tests, "DebugService/BreakpointsModelBehavior", TestDebugBreakpointsModelBehavior);
   AddTest(tests, "DebugService/SessionVariablesTreeAndSetVariable",
           TestDebugSessionVariablesTreeAndSetVariable);
