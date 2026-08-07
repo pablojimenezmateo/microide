@@ -204,6 +204,18 @@ class SettingsOverlayService {
   // rescanning settings_rows_ from the start on every call, which turned the render
   // loop that walks a category row-by-row into an O(rows^2) pass (TD-2026-07-17A-019).
   std::vector<std::vector<int>> category_row_indices_;
+  // Sorted (key -> stored value) views over the two override layers and over the
+  // derived category list, searched by binary search during a rebuild.
+  //
+  // These were three `unordered_map`s built from scratch inside RebuildSettingsRows,
+  // which is one node allocation per element — 500 on a 600-setting plugin surface,
+  // paid again on every keystroke in the Settings search box. Held as members so the
+  // buffers keep their capacity across rebuilds and the steady state allocates
+  // nothing for them at all. Views point into the caller's layers / into
+  // `categories_`, both of which are stable for the duration of one rebuild.
+  std::vector<std::pair<std::string_view, const std::string*>> user_layer_index_;
+  std::vector<std::pair<std::string_view, const std::string*>> project_layer_index_;
+  std::vector<std::pair<std::string_view, int>> category_index_;
   int selected_category_ = 0;
   int selected_row_ = 0;
   SettingsPane focused_pane_ = SettingsPane::Filter;

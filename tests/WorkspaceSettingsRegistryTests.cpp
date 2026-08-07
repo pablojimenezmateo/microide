@@ -3,6 +3,7 @@
 #include "plugin/PluginHost.h"
 #include "workspace/services/SettingsOverlayService.h"
 #include "workspace/registries/WorkspaceSettingsRegistry.h"
+#include "perf/AllocationCounter.h"
 
 #include <algorithm>
 #include <array>
@@ -225,6 +226,74 @@ void TestSettingsOverlayFiltersAndPreservesScopes() {
          "settings overlay rows should surface stored values and reset affordance state");
   Expect(it->detail.find("User") != std::string::npos,
          "settings overlay rows should preserve scope labels");
+}
+
+// TD-2026-08-06-159: a rebuild reuses its rows instead of freeing and reallocating
+// eight strings per row. RebuildSettingsRows runs on every keystroke in the
+// Settings search box, so what a repeated rebuild costs is a per-keystroke cost.
+//
+// Two claims are tested together because the fix is only correct if both hold: the
+// second rebuild must be nearly free, AND a narrowing rebuild must not leave stale
+// rows behind (reusing storage is exactly how that goes wrong).
+void TestSettingsOverlayRebuildReusesRowStorage() {
+  std::vector<microide::workspace::SettingInfo> settings;
+  for (int i = 0; i < 200; ++i) {
+    microide::workspace::SettingInfo info;
+    info.id = "perf.plugin.setting_" + std::to_string(i);
+    info.label = (i % 2 == 0 ? "Alpha number " : "Beta number ") + std::to_string(i);
+    info.description = "Controls behavior variant " + std::to_string(i);
+    info.type = SettingType::String;
+    info.scope = microide::workspace::SettingScope::Project;
+    info.default_value = std::string("default");
+    info.plugin_id = "perf.plugin";
+    info.group = "Plugins";
+    settings.push_back(std::move(info));
+  }
+  std::vector<std::pair<std::string, std::string>> user;
+  for (int i = 0; i < 200; i += 2) {
+    user.emplace_back("perf.plugin.setting_" + std::to_string(i), "user-override");
+  }
+
+  SettingsOverlayService service;
+  service.OpenSettings();
+  service.RebuildSettingsRows(settings, user, {});
+  Expect(service.SettingsRows().size() == 200, "the unfiltered rebuild shows every row");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  namespace perf = microide::tests::perf;
+  const auto before = perf::Allocations::Snapshot();
+  service.RebuildSettingsRows(settings, user, {});
+  const auto delta = perf::Allocations::DeltaSince(before);
+  // Six string allocations per row plus one hash node per override is ~1,300 here;
+  // reusing the rows leaves only the two sorted layer indices, which keep their
+  // capacity, and the per-category row-index vectors.
+  Expect(delta.allocations < 100,
+         "a repeated rebuild of the same surface must reuse its row storage (took " +
+             std::to_string(delta.allocations) + " allocations)");
+#endif
+
+  // Narrowing: the reused storage must not keep rows the query no longer matches.
+  service.SetQuery("Alpha");
+  service.RebuildSettingsRows(settings, user, {});
+  Expect(service.SettingsRows().size() == 100,
+         "a narrowing query drops the rows it filters out, reused storage or not");
+  for (const auto& row : service.SettingsRows()) {
+    Expect(row.label.find("Alpha") != std::string::npos,
+           "no stale row survives into a narrowed rebuild");
+  }
+
+  // Widening back must restore every row with correct content, not the values a
+  // reused row happened to hold.
+  service.SetQuery("");
+  service.RebuildSettingsRows(settings, user, {});
+  Expect(service.SettingsRows().size() == 200, "clearing the query restores every row");
+  Expect(service.SettingsRows()[0].id == "perf.plugin.setting_0" &&
+             service.SettingsRows()[0].value == "user-override" &&
+             service.SettingsRows()[0].resettable,
+         "an overridden row reads its override after storage reuse");
+  Expect(service.SettingsRows()[1].id == "perf.plugin.setting_1" &&
+             service.SettingsRows()[1].value == "default" && !service.SettingsRows()[1].resettable,
+         "a row with no override does not inherit the previous occupant's value");
 }
 
 void TestSettingsOverlayScopeSelectableRows() {
@@ -592,6 +661,8 @@ void RegisterWorkspaceSettingsRegistryTests(std::vector<TestCase>& tests) {
           TestSettingsCatalogRejectsInvalidEnums);
   AddTest(tests, "WorkspaceSettingsOverlay/FiltersAndPreservesScopes",
           TestSettingsOverlayFiltersAndPreservesScopes);
+  AddTest(tests, "WorkspaceSettingsOverlay/RebuildReusesRowStorage",
+          TestSettingsOverlayRebuildReusesRowStorage);
   AddTest(tests, "WorkspaceSettingsOverlay/ScopeSelectableRows",
           TestSettingsOverlayScopeSelectableRows);
   AddTest(tests, "WorkspaceSettingsOverlay/StringRowsAreTextEditable",
