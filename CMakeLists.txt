@@ -1027,6 +1027,7 @@ add_executable(microide_tests
   tests/PluginThreadTests.cpp
   tests/InlineVectorTests.cpp
   tests/SmallVectorTests.cpp
+  tests/FlatDedupSetTests.cpp
   tests/ParseTests.cpp
   tests/JsonValueTests.cpp
   tests/JsonFormatTests.cpp

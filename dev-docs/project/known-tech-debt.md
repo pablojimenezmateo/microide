@@ -564,6 +564,54 @@ to the Settings work this pass already did, and it is the scenario gating
 TD-2026-08-03-110's shared `LanguageContractView`, so anything found there has an
 existing guard to check it against.
 
+#### 2026-08-07 grep-first pass: the fresh-hash-set shape
+
+The grep for "a hash container built inside a function, walked once, thrown away"
+turned up `assist_merge::RankedUnion`, and the tracer sized it:
+
+    assist.ranked_union   240,086 -> 126  (-99.95 %)
+
+`RankedUnion` merges the LSP and plugin result lists for completion, code actions
+and references — per keystroke while a completion popup is open. Past a small
+threshold it de-duplicates through a `std::unordered_set<Key>`, which is **one
+heap node per distinct key**: merging two 6,000-item lists was 6,002 allocations
+per merge, and the merge itself is the entire function. The keys are short enough
+to sit in the string's SSO buffer, so every one of those allocations was the
+container's node, not the data.
+
+The replacement is `util::FlatDedupSet` (`src/util/FlatDedupSet.h`): open
+addressing over two flat arrays, the slot table sized once from the caller's
+upper bound at a load factor of 1/2, and the hash stored in the slot so a probe
+compares keys only on a hash match. Two allocations for any list length, and the
+probe stays in cache instead of chasing a pointer per step. It grows if the bound
+was under-estimated, so a wrong bound is slow rather than wrong (covered by
+`FlatDedupSet/GrowsPastAnUnderEstimatedBound`).
+
+**Where else this shape is** — the grep's other function-local hash containers,
+none of which is on a measured hot path today, so none was changed:
+`SdlTtfTextBackend`'s font-scan `seen` sets, `WorkspacePluginRuntime`'s
+`unique_languages`, `GitRepositoryService::conflicted_paths`, `ControlSpec`'s
+duplicate-id `seen`, and `WorkspaceShellPlugins`' `active_language_servers` /
+`active_debug_adapter_types`. `FlatDedupSet` is a drop-in for each when one of
+them turns up in a trace.
+
+**Read, inherent** (grep hits that are not this shape, recorded so the next pass
+does not re-open them):
+
+- `GitBlameService`'s `blame_by_line` is an `unordered_map<std::size_t, …>` keyed
+  by line number, which reads as a dense key — but it holds only the *loaded
+  window* of a file that may be 50k lines, so it is genuinely sparse. A vector
+  indexed by line would cost the whole file to cache forty rows.
+- `CompareModel::BuildExactLineOps`' `line_occurrences` / `ids` maps are keyed by
+  `std::string_view` and are one node per *distinct* line, which is the intern
+  table the DP needs. `FlatDedupSet` would help, but the map values are read
+  back (occurrence counts, equality-class ids) rather than only tested for
+  presence, so it wants a flat *map*, not the set. Filed as
+  [164](#td-2026-08-07-164).
+- `WorkspaceKeybindingRegistry`'s `resolved_contexts` is keyed by a packed
+  (keycode, modifiers) chord — sparse, not a counter. It is one node per distinct
+  chord per keybinding *reload*, not per key press.
+
 ### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. RESOLVED 2026-08-07 for the two apply paths; the shaping ops moved to [160](#td-2026-08-07-160).
 
 Found by pointing the phase-scoped tracer at `editor_surround_multi_caret`, the
@@ -703,6 +751,32 @@ Covered by `EditorEssentials/Shaping/MultiCaretOpsDoNotTouchLinesBetweenCarets`
 cases), `.../MoveLineSkipsOnlyThePinnedRegion`, and
 `TextViewport/GroupedChildEntriesDoNotCopyTheCaretSet` (budget placed from both
 measurements: 2.7x above the fixed cost, 12.6x below the defect).
+
+### TD-2026-08-07-164 — the exact-line diff interns every distinct line through two node-per-element hash maps. OPEN.
+
+Found by [159](#td-2026-08-06-159)'s grep-first pass, alongside the `RankedUnion`
+fix that pass took.
+
+`CompareModel::BuildExactLineOps` builds two `unordered_map`s before its DP:
+`line_occurrences` (line → how many times it appears on either side) and `ids`
+(line → equality-class id). Both are one heap node per **distinct line**, so a
+14k-line compare pays ~28k node allocations before the diff starts, and both are
+thrown away when the function returns. That is the same shape the grep-first pass
+fixed in `RankedUnion` — except `util::FlatDedupSet` does not fit, because these
+are maps whose *values* are read back, not sets that are only tested for presence.
+
+The answer is a flat open-addressed **map** with the same layout `FlatDedupSet`
+already uses (slot table sized once from `left_count + right_count`, hash stored
+in the slot, keys and values in their own arrays). Doing it as
+`util::FlatHashMap<K, V>` and making `FlatDedupSet` its degenerate case is
+probably right, but that is a second container to get correct and test, which is
+why this is filed rather than done.
+
+Worth ~2 allocations per distinct line on every compare/diff open. Size it with
+the tracer against `diff.open_large_compare` (26,967) and `diff.open_large_patch`
+(26,952) before starting: the 2026-08-07 pass already took the whole-side
+materialisation out of both, so what remains there is a mix and these maps are
+only part of it.
 
 ### TD-2026-08-07-162 — the debug value tree stores its nodes in a hash map keyed by a dense counter. [RESOLVED 2026-08-07 — and the paging path moved further than the expand path.]
 

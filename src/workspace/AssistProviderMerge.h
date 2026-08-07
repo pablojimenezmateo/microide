@@ -4,9 +4,10 @@
 #include <cstddef>
 #include <functional>
 #include <type_traits>
-#include <unordered_set>
 #include <utility>
 #include <vector>
+
+#include "util/FlatDedupSet.h"
 
 // Pure, allocation-light decision helpers for the LSP-primary *concurrent*
 // provider model. A plugin worker and the language server are queried at the
@@ -71,11 +72,14 @@ std::vector<Item> RankedUnion(const std::vector<Item>& primary,
   if constexpr (IsStdHashable<Key>::value) {
     constexpr std::size_t kHashThreshold = 128;
     if (total >= kHashThreshold) {
-      std::unordered_set<Key> seen;
-      seen.reserve(total);
+      // A flat open-addressed set, not std::unordered_set: the node-per-key cost
+      // was the whole cost of this branch (6,002 allocations to merge two
+      // 6,000-item lists, one per distinct key), and the table is sized once from
+      // `total` so this is two allocations regardless of list length.
+      util::FlatDedupSet<Key> seen(total);
       const auto append = [&](const std::vector<Item>& source) {
         for (const Item& item : source) {
-          if (!seen.insert(key_of(item)).second) {
+          if (!seen.Insert(key_of(item))) {
             continue;
           }
           merged.push_back(item);
