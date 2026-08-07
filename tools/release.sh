@@ -88,7 +88,16 @@ sed -i "s/project(microide VERSION ${OLD_VERSION}/project(microide VERSION ${VER
 sed -i -E "s/Tagged \`v[0-9]+\.[0-9]+\.[0-9]+\`/Tagged \`v${VERSION}\`/g; \
            s/microide_[0-9]+\.[0-9]+\.[0-9]+_amd64\.deb/microide_${VERSION}_amd64.deb/g" README.md
 sed -i -E "s/([Tt]agged v)[0-9]+\.[0-9]+\.[0-9]+/\1${VERSION}/g" docs/index.html
-info "CMakeLists: $(grep -oP 'VERSION \K[0-9.]+' CMakeLists.txt | head -1)"
+# Read the version back with the SAME anchored pattern OLD_VERSION uses, and
+# assert it. The unanchored `grep 'VERSION \K[0-9.]+' | head -1` this replaced
+# matched `cmake_minimum_required(VERSION 3.28)` on line 1, so the one line a
+# reviewer reads to confirm the bump reported "CMakeLists: 3.28" for every
+# release regardless of what was actually baked — including v2.9.0's. Confirming
+# a value by re-reading it is only worth anything if the read can fail.
+BAKED_CMAKE="$(grep -oP 'project\(microide VERSION \K[0-9]+\.[0-9]+\.[0-9]+' CMakeLists.txt)"
+[[ "$BAKED_CMAKE" == "$VERSION" ]] \
+  || die "CMakeLists.txt reports '$BAKED_CMAKE' after the bump, expected '$VERSION'"
+info "CMakeLists: $BAKED_CMAKE"
 
 # --- 2. changelog draft ----------------------------------------------------
 log "2/9  Draft CHANGELOG.md section"
