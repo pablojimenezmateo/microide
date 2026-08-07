@@ -3,7 +3,6 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
-#include <unordered_map>
 #include <utility>
 
 #include "util/StringUtil.h"
@@ -308,43 +307,67 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
   if (edits.empty()) {
     return;
   }
-  // Per-line sorted (origin_col -> running prefix-sum of deltas at/left of it).
-  std::unordered_map<std::size_t, std::vector<std::pair<std::size_t, std::ptrdiff_t>>> by_line;
+  // (line, origin_col) -> running prefix sum of the deltas at or left of it, as
+  // ONE sorted vector.
+  //
+  // This was an unordered_map<line, vector<...>> plus a second unordered_map keyed
+  // by range index, so a keystroke allocated a hash node per mirror — on a snippet
+  // whose entire point is having many mirrors, and once per character typed. The
+  // 150-mirror scenario paid 151 of them per keystroke (TD-2026-08-06-159).
+  struct ShiftEvent {
+    std::size_t line = 0;
+    std::size_t origin_col = 0;
+    // Delta on the way in; the running prefix sum for its line on the way out.
+    std::ptrdiff_t shift = 0;
+  };
+  std::vector<ShiftEvent> events;
+  events.reserve(edits.size());
   for (const AppliedMirrorEdit& e : edits) {
-    by_line[e.line].emplace_back(e.origin_col, e.delta);
+    events.push_back(ShiftEvent{.line = e.line, .origin_col = e.origin_col, .shift = e.delta});
   }
-  for (auto& [line, events] : by_line) {
-    std::sort(events.begin(), events.end(),
-              [](const auto& a, const auto& b) { return a.first < b.first; });
+  std::sort(events.begin(), events.end(), [](const ShiftEvent& a, const ShiftEvent& b) {
+    return a.line != b.line ? a.line < b.line : a.origin_col < b.origin_col;
+  });
+  for (std::size_t i = 0; i < events.size();) {
     std::ptrdiff_t acc = 0;
-    for (auto& ev : events) {
-      acc += ev.second;
-      ev.second = acc;  // sum of deltas with origin_col <= ev.first
+    std::size_t j = i;
+    while (j < events.size() && events[j].line == events[i].line) {
+      acc += events[j].shift;
+      events[j].shift = acc;  // sum of deltas on this line with origin_col <= this one
+      ++j;
     }
+    i = j;
   }
   // Sum of deltas whose origin_col <= col on `line` (0 when the line has none).
   const auto shift_at = [&](std::size_t line, std::size_t col) -> std::ptrdiff_t {
-    const auto it = by_line.find(line);
-    if (it == by_line.end()) {
+    const auto it = std::upper_bound(
+        events.begin(), events.end(), std::pair<std::size_t, std::size_t>{line, col},
+        [](const std::pair<std::size_t, std::size_t>& value, const ShiftEvent& e) {
+          return value.first != e.line ? value.first < e.line : value.second < e.origin_col;
+        });
+    if (it == events.begin()) {
       return 0;
     }
-    const auto& events = it->second;
-    std::size_t lo = 0;
-    std::size_t hi = events.size();
-    while (lo < hi) {
-      const std::size_t mid = (lo + hi) / 2;
-      if (events[mid].first <= col) {
-        lo = mid + 1;
-      } else {
-        hi = mid;
-      }
-    }
-    return lo > 0 ? events[lo - 1].second : 0;
+    const ShiftEvent& last_at_or_left = *(it - 1);
+    return last_at_or_left.line == line ? last_at_or_left.shift : 0;
   };
   // The edited tab's mirrors, keyed by range index, with their own edit footprint.
-  std::unordered_map<std::size_t, std::pair<std::size_t, std::ptrdiff_t>> own_edit;
+  // Dense, not a hash map: the keys ARE positions in the tab's range vector, so a
+  // hash table over 0..n-1 is a hash table over its own array indices.
+  struct OwnEdit {
+    std::size_t origin_col = 0;
+    std::ptrdiff_t delta = 0;
+    bool present = false;
+  };
+  std::size_t max_range_index = 0;
   for (const AppliedMirrorEdit& e : edits) {
-    own_edit[e.range_index] = {e.origin_col, e.delta};
+    max_range_index = std::max(max_range_index, e.range_index);
+  }
+  std::vector<OwnEdit> own_edit(max_range_index + 1);
+  for (const AppliedMirrorEdit& e : edits) {
+    // Last write wins, as the map's operator[] assignment did.
+    own_edit[e.range_index] = OwnEdit{.origin_col = e.origin_col, .delta = e.delta,
+                                      .present = true};
   }
   const auto shift_column = [](std::size_t& column, std::ptrdiff_t delta) {
     column = static_cast<std::size_t>(
@@ -355,15 +378,13 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
       SelectionRange& r = vec[j];
       std::ptrdiff_t start_shift = shift_at(r.start.line, r.start.column);
       std::ptrdiff_t own_delta = 0;
-      if (tab == edited_tab) {
-        const auto it = own_edit.find(j);
-        if (it != own_edit.end()) {
-          own_delta = it->second.second;
-          // Its own edit must not shift its own start; only exclude it when the
-          // edit origin actually falls at/left of the start (rel == 0 case).
-          if (it->second.first <= r.start.column) {
-            start_shift -= it->second.second;
-          }
+      if (tab == edited_tab && j < own_edit.size() && own_edit[j].present) {
+        const OwnEdit& own = own_edit[j];
+        own_delta = own.delta;
+        // Its own edit must not shift its own start; only exclude it when the
+        // edit origin actually falls at/left of the start (rel == 0 case).
+        if (own.origin_col <= r.start.column) {
+          start_shift -= own.delta;
         }
       }
       shift_column(r.start.column, start_shift);

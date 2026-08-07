@@ -75,6 +75,47 @@ void TestSnippetMultiOccurrenceLinkedTabMultiKeystroke() {
          "successive linked edits must keep mirroring at the correct column in every occurrence");
 }
 
+// TD-2026-08-06-159: the batched mirror shift keeps its per-line prefix sums in
+// ONE sorted vector rather than a hash map per line, so a snippet whose mirrors
+// and other tab stops span several lines is the case that says whether the
+// line-boundary handling is right — a lookup that walks past its own line's run
+// would apply another line's accumulated shift.
+void TestSnippetMirrorShiftAcrossLines() {
+  TextViewport viewport;
+  viewport.LoadContent("--", "/tmp/snippet-lines.cpp");
+  viewport.MoveCursorTo(0, 0);
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 2}};
+  // Tab 1 has two mirrors on line 0 and two on line 2; tab 2 sits after a mirror
+  // on each of those lines, so both must follow their OWN line's shift.
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger,
+                                  "$1 $1 ${2:a}\nplain\n$1 $1 ${3:b}$0"),
+         "a multi-line snippet with mirrors on two lines should expand");
+  Expect(viewport.lines()[0] == "  a" && viewport.lines()[1] == "plain" &&
+             viewport.lines()[2] == "  b",
+         "the expansion lays out three lines with empty tab-1 occurrences");
+
+  Expect(SnippetTryInsertText(viewport, session, "XY"), "typing into tab 1 mirrors everywhere");
+  Expect(viewport.lines()[0] == "XY XY a", "both line-0 mirrors take the text");
+  Expect(viewport.lines()[2] == "XY XY b", "both line-2 mirrors take the text");
+  Expect(viewport.lines()[1] == "plain", "the untouched line between them is unchanged");
+
+  // Each downstream tab stop moved by its own line's total (two mirrors x 2 chars),
+  // not by the sum across both lines.
+  Expect(session.ranges_by_tab[2].size() == 1u && session.ranges_by_tab[2][0].start.line == 0u &&
+             session.ranges_by_tab[2][0].start.column == 6u,
+         "tab 2 follows line 0's shift only");
+  Expect(session.ranges_by_tab[3].size() == 1u && session.ranges_by_tab[3][0].start.line == 2u &&
+             session.ranges_by_tab[3][0].start.column == 6u,
+         "tab 3 follows line 2's shift only");
+
+  // A second keystroke lands at the shifted columns in all four mirrors.
+  Expect(SnippetTryInsertText(viewport, session, "Z"), "second mirrored keystroke");
+  Expect(viewport.lines()[0] == "XYZ XYZ a" && viewport.lines()[2] == "XYZ XYZ b",
+         "successive edits keep mirroring at the correct column on both lines");
+}
+
 void TestSnippetChoiceTabCycles() {
   TextViewport viewport;
   viewport.LoadContent("z", "/tmp/snippet.cpp");
@@ -470,6 +511,7 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTab", TestSnippetMultiOccurrenceLinkedTab);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTabMultiKeystroke",
           TestSnippetMultiOccurrenceLinkedTabMultiKeystroke);
+  AddTest(tests, "EditorSnippet/MirrorShiftAcrossLines", TestSnippetMirrorShiftAcrossLines);
   AddTest(tests, "EditorSnippet/ChoiceTabCycles", TestSnippetChoiceTabCycles);
   AddTest(tests, "EditorSnippet/ExitWhenCaretLeavesPlaceholder",
           TestSnippetExitWhenCaretLeavesPlaceholder);
