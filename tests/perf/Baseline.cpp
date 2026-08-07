@@ -331,6 +331,42 @@ void ComparePhaseAllocations(BaselineComparison* out,
 
 }  // namespace
 
+BaselineRecord MergeDeterministicMetrics(const BaselineRecord& existing,
+                                         const BaselineRecord& fresh) {
+  // Start from `existing`, not from `fresh`: the default has to be "keep what is
+  // committed", so a metric added to MetricSet later is preserved by omission
+  // rather than silently overwritten with a reading this run was not entitled to
+  // take.
+  BaselineRecord merged = existing;
+  merged.scenario_name = fresh.scenario_name;
+  // Tolerances come from the scenario definition on either path — a deliberate
+  // widening lives in the Scenario struct precisely so a rebaseline cannot reset
+  // it (see Scenario::tolerance_rss_percent).
+  merged.tolerances = fresh.tolerances;
+  merged.metrics.p50_allocations = fresh.metrics.p50_allocations;
+  merged.metrics.p95_allocations = fresh.metrics.p95_allocations;
+  merged.metrics.max_allocations = fresh.metrics.max_allocations;
+  merged.metrics.p50_net_heap_bytes = fresh.metrics.p50_net_heap_bytes;
+  merged.has_net_heap_metrics = fresh.has_net_heap_metrics;
+
+  std::vector<PhaseMetricSet> phases;
+  phases.reserve(fresh.phases.size());
+  for (const PhaseMetricSet& measured : fresh.phases) {
+    const auto prior = std::find_if(
+        existing.phases.begin(), existing.phases.end(),
+        [&](const PhaseMetricSet& entry) { return entry.name == measured.name; });
+    if (prior == existing.phases.end()) {
+      phases.push_back(measured);
+      continue;
+    }
+    PhaseMetricSet phase = measured;
+    phase.p50_wall_ms = prior->p50_wall_ms;
+    phases.push_back(std::move(phase));
+  }
+  merged.phases = std::move(phases);
+  return merged;
+}
+
 std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   std::ifstream file(path);
   if (!file) {

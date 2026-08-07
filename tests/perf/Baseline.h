@@ -194,6 +194,36 @@ double EnvelopeUsedPercent(const MetricComparison& metric);
 // that an unchanged scenario says nothing at all.
 inline constexpr double kEnvelopeNoticePercent = 75.0;
 
+// Fold a fresh run's DETERMINISTIC metrics into a committed baseline, leaving
+// every clock- and machine-state-dependent number exactly as it was recorded.
+//
+// The two halves of a baseline have different requirements on the runner. Wall,
+// CPU, the calibration probe and resident growth are only meaningful when the box
+// is idle: recording them on a loaded machine records the load, and the gate that
+// results is loose by whatever the load was worth. Allocation counts, per-phase
+// allocation counts and `p50_net_heap_bytes` are none of those things — they are
+// properties of the code path, reproduce to the byte across process states, and
+// are exactly as valid recorded under load as on a quiet box.
+//
+// That asymmetry used to force an all-or-nothing choice, and the all-or-nothing
+// choice is what left the whole committed set 82x loose on its ALLOCATION gates
+// (TD-2026-08-07-161): the code moved, the runner was busy, so nothing was
+// rerecorded and the deterministic gates stayed stale alongside the timing ones
+// that genuinely had to wait. This is the half that never had to wait.
+//
+// `fresh` is the record this run would have written; `existing` is what is
+// committed. Metrics taken from `fresh`: p50/p95/max_allocations,
+// p50_net_heap_bytes, and every phase's allocation counts. Everything else —
+// wall, cpu, rss, the calibration probe, the recorded iteration count and the
+// cpu/rss/calibration presence flags — is carried over from `existing`, because
+// those are the numbers this run is not entitled to replace.
+//
+// A phase in `fresh` with no counterpart in `existing` is taken whole (there is
+// no prior wall reading to preserve), and a phase in `existing` that this run no
+// longer measures is dropped, both matching a full rebaseline.
+BaselineRecord MergeDeterministicMetrics(const BaselineRecord& existing,
+                                         const BaselineRecord& fresh);
+
 std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path);
 bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& baseline);
 BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggregate& aggregate);

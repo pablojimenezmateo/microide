@@ -55,6 +55,13 @@ inline constexpr std::size_t kDefaultIterations = 10;
 struct CliOptions {
   std::vector<std::string> scenarios;
   bool update_baseline = false;
+  // `--update-baseline=deterministic`: rewrite only the metrics that do not
+  // depend on how busy the machine is (allocation counts, per-phase allocation
+  // counts, net heap retention) and carry every timing/resident number over from
+  // the committed baseline unchanged. See MergeDeterministicMetrics for why the
+  // two halves have different runner requirements, and TD-2026-08-07-161 for the
+  // drift that the all-or-nothing form caused.
+  bool update_deterministic_only = false;
   bool smoke = false;
   bool require_fixtures = false;
   bool keep_artifacts = false;
@@ -244,6 +251,15 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
     }
     if (arg == "--update-baseline") {
       options.update_baseline = true;
+      continue;
+    }
+    if (arg.rfind("--update-baseline=", 0) == 0) {
+      const std::string value = arg.substr(std::string("--update-baseline=").size());
+      if (value != "all" && value != "deterministic") {
+        return std::nullopt;
+      }
+      options.update_baseline = true;
+      options.update_deterministic_only = value == "deterministic";
       continue;
     }
     if (arg == "--smoke") {
@@ -1805,7 +1821,8 @@ int main(int argc, char** argv) {
   RegisterBuiltInScenarios();
   const std::optional<CliOptions> options = ParseCli(argc, argv);
   if (!options.has_value()) {
-    std::cerr << "usage: microide_perf [--scenarios=a,b] [--update-baseline] [--smoke] "
+    std::cerr << "usage: microide_perf [--scenarios=a,b] "
+                 "[--update-baseline[=all|deterministic]] [--smoke] "
                  "[--require-fixtures] [--keep-artifacts] [--iterations=N] "
                  "[--report-json=path] [--report-text=path] "
                  "[--reference-runner=name] "
@@ -2108,6 +2125,27 @@ int main(int argc, char** argv) {
       // scenario that ran fewer iterations than requested must record what it
       // actually measured.
       record.iterations = aggregate->iterations.size();
+      if (options->update_deterministic_only) {
+        const std::optional<BaselineRecord> existing = LoadBaseline(baseline_path);
+        if (!existing.has_value()) {
+          // No committed baseline to preserve the timing half of, so there is
+          // nothing to merge into. Writing the whole record from a run that was
+          // explicitly declared untrustworthy for timing would mint a timing gate
+          // out of exactly the measurement this mode exists to avoid taking.
+          std::cerr << "[perf] --update-baseline=deterministic: no committed baseline for "
+                    << scenario.name
+                    << "; skipping (run a full --update-baseline on an idle runner to mint it)\n";
+          continue;
+        }
+        const double prior_p50 = existing->metrics.p50_allocations;
+        record = MergeDeterministicMetrics(*existing, record);
+        const double delta = prior_p50 > 0.0
+                                 ? (record.metrics.p50_allocations - prior_p50) / prior_p50 * 100.0
+                                 : 0.0;
+        std::cerr << "[perf] " << scenario.name << " p50_allocations " << prior_p50 << " -> "
+                  << record.metrics.p50_allocations << " (" << (delta >= 0.0 ? "+" : "") << delta
+                  << "%)\n";
+      }
       if (!SaveBaseline(baseline_path, record)) {
         std::cerr << "failed to save baseline: " << baseline_path << '\n';
         return 1;

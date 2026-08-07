@@ -1103,9 +1103,107 @@ void TestPerfPhaseAggregationSumsRepeatsWithinAnIteration() {
          "a sparse phase percentiles over the iterations that recorded it");
 }
 
+// TD-2026-08-07-161: the deterministic half of a baseline can be rerecorded on a
+// loaded box; the timing half cannot. The merge is what lets the first happen
+// without the second, so what it does and does NOT copy is the contract.
+void TestPerfDeterministicMergeKeepsTheTimingHalf() {
+  perf::BaselineRecord committed = MakeBaseline();
+  committed.metrics.p50_wall_ms = 12.0;
+  committed.metrics.p95_wall_ms = 15.0;
+  committed.metrics.max_wall_ms = 20.0;
+  committed.metrics.p50_cpu_ms = 11.0;
+  committed.metrics.p95_cpu_ms = 14.0;
+  committed.metrics.max_cpu_ms = 19.0;
+  committed.metrics.mean_rss_growth_bytes = 4096.0;
+  committed.metrics.p50_cpu_calibration_ns = 500000.0;
+  committed.metrics.p50_allocations = 76455.0;
+  committed.metrics.p95_allocations = 79069.0;
+  committed.metrics.max_allocations = 81089.0;
+  committed.metrics.p50_net_heap_bytes = 10781.0;
+  committed.has_cpu_metrics = true;
+  committed.has_rss_metrics = true;
+  committed.has_net_heap_metrics = true;
+  committed.has_calibration = true;
+  committed.iterations = 10;
+  committed.phases.push_back(
+      perf::PhaseMetricSet{.name = "insert", .p50_allocations = 67366.0, .max_allocations = 67368.0,
+                           .p50_wall_ms = 6.28, .iterations = 10});
+
+  // What a run on a LOADED box would have written: the allocation counts are the
+  // truth (the code really did get 82x cheaper), the durations are the load.
+  perf::BaselineRecord fresh = MakeBaseline();
+  fresh.metrics.p50_wall_ms = 90.0;
+  fresh.metrics.p95_wall_ms = 140.0;
+  fresh.metrics.max_wall_ms = 200.0;
+  fresh.metrics.p50_cpu_ms = 88.0;
+  fresh.metrics.mean_rss_growth_bytes = 900000.0;
+  fresh.metrics.p50_cpu_calibration_ns = 1400000.0;
+  fresh.metrics.p50_allocations = 933.0;
+  fresh.metrics.p95_allocations = 940.0;
+  fresh.metrics.max_allocations = 951.0;
+  fresh.metrics.p50_net_heap_bytes = 2048.0;
+  fresh.has_net_heap_metrics = true;
+  fresh.iterations = 10;
+  fresh.phases.push_back(
+      perf::PhaseMetricSet{.name = "insert", .p50_allocations = 810.0, .max_allocations = 815.0,
+                           .p50_wall_ms = 41.7, .iterations = 10});
+  fresh.phases.push_back(
+      perf::PhaseMetricSet{.name = "settle", .p50_allocations = 12.0, .max_allocations = 12.0,
+                           .p50_wall_ms = 3.0, .iterations = 10});
+
+  const perf::BaselineRecord merged = perf::MergeDeterministicMetrics(committed, fresh);
+
+  Expect(merged.metrics.p50_allocations == 933.0, "the allocation p50 is taken from the run");
+  Expect(merged.metrics.p95_allocations == 940.0, "the allocation p95 is taken from the run");
+  Expect(merged.metrics.max_allocations == 951.0, "the allocation max is taken from the run");
+  Expect(merged.metrics.p50_net_heap_bytes == 2048.0, "net heap retention is deterministic too");
+
+  Expect(merged.metrics.p50_wall_ms == 12.0, "wall p50 stays as committed");
+  Expect(merged.metrics.p95_wall_ms == 15.0, "wall p95 stays as committed");
+  Expect(merged.metrics.max_wall_ms == 20.0, "wall max stays as committed");
+  Expect(merged.metrics.p50_cpu_ms == 11.0, "cpu stays as committed");
+  Expect(merged.metrics.p95_cpu_ms == 14.0, "cpu p95 stays as committed");
+  Expect(merged.metrics.max_cpu_ms == 19.0, "cpu max stays as committed");
+  Expect(merged.metrics.mean_rss_growth_bytes == 4096.0, "the resident mean stays as committed");
+  Expect(merged.metrics.p50_cpu_calibration_ns == 500000.0,
+         "the clock the baseline was captured at must NOT be replaced by the loaded box's — "
+         "a merged record whose calibration says 'measured slow' would normalise every later "
+         "cpu gate loose, which is the drift this mode exists to avoid");
+  Expect(merged.iterations == 10, "the recorded iteration count belongs to the timing half");
+  Expect(merged.has_cpu_metrics && merged.has_rss_metrics && merged.has_calibration,
+         "presence flags for the preserved metrics are preserved with them");
+
+  Expect(merged.phases.size() == 2, "phases follow the run, so a new phase is gated");
+  Expect(merged.phases[0].name == "insert" && merged.phases[0].p50_allocations == 810.0,
+         "a phase's allocation count is taken from the run");
+  Expect(merged.phases[0].p50_wall_ms == 6.28,
+         "a phase that existed keeps its committed wall reading");
+  Expect(merged.phases[1].name == "settle" && merged.phases[1].p50_wall_ms == 3.0,
+         "a phase with no committed counterpart is taken whole — there is nothing to preserve");
+}
+
+// The merge must not resurrect a phase the scenario stopped measuring: that is
+// how a gate goes vacuous, and a full rebaseline drops it.
+void TestPerfDeterministicMergeDropsPhasesNoLongerMeasured() {
+  perf::BaselineRecord committed = MakeBaseline();
+  committed.phases.push_back(perf::PhaseMetricSet{.name = "gone", .p50_allocations = 5.0});
+  committed.phases.push_back(perf::PhaseMetricSet{.name = "kept", .p50_allocations = 5.0});
+
+  perf::BaselineRecord fresh = MakeBaseline();
+  fresh.phases.push_back(perf::PhaseMetricSet{.name = "kept", .p50_allocations = 3.0});
+
+  const perf::BaselineRecord merged = perf::MergeDeterministicMetrics(committed, fresh);
+  Expect(merged.phases.size() == 1 && merged.phases[0].name == "kept",
+         "a phase the scenario no longer measures is dropped, exactly as a full rebaseline does");
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/DeterministicMergeKeepsTheTimingHalf",
+          TestPerfDeterministicMergeKeepsTheTimingHalf);
+  AddTest(tests, "PerfBaseline/DeterministicMergeDropsPhasesNoLongerMeasured",
+          TestPerfDeterministicMergeDropsPhasesNoLongerMeasured);
   AddTest(tests, "PerfBaseline/PhaseGateCatchesWhatTheTotalCannot",
           TestPerfPhaseGateCatchesWhatTheTotalCannot);
   AddTest(tests, "PerfBaseline/PhaseGateFailsWhenAPhaseStopsBeingMeasured",
