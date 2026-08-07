@@ -442,6 +442,14 @@ class TextViewport {
   // caret, and so line-range resolution covers lines spanned only by an anchor
   // (A-120). secondary_carets() (positions only) stays for plain-caret callers.
   std::vector<TextViewportUndoHistory::SecondaryCaret> secondary_caret_ranges() const;
+  // Non-owning sibling of the above, for callers that only READ the set. The
+  // owning form copies the whole vector, which a shaping op pays once per
+  // keystroke purely to loop over it. Valid until the next mutating operation on
+  // this viewport — snapshot with secondary_caret_ranges() if the set is about
+  // to be edited underneath you.
+  std::span<const TextViewportUndoHistory::SecondaryCaret> secondary_caret_range_view() const {
+    return secondary_carets_;
+  }
   // Render-path accessor: returns a view into a cached vector that mirrors
   // `secondary_carets_`. The cache is rebuilt only when the positions
   // actually differ (size mismatch or any element changed), so steady-state

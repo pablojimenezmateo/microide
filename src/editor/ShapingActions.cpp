@@ -3,8 +3,10 @@
 #include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "editor/TextViewport.h"
@@ -18,43 +20,88 @@ using SecondaryCaret = TextViewportUndoHistory::SecondaryCaret;
 struct LineRange {
   std::size_t first = 0;
   std::size_t last = 0;  // inclusive
+
+  std::size_t line_count() const { return last - first + 1; }
 };
 
-LineRange ResolveLineRange(const TextViewport& viewport) {
-  LineRange r;
-  r.first = viewport.cursor_line();
-  r.last = viewport.cursor_line();
-
-  if (auto sel = viewport.selection_range()) {
-    SelectionRange n = sel->start.line <= sel->end.line ? *sel
-                                                         : SelectionRange{sel->end, sel->start};
-    if (sel->start.line > sel->end.line ||
-        (sel->start.line == sel->end.line && sel->start.column > sel->end.column)) {
-      n = {sel->end, sel->start};
-    }
-    r.first = n.start.line;
-    r.last = n.end.line;
-    if (r.last > r.first && n.end.column == 0) {
-      // Selection ends at start of a line; don't include that line.
-      --r.last;
-    }
+// The line span one caret asks a shaping op to touch: its selection's lines when
+// it has one, its own line when it does not. A selection that ends at column 0 of
+// a line has not reached into that line, so it is excluded — that is what makes a
+// whole-line drag select N lines rather than N+1.
+LineRange RangeForCaret(TextPosition anchor, TextPosition cursor) {
+  if (cursor.line < anchor.line ||
+      (cursor.line == anchor.line && cursor.column < anchor.column)) {
+    std::swap(anchor, cursor);
   }
-
-  // Cover every line a secondary caret touches, INCLUDING lines spanned only by
-  // a ranged caret's selection anchor (A-120) — a Ctrl-D selection whose anchor
-  // sits on a different line than its cursor must not be partially missed.
-  for (const SecondaryCaret& secondary : viewport.secondary_caret_ranges()) {
-    r.first = std::min(r.first, secondary.position.line);
-    r.last = std::max(r.last, secondary.position.line);
-    if (secondary.selection_anchor.has_value()) {
-      r.first = std::min(r.first, secondary.selection_anchor->line);
-      r.last = std::max(r.last, secondary.selection_anchor->line);
-    }
-  }
-  if (r.last >= viewport.line_count()) {
-    r.last = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
+  LineRange r{anchor.line, cursor.line};
+  if (r.last > r.first && cursor.column == 0) {
+    --r.last;
   }
   return r;
+}
+
+// Every line region the carets ask a shaping op to touch, as a SORTED SET OF
+// DISJOINT ranges — one per caret, with overlapping-or-touching neighbours merged.
+//
+// This used to be a single `min..max` span over every caret, and the ops rewrote
+// every line in it. Carets on lines 10 and 100 with no selection therefore made
+// `Ctrl+/` comment all 91 lines; VSCode comments two (TD-2026-08-07-160). It was a
+// fidelity bug first and a cost bug second, and the disjoint set fixes both: each
+// op now emits one edit per region inside an undo group, which the group frame
+// already aggregates into the multi-range undo entry TD-2026-08-06-157 shipped.
+//
+// Touching ranges are merged so two carets on adjacent lines produce one edit
+// rather than two abutting ones, and so two carets on the SAME line collapse
+// instead of applying an op to that line twice.
+std::vector<LineRange> ResolveLineRanges(const TextViewport& viewport) {
+  const std::size_t line_count = viewport.line_count();
+  std::vector<LineRange> ranges;
+  const std::span<const SecondaryCaret> secondaries = viewport.secondary_caret_range_view();
+  ranges.reserve(secondaries.size() + 1);
+
+  if (auto sel = viewport.selection_range()) {
+    ranges.push_back(RangeForCaret(sel->start, sel->end));
+  } else {
+    ranges.push_back(LineRange{viewport.cursor_line(), viewport.cursor_line()});
+  }
+  // A ranged secondary contributes the lines its anchor spans as well as the ones
+  // under its cursor (A-120): a Ctrl-D selection whose anchor sits on a different
+  // line than its cursor must not be partially missed.
+  for (const SecondaryCaret& secondary : secondaries) {
+    ranges.push_back(secondary.selection_anchor.has_value()
+                         ? RangeForCaret(*secondary.selection_anchor, secondary.position)
+                         : LineRange{secondary.position.line, secondary.position.line});
+  }
+
+  if (line_count == 0) {
+    ranges.clear();
+    return ranges;
+  }
+  // Clamp to the buffer, then drop anything that started past its end. Clamping
+  // first is deliberate: a stale caret one line past EOF still means "the last
+  // line", the same answer the single-span form gave.
+  for (LineRange& r : ranges) {
+    r.first = std::min(r.first, line_count - 1);
+    r.last = std::min(r.last, line_count - 1);
+    if (r.last < r.first) {
+      r.last = r.first;
+    }
+  }
+
+  std::sort(ranges.begin(), ranges.end(),
+            [](const LineRange& a, const LineRange& b) { return a.first < b.first; });
+  std::size_t merged = 0;
+  for (std::size_t i = 1; i < ranges.size(); ++i) {
+    // `<= last + 1` rather than `<= last`: adjacent regions merge, so a run of
+    // per-line carets is one edit and not one per line.
+    if (ranges[i].first <= ranges[merged].last + 1) {
+      ranges[merged].last = std::max(ranges[merged].last, ranges[i].last);
+      continue;
+    }
+    ranges[++merged] = ranges[i];
+  }
+  ranges.resize(merged + 1);
+  return ranges;
 }
 
 bool LineIsEmptyOrWhitespace(std::string_view s) {
@@ -102,15 +149,23 @@ std::optional<std::string> TryStripBlockComment(std::string_view content,
 
 }  // namespace
 
-bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
-  if (line_marker.empty()) return false;
-  LineRange range = ResolveLineRange(viewport);
-  const auto& lines = viewport.lines();
-  if (range.first >= lines.size()) return false;
+namespace {
 
-  // Determine whether all non-blank lines in range start with the marker
-  // (after leading whitespace). If yes, uncomment; otherwise, comment.
-  const std::string_view marker = line_marker;
+// Comment/uncomment ONE contiguous region into `updated`, which is cleared first
+// (the caller hands the same vector to ReplaceLines, which takes it by value, so
+// it comes back moved-from). Returns false when the region has no non-blank line —
+// there is nothing to toggle, and a region that contributes nothing must not
+// contribute an empty edit either.
+//
+// The add/remove decision and the insertion column are computed PER REGION, which
+// is what VSCode does (one LineCommentCommand per selection): a caret in a
+// commented block and a caret in an uncommented one each toggle their own way,
+// and a deeply indented region keeps its own alignment instead of being commented
+// at some unrelated region's indent.
+bool BuildToggledCommentRegion(const TextBuffer& lines,
+                               LineRange range,
+                               std::string_view marker,
+                               std::vector<std::string>* updated) {
   bool all_commented = true;
   bool any_non_blank = false;
   std::size_t min_indent = std::string::npos;
@@ -130,12 +185,12 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
   if (!any_non_blank) return false;
   if (min_indent == std::string::npos) min_indent = 0;
 
-  std::vector<std::string> updated;
-  updated.reserve(range.last - range.first + 1);
+  updated->clear();
+  updated->reserve(range.line_count());
   for (std::size_t i = range.first; i <= range.last; ++i) {
     const std::string_view line = lines.LineView(i);
     if (LineIsEmptyOrWhitespace(line)) {
-      updated.emplace_back(line);
+      updated->emplace_back(line);
       continue;
     }
     if (all_commented) {
@@ -151,7 +206,7 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
       out.reserve(lead + (line.size() - pos));
       out.append(line, 0, lead);
       out.append(line, pos, line.size() - pos);
-      updated.push_back(std::move(out));
+      updated->push_back(std::move(out));
     } else {
       std::string out;
       out.reserve(line.size() + marker.size() + 1);
@@ -159,11 +214,40 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
       out.append(marker);
       out.push_back(' ');
       out.append(line.begin() + static_cast<std::ptrdiff_t>(min_indent), line.end());
-      updated.push_back(std::move(out));
+      updated->push_back(std::move(out));
     }
   }
-  return viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
-                               /*record_undo=*/true);
+  return true;
+}
+
+}  // namespace
+
+bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
+  if (line_marker.empty()) return false;
+  const std::vector<LineRange> ranges = ResolveLineRanges(viewport);
+  if (ranges.empty()) return false;
+  const TextBuffer& lines = viewport.lines();
+
+  std::vector<std::string> updated;
+  if (ranges.size() == 1) {
+    // One region is the overwhelmingly common case (any single caret, any single
+    // selection) and it needs no group frame: the replace is already one entry.
+    if (!BuildToggledCommentRegion(lines, ranges[0], line_marker, &updated)) return false;
+    return viewport.ReplaceLines(ranges[0].first, ranges[0].last + 1, std::move(updated),
+                                 /*record_undo=*/true);
+  }
+
+  // Ascending region order: the toggle rewrites each line in place, so the edit
+  // preserves the line count and no region's indices move when another is applied.
+  bool changed = false;
+  viewport.BeginUndoGroup();
+  for (const LineRange& range : ranges) {
+    if (!BuildToggledCommentRegion(lines, range, line_marker, &updated)) continue;
+    changed |= viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
+                                     /*record_undo=*/true);
+  }
+  viewport.EndUndoGroup();
+  return changed;
 }
 
 bool ToggleBlockComment(TextViewport& viewport,
@@ -230,6 +314,22 @@ LineMoveCaretSnapshot SnapshotCaretsForLineMove(const TextViewport& viewport) {
   };
 }
 
+// The region containing `line`, or nullptr. Regions are sorted and disjoint, so
+// this is a binary search — a linear scan here would be O(carets x regions), and
+// both are the caret count on a select-all-occurrences edit.
+const LineRange* RegionContaining(std::span<const LineRange> regions,
+                                  std::size_t line,
+                                  bool include_exclusive_end = false) {
+  auto it = std::upper_bound(regions.begin(), regions.end(), line,
+                             [](std::size_t value, const LineRange& r) { return value < r.first; });
+  if (it == regions.begin()) {
+    return nullptr;
+  }
+  --it;
+  const std::size_t last = include_exclusive_end ? it->last + 1 : it->last;
+  return line <= last ? &*it : nullptr;
+}
+
 // Restore the snapshot's secondary carets, preserving each caret's selection
 // anchor. `remap` maps a snapshot TextPosition (line+column) to its post-edit
 // position. A plain caret (no anchor) restores as an empty range = bare caret,
@@ -251,32 +351,38 @@ void RestoreSecondaryCaretRanges(TextViewport& viewport,
 
 void RestoreCaretsAfterLineMove(TextViewport& viewport,
                                 const LineMoveCaretSnapshot& snapshot,
-                                std::size_t range_first,
-                                std::size_t range_last,
+                                std::span<const LineRange> moved,
                                 std::ptrdiff_t delta) {
   const auto shift = [&](std::size_t line) -> std::size_t {
-    if (line < range_first || line > range_last) return line;
+    if (RegionContaining(moved, line) == nullptr) return line;
     const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + delta;
     return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
   };
 
   // A whole-line selection ends at column 0 of the line AFTER the block, so its
-  // end.line is range_last + 1 (ResolveLineRange excludes that trailing line from
-  // the moved range). That exclusive boundary moved with the block, so extend the
-  // shiftable range to range_last + 1 for the end. Without this the guard below
+  // end.line is region.last + 1 (ResolveLineRanges excludes that trailing line
+  // from the moved region). That exclusive boundary moved with the block, so
+  // extend the shiftable range by one for the end. Without this the guard below
   // rejected the selection and the whole thing fell to the single-caret branch,
   // silently dropping the selection after the move.
   const auto shift_boundary = [&](std::size_t line) -> std::size_t {
-    if (line < range_first || line > range_last + 1) return line;
+    if (RegionContaining(moved, line, /*include_exclusive_end=*/true) == nullptr) return line;
     const std::ptrdiff_t shifted = static_cast<std::ptrdiff_t>(line) + delta;
     return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
   };
 
   viewport.ClearSecondaryCarets();
+  // The primary selection lives inside exactly one region (it is what produced
+  // it), so "covers the block" is a question about that region alone.
+  const LineRange* selection_region =
+      snapshot.selection.has_value()
+          ? RegionContaining(moved, snapshot.selection->start.line)
+          : nullptr;
   const bool selection_covers_block =
-      snapshot.selection.has_value() && snapshot.selection->start.line >= range_first &&
-      (snapshot.selection->end.line <= range_last ||
-       (snapshot.selection->end.line == range_last + 1 && snapshot.selection->end.column == 0));
+      selection_region != nullptr &&
+      (snapshot.selection->end.line <= selection_region->last ||
+       (snapshot.selection->end.line == selection_region->last + 1 &&
+        snapshot.selection->end.column == 0));
   if (selection_covers_block) {
     viewport.MoveCursorTo(shift(snapshot.selection->start.line),
                           snapshot.selection->start.column);
@@ -294,64 +400,74 @@ void RestoreCaretsAfterLineMove(TextViewport& viewport,
   });
 }
 
-}  // namespace
-
-bool MoveLineUp(TextViewport& viewport) {
-  LineRange range = ResolveLineRange(viewport);
-  if (range.first == 0) return false;
-  const auto& lines = viewport.lines();
-  if (range.last >= lines.size()) return false;
-  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
-  // One piece-tree walk for the moved block. The per-line `lines[i]` this replaced
-  // goes through TextBuffer::LineRef, which materialises a string AND inserts it
-  // into the buffer's line cache — and a multi-caret line op covers every line
-  // between the outermost carets, so it also evicted the cache across that span.
+// The moved block plus the neighbour it swaps with, as one replacement vector.
+// One piece-tree walk for the block: the per-line `lines[i]` this replaced goes
+// through TextBuffer::LineRef, which materialises a string AND inserts it into the
+// buffer's line cache.
+std::vector<std::string> BuildLineMoveReplacement(const TextBuffer& lines,
+                                                  LineRange range,
+                                                  bool downward) {
   std::vector<std::string> updated;
-  updated.reserve(range.last - range.first + 2);
-  {
-    std::vector<std::string> block = lines.SliceLines(range.first, range.last + 1);
-    updated.insert(updated.end(), std::make_move_iterator(block.begin()),
-                   std::make_move_iterator(block.end()));
+  updated.reserve(range.line_count() + 1);
+  if (downward) {
+    updated.push_back(std::string(lines.LineView(range.last + 1)));
   }
-  updated.push_back(std::string(lines.LineView(range.first - 1)));
-  // Wrap the replace + caret restore in one undo group so the aggregate entry's
+  std::vector<std::string> block = lines.SliceLines(range.first, range.last + 1);
+  updated.insert(updated.end(), std::make_move_iterator(block.begin()),
+                 std::make_move_iterator(block.end()));
+  if (!downward) {
+    updated.push_back(std::string(lines.LineView(range.first - 1)));
+  }
+  return updated;
+}
+
+// Shared body of MoveLineUp / MoveLineDown.
+//
+// Regions that cannot move (a region already at the top of the buffer for an
+// up-move, at the bottom for a down-move) are dropped and the rest still move,
+// which is what VSCode does — each selection gets its own MoveLinesCommand and a
+// pinned one no-ops alone.
+//
+// Regions are disjoint with at least one line between them (ResolveLineRanges
+// merges touching ones), and each edit reaches exactly one line beyond its region
+// in the direction of travel, so no two region edits overlap and the line count is
+// preserved. That is what lets them be applied in plain ascending order.
+bool MoveLines(TextViewport& viewport, bool downward) {
+  std::vector<LineRange> regions = ResolveLineRanges(viewport);
+  const TextBuffer& lines = viewport.lines();
+  const std::size_t line_count = lines.size();
+  std::erase_if(regions, [&](const LineRange& r) {
+    return downward ? r.last + 1 >= line_count : r.first == 0;
+  });
+  if (regions.empty()) return false;
+
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  // Wrap the replaces + caret restore in one undo group so the aggregate entry's
   // after_state is captured AFTER RestoreCaretsAfterLineMove — otherwise the
   // ReplaceLines entry snaps after_state to (range_first, 0) and redo loses the
   // real column and every secondary caret.
   viewport.BeginUndoGroup();
-  if (!viewport.ReplaceLines(range.first - 1, range.last + 1, std::move(updated),
-                             /*record_undo=*/true)) {
+  bool changed = false;
+  for (const LineRange& range : regions) {
+    std::vector<std::string> updated = BuildLineMoveReplacement(lines, range, downward);
+    const std::size_t start = downward ? range.first : range.first - 1;
+    const std::size_t end = downward ? range.last + 2 : range.last + 1;
+    changed |= viewport.ReplaceLines(start, end, std::move(updated), /*record_undo=*/true);
+  }
+  if (!changed) {
     viewport.EndUndoGroup();
     return false;
   }
-  RestoreCaretsAfterLineMove(viewport, snapshot, range.first, range.last, -1);
+  RestoreCaretsAfterLineMove(viewport, snapshot, regions, downward ? +1 : -1);
   viewport.EndUndoGroup();
   return true;
 }
 
-bool MoveLineDown(TextViewport& viewport) {
-  LineRange range = ResolveLineRange(viewport);
-  const auto& lines = viewport.lines();
-  if (range.last + 1 >= lines.size()) return false;
-  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
-  // See MoveLineUp for why this is one SliceLines walk and not a per-line read.
-  std::vector<std::string> updated;
-  updated.reserve(range.last - range.first + 2);
-  updated.push_back(std::string(lines.LineView(range.last + 1)));
-  std::vector<std::string> block = lines.SliceLines(range.first, range.last + 1);
-  updated.insert(updated.end(), std::make_move_iterator(block.begin()),
-                 std::make_move_iterator(block.end()));
-  // See MoveLineUp: group the replace + caret restore so redo keeps the carets.
-  viewport.BeginUndoGroup();
-  if (!viewport.ReplaceLines(range.first, range.last + 2, std::move(updated),
-                             /*record_undo=*/true)) {
-    viewport.EndUndoGroup();
-    return false;
-  }
-  RestoreCaretsAfterLineMove(viewport, snapshot, range.first, range.last, +1);
-  viewport.EndUndoGroup();
-  return true;
-}
+}  // namespace
+
+bool MoveLineUp(TextViewport& viewport) { return MoveLines(viewport, /*downward=*/false); }
+
+bool MoveLineDown(TextViewport& viewport) { return MoveLines(viewport, /*downward=*/true); }
 
 bool DuplicateSelection(TextViewport& viewport) {
   auto sel = viewport.selection_range();
@@ -368,7 +484,11 @@ bool DuplicateSelection(TextViewport& viewport) {
   }
   std::size_t line_index = viewport.cursor_line();
   if (line_index >= lines.size()) return false;
-  std::vector<std::string> updated{lines[line_index], lines[line_index]};
+  // One LineView read, copied twice. `lines[line_index]` twice went through
+  // LineRef, which materialises the line AND interns it in the buffer's line
+  // cache — two of each to produce two copies of one line.
+  const std::string_view source = lines.LineView(line_index);
+  std::vector<std::string> updated{std::string(source), std::string(source)};
   return viewport.ReplaceLines(line_index, line_index + 1, std::move(updated),
                                /*record_undo=*/true);
 }
@@ -405,6 +525,28 @@ void RestoreSelectionAcrossLines(TextViewport& viewport,
                         /*extend_selection=*/true);
 }
 
+// Per-line column deltas for a SET of disjoint regions, concatenated into one
+// flat run in region order. Two vectors for the whole edit rather than two per
+// region, which matters because "one region per caret" is the point of the
+// disjoint form and a select-all-occurrences edit has thousands of them.
+struct RegionColumnDeltas {
+  std::vector<std::ptrdiff_t> flat;
+  // Index into `flat` where each region's run starts. Stored rather than derived
+  // so a lookup stays O(log regions) instead of O(regions).
+  std::vector<std::size_t> region_offset;
+
+  void BeginRegion() { region_offset.push_back(flat.size()); }
+
+  std::ptrdiff_t For(std::span<const LineRange> regions, std::size_t line) const {
+    const LineRange* region = RegionContaining(regions, line);
+    if (region == nullptr) return 0;
+    const std::size_t index = static_cast<std::size_t>(region - regions.data());
+    if (index >= region_offset.size()) return 0;
+    const std::size_t slot = region_offset[index] + (line - region->first);
+    return slot < flat.size() ? flat[slot] : 0;
+  }
+};
+
 // Restore carets after an indent/outdent that changed each line's leading
 // whitespace IN PLACE (lines are not reordered). Each caret's column shifts by
 // the delta applied to its line (clamped at 0 and the new line length); the
@@ -414,15 +556,12 @@ void RestoreSelectionAcrossLines(TextViewport& viewport,
 // and snapped the primary to (first_line, 0).
 void RestoreCaretsAfterIndentEdit(TextViewport& viewport,
                                   const LineMoveCaretSnapshot& snapshot,
-                                  std::size_t first_line,
-                                  const std::vector<std::ptrdiff_t>& per_line_delta) {
+                                  std::span<const LineRange> regions,
+                                  const RegionColumnDeltas& deltas) {
   const auto shift_col = [&](std::size_t line, std::size_t column) -> std::size_t {
-    std::size_t result = column;
-    if (line >= first_line && line - first_line < per_line_delta.size()) {
-      const std::ptrdiff_t shifted =
-          static_cast<std::ptrdiff_t>(column) + per_line_delta[line - first_line];
-      result = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
-    }
+    const std::ptrdiff_t shifted =
+        static_cast<std::ptrdiff_t>(column) + deltas.For(regions, line);
+    std::size_t result = shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
     if (line < viewport.line_count()) {
       result = std::min(result, viewport.lines().LineLength(line));
     }
@@ -448,121 +587,145 @@ void RestoreCaretsAfterIndentEdit(TextViewport& viewport,
   });
 }
 
+// Shared body of IndentSelection / OutdentSelection: a per-line leading-whitespace
+// transform applied to each resolved region.
+//
+// `transform(source, out)` writes the replacement line into `out` and returns the
+// column delta it applied; a zero delta means the line is unchanged, and a region
+// where every line is unchanged makes no edit at all.
+//
+// Regions are visited in ascending order: every transform here rewrites a line in
+// place, so the edit preserves the line count and no region's indices move when
+// another region is applied.
+template <typename Transform>
+bool ReindentRegions(TextViewport& viewport, Transform&& transform) {
+  const std::vector<LineRange> regions = ResolveLineRanges(viewport);
+  if (regions.empty()) return false;
+  const TextBuffer& lines = viewport.lines();
+
+  const bool had_selection = viewport.has_selection();
+  const bool multi = viewport.has_multiple_carets();
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+
+  RegionColumnDeltas deltas;
+  std::size_t total_lines = 0;
+  for (const LineRange& region : regions) {
+    total_lines += region.line_count();
+  }
+  deltas.flat.reserve(total_lines);
+  deltas.region_offset.reserve(regions.size());
+
+  std::vector<std::string> updated;
+  bool changed = false;
+  viewport.BeginUndoGroup();
+  for (const LineRange& region : regions) {
+    deltas.BeginRegion();
+    updated.clear();
+    updated.reserve(region.line_count());
+    bool region_changed = false;
+    for (std::size_t i = region.first; i <= region.last; ++i) {
+      // LineView, not lines[i]: LineRef would also insert every line of the
+      // region into the buffer's line cache (see BuildLineMoveReplacement).
+      std::string out;
+      const std::ptrdiff_t delta = transform(lines.LineView(i), &out);
+      deltas.flat.push_back(delta);
+      region_changed |= delta != 0;
+      updated.push_back(std::move(out));
+    }
+    if (!region_changed) continue;
+    changed |= viewport.ReplaceLines(region.first, region.last + 1, std::move(updated),
+                                     /*record_undo=*/true);
+  }
+  if (!changed) {
+    viewport.EndUndoGroup();
+    return false;
+  }
+  // Grouping the replaces WITH the caret restore is what makes the aggregate undo
+  // entry's after_state capture the restored carets; without it redo snaps to
+  // (first, 0) and drops every secondary caret.
+  if (multi || !had_selection) {
+    RestoreCaretsAfterIndentEdit(viewport, snapshot, regions, deltas);
+  } else {
+    // A plain single selection is exactly one region, and this path is only
+    // reachable with no secondary carets.
+    RestoreSelectionAcrossLines(viewport, regions.front().first, regions.front().last,
+                                had_selection);
+  }
+  viewport.EndUndoGroup();
+  return true;
+}
+
 }  // namespace
 
 bool IndentSelection(TextViewport& viewport) {
-  LineRange range = ResolveLineRange(viewport);
-  const auto& lines = viewport.lines();
-  if (range.first >= lines.size()) return false;
   std::string indent_unit;
   if (viewport.soft_tabs()) {
     indent_unit.assign(viewport.indent_width(), ' ');
   } else {
     indent_unit = "\t";
   }
-  std::vector<std::string> updated;
-  updated.reserve(range.last - range.first + 1);
-  std::vector<std::ptrdiff_t> per_line_delta;
-  per_line_delta.reserve(range.last - range.first + 1);
-  for (std::size_t i = range.first; i <= range.last; ++i) {
-    // LineView, not lines[i]: LineRef would also insert every line of the span
-    // into the buffer's line cache (see MoveLineUp).
-    const std::string_view source = lines.LineView(i);
-    if (source.empty()) {
-      updated.emplace_back();
-      per_line_delta.push_back(0);
-    } else {
-      std::string line = indent_unit;
-      line += source;
-      updated.push_back(std::move(line));
-      per_line_delta.push_back(static_cast<std::ptrdiff_t>(indent_unit.size()));
-    }
-  }
-  const bool had_selection = viewport.has_selection();
-  const bool multi = viewport.has_multiple_carets();
-  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
-  // Group the replace + caret restore so the aggregate undo entry's after_state
-  // captures the restored carets (else redo snaps to (first,0) and drops carets).
-  viewport.BeginUndoGroup();
-  const bool changed = viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
-                                             /*record_undo=*/true);
-  if (changed) {
-    if (multi || !had_selection) {
-      RestoreCaretsAfterIndentEdit(viewport, snapshot, range.first, per_line_delta);
-    } else {
-      RestoreSelectionAcrossLines(viewport, range.first, range.last, had_selection);
-    }
-  }
-  viewport.EndUndoGroup();
-  return changed;
+  return ReindentRegions(
+      viewport, [&](std::string_view source, std::string* out) -> std::ptrdiff_t {
+        if (source.empty()) {
+          // An empty line gains no indent, so it also gains no column shift.
+          return 0;
+        }
+        out->reserve(indent_unit.size() + source.size());
+        out->append(indent_unit);
+        out->append(source);
+        return static_cast<std::ptrdiff_t>(indent_unit.size());
+      });
 }
 
 bool OutdentSelection(TextViewport& viewport) {
-  LineRange range = ResolveLineRange(viewport);
-  const auto& lines = viewport.lines();
-  if (range.first >= lines.size()) return false;
-  std::size_t indent_width = viewport.indent_width() == 0 ? 4 : viewport.indent_width();
-  std::vector<std::string> updated;
-  updated.reserve(range.last - range.first + 1);
-  std::vector<std::ptrdiff_t> per_line_delta;
-  per_line_delta.reserve(range.last - range.first + 1);
-  bool any_change = false;
-  for (std::size_t i = range.first; i <= range.last; ++i) {
-    // LineView, not lines[i]: see IndentSelection.
-    const std::string_view line = lines.LineView(i);
-    if (line.empty()) {
-      updated.emplace_back();
-      per_line_delta.push_back(0);
-      continue;
-    }
-    std::size_t strip = 0;
-    if (line[0] == '\t') {
-      strip = 1;
-    } else {
-      while (strip < indent_width && strip < line.size() && line[strip] == ' ') ++strip;
-    }
-    if (strip == 0) {
-      updated.emplace_back(line);
-      per_line_delta.push_back(0);
-    } else {
-      updated.emplace_back(line.substr(strip));
-      per_line_delta.push_back(-static_cast<std::ptrdiff_t>(strip));
-      any_change = true;
-    }
-  }
-  if (!any_change) return false;
-  const bool had_selection = viewport.has_selection();
-  const bool multi = viewport.has_multiple_carets();
-  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
-  // See IndentSelection: group the replace + caret restore so redo keeps carets.
-  viewport.BeginUndoGroup();
-  const bool changed = viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
-                                             /*record_undo=*/true);
-  if (changed) {
-    if (multi || !had_selection) {
-      RestoreCaretsAfterIndentEdit(viewport, snapshot, range.first, per_line_delta);
-    } else {
-      RestoreSelectionAcrossLines(viewport, range.first, range.last, had_selection);
-    }
-  }
-  viewport.EndUndoGroup();
-  return changed;
+  const std::size_t indent_width = viewport.indent_width() == 0 ? 4 : viewport.indent_width();
+  return ReindentRegions(
+      viewport, [&](std::string_view source, std::string* out) -> std::ptrdiff_t {
+        std::size_t strip = 0;
+        if (!source.empty()) {
+          if (source[0] == '\t') {
+            strip = 1;
+          } else {
+            while (strip < indent_width && strip < source.size() && source[strip] == ' ') ++strip;
+          }
+        }
+        out->assign(source.substr(strip));
+        return -static_cast<std::ptrdiff_t>(strip);
+      });
 }
 
 bool SortLines(TextViewport& viewport, bool ascending) {
-  LineRange range = ResolveLineRange(viewport);
-  if (range.first == range.last) return false;
-  const auto& lines = viewport.lines();
-  if (range.last >= lines.size()) return false;
-  // See MoveLineUp for why this is one SliceLines walk and not a per-line read.
-  std::vector<std::string> sorted = lines.SliceLines(range.first, range.last + 1);
-  if (ascending) {
-    std::sort(sorted.begin(), sorted.end());
-  } else {
-    std::sort(sorted.begin(), sorted.end(), std::greater<std::string>());
+  std::vector<LineRange> regions = ResolveLineRanges(viewport);
+  // A one-line region has nothing to sort. That is also the pre-existing
+  // single-caret-no-selection answer, generalised: sorting is a range operation,
+  // so a bare caret contributes no range.
+  std::erase_if(regions, [](const LineRange& r) { return r.first == r.last; });
+  if (regions.empty()) return false;
+  const TextBuffer& lines = viewport.lines();
+
+  const auto sort_region = [&](const LineRange& region) {
+    // See BuildLineMoveReplacement for why this is one SliceLines walk and not a
+    // per-line read.
+    std::vector<std::string> sorted = lines.SliceLines(region.first, region.last + 1);
+    if (ascending) {
+      std::sort(sorted.begin(), sorted.end());
+    } else {
+      std::sort(sorted.begin(), sorted.end(), std::greater<std::string>());
+    }
+    return viewport.ReplaceLines(region.first, region.last + 1, std::move(sorted),
+                                 /*record_undo=*/true);
+  };
+
+  if (regions.size() == 1) {
+    return sort_region(regions.front());
   }
-  return viewport.ReplaceLines(range.first, range.last + 1, std::move(sorted),
-                               /*record_undo=*/true);
+  bool changed = false;
+  viewport.BeginUndoGroup();
+  for (const LineRange& region : regions) {
+    changed |= sort_region(region);
+  }
+  viewport.EndUndoGroup();
+  return changed;
 }
 
 }  // namespace microide::editor

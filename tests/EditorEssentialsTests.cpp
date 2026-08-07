@@ -322,6 +322,129 @@ void TestShapingMoveLineDownKeepsWholeLineSelection() {
          "the selection follows the moved block (now lines 1..2, exclusive end at line 3)");
 }
 
+// TD-2026-08-07-160: the fidelity claim. `ResolveLineRanges` used to widen to
+// min..max over every caret, so a shaping op rewrote every line BETWEEN the
+// carets — Ctrl+/ with carets on lines 10 and 100 commented all 91. VSCode
+// comments two.
+void TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets() {
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+
+  {
+    TextViewport viewport;
+    viewport.LoadContent("l0\nl1\nl2\nl3\nl4\nl5", "/tmp/shaping-gap-comment.cpp");
+    viewport.MoveCursorTo(1, 0);
+    viewport.AddSecondaryCaret(4, 0);
+    Expect(microide::editor::ToggleLineComment(viewport, "//"),
+           "ToggleLineComment across two carets should succeed");
+    Expect(viewport.lines()[1] == "// l1" && viewport.lines()[4] == "// l4",
+           "both caret lines are commented");
+    Expect(viewport.lines()[0] == "l0" && viewport.lines()[2] == "l2" &&
+               viewport.lines()[3] == "l3" && viewport.lines()[5] == "l5",
+           "every line that has no caret is untouched");
+    Expect(viewport.Undo(), "the whole multi-region toggle is one undo step");
+    Expect(viewport.lines()[1] == "l1" && viewport.lines()[4] == "l4",
+           "undo restores both regions at once");
+  }
+
+  {
+    // Adjacent carets merge into ONE region, so the op is not applied to a line
+    // twice and the two lines are one edit rather than two abutting ones.
+    TextViewport viewport;
+    viewport.LoadContent("a\nb\nc\nd", "/tmp/shaping-adjacent.cpp");
+    viewport.MoveCursorTo(1, 0);
+    viewport.AddSecondaryCaret(2, 0);
+    Expect(microide::editor::ToggleLineComment(viewport, "//"), "adjacent carets should toggle");
+    Expect(viewport.lines()[1] == "// b" && viewport.lines()[2] == "// c",
+           "both adjacent lines are commented exactly once");
+    Expect(viewport.lines()[0] == "a" && viewport.lines()[3] == "d", "neighbours are untouched");
+  }
+
+  {
+    // Two carets on the SAME line collapse to one region — an op applied twice to
+    // one line would double-comment it.
+    TextViewport viewport;
+    viewport.LoadContent("aaaa\nbbbb", "/tmp/shaping-same-line.cpp");
+    viewport.MoveCursorTo(0, 0);
+    viewport.AddSecondaryCaret(0, 3);
+    Expect(microide::editor::ToggleLineComment(viewport, "//"), "same-line carets should toggle");
+    Expect(viewport.lines()[0] == "// aaaa", "the shared line is commented exactly once");
+  }
+
+  {
+    // Each region decides for itself whether it is commenting or uncommenting,
+    // and at what column — one LineCommentCommand per selection, as VSCode does.
+    TextViewport viewport;
+    viewport.LoadContent("// x\ngap\n    y", "/tmp/shaping-per-region.cpp");
+    viewport.MoveCursorTo(0, 0);
+    viewport.AddSecondaryCaret(2, 4);
+    Expect(microide::editor::ToggleLineComment(viewport, "//"),
+           "a mixed commented/uncommented caret set should still toggle");
+    Expect(viewport.lines()[0] == "x", "the already-commented region uncomments");
+    Expect(viewport.lines()[2] == "    // y",
+           "the uncommented region comments AT ITS OWN INDENT, not at the other region's");
+    Expect(viewport.lines()[1] == "gap", "the line between is untouched");
+  }
+
+  {
+    // Outdent: only the caret regions lose indentation.
+    TextViewport viewport;
+    viewport.LoadContent("    a\n    b\n    c", "/tmp/shaping-gap-outdent.txt");
+    viewport.SetSoftTabs(true);
+    viewport.SetIndentWidth(4);
+    viewport.MoveCursorTo(0, 4);
+    viewport.AddSecondaryCaret(2, 4);
+    Expect(microide::editor::OutdentSelection(viewport), "OutdentSelection should succeed");
+    Expect(viewport.lines()[0] == "a" && viewport.lines()[2] == "c",
+           "both caret regions are outdented");
+    Expect(viewport.lines()[1] == "    b", "the line between keeps its indentation");
+    Expect(viewport.cursor_column() == 0, "the primary caret's column follows its region's delta");
+    Expect(viewport.Undo(), "the multi-region outdent is one undo step");
+    Expect(viewport.lines()[0] == "    a" && viewport.lines()[1] == "    b" &&
+               viewport.lines()[2] == "    c",
+           "undo restores every region");
+  }
+
+  {
+    // Sort: two ranged selections sort independently instead of being merged into
+    // one span whose sort would interleave them.
+    TextViewport viewport;
+    viewport.LoadContent("b\na\nKEEP\nz\ny", "/tmp/shaping-gap-sort.txt");
+    viewport.MoveCursorTo(0, 0);
+    viewport.MoveCursorTo(1, 1, /*extend_selection=*/true);
+    viewport.AddSecondaryCaretWithRange(SelectionRange{TextPosition{3, 0}, TextPosition{4, 1}});
+    Expect(microide::editor::SortLines(viewport, /*ascending=*/true), "SortLines should succeed");
+    Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b",
+           "the first selection sorts within itself");
+    Expect(viewport.lines()[2] == "KEEP", "the line between the selections stays put");
+    Expect(viewport.lines()[3] == "y" && viewport.lines()[4] == "z",
+           "the second selection sorts within itself");
+  }
+}
+
+// A move region pinned against the edge of the buffer no-ops on its own; the
+// other regions still move. VSCode gives each selection its own MoveLinesCommand
+// and a pinned one returns without an edit.
+void TestShapingMoveLineSkipsOnlyThePinnedRegion() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\nd", "/tmp/shaping-pinned.txt");
+  viewport.MoveCursorTo(0, 0);
+  viewport.AddSecondaryCaret(3, 0);
+  Expect(microide::editor::MoveLineUp(viewport),
+         "MoveLineUp should succeed because one of the two regions can move");
+  Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b",
+         "the region at the top of the buffer stays put");
+  Expect(viewport.lines()[2] == "d" && viewport.lines()[3] == "c",
+         "the region that can move still swaps with the line above it");
+  Expect(viewport.cursor_line() == 0, "the pinned caret does not shift");
+
+  TextViewport top_only;
+  top_only.LoadContent("a\nb", "/tmp/shaping-pinned-only.txt");
+  top_only.MoveCursorTo(0, 0);
+  Expect(!microide::editor::MoveLineUp(top_only),
+         "with nothing left that can move, the op is a no-op");
+}
+
 // TD-2026-07-17A-120: shaping actions must not drop a ranged secondary caret's
 // selection anchor, and line-range resolution must cover lines spanned only by
 // such an anchor.
@@ -363,21 +486,26 @@ void TestShapingPreservesRangedSecondaryCaretAnchors() {
            "the line covered only by the secondary anchor must be indented (A-120)");
     Expect(viewport.lines()[1] == "  bb", "the secondary caret's own line is indented");
     Expect(viewport.lines()[3] == "  dd", "the primary caret line is indented");
+    Expect(viewport.lines()[2] == "cc",
+           "the line BETWEEN the two regions is untouched (TD-2026-08-07-160)");
   }
 }
 
+// TD-2026-08-07-160: two carets are two regions, not one span between them. Each
+// caret's line moves past its own neighbour — which is what VSCode does, one
+// MoveLinesCommand per selection — and the whole thing is still ONE undo step.
 void TestShapingMoveLineDownMultiCaretSingleUndoStep() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\nc\nd", "/tmp/sample.txt");
   viewport.MoveCursorTo(0, 0);
   viewport.AddSecondaryCaret(2, 0);
   Expect(microide::editor::MoveLineDown(viewport),
-         "MoveLineDown spanning primary and secondary caret lines should succeed");
+         "MoveLineDown on two disjoint caret lines should succeed");
   Expect(viewport.lines().size() == 4,
          "MoveLineDown should preserve line count when moving block before tail line");
-  Expect(viewport.lines()[0] == "d" && viewport.lines()[1] == "a" && viewport.lines()[2] == "b" &&
+  Expect(viewport.lines()[0] == "b" && viewport.lines()[1] == "a" && viewport.lines()[2] == "d" &&
              viewport.lines()[3] == "c",
-         "block [a,b,c] should move below line d via one ReplaceLines");
+         "each caret line swaps with the line below it; line 'b' between them is NOT dragged");
   Expect(viewport.Undo(),
          "undo after multi-caret MoveLineDown should succeed (single history entry)");
   Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b" && viewport.lines()[2] == "c" &&
@@ -391,12 +519,12 @@ void TestShapingMoveLineUpMultiCaretSingleUndoStep() {
   viewport.MoveCursorTo(1, 0);
   viewport.AddSecondaryCaret(3, 0);
   Expect(microide::editor::MoveLineUp(viewport),
-         "MoveLineUp spanning primary and secondary caret lines should succeed");
+         "MoveLineUp on two disjoint caret lines should succeed");
   Expect(viewport.lines().size() == 4,
          "MoveLineUp should preserve line count when moving block above prior line");
-  Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b" && viewport.lines()[2] == "c" &&
-             viewport.lines()[3] == "top",
-         "block [a,b,c] should move above line top via one ReplaceLines");
+  Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "top" &&
+             viewport.lines()[2] == "c" && viewport.lines()[3] == "b",
+         "each caret line swaps with the line above it; line 'b' between them is NOT dragged");
   Expect(viewport.Undo(),
          "undo after multi-caret MoveLineUp should succeed (single history entry)");
   Expect(viewport.lines()[0] == "top" && viewport.lines()[1] == "a" && viewport.lines()[2] == "b" &&
@@ -410,7 +538,8 @@ void TestShapingMoveLineDownRedoPreservesMultiCaret() {
   viewport.MoveCursorTo(0, 2);
   viewport.AddSecondaryCaret(2, 2);
   Expect(microide::editor::MoveLineDown(viewport), "MoveLineDown should succeed");
-  // Block [aaa,bbb,ccc] moves below ddd; carets follow (+1 line, same column).
+  // Each caret line swaps with the one below it; both carets follow (+1 line,
+  // same column).
   Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
          "primary caret should follow the moved block and keep its column");
   Expect(viewport.secondary_carets().size() == 1 &&
@@ -420,8 +549,9 @@ void TestShapingMoveLineDownRedoPreservesMultiCaret() {
 
   Expect(viewport.Undo(), "undo should succeed");
   Expect(viewport.Redo(), "redo should succeed");
-  Expect(viewport.lines()[0] == "ddd" && viewport.lines()[1] == "aaa",
-         "redo should re-apply the line move");
+  Expect(viewport.lines()[0] == "bbb" && viewport.lines()[1] == "aaa" &&
+             viewport.lines()[2] == "ddd" && viewport.lines()[3] == "ccc",
+         "redo should re-apply BOTH region moves");
   Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 2,
          "redo should restore the primary caret line AND column (regression: snapped to col 0)");
   Expect(viewport.secondary_carets().size() == 1 &&
@@ -1620,6 +1750,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineDown);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownKeepsWholeLineSelection",
           TestShapingMoveLineDownKeepsWholeLineSelection);
+  AddTest(tests, "EditorEssentials/Shaping/MultiCaretOpsDoNotTouchLinesBetweenCarets",
+          TestShapingMultiCaretOpsDoNotTouchLinesBetweenCarets);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineSkipsOnlyThePinnedRegion",
+          TestShapingMoveLineSkipsOnlyThePinnedRegion);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownMultiCaretSingleUndoStep",
           TestShapingMoveLineDownMultiCaretSingleUndoStep);
   AddTest(tests, "EditorEssentials/Shaping/PreservesRangedSecondaryCaretAnchors",
