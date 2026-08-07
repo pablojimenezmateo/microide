@@ -1,17 +1,28 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-07. **84 open items.** ([160](#td-2026-08-07-160) resolved;
-[162](#td-2026-08-07-162) and [163](#td-2026-08-07-163) opened by
-[159](#td-2026-08-06-159)'s tail pass; [161](#td-2026-08-07-161) is half done —
-its deterministic gates are rerecorded and its timing/resident gates still need an
-idle runner.)
+Reviewed 2026-08-07. **84 open items.**
+([162](#td-2026-08-07-162), [163](#td-2026-08-07-163) and
+[165](#td-2026-08-07-165) resolved; [164](#td-2026-08-07-164) and
+[166](#td-2026-08-07-166) opened by that work; [159](#td-2026-08-06-159) took a
+grep-first pass and stays open for its tail; [161](#td-2026-08-07-161) is half
+done — its deterministic gates are rerecorded and its timing/resident gates still
+need an idle runner.)
 
-**Suggested order for the perf cluster**, given a runner that is not idle:
-[163](#td-2026-08-07-163) (audit the instrument — no idle box needed, and it fixes
-[159](#td-2026-08-06-159)'s ranking), then [159](#td-2026-08-06-159) (grep-first
-sweep), then [162](#td-2026-08-07-162) (contained, wants care).
-[161](#td-2026-08-07-161) is blocked on a quiet machine, not on effort — take it
-whenever one appears, and it also settles the menu anomaly recorded there.
+**The perf cluster's 2026-08-07 pass**, in the order it was taken:
+[163](#td-2026-08-07-163) audited the instrument (answer: `plugin_status_item_update`
+was unique — 1 of 115 phases above threshold, and that one legitimately),
+[159](#td-2026-08-06-159) took the grep-first sweep plus the audit's own
+product-site table as its worklist, and [162](#td-2026-08-07-162) landed the debug
+value tree. On the way, reading allocation counts closely surfaced
+[165](#td-2026-08-07-165): **every scenario's shell was reading the developer's
+real `~/.local/state/microide`**, so any allocation gate on a shell scenario was
+partly measuring the operator's machine. That is fixed, and the deterministic half
+of the suite is re-recorded against it.
+
+[161](#td-2026-08-07-161) remains blocked on a quiet machine, not on effort — take
+it whenever one appears, and it also settles the menu anomaly recorded there. Its
+one visible symptom today is `typing_large_file`'s `mean_rss_growth_bytes`, the
+suite's only red gate.
 
 The 2026-08-06 interactive sweep is [149](#td-2026-08-06-149)'s own instruction
 carried out — "generalise the sweep: the instrument is cheap now, and no
@@ -991,7 +1002,50 @@ truncated), `.../DebugValueTreeStaleNodeIdDoesNotAliasAfterClear`, and
 the debug-subsystem TU cap, and the rule says carve a companion rather than raise
 the cap.
 
-### TD-2026-08-07-163 — no phase gate has been checked for how much of it is the scenario's own scaffolding. OPEN.
+### TD-2026-08-07-163 — no phase gate has been checked for how much of it is the scenario's own scaffolding. [RESOLVED 2026-08-07 — the answer is one, and it is the audit's own artifact.]
+
+**Result: `plugin_status_item_update` was unique.** All 115 phases audited, 0
+errors, and exactly one at or above the 20 % threshold — `value_tree.paging` at
+28 %, which is 50 allocations of `MakeVariables` building the 5,000 DAP variables
+the scenario streams, against a product path that TD-2026-08-07-162 had just cut
+by 98 %. A fixed input cost became a large *share* of a small total; nothing is
+wrong with the gate. 97 of the 115 phases read exactly 0 %.
+
+The committed table is `dev-docs/performance/perf-phase-scaffolding-audit.md`;
+the tool is `tools/audit-perf-phase-scaffolding.py`.
+
+**Three things the audit needed that were not in the plan:**
+
+  - the tracer printed only its top 12 sites, with the tail as
+    "... and N more site(s)" and no counts, so nothing could attribute *all* of a
+    phase. `MICROIDE_PERF_ALLOC_TRACE_SITES` makes the dump exhaustive.
+  - the innermost repo frame is not always the answer. LTO drops file/line for
+    some inlined bodies but keeps the symbol, so the walk has to fall back to the
+    demangled name (`microide::tests::` vs `microide::`) or it sails past the
+    product frame and lands on the harness that called it.
+  - and when even the symbol is gone — the whole lambda body flattened into
+    `ScenarioContext::Measure` — the honest answer is **unattributed**, not a
+    bucket. Charging those to the enclosing frame is what made
+    `assist_merge::RankedUnion`, a header template instantiated in the scenario
+    TU, read as "100 % scaffolding" when it is 100 % product. Eight phases have
+    such sites; all are small next to their totals.
+
+**And the audit found something bigger than what it was looking for.** Building it
+meant reading a lot of allocation counts closely, which is how
+[165](#td-2026-08-07-165) surfaced: every scenario's shell was reading the
+developer's real `~/.local/state/microide`, so allocation gates on a shell
+scenario were partly a measurement of the operator's machine. The product-site
+half of the audit's output also turned out to be [159](#td-2026-08-06-159)'s
+ranked worklist for free — summing each phase's top *product* sites across all 115
+gives a cross-phase table of where the suite allocates, which is what surfaced
+`OrderedSidebarViews` running per frame.
+
+**Making it standing** is still open, and the entry's own recommendation stands: a
+lint over `tests/perf/*.cpp` for string concatenation / `std::to_string` inside a
+`Measure()` lambda. Filed as [166](#td-2026-08-07-166) rather than done, because
+the audit is now cheap to re-run and the finding rate was 1 in 115.
+
+<details><summary>The original entry</summary>
 
 `plugin_status_item_update` measured 172,005 allocations. **95 % of them were the
 measured loop building its own input** — `"plugin.status.item_" + std::to_string(i)`,
@@ -1049,6 +1103,28 @@ string concatenation / `std::to_string` inside a `Measure()` lambda; or a harnes
 assertion that refuses to write a baseline for a phase over the threshold. The
 lint is the one that fits the repo's existing habits — and per
 `validation-traps.md`, it would need positive and negative control fixtures.
+
+</details>
+
+### TD-2026-08-07-166 — nothing stops the next perf scenario from measuring its own `operator+`. OPEN.
+
+[163](#td-2026-08-07-163)'s standing half. The audit found today's scaffolding-
+heavy gates (one, and it is legitimate); nothing prevents the next scenario from
+being written the way `plugin_status_item_update` was — a `Measure()` body that
+composes its own input string per iteration, so the gate measures `operator+`
+against a product function that allocates none.
+
+Cheapest first, per that entry's own list: a note in `guidelines/performance.md`;
+an architecture lint over `tests/perf/*.cpp` for string concatenation /
+`std::to_string` / `std::format` inside a `Measure(...)` lambda body; or a harness
+assertion refusing to write a baseline for a phase over the threshold. The lint
+fits the repo's habits and `ExtractBraceDelimitedBody` already gives it the lambda
+body; per `validation-traps.md` it needs negative and positive control fixtures,
+and the positive control has to cover the legitimate case — a pure-unit scenario
+where construction IS the work.
+
+Not done with 163 because the audit is now one command and the finding rate was
+1 in 115, so the lint is insurance rather than a discovery tool.
 
 ### TD-2026-08-06-158 — the status bar probes the filesystem for `.git` on every painted frame. OPEN.
 

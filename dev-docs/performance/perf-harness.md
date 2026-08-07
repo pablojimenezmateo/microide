@@ -692,6 +692,16 @@ them.
 | `MICROIDE_PERF_BIG_ALLOC_BYTES=<n>` | size floor, one backtrace per hit | a few large allocations ("what is eating memory") |
 | `MICROIDE_PERF_ALLOC_TRACE=<min>[:<max>]` | size **band**, aggregated by stack | many small allocations ("what does this 960 times") |
 | `MICROIDE_PERF_ALLOC_TRACE_PHASE=<substring>` | **when** — only inside a matching `Measure` phase | always, with the one above |
+| `MICROIDE_PERF_ALLOC_TRACE_SITES=<n>` | how many sites the dump prints (default 12) | attributing **all** of a phase, not reading the top by hand |
+
+Twelve sites is the right number to read and the wrong number to compute a share
+from: the tail prints as `... and N more site(s)` with no counts, so anything that
+has to account for every allocation is left guessing. Raise it (1024 is the table
+size) when you need the table to be exhaustive — that is what
+`tools/audit-perf-phase-scaffolding.py` does. See
+`dev-docs/performance/perf-phase-scaffolding-audit.md` for its committed result:
+how much of each phase gate is the scenario's own scaffolding rather than the
+product path the gate is named after.
 
 The phase filter is not optional in practice. A scenario's setup out-allocates
 its measured phase by an order of magnitude, so an unfiltered table is dominated
