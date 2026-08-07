@@ -10,6 +10,23 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Performance
 
+All figures are from the project's reference runner. Measured against v2.8.1
+across the 92 gated scenarios present in both releases and unchanged in what
+they measure: **median p50 allocations −49.4%**, and 7.18M → 2.92M allocations
+in aggregate (−59.3%). 75 scenarios improved, 16 are flat, and one moved up —
+`git_sidebar_activate`, because the harness now runs every scenario in its own
+cold child process with an isolated app-root instead of letting it inherit warm
+allocator and config state.
+
+Two scenarios are excluded from that comparison rather than counted as
+regressions: `terminal_alt_screen_toggle` and `terminal_scroll_long_output` used
+to scroll and toggle an *empty* buffer, because the harness never spawns a real
+shell, so they measured a terminal holding one blank line. They now feed 4,000
+lines through the emulator and measure what they are named for. No suite-wide
+wall-clock figure is quoted: v2.8.1's baselines predate the per-iteration clock
+calibration the harness now records, so the two sets are not comparable on
+duration.
+
 - **Four interactive models stopped rebuilding themselves from scratch.** Reading
   the allocation tracer across the perf suite's unread phases turned up the same
   shape four times: a row list cleared and re-pushed, so every string every row
@@ -25,54 +42,6 @@ project (see [README](README.md)); versions track meaningful shipped work.
   state three times, each capture deep-copying the whole secondary-caret vector,
   and the group discards all of them. With one edit per caret that is quadratic: a
   256-caret grouped indent allocated 12.9 MB and now allocates 381 KB.
-
-### Changed
-
-- **Code folding was rewritten to be incremental.** Fold ranges used to be
-  re-derived for the whole document on every keystroke, which was ~26% of a
-  keystroke on a 50k-line file and O(document) by construction. The document is
-  now partitioned into ~256-line blocks, each holding a reduced summary of the
-  brackets and indent levels it leaves open, and ranges are resolved for the
-  viewport's line window rather than materialised for the entire file. Typing
-  deep in a large file measured 20% faster overall.
-
-  Two behaviours changed with it. A construct whose closer sits far below the
-  viewport now gets its fold marker on the first frame instead of only once you
-  scroll near the closer (constructs spanning more than 8192 lines still wait
-  until the viewport is nearer). And a collapsed fold outside the resolved part
-  of a very large file no longer silently re-expands after an edit.
-
-### Fixed
-
-- **A multi-caret shaping op now edits the caret lines, not everything between
-  them.** With carets on lines 10 and 100 and no selection, `Ctrl+/` commented all
-  91 lines, `Tab` indented all 91, and `Alt+Down` dragged all 91 past line 101.
-  VSCode does two. The line range is resolved as a set of disjoint regions — one
-  per caret, with overlapping or adjacent ones merged — and each op emits one edit
-  per region inside a single undo step. Each region also decides for itself, again
-  matching VSCode: a caret sitting in a commented block uncomments while a caret in
-  an uncommented one comments, and each region comments at its own indent. A
-  selection spanning lines is unaffected: it is one region and still applies to
-  every line it covers.
-- **The file finder understands a `/` in the query.** `editor/tv` means "something
-  starting tv, in a directory matching editor", but the query was scored as one
-  string against the whole path — which threw away every filename signal the
-  ranker has, because a `/` cannot appear in a filename. Those queries barely
-  ordered at all: `util/str` scored `StringUtil.h` and `StringUtil.cpp` at exactly
-  the same number. The query is now split at the last separator, matching VSCode:
-  the tail ranks against the filename and the head narrows the directory.
-- **Sustained large multi-line editing no longer grows memory without bound.**
-  The piece tree's insert buffer is append-only and nothing reclaimed it below a
-  4 GiB backstop that in practice never fires, so a session doing repeated
-  large-selection edits (toggle-comment, multi-caret line moves, formatting) grew
-  its resident set forever with no way to get it back short of restarting.
-  Measured at ~2.7 MB per sixteen 1,000-line toggles. Retained edit history is now
-  bounded relative to the live document.
-
-### Performance
-
-All figures on the project's reference runner. Whole-suite result versus the
-previous release: mean p50 −2.35% across 96 gated scenarios.
 
 - **Opening a file that is already open no longer re-reads it from disk.** The
   existing-tab branch of "open file" ran a full reload unconditionally: read the
@@ -150,6 +119,49 @@ previous release: mean p50 −2.35% across 96 gated scenarios.
   refreshes and the staged-commit panel all fell by 60-78%.
 - **A git refresh stopped deep-copying the whole repository state twice** — once
   to publish it and once for a caller that wanted two numbers out of it.
+
+### Changed
+
+- **Code folding was rewritten to be incremental.** Fold ranges used to be
+  re-derived for the whole document on every keystroke, which was ~26% of a
+  keystroke on a 50k-line file and O(document) by construction. The document is
+  now partitioned into ~256-line blocks, each holding a reduced summary of the
+  brackets and indent levels it leaves open, and ranges are resolved for the
+  viewport's line window rather than materialised for the entire file. Typing
+  deep in a large file measured 20% faster overall.
+
+  Two behaviours changed with it. A construct whose closer sits far below the
+  viewport now gets its fold marker on the first frame instead of only once you
+  scroll near the closer (constructs spanning more than 8192 lines still wait
+  until the viewport is nearer). And a collapsed fold outside the resolved part
+  of a very large file no longer silently re-expands after an edit.
+
+### Fixed
+
+- **A multi-caret shaping op now edits the caret lines, not everything between
+  them.** With carets on lines 10 and 100 and no selection, `Ctrl+/` commented all
+  91 lines, `Tab` indented all 91, and `Alt+Down` dragged all 91 past line 101.
+  VSCode does two. The line range is resolved as a set of disjoint regions — one
+  per caret, with overlapping or adjacent ones merged — and each op emits one edit
+  per region inside a single undo step. Each region also decides for itself, again
+  matching VSCode: a caret sitting in a commented block uncomments while a caret in
+  an uncommented one comments, and each region comments at its own indent. A
+  selection spanning lines is unaffected: it is one region and still applies to
+  every line it covers.
+- **The file finder understands a `/` in the query.** `editor/tv` means "something
+  starting tv, in a directory matching editor", but the query was scored as one
+  string against the whole path — which threw away every filename signal the
+  ranker has, because a `/` cannot appear in a filename. Those queries barely
+  ordered at all: `util/str` scored `StringUtil.h` and `StringUtil.cpp` at exactly
+  the same number. The query is now split at the last separator, matching VSCode:
+  the tail ranks against the filename and the head narrows the directory.
+- **Sustained large multi-line editing no longer grows memory without bound.**
+  The piece tree's insert buffer is append-only and nothing reclaimed it below a
+  4 GiB backstop that in practice never fires, so a session doing repeated
+  large-selection edits (toggle-comment, multi-caret line moves, formatting) grew
+  its resident set forever with no way to get it back short of restarting.
+  Measured at ~2.7 MB per sixteen 1,000-line toggles. Retained edit history is now
+  bounded relative to the live document.
 
 ## [2.8.1] - 2026-08-04
 
