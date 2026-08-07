@@ -4,6 +4,10 @@
 
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
 
+#include <filesystem>
+
+#include "util/PathMatch.h"
+
 namespace microide::workspace {
 
 bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& path) {
@@ -44,7 +48,17 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
 
 bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& path,
                                                   const util::FileSignature& signature) const {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  // `lexically_normal()` is ~12 allocations and purely lexical, and every path
+  // reaching here has been normalized on ingress — so the normalization was
+  // spending a fresh path per open tab to confirm the tab's path was already the
+  // shape it is stored in. Once per side, only when the text says it is needed
+  // (TD-2026-08-06-159). The dominant caller is opening a file that is already
+  // open, which walks EVERY tab, so this was quadratic in tab count.
+  std::filesystem::path normalized_storage;
+  const std::filesystem::path& normalized_path =
+      util::PathTextNeedsNormalizing(path.native())
+          ? (normalized_storage = path.lexically_normal())
+          : path;
   bool matched_any_view = false;
   // Check views in every group: the self-write echo must only be suppressed if EVERY
   // open view of this path (including a non-focused split view) already saw our write,
@@ -55,7 +69,14 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
         continue;
       }
       const editor::TextViewport& viewport = tab.editor_state->viewport;
-      if (viewport.path().lexically_normal() != normalized_path) {
+      // The mismatching tabs are the majority and were the cost: normalizing each
+      // of them to reject it is ~12 allocations spent to learn nothing, and a path
+      // whose own text is already normal cannot become `normalized_path` by
+      // normalizing, so the string compare has already answered for it.
+      const std::filesystem::path& view_path = viewport.path();
+      if (view_path != normalized_path &&
+          !(util::PathTextNeedsNormalizing(view_path.native()) &&
+            view_path.lexically_normal() == normalized_path)) {
         continue;
       }
       matched_any_view = true;

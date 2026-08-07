@@ -21,6 +21,7 @@
 #include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
+#include "util/PathMatch.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -341,5 +342,39 @@ struct EditorPreferences {
   // applied; clamped to the setting range (8..32) on load/set.
   int font_size = 13;
 };
+
+// The path an editor tab's view is showing, without materializing it.
+//
+// A deferred-restore tab has not opened its viewport yet, so its identity lives
+// in `restored_path`; every other tab's is the viewport's own. Both are stored
+// normalized, which is why this can hand back a reference: the callers that need
+// a normalized `std::filesystem::path` value used to build one per tab per scan,
+// and a path copy is roughly as expensive as `lexically_normal()` (a fresh
+// pathname string plus a component list with a path per component).
+[[nodiscard]] inline const std::filesystem::path& EditorViewPathRef(
+    const TabEntry::EditorTabState& editor_state) {
+  return editor_state.needs_restore ? editor_state.restored_path
+                                    : editor_state.viewport.path();
+}
+
+// Whether an editor tab's view is showing `normalized_path`, which the caller
+// must already have in lexically-normal form.
+//
+// Both guards matter, and the second is the one that pays (TD-2026-08-06-159).
+// `normalized_path` is normal, so a view path that compares equal to it as text
+// is the same file and needs no normalizing — but a scan over open tabs is mostly
+// *mismatches*, and normalizing each of those to reject it is ~12 allocations
+// spent to learn nothing. A path whose own text is already normal cannot become
+// `normalized_path` by normalizing, so the string compare has already answered
+// for it too. Only an unusually spelled path reaches `lexically_normal()`.
+[[nodiscard]] inline bool EditorViewPathIs(const TabEntry::EditorTabState& editor_state,
+                                           const std::filesystem::path& normalized_path) {
+  const std::filesystem::path& view_path = EditorViewPathRef(editor_state);
+  if (view_path == normalized_path) {
+    return true;
+  }
+  return util::PathTextNeedsNormalizing(view_path.native()) &&
+         view_path.lexically_normal() == normalized_path;
+}
 
 }  // namespace microide::workspace

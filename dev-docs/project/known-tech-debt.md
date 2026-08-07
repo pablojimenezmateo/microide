@@ -620,6 +620,34 @@ That is a variant of this entry's own first shape — "work computed before the
 guard that discards it" — with the guard replaced by a caller that simply never
 reads 99 % of what it asked for.
 
+#### 2026-08-07: `multi_tab.open_tabs` — normalising the tabs that do NOT match
+
+    multi_tab.open_tabs            12,084 -> 6,414   (-46.9 %)
+    multi_tab_cycle (total)        18,953 -> 13,283  (-29.9 %)
+
+Opening a file walks **every open tab in every group, twice** — once to decide
+whether any view of that path exists (`ReloadEditorTabsForPath`'s any-match
+probe) and once in `DiskSignatureMatchesOpenView` — and each step compared by
+calling `lexically_normal()` on the tab's path. That is ~12 allocations, and it
+was paid per tab per open, so opening the Nth tab cost O(N) normalisations and a
+session cost O(N²). The dominant caller is Ctrl+P to a file that is *already*
+open, which is exactly the case that walks the whole strip.
+
+The subtlety is which side to guard, and the first attempt got it wrong. Skipping
+the normalisation when the two paths compare equal as text is correct but nearly
+worthless: a scan is mostly **mismatches**, and every mismatch still normalised in
+order to be rejected. The fix that works is the other guard —
+`util::PathTextNeedsNormalizing`, the allocation-free scan — because a path whose
+own text is already normal cannot become the (already normal) target by
+normalising, so the string compare has already answered for it. Only an unusually
+spelled path reaches `lexically_normal()` at all. First guard alone: -4.5 %. Both:
+-46.9 %.
+
+`EditorViewPathRef` / `EditorViewPathIs` in `WorkspaceTabState.h` carry it, so the
+comparison sites stop materialising a `std::filesystem::path` per tab as well —
+copying one costs about what normalising one does (a pathname string plus a
+component list holding a path per component).
+
 **Read, inherent** (grep hits that are not this shape, recorded so the next pass
 does not re-open them):
 

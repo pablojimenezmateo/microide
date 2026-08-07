@@ -493,9 +493,14 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
   // Reload every editor view on this path across ALL groups — a split view of the same
   // file in the non-focused group must not be left showing stale content (nor keep a
   // stale disk_signature that would later misfire self-write echo suppression).
+  // Compare, do not materialize: this runs over every tab in every group, twice
+  // (the any-match probe and the apply loop), and the dominant caller is opening a
+  // file that is already open. Building a normalized `path` value per tab per scan
+  // made that quadratic in tab count at ~12 allocations a step
+  // (TD-2026-08-06-159).
   const auto matches = [&](const TabEntry& tab) {
     return tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-           operations_.editor_view_path(*tab.editor_state) == normalized_path;
+           EditorViewPathIs(*tab.editor_state, normalized_path);
   };
   bool any_match = false;
   for (const EditorGroup& group : state_.editor_groups) {
