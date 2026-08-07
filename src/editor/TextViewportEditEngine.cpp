@@ -497,18 +497,33 @@ bool TextViewport::DeleteSelection() {
   return ApplyRangeEdit(*range, "", true);
 }
 
-TextViewport::ViewState TextViewport::CaptureViewState() const {
-  return ViewState{
+TextViewport::ViewState TextViewport::CaptureViewStateImpl(bool with_secondary_carets) const {
+  ViewState state{
       .cursor_line = cursor_line_,
       .cursor_column = cursor_column_,
       .preferred_column = preferred_column_,
       .scroll_line = scroll_line_,
       .horizontal_scroll = horizontal_scroll_,
       .selection_anchor = selection_anchor_,
-      .secondary_carets = secondary_carets_,
+      .secondary_carets = {},
       .placeholder = document_->placeholder,
       .dirty = document_->dirty,
   };
+  // The caret vector is the only heap member, and the whole point of the grouped
+  // form is to never make this copy — capturing it and clearing afterwards would
+  // be the same copy-then-discard shape it exists to remove.
+  if (with_secondary_carets) {
+    state.secondary_carets = secondary_carets_;
+  }
+  return state;
+}
+
+TextViewport::ViewState TextViewport::CaptureViewState() const {
+  return CaptureViewStateImpl(/*with_secondary_carets=*/true);
+}
+
+TextViewport::ViewState TextViewport::CaptureViewStateForGroupedEntry() const {
+  return CaptureViewStateImpl(/*with_secondary_carets=*/!undo_history_.IsGroupActive());
 }
 
 void TextViewport::RestoreViewState(const ViewState& state) {
@@ -726,7 +741,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     return std::nullopt;
   }
 
-  ViewState after_state = CaptureViewState();
+  ViewState after_state = CaptureViewStateForGroupedEntry();
   after_state.cursor_line = start.line + after_lines.size() - 1;
   after_state.cursor_column =
       after_lines.size() == 1 ? prefix_size + replacement_lines.front().size()
@@ -741,7 +756,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
       .start_line = start.line,
       .before_lines = std::move(before_lines),
       .after_lines = std::move(after_lines),
-      .before_state = CaptureViewState(),
+      .before_state = CaptureViewStateForGroupedEntry(),
       .after_state = after_state,
   };
 }
@@ -766,7 +781,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildInlineHistoryEntry(
     return std::nullopt;
   }
 
-  ViewState after_state = CaptureViewState();
+  ViewState after_state = CaptureViewStateForGroupedEntry();
   after_state.cursor_line = line;
   after_state.cursor_column = start_column + replacement.size();
   // Visual column of the caret WITHOUT composing the post-edit line: the bytes
@@ -784,7 +799,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildInlineHistoryEntry(
   entry.start_column = start_column;
   entry.removed_text = std::move(removed);
   entry.inserted_text.assign(replacement);
-  entry.before_state = CaptureViewState();
+  entry.before_state = CaptureViewStateForGroupedEntry();
   entry.after_state = std::move(after_state);
   return entry;
 }
@@ -824,7 +839,7 @@ TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
     after_lines.push_back("");
   }
 
-  ViewState after_state = CaptureViewState();
+  ViewState after_state = CaptureViewStateForGroupedEntry();
   const std::size_t total_after_lines =
       document_->lines.size() - (clamped_end - clamped_start) + after_lines.size();
   after_state.cursor_line = std::min(clamped_start, total_after_lines - 1);
@@ -838,7 +853,7 @@ TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
       .start_line = clamped_start,
       .before_lines = document_->lines.SliceLines(clamped_start, clamped_end),
       .after_lines = std::move(after_lines),
-      .before_state = CaptureViewState(),
+      .before_state = CaptureViewStateForGroupedEntry(),
       .after_state = after_state,
   };
 }
@@ -865,7 +880,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
     // `entry` is dead after this read, so move its line vectors into the saved
     // entry instead of deep-copying them on every keystroke.
     HistoryEntry saved_entry = std::move(*entry);
-    saved_entry.after_state = CaptureViewState();
+    saved_entry.after_state = CaptureViewStateForGroupedEntry();
     PushHistoryEntry(std::move(saved_entry), hint);
   } else {
     undo_history_.ClearRedo();
@@ -901,7 +916,7 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
   if (record_undo) {
     // `entry` is dead after this read; move rather than deep-copy the lines.
     HistoryEntry saved_entry = std::move(entry);
-    saved_entry.after_state = CaptureViewState();
+    saved_entry.after_state = CaptureViewStateForGroupedEntry();
     PushHistoryEntry(std::move(saved_entry));
   } else {
     undo_history_.ClearRedo();

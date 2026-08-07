@@ -1647,6 +1647,65 @@ void TestTextViewportMultiCaretUndoEntryDoesNotSpanTheGap() {
          "undo restores every caret's line");
 }
 
+// A grouped multi-region edit must not cost O(carets^2).
+//
+// Every child entry recorded inside an undo group used to capture the full view
+// state THREE times — once for the entry's before-image, once as the base of its
+// after-image, once when the applied entry was saved — and each capture deep-copied
+// the whole secondary-caret vector. `FinishActiveGroup` then throws all of them
+// away: the aggregate's states come from the frame's own captures and the disjoint
+// extra parts carry no state at all. With one region per caret (which is what
+// TD-2026-08-07-160 made the shaping ops do) that is 3 x N copies of an N-element
+// vector per keystroke, all discarded.
+//
+// Bytes, not duration, so this cannot go flaky.
+void TestTextViewportGroupedChildEntriesDoNotCopyTheCaretSet() {
+#if MICROIDE_PERF_HARNESS_BUILD
+  namespace perf = microide::tests::perf;
+  constexpr std::size_t kCarets = 256;
+  constexpr std::size_t kCaretStride = 5;
+
+  std::string content;
+  for (std::size_t i = 0; i < kCarets * kCaretStride + 16; ++i) {
+    content += "x\n";
+  }
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/grouped-child-state.txt");
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(2);
+  viewport.MoveCursorTo(0, 0);
+  std::vector<microide::editor::TextPosition> carets;
+  carets.reserve(kCarets - 1);
+  for (std::size_t i = 1; i < kCarets; ++i) {
+    carets.push_back(microide::editor::TextPosition{i * kCaretStride, 0});
+  }
+  viewport.SetSecondaryCarets(carets);
+
+  // Warm: the first pass pays one-off costs (undo stack growth, cache priming).
+  Expect(microide::editor::IndentSelection(viewport), "the warm-up indent must apply");
+
+  const auto before = perf::Allocations::Snapshot();
+  Expect(microide::editor::IndentSelection(viewport), "the measured indent must apply");
+  const auto delta = perf::Allocations::DeltaSince(before);
+
+  // Measured: 381,680 bytes with the grouped capture, 12,903,200 without it
+  // (probed by forcing CaptureViewStateForGroupedEntry to copy). 1 MiB sits 2.7x
+  // above the one and 12.6x below the other.
+  constexpr std::uint64_t kBudget = 1u << 20;
+  Expect(static_cast<std::uint64_t>(delta.bytes_allocated) < kBudget,
+         "a 256-region grouped indent must cost its regions, not carets x regions "
+         "copies of the caret set (allocated " +
+             std::to_string(delta.bytes_allocated) + " bytes)");
+
+  // The states that ARE read still work: undo restores every caret.
+  Expect(viewport.Undo(), "the grouped multi-region indent must undo");
+  Expect(viewport.secondary_carets().size() == kCarets - 1,
+         "undo restores the whole secondary caret set from the group's own captures");
+  Expect(viewport.lines().LineView(kCaretStride) == "  x",
+         "undo steps back exactly one indent level");
+#endif
+}
+
 void TestTextViewportMultiCaretBackspaceAndDeleteForward() {
   TextViewport viewport;
   viewport.LoadContent("abcd\nefgh\n", "/tmp/multi-caret-delete.txt");
@@ -4983,6 +5042,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportMultiCaretUndoEntryDoesNotSpanTheGap);
   AddTest(tests, "TextViewport/MultiCaretInsertAndUndoAreAtomic",
           TestTextViewportMultiCaretInsertAndUndoAreAtomic);
+  AddTest(tests, "TextViewport/GroupedChildEntriesDoNotCopyTheCaretSet",
+          TestTextViewportGroupedChildEntriesDoNotCopyTheCaretSet);
   AddTest(tests, "TextViewport/MultiCaretBackspaceAndDeleteForward",
           TestTextViewportMultiCaretBackspaceAndDeleteForward);
   AddTest(tests, "TextViewport/MultiCaretDeleteCurrentLineIsAtomic",

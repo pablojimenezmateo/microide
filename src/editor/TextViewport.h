@@ -643,6 +643,17 @@ class TextViewport {
   void BeginSelectionIfNeeded(bool extend_selection);
   bool DeleteSelection();
   ViewState CaptureViewState() const;
+  // CaptureViewState for an entry that is about to be recorded as a CHILD of an
+  // undo group, which is where the secondary-caret vector inside it is dead
+  // weight: FinishActiveGroup overwrites the aggregate's before/after state with
+  // the frame's own captures, and the disjoint extra parts carry no state at all.
+  //
+  // A multi-region edit builds three of these per region per keystroke, so on
+  // `editor_shaping_multi_caret` (32 carets) that was 96 copies of a 31-caret
+  // vector per key press, every one of them discarded. Outside a group it is
+  // exactly CaptureViewState — the state is the entry's own and must be complete.
+  ViewState CaptureViewStateForGroupedEntry() const;
+  ViewState CaptureViewStateImpl(bool with_secondary_carets) const;
   void RestoreViewState(const ViewState& state);
   // Undo and Redo are the same walk in opposite directions: flush any open
   // group, check the stack, pop, stamp the view state on the side being moved
