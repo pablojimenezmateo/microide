@@ -90,6 +90,16 @@ class DebugValueTree {
   // human-inspectable amount (≈500 fully paged containers) yet bounds memory.
   static constexpr std::size_t kMaxLoadedNodes = 100000;
 
+  // Backstop for the slot array behind kMaxLoadedNodes (TD-2026-08-07-162). Node
+  // ids index `nodes_` directly, so an erase leaves a tombstone rather than
+  // shrinking the array — live nodes stay bounded by kMaxLoadedNodes while the
+  // array itself only shrinks when the tree is emptied (every stop). Repeated
+  // first-page replacement inside ONE stop therefore grows slots without growing
+  // live nodes, so cap the slots too and let the same truncation row report it.
+  // Twice the node budget: high enough that no host-issued fetch sequence within
+  // a stop reaches it, low enough to bound the dead space.
+  static constexpr std::size_t kMaxNodeSlots = 2 * kMaxLoadedNodes;
+
   // True once the aggregate node budget forced ApplyVariables to drop children.
   bool Truncated() const { return truncated_; }
 
@@ -187,6 +197,11 @@ class DebugValueTree {
  private:
   struct Node {
     std::uint32_t id = 0;
+    // Slot liveness, not node state: `nodes_` is indexed by id, so EraseSubtree
+    // cannot remove an element without moving every later node's id. It leaves a
+    // tombstone instead, and this is what FindNode checks. Defaults to false so a
+    // default-constructed Node IS a tombstone (`*node = Node{}` erases in place).
+    bool live = false;
     std::string name;
     std::string value;
     std::string type;
@@ -208,6 +223,9 @@ class DebugValueTree {
 
   Node* FindNode(std::uint32_t id);
   const Node* FindNode(std::uint32_t id) const;
+  // Drop every node and re-base the id→slot mapping. The one place `id_base_`
+  // moves; see the `nodes_` comment below.
+  void DropAllNodes();
   Node* FindNodeByReference(int variables_reference);
   std::uint32_t AddNode(Node node);
   // Recursively remove a node and all its descendants from nodes_ and
@@ -227,7 +245,29 @@ class DebugValueTree {
   bool RebindReference(Node& node, int new_reference);
   void FlattenInto(std::uint32_t node_id, int depth);
 
-  std::unordered_map<std::uint32_t, Node> nodes_;
+  // TD-2026-08-07-162: dense storage, not a hash map. Node ids come from
+  // `next_id_++` — monotonic, never reused — so a map keyed by them was a hash
+  // table over its own array indices, and it cost one ~184-byte hash node per
+  // tree node (88 % of `value_tree.build_expand`) on every `variables` response
+  // during a debug stop.
+  //
+  // The slot for node `id` is `nodes_[id - id_base_]`. `id_base_` advances to
+  // `next_id_` whenever the tree is emptied (Clear/ClearRoots), which is what
+  // reconciles a vector index with ids that must stay globally monotonic: within
+  // one populated tree the live ids are exactly [id_base_, next_id_), dense and
+  // in insertion order, while a stale async response carrying an id from a
+  // previous stop still lands below id_base_ and resolves to nullptr.
+  //
+  // Two consequences callers must respect:
+  //   - EraseSubtree tombstones (`live = false`) rather than erasing, since ids
+  //     of surviving nodes must not move. `live_nodes_` is the count the
+  //     kMaxLoadedNodes budget reads; `nodes_.size()` includes tombstones.
+  //   - AddNode can reallocate, so a `Node*` must NOT be held across one. That
+  //     was safe against a map and is not safe here; ApplyVariables re-resolves
+  //     its parent after the attach loop.
+  std::vector<Node> nodes_;
+  std::uint32_t id_base_ = 1;   // id of nodes_[0]; == next_id_ when nodes_ is empty
+  std::size_t live_nodes_ = 0;  // nodes_.size() minus tombstones
   std::unordered_map<int, std::uint32_t> reference_to_node_;  // variables_reference → node id
   std::vector<std::uint32_t> roots_;                          // root node ids, in order
   // Path keys (root→node name chains) of containers the user has expanded. Tracked

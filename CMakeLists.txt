@@ -600,6 +600,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/debug/DebugServiceVariables.cpp
   src/workspace/debug/DebugBreakpointsModel.cpp
   src/workspace/debug/DebugValueTree.cpp
+  src/workspace/debug/DebugValueTreeNodes.cpp
   src/workspace/debug/DebugVariablesModel.cpp
   src/workspace/debug/DebugWatchModel.cpp
   src/workspace/debug/DebugPaneRegistry.cpp

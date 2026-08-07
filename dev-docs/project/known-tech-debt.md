@@ -704,7 +704,10 @@ cases), `.../MoveLineSkipsOnlyThePinnedRegion`, and
 `TextViewport/GroupedChildEntriesDoNotCopyTheCaretSet` (budget placed from both
 measurements: 2.7x above the fixed cost, 12.6x below the defect).
 
-### TD-2026-08-07-162 — the debug value tree stores its nodes in a hash map keyed by a dense counter. OPEN.
+### TD-2026-08-07-162 — the debug value tree stores its nodes in a hash map keyed by a dense counter. [RESOLVED 2026-08-07 — and the paging path moved further than the expand path.]
+
+    value_tree.build_expand   22,643 -> 2,003  (-91.2 %)
+    value_tree.paging          5,097 ->    93  (-98.2 %)
 
 Found by [159](#td-2026-08-06-159)'s tail pass, reading `value_tree.build_expand`.
 
@@ -728,6 +731,44 @@ Worth ~20,000 allocations per `debug_value_tree_expand_large` iteration.
 **Not** the row list: `value_tree.rebuild` already reads 0 allocations, and the
 in-place row reuse that fixed the Settings overlay and the Breakpoints panel moved
 this scenario by 3 allocations. It was tried and reverted.
+
+**What shipped.** `nodes_` is a `std::vector<Node>` and the slot for node `id` is
+`nodes_[id - id_base_]`. `id_base_` is the piece that reconciles a vector index
+with ids that must stay *globally* monotonic (the existing defence against a stale
+async reply aliasing a fresh node): it advances to `next_id_` whenever the tree is
+emptied, so within one populated tree the live ids are exactly `[id_base_,
+next_id_)` — dense and in insertion order — while an id from a previous stop sorts
+below `id_base_` and still resolves to `nullptr`.
+
+Three consequences, each of which is now a test:
+
+  - `EraseSubtree` **tombstones** (`live = false`, and a move-assigned default
+    `Node` releases the three strings and the child vector) rather than erasing,
+    because removing an element would renumber every later node.
+  - the `kMaxLoadedNodes` budget therefore had to move from `nodes_.size()` to a
+    live count. Counting slots would let a tree that repeatedly replaces one small
+    container's page report itself truncated while holding 200 values. The slot
+    array carries its own ceiling (`kMaxNodeSlots`, 2x the node budget) so the dead
+    space stays bounded inside one stop; a stop boundary reclaims it.
+  - `AddNode` can reallocate, so a `Node*` may not be held across one. That was
+    safe against a map and was exactly what `ApplyVariables`' attach loop did (with
+    a comment explaining why it was safe). It now reads everything it needs from
+    the parent before the loop and re-resolves once after — which also removes a
+    pointer chase per child.
+
+The paging scenario moved further than the expand scenario because its 5,000
+children carry no `variablesReference`, so nothing lands in `reference_to_node_`;
+the expand scenario's residue is that map (one node per *container* child) plus the
+row list. `reference_to_node_` is keyed by adapter-assigned ints, which are not
+dense and not ours, so it stays a hash map.
+
+Covered by `BoundedResourceCaps/DebugValueTreeBudgetCountsLiveNodesNotErasedSlots`
+(pages a small container past `kMaxLoadedNodes` in *slots* and asserts it is not
+truncated), `.../DebugValueTreeStaleNodeIdDoesNotAliasAfterClear`, and
+`.../DebugValueTreeErasedNodeIdStaysDead`. The node-storage cluster moved to
+`DebugValueTreeNodes.cpp` — the change pushed `DebugValueTree.cpp` five lines over
+the debug-subsystem TU cap, and the rule says carve a companion rather than raise
+the cap.
 
 ### TD-2026-08-07-163 — no phase gate has been checked for how much of it is the scenario's own scaffolding. OPEN.
 

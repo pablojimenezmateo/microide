@@ -75,6 +75,104 @@ void TestDebugValueTreeSmallContainerIsNotTruncated() {
   Expect(tree.Rows().size() == 9, "root + 8 children, no terminal truncated row");
 }
 
+// TD-2026-08-07-162: nodes_ is a vector indexed by node id, so an erase leaves a
+// tombstone. The aggregate budget must therefore count LIVE nodes, not slots —
+// counting slots would make a tree that repeatedly replaces one small container's
+// first page report itself truncated while holding a handful of values. The slot
+// array is still capped (kMaxNodeSlots), which is what this walks up to.
+void TestDebugValueTreeBudgetCountsLiveNodesNotErasedSlots() {
+  workspace::DebugValueTree tree;
+  constexpr int kContainerRef = 42;
+  constexpr std::size_t kPage = 200;
+  // total_known so the container reads as fully loaded after one page — otherwise
+  // a full-page response appends a "show more…" row and the row count shifts.
+  tree.AddRoot("obj", "{...}", "T", kContainerRef, /*is_scope=*/false,
+               /*total_count=*/static_cast<int>(kPage), /*total_known=*/true);
+  tree.Rebuild();
+  tree.ToggleRow(0);  // expand so children flatten into rows
+
+  std::vector<workspace::dap_protocol::DapVariable> variables;
+  variables.reserve(kPage);
+  for (std::size_t i = 0; i < kPage; ++i) {
+    variables.push_back(workspace::dap_protocol::DapVariable{.name = "v", .value = "0"});
+  }
+  // Replace the first page enough times to burn well past kMaxLoadedNodes in
+  // slots while never holding more than kPage + 1 live nodes.
+  const std::size_t rounds = (workspace::DebugValueTree::kMaxLoadedNodes / kPage) + 20;
+  for (std::size_t round = 0; round < rounds; ++round) {
+    tree.ApplyVariables(kContainerRef, variables, /*start=*/0);
+  }
+  Expect(!tree.Truncated(),
+         "replacing a small container's page must not spend the node budget on tombstones");
+  Expect(tree.Rows().size() == kPage + 1, "root + one live page after every replacement");
+}
+
+// The other half of the same change: a node id from a previous stop must not
+// resolve onto a freshly created node. Ids stay monotonic and `nodes_` is
+// re-based on Clear, so a late setVariable/evaluate reply lands on nothing.
+void TestDebugValueTreeStaleNodeIdDoesNotAliasAfterClear() {
+  workspace::DebugValueTree tree;
+  const std::uint32_t stale_root = tree.AddRoot("old", "1", "int", 0, /*is_scope=*/false);
+  tree.Rebuild();
+  Expect(tree.Rows().size() == 1, "the first stop has one root row");
+
+  tree.Clear();
+  const std::uint32_t fresh_root = tree.AddRoot("new", "2", "int", 0, /*is_scope=*/false);
+  tree.Rebuild();
+  Expect(fresh_root > stale_root, "node ids stay globally monotonic across Clear");
+
+  // A reply issued against the previous stop.
+  tree.SetNodeValue(stale_root, "999", "int", 0);
+  Expect(tree.Rows().size() == 1 && tree.Rows()[0].display_value == "2",
+         "a stale node id must resolve to nothing, not to the new root's slot");
+
+  // And an id past the end of the live range is equally inert.
+  tree.SetNodeValue(fresh_root + 5000, "999", "int", 0);
+  Expect(tree.Rows()[0].display_value == "2", "an out-of-range node id must be inert");
+}
+
+// An erased node's id must stay dead for the life of the tree, and erasing it
+// must not disturb the ids of the nodes that survive.
+void TestDebugValueTreeErasedNodeIdStaysDead() {
+  workspace::DebugValueTree tree;
+  constexpr int kContainerRef = 9;
+  const std::uint32_t root_id = tree.AddRoot("obj", "{...}", "T", kContainerRef,
+                                             /*is_scope=*/false);
+  tree.Rebuild();
+  tree.ToggleRow(0);
+  constexpr int kChildRef = 77;
+  tree.ApplyVariables(
+      kContainerRef,
+      {workspace::dap_protocol::DapVariable{
+           .name = "a", .value = "1", .variables_reference = kChildRef},
+       workspace::dap_protocol::DapVariable{.name = "b", .value = "2"}},
+      /*start=*/0);
+  Expect(tree.Rows().size() == 3, "root + two children");
+  const std::uint32_t erased_child = tree.Rows()[1].node_id;
+
+  // A fresh first page replaces (and erases) the previous children.
+  tree.ApplyVariables(kContainerRef,
+                      {workspace::dap_protocol::DapVariable{.name = "c", .value = "3"}},
+                      /*start=*/0);
+  Expect(tree.Rows().size() == 2, "root + the one replacement child");
+  Expect(tree.Rows()[1].node_id != erased_child, "the replacement child gets a fresh id");
+
+  tree.SetNodeValue(erased_child, "999", "int", 0);
+  Expect(tree.Rows()[1].display_value == "3", "an erased node id must not resolve");
+
+  // The erased child's container reference is unmapped too, so a late `variables`
+  // response for it attaches nothing rather than grafting onto a dead node.
+  tree.ApplyVariables(kChildRef,
+                      {workspace::dap_protocol::DapVariable{.name = "ghost", .value = "0"}},
+                      /*start=*/0);
+  Expect(tree.Rows().size() == 2, "a response for an erased node's reference is dropped");
+
+  // The surviving root is untouched by the erase.
+  tree.SetNodeValue(root_id, "{updated}", "T", kContainerRef);
+  Expect(tree.Rows()[0].display_value == "{updated}",
+         "erasing children must leave the surviving nodes addressable");
+}
+
 // TD-2026-07-17A-106: `project.files_exclude` had no parsed-rule count or byte
 // budget, so a persisted/pasted setting could create an unbounded rule vector that
 // is then copied into DirectoryTree/FileIndex/the native watcher and scanned per
@@ -266,6 +364,12 @@ void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests) {
           TestDebugValueTreeAggregateNodeBudget);
   AddTest(tests, "BoundedResourceCaps/DebugValueTreeSmallContainerIsNotTruncated",
           TestDebugValueTreeSmallContainerIsNotTruncated);
+  AddTest(tests, "BoundedResourceCaps/DebugValueTreeBudgetCountsLiveNodesNotErasedSlots",
+          TestDebugValueTreeBudgetCountsLiveNodesNotErasedSlots);
+  AddTest(tests, "BoundedResourceCaps/DebugValueTreeStaleNodeIdDoesNotAliasAfterClear",
+          TestDebugValueTreeStaleNodeIdDoesNotAliasAfterClear);
+  AddTest(tests, "BoundedResourceCaps/DebugValueTreeErasedNodeIdStaysDead",
+          TestDebugValueTreeErasedNodeIdStaysDead);
   AddTest(tests, "BoundedResourceCaps/ProcessAllowlistEntryByteBudget",
           TestProcessAllowlistEntryByteBudget);
   AddTest(tests, "BoundedResourceCaps/ClipboardExportClampBoundedAndUtf8Safe",
