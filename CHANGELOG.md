@@ -8,6 +8,24 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ## [Unreleased]
 
+### Performance
+
+- **Four interactive models stopped rebuilding themselves from scratch.** Reading
+  the allocation tracer across the perf suite's unread phases turned up the same
+  shape four times: a row list cleared and re-pushed, so every string every row
+  owns is freed and reallocated on the next pass — which for a search box is the
+  next keystroke — plus hash maps built per pass over keys that are already dense
+  array indices. Typing in the Settings search box allocated 417,644 times per
+  rebuild and now allocates 6,153; the Breakpoints panel 110,604 and now 2,706;
+  a keystroke inside a snippet with many mirrors 23,430 and now 3,634. The
+  Breakpoints panel also stopped deep-copying every file's whole breakpoint vector
+  (88 KB a pass) just to walk it once.
+- **A multi-caret edit stopped copying the caret set once per caret per
+  keystroke.** Every edit recorded inside an undo group captured the editor's view
+  state three times, each capture deep-copying the whole secondary-caret vector,
+  and the group discards all of them. With one edit per caret that is quadratic: a
+  256-caret grouped indent allocated 12.9 MB and now allocates 381 KB.
+
 ### Changed
 
 - **Code folding was rewritten to be incremental.** Fold ranges used to be
@@ -26,6 +44,16 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **A multi-caret shaping op now edits the caret lines, not everything between
+  them.** With carets on lines 10 and 100 and no selection, `Ctrl+/` commented all
+  91 lines, `Tab` indented all 91, and `Alt+Down` dragged all 91 past line 101.
+  VSCode does two. The line range is resolved as a set of disjoint regions — one
+  per caret, with overlapping or adjacent ones merged — and each op emits one edit
+  per region inside a single undo step. Each region also decides for itself, again
+  matching VSCode: a caret sitting in a commented block uncomments while a caret in
+  an uncommented one comments, and each region comments at its own indent. A
+  selection spanning lines is unaffected: it is one region and still applies to
+  every line it covers.
 - **The file finder understands a `/` in the query.** `editor/tv` means "something
   starting tv, in a directory matching editor", but the query was scored as one
   string against the whole path — which threw away every filename signal the

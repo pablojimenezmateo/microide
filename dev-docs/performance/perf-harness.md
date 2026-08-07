@@ -529,6 +529,35 @@ the code. The committed set had drifted 3–8x that way, in part because a bare
 `--update-baseline` used to abort partway through on the first advisory-only scenario
 it reached, leaving everything after it untouched.
 
+### `--update-baseline=deterministic`: the half that does not need a quiet box
+
+A baseline's two halves have different requirements on the machine, and treating
+them as one is what keeps rebaselines from happening. Wall, CPU, the calibration
+probe and resident growth are only meaningful on an idle runner — recording them
+under load records the load. Allocation counts, per-phase allocation counts and
+`p50_net_heap_bytes` are none of those things: they are properties of the code path
+and reproduce to the byte across process states.
+
+```
+./build/microide-perf-make/microide/microide_perf --update-baseline=deterministic
+```
+
+rewrites only the second set and carries every timing/resident number over from the
+committed record unchanged, printing each scenario's `p50_allocations` move so the
+drift is visible as it is closed. `--update-baseline` and `--update-baseline=all`
+remain the full form.
+
+Use it when the code has moved and the runner has not settled: it closes the gates
+that are provably stale without minting timing numbers you would have to redo. It
+refuses to write a baseline that does not exist yet — with nothing to merge into it
+would create a timing gate out of exactly the measurement it exists to avoid.
+
+It does **not** replace the full sweep. A run rebaselined this way still carries
+pre-existing timing and resident staleness, and those gates can be RED rather than
+merely loose (TD-2026-08-07-161: `editor_snippet_expand` fails its resident gate by
++26.8 % against a +25 % tolerance purely because the baseline predates per-scenario
+process isolation).
+
 **Rebaseline down, investigate up.** A sweep that rewrites every number with
 whatever the machine says today also enshrines every regression that crept in since
 the last one. The rule that keeps a rebaseline honest: a scenario measuring *under*

@@ -1,6 +1,9 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-06. **83 open items.**
+Reviewed 2026-08-07. **83 open items.** ([160](#td-2026-08-07-160) resolved,
+[162](#td-2026-08-07-162) opened by [159](#td-2026-08-06-159)'s tail pass, and
+[161](#td-2026-08-07-161) is half done — its deterministic gates are rerecorded
+and its timing/resident gates still need an idle runner.)
 
 The 2026-08-06 interactive sweep is [149](#td-2026-08-06-149)'s own instruction
 carried out — "generalise the sweep: the instrument is cheap now, and no
@@ -255,7 +258,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-07-161 — the whole baseline set is stale in three independent ways. OPEN.
+### TD-2026-08-07-161 — the whole baseline set is stale in three independent ways. PARTLY RESOLVED 2026-08-07: the deterministic half is rerecorded; the timing/resident half still needs an idle runner.
 
 Nothing in `tests/perf/baselines/` describes what `microide_perf` now measures,
 and the gaps are large enough that most allocation gates would pass a complete
@@ -292,6 +295,42 @@ verdict lines for clock-drift warnings before committing the result. Expect the
 resident numbers to DROP to their solo values and the allocation counts to move
 by the amounts 152 predicted; both are the point of that change, not a regression
 to investigate.
+
+**2026-08-07: the deterministic half is done, on a busy box, deliberately.**
+
+The all-or-nothing `--update-baseline` was the reason nothing had been rerecorded:
+a baseline's two halves have different requirements on the machine, and blocking
+both on the stricter one left the gates that never needed a quiet box stale for
+days. `--update-baseline=deterministic` rewrites only `p50/p95/max_allocations`,
+`p50_net_heap_bytes` and the per-phase allocation counts, carrying every
+timing/resident number over from the committed record unchanged (see
+`MergeDeterministicMetrics`). It refuses to mint a baseline that does not exist
+yet — with nothing to merge into, it would create a timing gate out of exactly the
+measurement it exists to avoid taking.
+
+The suite was rerecorded that way. 79 of 85 gated scenarios moved; the largest
+were `branch_review_presentation_markers` -99.6 %, `editor_surround_multi_caret`
+-98.8 %, `git_sidebar_refresh_many_untracked` -81.7 %, `diff_open_1000_file_changes`
+-78.0 %. Several small scenarios moved UP (`cold_startup_no_project` 101 -> 801,
+`menu_hover_switch` 54 -> 314): that is cause 2, the number becoming true, and it
+was confirmed by running each one both isolated and with `--no-isolate`.
+
+**Still open — the timing and resident half.** Wall, CPU, `p50_cpu_calibration_ns`
+and `mean_rss_growth_bytes` are all still pre-isolation. That is not only "loose":
+`editor_snippet_expand` FAILS its resident gate today at 103,310 bytes against a
+baseline of 81,465 (+26.8 % against a +25 % tolerance), reproducibly, and it fails
+identically at the commit before this session's code changes — it is the stale
+baseline, not a regression. Expect more of the same across the suite. Run the full
+`--update-baseline` recipe above on an idle runner.
+
+**One anomaly worth chasing before trusting the next full-suite number.** Two
+full-suite isolated runs, an hour apart, disagreed by exactly +80 allocations on
+both `menu_hover_switch` (234 vs 314) and `menu_popup_hover_rows` (254 vs 334).
+Only the higher value reproduces: 4/4 standalone, and identical when measured from
+a worktree at the commit before this session's code changes. So it is not a code
+move and the committed 314/334 is the isolated property — but a full-suite run
+that reads 80 lower is a lead, not noise (memory: perf-scenario-context-dependence).
+Diff the `perf_counters` block of the two runs if it recurs.
 
 
 ### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN.
@@ -424,6 +463,49 @@ the ranked ones was 9 fixes in 14 phases, so the tail is worth a pass, but a
 smaller one — start from a `--report-json` run of the whole suite sorted by
 phase `p50_allocations` after the pending rebaseline, not from this table.
 
+#### 2026-08-07 tail pass: the top of the unread remainder
+
+Taken from a `--report-json` of the whole suite (116 phases) after the
+deterministic rebaseline, ranked by `p50_allocations`, skipping the pure-unit
+scenarios and the phases the pass above already read. Four fixes in six phases.
+
+| phase | scenario total, → now | what it was |
+| --- | ---: | --- |
+| `settings_overlay.rebuild` | 417,644 → 6,153 | rows cleared and re-pushed, so eight strings per row were freed and reallocated per keystroke in the Settings search box; three `unordered_map`s built per pass (one node per element, 500 of them); `"plugin:" + plugin_id` per row |
+| `breakpoints_model.rebuild` | 110,617 → 2,706 | `SnapshotAll` deep-copying every file's breakpoint vector (88 KB a pass) to walk it once; then the same clear-and-re-push row churn, four strings and a `filesystem::path` per row |
+| `status_registry.apply_update` | 172,005 → 16,007 | **the scenario, not the product** — see below |
+| `snippet.many_mirror_shift` | 23,430 → 3,634 | two `unordered_map`s per keystroke inside a snippet: one node per mirror, on a construct whose point is having many mirrors |
+
+The recurring shape this time was **a model rebuilt from scratch when it could be
+overwritten**. Three of the four were the same two lines: `rows_.clear()` frees
+every string every row owns, and the next rebuild — which for a search box is the
+next keystroke — allocates them all again. Overwriting in place and truncating
+only the tail is the fix, and the thing to test with it is the SHRINKING rebuild,
+because reused storage is exactly how a stale field survives.
+
+**`plugin_status_item_update` was a gate on its own scaffolding.** 95 % of that
+phase's allocations were the measured loop composing
+`"plugin.status.item_" + std::to_string(...)` per call — two allocations per
+iteration against a lookup that makes none. A real regression in
+`ApplyStatusItemUpdate` could not have moved the number. The input is built
+outside the measured window now. Worth checking for elsewhere: a `Measure()` body
+that builds its own input is measuring `operator+`.
+
+**Read, inherent** (no fix; recorded so the next pass does not re-read them):
+
+- `sort_lines_ascending.10000_lines` — two symmetric `SliceLines` walks of the
+  same range, one to sort and one for the undo before-image, at two allocations
+  per line. The sort needs the lines materialised and the entry needs the pre-edit
+  image; they cannot share one copy without a shared-string line representation.
+- `value_tree.build_expand` — 88 % is `DebugValueTree::nodes_`, one 184-byte hash
+  node per tree node. Filed as [162](#td-2026-08-07-162) rather than done. The row
+  list is NOT the cost here: `value_tree.rebuild` already reads 0 allocations, and
+  applying the in-place row reuse that fixed the other three moved this scenario
+  by 3 allocations, so it was reverted rather than carried as complexity.
+
+**Still unread**: everything below `snippet.many_mirror_shift`'s 23,430 in that
+ranking. Same method, same starting point.
+
 ### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. RESOLVED 2026-08-07 for the two apply paths; the shaping ops moved to [160](#td-2026-08-07-160).
 
 Found by pointing the phase-scoped tracer at `editor_surround_multi_caret`, the
@@ -507,7 +589,7 @@ then undo / redo / undo replayed against those snapshots) and
 `MultiCaretUndoEntryDoesNotSpanTheGap` (the cost claim, which the oracle alone
 does not test).
 
-### TD-2026-08-07-160 — a multi-caret shaping op edits every line BETWEEN the carets. OPEN.
+### TD-2026-08-07-160 — a multi-caret shaping op edits every line BETWEEN the carets. RESOLVED 2026-08-07.
 
 Split out of [157](#td-2026-08-06-157), whose fix covered the two multi-caret
 apply paths but not the third shape it named.
@@ -530,6 +612,64 @@ Watch for the deliberate case: a op invoked with a genuine SELECTION spanning
 lines must keep operating on the whole selection. The widening is only wrong for
 *carets*, and `ResolveLineRange` currently cannot tell the two apart because it
 folds them into one range.
+
+**Done 2026-08-07.** `ResolveLineRanges` returns a sorted set of DISJOINT regions,
+one per caret, with overlapping-or-touching neighbours merged — so two carets on
+one line collapse to one region and two on adjacent lines are one edit rather than
+two abutting ones. Each op emits one edit per region inside an undo group, which
+the group frame already folds into [157](#td-2026-08-06-157)'s multi-range entry,
+so the whole gesture stays one undo step. A genuine selection is one region and
+still operates on every line it spans.
+
+Decisions are **per region**, matching VSCode (one `LineCommentCommand` per
+selection): a caret in a commented block uncomments while a caret in an
+uncommented one comments, and each region comments at its own indent. A move
+region pinned against the edge of the buffer no-ops alone while the others move.
+`SortLines` generalises the same way — a one-line region has nothing to sort,
+which is the pre-existing single-caret answer.
+
+    editor_shaping_multi_caret   19,952 -> 10,043 allocations
+
+Reading the residue then found the other half, which is not a shaping bug at all:
+every entry recorded inside an undo group captured the full view state three times
+and each capture deep-copied the secondary-caret vector, all of it discarded by
+`FinishActiveGroup`. With one region per caret that is 3xN copies of an N-element
+vector per keystroke — a 256-caret grouped indent allocated 12.9 MB.
+`CaptureViewStateForGroupedEntry` captures the caret set only when no group is
+active.
+
+    editor_shaping_multi_caret   10,043 -> 8,519 allocations
+
+Covered by `EditorEssentials/Shaping/MultiCaretOpsDoNotTouchLinesBetweenCarets`
+(the fidelity claim, across comment/outdent/sort plus the merge and per-region
+cases), `.../MoveLineSkipsOnlyThePinnedRegion`, and
+`TextViewport/GroupedChildEntriesDoNotCopyTheCaretSet` (budget placed from both
+measurements: 2.7x above the fixed cost, 12.6x below the defect).
+
+### TD-2026-08-07-162 — the debug value tree stores its nodes in a hash map keyed by a dense counter. OPEN.
+
+Found by [159](#td-2026-08-06-159)'s tail pass, reading `value_tree.build_expand`.
+
+`DebugValueTree::nodes_` is an `unordered_map<std::uint32_t, Node>` and `AddNode`
+is **88 % of that phase** — one 184-byte hash node per tree node, on every
+`variables` response during a debug stop. The keys come from `next_id_++`: they
+are dense, monotonic, and never reused, so this is a hash table over its own array
+indices. The same shape the tail pass fixed in three other places, except here the
+container is the model's identity rather than a scratch index.
+
+A `std::vector<Node>` indexed by id makes `FindNode` an O(1) load and the growth
+amortised, but it is not a drop-in: `EraseSubtree` removes nodes mid-life, so the
+vector needs tombstones (or a free list) and `FindNode` needs to distinguish a
+live slot from a dead one; every `FindNode`/`FindNodeByReference` caller holds
+`Node*` across calls that can insert, which is safe against a map and is NOT safe
+against a vector that reallocates. That last point is the real work — it wants an
+id-based audit of the callers, not a container swap.
+
+Worth ~20,000 allocations per `debug_value_tree_expand_large` iteration.
+
+**Not** the row list: `value_tree.rebuild` already reads 0 allocations, and the
+in-place row reuse that fixed the Settings overlay and the Breakpoints panel moved
+this scenario by 3 allocations. It was tried and reverted.
 
 ### TD-2026-08-06-158 — the status bar probes the filesystem for `.git` on every painted frame. OPEN.
 
