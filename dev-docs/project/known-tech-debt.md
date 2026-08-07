@@ -1,9 +1,17 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-08-07. **83 open items.** ([160](#td-2026-08-07-160) resolved,
-[162](#td-2026-08-07-162) opened by [159](#td-2026-08-06-159)'s tail pass, and
-[161](#td-2026-08-07-161) is half done — its deterministic gates are rerecorded
-and its timing/resident gates still need an idle runner.)
+Reviewed 2026-08-07. **84 open items.** ([160](#td-2026-08-07-160) resolved;
+[162](#td-2026-08-07-162) and [163](#td-2026-08-07-163) opened by
+[159](#td-2026-08-06-159)'s tail pass; [161](#td-2026-08-07-161) is half done —
+its deterministic gates are rerecorded and its timing/resident gates still need an
+idle runner.)
+
+**Suggested order for the perf cluster**, given a runner that is not idle:
+[163](#td-2026-08-07-163) (audit the instrument — no idle box needed, and it fixes
+[159](#td-2026-08-06-159)'s ranking), then [159](#td-2026-08-06-159) (grep-first
+sweep), then [162](#td-2026-08-07-162) (contained, wants care).
+[161](#td-2026-08-07-161) is blocked on a quiet machine, not on effort — take it
+whenever one appears, and it also settles the menu anomaly recorded there.
 
 The 2026-08-06 interactive sweep is [149](#td-2026-08-06-149)'s own instruction
 carried out — "generalise the sweep: the instrument is cheap now, and no
@@ -503,8 +511,58 @@ that builds its own input is measuring `operator+`.
   applying the in-place row reuse that fixed the other three moved this scenario
   by 3 allocations, so it was reverted rather than carried as complexity.
 
-**Still unread**: everything below `snippet.many_mirror_shift`'s 23,430 in that
-ranking. Same method, same starting point.
+#### The next pass: grep first, then confirm with the tracer
+
+**Do [163](#td-2026-08-07-163) before this one.** It measures how much of each
+phase is the scenario's own scaffolding, and the worklist below is ranked by
+phase allocation count — a phase that is mostly `operator+` in its `Measure()`
+body sorts high for the wrong reason and would be read for nothing.
+
+Then change the method. Both previous passes read phases in ranked order, which
+works but only reaches what the suite already measures: **116 phases across 103
+scenarios, out of an application with far more rebuild paths than that.** A path
+no scenario measures is not a path that is fast; it is an unmeasured one. Both
+shapes the passes found are greppable, so grep `src/` first and use the tracer to
+confirm and size what the grep turns up:
+
+- **Clear-and-repush.** A `<container>_.clear()` (or `.assign(...)`) followed by
+  `push_back`/`emplace_back` in a rebuild whose element type owns a `std::string`,
+  `std::filesystem::path`, or a nested vector. Three of this pass's four fixes were
+  exactly this, and the recipe is in [159](#td-2026-08-06-159)'s tail-pass section
+  above. Rank the hits by how often the rebuild runs: a per-keystroke rebuild
+  (any filter/search surface) is worth much more than a per-open one.
+- **A hash map keyed by something dense.** `unordered_map<std::size_t, …>` /
+  `unordered_map<std::uint32_t, …>` whose keys come from a counter or from
+  positions in a vector — that is a hash table over its own array indices.
+  `unordered_map<std::string, …>` built fresh inside a function that then walks it
+  once is the other half (a sorted vector plus `lower_bound` allocates twice, not
+  once per element).
+
+**Still unread, if the ranked read is preferred anyway** — everything below
+`snippet.many_mirror_shift`'s 23,430 in the 2026-08-07 ranking. The interactive
+ones, excluding phases already recorded as read or inherent:
+
+| phase | p50 allocations |
+| --- | ---: |
+| `switch_and_idle.switch_and_settle` | 16,034 |
+| `merge_model.build_interleaved` | 12,297 |
+| `multi_tab.open_tabs` | 12,084 |
+| `settings.apply_contract_family_all_tabs` | 10,752 |
+| `settings.apply_cheap_family_all_tabs` | 10,564 |
+| `compare_selection.open_to_first_paint` | 7,659 |
+| `compare_large.scroll_burst` | 7,017 |
+| `multi_tab.cycle_tabs` | 6,700 |
+| `value_tree.paging` | 5,094 |
+| `file_finder_type_query.type_and_rank` | 4,742 |
+| `linter.wait_diagnostics` | 4,676 |
+| `external.refresh_open_diff` | 4,457 |
+| `merge.accept_interleaved_burst` | 4,320 |
+| `terminal.feed_output` | 4,260 |
+
+`settings.apply_contract_family_all_tabs` is the one to start with: it is adjacent
+to the Settings work this pass already did, and it is the scenario gating
+TD-2026-08-03-110's shared `LanguageContractView`, so anything found there has an
+existing guard to check it against.
 
 ### TD-2026-08-06-157 — a multi-caret edit's undo entry is as big as the DISTANCE between its carets. RESOLVED 2026-08-07 for the two apply paths; the shaping ops moved to [160](#td-2026-08-07-160).
 
@@ -670,6 +728,65 @@ Worth ~20,000 allocations per `debug_value_tree_expand_large` iteration.
 **Not** the row list: `value_tree.rebuild` already reads 0 allocations, and the
 in-place row reuse that fixed the Settings overlay and the Breakpoints panel moved
 this scenario by 3 allocations. It was tried and reverted.
+
+### TD-2026-08-07-163 — no phase gate has been checked for how much of it is the scenario's own scaffolding. OPEN.
+
+`plugin_status_item_update` measured 172,005 allocations. **95 % of them were the
+measured loop building its own input** — `"plugin.status.item_" + std::to_string(i)`,
+two allocations per call, against an `ApplyStatusItemUpdate` that allocates none.
+Moving the construction outside the `Measure()` window took the phase to 16,007
+with no product change at all.
+
+That gate could not have failed on a regression in the function it is named after.
+A doubling of `ApplyStatusItemUpdate`'s cost would have moved the number by under
+5 %, inside its own tolerance. It is the same class of defect as the architecture
+lints that were structurally incapable of firing (see
+`dev-docs/project/validation-traps.md`): green, and blind.
+
+It was found by accident, on the third phase [159](#td-2026-08-06-159)'s tail pass
+happened to trace. **There are 116 phase gates and no reason to believe it is
+unique**, so the question is not "is there another one" but "which ones, and how
+bad".
+
+**Method.** The tracer already resolves every site's stack; the only new thing is
+bucketing. For each phase:
+
+```bash
+MICROIDE_PERF_ALLOC_TRACE=1:100000000 MICROIDE_PERF_ALLOC_TRACE_PHASE=<phase> \
+  ./build/microide-perf-make/microide/microide_perf --scenarios=<scenario> \
+  --iterations=2 --no-isolate
+```
+
+then `addr2line -e <binary> -f -C -p -i` each site (the `-i` matters — everything
+is inlined) and bucket its allocations by whether the innermost `microide::` frame
+resolves into `tests/perf/` or into `src/`. The scaffolding share is the
+`tests/perf/` bucket over the total. Script it; 116 phases is a loop, not a chore.
+
+Machine state does not affect this, so **it does not need an idle runner** — unlike
+[161](#td-2026-08-07-161), it can be done any time.
+
+**Reading the result.** A high share is not automatically a defect: the pure-unit
+scenarios (`user_config_record_decode`, `dap_protocol_encode_decode`,
+`lsp_*_parse`, …) legitimately measure construction, because construction IS the
+thing under test. The finding is a phase where the scenario builds a *convenience*
+value — a formatted id, a path string, a fixture line — that the product would
+have had in hand already. ~20 % is a reasonable threshold to look at; 95 % is not
+a judgement call.
+
+**Definition of done**, so this does not become open-ended: a committed table of
+every phase with its scaffolding share, and every phase above the threshold either
+fixed (input hoisted out of the measured window, baseline rerecorded with
+`--update-baseline=deterministic`) or annotated in that table with one line saying
+why its construction is the work. A phase recorded as "95 % scaffolding, and that
+is the point" is a real result.
+
+**Then consider making it standing.** The audit finds today's; nothing stops the
+next scenario from being written the same way. Options, cheapest first: a note in
+`guidelines/performance.md`; an architecture lint over `tests/perf/*.cpp` for
+string concatenation / `std::to_string` inside a `Measure()` lambda; or a harness
+assertion that refuses to write a baseline for a phase over the threshold. The
+lint is the one that fits the repo's existing habits — and per
+`validation-traps.md`, it would need positive and negative control fixtures.
 
 ### TD-2026-08-06-158 — the status bar probes the filesystem for `.git` on every painted frame. OPEN.
 
