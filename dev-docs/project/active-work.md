@@ -111,10 +111,19 @@ The emulator covers the full-screen and shell workflows exercised so far.
 
 ### 6. Testing and performance discipline
 
-- **the committed perf baselines are stale and the whole set needs re-recording
-  on an idle perf-runner-v1** — TD-2026-08-07-161 carries the command and the
-  conditions. Until it is taken, a green perf run is not evidence: most
-  allocation gates are loose enough to pass a complete regression
+- **the perf baselines' TIMING and RESIDENT half is still stale and needs
+  re-recording on an idle perf-runner-v1** — TD-2026-08-07-161 carries the command
+  and the conditions. The deterministic half (allocation counts, per-phase
+  allocation counts, net heap) was rerecorded on 2026-08-07 with
+  `--update-baseline=deterministic`, which rewrites only the metrics that do not
+  depend on machine state; those gates are now honest. The rest are not merely
+  loose — some are RED (`editor_snippet_expand` fails its resident gate purely
+  because its baseline predates per-scenario process isolation), so a perf run's
+  wall/cpu/rss failures need checking against that entry before they are believed
+- a `Measure()` body that builds its own input is measuring `operator+`.
+  `plugin_status_item_update` was 95% scenario scaffolding and could not have seen
+  a regression in the function it names (TD-2026-08-06-159's tail pass). Build
+  scenario inputs outside the measured window
 - each scenario runs in its own child process (TD-2026-08-06-152), so a metric is
   a property of the scenario rather than of whatever ran before it. `--no-isolate`
   restores the shared-process form for a debugger or profiler
