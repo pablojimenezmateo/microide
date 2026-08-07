@@ -58,6 +58,11 @@ void RunPerfCounterProducerRuleFixtures();
 void RunViewportFiletypeMemoRuleFixtures();
 
 // Runs every fixture above.
+// Negative + positive control for CheckPerfHarnessIsolatesBeforeConstructingTheShell:
+// the app-root isolation must precede the Driver declaration, because the Driver
+// holds a WorkspaceShell by value and constructing it loads user-level state.
+void RunPerfHarnessIsolationOrderRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

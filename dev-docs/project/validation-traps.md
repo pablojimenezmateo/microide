@@ -549,6 +549,44 @@ iteration (10.6x) while moving CPU by 15%, so it was not the poll loop.
 application counters unchanged, read `harness.cpu_calibration_ns` before reading
 the diff.
 
+### An "exactly deterministic" metric is only deterministic in what the harness controls
+
+`repo_open_rss_idle` read **369 allocations** against its committed baseline of 369
+on a machine that had never run microide, and **627** on the workstation the
+baseline was recorded on. Both figures reproduced to the byte across runs, on
+identical code. Allocation counts are the suite's oracle precisely because they do
+not move — so a stable wrong number is worse than a noisy one, because nothing
+about it looks like noise.
+
+The harness does isolate: `EstablishIsolatedAppRoot` points
+XDG_CONFIG/STATE/CACHE/DATA_HOME at a fresh `/tmp` tree, and there is a test
+pinning that it exports all four. What it did not control was **when**.
+`PerfHarness::Driver` holds a `workspace::WorkspaceShell` **by value**, so
+`Driver driver;` runs the shell's constructor — which resolves the user state root
+and loads `recents` from it — and the isolation was established one statement
+later, inside `InitializeDriver`. Writes landed in the isolated root, so the
+sandbox always looked right; only the reads leaked.
+
+`strace -f -e trace=openat` settled it in one run: the scenario child's first
+`openat` is `/home/<user>/.local/state/microide/recents`, and the next one is the
+isolated root being created.
+
+**What generalises:**
+
+- **Ask what the measured code reads, not just what it writes.** A sandbox
+  verified by "the artifacts are in the right place" is verified in the one
+  direction that cannot fail here.
+- **A by-value member is a constructor call at its declaration.** Any setup that
+  must precede the object cannot live inside a function that takes it by pointer.
+- **Reproducibility is not correctness.** "It measures the same number every time"
+  and "it measures the thing it names" are independent claims; this metric had the
+  first and not the second for as long as the harness has existed.
+- The ordering now carries an architecture lint
+  (`CheckPerfHarnessIsolatesBeforeConstructingTheShell`) with negative, positive,
+  comment-masking and missing-anchor controls, plus a process-level isolation floor
+  in `PerfMain` so a future mis-ordering degrades to a shared `/tmp` root instead
+  of the operator's home directory. See TD-2026-08-07-165.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit

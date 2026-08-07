@@ -15,6 +15,8 @@ RuleResult CheckPerfScenariosUseNonThrowingFilesystemProbes(const std::filesyste
 RuleResult CheckOneShotWakeProducersCheckPushResultOrHaveBackstop(
     const std::filesystem::path& repo_root);
 RuleResult CheckPublicScriptsUseRunChecksForCtest(const std::filesystem::path& repo_root);
+RuleResult CheckPerfHarnessIsolatesBeforeConstructingTheShell(
+    const std::filesystem::path& repo_root);
 RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root);
 RuleResult CheckRenderSurfaceGeometryAccess(const std::filesystem::path& repo_root);
 RuleResult CheckWorkspaceShellCompanionTuCount(const std::filesystem::path& repo_root);

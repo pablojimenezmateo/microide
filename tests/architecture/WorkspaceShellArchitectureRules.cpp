@@ -246,6 +246,58 @@ RuleResult CheckPerfScenariosUseNonThrowingFilesystemProbes(
   return result;
 }
 
+RuleResult CheckPerfHarnessIsolatesBeforeConstructingTheShell(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "perf harness isolates the app-root before the Driver";
+  result.hard_fail = true;
+  // TD-2026-08-07-165. `PerfHarness::Driver` holds a `workspace::WorkspaceShell`
+  // BY VALUE, so `Driver driver;` runs the shell's constructor — which resolves
+  // the user state root and loads `recents` from it. Establishing the isolated
+  // app-root one statement later meant every scenario read the developer's real
+  // ~/.local/state/microide, and `repo_open_rss_idle` measured 369 allocations on
+  // a fresh machine and 627 on a used one, from identical code.
+  //
+  // The ordering is the invariant, so the ordering is what this pins: inside
+  // PerfHarness.cpp, the first EstablishIsolatedAppRoot must appear before the
+  // first `Driver driver;`. Loud when either anchor disappears — a rule that
+  // cannot find what it orders is not passing, it is blind.
+  const std::filesystem::path harness = repo_root / "tests/perf/PerfHarness.cpp";
+  const std::string text = ReadRuleTarget(result, harness);
+  if (text.empty()) {
+    return result;
+  }
+  const auto first_code_offset = [&](std::string_view needle) -> std::size_t {
+    const std::vector<std::size_t> offsets = FindCodeLiteralOccurrences(text, needle);
+    return offsets.empty() ? std::string::npos : offsets.front();
+  };
+  const std::size_t establish = first_code_offset("EstablishIsolatedAppRoot");
+  const std::size_t declare = first_code_offset("Driver driver;");
+  if (establish == std::string::npos || declare == std::string::npos) {
+    result.violations.push_back(Violation{
+        .path = harness,
+        .line = 1,
+        .message = "expected both `EstablishIsolatedAppRoot` and `Driver driver;` in "
+                   "PerfHarness.cpp; one of them was renamed, so this rule can no longer "
+                   "order them and is silently not gating (TD-2026-08-07-165)",
+    });
+    return result;
+  }
+  if (establish > declare) {
+    result.violations.push_back(Violation{
+        .path = harness,
+        .line = LineNumberAt(text, declare),
+        .message = "the isolated app-root must be established BEFORE `Driver driver;`: the "
+                   "Driver holds a WorkspaceShell by value, so declaring it loads the "
+                   "user-level state (recents, config) — from the developer's real home "
+                   "directory if isolation has not been installed yet, which makes every "
+                   "project-opening scenario's allocation gate depend on the operator's "
+                   "machine (TD-2026-08-07-165)",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckRenderSurfaceStateAccess(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "render surface view-model-only access";

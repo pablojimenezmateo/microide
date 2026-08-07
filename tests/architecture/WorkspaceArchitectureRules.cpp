@@ -27,6 +27,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckOneShotWakeProducersCheckPushResultOrHaveBackstop",
        CheckOneShotWakeProducersCheckPushResultOrHaveBackstop},
       {"CheckPublicScriptsUseRunChecksForCtest", CheckPublicScriptsUseRunChecksForCtest},
+      {"CheckPerfHarnessIsolatesBeforeConstructingTheShell",
+       CheckPerfHarnessIsolatesBeforeConstructingTheShell},
       {"CheckRenderSurfaceStateAccess", CheckRenderSurfaceStateAccess},
       {"CheckRenderSurfaceGeometryAccess", CheckRenderSurfaceGeometryAccess},
       {"CheckWorkspaceShellCompanionTuCount", CheckWorkspaceShellCompanionTuCount},

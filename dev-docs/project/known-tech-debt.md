@@ -805,6 +805,50 @@ cases), `.../MoveLineSkipsOnlyThePinnedRegion`, and
 `TextViewport/GroupedChildEntriesDoNotCopyTheCaretSet` (budget placed from both
 measurements: 2.7x above the fixed cost, 12.6x below the defect).
 
+### TD-2026-08-07-165 — every perf scenario's shell read the developer's real `~/.local/state/microide`. [RESOLVED 2026-08-07.]
+
+Found while chasing what looked like an allocation regression in
+`repo_open_rss_idle` (baseline 369, measured 627, +70 %). It was not a
+regression, and it was not this machine being loaded: allocation counts are
+deterministic, and it reproduced to the byte across runs. It was the developer's
+home directory.
+
+`PerfHarness::Driver` holds a `workspace::WorkspaceShell` **by value**, so
+`Driver driver;` in `RunScenario` runs the shell's constructor — which resolves
+the user-level state root and loads `recents` from it. The isolated app root
+(`EstablishIsolatedAppRoot`, which points XDG_CONFIG/STATE/CACHE/DATA_HOME at a
+fresh `/tmp` tree) was established inside `InitializeDriver`, **one statement
+later**. Every scenario's shell therefore read the real state directory, and the
+allocation count of any scenario that opens a project scaled with how long
+microide had been used on that machine. Writes went to the isolated root, so the
+directory was never obviously wrong — only the reads leaked, which is why this
+survived a suite whose whole premise is that allocation counts are exact.
+
+`strace -e trace=openat` is what settled it: the scenario child's very first
+`openat` is `/home/gef/.local/state/microide/recents`, and the *next* one is the
+isolated root being created.
+
+**The fix** is the ordering: `RunScenario` establishes the isolated app root
+before declaring the `Driver`, and `InitializeDriver` keeps its own call only as
+a fallback for a caller that builds a `Driver` itself. `repo_open_rss_idle` then
+measures exactly its committed 369 on this machine, with no baseline change — the
+committed baseline was right all along and the runner was lying.
+
+**What this invalidates.** Any allocation figure recorded on a machine with a
+non-empty `~/.local/state/microide` is suspect for scenarios that construct a
+shell. `settings_change_many_tabs` measured 43,801 before this fix and 17,201
+after, on identical code. The 2026-08-07 rebaselines taken during this session
+were re-recorded afterwards; earlier baselines were recorded on this same
+workstation and should be re-checked when the suite is next rerecorded
+([161](#td-2026-08-07-161)).
+
+**The general lesson**, for `dev-docs/project/validation-traps.md`: an "exactly
+deterministic" metric is only deterministic with respect to the inputs the
+harness actually controls. This one controlled the environment variables and then
+read state before installing them. A cheap standing check is to assert, once per
+run, that the resolved user state root is under the isolated root — the harness
+knows both.
+
 ### TD-2026-08-07-164 — the exact-line diff interns every distinct line through two node-per-element hash maps. OPEN.
 
 Found by [159](#td-2026-08-06-159)'s grep-first pass, alongside the `RankedUnion`

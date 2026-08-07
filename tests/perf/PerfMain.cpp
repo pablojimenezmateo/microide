@@ -2,6 +2,7 @@
 #include "perf/Baseline.h"
 #include "perf/PerfCpuAffinity.h"
 #include "perf/PerfHarness.h"
+#include "perf/PerfHarnessIsolation.h"
 #include "perf/ScenarioProcessIsolation.h"
 
 #include "editor/BracketScanner.h"
@@ -1818,6 +1819,23 @@ int main(int argc, char** argv) {
   // Placeholder terminals (no real shell spawn) during perf measurement; was a
   // compile-time MICROIDE_TESTING fork, now a runtime switch (see TestMain.cpp).
   microide::terminal::SetUsePlaceholderTerminalsForTesting(true);
+  // Process-wide isolation floor (TD-2026-08-07-165). RunScenario establishes a
+  // fresh app-root per scenario, which is what gives each scenario a clean state
+  // directory — but for a long time it did so one statement after the Driver
+  // (and therefore the shell) was constructed, so the shell loaded the
+  // developer's real ~/.local/state/microide and every project-opening scenario's
+  // allocation count depended on how long microide had been used on that machine.
+  // The ordering is fixed there; this is the floor under it, so that ANY read
+  // that happens before a per-scenario root exists still lands in /tmp rather
+  // than in the operator's home.
+  {
+    std::string isolate_error;
+    if (EstablishIsolatedAppRoot(/*keep_artifacts=*/false, &isolate_error).empty()) {
+      std::cerr << "[perf] failed to establish the process-level isolated app-root: "
+                << isolate_error << "\n";
+      return 1;
+    }
+  }
   RegisterBuiltInScenarios();
   const std::optional<CliOptions> options = ParseCli(argc, argv);
   if (!options.has_value()) {

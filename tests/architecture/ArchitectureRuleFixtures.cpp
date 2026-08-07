@@ -615,6 +615,54 @@ void RunViewportFiletypeMemoRuleFixtures() {
          "viewport-filetype rule must fail loudly when the memo no longer detects anything");
 }
 
+void RunPerfHarnessIsolationOrderRuleFixtures() {
+  // The rule orders two anchors inside one file, so all three states have to be
+  // pinned: the bug (isolation after the Driver), the fix (before it), and a
+  // renamed anchor — because a rule that can no longer find what it orders would
+  // otherwise report green forever, which is precisely how the defect it guards
+  // survived a suite built on exact allocation counts.
+  TemporaryDirectory harness_dir;
+  const std::filesystem::path& root = harness_dir.path();
+  std::filesystem::create_directories(root / "tests/perf");
+  const auto harness = root / "tests/perf/PerfHarness.cpp";
+
+  // Negative control: the shipped defect — the Driver (and therefore the shell)
+  // is constructed before the app-root is isolated.
+  WriteFile(harness,
+            "std::optional<Aggregate> PerfHarness::RunScenario() {\n"
+            "  Driver driver;\n"
+            "  driver.isolated_app_root = EstablishIsolatedAppRoot(false, &error);\n"
+            "}\n");
+  Expect(CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.size() == 1,
+         "perf-isolation-order rule must flag isolation established after `Driver driver;`");
+
+  // Positive control: the fixed ordering.
+  WriteFile(harness,
+            "std::optional<Aggregate> PerfHarness::RunScenario() {\n"
+            "  const auto root = EstablishIsolatedAppRoot(false, &error);\n"
+            "  Driver driver;\n"
+            "  driver.isolated_app_root = root;\n"
+            "}\n");
+  Expect(CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.empty(),
+         "perf-isolation-order rule must accept isolation established before the Driver");
+
+  // A mention in a comment or a string literal is not an anchor, so a file whose
+  // only "EstablishIsolatedAppRoot" is prose must not read as ordered.
+  WriteFile(harness,
+            "std::optional<Aggregate> PerfHarness::RunScenario() {\n"
+            "  // EstablishIsolatedAppRoot used to run here.\n"
+            "  Driver driver;\n"
+            "}\n");
+  Expect(!CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.empty(),
+         "perf-isolation-order rule must not accept a commented-out anchor as the real one");
+
+  // Loud-missing-anchor guard: a rename of either anchor must fail the rule
+  // rather than silently stop ordering anything.
+  WriteFile(harness, "void nothing() {}\n");
+  Expect(!CheckPerfHarnessIsolatesBeforeConstructingTheShell(root).violations.empty(),
+         "perf-isolation-order rule must fail loudly when its anchors are gone");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -628,6 +676,7 @@ void RunAllRuleFixtures() {
   RunMissingRuleTargetFixtures();
   RunPerfCounterProducerRuleFixtures();
   RunViewportFiletypeMemoRuleFixtures();
+  RunPerfHarnessIsolationOrderRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

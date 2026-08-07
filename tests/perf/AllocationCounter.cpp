@@ -121,6 +121,23 @@ const char* const g_trace_phase_filter = [] {
   return (env == nullptr || env[0] == '\0') ? nullptr : env;
 }();
 
+// How many sites the dump prints, MICROIDE_PERF_ALLOC_TRACE_SITES, default 12.
+//
+// Twelve is the right number to read by hand and the wrong number to compute a
+// share from: the tail is printed as "... and N more site(s)" with no counts, so
+// anything that has to attribute *all* of a phase's allocations (the scaffolding
+// audit in tools/audit-perf-phase-scaffolding.py) is left with an unclassifiable
+// remainder it can only guess at. Raising this to kTraceBuckets makes the table
+// exhaustive.
+const std::size_t g_trace_site_limit = [] {
+  const char* env = std::getenv("MICROIDE_PERF_ALLOC_TRACE_SITES");
+  if (env == nullptr || env[0] == '\0') {
+    return std::size_t{12};
+  }
+  const std::size_t parsed = static_cast<std::size_t>(std::strtoull(env, nullptr, 10));
+  return parsed == 0 ? std::size_t{12} : parsed;
+}();
+
 // Armed by Measure, per thread — the same reason the counters are per-thread: a
 // worker allocating during the phase is not the shell-thread cost being chased.
 thread_local bool t_trace_phase_active = false;
@@ -296,7 +313,7 @@ void Allocations::DumpTracedAllocationSites() {
   }
   std::fprintf(stderr,
                "[alloctrace] resolve with: addr2line -e <binary> -f -C -p <address>...\n");
-  const std::size_t limit = std::min<std::size_t>(used, 12);
+  const std::size_t limit = std::min<std::size_t>(used, g_trace_site_limit);
   for (std::size_t i = 0; i < limit; ++i) {
     const TraceBucket& bucket = g_trace_table[order[i]];
     std::fprintf(stderr, "\n[alloctrace] #%zu: %llu allocations, %llu bytes\n", i + 1,

@@ -774,7 +774,27 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     return std::nullopt;
   }
 
+  // BEFORE `Driver`, and that ordering is the whole point (TD-2026-08-07-165).
+  // `Driver` holds a `WorkspaceShell` by value, so declaring it RUNS the shell's
+  // constructor — which resolves the user-level state root and loads `recents`
+  // from it. Establishing the isolated app root inside InitializeDriver was
+  // therefore one statement too late: every scenario's shell read the developer's
+  // real ~/.local/state/microide, and `repo_open_rss_idle` measured 369
+  // allocations on a machine that had never run microide and 627 on one where the
+  // recents list had grown. A gate whose value depends on the operator's home
+  // directory is not a gate.
+  std::string isolate_error;
+  const std::filesystem::path isolated_app_root =
+      EstablishIsolatedAppRoot(options.keep_artifacts, &isolate_error);
+  if (isolated_app_root.empty()) {
+    HarnessError() = isolate_error.empty() ? "failed to establish isolated app-root"
+                                           : isolate_error;
+    return std::nullopt;
+  }
+
   Driver driver;
+  driver.keep_artifacts = options.keep_artifacts;
+  driver.isolated_app_root = isolated_app_root;
   if (!InitializeDriver(&driver, options.random_seed, options.keep_artifacts,
                         options.renderer_driver, options.video_driver)) {
     return std::nullopt;
@@ -960,13 +980,19 @@ bool PerfHarness::InitializeDriver(Driver* driver,
   const std::string seed_text = std::to_string(ResolveSeed(random_seed));
   setenv("MICROIDE_PERF_SEED", seed_text.c_str(), 1);
 
-  std::string isolate_error;
   driver->keep_artifacts = keep_artifacts;
-  driver->isolated_app_root = EstablishIsolatedAppRoot(keep_artifacts, &isolate_error);
+  // Normally already established by RunScenario BEFORE the Driver was declared —
+  // see the comment there; the shell's constructor loads user state, so doing it
+  // here would be too late. Kept as a fallback for a caller that constructs a
+  // Driver itself, where late isolation still beats none.
   if (driver->isolated_app_root.empty()) {
-    HarnessError() = isolate_error.empty() ? "failed to establish isolated app-root"
-                                            : isolate_error;
-    return false;
+    std::string isolate_error;
+    driver->isolated_app_root = EstablishIsolatedAppRoot(keep_artifacts, &isolate_error);
+    if (driver->isolated_app_root.empty()) {
+      HarnessError() = isolate_error.empty() ? "failed to establish isolated app-root"
+                                              : isolate_error;
+      return false;
+    }
   }
 
   if (!SDL_Init(SDL_INIT_VIDEO)) {
