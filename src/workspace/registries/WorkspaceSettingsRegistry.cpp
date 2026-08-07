@@ -1158,74 +1158,108 @@ bool ApplyCanonicalEditorPreference(EditorPreferences& prefs, std::string_view i
   return false;
 }
 
-std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host) {
-  std::vector<SettingInfo> infos;
+namespace {
 
-  for (const SettingSpec& spec : BuiltinSettingSpecs()) {
-    SettingInfo info;
-    info.id = std::string(spec.id);
-    info.label = std::string(spec.label);
-    info.description = std::string(spec.description);
-    info.type = spec.type;
-    info.scope = spec.scope;
-    info.default_value = DefaultSettingValue(spec);
-    info.group = std::string(spec.group);
-    info.suggests_fonts = spec.suggests_fonts;
-    for (const SettingEnumValue& ev : spec.enum_values) {
-      info.enum_values.emplace_back(ev.value);
-    }
-    infos.push_back(std::move(info));
+SettingInfo SettingInfoForBuiltin(const SettingSpec& spec) {
+  SettingInfo info;
+  info.id = std::string(spec.id);
+  info.label = std::string(spec.label);
+  info.description = std::string(spec.description);
+  info.type = spec.type;
+  info.scope = spec.scope;
+  info.default_value = DefaultSettingValue(spec);
+  info.group = std::string(spec.group);
+  info.suggests_fonts = spec.suggests_fonts;
+  info.enum_values.reserve(spec.enum_values.size());
+  for (const SettingEnumValue& ev : spec.enum_values) {
+    info.enum_values.emplace_back(ev.value);
+  }
+  return info;
+}
+
+SettingInfo SettingInfoForContribution(const plugin::PluginHost::ContributedSettingSpec& contrib) {
+  SettingInfo info;
+  info.id = contrib.id;
+  info.label = contrib.label;
+  info.description = contrib.description;
+  info.plugin_id = contrib.plugin_id;
+
+  if (contrib.type == "bool") {
+    info.type = SettingType::Bool;
+    info.default_value = contrib.default_value == "true";
+  } else if (contrib.type == "int") {
+    info.type = SettingType::Int;
+    int v = 0;
+    std::from_chars(contrib.default_value.data(),
+                    contrib.default_value.data() + contrib.default_value.size(), v);
+    info.default_value = v;
+  } else if (contrib.type == "float") {
+    info.type = SettingType::Float;
+    info.default_value = util::ParseFloat(contrib.default_value).value_or(0.0f);
+  } else if (contrib.type == "enum") {
+    info.type = SettingType::Enum;
+    info.default_value = contrib.default_value;
+    info.enum_values = contrib.enum_values;
+  } else {
+    info.type = SettingType::String;
+    info.default_value = contrib.default_value;
   }
 
+  info.scope = contrib.scope == "user" ? SettingScope::User : SettingScope::Project;
+  return info;
+}
+
+const plugin::PluginHost::ContributedSettingSpec* FindContributedSettingSpec(
+    std::string_view id, const plugin::PluginHost& plugin_host) {
   for (const auto& contrib : plugin_host.ContributedSettings()) {
-    SettingInfo info;
-    info.id = contrib.id;
-    info.label = contrib.label;
-    info.description = contrib.description;
-    info.plugin_id = contrib.plugin_id;
-
-    if (contrib.type == "bool") {
-      info.type = SettingType::Bool;
-      info.default_value = contrib.default_value == "true";
-    } else if (contrib.type == "int") {
-      info.type = SettingType::Int;
-      int v = 0;
-      std::from_chars(contrib.default_value.data(),
-                      contrib.default_value.data() + contrib.default_value.size(), v);
-      info.default_value = v;
-    } else if (contrib.type == "float") {
-      info.type = SettingType::Float;
-      info.default_value = util::ParseFloat(contrib.default_value).value_or(0.0f);
-    } else if (contrib.type == "enum") {
-      info.type = SettingType::Enum;
-      info.default_value = contrib.default_value;
-      info.enum_values = contrib.enum_values;
-    } else {
-      info.type = SettingType::String;
-      info.default_value = contrib.default_value;
+    if (contrib.id == id) {
+      return &contrib;
     }
-
-    if (contrib.scope == "user") {
-      info.scope = SettingScope::User;
-    } else {
-      info.scope = SettingScope::Project;
-    }
-
-    infos.push_back(std::move(info));
   }
+  return nullptr;
+}
 
+}  // namespace
+
+std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host) {
+  const std::span<const SettingSpec> builtins = BuiltinSettingSpecs();
+  const auto& contributions = plugin_host.ContributedSettings();
+  std::vector<SettingInfo> infos;
+  infos.reserve(builtins.size() + contributions.size());
+  for (const SettingSpec& spec : builtins) {
+    infos.push_back(SettingInfoForBuiltin(spec));
+  }
+  for (const auto& contrib : contributions) {
+    infos.push_back(SettingInfoForContribution(contrib));
+  }
   return infos;
 }
 
 std::optional<SettingInfo> FindSettingInfo(std::string_view id,
                                             const plugin::PluginHost& plugin_host) {
-  const auto infos = AllSettingInfos(plugin_host);
-  const auto it = std::find_if(infos.begin(), infos.end(),
-                               [id](const SettingInfo& info) { return info.id == id; });
-  if (it == infos.end()) {
-    return std::nullopt;
+  // Build the ONE matching info, not the whole catalogue. This used to
+  // materialize every built-in and plugin setting — four strings plus an
+  // enum-value vector each, ~200 settings — and then throw all but one away, on a
+  // path that runs per settings write (TD-2026-08-06-159). It was 42 % of
+  // `settings.apply_contract_family_all_tabs`.
+  if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+    return SettingInfoForBuiltin(*spec);
   }
-  return *it;
+  if (const auto* contrib = FindContributedSettingSpec(id, plugin_host); contrib != nullptr) {
+    return SettingInfoForContribution(*contrib);
+  }
+  return std::nullopt;
+}
+
+std::optional<SettingScope> FindSettingScope(std::string_view id,
+                                             const plugin::PluginHost& plugin_host) {
+  if (const SettingSpec* spec = FindBuiltinSettingSpec(id); spec != nullptr) {
+    return spec->scope;
+  }
+  if (const auto* contrib = FindContributedSettingSpec(id, plugin_host); contrib != nullptr) {
+    return contrib->scope == "user" ? SettingScope::User : SettingScope::Project;
+  }
+  return std::nullopt;
 }
 
 }  // namespace microide::workspace

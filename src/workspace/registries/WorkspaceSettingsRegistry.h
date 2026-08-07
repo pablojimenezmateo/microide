@@ -96,6 +96,12 @@ std::vector<SettingInfo> AllSettingInfos(const plugin::PluginHost& plugin_host);
 std::optional<SettingInfo> FindSettingInfo(std::string_view id,
                                             const plugin::PluginHost& plugin_host);
 
+// Just the scope of one setting: existence plus the one field a write path needs
+// to decide which layer it lands in. `FindSettingInfo` copies four strings and an
+// enum-value vector to answer this; a settings write does not need any of them.
+std::optional<SettingScope> FindSettingScope(std::string_view id,
+                                             const plugin::PluginHost& plugin_host);
+
 // Build a default value from a SettingSpec.
 SettingValue DefaultSettingValue(const SettingSpec& spec);
 

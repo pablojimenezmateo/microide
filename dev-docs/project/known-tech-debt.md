@@ -595,6 +595,31 @@ duplicate-id `seen`, and `WorkspaceShellPlugins`' `active_language_servers` /
 `active_debug_adapter_types`. `FlatDedupSet` is a drop-in for each when one of
 them turns up in a trace.
 
+#### 2026-08-07: `settings.apply_*_all_tabs`, the entry's own suggested start
+
+    settings.apply_cheap_family_all_tabs      10,563 -> 4,036  (-61.8 %)
+    settings.apply_contract_family_all_tabs   10,752 -> 4,224  (-60.7 %)
+    settings_change_many_tabs (total)         56,856 -> 43,801 (-23.0 %)
+
+`FindSettingInfo(id)` materialized the **entire settings catalogue** — every
+built-in spec and every plugin contribution, four `std::string`s plus an
+enum-value vector each, ~200 of them — and then linear-scanned it for one id and
+threw the rest away. That was 42 % of the phase, from a function whose whole job
+is one lookup.
+
+It builds only the matching `SettingInfo` now: `FindBuiltinSettingSpec` first
+(the same static-span scan the read path already used), then the contributed
+list. `AllSettingInfos` keeps the loops, hoisted into two shared constructors so
+the two paths cannot drift.
+
+The other half is the same shape one level up: `WriteSettingValue` called
+`FindSettingInfo` and read exactly one field off it, `info->scope` — then
+immediately did a *second* lookup (`FindBuiltinSettingSpec`) for the parse. It
+takes `FindSettingScope(id, host)` now, which returns the enum and copies nothing.
+That is a variant of this entry's own first shape — "work computed before the
+guard that discards it" — with the guard replaced by a caller that simply never
+reads 99 % of what it asked for.
+
 **Read, inherent** (grep hits that are not this shape, recorded so the next pass
 does not re-open them):
 

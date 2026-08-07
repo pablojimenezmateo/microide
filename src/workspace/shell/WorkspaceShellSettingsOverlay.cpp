@@ -262,8 +262,11 @@ bool WorkspaceShell::SetSettingAsUserDefault(std::string_view id, std::string va
 
 bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
                                        bool as_user_default, bool persist) {
-  const auto info = FindSettingInfo(id, plugin_runtime_.Host());
-  if (!info.has_value()) {
+  // Scope is the only field of the setting's info this needs; building the whole
+  // SettingInfo (four strings plus an enum-value vector) to read one enum was the
+  // per-write half of TD-2026-08-06-159's settings finding.
+  const std::optional<SettingScope> scope = FindSettingScope(id, plugin_runtime_.Host());
+  if (!scope.has_value()) {
     return false;
   }
   const SettingSpec* builtin = FindBuiltinSettingSpec(id);
@@ -287,7 +290,7 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
 
   // A user-scoped setting already lives in the user layer; "set as default" only
   // changes where a project-scoped write lands (user layer instead of project).
-  const bool write_user_layer = info->scope == SettingScope::User || as_user_default;
+  const bool write_user_layer = *scope == SettingScope::User || as_user_default;
 
   // Track / untrack the transient marker before the value is moved-from. A later
   // persisting write of the same id promotes it back to durable storage.
