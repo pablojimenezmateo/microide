@@ -266,8 +266,7 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
 
 void RunLargeFileOpenFirstPaint(ScenarioContext& context) {
   const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!PathExistsNoThrow(file)) {
-    std::cerr << "large_file_open_first_paint: missing fixture " << file << "\n";
+  if (!RequireFixture(context, file, "large_file_open_first_paint")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -289,8 +288,7 @@ void RunLargeFileOpenFirstPaint(ScenarioContext& context) {
 void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
   const std::filesystem::path file =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(file)) {
-    std::cerr << "large_file_open_lf_first_paint: missing fixture " << file << "\n";
+  if (!RequireFixture(context, file, "large_file_open_lf_first_paint")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -313,8 +311,7 @@ void RunLargeFileOpenLfFirstPaint(ScenarioContext& context) {
 void RunEditorBufferFindIncremental(ScenarioContext& context) {
   const std::filesystem::path file =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(file)) {
-    std::cerr << "editor_buffer_find_incremental: missing fixture " << file << "\n";
+  if (!RequireFixture(context, file, "editor_buffer_find_incremental")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -343,8 +340,7 @@ void RunEditorBufferFindIncremental(ScenarioContext& context) {
 
 void RunMergeScrollLargeFixture(ScenarioContext& context) {
   const std::filesystem::path seed = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!PathExistsNoThrow(seed)) {
-    std::cerr << "merge_scroll_large_fixture: missing fixture " << seed << "\n";
+  if (!RequireFixture(context, seed, "merge_scroll_large_fixture")) {
     return;
   }
 
@@ -375,8 +371,7 @@ void RunMergeScrollLargeFixture(ScenarioContext& context) {
 
 void RunCompareScrollLargeFixture(ScenarioContext& context) {
   const std::filesystem::path seed = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!PathExistsNoThrow(seed)) {
-    std::cerr << "compare_scroll_large_fixture: missing fixture " << seed << "\n";
+  if (!RequireFixture(context, seed, "compare_scroll_large_fixture")) {
     return;
   }
 

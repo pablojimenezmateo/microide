@@ -90,8 +90,7 @@ std::string MakeSnippetLinkedTen() {
 void RunEditorOccurrencesScan(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "editor_occurrences_scan: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "editor_occurrences_scan")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -112,8 +111,7 @@ void RunEditorOccurrencesScan(ScenarioContext& context) {
 void RunEditorAddCursorNextMatch(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "editor_add_cursor_next_match: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "editor_add_cursor_next_match")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -141,8 +139,7 @@ void RunEditorAddCursorNextMatch(ScenarioContext& context) {
 void RunEditorColumnSelectionBurst(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "editor_column_selection_burst: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "editor_column_selection_burst")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -187,8 +184,7 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
 void RunEditorShapingMultiCaret(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "editor_shaping_multi_caret: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "editor_shaping_multi_caret")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -212,8 +208,7 @@ void RunEditorShapingMultiCaret(ScenarioContext& context) {
 void RunEditorToggleCommentLargeSelection(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "editor_toggle_comment_large_selection: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "editor_toggle_comment_large_selection")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -246,8 +241,7 @@ void RunEditorToggleCommentLargeSelection(ScenarioContext& context) {
 void RunEditorMouseSelectionDrag(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "editor_mouse_selection_drag: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "editor_mouse_selection_drag")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -368,8 +362,7 @@ void RunMenuPopupHoverRows(ScenarioContext& context) {
 void RunEditorSortLinesLarge(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "editor_sort_lines_large: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "editor_sort_lines_large")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -393,8 +386,7 @@ void RunEditorSortLinesLarge(ScenarioContext& context) {
 void RunEditorSnippetExpand(ScenarioContext& context) {
   const std::filesystem::path seed =
       "tests/perf/fixtures/editor_essentials_snippet_seed/snippet_expand.cpp";
-  if (!PathExistsNoThrow(seed)) {
-    std::cerr << "editor_snippet_expand: missing fixture " << seed << "\n";
+  if (!RequireFixture(context, seed, "editor_snippet_expand")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -414,8 +406,7 @@ void RunEditorSnippetExpand(ScenarioContext& context) {
 void RunEditorSnippetPlaceholderEdit(ScenarioContext& context) {
   const std::filesystem::path seed =
       "tests/perf/fixtures/editor_essentials_snippet_seed/snippet_linked.cpp";
-  if (!PathExistsNoThrow(seed)) {
-    std::cerr << "editor_snippet_placeholder_edit: missing fixture " << seed << "\n";
+  if (!RequireFixture(context, seed, "editor_snippet_placeholder_edit")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -438,8 +429,7 @@ void RunEditorSnippetPlaceholderEdit(ScenarioContext& context) {
 
 void RunEditorSaveNormalization(ScenarioContext& context) {
   const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!PathExistsNoThrow(file)) {
-    std::cerr << "editor_save_normalization: missing fixture " << file << "\n";
+  if (!RequireFixture(context, file, "editor_save_normalization")) {
     return;
   }
   FixtureRestoreGuard guard(file, ReadFileTextOrThrow(file));
@@ -480,8 +470,7 @@ void RunSettingsChangeManyTabs(ScenarioContext& context) {
   // into a shared fixture would silently move multi_tab_cycle,
   // cold_startup_large_project and multi_project_switch off their baselines.
   const std::filesystem::path project = "tests/perf/fixtures/settings_tabs_project";
-  if (!PathExistsNoThrow(project)) {
-    std::cerr << "settings_change_many_tabs: missing fixture " << project << "\n";
+  if (!RequireFixture(context, project, "settings_change_many_tabs")) {
     return;
   }
   (void)context.Open(project);
@@ -503,7 +492,10 @@ void RunSettingsChangeManyTabs(ScenarioContext& context) {
     ++opened;
   }
   if (opened == 0) {
-    std::cerr << "settings_change_many_tabs: no fixture files opened\n";
+    // Same rule as a missing fixture: a scenario that opened no tabs measures
+    // nothing, and must not be compared to a baseline (TD-2026-08-10-170).
+    context.SkipScenario("settings_change_many_tabs: no fixture files opened under " +
+                         (project / "src").string());
     return;
   }
   context.PumpFrames(2);
@@ -555,8 +547,7 @@ void RunSettingsChangeManyTabs(ScenarioContext& context) {
 
 void RunEditorIndentDetectOpen(ScenarioContext& context) {
   const std::filesystem::path file = "tests/perf/fixtures/editor_essentials_1mb/mixed_content.txt";
-  if (!PathExistsNoThrow(file)) {
-    std::cerr << "editor_indent_detect_open: missing fixture " << file << "\n";
+  if (!RequireFixture(context, file, "editor_indent_detect_open")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -583,8 +574,7 @@ void RunEditorIndentDetectOpen(ScenarioContext& context) {
 void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "large_file_restore_deep_scroll_first_paint: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "large_file_restore_deep_scroll_first_paint")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -613,8 +603,7 @@ void RunLargeFileRestoreDeepScrollFirstPaint(ScenarioContext& context) {
 void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "mid_file_edit_latency_large_file: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "mid_file_edit_latency_large_file")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -649,8 +638,7 @@ void RunMidFileEditLatencyLargeFile(ScenarioContext& context) {
 void RunEditorTypingMinifiedLine(ScenarioContext& context) {
   const std::filesystem::path minified =
       "tests/perf/fixtures/editor_essentials_minified/bundle.min.js";
-  if (!PathExistsNoThrow(minified)) {
-    std::cerr << "editor_typing_minified_line: missing fixture " << minified << "\n";
+  if (!RequireFixture(context, minified, "editor_typing_minified_line")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -693,8 +681,7 @@ editor::TextViewport* OpenMinifiedFixtureOrSkip(ScenarioContext& context,
                                                 const char* scenario_name) {
   const std::filesystem::path minified =
       "tests/perf/fixtures/editor_essentials_minified/bundle.min.js";
-  if (!PathExistsNoThrow(minified)) {
-    std::cerr << scenario_name << ": missing fixture " << minified << "\n";
+  if (!RequireFixture(context, minified, scenario_name)) {
     return nullptr;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -865,8 +852,7 @@ void RunEditorLongLineSelectAllEdit(ScenarioContext& context) {
 void RunFirstLineEditLatencyLargeFile(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
-  if (!PathExistsNoThrow(cpp_50k)) {
-    std::cerr << "first_line_edit_latency_large_file: missing fixture " << cpp_50k << "\n";
+  if (!RequireFixture(context, cpp_50k, "first_line_edit_latency_large_file")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");
@@ -902,10 +888,7 @@ void RunFirstLineEditLatencyLargeFile(ScenarioContext& context) {
 void RunMobyDickWorkout(ScenarioContext& context) {
   const std::filesystem::path moby =
       "tests/perf/fixtures/editor_essentials_moby_dick/moby-dick.txt";
-  if (!PathExistsNoThrow(moby)) {
-    std::cerr << "editor_moby_dick_workout: missing fixture " << moby
-              << " (run: python3 tests/perf/generate_editor_essentials_perf_fixtures.py"
-              << " --fixture moby)\n";
+  if (!RequireFixture(context, moby, "editor_moby_dick_workout")) {
     return;
   }
   (void)context.Open("tests/perf/fixtures/small_project");

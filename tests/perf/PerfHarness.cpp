@@ -300,6 +300,29 @@ std::vector<std::pair<std::string, std::uint64_t>> ScenarioContext::TakeHarnessC
   return out;
 }
 
+bool RequireFixture(ScenarioContext& context,
+                    const std::filesystem::path& fixture,
+                    std::string_view scenario_label) {
+  if (PathExistsNoThrow(fixture)) {
+    return true;
+  }
+  std::string reason(scenario_label);
+  reason += ": missing fixture ";
+  reason += fixture.string();
+  // Deliberately names the ctest setup rather than one generator: there are
+  // three (editor-essentials, file-finder, kernel) and naming the wrong one sent
+  // a reader to a script that does not produce the tree they are missing.
+  reason += " (generate every perf fixture: ctest --test-dir build -R microide_perf_fixtures)";
+  context.SkipScenario(std::move(reason));
+  return false;
+}
+
+void ScenarioContext::SkipScenario(std::string reason) {
+  if (skip_reason_.empty()) {
+    skip_reason_ = std::move(reason);
+  }
+}
+
 void ScenarioContext::RecordCpuCalibration(std::uint64_t nanoseconds) {
   BumpHarnessCounter(HarnessCounter::kCpuCalibrationNs, nanoseconds);
 }
@@ -906,6 +929,16 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
       return std::nullopt;
     }
     const auto end = std::chrono::steady_clock::now();
+    // The scenario declared it cannot run. Stop here rather than recording nine
+    // more empty iterations: the aggregate is not a measurement, and the caller
+    // reports it as a skip (and, for a gated scenario, a failure).
+    if (context.skipped()) {
+      context.RestoreExternalFileChanges();
+      aggregate.skip_reason = context.skip_reason();
+      aggregate.iterations.clear();
+      ShutdownDriver(&driver);
+      return aggregate;
+    }
     const AllocationDelta delta = Allocations::DeltaSince(before);
     const double cpu_ms_after = ProcessCpuMilliseconds();
     SettleResidentSet();

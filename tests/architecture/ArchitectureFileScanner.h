@@ -27,6 +27,17 @@ bool MatchesCodeAt(std::string_view text,
 std::vector<std::size_t> FindCodeLiteralOccurrences(std::string_view text,
                                                     std::string_view literal);
 std::vector<std::size_t> FindTryCatchStoViolations(std::string_view text);
+// Every `*.cpp` under `root`, EXCLUDING any `fixtures/` subtree, collected
+// without throwing.
+//
+// Two rules walk `tests/perf` recursively, which contains the generated fixture
+// trees — tens of thousands of files that no rule can match, and that the ctest
+// fixture-setup tests rewrite while the shards run. A `recursive_directory_iterator`
+// over them is both wasted work and a race: increment on an entry another process
+// just unlinked throws, and the whole architecture shard died with
+// "cannot increment recursive directory iterator: No such file or directory"
+// (TD-2026-08-10-170).
+std::vector<std::filesystem::path> SourceFilesUnder(const std::filesystem::path& root);
 std::vector<bool> BuildTestingGuardMask(const std::string& text);
 std::optional<std::string> ExtractBraceDelimitedBody(const std::string& text,
                                                      std::size_t open_brace_index);

@@ -144,6 +144,11 @@ std::string EncodeScenarioAggregate(const Aggregate& aggregate) {
   Writer w;
   w.Str(aggregate.scenario_name);
   w.U64(aggregate.smoke ? 1u : 0u);
+  // Carried across the fork like everything else: a skip declared in the child
+  // has to reach the parent, which is the process that decides the run's verdict
+  // (TD-2026-08-10-170). Without it an isolated run would silently regain the
+  // vacuous pass the skip exists to prevent.
+  w.Str(aggregate.skip_reason);
   WriteMetricSet(w, aggregate.metrics);
   w.U64(aggregate.iterations.size());
   for (const Iteration& iteration : aggregate.iterations) {
@@ -180,6 +185,7 @@ std::optional<Aggregate> DecodeScenarioAggregate(std::string_view bytes) {
   Aggregate aggregate;
   aggregate.scenario_name = r.Str();
   aggregate.smoke = r.U64() != 0;
+  aggregate.skip_reason = r.Str();
   aggregate.metrics = ReadMetricSet(r);
   const std::uint64_t iteration_count = r.U64();
   if (!r.ok()) {

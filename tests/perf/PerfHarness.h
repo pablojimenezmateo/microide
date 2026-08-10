@@ -40,6 +40,20 @@ inline bool DirectoryExistsNoThrow(const std::filesystem::path& path) {
   return std::filesystem::is_directory(path, ec) && !ec;
 }
 
+class ScenarioContext;
+
+// The ONE fixture guard for scenario bodies (TD-2026-08-10-170). Returns true
+// when the fixture is there; otherwise marks the scenario skipped — which the
+// harness turns into a `SKIP` line and, for a baseline-gated scenario, a run
+// failure — and returns false so the caller returns immediately.
+//
+// Every scenario used to spell this itself as `std::cerr << ... ; return;`,
+// which told the harness nothing: the empty iteration was measured and compared,
+// and a scenario that did nothing PASSED its gate.
+bool RequireFixture(ScenarioContext& context,
+                    const std::filesystem::path& fixture,
+                    std::string_view scenario_label);
+
 // Linear-interpolated percentile over an unsorted sample. Shared with the
 // baseline comparison, which re-percentiles the clock-normalised CPU series
 // (Baseline.cpp) and must do it exactly the way the harness percentiled the raw
@@ -205,6 +219,10 @@ struct Aggregate {
   // Aggregated per-phase metrics, in first-appearance order.
   std::vector<PhaseMetricSet> phases;
   bool smoke = false;
+  // Non-empty when the scenario declared it could not run (see
+  // ScenarioContext::SkipScenario). Its metrics describe nothing and must not be
+  // compared to a baseline, written as one, or reported as a pass.
+  std::string skip_reason;
 };
 
 // Aggregate the per-iteration phase records into one entry per phase name.
@@ -373,8 +391,22 @@ class ScenarioContext {
 
   workspace::WorkspaceShell& Shell() { return shell_; }
 
+  // Declare that this scenario cannot run — a fixture it needs is absent, so
+  // whatever it measured is not what its baseline describes.
+  //
+  // Scenarios used to handle this themselves: print to stderr and `return`. The
+  // harness never learned, so the iteration was recorded, compared to a real
+  // baseline, and reported **PASS** — because a gate only fails on a regression
+  // and "did nothing" is not a regression. `editor_moby_dick_workout` passed
+  // measuring **7 allocations against a baseline of 138,599**, which is the
+  // shape of every vacuous green in `validation-traps.md` (TD-2026-08-10-170).
+  void SkipScenario(std::string reason);
+  bool skipped() const { return !skip_reason_.empty(); }
+  const std::string& skip_reason() const { return skip_reason_; }
+
  private:
   workspace::WorkspaceShell& shell_;
+  std::string skip_reason_;
   SDL_Window* window_ = nullptr;
   SDL_Renderer* renderer_ = nullptr;
   std::mt19937_64 rng_;

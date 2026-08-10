@@ -330,6 +330,39 @@ exactly while its max is 13x should be a loud, named condition in the harness
 human notices while chasing something else. Filed as part of 167's
 `measurement_revision` work rather than separately.
 
+### TD-2026-08-10-170 — a gated perf scenario whose fixture was missing did nothing and reported PASS. [RESOLVED 2026-08-10.]
+
+    editor_moby_dick_workout   measured 7 allocations   baseline 138,599   verdict: PASS
+
+Found by accident, comparing a scenario's measurement to its committed baseline
+by hand. The fixture is gitignored and generated on demand; without it the
+scenario body printed a line to stderr and `return`ed. The harness never learned,
+so the empty iteration was recorded, compared, and graded — and a gate only fails
+on a REGRESSION, so "did 0.005 % of the work" sailed through.
+
+Three policies for "the fixture is not here" lived in one binary, which is the
+condition `validation-traps.md` already warns about:
+
+- `throw` (the git scenarios) — correct, the run dies.
+- `EnsureFixtureOrSkip` + `--require-fixtures` — a quiet skip by default, a throw
+  in CI. The flag defaults to off, so the quiet answer was the usual one.
+- `std::cerr << "missing fixture"; return;` — **23 scenarios**, every one of them
+  baseline-gated, none of them able to fail.
+
+Now one policy. A scenario declares the skip (`ScenarioContext::SkipScenario`,
+reached through the single `RequireFixture` guard); the harness stops after the
+first iteration, discards the metrics, carries the reason across the isolation
+fork, and PerfMain prints `SKIP` and **fails the run** for a baseline-gated
+scenario, flag or no flag. `EnsureFixtureOrSkip` is deleted;
+`--require-fixtures` now governs only the manifest-backed fixture-tree integrity
+check, where a skip is genuinely right.
+
+**Generalisable**: a one-sided gate cannot detect a measurement that collapsed.
+Everything in this suite is checked for being too slow and nothing for being
+impossibly fast, so any path that makes a scenario stop doing its work is
+invisible by construction. The fixture guard was one such path; a scenario whose
+`Measure` body silently early-returns is another, and nothing covers it yet.
+
 ### TD-2026-08-10-169 — `switch_and_idle` retains 10.4 % more heap than its baseline, and no code change explains it. OPEN.
 
     switch_and_idle  p50_net_heap_bytes  113,417 -> 125,164  (+10.4 %, tolerance +10 %)
@@ -518,7 +551,18 @@ is stale until the pending rebaseline lands:
 | `mid_file_edit.enter_backspace_burst` | 11,633 | 24 ms |
 | `merge_interleaved.scroll_burst` | 8,928 | 108 ms |
 
-**One lead is already open.** `toggle_line_comment.1000_lines` is **89 allocations
+**The one lead this entry named is closed, and it was stale when written.**
+`toggle_line_comment.1000_lines` measures **32,869 allocations** against a
+committed phase baseline of 32,869.5 — about **2 per line** on a 1,000-line
+selection (one for the undo entry's `before_lines` string, one for the rewritten
+line), which is the floor for an operation that must record what it replaced. The
+89,044 below is a whole-SCENARIO number from before the phase gates were armed
+([153](#td-2026-08-06-153)), so it counted the fixture open too; dividing it by
+the line count was never meaningful. Traced 2026-08-10 and dropped from the
+worklist. The rest of the table is likewise pre-rebaseline and should be re-read
+from the committed phase baselines before anything is ranked by it.
+
+The original text follows. `toggle_line_comment.1000_lines` is **89 allocations
 per line** on a 1,000-line selection. Reading `ShapingActions::ToggleLineComment`
 accounts for about five of them — it walks the range twice through
 `TextBuffer::LineRef`, and the uncomment branch takes two `substr`s per line — and
@@ -4785,6 +4829,19 @@ latent bug. Kept documented with fix direction for a maintainer on that platform
 
 These are dead ends proven by the perf gate. Re-attempting them in the same shape wastes effort and
 the gate will reject them again.
+
+- **Capacity-preserving line assembly in `PieceTree::ExtractLineRange`** (2026-08-10). The spanning
+  line path does `out.push_back(std::move(current))`, which hands the buffer away and leaves `current`
+  at zero capacity, so the next line that spans pieces re-allocates and grows geometrically. Copying
+  out of `current` instead (and constructing single-piece lines straight into `out`) makes it exactly
+  one allocation per line in every case. Measured **zero** on `editor_long_line_select_all_edit`,
+  `editor_typing_minified_line`, `editor_smart_indent_typing`, `editor_sort_lines_large`,
+  `first_line_edit`, `mid_file_edit`, `typing_large_file`, `toggle_line_comment` — before and after,
+  same build, identical counts. The reason is structural: an insert appends its whole text as ONE
+  piece, so a multi-line slice's lines do not span pieces; only an intra-line edit splits a line, and
+  the paths that slice after those edits record inline undo entries instead. The shape the fix
+  addresses is not produced by the editor. Do not retry without first exhibiting a scenario whose
+  slice actually spans pieces.
 
 - **Editor glyph atlas on the draw path** (GPU / `SDL_RenderGeometry`). RESOLVED 2026-06-28 on
   `perf/gpu-render-path`: the three preconditions were met with measurement (GPU backend confirmed +

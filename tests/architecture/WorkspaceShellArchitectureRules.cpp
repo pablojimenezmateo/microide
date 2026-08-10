@@ -93,15 +93,12 @@ RuleResult CheckThrowingStoParsers(const std::filesystem::path& repo_root) {
     if (!std::filesystem::is_directory(root, root_ec) || root_ec) {
       continue;
     }
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-      if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
-        continue;
-      }
-      const std::string text = ReadText(entry.path());
+    for (const std::filesystem::path& path : SourceFilesUnder(root)) {
+      const std::string text = ReadText(path);
       const auto offsets = FindTryCatchStoViolations(text);
       for (const std::size_t offset : offsets) {
         result.violations.push_back(Violation{
-            .path = entry.path(),
+            .path = path,
             .line = LineNumberAt(text, offset),
             .message = "replace try/catch std::sto parsing with util::Parse helpers",
         });
@@ -234,12 +231,9 @@ RuleResult CheckPerfScenariosUseNonThrowingFilesystemProbes(
   }
   const std::regex throwing_probe(
       R"(std::filesystem::(exists|is_directory)\s*\([^,()]*\))");
-  for (const auto& entry : std::filesystem::recursive_directory_iterator(perf_dir)) {
-    if (!entry.is_regular_file() || entry.path().extension() != ".cpp") {
-      continue;
-    }
-    const std::string text = ReadText(entry.path());
-    AppendViolations(result, entry.path(), text, throwing_probe,
+  for (const std::filesystem::path& path : SourceFilesUnder(perf_dir)) {
+    const std::string text = ReadText(path);
+    AppendViolations(result, path, text, throwing_probe,
                      "perf fixture probes must use PathExistsNoThrow/DirectoryExistsNoThrow, "
                      "not a throwing single-arg std::filesystem::exists/is_directory");
   }

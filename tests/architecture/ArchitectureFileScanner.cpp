@@ -196,6 +196,33 @@ std::vector<std::size_t> FindCodeLiteralOccurrences(std::string_view text,
   return offsets;
 }
 
+std::vector<std::filesystem::path> SourceFilesUnder(const std::filesystem::path& root) {
+  std::vector<std::filesystem::path> files;
+  std::error_code ec;
+  std::filesystem::recursive_directory_iterator it(
+      root, std::filesystem::directory_options::skip_permission_denied, ec);
+  if (ec) {
+    return files;
+  }
+  const std::filesystem::recursive_directory_iterator end;
+  while (it != end) {
+    const std::filesystem::directory_entry entry = *it;
+    if (entry.is_directory(ec) && !ec && entry.path().filename() == "fixtures") {
+      it.disable_recursion_pending();
+    } else if (entry.is_regular_file(ec) && !ec && entry.path().extension() == ".cpp") {
+      files.push_back(entry.path());
+    }
+    // The error_code increment is the point: a generated fixture tree can be
+    // rewritten by a concurrent ctest setup test, and the throwing form takes the
+    // whole shard down with it.
+    it.increment(ec);
+    if (ec) {
+      break;
+    }
+  }
+  return files;
+}
+
 std::vector<std::size_t> FindTryCatchStoViolations(std::string_view text) {
   std::vector<std::size_t> violations;
   const auto is_code = BuildCodeMask(text);

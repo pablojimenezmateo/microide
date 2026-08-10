@@ -1418,6 +1418,22 @@ if(MICROIDE_PERF_HARNESS_BUILD)
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   set_tests_properties(microide_perf_fixtures PROPERTIES FIXTURES_SETUP perf_fixtures)
 
+  # The editor_essentials generator is not the only one: file_finder_large and
+  # kernel_sized_project have their own scripts and committed .sha256 files, and
+  # nothing ran them. `file_finder_cold` and `file_finder_type_query` are
+  # baseline-gated and had simply been skipping — invisibly, until a skipped
+  # scenario started failing the run (TD-2026-08-10-170). Same FIXTURES_SETUP
+  # label, so the perf test still requires all of them.
+  add_test(NAME microide_perf_fixtures_file_finder
+           COMMAND python3 tests/perf/generate_file_finder_fixture.py --ensure
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(microide_perf_fixtures_file_finder PROPERTIES FIXTURES_SETUP perf_fixtures)
+
+  add_test(NAME microide_perf_fixtures_kernel
+           COMMAND python3 tests/perf/generate_kernel_fixture.py --ensure
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(microide_perf_fixtures_kernel PROPERTIES FIXTURES_SETUP perf_fixtures)
+
   add_test(NAME microide_perf_tests
            COMMAND microide_perf --smoke --iterations=1
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

@@ -89,26 +89,17 @@ struct CliOptions {
   bool isolate_scenarios = true;
 };
 
-// Set by main() after CLI parse so scenario lambdas registered at static-init
-// time can consult the flag. Default false matches local-dev behavior (skip
-// missing fixtures); CI passes --require-fixtures so missing fixtures fail.
+// Set by main() after CLI parse. It now governs only the manifest-backed fixture
+// TREE check below: an absent tree is a skip locally and a hard failure in CI.
+//
+// It used to govern per-scenario fixture handling too, through
+// EnsureFixtureOrSkip — which is deleted. Two policies for "the fixture is not
+// here" in one binary is precisely what let a gated scenario measure an empty
+// function and PASS (TD-2026-08-10-170), and the flag's default made the quiet
+// answer the usual one. A scenario now declares the skip
+// (ScenarioContext::SkipScenario, via RequireFixture) and the run refuses to
+// grade it, with or without this flag.
 bool g_require_fixtures = false;
-
-// Returns true if the fixture is present and the scenario should proceed.
-// Returns false (silent skip) when the fixture is missing and --require-fixtures
-// is not set. Throws when --require-fixtures is set — converts a quiet skip into
-// a CI failure so a missing fixture cannot mask a regression.
-bool EnsureFixtureOrSkip(const std::filesystem::path& fixture, const char* scenario_label) {
-  if (DirectoryExistsNoThrow(fixture)) {
-    return true;
-  }
-  if (g_require_fixtures) {
-    throw std::runtime_error(std::string(scenario_label) +
-                             ": required fixture missing: " + fixture.string());
-  }
-  std::cerr << scenario_label << ": fixture missing, skipping\n";
-  return false;
-}
 
 struct ProcessSample {
   std::uint64_t rss_bytes = 0;
@@ -1017,7 +1008,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
                 std::filesystem::path("tests/perf/fixtures/file_finder_large");
-            if (!EnsureFixtureOrSkip(fixture, "file_finder_cold")) {
+            if (!RequireFixture(context, fixture, "file_finder_cold")) {
               return;
             }
             if (!context.Open(fixture)) {
@@ -1060,7 +1051,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
                 std::filesystem::path("tests/perf/fixtures/file_finder_large");
-            if (!EnsureFixtureOrSkip(fixture, "file_finder_type_query")) {
+            if (!RequireFixture(context, fixture, "file_finder_type_query")) {
               return;
             }
             if (!context.Open(fixture)) {
@@ -1108,7 +1099,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
                 std::filesystem::path("tests/perf/fixtures/git_status_project");
-            if (!EnsureFixtureOrSkip(fixture, "git_sidebar_activate")) {
+            if (!RequireFixture(context, fixture, "git_sidebar_activate")) {
               return;
             }
             if (!context.Open(fixture)) {
@@ -1166,7 +1157,7 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
                 std::filesystem::path("tests/perf/fixtures/file_finder_large");
-            if (!EnsureFixtureOrSkip(fixture, "search_first_result")) {
+            if (!RequireFixture(context, fixture, "search_first_result")) {
               return;
             }
             if (!context.Open(fixture)) {
@@ -1954,10 +1945,9 @@ int main(int argc, char** argv) {
   std::size_t selected_count = 0;
   // Integrity gate for the manifest-backed fixture trees.
   //
-  // Policy matches EnsureFixtureOrSkip, deliberately, because two different
-  // answers to "the fixture is not here" is how this broke: a tree that is
-  // ENTIRELY ABSENT is a skip (or a hard failure under --require-fixtures), and a
-  // tree that is PRESENT must match its manifest or the run dies. These trees are
+  // A tree that is ENTIRELY ABSENT is a skip (or a hard failure under
+  // --require-fixtures), and a tree that is PRESENT must match its manifest or
+  // the run dies. These trees are
   // gitignored and generated on demand by the ctest `microide_perf_fixtures`
   // setup, so a fresh checkout legitimately has none of them — and this loop used
   // to hash them unconditionally and report the empty-tree digest as a corruption
@@ -2041,6 +2031,24 @@ int main(int argc, char** argv) {
         std::cerr << "scenario failed to run: " << scenario.name << " (" << isolation_error
                   << ")\n";
         return 1;
+      }
+      continue;
+    }
+    // The scenario declared it cannot run (a missing fixture). Never compare it
+    // to a baseline, never write one from it, and never call it a pass: its
+    // metrics describe an empty function. Before this existed, such a scenario
+    // printed a line to stderr and then PASSED — `editor_moby_dick_workout`
+    // reported 7 allocations against a baseline of 138,599 and the run was green
+    // (TD-2026-08-10-170). A gated scenario that cannot run is a failed run; an
+    // advisory one is merely reported.
+    if (!aggregate->skip_reason.empty()) {
+      std::cerr << "[perf] SKIP " << scenario.name << " — " << aggregate->skip_reason << '\n';
+      if (scenario.baseline_gated && !options->update_baseline) {
+        // Recorded, not returned on: one missing fixture must not hide the
+        // verdict of the eighty scenarios after it. The run still ends non-zero.
+        std::cerr << "[perf] a baseline-gated scenario that cannot run is a failed run: its "
+                     "committed baseline describes work this process did not do\n";
+        all_passed = false;
       }
       continue;
     }
