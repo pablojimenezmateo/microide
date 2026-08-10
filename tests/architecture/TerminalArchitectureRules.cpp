@@ -718,24 +718,34 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
   return result;
 }
 
-std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path& repo_root) {
-  return {
-      CheckTerminalSessionTuSize(repo_root),
-      CheckTerminalSessionHeaderSize(repo_root),
-      CheckTerminalSessionPrivateMethodCount(repo_root),
-      CheckTerminalHelperTuSize(repo_root),
-      CheckTerminalParserHelpersNoForbiddenDeps(repo_root),
-      CheckTerminalSessionNoExtractedImpl(repo_root),
-      CheckTerminalInternalHeadersStayInTerminalDir(repo_root),
-      CheckTerminalSessionSplitTranslationUnits(repo_root),
-      CheckArchitectureInvariantsDispatcherSize(repo_root),
-      CheckArchitectureRulesTuSize(repo_root),
-      CheckWorkspaceArchitectureRulesDispatcherSize(repo_root),
-      CheckDescriptorCreationIsCloseOnExec(repo_root),
-      CheckSettingsReadAreRegistered(repo_root),
-      CheckRegisteredSettingsAreRead(repo_root),
-      CheckSettingDefaultsMatchRegistry(repo_root),
+const std::vector<NamedRule>& TerminalArchitectureRuleList() {
+  static const std::vector<NamedRule> rules = {
+      {"CheckTerminalSessionTuSize", CheckTerminalSessionTuSize},
+      {"CheckTerminalSessionHeaderSize", CheckTerminalSessionHeaderSize},
+      {"CheckTerminalSessionPrivateMethodCount", CheckTerminalSessionPrivateMethodCount},
+      {"CheckTerminalHelperTuSize", CheckTerminalHelperTuSize},
+      {"CheckTerminalParserHelpersNoForbiddenDeps", CheckTerminalParserHelpersNoForbiddenDeps},
+      {"CheckTerminalSessionNoExtractedImpl", CheckTerminalSessionNoExtractedImpl},
+      {"CheckTerminalInternalHeadersStayInTerminalDir", CheckTerminalInternalHeadersStayInTerminalDir},
+      {"CheckTerminalSessionSplitTranslationUnits", CheckTerminalSessionSplitTranslationUnits},
+      {"CheckArchitectureInvariantsDispatcherSize", CheckArchitectureInvariantsDispatcherSize},
+      {"CheckArchitectureRulesTuSize", CheckArchitectureRulesTuSize},
+      {"CheckWorkspaceArchitectureRulesDispatcherSize", CheckWorkspaceArchitectureRulesDispatcherSize},
+      {"CheckDescriptorCreationIsCloseOnExec", CheckDescriptorCreationIsCloseOnExec},
+      {"CheckSettingsReadAreRegistered", CheckSettingsReadAreRegistered},
+      {"CheckRegisteredSettingsAreRead", CheckRegisteredSettingsAreRead},
+      {"CheckSettingDefaultsMatchRegistry", CheckSettingDefaultsMatchRegistry},
   };
+  return rules;
+}
+
+std::vector<RuleResult> RunTerminalArchitectureRules(const std::filesystem::path& repo_root) {
+  std::vector<RuleResult> results;
+  results.reserve(TerminalArchitectureRuleList().size());
+  for (const NamedRule& rule : TerminalArchitectureRuleList()) {
+    results.push_back(rule.fn(repo_root));
+  }
+  return results;
 }
 
 // The mirror of CheckSettingsReadAreRegistered. That rule stops a setting being

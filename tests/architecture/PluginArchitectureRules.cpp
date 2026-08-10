@@ -489,18 +489,29 @@ RuleResult CheckNoUnwiredMcpScaffolding(const std::filesystem::path& repo_root) 
   return result;
 }
 
+const std::vector<NamedRule>& PluginArchitectureRuleList() {
+  static const std::vector<NamedRule> rules = {
+      {"CheckNoProjectLocalPluginDiscovery", CheckNoProjectLocalPluginDiscovery},
+      {"CheckSinglePluginReloadPerActivation", CheckSinglePluginReloadPerActivation},
+      {"CheckEssentialEditorCppModulesDoNotTouchLuaState",
+       CheckEssentialEditorCppModulesDoNotTouchLuaState},
+      {"CheckPluginTranslationUnitSize", CheckPluginTranslationUnitSize},
+      {"CheckPluginLuaErrorDoesNotLongjmpOverCppLocals",
+       CheckPluginLuaErrorDoesNotLongjmpOverCppLocals},
+      {"CheckPluginFieldReadsAreMetamethodProtected", CheckPluginFieldReadsAreMetamethodProtected},
+      {"CheckLuaStaysBehindPluginBoundary", CheckLuaStaysBehindPluginBoundary},
+      {"CheckCoreIsNetworkFree", CheckCoreIsNetworkFree},
+      {"CheckNoUnwiredMcpScaffolding", CheckNoUnwiredMcpScaffolding},
+  };
+  return rules;
+}
+
 std::vector<RuleResult> RunPluginArchitectureRules(const std::filesystem::path& repo_root) {
   std::vector<RuleResult> results;
-  const auto run = [&](auto&& fn) { results.push_back(fn(repo_root)); };
-  run(CheckNoProjectLocalPluginDiscovery);
-  run(CheckSinglePluginReloadPerActivation);
-  run(CheckEssentialEditorCppModulesDoNotTouchLuaState);
-  run(CheckPluginTranslationUnitSize);
-  run(CheckPluginLuaErrorDoesNotLongjmpOverCppLocals);
-  run(CheckPluginFieldReadsAreMetamethodProtected);
-  run(CheckLuaStaysBehindPluginBoundary);
-  run(CheckCoreIsNetworkFree);
-  run(CheckNoUnwiredMcpScaffolding);
+  results.reserve(PluginArchitectureRuleList().size());
+  for (const NamedRule& rule : PluginArchitectureRuleList()) {
+    results.push_back(rule.fn(repo_root));
+  }
   return results;
 }
 

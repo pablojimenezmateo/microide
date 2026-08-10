@@ -115,9 +115,12 @@ The emulator covers the full-screen and shell workflows exercised so far.
   now resolved). The deterministic half went first with
   `--update-baseline=deterministic`, which rewrites only the metrics that do not
   depend on machine state; the timing and resident half followed on an idle
-  perf-runner-v1 with the full `--update-baseline`. The suite re-gates 100 PASS /
-  0 FAIL with every gated metric below 75 % of its envelope, so a wall/cpu/rss
-  failure is now evidence again rather than something to check against a stale
+  perf-runner-v1 with the full `--update-baseline`. The suite re-gated 100 PASS /
+  0 FAIL at the time; by 2026-08-10 a third of it was red without a line of
+  product code changing, from the harness change described under isolation below
+  (TD-2026-08-10-168) — a rebaseline is a snapshot of a measurement REGIME, and
+  the file records the numbers but not the regime (TD-2026-08-07-167). A wall/cpu/rss
+  failure is evidence rather than something to check against a stale
   record first. Rebaseline the same way: confirm no *allocation* gate is near its
   envelope before rewriting, because those are deterministic and a tight one means
   the code moved — rerecording then buries a regression instead of closing drift
@@ -135,10 +138,28 @@ The emulator covers the full-screen and shell workflows exercised so far.
   — `tools/audit-perf-phase-scaffolding.py`, result in
   `dev-docs/performance/perf-phase-scaffolding-audit.md`: 1 of 115 above the 20%
   threshold, and that one legitimately (TD-2026-08-07-163). Re-run it after adding
-  scenarios; nothing enforces it yet (TD-2026-08-07-166)
+  scenarios, and `CheckPerfMeasureBodiesDoNotBuildTheirOwnInput` now enforces it
+  per-`Measure`-body — `perf-measure-builds-input: <reason>` in the body is the
+  declared exemption for a scenario where construction IS the work
+  (TD-2026-08-07-166)
 - each scenario runs in its own child process (TD-2026-08-06-152), so a metric is
   a property of the scenario rather than of whatever ran before it. `--no-isolate`
-  restores the shared-process form for a debugger or profiler
+  restores the shared-process form for a debugger or profiler. **The harness pumps
+  three frames on the bare driver before the measured loop**, because that
+  isolation moved a cost the baselines never contained: the first frames a PROCESS
+  paints do ~8,600 allocations no later frame repeats, and while the suite shared
+  one process only the first scenario paid it. Without the warm-up, 34 of 100
+  scenarios failed p95/max allocations with a p50 that matched their baseline
+  exactly (TD-2026-08-10-168) — a tail-only divergence is a signal to suspect the
+  harness, not the code
+- **a scenario that cannot run fails the run.** A missing fixture used to print a
+  line and `return`, so the empty iteration was graded and PASSED —
+  `editor_moby_dick_workout` reported 7 allocations against a baseline of 138,599
+  (TD-2026-08-10-170). One policy now: `RequireFixture` →
+  `ScenarioContext::SkipScenario` → `SKIP` plus a failed run for a gated scenario.
+  Every fixture generator is a ctest setup test under `FIXTURES_SETUP
+  perf_fixtures`, all with `--ensure` semantics. Remember the general shape: every
+  gate here is one-sided, so nothing detects a measurement that COLLAPSED
 - add regression coverage with every bug fix; never rely on "should be covered
   already"
 - every `ScenarioContext::Measure` phase carries its own allocation gate

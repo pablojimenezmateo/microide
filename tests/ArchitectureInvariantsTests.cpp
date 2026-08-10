@@ -44,14 +44,6 @@ void RunWorkspaceRuleTest(architecture::ArchitectureRuleFn fn) {
   AssertRuleResultsPass({fn(architecture::RepoRoot())});
 }
 
-void TestArchitecturePluginRules() {
-  AssertRuleResultsPass(architecture::RunPluginArchitectureRules(architecture::RepoRoot()));
-}
-
-void TestArchitectureTerminalRules() {
-  AssertRuleResultsPass(architecture::RunTerminalArchitectureRules(architecture::RepoRoot()));
-}
-
 void TestArchitectureFileSizes() {
   const std::filesystem::path repo_root = architecture::RepoRoot();
   std::vector<architecture::RuleResult> results;
@@ -616,8 +608,21 @@ void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests) {
     AddTest(tests, "ArchitectureInvariants/Workspace/" + std::string(rule.name),
             [fn]() { RunWorkspaceRuleTest(fn); });
   }
-  AddTest(tests, "ArchitectureInvariants/PluginRules", TestArchitecturePluginRules);
-  AddTest(tests, "ArchitectureInvariants/TerminalRules", TestArchitectureTerminalRules);
+  // Same treatment, and for a sharper reason than speed: as single aggregate
+  // cases, PluginRules took 221 s and TerminalRules ~230 s under TSAN with the
+  // machine otherwise idle, against the runner's own 300 s per-test watchdog.
+  // Both tripped it the moment ctest ran shards in parallel — a test that only
+  // passes on an unloaded machine (TD-2026-08-10-171).
+  for (const architecture::NamedRule& rule : architecture::PluginArchitectureRuleList()) {
+    const architecture::ArchitectureRuleFn fn = rule.fn;
+    AddTest(tests, "ArchitectureInvariants/Plugin/" + std::string(rule.name),
+            [fn]() { RunWorkspaceRuleTest(fn); });
+  }
+  for (const architecture::NamedRule& rule : architecture::TerminalArchitectureRuleList()) {
+    const architecture::ArchitectureRuleFn fn = rule.fn;
+    AddTest(tests, "ArchitectureInvariants/Terminal/" + std::string(rule.name),
+            [fn]() { RunWorkspaceRuleTest(fn); });
+  }
   AddTest(tests, "ArchitectureInvariants/FileSizes", TestArchitectureFileSizes);
   AddTest(tests, "ArchitectureInvariants/TryCatchStoScanner", TestTryCatchStoScanner);
   AddTest(tests, "ArchitectureInvariants/CountCodeLinesScanner", TestCountCodeLinesScanner);

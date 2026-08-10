@@ -330,6 +330,32 @@ exactly while its max is 13x should be a loud, named condition in the harness
 human notices while chasing something else. Filed as part of 167's
 `measurement_revision` work rather than separately.
 
+### TD-2026-08-10-171 — two architecture tests passed only on an idle machine. [RESOLVED 2026-08-10.]
+
+    ArchitectureInvariants/PluginRules     221 s under TSAN, machine idle
+    ArchitectureInvariants/TerminalRules   ~230 s
+    microide_tests per-test watchdog       300 s
+
+Found by the end-of-session sanitizer batch: `tsan` failed two shards with
+"Subprocess aborted", and the abort was the test runner's own watchdog firing on
+these two. Each ran alone in ~75 % of the budget, so the moment ctest scheduled
+six sanitizer shards on a four-core box they went over. Nothing about them had
+changed — they had been sitting one busy machine away from red.
+
+The suite already had the answer and had applied it to exactly one of the three
+rule groups: `WorkspaceArchitectureRuleList` exists so the test layer can register
+**one ctest case per rule**, and its own comment says why ("formerly a single ~30 s
+serial test"). Plugin and Terminal kept their aggregate `Run*ArchitectureRules`
+entry points and stayed single cases. They now expose the same `NamedRule` list —
+one source of truth each, iterated by both the aggregate runner and the
+registration loop — and the ArchitectureInvariants test count goes 65 → 87, with
+the slowest single case at ~4 s natively.
+
+**Generalisable**: a fix applied to one of N instances of a pattern leaves the
+other N−1, and a per-test timeout converts "slow" into "flaky under load" rather
+than into a visible failure. Both are invisible on the machine where the fix was
+written.
+
 ### TD-2026-08-10-170 — a gated perf scenario whose fixture was missing did nothing and reported PASS. [RESOLVED 2026-08-10.]
 
     editor_moby_dick_workout   measured 7 allocations   baseline 138,599   verdict: PASS
