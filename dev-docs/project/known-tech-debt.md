@@ -338,6 +338,62 @@ when the tail merely drifted past a loose envelope. All three cases are covered
 by `PerfBaseline/NamesTailOnlyAllocationDivergence`, using this entry's own
 numbers (`cold_startup_no_project`, 681 → 9,364 with p50 matching exactly).
 
+### TD-2026-08-10-173 — the retention gate reported a 476 % regression on an unchanged binary, because a median over a settling series is not a measurement at five iterations. [RESOLVED 2026-08-10.]
+
+    editor_indent_guides_paint  p50_net_heap_bytes  59,735 -> 297,236  (+398 %, tolerance +10 %)   --iterations=5
+    editor_indent_guides_paint  p50_net_heap_bytes  59,735 ->  49,334  (PASS)                      --iterations=10
+
+Found while diagnosing what looked like a real retention regression: **five of
+twelve** editor scenarios were red on `p50_net_heap_bytes` at `--iterations=5`,
+one of them at +398 %, on a metric the suite documents as *deterministic to the
+byte*. The two edit-latency scenarios reproduced identically at `035f8e1c` — the
+commit right after the v2.9.0 cut, before every recent perf change — so nothing
+in the code had moved.
+
+The series is the whole answer. Same binary, ten iterations:
+
+```
+12,286,512  341,770  297,236  63,389  -7,535  29,836  48,084  -20,348  50,584  25,080
+```
+
+p50 over the first 3 is 341,770; over 5, 297,236; over all 10, **49,334**. The
+first iterations fill caches the later ones reuse, so the median walks down the
+series and does not converge until they are full. A short run therefore gates a
+settling reading against a steady-state baseline, and the failure line named the
+metric, the percentage and the envelope — everything except the sample size.
+
+**This is [148](#td-2026-08-06-148) again, on the other metric.** That entry
+found exactly this for `mean_rss_growth_bytes` (100-114 KB at 6 iterations,
+84-95 KB at 10) and taught `CompareToBaseline` to decline the comparison and say
+why. `p50_net_heap_bytes` is the same shape — a statistic over a settling series
+— and did not get the guard, so it kept generating false positives for four
+days. Same "a fix applied to one of N instances of a pattern leaves the other
+N−1" as [171](#td-2026-08-10-171).
+
+Fixed by generalising the guard: `AnnotateSettlingGateForIterationCount` now
+serves both metrics, naming the metric and its statistic. A run shorter than its
+baseline reports the number, is not gated on it, and says
+`rerun with --iterations=10`; a LONGER run stays gated with a note that the gate
+is loose. Everything else in a short run stays armed, or dropping `--iterations`
+becomes a way to turn the suite off. Covered by
+`PerfBaseline/DeclinesTheNetHeapGateOnAShortRun` using the series above.
+
+**Generalisable, and worth more than the fix**: the suite's habit is to reach for
+`--iterations=3` or `5` when iterating. Every metric read at a short count is
+suspect unless it has been shown to be steady from iteration 1, and only two of
+them have been checked. `p50/p95/max_allocations` are safe by construction (each
+iteration is independently counted, and the percentiles of a settling series are
+what the tail gates are FOR). The duration metrics carry machine state, which is
+already loudly annotated. But nothing systematically asks "does this statistic
+converge?" of a metric before gating it, and the two that did not were found one
+at a time, by accident, four days apart.
+
+**Left open**: this said nothing while it was wrong, which is the same one-sided
+gate [170](#td-2026-08-10-170) closed for skips. A red that is an artifact of the
+harness costs a bisect; the run should be able to say "you asked for 5 of 10
+iterations — 1 gate declined" in its summary line rather than only in a
+per-metric note nobody greps for.
+
 ### TD-2026-08-10-172 — `git_sidebar_activate`'s timing baseline describes a fixture that no longer exists. PARTIALLY RESOLVED 2026-08-10 — the fixture family now has a contract and a ctest setup; only the wall/cpu rerecord on an idle runner is left.
 
 The scenario names `tests/perf/fixtures/git_status_project`. Nothing produced

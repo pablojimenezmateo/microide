@@ -298,6 +298,37 @@ below the committed baseline with a head that does not. If the tail is clean, th
 scenario needs a warmup, not a fix — and rebaselining it instead would bake the
 cold pass into the number and hide the next real regression underneath it.
 
+#### The mirror: a settling statistic gated at a short count
+
+The entry above is about a scenario that needs a warmup. This is about a metric
+that needs a sample size, and it produced a **476 % phantom regression** on an
+unchanged binary.
+
+`p50_net_heap_bytes` is documented as deterministic to the byte, and it is — *at
+a fixed iteration count*, which is not the same claim.
+`editor_indent_guides_paint`, one binary, ten iterations:
+
+```
+12,286,512  341,770  297,236  63,389  -7,535  29,836  48,084  -20,348  50,584  25,080
+```
+
+p50 over 3 = 341,770. Over 5 = 297,236. Over 10 = 49,334, against a 59,735
+baseline. Five of twelve editor scenarios were red at `--iterations=5` and green
+at 10, and the failure line named the metric, the percentage and the envelope —
+everything except the sample size (TD-2026-08-10-173).
+
+Two rules come out of it:
+
+- **Before gating a statistic, ask whether it converges.** `mean_rss_growth_bytes`
+  and `p50_net_heap_bytes` are both statistics over a settling series, and both
+  had to learn separately (TD-2026-08-06-148, then TD-2026-08-10-173) to decline
+  a comparison against a baseline recorded over more iterations. Allocation
+  percentiles are safe by construction; durations carry machine state and are
+  already annotated. Nothing else has been checked.
+- **A red gate on a short run is a suspect, not a result.** Both metrics now say
+  `NOT ENFORCED: this run measured 5 iterations against a baseline recorded over
+  10`. Read the note before starting a bisect.
+
 ### A scenario can regress 1.9x from a change that cannot reach its code
 
 `reference_snippet_file_window` — which writes a temp file and calls

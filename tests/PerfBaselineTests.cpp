@@ -1358,9 +1358,81 @@ void TestPerfBaselineNamesTailOnlyAllocationDivergence() {
   }
 }
 
+// TD-2026-08-10-173: the resident gate learned in TD-2026-08-06-148 that a run
+// shorter than its baseline is not comparable. `p50_net_heap_bytes` is the same
+// shape — a statistic over a settling series — and did not, so a short run
+// reported phantom retention regressions on an unchanged binary.
+void TestPerfBaselineDeclinesTheNetHeapGateOnAShortRun() {
+  // The real series, editor_indent_guides_paint, unchanged binary, ten iterations.
+  // p50 over 5 is 297,236; over all 10 it is 49,334, against a 59,735 baseline.
+  const auto run_of = [](std::size_t iteration_count, double net_heap) {
+    perf::Aggregate aggregate;
+    aggregate.scenario_name = "test";
+    aggregate.metrics.p50_net_heap_bytes = net_heap;
+    for (std::size_t index = 0; index < iteration_count; ++index) {
+      perf::Iteration iteration;
+      iteration.index = index;
+      aggregate.iterations.push_back(std::move(iteration));
+    }
+    return aggregate;
+  };
+  const auto net_heap = [](const perf::BaselineComparison& comparison) {
+    for (const perf::MetricComparison& metric : comparison.metrics) {
+      if (metric.metric == "p50_net_heap_bytes") {
+        return metric;
+      }
+    }
+    Expect(false, "the comparison must report the net-heap metric at all");
+    return perf::MetricComparison{};
+  };
+
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.has_net_heap_metrics = true;
+  baseline.metrics.p50_net_heap_bytes = 59'735.0;
+  baseline.tolerances.net_heap_percent = 10.0;
+  baseline.iterations = 10;
+
+  const perf::BaselineComparison short_run =
+      perf::CompareToBaseline(baseline, run_of(5, 297'236.0));
+  const perf::MetricComparison short_metric = net_heap(short_run);
+  Expect(!short_metric.passed, "the raw arithmetic must still say the reading is out of envelope");
+  Expect(!short_metric.enforced,
+         "but a five-iteration run must not be gated against a ten's baseline");
+  Expect(short_run.passed, "and the scenario must not go red on a comparison that was declined");
+  Expect(short_metric.note.find("5 iterations") != std::string::npos &&
+             short_metric.note.find("10") != std::string::npos,
+         "the note must name both counts");
+  Expect(short_metric.note.find("TD-2026-08-10-173") != std::string::npos,
+         "and point at the analysis");
+
+  // The allocation gates beside it stay armed: a short run must still be a run
+  // with gates, or dropping --iterations becomes a way to turn the suite off.
+  perf::Aggregate short_with_alloc_regression = run_of(5, 297'236.0);
+  short_with_alloc_regression.metrics.p50_allocations = 5'000.0;
+  Expect(!perf::CompareToBaseline(baseline, short_with_alloc_regression).passed,
+         "declining the net-heap gate must not disarm the allocation gates beside it");
+
+  // At the recorded count the gate is live: the settling explanation must not
+  // become a way for a real retention regression to escape.
+  const perf::BaselineComparison at_count =
+      perf::CompareToBaseline(baseline, run_of(10, 297'236.0));
+  Expect(net_heap(at_count).enforced && !at_count.passed,
+         "at the recorded iteration count the retention gate is enforced again");
+
+  // A LONGER run reads lower, so the gate only gets more permissive — reported,
+  // not failed, because a gate nobody knows is loose is how a suite goes vacuous.
+  const perf::BaselineComparison long_run =
+      perf::CompareToBaseline(baseline, run_of(25, 49'334.0));
+  Expect(net_heap(long_run).enforced, "a longer run stays gated");
+  Expect(net_heap(long_run).note.find("loose") != std::string::npos,
+         "and says the gate it passed is looser than the baseline describes");
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/DeclinesTheNetHeapGateOnAShortRun",
+          TestPerfBaselineDeclinesTheNetHeapGateOnAShortRun);
   AddTest(tests, "PerfBaseline/RefusesToGateAcrossAMeasurementRevision",
           TestPerfBaselineRefusesToGateAcrossAMeasurementRevision);
   AddTest(tests, "PerfBaseline/MeasurementRevisionRoundTrip",

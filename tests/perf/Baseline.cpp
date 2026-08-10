@@ -192,8 +192,13 @@ NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
   return out;
 }
 
-// Decide whether the resident gate is comparable at this run's iteration count,
-// and annotate it either way.
+// Decide whether a SETTLING-SERIES gate is comparable at this run's iteration
+// count, and annotate it either way.
+//
+// Two metrics are settling series, not steady ones, and both were affected. The
+// second was found on 2026-08-10, because the fix below had been applied to one
+// of the two (TD-2026-08-10-173) — the same "a fix applied to one of N instances
+// leaves the other N-1" shape as TD-2026-08-10-171.
 //
 // `mean_rss_growth_bytes` is a trimmed mean over a series that SETTLES: the first
 // iterations pay arena growth and first-touch faults that later ones do not, so
@@ -208,14 +213,30 @@ NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
 // declining to gate it beats a red that means nothing — a developer who drops
 // --iterations to save time gets an explanation, not a bisect.
 //
+// `p50_net_heap_bytes` is the same shape for a different reason: it is a MEDIAN
+// over a series whose first iterations fill caches the later ones reuse.
+// editor_indent_guides_paint, unchanged binary, ten iterations:
+//
+//   12,286,512  341,770  297,236  63,389  -7,535  29,836  48,084  -20,348  50,584  25,080
+//
+// p50 over the first 3 is 341,770; over 5, 297,236; over all 10, 49,334 — against
+// a 59,735 baseline. So a `--iterations=5` run reported +398 % on code that had
+// not moved, and a `--iterations=3` run +476 %, in both cases naming the one
+// metric the suite documents as deterministic to the byte. That is a
+// false-positive generator pointed at the retention gate, and the median does not
+// converge until the caches are full.
+//
 // The other direction is left enforced. A LONGER run reads lower, so the gate can
 // only get more permissive, which is a note rather than a failure — but it is
 // still worth saying, because a permissive gate that nobody knows is permissive
 // is how a baseline set goes quietly vacuous (validation-traps.md).
-void AnnotateResidentGateForIterationCount(BaselineComparison* result,
+void AnnotateSettlingGateForIterationCount(BaselineComparison* result,
                                            std::size_t metric_index,
                                            const BaselineRecord& baseline,
-                                           const Aggregate& aggregate) {
+                                           const Aggregate& aggregate,
+                                           std::string_view metric_name,
+                                           std::string_view statistic,
+                                           std::string_view debt_id) {
   const std::size_t measured = aggregate.iterations.size();
   // Either side unknown: a pre-iteration-count baseline, or an aggregate built
   // from summary metrics alone (the unit tests, and report replay). Compare as
@@ -225,17 +246,18 @@ void AnnotateResidentGateForIterationCount(BaselineComparison* result,
   }
   std::ostringstream note;
   if (measured < baseline.iterations) {
-    note << "mean_rss_growth_bytes NOT ENFORCED: this run averaged " << measured
+    note << metric_name << " NOT ENFORCED: this run measured " << measured
          << " iterations against a baseline recorded over " << baseline.iterations
-         << ". The statistic is a trimmed mean over a settling series and reads high at "
-            "short counts, so the comparison is not a measurement — rerun with "
-            "--iterations=" << baseline.iterations << " to gate it (TD-2026-08-06-148)";
+         << ". The statistic is " << statistic
+         << " over a settling series and reads high at short counts, so the comparison is "
+            "not a measurement — rerun with --iterations="
+         << baseline.iterations << " to gate it (" << debt_id << ")";
     Unenforce(result, metric_index, note.str());
     return;
   }
-  note << "resident gate is loose: this run averaged " << measured
+  note << metric_name << " gate is loose: this run measured " << measured
        << " iterations against a baseline recorded over " << baseline.iterations
-       << ", and the trimmed mean falls as iterations rise (TD-2026-08-06-148)";
+       << ", and the statistic falls as iterations rise (" << debt_id << ")";
   result->metrics[metric_index].note = note.str();
 }
 
@@ -758,7 +780,9 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
     const std::size_t rss_index =
         add_rss("mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes,
                 aggregate.metrics.mean_rss_growth_bytes, baseline.tolerances.rss_mean_percent);
-    AnnotateResidentGateForIterationCount(&result, rss_index, baseline, aggregate);
+    AnnotateSettlingGateForIterationCount(&result, rss_index, baseline, aggregate,
+                                          "mean_rss_growth_bytes", "a trimmed mean",
+                                          "TD-2026-08-06-148");
   }
   if (baseline.has_net_heap_metrics) {
     // The deterministic half of the memory gate (TD-2026-08-06-150). Unlike the
@@ -775,10 +799,17 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
     // iteration.
     constexpr double kNetHeapNoiseFloorBytes = 4096.0;
     const double expected = baseline.metrics.p50_net_heap_bytes;
-    AddMetricWithAllowance(
+    const std::size_t net_heap_index = AddMetricWithAllowance(
         &result, "p50_net_heap_bytes", expected, aggregate.metrics.p50_net_heap_bytes,
         std::max(std::abs(expected) * (baseline.tolerances.net_heap_percent / 100.0),
                  kNetHeapNoiseFloorBytes));
+    // Deterministic to the byte AT A FIXED ITERATION COUNT, which is not the same
+    // claim. The median walks down the settling series as iterations are added,
+    // so a short run gates a settling reading against a steady-state baseline
+    // (TD-2026-08-10-173).
+    AnnotateSettlingGateForIterationCount(&result, net_heap_index, baseline, aggregate,
+                                          "p50_net_heap_bytes", "a median",
+                                          "TD-2026-08-10-173");
   }
   ComparePhaseAllocations(&result, baseline, aggregate);
   NoteTailOnlyAllocationDivergence(&result);
