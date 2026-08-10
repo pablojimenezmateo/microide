@@ -2217,6 +2217,10 @@
   bool quit_requested_ = false;
   WorkspaceStartupOptions startup_options_;
   std::vector<std::string> available_colorscheme_names_;
+  // Backs `available_colorscheme_names_`'s filesystem half. Rebuilding the picker
+  // runs on every project switch to pick up plugin themes; the memo keeps that
+  // from re-walking the themes directory each time (see render::ThemeNameCatalog).
+  render::ThemeNameCatalog theme_name_catalog_;
   float ui_scale_ = 1.0f;
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;

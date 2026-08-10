@@ -12,12 +12,14 @@ namespace microide::workspace {
 PersistenceCoordinator::PersistenceCoordinator(WorkspaceContext& context,
                                                render::Theme& theme,
                                                std::vector<std::string>& available_colorscheme_names,
+                                               render::ThemeNameCatalog& theme_name_catalog,
                                                float& ui_scale,
                                                SettingsStore& settings_store,
                                                Operations operations)
     : context_(context),
       theme_(theme),
       available_colorscheme_names_(available_colorscheme_names),
+      theme_name_catalog_(theme_name_catalog),
       ui_scale_(ui_scale),
       settings_store_(settings_store),
       operations_(std::move(operations)) {}
@@ -35,6 +37,7 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
       context_,
       theme_,
       available_colorscheme_names_,
+      theme_name_catalog_,
       ui_scale_,
       settings_store_,
       PersistenceCoordinator::Operations{

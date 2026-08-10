@@ -411,29 +411,87 @@ std::filesystem::path FindThemeDirectory() {
   return {};
 }
 
+namespace {
+
+constexpr std::string_view kThemeFileExtension = ".microide";
+
+// Appends the stem of every `*.microide` regular file in `directory`. Written
+// against the directory iterator rather than `platform::ListDirectory` because
+// that helper normalizes a path and stats every entry, then sorts them — for a
+// list of stems that is a dozen allocations per entry to reject entries that do
+// not even carry the extension.
+void AppendThemeNamesFromDirectory(const std::filesystem::path& directory,
+                                   std::vector<std::string>& names) {
+  std::error_code error;
+  for (std::filesystem::directory_iterator it(directory, error), end; !error && it != end;
+       it.increment(error)) {
+    const std::string& text = it->path().native();
+    std::string_view name(text);
+    if (!name.ends_with(kThemeFileExtension)) {
+      continue;
+    }
+    std::error_code status_error;
+    if (!std::filesystem::is_regular_file(it->status(status_error)) || status_error) {
+      continue;
+    }
+    name.remove_suffix(kThemeFileExtension.size());
+    if (const std::size_t separator = name.rfind(std::filesystem::path::preferred_separator);
+        separator != std::string_view::npos) {
+      name.remove_prefix(separator + 1);
+    }
+    names.emplace_back(name);
+  }
+}
+
+void SortAndDedupe(std::vector<std::string>& names) {
+  std::sort(names.begin(), names.end());
+  names.erase(std::unique(names.begin(), names.end()), names.end());
+}
+
+}  // namespace
+
 std::vector<std::string> ListAvailableThemeNames(const std::filesystem::path& theme_directory) {
   const std::filesystem::path resolved_directory = ResolveThemeDirectory(theme_directory);
   // The built-in themes are always selectable, even without bundled assets.
   std::vector<std::string> names = {"default", "light"};
-  if (resolved_directory.empty()) {
-    std::sort(names.begin(), names.end());
-    return names;
+  if (!resolved_directory.empty()) {
+    AppendThemeNamesFromDirectory(resolved_directory, names);
   }
-
-  for (const auto& entry : platform::ListDirectory(resolved_directory)) {
-    if (entry.type != platform::PathType::RegularFile) {
-      continue;
-    }
-    const auto& path = entry.path;
-    if (path.extension() != ".microide") {
-      continue;
-    }
-    names.push_back(path.stem().string());
-  }
-
-  std::sort(names.begin(), names.end());
-  names.erase(std::unique(names.begin(), names.end()), names.end());
+  SortAndDedupe(names);
   return names;
+}
+
+const std::vector<std::string>& ThemeNameCatalog::Names(
+    const std::filesystem::path& theme_directory) {
+  std::error_code error;
+  if (valid_ && theme_directory == requested_directory_) {
+    const std::filesystem::file_time_type mtime =
+        std::filesystem::last_write_time(resolved_directory_, error);
+    if (!error && mtime == resolved_mtime_) {
+      return names_;
+    }
+  }
+
+  requested_directory_ = theme_directory;
+  resolved_directory_ = ResolveThemeDirectory(theme_directory);
+  names_.clear();
+  names_.emplace_back("default");
+  names_.emplace_back("light");
+  valid_ = false;
+  if (!resolved_directory_.empty()) {
+    // Sampled BEFORE the walk: a change that lands during it then leaves the
+    // recorded stamp older than the directory's, so the next call rescans.
+    error.clear();
+    const std::filesystem::file_time_type mtime =
+        std::filesystem::last_write_time(resolved_directory_, error);
+    if (!error) {
+      resolved_mtime_ = mtime;
+      valid_ = true;
+    }
+    AppendThemeNamesFromDirectory(resolved_directory_, names_);
+  }
+  SortAndDedupe(names_);
+  return names_;
 }
 
 bool LoadThemeByName(std::string_view name,

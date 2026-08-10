@@ -95,7 +95,7 @@ void PersistenceCoordinator::MaterializeCanonicalPreferences() {
 }
 
 void PersistenceCoordinator::RefreshAvailableColorschemeNames() {
-  available_colorscheme_names_ = render::ListAvailableThemeNames();
+  available_colorscheme_names_ = theme_name_catalog_.Names();
   if (operations_.plugin_theme_names) {
     for (std::string& name : operations_.plugin_theme_names()) {
       available_colorscheme_names_.push_back(std::move(name));

@@ -56,6 +56,7 @@ class PersistenceCoordinator {
   PersistenceCoordinator(WorkspaceContext& context,
                          render::Theme& theme,
                          std::vector<std::string>& available_colorscheme_names,
+                         render::ThemeNameCatalog& theme_name_catalog,
                          float& ui_scale,
                          SettingsStore& settings_store,
                          Operations operations);
@@ -111,6 +112,7 @@ class PersistenceCoordinator {
   WorkspaceContext& context_;
   render::Theme& theme_;
   std::vector<std::string>& available_colorscheme_names_;
+  render::ThemeNameCatalog& theme_name_catalog_;
   float& ui_scale_;
   SettingsStore& settings_store_;
   Operations operations_;

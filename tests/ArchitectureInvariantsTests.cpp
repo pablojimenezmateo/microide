@@ -224,8 +224,13 @@ void TestArchitectureFileSizes() {
              // member. It mirrors the project picker exactly; File > Open File…,
              // Ctrl+O and the welcome screen's Open File action all needed a real
              // dialog instead of the "open requires a path" rejection they hit.
+             // 1695: +1 for the ThemeNameCatalog member backing
+             // available_colorscheme_names_'s filesystem half. The picker is rebuilt
+             // on every project switch to pick up plugin themes and was re-walking the
+             // themes directory each time; the memo (and its mtime check) lives in
+             // render::ThemeNameCatalog, not the shell.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1694);
+                                                     1695);
            });
 
   AssertRuleResultsPass(results);

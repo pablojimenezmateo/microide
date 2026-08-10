@@ -82,6 +82,33 @@ Theme BuildThemeFromStyles(const ThemeStyleMap& styles);
 std::filesystem::path FindThemeDirectory();
 std::vector<std::string> ListAvailableThemeNames(
     const std::filesystem::path& theme_directory = {});
+
+// Host-owned memo over `ListAvailableThemeNames`. The colorscheme picker is
+// rebuilt on every project switch so it picks up plugin-contributed themes —
+// an in-memory list — and re-listing the themes directory for it cost a
+// resolve (nine candidate paths, each stat'd) plus a full directory walk with a
+// normalized path per entry: ~4,900 allocations per switch, 12 % of the
+// `multi_project.switch_cycles` phase (TD-2026-08-06-159).
+//
+// Validity is the directory's own mtime, which changes exactly when an entry is
+// created, removed or renamed — the only events that can change this list. A
+// `.microide` file's contents changing does not affect it.
+//
+// Not thread-safe by design: it is owned by the shell and read on the UI thread.
+class ThemeNameCatalog {
+ public:
+  // `theme_directory` empty means "resolve the bundled themes directory", which
+  // is what the shell passes. A different argument than the cached one forces a
+  // rescan, so a test may pass its own directory without seeing a stale answer.
+  const std::vector<std::string>& Names(const std::filesystem::path& theme_directory = {});
+
+ private:
+  std::vector<std::string> names_;
+  std::filesystem::path requested_directory_;
+  std::filesystem::path resolved_directory_;
+  std::filesystem::file_time_type resolved_mtime_{};
+  bool valid_ = false;
+};
 bool LoadThemeByName(std::string_view name,
                      Theme& out_theme,
                      std::string* resolved_name = nullptr,

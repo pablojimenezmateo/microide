@@ -324,11 +324,66 @@ void ExpectOversizedColorschemeFileIsRejected() {
          "the failure should name the file-size budget: " + error);
 }
 
+// The colorscheme picker is rebuilt on every project switch, so the catalog memoizes
+// the directory walk. It must still see a theme that appears afterwards: the memo is
+// keyed on the directory's own mtime, which an added/removed entry moves.
+void ExpectThemeNameCatalogSeesDirectoryChanges() {
+  const std::filesystem::path dir =
+      std::filesystem::temp_directory_path() / "microide_theme_catalog_test";
+  std::error_code ec;
+  std::filesystem::remove_all(dir, ec);
+  std::filesystem::create_directories(dir, ec);
+  Expect(!ec, "should be able to create a temp theme directory");
+
+  const auto write_theme = [&](const char* name) {
+    std::ofstream out(dir / (std::string(name) + ".microide"));
+    out << "color-link default \"#ffffff,#101010\"\n";
+  };
+  const auto contains = [](const std::vector<std::string>& names, std::string_view name) {
+    return std::find(names.begin(), names.end(), name) != names.end();
+  };
+
+  write_theme("first");
+  render::ThemeNameCatalog catalog;
+  {
+    const std::vector<std::string>& names = catalog.Names(dir);
+    Expect(contains(names, "first"), "the catalog should list a theme file in the directory");
+    Expect(contains(names, "default") && contains(names, "light"),
+           "the catalog should always offer the built-in themes");
+    Expect(names == render::ListAvailableThemeNames(dir),
+           "the catalog should agree with the one-shot listing");
+  }
+
+  // A second call with nothing changed answers from the memo, and must answer
+  // the same thing.
+  Expect(contains(catalog.Names(dir), "first"), "a memoized answer should be unchanged");
+
+  write_theme("second");
+  {
+    const std::vector<std::string>& names = catalog.Names(dir);
+    Expect(contains(names, "second"),
+           "a theme added after the first listing should appear on the next call");
+    Expect(contains(names, "first"), "the previously listed theme should still be there");
+  }
+
+  std::filesystem::remove(dir / "first.microide", ec);
+  Expect(!contains(catalog.Names(dir), "first"),
+         "a removed theme should drop out of the next listing");
+
+  // A different requested directory must not be answered from the cached one.
+  Expect(!contains(catalog.Names({}), "second"),
+         "switching the requested directory should rescan rather than reuse the memo");
+
+  std::filesystem::remove_all(dir, ec);
+}
+
 }  // namespace
 
 void RegisterThemeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Theme oversized colorscheme file is rejected",
           ExpectOversizedColorschemeFileIsRejected);
+  AddTest(tests, "Theme name catalog sees directory changes",
+          ExpectThemeNameCatalogSeesDirectoryChanges);
   AddTest(tests, "Theme built-in light is selectable and readable",
           ExpectBuiltinLightThemeIsSelectableAndReadable);
   AddTest(tests, "Theme shared ANSI palette parity", ExpectSharedAnsiPaletteParity);
