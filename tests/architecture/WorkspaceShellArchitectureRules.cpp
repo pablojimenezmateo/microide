@@ -322,6 +322,96 @@ RuleResult CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(
   return result;
 }
 
+RuleResult CheckFactoryResultsAreNotCapturedByValue(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "Make*Service/Coordinator results are not captured by value into a callback";
+  result.hard_fail = true;
+  // TD-2026-08-10-177. MakeTabMouseCoordinator and MakePanelMouseCoordinator each
+  // built one TerminalPanelService and captured it BY VALUE into their terminal
+  // hooks. TerminalPanelService is nine std::functions -- 288 bytes -- which
+  // overflows std::function's 16-byte small-object buffer, so every such capture
+  // heap-allocates its own copy of the whole service: twice in one factory, SEVEN
+  // times in the other, and both are constructed per mouse event. Fixing the two
+  // took 55 % off scroll_large_file's allocations.
+  //
+  // The defect is invisible at the call site -- `[terminal_panel]` reads like any
+  // other capture -- so it gets a lint rather than a comment. The fix is always
+  // the same and always free: capture `this` and construct inside the body, since
+  // every one of these factories returns a struct of `this`-capturing lambdas that
+  // costs nothing to build.
+  //
+  // Shape: a local initialised from a Make*Service()/Make*Coordinator() factory,
+  // then named inside a lambda capture list in the same file.
+  const std::filesystem::path workspace_dir = repo_root / "src/workspace";
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(workspace_dir, dir_ec) || dir_ec) {
+    return result;
+  }
+  const std::regex factory_local(
+      R"(\bauto\s+([A-Za-z_][A-Za-z_0-9]*)\s*=\s*Make[A-Za-z_0-9]*(Service|Coordinator)\s*\(\s*\)\s*;)");
+  std::size_t factory_locals_seen = 0;
+  for (const std::filesystem::path& path : SourceFilesUnder(workspace_dir)) {
+    const std::string text = ReadText(path);
+    // Code-masked so a factory name mentioned in a comment or a string literal is
+    // not treated as a declaration, and neither is a capture-shaped comment.
+    const std::vector<bool> code_mask = BuildCodeMask(text);
+    const auto is_code = [&code_mask](std::size_t offset) {
+      return offset < code_mask.size() && code_mask[offset];
+    };
+    for (auto it = std::sregex_iterator(text.begin(), text.end(), factory_local);
+         it != std::sregex_iterator(); ++it) {
+      if (!is_code(static_cast<std::size_t>(it->position()))) {
+        continue;
+      }
+      ++factory_locals_seen;
+      const std::string name = (*it)[1].str();
+      // A capture list naming it: `[name]`, `[name,`, `[..., name]`. Deliberately
+      // not `[&name]` or `[name = ...]` -- a reference capture is free, and an
+      // explicit init-capture is someone saying what they mean.
+      // The name as a STANDALONE capture entry: a capture-list opener or
+      // separator, optional space, the name, optional space, then a separator or
+      // the closer. Written this way rather than as "somewhere inside `[...]`"
+      // because the surrounding characters are the whole distinction — `[&name]`
+      // is a reference capture and free, and an earlier draft that scanned the
+      // interior flagged it. (An earlier draft still also used `[^]` in the
+      // negated class, which ECMAScript reads as "any character", so it matched
+      // everything and passed on the very defect the rule was written for. Both
+      // mistakes are pinned by fixtures.)
+      const std::regex captured("[\\[,]\\s*" + name + "\\s*[,\\]]");
+      for (auto cap = std::sregex_iterator(text.begin(), text.end(), captured);
+           cap != std::sregex_iterator(); ++cap) {
+        if (!is_code(static_cast<std::size_t>(cap->position()))) {
+          continue;
+        }
+        result.violations.push_back(Violation{
+            .path = path,
+            .line = LineNumberAt(text, static_cast<std::size_t>(cap->position())),
+            .message = "`" + name +
+                       "` comes from a Make*Service()/Make*Coordinator() factory and is captured "
+                       "BY VALUE into a lambda. Those factories return structs of std::functions "
+                       "(hundreds of bytes), which overflow std::function's small-object buffer, "
+                       "so each capture heap-allocates a copy of the whole object -- once per "
+                       "hook, every time the enclosing factory runs, which for a mouse or frame "
+                       "coordinator is per event. Capture `this` and construct it inside the "
+                       "body instead; building one of these allocates nothing "
+                       "(TD-2026-08-10-177)",
+        });
+      }
+    }
+  }
+  // Loud-missing-target guard: these factories are the whole subject of the rule.
+  if (factory_locals_seen == 0) {
+    result.violations.push_back(Violation{
+        .path = workspace_dir,
+        .line = 1,
+        .message = "found no `auto x = Make*Service();` local under src/workspace; this rule now "
+                   "scans nothing and cannot fail (TD-2026-08-10-177)",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckPerfMeasureBodiesDoNotWaitOnWallClock(
     const std::filesystem::path& repo_root) {
   RuleResult result;

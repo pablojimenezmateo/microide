@@ -31,6 +31,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
        CheckPerfMeasureBodiesDoNotBuildTheirOwnInput},
       {"CheckPerfMeasureBodiesDoNotWaitOnWallClock",
        CheckPerfMeasureBodiesDoNotWaitOnWallClock},
+      {"CheckFactoryResultsAreNotCapturedByValue",
+       CheckFactoryResultsAreNotCapturedByValue},
       {"CheckPerfHarnessIsolatesBeforeConstructingTheShell",
        CheckPerfHarnessIsolatesBeforeConstructingTheShell},
       {"CheckRenderSurfaceStateAccess", CheckRenderSurfaceStateAccess},

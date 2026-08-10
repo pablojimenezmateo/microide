@@ -75,6 +75,12 @@ void RunPerfMeasureBodyRuleFixtures();
 // case (TD-2026-08-10-179).
 void RunPerfMeasureWallClockWaitRuleFixtures();
 
+// Negative + positive controls for CheckFactoryResultsAreNotCapturedByValue:
+// a Make*Service()/Make*Coordinator() result captured BY VALUE into a callback
+// heap-copies the whole object per hook, per construction; a reference capture
+// and a comment mention must not be flagged (TD-2026-08-10-177).
+void RunFactoryCaptureRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

@@ -771,6 +771,61 @@ void RunPerfMeasureWallClockWaitRuleFixtures() {
          "perf-wait rule must fail loudly when it finds no Measure body to scan");
 }
 
+void RunFactoryCaptureRuleFixtures() {
+  TemporaryDirectory workspace_dir;
+  const std::filesystem::path& root = workspace_dir.path();
+  std::filesystem::create_directories(root / "src/workspace");
+  const auto source = root / "src/workspace/ExampleFactory.cpp";
+
+  // Negative control: the shipped defect — a factory result captured by value
+  // into a hook, which heap-copies the whole service per hook per construction.
+  WriteFile(source,
+            "Coord Shell::MakeCoord() {\n"
+            "  auto terminal_panel = MakeTerminalPanelService();\n"
+            "  return Coord(Ops{\n"
+            "      .open_terminal = [terminal_panel](std::string c) mutable {\n"
+            "        terminal_panel.OpenTerminal(std::move(c));\n"
+            "      },\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.size() == 1,
+         "factory-capture rule must flag a by-value capture of a Make*Service() local");
+
+  // Positive control: the fix — construct inside the body from `this`.
+  WriteFile(source,
+            "Coord Shell::MakeCoord() {\n"
+            "  auto terminal_panel = MakeTerminalPanelService();\n"
+            "  terminal_panel.Warm();\n"
+            "  return Coord(Ops{\n"
+            "      .open_terminal = [this](std::string c) {\n"
+            "        MakeTerminalPanelService().OpenTerminal(std::move(c));\n"
+            "      },\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
+         "factory-capture rule must accept constructing the service inside the body");
+
+  // Positive control: a REFERENCE capture is free and must not be flagged, and
+  // neither must the name appearing in a comment.
+  WriteFile(source,
+            "Coord Shell::MakeCoord() {\n"
+            "  auto terminal_panel = MakeTerminalPanelService();\n"
+            "  // note: [terminal_panel] by value would be a copy per hook\n"
+            "  const auto run = [&terminal_panel]() { terminal_panel.Warm(); };\n"
+            "  run();\n"
+            "  return Coord(Ops{});\n"
+            "}\n");
+  Expect(CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
+         "factory-capture rule must not flag a reference capture or a comment mention");
+
+  // Loud-blind guard: no factory local at all means the rule scans nothing. This
+  // one earned its place — an earlier draft used `[^]` in the capture regex,
+  // which ECMAScript reads as "any character", and it passed on the defect above.
+  WriteFile(source, "Coord Shell::MakeCoord() { return Coord(Ops{}); }\n");
+  Expect(!CheckFactoryResultsAreNotCapturedByValue(root).violations.empty(),
+         "factory-capture rule must fail loudly when it finds no factory local to scan");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -787,6 +842,7 @@ void RunAllRuleFixtures() {
   RunPerfHarnessIsolationOrderRuleFixtures();
   RunPerfMeasureBodyRuleFixtures();
   RunPerfMeasureWallClockWaitRuleFixtures();
+  RunFactoryCaptureRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture
