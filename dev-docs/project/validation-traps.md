@@ -177,6 +177,32 @@ Causes seen so far:
 - `CheckNoDirectGitRepositoryInWorkspace` matched only `GitRepository(` — the
   temporary form nobody writes — while every real site is `GitRepository repo(…)`.
 
+### A lint whose cost is (patterns x files) is one busy machine from the watchdog
+
+The architecture lint reads the whole tree with `std::regex`. Two of its rules
+did it once per *pattern* rather than once per file, and the cost compounds
+invisibly: `CheckCoordinatorOperationsAreCalled` compiled a regex per
+`Operations` field and ran it over that field's whole include scope — ~200
+fields x ~1,000 files. 3.3 s natively, and **326 s under TSAN with six ctest
+shards on four cores**, which is past `microide_tests`' 300 s per-test watchdog.
+The lane went red with zero ThreadSanitizer warnings, so the failure said
+"Subprocess aborted" and nothing about why.
+
+Two rules to take from it:
+
+- **A slow lint is a flaky lint.** A per-test timeout turns "slow" into "fails
+  under load", and load is exactly what a sanitizer lane has. Measure a new rule
+  natively and assume ~100x under TSAN with contention: anything over ~2 s
+  natively is already inside the failure envelope.
+- **Sharding is not the fix; the scan is.** TD-2026-08-10-171 first split
+  aggregate rule tests into one ctest case per rule, which was right and did not
+  help here — the slow thing was one rule. Collect what every file says once and
+  query it per pattern, rather than asking each pattern of every file.
+
+When you do rewrite a rule's scan, the evidence that it still works is its
+positive **and** negative fixtures (`ArchitectureInvariants/TargetedScannerFixtures`),
+not a green run of the rule itself: a rule that now matches nothing also passes.
+
 ### Three vacuity vectors
 
 1. **Stale fixtures.** A rule's meta-fixture writes files into a temp root. When

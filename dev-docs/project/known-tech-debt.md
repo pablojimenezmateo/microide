@@ -533,6 +533,30 @@ other N−1, and a per-test timeout converts "slow" into "flaky under load" rath
 than into a visible failure. Both are invisible on the machine where the fix was
 written.
 
+**And it happened again the same day, one layer down.** The next TSAN batch
+failed one shard on
+`ArchitectureInvariants/Workspace/CheckCoordinatorOperationsAreCalled` —
+`Subprocess aborted` at 326 s, zero ThreadSanitizer warnings, so the watchdog and
+not a race. That rule was *already* one ctest case per rule; splitting was the
+wrong axis for it, because a single rule was the slow thing. It compiled a fresh
+`std::regex` per `Operations` field and ran it over every file in that field's
+include scope — ~200 fields x ~1,000 files, the whole tree rescanned two hundred
+times. Collecting each file's `.`/`->` identifiers once and looking each field up
+took it 3.3 s → 0.62 s.
+
+The sweep the entry's own lesson demanded found the next one before it fired:
+`CheckDescriptorCreationIsCloseOnExec` ran six separate `sregex_iterator` walks
+of the whole tree, one per descriptor-creating form, at 5.3 s — *higher* than the
+rule that had just gone red. One ordered alternation: 5.3 s → 1.09 s.
+
+So the durable statement is not "split slow aggregate tests", it is: **a lint
+whose cost is (patterns x files) is one busy machine away from the watchdog, and
+the fix is to make the scan O(files), not to shard it.** The remaining
+three-second rule, `CheckCoreIsNetworkFree`, is already a single pass; speeding
+it further would need a hand-maintained substring pre-filter that goes blind when
+somebody adds an alternative to the pattern, which is a worse trade than three
+seconds.
+
 ### TD-2026-08-10-170 — a gated perf scenario whose fixture was missing did nothing and reported PASS. [RESOLVED 2026-08-10.]
 
     editor_moby_dick_workout   measured 7 allocations   baseline 138,599   verdict: PASS
