@@ -26,11 +26,39 @@ void Expect(bool condition, std::string_view message) {
   }
 }
 
+namespace {
+
+#if defined(__SANITIZE_THREAD__) || defined(__SANITIZE_ADDRESS__)
+#define MICROIDE_TEST_SANITIZER_BUILD 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer) || __has_feature(address_sanitizer)
+#define MICROIDE_TEST_SANITIZER_BUILD 1
+#endif
+#endif
+
+// A sanitizer build runs the code under test several times slower — TSAN
+// instruments every memory access and serializes through its shadow state — and
+// many of these waits are on a real subprocess (a mock DAP adapter, git, a
+// language server) with the sharded suite running several of them at once. A
+// deadline chosen for an uninstrumented run then measures the sanitizer rather
+// than the product: `DebugService/SessionResolvesStackOnStopAndStepsResume` timed
+// out on its fifth adapter round trip under TSAN on a loaded runner and passed on
+// every rerun. Stretch every deadline here instead of tuning them one at a time —
+// a wait returns the moment its predicate holds, so a higher ceiling costs a
+// passing run nothing, and only a genuinely stuck test pays the extra seconds.
+#if defined(MICROIDE_TEST_SANITIZER_BUILD)
+constexpr int kWaitTimeoutScale = 4;
+#else
+constexpr int kWaitTimeoutScale = 1;
+#endif
+
+}  // namespace
+
 bool WaitUntil(const std::function<bool()>& predicate,
                std::chrono::milliseconds timeout,
                std::chrono::milliseconds poll_interval,
                const std::function<void()>& pump) {
-  const auto deadline = std::chrono::steady_clock::now() + timeout;
+  const auto deadline = std::chrono::steady_clock::now() + timeout * kWaitTimeoutScale;
   while (std::chrono::steady_clock::now() < deadline) {
     if (pump) {
       pump();
