@@ -404,7 +404,7 @@ its whole body, because it allocates while holding the same non-recursive mutex
 not a miscount. The same phase now reports 23,995 allocations from 2,618 sites,
 zero dropped.
 
-### TD-2026-08-10-177 — a Make*Coordinator hook capturing another Make*Service() by value is a heap allocation per hook, per event. OPEN (two sites fixed; the shape is unaudited).
+### TD-2026-08-10-177 — a Make*Coordinator hook capturing another Make*Service() by value is a heap allocation per hook, per event. [RESOLVED 2026-08-10 — audited clean beyond the two sites, and linted.]
 
 Found by tracing `editor_scroll_only_no_content_bump.scroll_frame`:
 `MakeTabMouseCoordinator` and `MakePanelMouseCoordinator` were in the top six
@@ -434,15 +434,37 @@ at the call site — `[some_service]` reads like any other capture — and this 
 has ~20 `Make*Service()` / `Make*Coordinator()` factories, several of which return
 objects of the same order. Nobody has looked at the others.
 
-**Method**: `rg -n 'auto \w+ = Make\w+(Service|Coordinator)\(\);' src/workspace`
-finds a factory result bound to a local; a capture of that local in a lambda
-stored into a `std::function` is the defect. A capture is free only if the
-captured object is ≤ 16 bytes, so the rule is: capture `this` and construct
-inside, unless the constructed object is genuinely expensive to build (none of
-these are — they are structs of `this`-capturing lambdas).
+#### Audited and linted 2026-08-10
 
-Worth a lint. It is grep-shaped, it has a clean fix, and the cost is proportional
-to event rate rather than to anything a scenario would obviously attribute.
+`rg -n 'auto \w+ = Make\w+(Service|Coordinator)\(\);' src/workspace` finds five
+factory results bound to locals. **None of the other three are captured** — they
+are used directly in the enclosing function. A wider sweep for by-value captures
+of non-`this` locals across `src/workspace` turned up only small values (ids,
+pointers, an int) and the `std::move`-captures that async work legitimately needs.
+So the two fixed sites were the whole of it.
+
+`CheckFactoryResultsAreNotCapturedByValue` now keeps it that way: a hard-fail rule
+that finds those locals and flags any standalone `[x]` capture-list entry,
+code-masked, with the loud-missing-target guard. Four control fixtures — the
+defect, the fix, a reference capture plus a comment mention, and the blind case.
+
+**Two drafts of this rule were wrong, and how each was caught is the reusable
+part:**
+
+- The first used `[^]` inside the capture regex's negated class. ECMAScript reads
+  a leading `[^]` as **"any character"**, so the pattern matched everything and the
+  rule reported green against the very defect it was written for. The negative
+  fixture did **not** catch this — it "passed" too. What caught it was
+  reintroducing the real line in the real tree and watching the rule stay silent.
+- The second flagged `[&terminal_panel]`. A reference capture is free, and the
+  surrounding characters are the whole distinction, so the pattern now anchors on
+  a capture-list opener or separator instead of scanning the interior. The third
+  control fixture caught this before it shipped.
+
+The generalisable rule, for `dev-docs/project/validation-traps.md`'s list: **a
+lint whose regex was never run against a known positive is not a lint.** Write the
+fixtures, then reintroduce the original defect in the real tree and watch it fail.
+A fixture that passes proves the fixture, not the rule.
 
 ### TD-2026-08-10-168 — a third of the suite's allocation gates were red, because process isolation moved a cost the baselines never contained. [RESOLVED 2026-08-10.]
 

@@ -705,6 +705,41 @@ The `(void)` cast is what let it: a wait whose success is load-bearing must
 
 See TD-2026-08-10-179.
 
+### A lint whose regex was never run against a known positive is not a lint
+
+`CheckFactoryResultsAreNotCapturedByValue` shipped in two broken drafts before the
+one that works, and only one of them was caught by its own fixtures.
+
+The first spelled the capture-list scan `\[[^]\n]*\bNAME\s*[,\]]`. ECMAScript
+reads a **leading `[^]` as "any character"** — the `]` does not close the class —
+so the pattern matched essentially everything, and the rule reported green on the
+exact defect it was written for. Its negative-control fixture "passed" too, for the
+same reason, so the fixture suite was green and meaningless. What caught it was
+reintroducing the original defect *in the real tree* and observing that the rule
+stayed silent.
+
+The second flagged `[&name]`. A reference capture is free; the rule is about
+by-value ones, and the distinguishing information is entirely in the surrounding
+characters. The pattern now anchors on a capture-list opener or separator
+(`[\[,]\s*NAME\s*[,\]]`) rather than scanning the interior. That one *was*
+caught by a fixture — the third control, written specifically because a reference
+capture is the obvious false positive.
+
+**What generalises:**
+
+- **Two verifications, not one.** Fixtures prove the rule's *logic* on synthetic
+  input. Reintroducing the real defect in the real tree proves the rule's
+  *pattern* against real source. A regex bug can pass the first and fail the
+  second, because the same bug is present in both.
+- **Write a fixture for the obvious false positive**, not just for the defect and
+  the fix. `[&x]` vs `[x]`, a comment mention, a same-named unrelated local. This
+  is where an over-broad pattern shows up.
+- Repo precedent for the same lesson: `CheckDescriptorCreationIsCloseOnExec`
+  shipped with `openat?` as its `open` pattern — which matches `opena`/`openat`
+  and never plain `open(` — and passed green while blind.
+
+See TD-2026-08-10-177.
+
 ### A tracer whose site table fills prints a ranking of the sites that got there first
 
 The allocation tracer aggregates by call stack into a fixed open-addressed table.
