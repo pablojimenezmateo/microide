@@ -663,6 +663,71 @@ isolated root being created.
   in `PerfMain` so a future mis-ordering degrades to a shared `/tmp` root instead
   of the operator's home directory. See TD-2026-08-07-165.
 
+### A measured phase whose body is a wall-clock wait gates the runner, not the code
+
+`linter_on_save`'s gated phase was:
+
+```cpp
+context.Measure("linter.wait_diagnostics", [&]() {
+  (void)context.WaitForDiagnostics(source, std::chrono::milliseconds(120));
+});
+```
+
+`WaitForDiagnostics` polls to a deadline and pumps a frame per iteration. Its
+allocation count is therefore *how many times a wall-clock loop got round* — a
+duration wearing an allocation's clothes, gated at the 10 % tolerance the suite
+reserves for the metric whose entire justification is that it is byte-identical
+run to run. One unchanged binary read **3,561 / 3,644 / 3,711** against a
+committed baseline of 2,745 recorded on an idler machine.
+
+Underneath that sat the larger fact: **the wait had never once succeeded.**
+Nothing in this repository lints JavaScript — no linter service, no config in the
+fixture, an empty `node_modules/` — so every run since the scenario was written
+spun the full 120 ms, found nothing, and reported the poll loop as the result.
+The `(void)` cast is what let it: a wait whose success is load-bearing must
+`SkipScenario()` on failure, not be discarded.
+
+**What generalises:**
+
+- **Grep for it**: `rg -n 'Measure\(' -A4 tests/perf/*.cpp | rg 'WaitFor'`. Every
+  hit is a candidate. `WaitForFileIndexPath` and `WaitForProjectSearchFinished`
+  have the same shape and are unaudited (TD-2026-08-10-180).
+- **The test for it is three runs, not one.** A phase whose `p50_allocations`
+  moves by more than a few between runs of an unchanged binary is timing the
+  runner. This is cheap and nobody was doing it.
+- **Raising a timeout is a diagnostic.** Going 120 ms → 500 ms turned the pass
+  into a SKIP, which is what finally said the wait had always failed. A phase that
+  gets *cheaper* when you give it more time is measuring the timeout.
+- **The fix is to drive the path, not to wait for it.** Publish the diagnostics
+  through the store exactly as an LSP publish would, then measure the fixed number
+  of frames that apply and paint them. Bump `measurement_revision`: the old and
+  new numbers are not comparable (TD-2026-08-07-167).
+
+See TD-2026-08-10-179.
+
+### A tracer whose site table fills prints a ranking of the sites that got there first
+
+The allocation tracer aggregates by call stack into a fixed open-addressed table.
+When that table is full it drops each **new** site whole rather than merging it
+anywhere — so the "most frequent first" listing it prints covers only the sites
+seen before it filled, and the phase's largest site can be missing from it
+entirely.
+
+It was. `switch_and_idle.switch_and_settle` reported 6,188 allocations from 1,024
+sites with 17,807 dropped (74 % of the phase). After enlarging the table the true
+#1 is 720 allocations and the old table's "#1" — 192 — is #4.
+
+**What generalises:** an aggregating instrument with a bounded key space has two
+failure modes, and only one of them looks like a failure. Merging on collision
+degrades gracefully and visibly (one row is too big). Dropping on overflow
+produces a table that is internally consistent, correctly sorted, and wrong. If a
+tool prints a top-N, check whether its N-selection saw everything — and make the
+overflow message state the *consequence* ("this ranking is not a ranking"), not
+the remedy ("raise kTraceBuckets"), because the remedy reads as an optimisation
+note and gets skipped.
+
+See TD-2026-08-10-178.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit

@@ -694,10 +694,19 @@ them.
 | `MICROIDE_PERF_ALLOC_TRACE_PHASE=<substring>` | **when** — only inside a matching `Measure` phase | always, with the one above |
 | `MICROIDE_PERF_ALLOC_TRACE_SITES=<n>` | how many sites the dump prints (default 12) | attributing **all** of a phase, not reading the top by hand |
 
+**Read the drop warning before you read the table.** The tracer aggregates by call
+stack into a fixed table (`kTraceBuckets`, 65536). If that table ever fills, it
+drops each *new* site whole rather than merging it — so the listing stays
+correctly sorted and becomes wrong, covering only the sites seen before it filled.
+The warning says so explicitly and prints the drop percentage; a table with a
+non-zero drop count is not evidence about anything. This bit once, at the old
+1024-bucket size: 74 % of a phase was dropped and the printed "#1" was actually
+its #4 (TD-2026-08-10-178).
+
 Twelve sites is the right number to read and the wrong number to compute a share
 from: the tail prints as `... and N more site(s)` with no counts, so anything that
-has to account for every allocation is left guessing. Raise it (1024 is the table
-size) when you need the table to be exhaustive — that is what
+has to account for every allocation is left guessing. Raise it (`kTraceBuckets` is
+the ceiling) when you need the table to be exhaustive — that is what
 `tools/audit-perf-phase-scaffolding.py` does. See
 `dev-docs/performance/perf-phase-scaffolding-audit.md` for its committed result:
 how much of each phase gate is the scenario's own scaffolding rather than the

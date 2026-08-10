@@ -160,6 +160,21 @@ The emulator covers the full-screen and shell workflows exercised so far.
   Every fixture generator is a ctest setup test under `FIXTURES_SETUP
   perf_fixtures`, all with `--ensure` semantics. Remember the general shape: every
   gate here is one-sided, so nothing detects a measurement that COLLAPSED
+- **a `Measure()` body that is a wall-clock wait gates the runner, not the code.**
+  `linter_on_save`'s gated phase wrapped a 120 ms `WaitForDiagnostics` deadline
+  loop that pumps a frame per poll, so its allocation count was "how many times a
+  loop got round" — 3,561 / 3,644 / 3,711 across three runs of one unchanged
+  binary, against a 2,745 baseline, gated at 10 %. Worse, the wait had **never
+  once succeeded**: nothing here lints JavaScript, so it always timed out and the
+  poll loop WAS the measurement (TD-2026-08-10-179). Drive the path instead of
+  waiting for it, and `SkipScenario()` when the setup does not land. The other two
+  `WaitFor*` helpers are unaudited (TD-2026-08-10-180)
+- **check the allocation tracer's drop warning before reading its table.** An
+  aggregating instrument with a bounded key space drops each new site whole when
+  full, so the listing stays correctly sorted and becomes wrong. At the old
+  1024-bucket size, 74 % of a phase was dropped and the printed "#1" was really its
+  #4 (TD-2026-08-10-178). Make an overflow message state the consequence, not the
+  remedy
 - add regression coverage with every bug fix; never rely on "should be covered
   already"
 - every `ScenarioContext::Measure` phase carries its own allocation gate

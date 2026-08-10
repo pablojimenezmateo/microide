@@ -277,6 +277,142 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-10-179 — a perf scenario measured a poll loop timing out, and called the number authoritative. [RESOLVED 2026-08-10.]
+
+Found while chasing what looked like a +32.7 % allocation regression in
+`linter_on_save`. It was not a regression, and the phase had never measured what
+its name says.
+
+**Nothing in this repository lints JavaScript.** There is no linter service, the
+fixture (`tests/perf/fixtures/linter_project`) carries no linter config, and its
+`node_modules/` is empty — so `WaitForDiagnostics` never returned true. Every run
+since the scenario was written spun the full 120 ms deadline, found nothing, and
+reported the poll loop's own allocations as a baseline-gated number.
+
+That number is **a duration wearing an allocation's clothes**. The loop pumps a
+frame per poll iteration, so its count is "how many times a wall-clock loop got
+round" — which moves with machine load and not with any code:
+
+    one unchanged binary, three runs:   3,561 / 3,644 / 3,711
+    committed baseline (idler runner):  2,745      tolerance +10 %
+
+Gated at the 10 % the suite reserves for the metric whose whole justification is
+that it is *byte-identical run to run*. The tell that finally broke it open was
+raising the timeout to 500 ms: the scenario then SKIPped, which is what said the
+wait had always failed.
+
+**Fixed** by driving the path the scenario exists to measure instead of waiting
+for a tool that is not there. 24 diagnostics are published through the store
+exactly as an LSP publish would, then three frames apply and paint them — store
+update, decoration invalidation, squiggles, status counts. New
+`ScenarioContext::PublishDiagnostics` / `HasDiagnostics` back it, and the scenario
+`SkipScenario()`s if the publish did not land: the vacuity guard the old phase
+never had. `linter.publish_diagnostics` now reads 303 allocations, identical
+across three runs; `measurement_revision` bumped to 2 per
+[167](#td-2026-08-07-167).
+
+**Generalisable, and the sweep is not done.** This is a *fourth* shape for
+[159](#td-2026-08-06-159)'s list and a new one for
+`dev-docs/project/validation-traps.md`: **a measured phase whose body is a
+wall-clock wait**. Grep the harness for `Measure(` wrapping a `WaitFor*`; each is
+a gate on the runner, not on the code. `WaitForDiagnostics`,
+`WaitForFileIndexPath` and `WaitForProjectSearchFinished` all have this shape, and
+only this one has been audited. **Filed as TD-2026-08-10-180.**
+
+### TD-2026-08-10-180 — the other two `WaitFor*` helpers have never been checked for the trap 179 found. OPEN.
+
+[179](#td-2026-08-10-179) found one measured phase whose body was a wall-clock
+poll loop, making its allocation count a function of machine load rather than of
+code. The harness has two more helpers of exactly that shape —
+`ScenarioContext::WaitForFileIndexPath` and
+`ScenarioContext::WaitForProjectSearchFinished` — and neither has been audited.
+
+Both poll to a deadline and pump frames per iteration, so any scenario that calls
+one INSIDE `Measure(...)` has the same defect. `WaitForDiagnostics` had it;
+whether the other two do depends on each call site.
+
+**Method**: `rg -n 'Measure\(' -A4 tests/perf/*.cpp | rg 'WaitFor'` for the call
+sites, then for each one run the scenario three times on an unchanged binary and
+compare the phase's `p50_allocations`. A spread of more than a few allocations
+means the phase is timing the runner. The fix shape is 179's: move the wait
+outside the measured window and measure the deterministic work the wait was
+waiting FOR, bumping `measurement_revision`.
+
+Also worth checking in the same pass: a scenario whose wait always TIMES OUT is
+measuring nothing at all, which is how 179 sat undetected. A wait whose success is
+load-bearing needs a `SkipScenario()` on failure, not a `(void)` cast.
+
+### TD-2026-08-10-178 — the allocation tracer's "top sites" table was a ranking of the earliest sites. [RESOLVED 2026-08-10.]
+
+The instrument [159](#td-2026-08-06-159)'s whole method depends on. Pointed at
+`switch_and_idle.switch_and_settle` it printed:
+
+    [alloctrace] 6188 allocations in [1, 1000000] bytes from 1024 distinct sites
+    [alloctrace] WARNING: 17807 allocations were dropped, the site table is full
+
+74 % of the phase unattributed — and the failure is worse than the warning
+admits. The site table is open-addressed with a fixed 1024 buckets; once full,
+every NEW site is dropped **whole** rather than merged anywhere. So a table
+printed "most frequent first" contains only sites that appeared *before it
+filled*, and the phase's real top site can be absent from it.
+
+It was. After enlarging the table, site #1 is 720 allocations
+(`ProjectTabTooltipLabel`, per project tab per painted frame) and the old table's
+"#1" — 192 allocations — is #4. A sweep reading the old output would have ranked a
+biased sample and moved on, which is exactly the reading
+`dev-docs/project/validation-traps.md` exists to prevent.
+
+**Fixed**: `kTraceBuckets` 1024 → 65536 (~14 MB of BSS in the perf harness build
+only, faulted on first touch); the truncation warning now says what it *means* —
+that the ranking below is not a ranking — with the drop percentage rather than
+naming a constant to raise; the bucket index array moved off the stack (half a
+megabyte would have blown a default thread stack); and
+`DumpTracedAllocationSites` raises the existing `t_in_trace` recursion guard for
+its whole body, because it allocates while holding the same non-recursive mutex
+`RecordAllocationSite` takes — a self-deadlock without whole-run phase scoping,
+not a miscount. The same phase now reports 23,995 allocations from 2,618 sites,
+zero dropped.
+
+### TD-2026-08-10-177 — a Make*Coordinator hook capturing another Make*Service() by value is a heap allocation per hook, per event. OPEN (two sites fixed; the shape is unaudited).
+
+Found by tracing `editor_scroll_only_no_content_bump.scroll_frame`:
+`MakeTabMouseCoordinator` and `MakePanelMouseCoordinator` were in the top six
+sites at **288 bytes an allocation**. 288 is `sizeof(TerminalPanelService)` — nine
+`std::function`s.
+
+Both factories built one service and captured it BY VALUE into their terminal
+hooks. A 288-byte capture overflows `std::function`'s small-object buffer (16
+bytes on libstdc++), so each capture heap-allocates its own copy of the whole
+service — twice in the tab coordinator, **seven times** in the panel one — and
+both coordinators are constructed per mouse event, the wheel handler included.
+
+Fixed at those two by constructing the service inside the lambda body from
+`this`, which costs nothing (every one of `TerminalPanelService`'s own hooks is a
+bare `this` capture and fits inline):
+
+    scroll_large_file                     582 -> 259   -55.5 %
+    editor_scroll_only_no_content_bump  7,926 -> 7,122  -10.1 %
+    editor_indent_guides_paint          8,704 -> 8,046   -7.6 %
+    editor_sticky_scroll_scroll        12,722 -> 11,918  -6.3 %
+    terminal_scroll_long_output         5,897 -> 5,511   -6.5 %
+    editor_fold_viewport_refresh       12,384 -> 11,612  -6.2 %
+    editor_render_whitespace_paint     10,428 -> 9,784   -6.2 %
+
+**What is left, and why it is filed rather than closed.** The shape is invisible
+at the call site — `[some_service]` reads like any other capture — and this repo
+has ~20 `Make*Service()` / `Make*Coordinator()` factories, several of which return
+objects of the same order. Nobody has looked at the others.
+
+**Method**: `rg -n 'auto \w+ = Make\w+(Service|Coordinator)\(\);' src/workspace`
+finds a factory result bound to a local; a capture of that local in a lambda
+stored into a `std::function` is the defect. A capture is free only if the
+captured object is ≤ 16 bytes, so the rule is: capture `this` and construct
+inside, unless the constructed object is genuinely expensive to build (none of
+these are — they are structs of `this`-capturing lambdas).
+
+Worth a lint. It is grep-shaped, it has a clean fix, and the cost is proportional
+to event rate rather than to anything a scenario would obviously attribute.
+
 ### TD-2026-08-10-168 — a third of the suite's allocation gates were red, because process isolation moved a cost the baselines never contained. [RESOLVED 2026-08-10.]
 
 Found while sanity-checking an unrelated perf number: `editor_scroll_only_no_content_bump`
@@ -338,7 +474,62 @@ when the tail merely drifted past a loose envelope. All three cases are covered
 by `PerfBaseline/NamesTailOnlyAllocationDivergence`, using this entry's own
 numbers (`cold_startup_no_project`, 681 → 9,364 with p50 matching exactly).
 
-### TD-2026-08-10-174 — `lexically_normal()` is ~12 allocations and the codebase calls it 416 times, three of them on paths that run per keystroke. OPEN.
+### TD-2026-08-10-174 — `lexically_normal()` is ~12 allocations and the codebase calls it 416 times, three of them on paths that run per keystroke. OPEN — 2026-08-10 pass took the per-entry and per-frame ones.
+
+#### 2026-08-10 pass: the per-filesystem-entry and per-frame sites
+
+Ranked by how often the call runs, as the entry's method says, and the top of that
+ranking was not a keystroke path at all — it was **once per filesystem entry of
+every tree walk in the app**: the initial file-index build (documented in
+`FileIndexWatcher` as "the dominant single cost of opening a project"), the poll
+re-walk, the inotify registration, the sidebar tree and the project scanner all
+funnel through `ProjectTraversalFilter::Includes`.
+
+Every entry paid a `lexically_normal()` of an already-normal path, a
+`lexically_relative()` to derive the relative text, a `parent_path()` to find the
+ignore matcher, a `generic_string()` key for the matcher cache, and one more path
+per ancestor in the pruning walk. None of it is needed: a directory iterator hands
+back an already-normal path, and the containment check has already proved the root
+is a string prefix — so the relative part is that prefix removed and the ancestors
+are that text trimmed at each separator.
+
+Two new helpers in `util/PathMatch.h` do it as views into the caller's own text:
+`NormalizedRelativeView` (the allocation-free companion to
+`NormalizedPathEqualsOrWithin`, sharing its preconditions) and
+`NormalizedParentDirectoryView`. New gated scenario
+`project_traversal_filter_scan` pins it at 2,048 entries:
+
+    project.traversal_filter_scan   46,208 allocations -> 0     (12.6ms -> 0.70ms)
+
+A **zero** phase baseline, which `WithinTolerance` turns into an exact gate: one
+re-added allocation on this path fails the run.
+
+**A third helper, for the shape the entry's method does not cover.** Eight sites
+shared one form: normalize a query path, then walk a collection comparing each
+element's path to it (open tabs, review targets, editor groups). Each re-normalized
+the ELEMENT per iteration — ~12 allocations to answer "no" — so the cost scaled
+with the collection, not with the match. `util::SamePathNormalized` is the wrong
+tool and was never what these used: it normalizes BOTH sides on a mismatch, and a
+scan is mostly mismatches. New `util::SameAsNormalizedPath` takes an
+already-normalized reference and answers a mismatch between two normal paths with a
+string compare. `TabCoordinator::DiskSignatureMatchesOpenView` had already
+hand-rolled it inline and is now its caller rather than its second copy;
+`BranchReviewStateService::PruneForRepository` scanned its list twice with the same
+per-element normalization and now shares one predicate.
+
+**Per-frame sites, found via the tracer rather than by grep.**
+`WorkspaceShell::ProjectTabTooltipLabel` normalized a catalog root once per project
+tab per painted frame (and `ProjectCatalogRoot` returned that path BY VALUE);
+`BuildPersistedEditorTabState` normalized once per open tab of every group on every
+session save. Both guarded.
+
+**Still open**: `rg -n 'lexically_normal' src | wc -l` is still ~400. What this pass
+did NOT do is the per-item sites in `DirectoryTree` (the sidebar's own normalize
+per entry), `GitBlameService`'s cache keys, and the ~27 in
+`WorkspaceShellPlugins.cpp`. Rank by how often the call runs and confirm with the
+phase tracer — and note that the tracer itself was lying until
+[178](#td-2026-08-10-178).
+
 
 Three independent fixes in the 2026-08-10 pass were the same one line:
 
@@ -800,7 +991,44 @@ noise (memory: perf-scenario-context-dependence). Diff the `perf_counters` block
 the two runs if it returns.
 
 
-### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN.
+### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN — and every pass so far has found something.
+
+#### 2026-08-10 pass: two phases read, and the instrument was broken
+
+Read `switch_and_idle.switch_and_settle` and
+`editor_scroll_only_no_content_bump.scroll_frame`. Both had something, keeping
+this entry's hit rate at 100 %.
+
+**Read the instrument first.** The tracer's top-sites table was a ranking of the
+sites that appeared before its 1024-bucket table filled, not of the sites that
+allocated most — the real #1 was missing from it entirely. That is
+[178](#td-2026-08-10-178), fixed before either phase was read. **Any conclusion
+drawn from a trace taken before that fix should be re-taken.**
+
+| phase | scenario total | what it was |
+| --- | ---: | --- |
+| `switch_and_idle.switch_and_settle` | 28,183.5 -> 25,567 | the project tab strip building a `reserve()`d vector per tab per frame to ask it `.empty()`; a catalog path returned by value per tab per frame; a `lexically_normal()` on it; and a session save deep-copying every breakpoint to read each once |
+| `editor_scroll_only_no_content_bump.scroll_frame` | 7,926 -> 7,122 | a `TerminalPanelService` heap-copied into each of nine callbacks, per mouse event ([177](#td-2026-08-10-177)) |
+
+The second one was carried by six other scenarios (`scroll_large_file` -55.5 %,
+`editor_indent_guides_paint` -7.6 %, `editor_sticky_scroll_scroll` -6.3 %,
+`terminal_scroll_long_output` -6.5 %, `editor_fold_viewport_refresh` -6.2 %,
+`editor_render_whitespace_paint` -6.2 %), which is this entry's recurring pattern:
+a per-frame or per-event site found in one phase is almost never confined to it.
+
+**A fourth shape for the list**, alongside "work computed before the guard that
+discards it", "a value copied N times", and "an argument built eagerly for a callee
+that usually does not look at it": **a measured phase whose body is a wall-clock
+wait**. `linter_on_save` was gating on the iteration count of a poll loop that had
+never once succeeded — see [179](#td-2026-08-10-179), and
+[180](#td-2026-08-10-180) for the two `WaitFor*` helpers still unaudited.
+
+**Next by committed `p50_allocations`, unread**: `sort_lines_ascending.10000_lines`
+(20,015), `merge_model.build_interleaved` (8,673),
+`status_registry.apply_update` (8,001), `move_line_down.multi_caret_burst`
+(7,547), `compare_large.scroll_burst` (6,457). The three `git.refresh_dispatch`
+instances are already recorded as read/inherent above.
+
 
 [149](#td-2026-08-06-149) ended with an instruction — "generalise the sweep: the
 instrument is cheap now, and no interactive scenario other than the drag and this
