@@ -52,7 +52,20 @@ class StatusBarModelService {
     bool valid = false;
   };
 
+  // The `.git` availability probe, keyed on the project root AND the repository
+  // marker generation. The generation is what makes caching this safe: it moves
+  // on every repository change, including `.git` appearing or disappearing, so
+  // an in-session `git init` is still reflected — without a stat per painted
+  // frame (TD-2026-08-06-158).
+  struct MarkerProbeCache {
+    std::filesystem::path project_root;
+    std::uint64_t marker_generation = 0;
+    bool present = false;
+    bool valid = false;
+  };
+
   HeadBranchCache head_branch_cache_;
+  MarkerProbeCache marker_probe_cache_;
 
   // Two per-frame costs this refresh used to pay unconditionally, both keyed on
   // things that move far less often than once a frame:

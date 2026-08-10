@@ -3,8 +3,17 @@
 #include <algorithm>
 #include <array>
 #include <cctype>
+#include <cstring>
 #include <string_view>
 #include <system_error>
+
+#if !defined(_WIN32)
+#include <climits>
+#include <sys/stat.h>
+#if !defined(PATH_MAX)
+#define PATH_MAX 4096
+#endif
+#endif
 
 #include "platform/Subprocess.h"
 #include "util/PerformanceCounters.h"
@@ -18,6 +27,34 @@ bool HasGitMarker(const std::filesystem::path& root) {
   if (root.empty()) {
     return false;
   }
+#if !defined(_WIN32)
+  // POSIX fast path: assemble `<root>/.git` in a stack buffer and stat it.
+  // `root / ".git"` is not free — the resulting path allocates its own string
+  // plus libstdc++'s component list, ~167 bytes across the pair — and this runs
+  // on the background executor for essentially every git operation as well as
+  // once per painted frame from the status bar (TD-2026-08-06-158). `native()`
+  // hands back the string that already exists, so this path allocates nothing.
+  //
+  // Same failure policy as the fallback below: any stat error, not just ENOENT,
+  // reads as "no usable repository here".
+  {
+    const std::string& native = root.native();
+    constexpr std::string_view kMarker = "/.git";
+    char buffer[PATH_MAX];
+    if (native.size() + kMarker.size() + 1 <= sizeof(buffer)) {
+      std::size_t end = native.size();
+      std::memcpy(buffer, native.data(), end);
+      while (end > 0 && buffer[end - 1] == '/') {
+        --end;  // "/" and "/repo/" must not produce "//.git" or "/repo//.git"
+      }
+      std::memcpy(buffer + end, kMarker.data(), kMarker.size());
+      end += kMarker.size();
+      buffer[end] = '\0';
+      struct ::stat info;
+      return ::stat(buffer, &info) == 0;
+    }
+  }
+#endif
   // Use the non-throwing overload: this runs on the background-executor thread on
   // essentially every git operation, and the throwing exists() aborts the process
   // when the failure is not "does not exist" (a parent dir losing +x, an unmounted

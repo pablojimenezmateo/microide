@@ -170,6 +170,17 @@ void GitRepositoryMetadataTracker::SetProjectRoot(const std::filesystem::path& p
 
 std::vector<RepositoryChange> GitRepositoryMetadataTracker::SampleChanges() {
   const std::optional<MetadataTick> current = ReadCurrentTicks();
+  // The repository appearing or disappearing IS head movement, and the tracker
+  // used to swallow it: `ReadCurrentTicks` returns nullopt when there is no
+  // usable `.git`, and both transitions (an in-session `git init`, an `rm -rf
+  // .git`) hit the "no baseline to compare" branch below, which re-baselines and
+  // reports nothing. Every consumer of a repository change — the sidebar's
+  // staleness mark, the status bar's cached availability probe — therefore kept
+  // the pre-init answer until something unrelated forced a refresh.
+  if (current.has_value() != baseline_.has_value()) {
+    baseline_ = current;
+    return {RepositoryChange{.kind = RepositoryChangeKind::HeadChanged}};
+  }
   if (!current.has_value() || !baseline_.has_value()) {
     baseline_ = current;
     return {};

@@ -48,11 +48,24 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     const bool has_worktree_changes = snapshot_has_worktree_changes || tree_has_worktree_changes;
     bool repo_available = git_state.repo_available;
     if (!repo_available) {
-      // is_git_repo_valid is a single cheap `.git` stat (not a subprocess), so it
-      // runs directly rather than being cached by project_root — caching saved one
-      // stat but went stale after an in-session `git init` / `.git` removal until a
-      // real git refresh superseded it. Only reached when there is no git snapshot.
-      repo_available = operations.is_git_repo_valid(project_root);
+      // is_git_repo_valid is a `.git` stat (not a subprocess), but this refresh
+      // runs from PrepareFrameOnce, so "cheap" was still one syscall per painted
+      // frame — 120 a second, forever, for any project git has not answered for
+      // yet (TD-2026-08-06-158). It ran uncached because a per-root cache went
+      // stale after an in-session `git init` until an unrelated refresh
+      // superseded it. `repository_marker_generation` is the missing
+      // invalidation key: `.git` cannot appear or disappear under a live project
+      // without producing a repository change, and one now fires for exactly
+      // that transition (GitRepositoryMetadataTracker).
+      if (!marker_probe_cache_.valid ||
+          marker_probe_cache_.project_root != project_root ||
+          marker_probe_cache_.marker_generation != git_state.repository_marker_generation) {
+        marker_probe_cache_.project_root = project_root;
+        marker_probe_cache_.marker_generation = git_state.repository_marker_generation;
+        marker_probe_cache_.present = operations.is_git_repo_valid(project_root);
+        marker_probe_cache_.valid = true;
+      }
+      repo_available = marker_probe_cache_.present;
     }
     const std::string_view cleanliness =
         repo_available ? (has_worktree_changes ? "dirty" : "clean") : "no-scm";

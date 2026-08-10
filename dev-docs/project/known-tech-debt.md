@@ -1233,7 +1233,42 @@ where construction IS the work.
 Not done with 163 because the audit is now one command and the finding rate was
 1 in 115, so the lint is insurance rather than a discovery tool.
 
-### TD-2026-08-06-158 — the status bar probes the filesystem for `.git` on every painted frame. OPEN.
+### TD-2026-08-06-158 — the status bar probes the filesystem for `.git` on every painted frame. [RESOLVED 2026-08-10 — both halves, and the event the durable fix needed did not exist.]
+
+    editor_scroll_only_no_content_bump.scroll_frame   6,950 -> 6,450  (-7.2 %)
+
+Three changes, and the middle one is a product bug the entry did not know it was
+sitting on:
+
+1. **The allocation.** `internal::HasGitMarker` assembles `<root>/.git` in a
+   stack buffer and `stat`s it on POSIX, instead of building a
+   `std::filesystem::path` (its own string plus libstdc++'s component list) per
+   call. `root.native()` is the string that already exists, so the fast path
+   allocates nothing. It benefits every git operation on the background executor,
+   not just the frame path — the fallback stays for Windows and for a path longer
+   than `PATH_MAX`.
+
+2. **The event the entry assumed existed.** The plan was "`.git` appearing or
+   disappearing is an event; wire the marker state to it". It was not an event.
+   `GitRepositoryMetadataTracker::ReadCurrentTicks` returns nullopt when there is
+   no usable `.git`, and **both** transitions — an in-session `git init`, an
+   `rm -rf .git` — landed in the "no baseline to compare" branch, which
+   re-baselines and reports nothing. So a `git init` in the built-in terminal
+   published no repository change at all, and the sidebar's staleness mark never
+   fired for it either. The tracker now emits `HeadChanged` on the presence flip.
+
+3. **The syscall.** With a real event, the probe caches on (project root,
+   `sidebar.git.repository_marker_generation`), a counter bumped by
+   `ApplyProjectChangeBatch` for every repository change. One stat per repository
+   change instead of one per painted frame, and the in-session `git init` the
+   original per-root cache got wrong is now covered by a test that asserts both
+   directions *and* that an unchanged repository is not re-probed.
+
+Note the ordering the entry got backwards: the cache was not unsafe because
+caching was wrong, it was unsafe because the invalidation signal was missing. The
+signal was worth having on its own.
+
+The original entry follows.
 
 `StatusBarModelService::Refresh` runs from `WorkspaceShell::PrepareFrameOnce`, and
 when there is no git snapshot yet it calls `is_git_repo_valid`, which stats

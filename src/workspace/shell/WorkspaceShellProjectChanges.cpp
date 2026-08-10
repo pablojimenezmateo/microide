@@ -25,6 +25,10 @@ void WorkspaceShell::ApplyProjectChangeBatch(const project::ProjectChangeBatch& 
   if (repository_changed) {
     git_repository_service_.MarkStale();
     context_.current_project_state.sidebar.git.snapshot_stale = true;
+    // Invalidates every answer derived from the repository merely existing; see
+    // the field's comment. A repository change is the only way `.git` can appear
+    // or disappear under a live project without the root itself changing.
+    ++context_.current_project_state.sidebar.git.repository_marker_generation;
     // Mark merge tabs stale in EVERY editor group, not just the focused split: a
     // merge tab in the other split must not keep rendering a pre-change index.
     for (EditorGroup& group : context_.current_project_state.editor_groups) {

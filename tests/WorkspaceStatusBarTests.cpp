@@ -180,8 +180,10 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
 
 void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
   // The repo-availability probe must not be cached by project_root alone: an
-  // in-session `git init` (or `.git` removal) must be reflected on the next
-  // refresh, not stay stale until the project root changes.
+  // in-session `git init` (or `.git` removal) must be reflected, not stay stale
+  // until the project root changes. It is keyed on the repository marker
+  // generation, which ApplyProjectChangeBatch bumps for every repository change
+  // — and `.git` appearing is now one (GitRepositoryMetadataTracker).
   WorkspaceContext context;
   context.current_project_state.root = "/tmp/statusbar-git-init-probe";
   StatusBarService service;
@@ -189,18 +191,39 @@ void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
   microide::workspace::StatusBarModelService model;
   microide::workspace::StatusBarModelService::Operations ops;
   bool repo_valid = false;
-  ops.is_git_repo_valid = [&](const std::filesystem::path&) { return repo_valid; };
+  std::size_t probes = 0;
+  ops.is_git_repo_valid = [&](const std::filesystem::path&) {
+    ++probes;
+    return repo_valid;
+  };
   ops.active_lsp_status_strings = [](bool, std::string&, std::string&, StatusBarSegmentTone&) {};
 
   model.Refresh(service, ops, context.current_project_state, nullptr);
   Expect(service.Segment(StatusBarSegmentId::Project).text == "no-scm",
          "a non-repo project must show no-scm");
+  Expect(probes == 1, "the first refresh probes");
 
-  // Simulate `git init`: the same project root now reports a valid repo.
-  repo_valid = true;
+  // The status bar rebuilds every frame. With nothing claiming the repository
+  // changed, the probe must not run again — it is a filesystem stat.
   model.Refresh(service, ops, context.current_project_state, nullptr);
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(probes == 1, "an unchanged repository must not be re-probed per frame");
+
+  // Simulate `git init`: the marker generation moves, and the same project root
+  // now reports a valid repo.
+  repo_valid = true;
+  ++context.current_project_state.sidebar.git.repository_marker_generation;
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(probes == 2, "a repository change re-probes");
   Expect(service.Segment(StatusBarSegmentId::Project).text.find("[clean]") != std::string::npos,
          "an in-session git init must be reflected without a stale project_root cache");
+
+  // And the reverse transition, which is the same event.
+  repo_valid = false;
+  ++context.current_project_state.sidebar.git.repository_marker_generation;
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(service.Segment(StatusBarSegmentId::Project).text == "no-scm",
+         "removing .git in-session must be reflected too");
 }
 
 // A git checkout with no `git status` snapshot yet labelled itself

@@ -219,6 +219,45 @@ void TestGitRepositoryMetadataTrackerDetectsPackedRefsChange() {
          "a packed-refs change must be treated as possible head movement");
 }
 
+// TD-2026-08-06-158: the repository APPEARING or DISAPPEARING is head movement,
+// and the tracker used to swallow both — ReadCurrentTicks returns nullopt with no
+// usable `.git`, and either transition hit the "no baseline" branch, which
+// re-baselines silently. So an in-session `git init` produced no repository
+// change, and everything keyed on one (the sidebar's staleness mark, the status
+// bar's availability probe) kept the pre-init answer.
+void TestGitRepositoryMetadataTrackerDetectsRepositoryAppearingAndDisappearing() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+
+  project::GitRepositoryMetadataTracker tracker;
+  tracker.SetProjectRoot(root);  // no .git yet — an ordinary directory
+  Expect(tracker.SampleChanges().empty(), "a project with no repository reports no changes");
+  Expect(tracker.SampleChanges().empty(), "and keeps reporting none while that stays true");
+
+  // `git init`.
+  std::filesystem::create_directories(root / ".git");
+  WriteFile(root / ".git/HEAD", "ref: refs/heads/main\n");
+  WriteFile(root / ".git/index", "index\n");
+  const std::vector<project::RepositoryChange> appeared = tracker.SampleChanges();
+  Expect(std::any_of(appeared.begin(), appeared.end(),
+                     [](const project::RepositoryChange& change) {
+                       return change.kind == project::RepositoryChangeKind::HeadChanged;
+                     }),
+         "an in-session git init must publish a repository change");
+  Expect(tracker.SampleChanges().empty(), "the transition fires once, not every sample");
+
+  // `rm -rf .git`.
+  std::filesystem::remove_all(root / ".git");
+  const std::vector<project::RepositoryChange> vanished = tracker.SampleChanges();
+  Expect(std::any_of(vanished.begin(), vanished.end(),
+                     [](const project::RepositoryChange& change) {
+                       return change.kind == project::RepositoryChangeKind::HeadChanged;
+                     }),
+         "removing the repository must publish a repository change too");
+  Expect(tracker.SampleChanges().empty(), "and that transition also fires once");
+}
+
 // TD-2026-07-17A-110: a malformed symbolic HEAD with an absolute (unsafe) ref must not
 // be followed. Otherwise `common_dir / ref` resolves to a path outside the git dir and
 // that external file would drive change detection.
@@ -334,6 +373,8 @@ void RegisterProjectChangeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ProjectChange/GitMetadataHeadChange", TestGitRepositoryMetadataTrackerDetectsHeadChanges);
   AddTest(tests, "ProjectChange/GitMetadataWorktreeGitFile",
           TestGitRepositoryMetadataTrackerFollowsWorktreeGitFile);
+  AddTest(tests, "ProjectChange/GitMetadataRepositoryAppearsAndDisappears",
+          TestGitRepositoryMetadataTrackerDetectsRepositoryAppearingAndDisappearing);
 }
 
 }  // namespace microide::tests

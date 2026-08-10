@@ -168,6 +168,13 @@ struct GitSidebarState {
   std::string error;
   std::size_t selected_index = 0;
   std::uint64_t snapshot_generation = 0;
+  // Bumped whenever a repository change lands (which now includes `.git`
+  // appearing or disappearing — see GitRepositoryMetadataTracker). It is the
+  // invalidation key for answers derived from the repository's mere EXISTENCE,
+  // which is otherwise a filesystem probe with nothing to key on: the status
+  // bar's availability probe ran a `stat` on every painted frame for want of
+  // one (TD-2026-08-06-158).
+  std::uint64_t repository_marker_generation = 0;
   std::unordered_set<std::string> collapsed_directory_keys;
   CommitWorkflowState commit_workflow;
 };
