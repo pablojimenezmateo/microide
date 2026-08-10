@@ -324,11 +324,19 @@ out of the old regime — so "rebaseline after the harness change" is not by its
 a defence. Related trap: the tail metrics were the only ones affected, and the
 suite's habit of reading p50 first is what let it sit.
 
-**Left open**: nothing gates this. A scenario whose p50 matches its baseline
-exactly while its max is 13x should be a loud, named condition in the harness
-("tail-only divergence — suspect the harness, not the code"), not something a
-human notices while chasing something else. Filed as part of 167's
-`measurement_revision` work rather than separately.
+**Left open, and closed 2026-08-10 with 167.** Nothing gated this: a scenario
+whose p50 matches its baseline exactly while its max is 13x should be a loud,
+named condition in the harness, not something a human notices while chasing
+something else. `CompareToBaseline` now attaches **TAIL-ONLY DIVERGENCE** to a
+failing `p95_allocations`/`max_allocations` whose baseline-relative factor is
+≥ 2x while `p50_allocations` is within 1 % of its baseline, saying that a code
+regression moves the median and that the extra work is therefore a property of
+the process. It does not change the verdict — the tail gate failed on its own
+merits and a real tail regression exists — and it deliberately stays quiet when
+the median moved (an ordinary regression, which the note would misattribute) and
+when the tail merely drifted past a loose envelope. All three cases are covered
+by `PerfBaseline/NamesTailOnlyAllocationDivergence`, using this entry's own
+numbers (`cold_startup_no_project`, 681 → 9,364 with p50 matching exactly).
 
 ### TD-2026-08-10-172 — `git_sidebar_activate`'s timing baseline describes a fixture that no longer exists. PARTIALLY RESOLVED 2026-08-10 — the fixture family now has a contract and a ctest setup; only the wall/cpu rerecord on an idle runner is left.
 
@@ -488,7 +496,7 @@ Do not rebaseline it before that: a retention gate that gets widened whenever it
 trips is [139](#td-2026-08-06-139)'s exact failure, and this scenario's whole job
 is catching a project switch that does not free what it opened.
 
-### TD-2026-08-07-167 — nothing records that a scenario changed what it measures, so cross-release perf claims are computed from incomparable numbers. OPEN.
+### TD-2026-08-07-167 — nothing records that a scenario changed what it measures, so cross-release perf claims are computed from incomparable numbers. [RESOLVED 2026-08-10.]
 
 Cutting v2.9.0 needed one number: how much faster is this release than v2.8.1.
 The obvious way to get it — diff `p50_allocations` across the two tags'
@@ -510,17 +518,49 @@ same thing it did last release. The changelog for v2.9.0 works around this by
 naming the two excluded scenarios in prose, which is exactly the kind of fact
 that survives one release and is then lost.
 
-Worth fixing, cheaply: give a baseline a `measurement_revision` (or a
-`definition_hash` over the scenario body) that the author bumps when the scenario
-changes what it does, and have any cross-release comparison refuse to difference
-two baselines whose revisions differ. The same field would let the harness say
-"3 scenarios not comparable" instead of silently reporting them as regressions.
+**Fixed** with the cheap version the entry proposed: a `measurement_revision`
+the author bumps, declared in `Scenario` (not in the JSON — a value that lives
+only in a generated file does not survive a rebaseline) and written into every
+baseline. Absent reads as 1, which is correct by construction for every baseline
+that predates the field.
 
-Related: **wall-clock cannot be compared across v2.8.1 at all** — those baselines
-predate `p50_cpu_calibration_ns`, so there is no way to normalise for the machine
-clock state, and the release note had to drop the duration figure entirely and
-lead on allocations. That one ages out on its own as tags accumulate; the
-scenario-identity gap does not.
+Two readers, and the second is the one the entry asked for:
+
+- `CompareToBaseline` **refuses to gate** across a revision change. Every metric
+  is still reported, none is enforced, and the run goes red on the mismatch
+  itself with "rerecord", not on a phantom regression. That is what makes the
+  bump self-enforcing: an author who changes a scenario and forgets gets a red
+  run naming the field, rather than a green one hiding a rebaseline.
+- `tools/perf-release-diff.py OLD_REF [NEW_REF]` differences two tags' committed
+  baselines, excludes revision-mismatched scenarios from the totals and names
+  each one. Run against the case that produced this entry it says exactly what
+  the changelog had to say in prose:
+
+  ```
+  91 comparable scenarios, summed p50_allocations: 7,181,569 -> 2,922,208 (-59.3%)
+
+  3 scenario(s) NOT COMPARABLE — excluded from the totals:
+    git_sidebar_activate: measurement_revision 1 -> 2
+    terminal_alt_screen_toggle: measurement_revision 1 -> 2
+    terminal_scroll_long_output: measurement_revision 1 -> 2
+  ```
+
+The three scenarios this entry had to explain away are declared revision 2 and
+rerecorded, so the v2.8.1 → v2.9.0 comparison is now correct **retroactively**
+rather than only from here on.
+
+**The `definition_hash` alternative was rejected**, and for a reason worth
+keeping: a hash over the scenario body would fire on a comment, a rename, or a
+refactor that changes nothing measurable, and a signal that fires on
+no-op edits is one people learn to clear without reading. The declaration is a
+judgement — "this changes what is measured" — and only a human can make it.
+
+Related, and handled: **wall-clock cannot be compared across v2.8.1 at all** —
+those baselines predate `p50_cpu_calibration_ns`, so there is no way to normalise
+for the machine clock state. The tool applies the same refusal there (91
+scenarios reported as having no comparable duration metric, with the reason)
+rather than differencing raw milliseconds. That one ages out on its own as tags
+accumulate.
 
 ### TD-2026-08-07-161 — the whole baseline set is stale in three independent ways. RESOLVED 2026-08-07: both halves rerecorded; the timing/resident half on an idle runner.
 

@@ -1197,9 +1197,178 @@ void TestPerfDeterministicMergeDropsPhasesNoLongerMeasured() {
          "a phase the scenario no longer measures is dropped, exactly as a full rebaseline does");
 }
 
+// TD-2026-08-07-167: a baseline records a value and, before this field, nothing
+// about whether the value means what it meant last release. A scenario that
+// changed what it DOES must not be gated against numbers taken from the old
+// definition — and must not go quietly green either.
+void TestPerfBaselineRefusesToGateAcrossAMeasurementRevision() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.measurement_revision = 1;
+
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "test";
+  aggregate.measurement_revision = 2;
+  // Deliberately a huge "regression": the numbers are incomparable, so the only
+  // correct verdict is the revision mismatch, not a regression on any metric.
+  aggregate.metrics = perf::MetricSet{
+      .p50_wall_ms = 500.0,
+      .p95_wall_ms = 500.0,
+      .max_wall_ms = 500.0,
+      .p50_allocations = 500.0,
+      .p95_allocations = 500.0,
+      .max_allocations = 500.0,
+  };
+
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, aggregate);
+  Expect(!comparison.passed, "a revision mismatch must go red, not quietly green");
+
+  bool saw_mismatch = false;
+  for (const perf::MetricComparison& metric : comparison.metrics) {
+    if (metric.metric == "measurement_revision") {
+      saw_mismatch = true;
+      Expect(metric.enforced && !metric.passed,
+             "the mismatch itself is the enforced failure");
+      Expect(metric.note.find("NOT COMPARABLE") != std::string::npos,
+             "and says so in words, not only as a number");
+      continue;
+    }
+    Expect(!metric.enforced,
+           std::string("every other metric must be reported and NOT enforced: ") + metric.metric);
+  }
+  Expect(saw_mismatch, "the comparison must carry a measurement_revision entry");
+
+  // The same run against a baseline at the same revision gates normally, so the
+  // field costs nothing when nobody has changed anything.
+  perf::BaselineRecord matched = baseline;
+  matched.measurement_revision = 2;
+  const perf::BaselineComparison same = perf::CompareToBaseline(matched, aggregate);
+  Expect(!same.passed, "at a matching revision the 5x regression is a real failure again");
+  for (const perf::MetricComparison& metric : same.metrics) {
+    Expect(metric.metric != "measurement_revision",
+           "and no mismatch entry is added when the revisions agree");
+  }
+}
+
+void TestPerfBaselineMeasurementRevisionRoundTrip() {
+  TemporaryDirectory temp;
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.measurement_revision = 4;
+
+  const std::filesystem::path path = temp.path() / "revision.json";
+  Expect(perf::SaveBaseline(path, baseline), "a baseline with a revision should save");
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value() && loaded->measurement_revision == 4, "and load back intact");
+
+  // Written even at the default, so a reader can tell "revision 1" from "this
+  // file predates the idea".
+  perf::BaselineRecord defaulted = MakeBaseline();
+  const std::filesystem::path default_path = temp.path() / "default_revision.json";
+  Expect(perf::SaveBaseline(default_path, defaulted), "the default revision should save");
+  Expect(ReadFile(default_path).find("\"measurement_revision\"") != std::string::npos,
+         "the default revision is written, not omitted");
+
+  // A baseline written before the field existed reads as revision 1, which is
+  // what every scenario declares until somebody changes one.
+  const std::filesystem::path legacy = temp.path() / "legacy.json";
+  WriteFile(legacy,
+            R"({"scenario":"test","metrics":{"p50_wall_ms":1,"p95_wall_ms":1,"max_wall_ms":1,)"
+            R"("p50_allocations":1,"p95_allocations":1,"max_allocations":1},"tolerances":{}})");
+  const std::optional<perf::BaselineRecord> old = perf::LoadBaseline(legacy);
+  Expect(old.has_value() && old->measurement_revision == 1,
+         "a pre-field baseline is a revision-1 baseline");
+}
+
+// A deterministic rebaseline stamps the revision the code declares today, for
+// the same reason it stamps the tolerances: a value that lives only in the
+// committed JSON does not survive a rebaseline.
+void TestPerfDeterministicMergeTakesTheDeclaredRevision() {
+  perf::BaselineRecord committed = MakeBaseline();
+  committed.measurement_revision = 1;
+  committed.metrics.p50_wall_ms = 100.0;
+  perf::BaselineRecord fresh = MakeBaseline();
+  fresh.measurement_revision = 3;
+  fresh.metrics.p50_wall_ms = 999.0;
+  fresh.metrics.p50_allocations = 42.0;
+
+  const perf::BaselineRecord merged = perf::MergeDeterministicMetrics(committed, fresh);
+  Expect(merged.measurement_revision == 3, "the merged record carries the declared revision");
+  Expect(merged.metrics.p50_wall_ms == 100.0,
+         "while the timing half this run was not entitled to take is preserved");
+  Expect(merged.metrics.p50_allocations == 42.0, "and the deterministic half is taken");
+}
+
+// TD-2026-08-10-168 left "nothing gates this" open: a scenario whose p50 matches
+// its baseline exactly while its tail is a multiple is the harness moving, not
+// the code, and diagnosing it took a human noticing the pattern by accident.
+void TestPerfBaselineNamesTailOnlyAllocationDivergence() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.metrics.p50_allocations = 101.0;
+  baseline.metrics.p95_allocations = 120.0;
+  baseline.metrics.max_allocations = 681.0;
+
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = "test";
+  // cold_startup_no_project's real numbers from the entry: p50 matched exactly,
+  // max went 681 -> 9,364.
+  aggregate.metrics = perf::MetricSet{
+      .p50_wall_ms = 100.0,
+      .p95_wall_ms = 100.0,
+      .max_wall_ms = 100.0,
+      .p50_allocations = 101.0,
+      .p95_allocations = 9000.0,
+      .max_allocations = 9364.0,
+  };
+
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(baseline, aggregate);
+  Expect(!comparison.passed, "a 13x tail is still a failure — this only explains it");
+  std::size_t named = 0;
+  for (const perf::MetricComparison& metric : comparison.metrics) {
+    if (metric.metric == "p95_allocations" || metric.metric == "max_allocations") {
+      Expect(metric.note.find("TAIL-ONLY DIVERGENCE") != std::string::npos,
+             std::string("the tail metric must name the shape: ") + metric.metric);
+      ++named;
+    }
+    if (metric.metric == "p50_allocations") {
+      Expect(metric.note.empty(), "the matching median has nothing to say");
+    }
+  }
+  Expect(named == 2, "both tail metrics carry the diagnosis");
+
+  // A regression that moved the median is an ordinary regression and must NOT be
+  // blamed on the harness — the note would be actively misleading there.
+  perf::Aggregate median_moved = aggregate;
+  median_moved.metrics.p50_allocations = 5000.0;
+  for (const perf::MetricComparison& metric :
+       perf::CompareToBaseline(baseline, median_moved).metrics) {
+    Expect(metric.note.find("TAIL-ONLY DIVERGENCE") == std::string::npos,
+           "a moved median is a code regression, and must not be explained away");
+  }
+
+  // A tail that merely drifted past its (loose) envelope is not this shape
+  // either: the diagnosis is about a tail that is a MULTIPLE of the baseline.
+  perf::Aggregate small_tail = aggregate;
+  small_tail.metrics.p95_allocations = 145.0;
+  small_tail.metrics.max_allocations = 1100.0;
+  for (const perf::MetricComparison& metric :
+       perf::CompareToBaseline(baseline, small_tail).metrics) {
+    if (metric.metric == "p95_allocations") {
+      Expect(metric.note.find("TAIL-ONLY DIVERGENCE") == std::string::npos,
+             "a 1.2x tail is ordinary drift, not the isolation signature");
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "PerfBaseline/RefusesToGateAcrossAMeasurementRevision",
+          TestPerfBaselineRefusesToGateAcrossAMeasurementRevision);
+  AddTest(tests, "PerfBaseline/MeasurementRevisionRoundTrip",
+          TestPerfBaselineMeasurementRevisionRoundTrip);
+  AddTest(tests, "PerfBaseline/DeterministicMergeTakesTheDeclaredRevision",
+          TestPerfDeterministicMergeTakesTheDeclaredRevision);
+  AddTest(tests, "PerfBaseline/NamesTailOnlyAllocationDivergence",
+          TestPerfBaselineNamesTailOnlyAllocationDivergence);
   AddTest(tests, "PerfBaseline/DeterministicMergeKeepsTheTimingHalf",
           TestPerfDeterministicMergeKeepsTheTimingHalf);
   AddTest(tests, "PerfBaseline/DeterministicMergeDropsPhasesNoLongerMeasured",

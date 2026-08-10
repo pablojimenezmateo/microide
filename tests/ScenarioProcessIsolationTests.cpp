@@ -33,6 +33,10 @@ Aggregate MakeWireFixture() {
   Aggregate aggregate;
   aggregate.scenario_name = "wire_fixture";
   aggregate.smoke = true;
+  // The child is the only process that knows which revision of the scenario ran,
+  // and the parent is the one that gates. Not 1: a default that survives by
+  // accident proves nothing (TD-2026-08-07-167).
+  aggregate.measurement_revision = 7;
   aggregate.metrics = MetricSet{
       .p50_wall_ms = 0.1 + 0.2,  // 0.30000000000000004, not 0.3
       .p95_wall_ms = 1.0 / 3.0,
@@ -104,6 +108,8 @@ void TestScenarioAggregateSurvivesTheWireExactly() {
 
   Expect(decoded->scenario_name == original.scenario_name, "scenario name round-trips");
   Expect(decoded->smoke == original.smoke, "smoke flag round-trips");
+  Expect(decoded->measurement_revision == original.measurement_revision,
+         "measurement revision round-trips");
 
   const auto& m = original.metrics;
   const auto& d = decoded->metrics;

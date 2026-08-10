@@ -823,6 +823,12 @@ void RegisterBuiltInScenarios() {
       // Iteration 0 pays the project open and the emulator's first buffer growth;
       // without a warmup it alone governs p95/max and the gate flaps.
       .warmup_iterations = 1,
+      // Revision 2: f38ef7fd. Revision 1 scrolled an EMPTY buffer -- the harness
+      // spawns no real shell, so `yes` left the terminal holding one blank line --
+      // and this feeds 4,000 lines through the emulator instead. Its pre-v2.9.0
+      // numbers describe different work and must not be differenced against these
+      // (TD-2026-08-07-167).
+      .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/small_project");
@@ -854,6 +860,9 @@ void RegisterBuiltInScenarios() {
       // Iteration 0 pays the project open and the emulator's first buffer growth;
       // without a warmup it alone governs p95/max and the gate flaps.
       .warmup_iterations = 1,
+      // Revision 2: f38ef7fd, the same change as terminal_scroll_long_output --
+      // revision 1 toggled the alternate screen over an empty primary buffer.
+      .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/small_project");
@@ -1103,6 +1112,12 @@ void RegisterBuiltInScenarios() {
       // this scenario claims to measure ("first status"). The warmup discards the
       // 4,137-allocation cold pass that owned max and p95.
       .warmup_iterations = 1,
+      // Revision 2: 23ccb088 (per-scenario cold child process) and b4bac8e0
+      // (isolated app root) changed what this scenario inherits from the process,
+      // and ae52a755 pointed it at a git_status_project that nothing had been
+      // generating. Its pre-v2.9.0 numbers describe a different measurement -- one
+      // of the three phantom "regressions" TD-2026-08-07-167 had to explain away.
+      .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
             const std::filesystem::path fixture =
@@ -1777,6 +1792,7 @@ util::JsonValue ToJson(const Aggregate& aggregate,
   return util::JsonObject{
       {"scenario", aggregate.scenario_name},
       {"smoke", aggregate.smoke},
+      {"measurement_revision", static_cast<std::int64_t>(aggregate.measurement_revision)},
       {"baseline", std::move(baseline_json)},
       {"phases", std::move(phases_json)},
       {"metrics", util::JsonObject{
@@ -2159,6 +2175,10 @@ int main(int argc, char** argv) {
       // scenario that ran fewer iterations than requested must record what it
       // actually measured.
       record.iterations = aggregate->iterations.size();
+      // Which revision of the scenario these numbers came from, so a later
+      // release diff can refuse to difference them against numbers taken from a
+      // different definition of the same scenario (TD-2026-08-07-167).
+      record.measurement_revision = scenario.measurement_revision;
       if (options->update_deterministic_only) {
         const std::optional<BaselineRecord> existing = LoadBaseline(baseline_path);
         if (!existing.has_value()) {

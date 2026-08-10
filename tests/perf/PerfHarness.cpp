@@ -849,6 +849,7 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
   Aggregate aggregate;
   aggregate.scenario_name = scenario.name;
   aggregate.smoke = scenario.smoke;
+  aggregate.measurement_revision = scenario.measurement_revision;
   aggregate.iterations.reserve(options.iterations);
 
   // Warmup: run (and discard) the scenario a few times on the same reused driver

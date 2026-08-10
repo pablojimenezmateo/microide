@@ -87,6 +87,11 @@ struct BaselineRecord {
   // (TD-2026-08-06-148). Comparing a short run against a long baseline is not a
   // measurement, so CompareToBaseline declines to gate it and says why.
   std::size_t iterations = 0;
+  // Which revision of the scenario produced these numbers. See
+  // `Scenario::measurement_revision`. Absent in a baseline written before the
+  // field existed, which reads as 1 — correct by construction, because 1 is what
+  // every scenario declares until somebody changes what it measures.
+  std::size_t measurement_revision = 1;
 };
 
 // Ceiling on the clock-normalisation factor, in either direction. A machine

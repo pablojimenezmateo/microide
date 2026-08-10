@@ -219,6 +219,11 @@ struct Aggregate {
   // Aggregated per-phase metrics, in first-appearance order.
   std::vector<PhaseMetricSet> phases;
   bool smoke = false;
+  // The scenario's declared measurement revision at the time this run happened.
+  // Copied from Scenario::measurement_revision; see that field for what it means
+  // and why comparing two numbers recorded at different revisions is not a
+  // comparison.
+  std::size_t measurement_revision = 1;
   // Non-empty when the scenario declared it could not run (see
   // ScenarioContext::SkipScenario). Its metrics describe nothing and must not be
   // compared to a baseline, written as one, or reported as a pass.
@@ -524,6 +529,32 @@ struct Scenario {
   // +29,061 bytes with `p50_allocations` moving by 14 across the same runs. The
   // allocation count is the oracle there.
   bool gate_net_heap_metrics = true;
+  // What this scenario measures, versioned. Bump it — in the same commit — every
+  // time the scenario body changes what work it performs, as opposed to how fast
+  // the product performs it.
+  //
+  // A baseline file records a value and, until this field existed, nothing about
+  // whether that value means the same thing it meant last release. Cutting v2.9.0
+  // needed one number (how much faster than v2.8.1) and the obvious way to get it
+  // — diff `p50_allocations` across the two tags' baselines — reported three
+  // regressions, all three artifacts (TD-2026-08-07-167). `f38ef7fd` changed what
+  // the two terminal scenarios *do*: they used to scroll and toggle an empty
+  // buffer and now feed 4,000 lines through the emulator, so the +172.6 % and
+  // +112.3 % were the scenario growing, not the product slowing. The only way to
+  // know was to read the commit that moved the baseline, and the changelog worked
+  // around it by naming the excluded scenarios in prose — a fact that survives one
+  // release and is then lost.
+  //
+  // Two things read this. `CompareToBaseline` refuses to gate a run against a
+  // baseline recorded at a different revision (the numbers are still reported;
+  // they just do not decide anything, and the run goes red asking to be
+  // rerecorded). `tools/perf-release-diff.py` refuses to difference two releases'
+  // baselines across a revision change and counts them as "not comparable"
+  // instead of reporting a phantom regression.
+  //
+  // Do NOT bump it for a product change. A scenario that got faster or slower at
+  // the same work is exactly what the gate is for.
+  std::size_t measurement_revision = 1;
   std::function<void(ScenarioContext&)> run;
 };
 

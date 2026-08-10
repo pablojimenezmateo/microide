@@ -149,6 +149,9 @@ std::string EncodeScenarioAggregate(const Aggregate& aggregate) {
   // (TD-2026-08-10-170). Without it an isolated run would silently regain the
   // vacuous pass the skip exists to prevent.
   w.Str(aggregate.skip_reason);
+  // The child runs the scenario, so the child is the only process that knows
+  // which revision of it ran. The parent gates.
+  w.U64(aggregate.measurement_revision);
   WriteMetricSet(w, aggregate.metrics);
   w.U64(aggregate.iterations.size());
   for (const Iteration& iteration : aggregate.iterations) {
@@ -186,6 +189,7 @@ std::optional<Aggregate> DecodeScenarioAggregate(std::string_view bytes) {
   aggregate.scenario_name = r.Str();
   aggregate.smoke = r.U64() != 0;
   aggregate.skip_reason = r.Str();
+  aggregate.measurement_revision = static_cast<std::size_t>(r.U64());
   aggregate.metrics = ReadMetricSet(r);
   const std::uint64_t iteration_count = r.U64();
   if (!r.ok()) {

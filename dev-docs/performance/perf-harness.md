@@ -1351,6 +1351,58 @@ Accepted locations:
 
 The `perf-baseline-tag` CI job enforces this.
 
+## `measurement_revision`: when a scenario stops measuring the same thing
+
+A baseline records a value. Until this field existed it recorded nothing about
+whether that value *means* what it meant last release, and the difference is not
+visible in the numbers. Cutting v2.9.0 needed one figure — how much faster than
+v2.8.1 — and the obvious way to get it, differencing `p50_allocations` across the
+two tags' baselines, reported three regressions that were all artifacts of
+scenarios that had changed what they *do* (TD-2026-08-07-167).
+
+`Scenario::measurement_revision` fixes that by declaring it. **Bump it, in the
+same commit, whenever the scenario body changes what work it performs** — a
+different fixture, a different input size, a new step inside the measured window.
+Do NOT bump it when the product got faster or slower at the same work: that is
+what the gate is for.
+
+Two things read it:
+
+- `CompareToBaseline` refuses to gate a run against a baseline recorded at a
+  different revision. Every metric is still reported; none of them is enforced;
+  the run goes red on the mismatch itself with `rerecord`, not on a phantom
+  regression. So the bump costs one `--update-baseline` and cannot be forgotten.
+- `tools/perf-release-diff.py OLD_REF [NEW_REF]` differences two releases'
+  committed baselines and excludes revision-mismatched scenarios from the totals,
+  naming each one:
+
+  ```text
+  91 comparable scenarios, summed p50_allocations: 7,181,569 -> 2,922,208 (-59.3%)
+
+  3 scenario(s) NOT COMPARABLE — excluded from the totals:
+    git_sidebar_activate: measurement_revision 1 -> 2: the scenario changed what it measures
+  ```
+
+  It applies the same rule to durations for a different reason: wall and CPU are
+  comparable only when both sides recorded `p50_cpu_calibration_ns`, so a
+  pre-calibration tag reports no duration figure at all rather than an
+  unnormalisable one.
+
+Absent means revision 1, which is correct for every baseline written before the
+field: 1 is what a scenario declares until somebody changes it.
+
+### Tail-only divergence
+
+Related, and the diagnostic TD-2026-08-10-168 closed without: when a run's
+`p50_allocations` matches its baseline to within 1 % while `p95`/`max` are 2x or
+more, the verdict line says **TAIL-ONLY DIVERGENCE**. A code regression moves the
+median, so extra work confined to one iteration in ten is a property of the
+*process* — which is exactly what per-scenario isolation did to 34 of 100
+scenarios by giving each its own first-ever painted frame. It does not change the
+verdict (the tail gate failed on its own merits, and a real tail regression
+exists); it names the shape so the next occurrence is a sentence rather than an
+afternoon.
+
 ## Reference Runner Class
 
 The gate run is measured on a dedicated self-hosted runner class tagged `perf-runner-v1`. Baselines

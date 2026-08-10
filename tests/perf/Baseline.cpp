@@ -329,6 +329,100 @@ void ComparePhaseAllocations(BaselineComparison* out,
   out->metrics.push_back(std::move(note));
 }
 
+// Name the one shape that means "the harness moved, not the code".
+//
+// A code regression moves the MEDIAN. When `p50_allocations` matches its
+// baseline to the allocation while `p95`/`max` are multiples of theirs, the extra
+// work happened in one iteration of ten and is therefore a property of the
+// process, not of the scenario: exactly what per-scenario isolation did to 34 of
+// 100 scenarios by giving each one its own first-ever painted frame
+// (TD-2026-08-10-168, ~8,600 allocations in iteration 1, p50 matching exactly in
+// every case). Diagnosing that took a human noticing the pattern while chasing
+// something unrelated, and 168 closed with "nothing gates this" left open.
+//
+// This does not decide the verdict — the tail gate already failed on its own
+// merits, and a real tail regression exists. It attaches the reading that
+// separates the two, so the next occurrence is a sentence on the verdict line
+// instead of an afternoon.
+constexpr double kTailDivergenceP50MatchPercent = 1.0;
+constexpr double kTailDivergenceTailFactor = 2.0;
+
+void NoteTailOnlyAllocationDivergence(BaselineComparison* out) {
+  const auto find = [&](std::string_view name) -> MetricComparison* {
+    for (MetricComparison& metric : out->metrics) {
+      if (metric.metric == name) {
+        return &metric;
+      }
+    }
+    return nullptr;
+  };
+  const MetricComparison* p50 = find("p50_allocations");
+  if (p50 == nullptr || p50->expected <= 0.0) {
+    return;
+  }
+  const double p50_delta =
+      std::abs(p50->actual - p50->expected) / p50->expected * 100.0;
+  if (p50_delta > kTailDivergenceP50MatchPercent) {
+    return;
+  }
+  for (const std::string_view name : {"p95_allocations", "max_allocations"}) {
+    MetricComparison* tail = find(name);
+    if (tail == nullptr || tail->passed || tail->expected <= 0.0) {
+      continue;
+    }
+    const double factor = tail->actual / tail->expected;
+    if (factor < kTailDivergenceTailFactor) {
+      continue;
+    }
+    std::ostringstream note;
+    note << "TAIL-ONLY DIVERGENCE: p50_allocations matches the baseline (" << p50->actual
+         << " vs " << p50->expected << ") while this tail is " << factor
+         << "x. A code regression moves the median, so the extra work is in one iteration "
+            "and is a property of the PROCESS, not the scenario — suspect the harness "
+            "regime the baseline was recorded in before suspecting the code "
+            "(TD-2026-08-10-168)";
+    if (tail->note.empty()) {
+      tail->note = note.str();
+    } else {
+      tail->note += "; " + note.str();
+    }
+  }
+}
+
+// A baseline recorded at a different revision of the scenario is not a baseline
+// for this scenario. Report every number, enforce none of them, and go red on
+// the mismatch itself so the run says "rerecord" instead of "regression".
+void RefuseComparisonAcrossMeasurementRevisions(BaselineComparison* out,
+                                                const BaselineRecord& baseline,
+                                                const Aggregate& aggregate) {
+  if (baseline.measurement_revision == aggregate.measurement_revision) {
+    return;
+  }
+  // Unenforced with no per-metric note, deliberately. Every gate in the scenario
+  // is disqualified by the same one fact, and repeating it fourteen times on the
+  // verdict line buries the one sentence that matters under its own explanation.
+  for (MetricComparison& metric : out->metrics) {
+    metric.enforced = false;
+  }
+  MetricComparison mismatch{
+      .metric = "measurement_revision",
+      .expected = static_cast<double>(baseline.measurement_revision),
+      .actual = static_cast<double>(aggregate.measurement_revision),
+      .tolerance_percent = 0.0,
+      .passed = false,
+      .raw_actual = static_cast<double>(aggregate.measurement_revision),
+  };
+  mismatch.note =
+      "NOT COMPARABLE: this baseline was recorded at measurement_revision " +
+      std::to_string(baseline.measurement_revision) + " and the scenario now declares " +
+      std::to_string(aggregate.measurement_revision) +
+      ", so it measures different work. Every other metric here is a reading, not a gate. "
+      "Run --update-baseline for it on the reference runner; do NOT difference the old and "
+      "new numbers as if they described the same work (TD-2026-08-07-167)";
+  out->passed = false;
+  out->metrics.push_back(std::move(mismatch));
+}
+
 }  // namespace
 
 BaselineRecord MergeDeterministicMetrics(const BaselineRecord& existing,
@@ -343,6 +437,12 @@ BaselineRecord MergeDeterministicMetrics(const BaselineRecord& existing,
   // widening lives in the Scenario struct precisely so a rebaseline cannot reset
   // it (see Scenario::tolerance_rss_percent).
   merged.tolerances = fresh.tolerances;
+  // Same reasoning as tolerances: the revision is declared in the Scenario, so a
+  // rebaseline of any kind stamps what the code says today. A deterministic
+  // rebaseline carries the old wall numbers forward, which is fine — a scenario
+  // whose revision moved needs a full rerecord anyway, and stamping the new
+  // revision is what lets the run stop shouting about it.
+  merged.measurement_revision = fresh.measurement_revision;
   merged.metrics.p50_allocations = fresh.metrics.p50_allocations;
   merged.metrics.p95_allocations = fresh.metrics.p95_allocations;
   merged.metrics.max_allocations = fresh.metrics.max_allocations;
@@ -446,6 +546,14 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
     record.iterations = iterations > 0.0 ? static_cast<std::size_t>(iterations) : 0;
   }
 
+  // Absent means 1: every scenario declares 1 until somebody changes what it
+  // measures, so a pre-field baseline is a revision-1 baseline and compares
+  // exactly as it did (TD-2026-08-07-167).
+  if (IsNumber((*parsed)["measurement_revision"])) {
+    const double revision = (*parsed)["measurement_revision"].AsDouble();
+    record.measurement_revision = revision >= 1.0 ? static_cast<std::size_t>(revision) : 1;
+  }
+
   record.tolerances.cpu_p50_percent =
       tolerances["cpu_p50_percent"].AsDouble(record.tolerances.p50_percent);
   record.tolerances.cpu_p95_percent =
@@ -521,6 +629,11 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   if (baseline.iterations > 0) {
     root["iterations"] = static_cast<std::int64_t>(baseline.iterations);
   }
+  // Always written, including the default 1: the whole value of the field is
+  // that a reader can tell "revision 1" from "this file predates the idea", and
+  // omitting the common case would throw that away for every baseline that has
+  // not yet needed a bump.
+  root["measurement_revision"] = static_cast<std::int64_t>(baseline.measurement_revision);
   // Written whenever the run measured phases at all. A scenario with no
   // Measure() call writes no "phases" key, which is the same state as a
   // pre-phase-gating baseline and compares the same way.
@@ -668,6 +781,8 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
                  kNetHeapNoiseFloorBytes));
   }
   ComparePhaseAllocations(&result, baseline, aggregate);
+  NoteTailOnlyAllocationDivergence(&result);
+  RefuseComparisonAcrossMeasurementRevisions(&result, baseline, aggregate);
   return result;
 }
 
