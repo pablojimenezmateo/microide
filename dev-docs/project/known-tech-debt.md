@@ -1076,11 +1076,25 @@ wait**. `linter_on_save` was gating on the iteration count of a poll loop that h
 never once succeeded — see [179](#td-2026-08-10-179), and
 [180](#td-2026-08-10-180) for the two `WaitFor*` helpers still unaudited.
 
-**Next by committed `p50_allocations`, unread**: `sort_lines_ascending.10000_lines`
-(20,015), `merge_model.build_interleaved` (8,673),
-`status_registry.apply_update` (8,001), `move_line_down.multi_caret_burst`
-(7,547), `compare_large.scroll_burst` (6,457). The three `git.refresh_dispatch`
-instances are already recorded as read/inherent above.
+**Read, inherent** (recorded so the next pass does not re-read it):
+
+- `sort_lines_ascending.10000_lines` — 20,000 allocations over 10,000 lines, in
+  exactly two flat sites of 10,000 each, both `PieceTree::SliceLines`. One is
+  `SortLines` reading the range to sort it, which becomes the edit's
+  `after_lines`; the other is `BuildLineHistoryEntry` re-reading the same range
+  for `before_lines`. It looks like a duplicate read and is not: `SortLines`
+  sorts **in place**, so by the time the history entry is built the vector it
+  holds is no longer in the original order, and `before_lines` must be. Two owned
+  copies of every line is the floor for "undo stores whole lines" — the same
+  conclusion `toggle_line_comment.1000_lines` reached at 2 per line. Cheaper only
+  with a permutation-shaped `HistoryEntry`, which is a general-structure change
+  for one operation.
+
+**Next by committed `p50_allocations`, unread**: `merge_model.build_interleaved`
+(8,673 in 0.6 ms), `status_registry.apply_update` (8,001),
+`move_line_down.multi_caret_burst` (7,547), `compare_large.scroll_burst` (6,457).
+The three `git.refresh_dispatch` instances are already recorded as read/inherent
+above.
 
 
 [149](#td-2026-08-06-149) ended with an instruction — "generalise the sweep: the
