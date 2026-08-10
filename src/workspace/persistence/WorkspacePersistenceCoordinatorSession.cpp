@@ -7,6 +7,7 @@
 #include <limits>
 
 #include "util/JsonValue.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "util/StartupTrace.h"
@@ -54,9 +55,17 @@ void PersistenceCoordinator::SaveDebugState() {
   const ProjectWorkspaceState& state = CurrentProjectState();
 
   PersistedDebugState persisted;
-  for (const auto& file : state.breakpoint_store.SnapshotAll()) {
+  // Views, not SnapshotAll. The header classes session persistence as a caller
+  // that KEEPS the snapshot across store mutations; it does not -- the loop below
+  // copies each breakpoint into the persisted struct and drops the snapshot before
+  // returning, with nothing mutating the store in between. SnapshotAll therefore
+  // deep-copied every file's whole breakpoint vector, on every session save, i.e.
+  // on every project switch, to be read once.
+  std::vector<editor::BreakpointStore::FileBreakpointsView> breakpoint_files;
+  state.breakpoint_store.FillSortedFileViews(&breakpoint_files);
+  for (const auto& file : breakpoint_files) {
     PersistedFileBreakpoints persisted_file;
-    persisted_file.path = file.path;
+    persisted_file.path = *file.path;
     for (const editor::Breakpoint& breakpoint : file.breakpoints) {
       persisted_file.breakpoints.push_back(PersistedBreakpoint{
           .line = breakpoint.line,
@@ -734,9 +743,15 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
 
   auto& editor_state = tab.editor_state.value();
   const editor::TextViewport* persisted_viewport = &editor_state.viewport;
+  // Guarded: both sources were normalized on the way in (the tab's restored path
+  // by the reader, the viewport's by the open path), and lexically_normal() is
+  // ~12 allocations even when it changes nothing -- once per open tab of every
+  // group, on every session save (TD-2026-08-10-174).
+  const std::filesystem::path& source_path =
+      editor_state.needs_restore ? editor_state.restored_path : persisted_viewport->path();
   const std::filesystem::path normalized_path =
-      editor_state.needs_restore ? editor_state.restored_path.lexically_normal()
-                                 : persisted_viewport->path().lexically_normal();
+      util::PathTextNeedsNormalizing(source_path.native()) ? source_path.lexically_normal()
+                                                           : source_path;
   const bool dirty_snapshot = !editor_state.needs_restore && persisted_viewport->dirty();
 
   // Enforce the reader's dirty-buffer budget BEFORE snapshotting. Without this a
