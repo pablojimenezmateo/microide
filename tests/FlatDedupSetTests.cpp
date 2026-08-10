@@ -100,9 +100,54 @@ void TestFlatDedupSetRejectionDoesNotStoreTheKey() {
          "the rejected insert left the stored key intact");
 }
 
+// Intern is the value-map half of the container: the id it returns must be the
+// key's index in keys(), dense and stable, so a caller can hang a parallel
+// vector off it (the compare path's occurrence counts).
+void TestFlatDedupSetInternAssignsDenseFirstOccurrenceIds() {
+  FlatDedupSet<std::string> ids(8);
+  Expect(ids.Intern("b") == 0, "the first key gets id 0");
+  Expect(ids.Intern("a") == 1, "the second distinct key gets the next id");
+  Expect(ids.Intern("b") == 0, "a repeat returns the id it was given first");
+  Expect(ids.Intern("c") == 2, "ids stay dense across repeats");
+  Expect(ids.size() == 3, "a repeat stored nothing");
+  for (std::size_t id = 0; id < ids.size(); ++id) {
+    Expect(ids.Intern(ids.keys()[id]) == id, "every id indexes its own key in keys()");
+  }
+}
+
+// Intern and Insert are the same probe. Growth past the caller's bound must not
+// renumber anything a parallel vector is already indexed by.
+void TestFlatDedupSetInternIdsSurviveGrowth() {
+  FlatDedupSet<std::string> ids(2);
+  constexpr std::size_t kCount = 3000;
+  for (std::size_t i = 0; i < kCount; ++i) {
+    Expect(ids.Intern("key_" + std::to_string(i)) == i, "each new key gets the next id");
+  }
+  for (std::size_t i = 0; i < kCount; ++i) {
+    Expect(ids.Intern("key_" + std::to_string(i)) == i, "ids are unchanged by the rehashes");
+  }
+  Expect(ids.size() == kCount, "the second pass added nothing");
+}
+
+void TestFlatDedupSetInternAgreesWithInsert() {
+  FlatDedupSet<std::string> interned(64);
+  FlatDedupSet<std::string> inserted(64);
+  for (std::size_t i = 0; i < 500; ++i) {
+    const std::string key = "v" + std::to_string(i % 97);
+    const std::size_t size_before = interned.size();
+    const bool is_new = interned.Intern(key) == size_before;
+    Expect(is_new == inserted.Insert(key), "Intern and Insert agree on what is new");
+  }
+  Expect(interned.keys() == inserted.keys(), "both paths store the same keys in the same order");
+}
+
 }  // namespace
 
 void RegisterFlatDedupSetTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FlatDedupSet/InternAssignsDenseFirstOccurrenceIds",
+          TestFlatDedupSetInternAssignsDenseFirstOccurrenceIds);
+  AddTest(tests, "FlatDedupSet/InternIdsSurviveGrowth", TestFlatDedupSetInternIdsSurviveGrowth);
+  AddTest(tests, "FlatDedupSet/InternAgreesWithInsert", TestFlatDedupSetInternAgreesWithInsert);
   AddTest(tests, "FlatDedupSet/KeepsFirstOccurrenceOrder",
           TestFlatDedupSetKeepsFirstOccurrenceOrder);
   AddTest(tests, "FlatDedupSet/ContainsMatchesInsert", TestFlatDedupSetContainsMatchesInsert);

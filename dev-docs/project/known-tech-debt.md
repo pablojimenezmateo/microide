@@ -968,7 +968,56 @@ read state before installing them. A cheap standing check is to assert, once per
 run, that the resolved user state root is under the isolated root — the harness
 knows both.
 
-### TD-2026-08-07-164 — the exact-line diff interns every distinct line through two node-per-element hash maps. OPEN.
+### TD-2026-08-07-164 — the exact-line diff interns every distinct line through two node-per-element hash maps. [RESOLVED 2026-08-10 — and the entry named the wrong scenarios.]
+
+**Shipped**: three `unordered_map`s deleted from `CompareModel.cpp`, no second
+container written.
+
+The entry proposed a `util::FlatHashMap<K, V>` and filed the item rather than
+doing it because that is "a second container to get correct and test". It is not
+needed. `FlatDedupSet` already stores its keys in an append-only vector, so a
+key's index in `keys()` **is** a dense equality-class id — the new `Intern(key)`
+returns it, and any caller wanting a value per distinct key hangs a plain
+`std::vector<V>` off that id. One container, one new method, four new tests.
+
+What went, per call site:
+
+- `BuildExactLineOps`'s `line_occurrences` map became a `std::vector<uint32_t>`
+  indexed by class id. Under `ignore_whitespace` the counts are now per
+  equality class rather than per exact line, which is a deliberate correctness
+  improvement: the rarity weight and the relation the DP matches on finally
+  agree.
+- Its two id maps became one `FlatDedupSet<std::string_view>`. The
+  `ignore_whitespace` branch used to key an `unordered_map<std::string, ...>` on
+  a whitespace-stripped **owned copy** of every distinct line, purely so the map
+  had something to hash; a whitespace-insensitive Hash/Eq pair keyed on the
+  original view removes the copies outright.
+- `BuildUniqueLineAnchors` — the anchored fallback path, which is the one large
+  diffs take — had the same shape and got the same treatment.
+
+**Measured, and this is the part worth keeping**: the entry says to size the work
+against `diff.open_large_compare` (26,967) and `diff.open_large_patch` (26,952),
+and predicts "~2 allocations per distinct line on every compare/diff open". Those
+two phases moved by **7 allocations each**:
+
+    diff.open_large_compare    27,541 -> 27,534
+    diff.open_large_patch      27,526 -> 27,519
+    merge_model.build_interleaved  12,297 -> 8,673  (-29.5 %)
+
+The reason is `kMaxLineLcsMatrixCells`: `BuildExactLineOps` is only ever reached
+with slices whose product fits 250k cells, so on a 14k-line file it never sees
+more than ~500 lines a side and its maps were never big. The "~28k node
+allocations before the diff starts" in the original entry was computed from the
+file size, not from what the function is called with. The real win landed on the
+merge model, which feeds it whole interleaved documents.
+
+**Generalisable**: an entry that estimates a cost from the input size is
+estimating the caller's input, not the callee's. Every capped inner algorithm in
+this repo breaks that inference. Read the phase counter before sizing the fix —
+here the fix was worth doing anyway, but it would have been ranked very
+differently.
+
+The original entry follows.
 
 Found by [159](#td-2026-08-06-159)'s grep-first pass, alongside the `RankedUnion`
 fix that pass took.

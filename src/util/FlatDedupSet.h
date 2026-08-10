@@ -26,6 +26,13 @@ namespace microide::util {
 // match, so a colliding-bucket walk over string keys does not run memcmp per
 // step. Growth exists so an under-estimated bound stays correct rather than
 // spinning; a caller that passes a real upper bound never pays it.
+//
+// `Intern` makes this a value map as well, without a second container: because
+// keys live in an append-only vector, a key's index in `keys()` IS its dense
+// equality-class id, so a caller that wants a value per distinct key keeps a
+// parallel `std::vector<V>` indexed by that id — one allocation instead of a
+// node per element. That is what the compare path uses in place of the two
+// `unordered_map`s it used to build per diff (TD-2026-08-07-164).
 template <typename Key, typename Hash = std::hash<Key>, typename Eq = std::equal_to<Key>>
 class FlatDedupSet {
  public:
@@ -41,36 +48,32 @@ class FlatDedupSet {
   // false when it was (and `key` is left untouched, so the caller's move is not
   // consumed on the duplicate path).
   bool Insert(Key key) {
-    const std::size_t hash = Hash{}(key);
-    std::size_t index = hash & mask_;
-    while (slots_[index].index_plus_one != 0) {
-      const Slot& slot = slots_[index];
-      if (slot.hash == hash && Eq{}(keys_[slot.index_plus_one - 1], key)) {
-        return false;
-      }
-      index = (index + 1) & mask_;
+    std::size_t hash = 0;
+    const std::size_t slot = Probe(key, hash);
+    if (slots_[slot].index_plus_one != 0) {
+      return false;
     }
-    keys_.push_back(std::move(key));
-    slots_[index] = Slot{.hash = hash, .index_plus_one = keys_.size()};
-    // Keep the load factor at or below 1/2: linear probing degrades sharply past
-    // that, and an under-estimated bound must not turn into a quadratic walk.
-    if (keys_.size() * 2 > slots_.size()) {
-      Resize(slots_.size() * 2);
-    }
+    Occupy(slot, hash, std::move(key));
     return true;
   }
 
-  bool Contains(const Key& key) const {
-    const std::size_t hash = Hash{}(key);
-    std::size_t index = hash & mask_;
-    while (slots_[index].index_plus_one != 0) {
-      const Slot& slot = slots_[index];
-      if (slot.hash == hash && Eq{}(keys_[slot.index_plus_one - 1], key)) {
-        return true;
-      }
-      index = (index + 1) & mask_;
+  // Equality-class id for `key`: its index in `keys()`. A key seen for the first
+  // time is appended (taking ownership) and gets the next id, so ids are dense
+  // and assigned in first-occurrence order.
+  std::size_t Intern(Key key) {
+    std::size_t hash = 0;
+    const std::size_t slot = Probe(key, hash);
+    if (slots_[slot].index_plus_one != 0) {
+      return slots_[slot].index_plus_one - 1;
     }
-    return false;
+    const std::size_t id = keys_.size();
+    Occupy(slot, hash, std::move(key));
+    return id;
+  }
+
+  bool Contains(const Key& key) const {
+    std::size_t hash = 0;
+    return slots_[Probe(key, hash)].index_plus_one != 0;
   }
 
   std::size_t size() const { return keys_.size(); }
@@ -84,6 +87,32 @@ class FlatDedupSet {
     std::size_t hash = 0;
     std::size_t index_plus_one = 0;  // 0 = empty; otherwise index into keys_ + 1
   };
+
+  // Linear probe to `key`'s slot: either the one holding it, or the first empty
+  // slot on its chain (the insertion point). Also reports the key's hash so a
+  // caller that inserts does not compute it twice.
+  std::size_t Probe(const Key& key, std::size_t& hash) const {
+    hash = Hash{}(key);
+    std::size_t index = hash & mask_;
+    while (slots_[index].index_plus_one != 0) {
+      const Slot& slot = slots_[index];
+      if (slot.hash == hash && Eq{}(keys_[slot.index_plus_one - 1], key)) {
+        break;
+      }
+      index = (index + 1) & mask_;
+    }
+    return index;
+  }
+
+  void Occupy(std::size_t slot, std::size_t hash, Key key) {
+    keys_.push_back(std::move(key));
+    slots_[slot] = Slot{.hash = hash, .index_plus_one = keys_.size()};
+    // Keep the load factor at or below 1/2: linear probing degrades sharply past
+    // that, and an under-estimated bound must not turn into a quadratic walk.
+    if (keys_.size() * 2 > slots_.size()) {
+      Resize(slots_.size() * 2);
+    }
+  }
 
   static std::size_t TableSizeFor(std::size_t max_elements) {
     std::size_t size = 8;

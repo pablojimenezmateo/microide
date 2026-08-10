@@ -134,6 +134,25 @@ fixture at all.
   startup and a graceful skip per scenario — is how the disagreement stayed
   invisible until a lane hit only the strict one.
 
+### A lane that narrows the build target but not the test selection
+
+The inverse of the trap above, and it shipped in the same script. `run-checks.sh
+tests` built `--target microide_tests` for inner-loop speed and then ran the
+whole of `ctest` — which also invokes `microide_perf --smoke`. That binary was
+therefore whatever the last full build produced, and nothing said so:
+
+- The loud direction: a perf scenario registered after the last `microide_perf`
+  build makes `FindStaleBaselineScenarios` report 13 committed baselines as
+  belonging to unregistered scenarios. The message describes a source problem
+  that does not exist. Found 2026-08-10, and it cost a diagnosis.
+- The quiet direction is the one that matters: any change to the perf harness or
+  to product code the smoke run exercises is validated against the previous
+  build, and the lane reports green.
+
+If a lane scopes the build, it must scope the test selection to match, or build
+every target the selection invokes. Fixed by building `microide_tests
+microide_perf` — the two binaries ctest actually runs in the default build.
+
 ### `git checkout <file>` on a `git mv`'d file restores pre-rewrite content
 
 During a large move, `git checkout` on a moved file restores the version from the

@@ -72,14 +72,18 @@ check_tests() {
     echo "run-checks: doc/version drift — fix before building (tests not run)" >&2
     return 1
   }
-  # ctest in the default build only invokes the microide_tests binary (see
-  # add_test in CMakeLists.txt), so scope the build to that target and its deps.
-  # This skips the production microide executable and the bench binaries, which
-  # the test run does not need — roughly halving inner-loop build work.
+  # ctest in the default build invokes exactly two binaries: the microide_tests
+  # shards and `microide_perf --smoke` (see add_test in CMakeLists.txt). Build
+  # both. Scoping to microide_tests alone — which this lane did until 2026-08-10
+  # — left microide_perf at whatever revision last built it, so `microide_perf_tests`
+  # either failed for a source change it had never seen (a scenario registered
+  # after the last perf build reads as a "stale baseline") or, the dangerous
+  # direction, passed a smoke run of yesterday's harness. The production microide
+  # executable and the bench binaries are still skipped; ctest does not run them.
   run_logged "$log" bash -c '
     set -e
     cmake -S . -B build
-    cmake --build build --target microide_tests -j'"$JOBS"'
+    cmake --build build --target microide_tests microide_perf -j'"$JOBS"'
     ctest --test-dir build --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?

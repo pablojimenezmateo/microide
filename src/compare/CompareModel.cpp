@@ -6,10 +6,10 @@
 #include <cmath>
 #include <limits>
 #include <span>
-#include <unordered_map>
 #include <string_view>
 #include <vector>
 
+#include "util/FlatDedupSet.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/SaturatingMath.h"
@@ -922,6 +922,31 @@ void AppendInsertOps(std::span<const std::string_view> lines,
 bool LinesEqualForDiff(std::string_view left,
                        std::string_view right,
                        const CompareBuildOptions& options);
+bool LinesEqualIgnoringWhitespace(std::string_view left, std::string_view right);
+
+// Whitespace-insensitive line identity, so the ignore_whitespace interning pass
+// can key on the original view instead of a normalised copy of it. The hash
+// walks the same bytes the equality does — everything that is not ASCII space —
+// which is what makes it agree with LinesEqualIgnoringWhitespace.
+struct IgnoreWhitespaceLineHash {
+  std::size_t operator()(std::string_view line) const {
+    std::uint64_t hash = 1469598103934665603ULL;  // FNV-1a
+    for (const char c : line) {
+      if (util::IsAsciiSpace(static_cast<unsigned char>(c)) != 0) {
+        continue;
+      }
+      hash ^= static_cast<unsigned char>(c);
+      hash *= 1099511628211ULL;
+    }
+    return static_cast<std::size_t>(hash);
+  }
+};
+
+struct IgnoreWhitespaceLineEq {
+  bool operator()(std::string_view left, std::string_view right) const {
+    return LinesEqualIgnoringWhitespace(left, right);
+  }
+};
 
 // Emit a run of Equal ops carrying both columns' text for the lockstep-matched
 // pair range [left_begin, left_end) <-> [right_begin, ...). The two ranges have
@@ -948,21 +973,6 @@ std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lin
     return ops;
   }
 
-  std::unordered_map<std::string_view, std::size_t> line_occurrences;
-  line_occurrences.reserve(left_count + right_count);
-  for (const auto& line : left_lines) {
-    ++line_occurrences[line];
-  }
-  for (const auto& line : right_lines) {
-    ++line_occurrences[line];
-  }
-
-  std::vector<std::size_t> left_match_weight(left_count, 1);
-  for (std::size_t i = 0; i < left_count; ++i) {
-    left_match_weight[i] = LineMatchWeight(left_lines[i], SignificantTokenBytes(left_lines[i]),
-                                           line_occurrences[left_lines[i]]);
-  }
-
   // Intern each line to an equality-class id before the DP. The table below is
   // bounded at kMaxLineLcsMatrixCells (250k) cells, and the loop used to call
   // LinesEqualForDiff at EVERY one of them — a full memcmp over the line, or
@@ -972,38 +982,51 @@ std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lin
   // relation either way: exact byte equality, or equality after removing every
   // whitespace byte (`==` implies the whitespace-insensitive form, so the
   // ignore_whitespace case is not a union of two relations).
+  //
+  // Interning is the ONLY hash structure this function builds now
+  // (TD-2026-08-07-164). It used to build three: a `line_occurrences` map for
+  // the rarity weight, plus one of two id maps — and under ignore_whitespace the
+  // id map keyed on an owned, whitespace-stripped `std::string` per distinct
+  // line, purely so `unordered_map` had something to hash. All three were a heap
+  // node per distinct line, so a 14k-line compare paid ~28k node allocations
+  // before the DP started. `FlatDedupSet` hands out ids that are dense indices
+  // into its own key vector, so the occurrence counts are a plain vector indexed
+  // by id, and a whitespace-insensitive Hash/Eq pair lets the ignore_whitespace
+  // path key on the original view with no normalised copy at all.
+  //
+  // The counts are per equality CLASS, which under ignore_whitespace groups
+  // lines that differ only in whitespace — the same relation the DP matches on,
+  // so the rarity weight and the match it weighs now agree.
   std::vector<std::uint32_t> left_ids(left_count);
   std::vector<std::uint32_t> right_ids(right_count);
-  if (options.ignore_whitespace) {
-    // Normalizing needs owned keys, so this path allocates one string per
-    // DISTINCT line rather than per cell.
-    std::unordered_map<std::string, std::uint32_t> ids;
-    ids.reserve(left_count + right_count);
-    std::string key;
+  std::vector<std::uint32_t> class_occurrences;
+  class_occurrences.reserve(left_count + right_count);
+  const auto assign_ids = [&](auto& ids) {
     const auto intern = [&](std::string_view line) {
-      key.clear();
-      for (const char c : line) {
-        if (!util::IsAsciiSpace(static_cast<unsigned char>(c))) {
-          key.push_back(c);
-        }
+      const std::size_t id = ids.Intern(line);
+      if (id == class_occurrences.size()) {
+        class_occurrences.push_back(1);
+      } else {
+        ++class_occurrences[id];
       }
-      return ids.try_emplace(key, static_cast<std::uint32_t>(ids.size())).first->second;
+      return static_cast<std::uint32_t>(id);
     };
     for (std::size_t i = 0; i < left_count; ++i) left_ids[i] = intern(left_lines[i]);
     for (std::size_t j = 0; j < right_count; ++j) right_ids[j] = intern(right_lines[j]);
+  };
+  if (options.ignore_whitespace) {
+    util::FlatDedupSet<std::string_view, IgnoreWhitespaceLineHash, IgnoreWhitespaceLineEq> ids(
+        left_count + right_count);
+    assign_ids(ids);
   } else {
-    // Exact equality: the views already key the map, so this allocates nothing
-    // beyond the table itself.
-    std::unordered_map<std::string_view, std::uint32_t> ids;
-    ids.reserve(left_count + right_count);
-    for (std::size_t i = 0; i < left_count; ++i) {
-      left_ids[i] = ids.try_emplace(left_lines[i], static_cast<std::uint32_t>(ids.size()))
-                        .first->second;
-    }
-    for (std::size_t j = 0; j < right_count; ++j) {
-      right_ids[j] = ids.try_emplace(right_lines[j], static_cast<std::uint32_t>(ids.size()))
-                         .first->second;
-    }
+    util::FlatDedupSet<std::string_view> ids(left_count + right_count);
+    assign_ids(ids);
+  }
+
+  std::vector<std::size_t> left_match_weight(left_count, 1);
+  for (std::size_t i = 0; i < left_count; ++i) {
+    left_match_weight[i] = LineMatchWeight(left_lines[i], SignificantTokenBytes(left_lines[i]),
+                                           class_occurrences[left_ids[i]]);
   }
 
   const std::size_t stride = right_count + 1;
@@ -1070,23 +1093,37 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
     std::size_t right_index = 0;
   };
 
-  std::unordered_map<std::string_view, AnchorInfo> info_by_line;
-  info_by_line.reserve((left_end - left_begin) + (right_end - right_begin));
+  // Same shape as BuildExactLineOps' interning, and the same reason: this ran on
+  // the anchored fallback path — the one large diffs take — and cost a heap node
+  // per distinct line before any anchor was found (TD-2026-08-07-164). Ids from
+  // `Intern` are dense indices, so the per-line info is a parallel vector.
+  const std::size_t line_count = (left_end - left_begin) + (right_end - right_begin);
+  util::FlatDedupSet<std::string_view> line_ids(line_count);
+  std::vector<AnchorInfo> info_by_id;
+  info_by_id.reserve(line_count);
+  const auto info_for = [&](std::string_view line) -> AnchorInfo& {
+    const std::size_t id = line_ids.Intern(line);
+    if (id == info_by_id.size()) {
+      info_by_id.emplace_back();
+    }
+    return info_by_id[id];
+  };
   for (std::size_t i = left_begin; i < left_end; ++i) {
-    AnchorInfo& info = info_by_line[left_lines[i]];
+    AnchorInfo& info = info_for(left_lines[i]);
     ++info.left_count;
     info.left_index = i;
   }
   for (std::size_t i = right_begin; i < right_end; ++i) {
-    AnchorInfo& info = info_by_line[right_lines[i]];
+    AnchorInfo& info = info_for(right_lines[i]);
     ++info.right_count;
     info.right_index = i;
   }
 
   std::vector<std::pair<std::size_t, std::size_t>> candidates;
   candidates.reserve(std::min(left_end - left_begin, right_end - right_begin));
-  for (const auto& [line, info] : info_by_line) {
-    if (line.empty()) {
+  for (std::size_t id = 0; id < info_by_id.size(); ++id) {
+    const AnchorInfo& info = info_by_id[id];
+    if (line_ids.keys()[id].empty()) {
       continue;
     }
     if (info.left_count == 1 && info.right_count == 1) {
