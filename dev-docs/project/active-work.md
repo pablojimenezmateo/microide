@@ -124,6 +124,12 @@ The emulator covers the full-screen and shell workflows exercised so far.
   record first. Rebaseline the same way: confirm no *allocation* gate is near its
   envelope before rewriting, because those are deterministic and a tight one means
   the code moved — rerecording then buries a regression instead of closing drift
+- **the allocation half is loose again as of 2026-08-11** (TD-2026-08-11-184).
+  Five wins landed without their baselines moving, so five gates now carry 12-40 %
+  of slack — enough to accept re-adding exactly the per-entry cost they were
+  tightened past. The deterministic metrics do not need a quiet machine (that is
+  the premise of the gating policy), only an authoritative runner class, which is
+  what blocks `--update-baseline=deterministic` here
 - a scenario must not read the developer's home directory. Every scenario's shell
   loaded `~/.local/state/microide/recents` until 2026-08-07, because
   `PerfHarness::Driver` holds a `WorkspaceShell` **by value** and the isolated

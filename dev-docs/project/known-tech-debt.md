@@ -1,5 +1,17 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-08-11. The 2026-08-11 pass read the suite's two biggest phases
+([159](#td-2026-08-06-159)): `multi_project.switch_cycles` (-42 %) and
+`git.refresh_dispatch` (-14 % / -12 %). Five fixes, all of them the same
+mistake in different clothes — **re-deriving, on an event, something that event
+cannot change**: the language-contract default table and the colorscheme picker
+on every project switch, a path key per tree entry, a normalization per git
+entry. Three entries opened: [182](#td-2026-08-11-182) (an undo entry costs one
+string per line it covers), [183](#td-2026-08-11-183) (a git refresh builds each
+path four times, and libstdc++'s `path` is two allocations before it holds
+anything), [184](#td-2026-08-11-184) (every gate this pass touched is now 12-40 %
+loose and this runner may not re-record it).
+
 Reviewed 2026-08-10. The 2026-08-10 second pass read the four phases
 [159](#td-2026-08-06-159) named as next, which produced two fixes
 (`PieceTree::ExtractLineRange`'s per-call walk stack, and the welcome surface
@@ -286,6 +298,92 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-11-184 — every allocation gate this pass touched now passes with 12-40 % of slack, and nothing can re-record them here. OPEN.
+
+Five fixes landed on 2026-08-11 ([159](#td-2026-08-06-159)) and none of their
+baselines moved, because `microide_perf` on this box prints `advisory run
+(runner_class=local-advisory)` and refuses to write baselines. The gates are now
+loose by the size of the win:
+
+| gate | baseline | measured |
+| --- | ---: | ---: |
+| `multi_project.switch_cycles` p50_allocations | 17,390 | ~11,254 |
+| `git_sidebar_refresh_many_untracked` p50_allocations | 52,357 | 45,051 |
+| `git_sidebar_refresh_large_repo` p50_allocations | 23,920 | 21,111 |
+| `editor_moby_dick_workout` p50_allocations | 138,599 | 58,552 |
+| `cold_startup_large_project` p50_allocations | 248 | 168 |
+
+A 40 %-loose allocation gate is not a gate: it will accept re-adding the whole
+`lexically_normal()`-per-entry cost it was tightened past. The deterministic half
+of the suite can be re-recorded on any machine (allocation counts are
+byte-identical run to run — that is the premise of the whole gating policy), so
+this needs `--update-baseline=deterministic` on an authoritative runner, or the
+runner-class check needs a documented way to say "deterministic metrics only,
+this machine is fine for those". The last two rows predate this pass and show the
+drift is not new. Same family as [141](#td-2026-08-06-141) (nothing reruns the
+gate) and [161](#td-2026-08-07-161) (the timing half needs a quiet machine — this
+half does not).
+
+### TD-2026-08-11-183 — a git refresh materializes each changed file's path as a `std::filesystem::path` four times, and libstdc++'s `path` is not one allocation. OPEN.
+
+After the ingress fix ([174](#td-2026-08-10-174)), `git.refresh_dispatch` at 3,000
+untracked files is 45,051 allocations, and the remainder is one shape rather than
+a list of sites:
+
+| stage | allocations | what it holds |
+| --- | ---: | --- |
+| `GitPorcelainV2Parser::Parse` → `MakeEntry` | ~12,000 | `GitRepositoryPathIdentity` (a `path` + its generic text) |
+| `GitRepositoryService::BuildSidebarSnapshot` | 6,000 | the snapshot entry's own relative `path` |
+| `SidebarCoordinator::RefreshGit` | 21,767 | `root / relative` per entry, into `GitSidebarEntry::path` |
+| `CachedGitSidebarPresentation` + `BuildGitSidebarViewModel` | 27,052 | grouping keys and row labels derived from that path again |
+
+libstdc++'s `std::filesystem::path` is `_M_pathname` **plus** `_M_cmpts`, a
+component list built eagerly by the constructor — so even a short relative path
+is two allocations before any component needs its own storage, and `root /
+relative` re-splits the whole joined string. Nothing downstream of the parser
+needs a `path`: the presentation layer already works on generic '/'-separated
+text (it says so in its own header comment), the tree-status map is keyed by that
+text, and only the eventual "open this file" action wants a real path.
+
+The fix is to carry the relative generic **text** through the pipeline and build
+an absolute `path` at the point of use. It is a wide change (`GitRepositoryEntry`,
+`GitSidebarState::RefreshSnapshot`, `GitSidebarEntry`, the view model, and every
+consumer of `.path`), which is why it is an entry and not a commit. Worth it: git
+refresh is the single largest gated phase in the suite, and it runs on every
+external file change.
+
+Also visible in that trace and worth its own look: `ScenarioContext::Measure` is
+**10 %** of `git.refresh_dispatch`'s allocations. [163](#td-2026-08-07-163)
+audited scaffolding share once and found one offender; this is a second, inside
+the suite's biggest gate.
+
+### TD-2026-08-11-182 — an undo entry stores one owned `std::string` per line it covers, which is the floor a 1,000-line edit cannot get under. OPEN.
+
+`toggle_line_comment.1000_lines` traces to 2.35 allocations per toggled line, and
+two of them are structural, not wasteful:
+
+  - `BuildToggledCommentRegion` builds the line's new text — one owned string per
+    line, which `ReplaceLines` then consumes.
+  - `BuildLineHistoryEntry` slices the replaced span into `before_lines` — one
+    owned string per line, for undo.
+
+Both are `std::vector<std::string>` members of `HistoryEntry`, so a line-shaped
+edit costs 2n allocations and the constant is not reducible while the entry is a
+vector of strings. Every large shaping op pays it: toggle comment, sort lines,
+move line, indent/dedent, multi-caret shaping.
+
+The exit is a blob-backed entry — one `std::string` holding the whole
+before-image and one holding the whole after-image, plus a `std::vector<uint32_t>`
+of line offsets — which turns 2n allocations into 4 regardless of n, and makes
+the entry's memory footprint one contiguous buffer instead of n heap blocks (it
+also removes n destructor calls per undo/redo). `ApplyHistoryEntry`,
+`SetLastAppliedEditFromEntry`, the coalescing paths and the LSP-sync bridge all
+read `before_lines`/`after_lines` as vectors today, so the change is a real
+refactor with a clean measurement attached. Related: [131](#td-2026-08-05-131)
+took the same argument for the *single-line* case and shipped the column-scoped
+entry; this is its multi-line half. [157](#td-2026-08-06-157) capped the *range*
+an entry covers; this caps the cost *per line inside* that range.
 
 ### TD-2026-08-10-181 — twelve phase allocation gates fail on an unchanged binary, and three of them measure a re-open rather than an open. OPEN.
 
@@ -610,6 +708,29 @@ by `PerfBaseline/NamesTailOnlyAllocationDivergence`, using this entry's own
 numbers (`cold_startup_no_project`, 681 → 9,364 with p50 matching exactly).
 
 ### TD-2026-08-10-174 — `lexically_normal()` is ~12 allocations and the codebase calls it 416 times, three of them on paths that run per keystroke. OPEN — 2026-08-10 pass took the per-entry and per-frame ones.
+
+#### 2026-08-11 pass: two more per-item sites, found by tracing rather than by grep
+
+Both were named in this entry's own "still open" list, and both were found again
+from the other end — by reading a phase ([159](#td-2026-08-06-159)) rather than by
+grepping for the call.
+
+- **`MakeGitRepositoryPathIdentity`** normalized every entry of every git refresh.
+  git's porcelain output is already relative, '/'-separated and normal, so the
+  call could only ever return its input. Guarded; it also copied the generic text
+  into `display_label` and dropped the original, which is now a move.
+  `git.refresh_dispatch` -14 % / -12 % on its two scenarios.
+- **`DirectoryTree`'s per-item sites** (this entry named them explicitly). Its
+  expansion-key probe ran `absolute()` — a **getcwd syscall**, not just
+  allocations — plus `lexically_normal()` plus `generic_string()`, once per
+  candidate entry of every rebuild and once per ancestor in the
+  manually-collapsed walk. The two key sets are transparent-hash now and
+  `ContainsPathKey` probes them through a view into the path's own text.
+
+**Still open**, unchanged: the ~27 single normalizations in
+`WorkspaceShellPlugins.cpp`, and the rest of the ~390. And note the shape
+[183](#td-2026-08-11-183) describes — guarding the *normalization* does not help
+when the cost is constructing the `path` at all.
 
 #### 2026-08-10 pass 2: every remaining `x.lexically_normal() == normalized` scan
 
@@ -1154,6 +1275,67 @@ the two runs if it returns.
 
 
 ### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN — and every pass so far has found something.
+
+#### 2026-08-11 pass: the two biggest remaining phases, and a rule about the tracer's own output
+
+Read `multi_project.switch_cycles` (17,390, the largest unread interactive phase)
+and `git.refresh_dispatch` (52,001, the largest of all). Four fixes; the hit rate
+stays at 100 %.
+
+| phase | before → after | what it was |
+| --- | ---: | --- |
+| `multi_project.switch_cycles` | 19,522 → 11,254 (-42 %) | three separate per-switch rebuilds of things that had not changed |
+| `git.refresh_dispatch` (many_untracked) | 52,357 → 45,051 (-14 %) | `lexically_normal()` per changed file on git's already-normal output |
+| `git.refresh_dispatch` (large_repo) | 23,920 → 21,111 (-12 %) | the same call |
+
+**A project switch rebuilt three tables that a switch cannot change.** All three
+hang off `RefreshPluginSurfacesForReactivation`, and all three are the same
+mistake — "the plugin host was torn down, so re-derive everything the plugin host
+could contribute to", applied to state the plugin host does not own:
+
+  - `WorkspaceLanguageContract::Refresh` rebuilt the ~40-language default table
+    from scratch (~5,000 allocations, 12 % of the phase) to then layer nothing on
+    it. It now skips the rebuild when there is no contribution and no user
+    override, which also skips the **revision bump** — and that bump drops the
+    shared editor-view cache and re-applies preferences to every open tab
+    ([110](#td-2026-08-03-110)). A revision that advances when nothing changed is
+    not free; it is the price of everything downstream keyed on it.
+  - `RefreshAvailableColorschemeNames` re-listed the themes directory (~4,900
+    allocations): resolve nine candidate paths, stat each, then a
+    `platform::ListDirectory` walk that normalizes a path and stats every entry,
+    then sorts them — to produce a handful of stems, for a picker whose only
+    switch-sensitive input is the in-memory plugin theme list.
+    `render::ThemeNameCatalog` memoizes it against the directory's own mtime.
+  - `DirectoryTree::IsExpanded` built its lookup key per candidate entry with
+    `absolute()` (a getcwd **syscall**) + `lexically_normal()` + `generic_string()`,
+    on paths the tree walk had just built from its own absolute normal root.
+
+**Read the instrument, again — and the frames this time.** `addr2line` without
+`-i` names the function *containing* the return address, which under LTO is
+routinely a different function than the one that ran: one trace attributed
+allocations to `RenderMergeScrollbars` calling `EditorViewRenderer::Render`,
+which cannot happen. Two rules follow, both of which cost time here:
+resolve with `-i` and read the inline chain, and **filter frames by module** —
+a backtrace interleaves `libstdc++` and the binary, and feeding a libstdc++
+offset to `addr2line -e <binary>` produces a confident, wrong answer rather than
+an error.
+
+**Read, inherent** (recorded so the next pass does not re-read them):
+
+- `toggle_line_comment.1000_lines` — 2.35 allocations per toggled line, and two
+  of them are the floor of the current representation: one owned `std::string`
+  for the line's new text, one for the undo entry's before-image. The entry's own
+  earlier note ("89 allocations per line, only ~8 accounted for") is long
+  obsolete. The exit is [182](#td-2026-08-11-182), a blob-backed `HistoryEntry`.
+- `git.refresh_dispatch`'s remainder is one shape: every changed file's path is
+  materialized as a `std::filesystem::path` four times over on its way from the
+  porcelain parser to the sidebar presentation, and libstdc++'s `path` is a
+  string **plus** a component list. That is [183](#td-2026-08-11-183).
+
+**Next unread**, re-ranked from the committed phase baselines:
+`diff.open_large_patch` / `diff.open_large_compare` (25,709 each),
+`diff.open_first_changed_file` (24,317), `commit.open_staged_sidebar` (20,749),
+`sort_lines_ascending.10000_lines` (20,015), `diff.next_hunk_burst` (12,516).
 
 #### 2026-08-10 pass 2: the four named-next phases, and a fifth shape
 
