@@ -95,6 +95,11 @@ class TextBuffer {
   std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const {
     return tree_.SliceLines(begin, end);
   }
+  // The same lines appended to a caller-owned vector, for a caller assembling a
+  // larger one (see PieceTree::AppendLines).
+  void AppendLines(std::size_t begin, std::size_t end, std::vector<std::string>& out) const {
+    tree_.AppendLines(begin, end, out);
+  }
   // Full materialized copy of the document.
   std::vector<std::string> ToVector() const { return tree_.ToVector(); }
 

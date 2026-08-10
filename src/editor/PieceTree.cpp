@@ -546,15 +546,13 @@ void PieceTree::ExtractLineRange(std::size_t begin_line, std::size_t end_line,
   // the byte stream, so it is pushed once after the walk drains.
   std::string current;
   bool done = false;
-  struct Frame {
-    NodeId id;
-    std::uint32_t base;
-    bool emit;  // false: expand children; true: consume this node's span
-  };
-  std::vector<Frame> stack;
+  // Member-held stack: see extract_stack_'s declaration. Cleared, not
+  // reconstructed, so its capacity survives the call.
+  std::vector<CopyFrame>& stack = extract_stack_;
+  stack.clear();
   stack.push_back({root_, 0, false});
   while (!stack.empty() && !done) {
-    const Frame frame = stack.back();
+    const CopyFrame frame = stack.back();
     stack.pop_back();
     if (frame.id == kNull) continue;
     const Node& node = nodes_[frame.id];
@@ -602,6 +600,12 @@ std::vector<std::string> PieceTree::SliceLines(std::size_t begin, std::size_t en
   std::vector<std::string> out;
   ExtractLineRange(begin, end, out);
   return out;
+}
+
+void PieceTree::AppendLines(std::size_t begin, std::size_t end,
+                            std::vector<std::string>& out) const {
+  if (begin >= end || begin >= line_count_) return;
+  ExtractLineRange(begin, std::min(end, line_count_), out);
 }
 
 std::vector<std::string> PieceTree::ToVector() const {

@@ -93,6 +93,11 @@ class PieceTree {
 
   // Copy lines [begin, end) into a fresh vector.
   std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const;
+  // The same lines APPENDED to a caller-owned vector. For a caller that is
+  // assembling a larger vector, this is one fewer vector (SliceLines' return
+  // value) per call -- which on a multi-caret line op is one per caret per
+  // keystroke.
+  void AppendLines(std::size_t begin, std::size_t end, std::vector<std::string>& out) const;
   // Full materialized copy of every line.
   std::vector<std::string> ToVector() const;
 
@@ -282,6 +287,13 @@ class PieceTree {
     bool emit;  // false: expand children; true: append this node's overlap
   };
   mutable std::vector<CopyFrame> copy_stack_;
+  // The same, for ExtractLineRange's walk, which has the identical frame shape.
+  // Held separately rather than shared with copy_stack_ so neither walk has to
+  // reason about the other's reentrancy. A local vector here cost ~4 allocations
+  // per call (its geometric growth), and SliceLines runs per undo entry, per
+  // multi-caret region, per line op -- 32 carets x 12 ops made it the single
+  // largest site in `move_line_down.multi_caret_burst` (TD-2026-08-06-159).
+  mutable std::vector<CopyFrame> extract_stack_;
   // Append lines [begin_line, end_line) (newlines excluded) to `out` in a single
   // in-order treap walk -- O(N + p) instead of the O(N log p) that per-line
   // LineView() extraction costs (two tree descents per line). Callers guarantee

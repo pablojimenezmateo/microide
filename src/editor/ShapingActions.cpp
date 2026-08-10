@@ -412,9 +412,9 @@ std::vector<std::string> BuildLineMoveReplacement(const TextBuffer& lines,
   if (downward) {
     updated.push_back(std::string(lines.LineView(range.last + 1)));
   }
-  std::vector<std::string> block = lines.SliceLines(range.first, range.last + 1);
-  updated.insert(updated.end(), std::make_move_iterator(block.begin()),
-                 std::make_move_iterator(block.end()));
+  // Appended, not sliced-then-moved: SliceLines' return vector was one heap
+  // allocation per caret per keystroke for a vector that only ever fed this one.
+  lines.AppendLines(range.first, range.last + 1, updated);
   if (!downward) {
     updated.push_back(std::string(lines.LineView(range.first - 1)));
   }
