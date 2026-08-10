@@ -104,7 +104,7 @@ void FileFinder::SetIndex(const FileIndex* index) {
   util::PerformanceTrace::Scope perf_scope("FileFinder::SetIndex");
   index_ = index;
   InvalidateIndexCache();
-  results_.clear();
+  results_size_ = 0;
   selected_index_ = 0;
   if (index_ != nullptr && !query_.text().empty()) {
     Refresh();
@@ -134,7 +134,7 @@ void FileFinder::SetRecentRelativePaths(std::vector<std::filesystem::path> paths
 
 void FileFinder::Refresh() {
   util::PerformanceTrace::Scope perf_scope("FileFinder::Refresh");
-  results_.clear();
+  results_size_ = 0;
   selected_index_ = 0;
 
   if (index_ == nullptr) {
@@ -187,17 +187,14 @@ void FileFinder::Refresh() {
       // Recents are deep-copied into results_ before the ranked tail applies its
       // cap, so a large/corrupt persisted recents list would otherwise materialize
       // an unbounded result set. Enforce the same visible budget here.
-      if (results_.size() >= kMaxResults) {
+      if (results_size_ >= kMaxResults) {
         break;
       }
       const CachedFileEntry& entry = cached_entries_[entry_index];
       const std::string_view path = PathView(entry);
       // Views into the candidate blob, which nothing in this Refresh mutates.
       recent_shown.insert(path);
-      results_.push_back(FileFinderResult{
-          .path_string = std::string(path),
-          .score = 0,
-      });
+      AppendResult(path, 0);
     }
   }
 
@@ -275,7 +272,7 @@ void FileFinder::Refresh() {
   // Only materialize (deep-copy) up to kMaxResults rows, accounting for any recent
   // files already in results_. partial_sort avoids sorting the discarded tail.
   const std::size_t remaining =
-      results_.size() >= kMaxResults ? 0 : kMaxResults - results_.size();
+      results_size_ >= kMaxResults ? 0 : kMaxResults - results_size_;
   const std::size_t keep = std::min(ranked_refs.size(), remaining);
   if (keep < ranked_refs.size()) {
     std::partial_sort(ranked_refs.begin(),
@@ -284,13 +281,11 @@ void FileFinder::Refresh() {
   } else {
     std::sort(ranked_refs.begin(), ranked_refs.end(), ref_less);
   }
-  results_.reserve(results_.size() + keep);
+  if (results_storage_.size() < results_size_ + keep) {
+    results_storage_.resize(results_size_ + keep);
+  }
   for (std::size_t i = 0; i < keep; ++i) {
-    const std::string_view path = PathView(cached_entries_[ranked_refs[i].index]);
-    results_.push_back(FileFinderResult{
-        .path_string = std::string(path),
-        .score = ranked_refs[i].score,
-    });
+    AppendResult(PathView(cached_entries_[ranked_refs[i].index]), ranked_refs[i].score);
   }
 
   // Remember this match set for the next keystroke's narrowing. Only when the
@@ -303,23 +298,36 @@ void FileFinder::Refresh() {
   last_matched_indices_ = std::move(matched_indices);
 }
 
+void FileFinder::AppendResult(std::string_view path, int score) {
+  if (results_size_ < results_storage_.size()) {
+    FileFinderResult& row = results_storage_[results_size_];
+    // assign, not construct: the row already owns a string whose buffer is very
+    // likely long enough for this path, and reusing it is the whole point.
+    row.path_string.assign(path);
+    row.score = score;
+  } else {
+    results_storage_.push_back(FileFinderResult{.path_string = std::string(path), .score = score});
+  }
+  ++results_size_;
+}
+
 void FileFinder::MoveSelection(int delta) {
-  if (results_.empty() || delta == 0) {
+  if (results_size_ == 0 || delta == 0) {
     return;
   }
 
   const int current = static_cast<int>(selected_index_);
-  const int max_index = static_cast<int>(results_.size()) - 1;
+  const int max_index = static_cast<int>(results_size_) - 1;
   selected_index_ = static_cast<std::size_t>(std::clamp(current + delta, 0, max_index));
 }
 
 std::optional<std::filesystem::path> FileFinder::SelectedPath() const {
-  if (results_.empty() || selected_index_ >= results_.size()) {
+  if (selected_index_ >= results_size_) {
     return std::nullopt;
   }
   // Built here rather than per row: this is the one place a path is needed, and
   // it runs once, when the user picks a file.
-  return std::filesystem::path(results_[selected_index_].path_string);
+  return std::filesystem::path(results_storage_[selected_index_].path_string);
 }
 
 int FileFinder::MatchPenalty(std::string_view text, std::string_view original,

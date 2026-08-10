@@ -123,6 +123,19 @@ struct CompareTabState {
   editor::TextViewport right_viewport;
   std::vector<std::vector<editor::SyntaxTokenKind>> left_tokens_by_row;
   std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
+  // Non-zero where this row's right-pane tokens ARE its left-pane tokens, so the
+  // right cache holds nothing for it and the render site reads the left vector.
+  //
+  // A diff is mostly unchanged rows, and an unchanged row whose two sides are
+  // byte-identical and start from the same syntax state highlights to the same
+  // token run — which the tokenizer used to store TWICE, one owned vector per
+  // pane. That second vector was half of `diff.next_hunk_burst`'s per-frame
+  // allocations, for a byte-for-byte copy of the one beside it
+  // (TD-2026-08-06-159). A flag beside the caches keeps the read sites O(1) and
+  // keeps the predicate — which needs the two lines' text and the two syntax
+  // states — where it is already computed, rather than re-deriving it per visible
+  // row per frame inside a render TU.
+  std::vector<std::uint8_t> right_tokens_alias_left_by_row;
   std::uint64_t visible_layout_cache_model_revision = 0;
   std::vector<CompareVisibleLayoutCacheEntry> visible_layout_cache;
   std::unordered_map<CompareVisibleLayoutCacheKey, std::size_t,

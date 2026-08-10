@@ -109,15 +109,24 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
         compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
         compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
         compare_tab.left_current_syntax_state == compare_tab.right_current_syntax_state;
-    if (reuse_tokens) {
+    const bool has_alias_flags =
+        index < compare_tab.right_tokens_alias_left_by_row.size();
+    if (reuse_tokens && has_alias_flags) {
       editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
           compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state);
       compare_tab.left_current_syntax_state = highlighted.end_state;
       compare_tab.right_current_syntax_state = highlighted.end_state;
-      left_tokens = highlighted.tokens;
-      right_tokens = std::move(highlighted.tokens);
+      // One vector, two panes. This used to copy it into the left cache and move
+      // it into the right, so an identical unchanged row cost two owned token
+      // vectors to paint the same run twice (TD-2026-08-06-159).
+      left_tokens = std::move(highlighted.tokens);
+      right_tokens.clear();
+      compare_tab.right_tokens_alias_left_by_row[index] = 1;
       ++compare_tab.syntax_rows_tokenized;
       continue;
+    }
+    if (has_alias_flags) {
+      compare_tab.right_tokens_alias_left_by_row[index] = 0;
     }
 
     if (compare_row.left_line > 0) {
@@ -549,9 +558,17 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           };
         }
       }
+      // An unchanged row whose two sides are byte-identical stores its tokens once,
+      // in the left cache; the flag says which rows those are.
+      const std::size_t right_token_row = static_cast<std::size_t>(model_index);
+      const bool right_aliases_left =
+          right_token_row < compare_tab->right_tokens_alias_left_by_row.size() &&
+          compare_tab->right_tokens_alias_left_by_row[right_token_row] != 0 &&
+          right_token_row < compare_tab->left_tokens_by_row.size();
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
-          static_cast<std::size_t>(model_index) < compare_tab->right_tokens_by_row.size()
-              ? &compare_tab->right_tokens_by_row[static_cast<std::size_t>(model_index)]
+          right_aliases_left ? &compare_tab->left_tokens_by_row[right_token_row]
+          : right_token_row < compare_tab->right_tokens_by_row.size()
+              ? &compare_tab->right_tokens_by_row[right_token_row]
               : &kEmptyTokens;
       const std::vector<compare::CompareTextSpan>& right_changed_spans =
           compare::CompareInlineRightSpans(compare_tab->presentation, compare_tab->model,

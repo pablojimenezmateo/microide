@@ -540,6 +540,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     compare_tab.right_current_syntax_state = compare_tab.right_initial_syntax_state;
     compare_tab.left_tokens_by_row.assign(compare_tab.model.rows.size(), {});
     compare_tab.right_tokens_by_row.assign(compare_tab.model.rows.size(), {});
+    compare_tab.right_tokens_alias_left_by_row.assign(compare_tab.model.rows.size(), 0);
     compare_tab.syntax_rows_tokenized = 0;
     compare_tab.syntax_highlighting_enabled = true;
     compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);

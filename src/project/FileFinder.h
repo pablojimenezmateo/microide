@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <filesystem>
 #include <optional>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -44,7 +45,14 @@ class FileFinder {
   const std::string& query() const { return query_.text(); }
   editor::SingleLineEditor& query_state() { return query_; }
   const editor::SingleLineEditor& query_state() const { return query_; }
-  const std::vector<FileFinderResult>& results() const { return results_; }
+  // A span over the live prefix of `results_storage_`, not the vector itself.
+  // The rows are overwritten in place on every keystroke and the tail is kept
+  // rather than destroyed, so the storage keeps its strings' capacity across
+  // refreshes; the vector's own size would be the high-water mark, not the
+  // answer. See AppendResult (TD-2026-08-06-156).
+  std::span<const FileFinderResult> results() const {
+    return std::span<const FileFinderResult>(results_storage_.data(), results_size_);
+  }
   // Files the finder can rank over, i.e. the denominator for the overlay's
   // "<shown> of <indexed>" summary.
   std::size_t indexed_file_count() const { return cached_entries_.size(); }
@@ -140,11 +148,25 @@ class FileFinder {
   // offset.
   bool AppendCacheEntry(std::string_view relative_path);
   void EnsureCacheBuilt();
+  // Write one result row, reusing the string already sitting at that slot.
+  //
+  // Ranking is allocation-free (it walks views into the candidate blob) and then
+  // this used to `clear()` and `push_back` up to 512 rows, so every keystroke
+  // freed 512 strings and allocated 512 more to show about twenty of them —
+  // ~490 allocations per keystroke, the last of `file_finder_type_query`'s
+  // original 13,140 (TD-2026-08-06-156). `assign` into the retained string is
+  // the same fix that took the Settings and Breakpoints rebuilds apart
+  // (TD-2026-08-06-159), and it is why the tail past `results_size_` is kept
+  // rather than resized away: a backspace grows the list back.
+  void AppendResult(std::string_view path, int score);
 
   const FileIndex* index_ = nullptr;
   editor::SingleLineEditor query_;
   std::vector<std::filesystem::path> recent_relative_paths_;
-  std::vector<FileFinderResult> results_;
+  // High-water storage. `results_size_` is how many of its rows are live; the
+  // rest keep their strings' capacity for the next refresh.
+  std::vector<FileFinderResult> results_storage_;
+  std::size_t results_size_ = 0;
   std::vector<CachedFileEntry> cached_entries_;
   // The candidate bytes, packed. Cleared (capacity retained) and refilled by a
   // rebuild, so a steady-state finder over a project whose index keeps moving
