@@ -546,7 +546,7 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
   OpenFile(path);
 
   editor::TextViewport* viewport = ActiveEditorViewport();
-  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
+  if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     for (std::size_t i = 0; i < context_.current_project_state.focused_group().open_tabs.size(); ++i) {
       const auto& tab = context_.current_project_state.focused_group().open_tabs[i];
       if (tab.kind == TabEntry::Kind::Editor && tab.path == normalized_path) {
@@ -561,7 +561,7 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
   // open failed (per-group tab cap reached, unreadable file, …) the fallback search
   // finds no matching tab and `viewport` still points at the previously-active tab —
   // relocating its caret would scroll/jump the wrong buffer.
-  if (viewport != nullptr && viewport->path().lexically_normal() == normalized_path) {
+  if (viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     viewport->MoveCursorTo(line, column);
   }
 }

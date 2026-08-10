@@ -1,5 +1,7 @@
 #include "workspace/persistence/WorkspacePersistenceBinaryInternal.h"
 
+#include "util/PathMatch.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -273,7 +275,7 @@ bool DecodeWorkspaceSessionRecord(std::span<const std::byte> input,
                    const bool already_present =
                        std::any_of(state->project_roots.begin(), state->project_roots.end(),
                                    [&](const std::filesystem::path& existing) {
-                                     return existing.lexically_normal() == normalized;
+                                     return util::SameAsNormalizedPath(existing, normalized);
                                    });
                    if (!already_present &&
                        state->project_roots.size() < kMaxWorkspaceProjectRoots) {

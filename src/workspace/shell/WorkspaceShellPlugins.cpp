@@ -1182,7 +1182,7 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
   // (the user typed) during the async hop, the edit is stale — drop it rather than
   // apply now-invalid coordinates over newer input.
   if (request.has_staleness_guard &&
-      (viewport->path().lexically_normal() != request.guard_path ||
+      (!util::SameAsNormalizedPath(viewport->path(), request.guard_path) ||
        viewport->content_revision() != request.captured_content_revision)) {
     return false;
   }
@@ -1275,7 +1275,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     }
     const std::filesystem::path normalized = path.lexically_normal();
     if (editor::TextViewport* active = ActiveEditableViewport();
-        active != nullptr && active->path().lexically_normal() == normalized) {
+        active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
       return active;
     }
     for (auto& group : context_.current_project_state.editor_groups) {
@@ -1285,7 +1285,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
         }
         auto& state = *tab.editor_state;
         if (!state.needs_restore &&
-            state.viewport.path().lexically_normal() == normalized) {
+            util::SameAsNormalizedPath(state.viewport.path(), normalized)) {
           return &state.viewport;
         }
       }
@@ -1557,7 +1557,7 @@ bool IsPathOpenInEditorState(const ProjectWorkspaceState& state,
     for (const auto& tab : group.open_tabs) {
       if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
           !tab.editor_state->needs_restore &&
-          tab.editor_state->viewport.path().lexically_normal() == normalized_path) {
+          util::SameAsNormalizedPath(tab.editor_state->viewport.path(), normalized_path)) {
         return true;
       }
     }
@@ -1750,7 +1750,7 @@ void WorkspaceShell::PublishPluginGhostText(
     return;
   }
   const std::filesystem::path path = viewport->path().lexically_normal();
-  if (!request.path.empty() && request.path.lexically_normal() != path) {
+  if (!request.path.empty() && !util::SameAsNormalizedPath(request.path, path)) {
     return;
   }
   // Resolve the anchor (1-based; 0 => the live caret) and reject anything that no

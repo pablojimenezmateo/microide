@@ -206,7 +206,7 @@ void WorkspaceShell::InvalidateMergeTabsForPath(const std::filesystem::path& pat
     if (!tab.merge.has_value() || tab.merge->output_path.empty()) {
       continue;
     }
-    if (tab.merge->output_path.lexically_normal() != normalized_path) {
+    if (!util::SameAsNormalizedPath(tab.merge->output_path, normalized_path)) {
       continue;
     }
     std::error_code exists_error;

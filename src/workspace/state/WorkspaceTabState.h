@@ -373,21 +373,14 @@ struct EditorPreferences {
 // Whether an editor tab's view is showing `normalized_path`, which the caller
 // must already have in lexically-normal form.
 //
-// Both guards matter, and the second is the one that pays (TD-2026-08-06-159).
-// `normalized_path` is normal, so a view path that compares equal to it as text
-// is the same file and needs no normalizing — but a scan over open tabs is mostly
-// *mismatches*, and normalizing each of those to reject it is ~12 allocations
-// spent to learn nothing. A path whose own text is already normal cannot become
-// `normalized_path` by normalizing, so the string compare has already answered
-// for it too. Only an unusually spelled path reaches `lexically_normal()`.
+// This used to carry its own byte-identical copy of `util::SameAsNormalizedPath`'s
+// two guards (TD-2026-08-06-159), written before that helper existed. The reason
+// they matter lives with the helper now: a scan over open tabs is mostly
+// mismatches, and normalizing each candidate to reject it is ~12 allocations
+// spent to learn nothing.
 [[nodiscard]] inline bool EditorViewPathIs(const TabEntry::EditorTabState& editor_state,
                                            const std::filesystem::path& normalized_path) {
-  const std::filesystem::path& view_path = EditorViewPathRef(editor_state);
-  if (view_path == normalized_path) {
-    return true;
-  }
-  return util::PathTextNeedsNormalizing(view_path.native()) &&
-         view_path.lexically_normal() == normalized_path;
+  return util::SameAsNormalizedPath(EditorViewPathRef(editor_state), normalized_path);
 }
 
 }  // namespace microide::workspace

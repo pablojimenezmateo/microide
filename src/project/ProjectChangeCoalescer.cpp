@@ -2,12 +2,11 @@
 
 #include <algorithm>
 
+#include "util/PathMatch.h"
+
 namespace microide::project {
 namespace {
 
-bool SameRelativePath(const std::filesystem::path& lhs, const std::filesystem::path& rhs) {
-  return lhs.lexically_normal() == rhs.lexically_normal();
-}
 
 // Cap on distinct pending file changes before the coalescer collapses to a single
 // full-tree rescan. A file-change flood (a build writing thousands of files, a
@@ -73,10 +72,19 @@ void ProjectChangeCoalescer::MergeFileChange(ProjectFileChange change) {
     pending_.tree_rescan_requested = true;
     return;
   }
+  // Normalized ONCE, outside the scan. This comparison used to normalize both
+  // sides per candidate -- ~24 allocations to answer "different file", up to 1024
+  // times per change, on the watcher thread while a build writes files. Watcher
+  // paths are already normal in practice, so `SameAsNormalizedPath` answers a
+  // mismatch with a string compare and normalizes nothing at all.
+  const std::filesystem::path normalized_relative =
+      util::PathTextNeedsNormalizing(change.relative_path.native())
+          ? change.relative_path.lexically_normal()
+          : change.relative_path;
   auto existing = std::find_if(pending_.file_changes.begin(), pending_.file_changes.end(),
                                [&](const ProjectFileChange& candidate) {
-                                 return SameRelativePath(candidate.relative_path,
-                                                         change.relative_path);
+                                 return util::SameAsNormalizedPath(candidate.relative_path,
+                                                                   normalized_relative);
                                });
   if (existing == pending_.file_changes.end()) {
     pending_.file_changes.push_back(std::move(change));
