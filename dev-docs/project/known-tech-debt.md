@@ -338,6 +338,40 @@ when the tail merely drifted past a loose envelope. All three cases are covered
 by `PerfBaseline/NamesTailOnlyAllocationDivergence`, using this entry's own
 numbers (`cold_startup_no_project`, 681 → 9,364 with p50 matching exactly).
 
+### TD-2026-08-10-174 — `lexically_normal()` is ~12 allocations and the codebase calls it 416 times, three of them on paths that run per keystroke. OPEN.
+
+Three independent fixes in the 2026-08-10 pass were the same one line:
+
+| site | runs | fix |
+| --- | --- | --- |
+| `FileUriForPath` | 3x per keystroke (LSP sync) | guard with `util::PathTextNeedsNormalizing` |
+| `BreakpointStore::PathKey` | per applied edit | same guard, plus a view-returning form for the probe |
+| `RelativePathLabel` (2026-08-07) | 2x per tab per tab-strip rebuild | same guard, plus `NormalizedPathEqualsOrWithin` |
+
+`lexically_normal()` costs a fresh `std::filesystem::path` plus a component list
+holding a string per component — ~12 allocations — and it is a **no-op** for a
+path whose text is already normal, which is nearly every path the editor holds:
+the project catalog, the git status ingress and the branch-review store all
+normalize once on the way in. `util::PathTextNeedsNormalizing` is the
+allocation-free scan that confirms it, and it has now paid for itself three
+times, found one at a time by tracing three unrelated phases.
+
+`rg -n 'lexically_normal' src | wc -l` says **416**. Nobody has looked at the
+other 413. The ones that matter are the ones on a per-keystroke, per-frame or
+per-item path; the ones at file-open or project-activation are fine as they are
+and should be left alone.
+
+**Method, and why it is not just "add the guard everywhere"**: the guard is only
+correct where the caller wants the *normalized text*, not a normalized `path`
+object, and where the fallback still runs for an unusually spelled input. Two of
+the three fixes also needed a second guard on the other side of the comparison
+(`RelativePathLabel` needed the root to be normal too, and the first attempt at
+it guarded the wrong side — skipping normalization when the two paths compare
+equal is nearly worthless, because a scan is mostly mismatches and every mismatch
+still normalised in order to be rejected). Rank the hits by how often the call
+runs, confirm with the phase tracer, and read
+[159](#td-2026-08-06-159)'s tab-strip section before starting.
+
 ### TD-2026-08-10-173 — the retention gate reported a 476 % regression on an unchanged binary, because a median over a settling series is not a measurement at five iterations. [RESOLVED 2026-08-10.]
 
     editor_indent_guides_paint  p50_net_heap_bytes  59,735 -> 297,236  (+398 %, tolerance +10 %)   --iterations=5
@@ -532,7 +566,7 @@ impossibly fast, so any path that makes a scenario stop doing its work is
 invisible by construction. The fixture guard was one such path; a scenario whose
 `Measure` body silently early-returns is another, and nothing covers it yet.
 
-### TD-2026-08-10-169 — `switch_and_idle` retains 10.4 % more heap than its baseline, and no code change explains it. OPEN.
+### TD-2026-08-10-169 — `switch_and_idle` retains 10.4 % more heap than its baseline, and no code change explains it. [RESOLVED 2026-08-10 — the reading was the instrument, and the true value is a quarter of the baseline.]
 
     switch_and_idle  p50_net_heap_bytes  113,417 -> 125,164  (+10.4 %, tolerance +10 %)
 
@@ -551,6 +585,31 @@ the metric across the isolation commit — and neither has been done.
 Do not rebaseline it before that: a retention gate that gets widened whenever it
 trips is [139](#td-2026-08-06-139)'s exact failure, and this scenario's whole job
 is catching a project switch that does not free what it opened.
+
+**Resolved 2026-08-10, and the caution above was right for the wrong reason.**
+[173](#td-2026-08-10-173) is the mechanism: `p50_net_heap_bytes` is a median over
+a settling series, so its value depends on how many iterations were taken. At ten
+iterations, on the same machine, the series is
+
+```
+1,166,649  35,589  29,935  30,414  30,414  36,607  30,414  30,414  29,934  30,414
+```
+
+— p50 **30,414**, deterministic to the byte across five of the ten samples. Not
+125,164, and not the committed 113,417 either. So the answer to "does something
+retain ~12 KB more per project switch" is no; what moved was the sample the
+median landed on.
+
+The gate is rebaselined **down**, 113,417 → 30,414, which is the opposite of the
+widening this entry warned about: it tightens the scenario's whole point by 3.7x.
+A retention regression that would have hidden inside the old envelope now trips
+it.
+
+**Generalisable**: the entry's two hypotheses were "a real regression" and
+"recorded in another regime", and the actual answer was a third — the metric is
+not a scalar, it is a function of the iteration count, and neither the baseline
+nor the failure line said which one produced it. That is now recorded in the
+baseline (`iterations`) and enforced by 173's guard.
 
 ### TD-2026-08-07-167 — nothing records that a scenario changed what it measures, so cross-release perf claims are computed from incomparable numbers. [RESOLVED 2026-08-10.]
 
@@ -840,16 +899,80 @@ Two more moved without being on the list, from the same shared fixes:
   per-frame chrome (status bar model, bottom-panel tab strip, ordered sidebar
   views), no site above 17 %.
 
-**Still open, found by this pass and deliberately not taken:**
+**Still open, found by this pass and deliberately not taken** — both closed
+2026-08-10, and neither needed the guard the entry was dreading:
 
 - `LspService::ClearLspCodeLensesForFile` builds a `FileUriForPath` per keystroke
-  before discovering there is no lens to clear. The guard has to reason about
-  which in-flight responses the generation bump is protecting — `NextOverlayGeneration`
-  *creates* the entry, so the obvious "nothing tracked yet" test is one-shot.
-  Worth ~290 allocations per edit-burst iteration.
-- The compare token cache's duplicate vector, above.
+  before discovering there is no lens to clear. The entry proposed a guard that
+  has to reason about which in-flight responses the generation bump is protecting
+  (`NextOverlayGeneration` *creates* the entry, so the obvious "nothing tracked
+  yet" test is one-shot). **The URI was the cost, not the call.**
+  `FileUriForPath` ran `lexically_normal()` — ~12 allocations, a fresh path plus a
+  component list holding a string per component — plus `generic_string()`, on a
+  path the editor normalized when it opened the file, three times per keystroke
+  (inlay generation, code-lens generation, open-document resolution). Guarding it
+  with `util::PathTextNeedsNormalizing`, the allocation-free scan, leaves the
+  common case at the one allocation the result needs and makes the clear paths
+  free, so the in-flight-response reasoning never has to be done.
+- The compare token cache's duplicate vector, above. One flag beside the two
+  caches marks the rows whose right tokens ARE their left tokens, so the
+  predicate stays where the tokenizer already computes it (it needs both lines'
+  text and both syntax states) instead of being re-derived per visible row per
+  frame in a render TU, and the two read sites are pointer assignments:
+  `diff.next_hunk_burst` 23,493 → 12,516 (−46.7 %).
 - `internal::HasGitMarker` still shows up on every frame-pumping phase; that is
   [158](#td-2026-08-06-158), unchanged.
+
+#### 2026-08-10 pass: the detection nobody asked for
+
+Pointing the tracer at `first_line_edit.enter_backspace_burst` — one of the two
+leads above — found something larger sitting underneath it. **25 % of the phase**
+was `SignatureDetectHead` materialising up to 64 owned strings before every
+`DetectDefinitionId` call, from both `TextViewport::language_id()` and
+`EnsureInitialHighlightState()`, once per content revision, i.e. per keystroke.
+The signature scan that reads them runs only when a filename match is
+**ambiguous**, which for an ordinary `.cpp`/`.py`/`.rs` path is never. So the
+head was built and thrown away, every keystroke, ~65 allocations a time.
+
+`DetectDefinitionId` now takes the `LineSpan` and reads a bounded head line
+through `LineWindow` into one reused scratch buffer at the point the scan needs
+it — so the ambiguous case allocates nothing either, rather than 65. Combined
+with the `FileUriForPath` guard:
+
+    first_line_edit_latency_large_file    13,189 ->  8,909   -32.5 %
+    editor_typing_minified_line            3,164 ->  2,196   -30.6 %
+    mid_file_edit_latency_large_file      11,024 ->  8,257   -25.1 %
+    typing_small_file                        261 ->    224   -14.2 %
+    typing_large_file                        270 ->    233   -13.9 %
+    editor_scroll_only_no_content_bump     8,546 ->  7,926    -7.3 %
+    editor_indent_guides_paint             9,200 ->  8,734    -5.1 %
+    editor_fold_viewport_refresh          12,984 -> 12,390    -4.6 %
+    editor_sticky_scroll_scroll           13,342 -> 12,723    -4.6 %
+    editor_render_whitespace_paint        10,938 -> 10,450    -4.5 %
+
+**A third shape for the list.** The two the entry names are "work computed before
+the guard that discards it" and "a value copied N times". This is neither: it is
+**an argument built eagerly for a callee that usually does not look at it**. Grep
+for a function that materialises a container to pass as a parameter, then read
+the callee for an early return that precedes the first use of it —
+`resolve_from_matches` returns `matches.front()` before touching `lines` whenever
+the filename match is unambiguous.
+
+**And the same shape once more, from the same trace.**
+`BreakpointStore::ShiftForAppliedEdit` runs on every applied edit and returns
+immediately when the file has no breakpoints — the common case — but built its
+lookup key with `PathKey`, i.e. `lexically_normal().generic_string()`: ~13
+allocations to discover there was nothing to shift, ~720 per edit-burst phase.
+`by_path_` already hashes transparently, so a probe wants a view and not a
+string, and on an already-normal path the key IS the path's own text. That is
+the third independent site in this pass whose fix was
+`util::PathTextNeedsNormalizing` — `FileUriForPath`, `RelativePathLabel`
+([the 2026-08-07 tab-strip pass](#td-2026-08-06-159)) and now this one. **Grep
+`lexically_normal` before the next pass**: every remaining call on a per-keystroke
+or per-frame path is a candidate, and the guard is allocation-free.
+
+    first_line_edit_latency_large_file     8,909 -> 8,333   -6.5 %
+    mid_file_edit_latency_large_file       8,256 -> 7,681   -7.0 %
 
 **What is NOT covered by this pass**: the entry's title counts 63 unread
 *phases*, and the table was the ranked subset. The phases below
@@ -3037,7 +3160,7 @@ re-records the suite. Every scenario now starts cold, so wall p95/max and
 a warm page cache from whatever ran before them. That is the number becoming
 true, not a regression.
 
-### TD-2026-08-06-156 — the finder deep-copies up to 512 result rows on every keystroke to render about twenty of them. PARTIALLY RESOLVED 2026-08-06 — two thirds removed; the rest needs a lifetime change or a smaller cap.
+### TD-2026-08-06-156 — the finder deep-copies up to 512 result rows on every keystroke to render about twenty of them. [RESOLVED 2026-08-10 — and neither of the two exits this entry proposed was needed.]
 
 Found by `file_finder_type_query`, the scenario added with
 [155](#td-2026-08-06-155) to cover the finder's interactive path for the first
@@ -3080,6 +3203,27 @@ broad query. Two ways out, both with a real cost:
 Neither is urgent now that the per-keystroke cost is a third of what it was, and
 `file_finder_type_query` gates both phases exactly (p50 == max on every
 iteration), so a regression here is now visible.
+
+**Resolved 2026-08-10 by a third option this entry did not consider**, and it is
+the shape [159](#td-2026-08-06-159)'s tail pass had already named three times:
+the rows were `clear()`ed and re-`push_back`ed, so the cost was not *copying* 512
+strings, it was **freeing 512 and allocating 512 more**. Overwriting each slot
+with `assign` reuses the buffer that is already there.
+
+    file_finder_type_query.type_and_rank        4,672 ->   538   -88.5 %
+    file_finder_type_query.backspace_rescan     1,861 ->   288   -84.5 %
+    file_finder_cold.open_finder                  577 ->    66   -88.6 %
+
+The one subtlety is the tail: `results_` keeps its rows past the live count
+rather than resizing down, because a **backspace grows the list back** and a
+resize would free exactly the buffers the next keystroke needs. `results()`
+therefore returns a `std::span` over the live prefix — the vector's own size is
+the high-water mark, not the answer — which is the change the 45 call sites saw.
+
+So the cap stays at 512 and the list stays scrollable (no `string_view` lifetime
+change, no smaller cap), because materialising it costs nothing after the first
+refresh. Both proposed exits traded a real property away to avoid a cost that
+turned out to be avoidable outright.
 
 ### TD-2026-08-06-155 — a perf scenario appended to a fixture in the repository 1,361 times, and every diff scenario reading that tree had been measuring the accumulation. [RESOLVED — append leak 2026-08-06; the index mutation 2026-08-10, by a manifest rather than a sandbox.]
 
