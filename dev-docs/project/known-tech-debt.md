@@ -330,6 +330,36 @@ exactly while its max is 13x should be a loud, named condition in the harness
 human notices while chasing something else. Filed as part of 167's
 `measurement_revision` work rather than separately.
 
+### TD-2026-08-10-172 — `git_sidebar_activate`'s timing baseline describes a fixture that no longer exists. OPEN.
+
+The scenario names `tests/perf/fixtures/git_status_project`. Nothing produced
+that tree: `generate_git_workstation_fixtures.sh` builds six git fixtures and not
+that one — its own comment says "same layout as **git_status_project**", so the
+tree was renamed or dropped and the scenario was never repointed. The fixture
+guard then skipped it QUIETLY on every run, while its committed baseline stayed
+in the set and got differenced across releases (it is one of the three "regressions"
+[167](#td-2026-08-07-167) had to explain away for v2.9.0).
+
+Found by [170](#td-2026-08-10-170)'s one-policy skip, which is the entry's point:
+the scenario had been not-running for long enough that nobody could say when it
+stopped.
+
+**Done**: the generator now builds `git_status_project` (200 tracked files, 40
+modified, 10 untracked), the scenario runs, and its **allocation** half is
+rerecorded — 733 → 2,409, deterministic to the sample (p50 == p95 == max), which
+is the property that scenario's comment fought for.
+
+**Open**: the wall/cpu half of its baseline is still the old tree's, carried over
+by `--update-baseline=deterministic` because this session's machine was thermally
+throttled (calibration moved 4x mid-run). Rerecord it with a full
+`--update-baseline` on an idle runner.
+
+**Also open, and larger**: the git fixtures are the one family with no ctest
+setup. The other three generators are `FIXTURES_SETUP` tests with `--ensure`;
+this one is a shell script a human has to remember to run, it has no `.sha256`
+contract, and it `rm -rf`s seven repositories every time. A fresh checkout cannot
+run any git-workstation scenario. Give it `--ensure` semantics and wire it in.
+
 ### TD-2026-08-10-171 — two architecture tests passed only on an idle machine. [RESOLVED 2026-08-10.]
 
     ArchitectureInvariants/PluginRules     221 s under TSAN, machine idle

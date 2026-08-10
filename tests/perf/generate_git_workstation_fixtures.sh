@@ -37,6 +37,30 @@ write_untracked_files() {
   done
 }
 
+# Modest tracked status set with a working-tree delta, for `git_sidebar_activate`
+# — the scenario that measures activating the Source Control view and running its
+# first `git status`. This tree is what that scenario has always named, and this
+# script never produced it: the fixture was simply absent, and the scenario's
+# fixture guard skipped QUIETLY while its baseline sat in the committed set and
+# got differenced across releases. It only surfaced once a skip started failing
+# the run (TD-2026-08-10-170). Note the comment three blocks down that already
+# refers to "the same layout as git_status_project".
+status_project="${ROOT}/git_status_project"
+git_init_repo "$status_project"
+write_tracked_files "$status_project" 200 "status"
+git -C "$status_project" add -A
+git -C "$status_project" commit -q -m "initial: 200 tracked files"
+# `seq -w 1 200 | head -n 40`, not `seq -w 1 40`: -w pads to the width of the
+# LARGEST value, so the short form writes file_01.cpp while the tracked files are
+# file_001.cpp — 40 new untracked files instead of 40 modified tracked ones, and
+# `git status` reports the opposite of what this fixture is for.
+for i in $(seq -w 1 200 | head -n 40); do
+  bucket="status_$(( (10#$i - 1) / 50 ))"
+  printf '\n// working-tree delta %s\n' "$i" >> "$status_project/$bucket/file_${i}.cpp"
+done
+write_untracked_files "$status_project" 10 "status"
+echo "wrote $status_project"
+
 # Large tracked status set (5 000 files).
 large_status="${ROOT}/git_large_status_project"
 git_init_repo "$large_status"
