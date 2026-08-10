@@ -223,6 +223,11 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
     rss_after_open = ReadProcessSample();
   });
   context.Measure("repo_open.idle_500ms", [&] {
+    // perf-measure-waits-on-clock: the fixed idle IS what this phase measures --
+    // what an idle editor does with 500 ms and how much resident set it keeps.
+    // The shell reports Idle, so Wait sleeps in 20 ms slices without allocating.
+    // Three runs of one unchanged binary read p50_allocations 331 / 331 / 331
+    // (TD-2026-08-10-179).
     (void)context.Wait(std::chrono::milliseconds(500));
     rss_after_idle = ReadProcessSample();
   });

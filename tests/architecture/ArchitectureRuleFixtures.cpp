@@ -721,6 +721,56 @@ void RunPerfMeasureBodyRuleFixtures() {
          "perf-measure rule must fail loudly when it finds no Measure body to scan");
 }
 
+void RunPerfMeasureWallClockWaitRuleFixtures() {
+  // Same four states as the sibling rule above, for the same reason: this one has
+  // an opt-out too, and an opt-out is the usual way a lint quietly stops gating.
+  TemporaryDirectory scenarios_dir;
+  const std::filesystem::path& root = scenarios_dir.path();
+  std::filesystem::create_directories(root / "tests/perf");
+  const auto scenario = root / "tests/perf/ExampleScenarios.cpp";
+
+  // Negative control: the shipped defect — linter_on_save's gated phase was a
+  // wall-clock deadline loop, so its allocation count counted poll iterations.
+  WriteFile(scenario,
+            "void RunThing(ScenarioContext& context) {\n"
+            "  context.Measure(\"linter.wait_diagnostics\", [&]() {\n"
+            "    (void)context.WaitForDiagnostics(source, std::chrono::milliseconds(120));\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.size() == 1,
+         "perf-wait rule must flag a wall-clock wait inside a Measure body");
+
+  // Positive control: the fix — the wait happens outside the window and the body
+  // measures the fixed work the wait was waiting for.
+  WriteFile(scenario,
+            "void RunThing(ScenarioContext& context) {\n"
+            "  const bool ready = context.WaitForDiagnostics(source, kTimeout);\n"
+            "  context.Measure(\"linter.apply\", [&]() {\n"
+            "    context.PumpFrames(3);\n"
+            "  });\n"
+            "  if (!ready) context.SkipScenario(\"no diagnostics\");\n"
+            "}\n");
+  Expect(CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.empty(),
+         "perf-wait rule must accept a wait done OUTSIDE the measured window");
+
+  // Positive control for the legitimate case: a wait that provably allocates
+  // nothing while spinning, or an idle that IS the measurement. It declares itself.
+  WriteFile(scenario,
+            "void RunThing(ScenarioContext& context) {\n"
+            "  context.Measure(\"repo_open.idle_500ms\", [&]() {\n"
+            "    // perf-measure-waits-on-clock: the fixed idle IS the measurement.\n"
+            "    (void)context.Wait(std::chrono::milliseconds(500));\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.empty(),
+         "perf-wait rule must honor a declared perf-measure-waits-on-clock exemption");
+
+  // Loud-blind guard: no Measure body at all means the rule scans nothing.
+  WriteFile(scenario, "void RunThing(ScenarioContext& context) { context.PumpFrames(2); }\n");
+  Expect(!CheckPerfMeasureBodiesDoNotWaitOnWallClock(root).violations.empty(),
+         "perf-wait rule must fail loudly when it finds no Measure body to scan");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -736,6 +786,7 @@ void RunAllRuleFixtures() {
   RunViewportFiletypeMemoRuleFixtures();
   RunPerfHarnessIsolationOrderRuleFixtures();
   RunPerfMeasureBodyRuleFixtures();
+  RunPerfMeasureWallClockWaitRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

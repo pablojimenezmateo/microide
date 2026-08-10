@@ -1241,6 +1241,12 @@ void RegisterBuiltInScenarios() {
             }
             bool search_finished = false;
             context.Measure("search_first_result.search_to_first_result", [&] {
+              // perf-measure-waits-on-clock: WaitForProjectSearchFinished is written
+              // NOT to pump the shell while spinning and to drain exactly once after
+              // completion, precisely so it can sit inside a measured window; its
+              // spin is a flag check plus sleep_for and allocates nothing. Verified
+              // the way TD-2026-08-10-179 prescribes -- three runs of one unchanged
+              // binary read p50_allocations 20,149 / 20,149 / 20,149.
               context.StartSearch("symbol_09999");
               search_finished = context.WaitForProjectSearchFinished(std::chrono::seconds(15));
               context.PumpFrames(2);

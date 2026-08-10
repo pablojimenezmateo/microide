@@ -68,6 +68,13 @@ void RunPerfHarnessIsolationOrderRuleFixtures();
 // blind case (no Measure body found at all).
 void RunPerfMeasureBodyRuleFixtures();
 
+// Negative + positive control for CheckPerfMeasureBodiesDoNotWaitOnWallClock:
+// a measured phase whose body blocks on a wall-clock poll loop gates the runner
+// rather than the code, plus the legitimate exemption (a wait that provably does
+// not allocate while spinning, or an idle that IS the measurement) and the blind
+// case (TD-2026-08-10-179).
+void RunPerfMeasureWallClockWaitRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

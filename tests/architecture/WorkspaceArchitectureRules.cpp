@@ -29,6 +29,8 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckPublicScriptsUseRunChecksForCtest", CheckPublicScriptsUseRunChecksForCtest},
       {"CheckPerfMeasureBodiesDoNotBuildTheirOwnInput",
        CheckPerfMeasureBodiesDoNotBuildTheirOwnInput},
+      {"CheckPerfMeasureBodiesDoNotWaitOnWallClock",
+       CheckPerfMeasureBodiesDoNotWaitOnWallClock},
       {"CheckPerfHarnessIsolatesBeforeConstructingTheShell",
        CheckPerfHarnessIsolatesBeforeConstructingTheShell},
       {"CheckRenderSurfaceStateAccess", CheckRenderSurfaceStateAccess},

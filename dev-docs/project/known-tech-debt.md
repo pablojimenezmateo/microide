@@ -319,7 +319,7 @@ a gate on the runner, not on the code. `WaitForDiagnostics`,
 `WaitForFileIndexPath` and `WaitForProjectSearchFinished` all have this shape, and
 only this one has been audited. **Filed as TD-2026-08-10-180.**
 
-### TD-2026-08-10-180 — the other two `WaitFor*` helpers have never been checked for the trap 179 found. OPEN.
+### TD-2026-08-10-180 — the other two `WaitFor*` helpers have never been checked for the trap 179 found. [RESOLVED 2026-08-10 — clean, and the check is now a lint.]
 
 [179](#td-2026-08-10-179) found one measured phase whose body was a wall-clock
 poll loop, making its allocation count a function of machine load rather than of
@@ -341,6 +341,37 @@ waiting FOR, bumping `measurement_revision`.
 Also worth checking in the same pass: a scenario whose wait always TIMES OUT is
 measuring nothing at all, which is how 179 sat undetected. A wait whose success is
 load-bearing needs a `SkipScenario()` on failure, not a `(void)` cast.
+
+#### Audited 2026-08-10: `linter_on_save` was the only one
+
+There are exactly three measured bodies in the suite that block, and the other
+two are clean **by construction**, which is the useful part of the result:
+
+- `search_first_result.search_to_first_result` wraps
+  `WaitForProjectSearchFinished`. That helper deliberately does **not** pump the
+  shell while spinning and drains exactly once after completion — its own comment
+  says both, and gives the determinism reason. Its spin is a flag check plus
+  `sleep_for`, so it allocates nothing. Three runs of one unchanged binary:
+  **20,149 / 20,149 / 20,149**.
+- `repo_open.idle_500ms` wraps `context.Wait(500ms)`, where the fixed idle IS the
+  measurement. The shell reports `Idle`, so `Wait` sleeps in 20 ms slices without
+  allocating. Three runs: **331 / 331 / 331**.
+- `WaitForFileIndexPath` pumps frames per poll and WOULD have the defect, but no
+  call site is inside a `Measure(...)`; all five sit in setup.
+
+**The check is now mechanical rather than a one-time audit.**
+`CheckPerfMeasureBodiesDoNotWaitOnWallClock` is a hard-fail architecture rule,
+built as a sibling of `CheckPerfMeasureBodiesDoNotBuildTheirOwnInput` and sharing
+its shape: it extracts each `Measure(...)` lambda body, flags `WaitFor*(`,
+`context.Wait(` or `sleep_for(`, honours an in-body
+`perf-measure-waits-on-clock: <reason>` exemption, and fails loudly if it finds no
+`Measure` body at all rather than reporting green while blind. Four control
+fixtures cover the defect, the fix, the declared exemption and the blind case; the
+rule was also verified against the real tree by reintroducing 179's exact line,
+which it flags at `tests/perf/PerfMain.cpp:820`.
+
+The two clean cases carry the exemption comment with their three-run numbers in
+it, so the claim is checkable where a reader is already looking.
 
 ### TD-2026-08-10-178 — the allocation tracer's "top sites" table was a ranking of the earliest sites. [RESOLVED 2026-08-10.]
 

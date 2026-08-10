@@ -322,6 +322,92 @@ RuleResult CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(
   return result;
 }
 
+RuleResult CheckPerfMeasureBodiesDoNotWaitOnWallClock(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "perf Measure bodies do not wait on the wall clock";
+  result.hard_fail = true;
+  // TD-2026-08-10-179. `linter_on_save`'s gated phase was
+  // `Measure("linter.wait_diagnostics", [&]{ WaitForDiagnostics(source, 120ms); })`.
+  // Those helpers poll to a deadline and pump a frame per iteration, so the
+  // phase's allocation count is HOW MANY TIMES A WALL-CLOCK LOOP GOT ROUND — a
+  // duration wearing an allocation's clothes, gated at the 10 % tolerance the
+  // suite reserves for the one metric it calls byte-identical run to run. Three
+  // runs of an unchanged binary read 3,561 / 3,644 / 3,711 against a 2,745
+  // baseline. Underneath, the wait had never once succeeded: nothing here lints
+  // JavaScript, so every run since the scenario was written measured the timeout.
+  //
+  // Sibling of CheckPerfMeasureBodiesDoNotBuildTheirOwnInput and deliberately the
+  // same shape: a narrow pattern inside a `Measure(...)` lambda body, with a
+  // greppable in-body exemption for the case that is genuinely fine.
+  //
+  // The legitimate case exists — `WaitForProjectSearchFinished` is written NOT to
+  // pump while spinning precisely so it can sit inside a measured window, and
+  // `repo_open.idle_500ms` measures a fixed idle on purpose. Both are
+  // byte-identical across runs. They opt out by naming themselves: put
+  // `perf-measure-waits-on-clock:` and a reason in a comment inside the body,
+  // and confirm the claim the way the entry says — three runs of one unchanged
+  // binary, comparing the phase's p50_allocations.
+  const std::filesystem::path perf_dir = repo_root / "tests/perf";
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(perf_dir, dir_ec) || dir_ec) {
+    return result;
+  }
+  // The harness's own blocking helpers, plus a raw sleep. Named directly rather
+  // than by a `Wait` substring so an unrelated identifier does not trip it.
+  const std::regex waits(
+      R"((\bWaitFor[A-Za-z]*\s*\()|(\bcontext\.Wait\s*\()|(std::this_thread::sleep_for\s*\())");
+  std::size_t measure_bodies_seen = 0;
+  for (const std::filesystem::path& path : SourceFilesUnder(perf_dir)) {
+    const std::string text = ReadText(path);
+    for (const std::size_t call : FindCodeLiteralOccurrences(text, "Measure(")) {
+      const std::size_t capture = text.find(']', call);
+      if (capture == std::string::npos) {
+        continue;
+      }
+      const std::size_t brace = text.find('{', capture);
+      if (brace == std::string::npos) {
+        continue;
+      }
+      const std::optional<std::string> body = ExtractBraceDelimitedBody(text, brace);
+      if (!body.has_value()) {
+        continue;
+      }
+      ++measure_bodies_seen;
+      if (body->find("perf-measure-waits-on-clock:") != std::string::npos) {
+        continue;
+      }
+      std::smatch match;
+      if (!std::regex_search(*body, match, waits)) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = LineNumberAt(text, brace),
+          .message = "a Measure(...) body must not block on the wall clock (WaitFor*, "
+                     "context.Wait, sleep_for): the phase's allocation count then counts poll "
+                     "iterations, so it moves with machine load and not with any code, while "
+                     "being gated as a deterministic metric. Wait OUTSIDE the window and measure "
+                     "the fixed work the wait was waiting for -- or, if the wait provably "
+                     "allocates nothing while spinning, say so in the body with a "
+                     "`perf-measure-waits-on-clock: <reason>` comment and prove it with three "
+                     "runs of one unchanged binary (TD-2026-08-10-179)",
+      });
+    }
+  }
+  // Loud-missing-target guard, same reasoning as the sibling rule: a rule that
+  // found no Measure body is blind, not passing.
+  if (measure_bodies_seen == 0) {
+    result.violations.push_back(Violation{
+        .path = perf_dir,
+        .line = 1,
+        .message = "found no Measure(...) lambda body under tests/perf; this rule now scans "
+                   "nothing and cannot fail (TD-2026-08-10-179)",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckPerfHarnessIsolatesBeforeConstructingTheShell(
     const std::filesystem::path& repo_root) {
   RuleResult result;
