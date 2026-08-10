@@ -7,6 +7,7 @@
 #include <cstdlib>
 #include <execinfo.h>
 #include <mutex>
+#include <vector>
 #include <new>
 
 namespace {
@@ -75,7 +76,19 @@ const std::size_t g_big_alloc_threshold = [] {
 // allocate -- it runs inside operator new.
 constexpr std::size_t kTraceFrames = 24;
 constexpr std::size_t kTraceSkipFrames = 1;  // operator new itself
-constexpr std::size_t kTraceBuckets = 1024;  // power of two, mask-indexed
+// Power of two, mask-indexed. 1024 was not enough: a phase that drives a whole
+// project switch presents ~25,000 allocations from far more than a thousand
+// distinct 24-frame stacks, and the table filled after the first 1024 of them.
+// That is worse than a small table -- it is a WRONG one. Once full, every later
+// site is dropped whole, so the printed "most frequent first" ranking is a
+// ranking of the sites that happened to appear EARLIEST, and the phase's real
+// top site can be missing from it entirely. Reading such a table is how a sweep
+// concludes a phase is clean.
+//
+// At ~224 bytes a bucket this is ~14 MB of BSS in the perf harness build only,
+// and BSS pages are faulted on first touch, so a run that fills 3,000 buckets
+// pays for 3,000.
+constexpr std::size_t kTraceBuckets = 65536;
 
 struct TraceBucket {
   std::uint64_t hash = 0;
@@ -168,8 +181,8 @@ void RecordAllocationSite(std::size_t size) {
   }
   const int begin = static_cast<int>(kTraceSkipFrames);
   // FNV-1a over the return addresses. Two different stacks colliding would merge
-  // two sites into one row; at 1024 buckets over a handful of real sites that is
-  // not a risk worth a second hash for.
+  // two sites into one row; over a 64-bit hash and thousands of real sites that
+  // is not a risk worth a second hash for.
   std::uint64_t hash = 1469598103934665603ULL;
   for (int i = begin; i < captured; ++i) {
     auto address = reinterpret_cast<std::uintptr_t>(frames[i]);
@@ -276,11 +289,24 @@ void Allocations::DumpTracedAllocationSites() {
                  "allocated\n",
                  g_trace_phase_filter);
   }
+  // Everything below allocates (the index vector, and fprintf's own buffering),
+  // and RecordAllocationSite holds the SAME non-recursive mutex this function is
+  // about to take. Without whole-run phase scoping that is a self-deadlock, not a
+  // miscount. Raise the existing recursion guard for the whole dump.
+  const bool outer_in_trace = t_in_trace;
+  t_in_trace = true;
+  const struct TraceGuard {
+    bool restore;
+    ~TraceGuard() { t_in_trace = restore; }
+  } trace_guard{outer_in_trace};
+
   const std::lock_guard<std::mutex> guard(g_trace_mutex);
   // Index the non-empty buckets rather than sorting the table: TraceBucket is
-  // ~220 bytes and this runs after a measured run, but a std::sort over 1024 of
-  // them would move a quarter of a megabyte for no reason.
-  std::size_t order[kTraceBuckets];
+  // ~220 bytes, and a std::sort over the table itself would move megabytes for no
+  // reason. Heap and not a stack array: kTraceBuckets std::size_t is half a
+  // megabyte, which would blow a default thread stack.
+  static std::vector<std::size_t> order;
+  order.assign(kTraceBuckets, 0);
   std::size_t used = 0;
   std::uint64_t total = 0;
   for (std::size_t i = 0; i < kTraceBuckets; ++i) {
@@ -295,9 +321,10 @@ void Allocations::DumpTracedAllocationSites() {
                  g_trace_band.min_bytes, g_trace_band.max_bytes);
     return;
   }
-  std::sort(order, order + used, [](std::size_t a, std::size_t b) {
-    return g_trace_table[a].count > g_trace_table[b].count;
-  });
+  std::sort(order.begin(), order.begin() + static_cast<std::ptrdiff_t>(used),
+            [](std::size_t a, std::size_t b) {
+              return g_trace_table[a].count > g_trace_table[b].count;
+            });
 
   std::fprintf(stderr,
                "\n[alloctrace] %llu allocations in [%zu, %zu] bytes from %zu distinct sites\n",
@@ -305,11 +332,21 @@ void Allocations::DumpTracedAllocationSites() {
                g_trace_band.max_bytes, used);
   const std::uint64_t dropped = g_trace_dropped.load(std::memory_order_relaxed);
   if (dropped != 0) {
-    // Never silently: a truncated table reads exactly like a complete one.
+    // Never silently: a truncated table reads exactly like a complete one, and it
+    // is not merely incomplete -- the sites below are the ones that appeared
+    // FIRST, not the ones that allocated most, because a full table drops every
+    // new site whole. Say that, rather than leaving the reader to rank a biased
+    // sample.
     std::fprintf(stderr,
-                 "[alloctrace] WARNING: %llu allocations were dropped, the site table is full "
-                 "(raise kTraceBuckets)\n",
-                 static_cast<unsigned long long>(dropped));
+                 "[alloctrace] WARNING: %llu of %llu allocations (%.0f%%) were DROPPED -- the "
+                 "site table filled at %zu sites.\n"
+                 "[alloctrace] The ranking below is NOT a ranking: it covers only the sites seen "
+                 "before the table filled, so the phase's largest site may be missing entirely. "
+                 "Raise kTraceBuckets and re-run before drawing any conclusion.\n",
+                 static_cast<unsigned long long>(dropped),
+                 static_cast<unsigned long long>(dropped + total),
+                 100.0 * static_cast<double>(dropped) / static_cast<double>(dropped + total),
+                 kTraceBuckets);
   }
   std::fprintf(stderr,
                "[alloctrace] resolve with: addr2line -e <binary> -f -C -p <address>...\n");
