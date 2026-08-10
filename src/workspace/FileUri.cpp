@@ -3,6 +3,7 @@
 #include <cctype>
 
 #include "util/Hex.h"
+#include "util/PathMatch.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -16,7 +17,27 @@ bool IsUnreservedUriByte(unsigned char ch) {
 }  // namespace
 
 std::string FileUriForPath(const std::filesystem::path& path) {
-  const std::string raw = path.lexically_normal().generic_string();
+  // `lexically_normal()` costs ~12 allocations (a fresh path plus a component list
+  // holding a string per component) and `generic_string()` one more, and this runs
+  // three times per keystroke on the LSP sync path — once to invalidate the inlay
+  // generation, once for code lenses, once to resolve the open document — for a
+  // path the editor normalized when it opened the file. `PathTextNeedsNormalizing`
+  // is the allocation-free scan that says so, leaving the common case at the one
+  // allocation the result itself needs (TD-2026-08-06-159).
+  std::filesystem::path normalized;
+  const std::filesystem::path* source = &path;
+  if (util::PathTextNeedsNormalizing(path.native())) {
+    normalized = path.lexically_normal();
+    source = &normalized;
+  }
+#ifdef _WIN32
+  // Windows' native separator is not the generic one, so the conversion is real
+  // work rather than a copy of the same bytes.
+  const std::string raw_storage = source->generic_string();
+  const std::string_view raw = raw_storage;
+#else
+  const std::string_view raw = source->native();
+#endif
   std::string encoded = "file://";
   encoded.reserve(raw.size() + 8);
 #ifdef _WIN32

@@ -56,36 +56,17 @@ constexpr uint32_t kRegexCompileOptions = PCRE2_UTF | PCRE2_UCP;
 // of trading that away for the speed.
 constexpr uint32_t kAsciiRegexCompileOptions = 0;
 
-// Materialize at most kSignatureDetectLineLimit head lines from `lines`, each
-// truncated to kSignatureDetectLineBytes.
-//
-// The line-count bound alone does NOT bound the copy: "64 head lines" is 64
-// *short* strings only in a file with line breaks. A minified bundle or a
-// newline-free JSON blob is ONE line of many megabytes, so this copied the whole
-// document -- per call, on the shell thread, on every keystroke (DetectState runs
-// from the highlight path). The byte cap is what actually delivers the bound this
-// function was written to provide.
-//
 // A signature is an opening marker -- a shebang, an XML declaration, a modeline --
 // so it lives in the first bytes of a head line. Nothing in the registry looks for
 // one a kilobyte in, and a match past this cap is deliberately out of scope.
+//
+// The line-count bound alone does NOT bound the read: "64 head lines" is 64
+// *short* lines only in a file with line breaks. A minified bundle or a
+// newline-free JSON blob is ONE line of many megabytes, so an unbounded read would
+// touch the whole document -- per call, on the shell thread, on every keystroke
+// (DetectState runs from the highlight path). The byte cap is the bound that
+// actually holds (TD-2026-08-05-133).
 constexpr std::size_t kSignatureDetectLineBytes = 4096;
-
-std::vector<std::string> SignatureDetectHead(LineSpan lines) {
-  std::vector<std::string> head;
-  const std::size_t head_count = std::min(lines.size(), kSignatureDetectLineLimit);
-  head.reserve(head_count);
-  // `lines[i].substr(0, N)` reads bounded but ASKS unbounded: on a piece-tree
-  // source `operator[]` materializes the whole line first, so a file with no line
-  // breaks in it paid a multi-megabyte copy per detection to look at 4 KiB of it,
-  // and detection runs once per content revision — i.e. per keystroke
-  // (TD-2026-08-05-133). LineWindow asks for exactly what is read.
-  std::string scratch;
-  for (std::size_t i = 0; i < head_count; ++i) {
-    head.emplace_back(lines.LineWindow(i, 0, kSignatureDetectLineBytes, scratch));
-  }
-  return head;
-}
 
 struct MatchRange {
   std::size_t start = 0;
@@ -1091,9 +1072,17 @@ void HighlightLineScoped(const Registry& registry,
   write_state();
 }
 
+// `lines`, when present, is the document itself -- NOT a materialized head. The
+// signature scan is reached only when a filename match is ambiguous (two or more
+// candidate definitions), which for an ordinary `.cpp`/`.py`/`.rs` path is never;
+// materializing 64 head strings up front paid ~65 allocations per call for a scan
+// that usually does not run. Detection runs once per content revision, i.e. per
+// keystroke, and this was 25 % of the allocations in an edit burst
+// (TD-2026-08-06-159). Read the head through LineWindow, one bounded line at a
+// time into a reused scratch buffer, at the point the scan actually needs it.
 std::uint32_t DetectDefinitionId(const Registry& registry,
                                  const std::filesystem::path& path,
-                                 const std::vector<std::string>* lines,
+                                 const LineSpan* lines,
                                  std::string_view first_line) {
   static constexpr std::array<std::string_view, 1> kCCandidates = {"c"};
   static constexpr std::array<std::string_view, 1> kCMakeCandidates = {"cmake"};
@@ -1146,6 +1135,10 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
 
     const std::size_t line_limit = std::min(lines->size(), kSignatureDetectLineLimit);
     util::PerformanceTrace::Scope signature_scope(signature_scope_label);
+    // One buffer for the whole scan. LineWindow only writes into it when the
+    // source cannot serve the window contiguously (an edited piece-tree line), so
+    // on an unedited buffer this stays at zero allocations for any line count.
+    std::string window;
     for (const std::uint32_t definition_id : matches) {
       const Definition* definition = DefinitionById(registry, definition_id);
       if (definition == nullptr || !definition->signature_regex.valid()) {
@@ -1154,7 +1147,9 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
       const std::size_t signature_slot =
           DefinitionMatchSlot(registry, definition_id - 1, kDefinitionSlotSignature);
       for (std::size_t i = 0; i < line_limit; ++i) {
-        if (RegexMatches((*lines)[i], definition->signature_regex, signature_slot)) {
+        const std::string_view head_line =
+            lines->LineWindow(i, 0, kSignatureDetectLineBytes, window);
+        if (RegexMatches(head_line, definition->signature_regex, signature_slot)) {
           return definition_id;
         }
       }
@@ -1300,8 +1295,14 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
   }
 
   const std::string path_text = path.generic_string();
+  // Same bound the signature scan uses, and for the same reason: a header regex
+  // looks at an opening marker, and the "first line" of a minified bundle is the
+  // whole file. `header_window` must outlive `header_line`, which may view into it.
+  std::string header_window;
   const std::string_view header_line =
-      lines != nullptr && !lines->empty() ? std::string_view(lines->front()) : first_line;
+      lines != nullptr && !lines->empty()
+          ? lines->LineWindow(0, 0, kSignatureDetectLineBytes, header_window)
+          : first_line;
 
   std::vector<std::uint32_t> filename_matches;
   std::vector<std::uint32_t> header_matches;
@@ -1392,10 +1393,10 @@ std::size_t RegistryRevision() {
 SyntaxState DetectState(const std::filesystem::path& path, LineSpan lines) {
   util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::DetectState");
   const Registry& registry = GetRegistry();
-  // Bounded head only -- never materialize the whole (possibly huge) document.
-  const std::vector<std::string> head = SignatureDetectHead(lines);
+  // The span is handed straight through: DetectDefinitionId reads a bounded head
+  // from it only if a filename match turns out to be ambiguous.
   return SyntaxState{
-      .definition_id = DetectDefinitionId(registry, path, &head, {}),
+      .definition_id = DetectDefinitionId(registry, path, &lines, {}),
   };
 }
 
@@ -1410,10 +1411,7 @@ SyntaxState DetectState(const std::filesystem::path& path, std::string_view text
 
 std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines) {
   const Registry& registry = GetRegistry();
-  // Signature detection inspects at most kSignatureDetectLineLimit lines, so
-  // materialize only that bounded head -- never the whole document.
-  const std::vector<std::string> head = SignatureDetectHead(lines);
-  const std::uint32_t definition_id = DetectDefinitionId(registry, path, &head, {});
+  const std::uint32_t definition_id = DetectDefinitionId(registry, path, &lines, {});
   const Definition* definition = DefinitionById(registry, definition_id);
   return definition == nullptr ? std::string{} : definition->filetype;
 }
