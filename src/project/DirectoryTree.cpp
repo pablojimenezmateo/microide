@@ -64,7 +64,7 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
 
 void DirectoryTree::PruneDeletedDirectoryKeys() {
   const std::string root_key = NormalizePathKey(root_);
-  const auto prune = [&](std::unordered_set<std::string>& keys) {
+  const auto prune = [&](PathKeySet& keys) {
     for (auto it = keys.begin(); it != keys.end();) {
       if (*it == root_key) {
         ++it;  // Never drop the root's own expanded key.
@@ -218,7 +218,7 @@ bool DirectoryTree::HasManuallyCollapsedAncestor(const std::filesystem::path& pa
   for (auto current = normalized_path.parent_path();
        !current.empty() && current != root_ && util::PathEqualsOrWithin(current, root_);
        current = current.parent_path()) {
-    if (manually_collapsed_paths_.contains(NormalizePathKey(current))) {
+    if (ContainsPathKey(manually_collapsed_paths_, current)) {
       return true;
     }
   }
@@ -490,7 +490,7 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
 namespace {
 
 std::vector<std::string> RelativeKeysExcludingRoot(
-    const std::unordered_set<std::string>& keys,
+    const DirectoryTree::PathKeySet& keys,
     const std::filesystem::path& root) {
   // Non-throwing overload with a lexical fallback, matching NormalizePathKey and
   // every other absolute() probe in this file: this runs on the persistence-save
@@ -550,7 +550,7 @@ void DirectoryTree::RestoreExpansionState(const std::vector<std::string>& expand
   // seed outside-root keys that PruneDeletedDirectoryKeys would stat (a syscall on an
   // arbitrary path) or that would be re-serialized as outside-root relatives
   // (TD-2026-07-17A-089). Purely lexical — no filesystem access.
-  const auto insert_contained = [this](std::unordered_set<std::string>& target,
+  const auto insert_contained = [this](PathKeySet& target,
                                        const std::string& relative) {
     if (relative.empty()) {
       return;
@@ -619,8 +619,21 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
   return it == git_statuses_.end() ? GitFileStatus::Clean : it->second;
 }
 
+bool DirectoryTree::ContainsPathKey(const PathKeySet& keys, const std::filesystem::path& path) {
+#if !defined(_WIN32)
+  // POSIX: the native spelling IS the generic spelling, and `absolute()` returns
+  // an already-absolute path unchanged, so an absolute path whose text is already
+  // normal is byte-identical to its NormalizePathKey.
+  if (const std::string& text = path.native();
+      !text.empty() && text.front() == '/' && !util::PathTextNeedsNormalizing(text)) {
+    return keys.contains(std::string_view(text));
+  }
+#endif
+  return keys.contains(NormalizePathKey(path));
+}
+
 bool DirectoryTree::IsExpanded(const std::filesystem::path& path) const {
-  return expanded_paths_.contains(NormalizePathKey(path));
+  return ContainsPathKey(expanded_paths_, path);
 }
 
 bool DirectoryTree::CanCollapseAll() const {

@@ -9,6 +9,8 @@
 #include <unordered_set>
 #include <vector>
 
+#include "util/TransparentStringHash.h"
+
 namespace microide::project {
 
 class IgnoreMatcher;
@@ -36,6 +38,17 @@ struct TreeEntry {
 
 class DirectoryTree {
  public:
+  // Expansion-state keys are normalized absolute path text. `NormalizePathKey`
+  // materializes that text through `absolute()` (a getcwd syscall) plus
+  // `lexically_normal()` (~12 allocations) plus `generic_string()` — and the
+  // tree rebuild probes it once per candidate entry, on paths it built itself by
+  // appending a filename to its own absolute, normal root. For those the key IS
+  // the path's own spelling, so `ContainsPathKey` probes the set through a view
+  // into it (TD-2026-08-10-174), falling back to the authoritative form for
+  // anything unusually spelled.
+  using PathKeySet =
+      std::unordered_set<std::string, util::TransparentStringHash, std::equal_to<>>;
+
   bool SetRoot(const std::filesystem::path& root);
   void Refresh();
   // Mirrors the `project.follow_out_of_root_symlinks` user setting; consulted
@@ -111,6 +124,8 @@ class DirectoryTree {
   void MaybePruneDeletedDirectoryKeys();
   static std::string NormalizePathKey(const std::filesystem::path& path);
 
+  static bool ContainsPathKey(const PathKeySet& keys, const std::filesystem::path& path);
+
   std::filesystem::path root_;
   // root_ in generic ('/'-separated) form, cached because every git-badge lookup
   // strips it as a prefix. Kept in lockstep with root_ (SetRoot is its only writer).
@@ -120,8 +135,8 @@ class DirectoryTree {
   std::vector<TreeEntry> entries_;
   std::uint64_t entries_revision_ = 0;
   std::unordered_map<std::string, GitFileStatus> git_statuses_;
-  std::unordered_set<std::string> expanded_paths_;
-  std::unordered_set<std::string> manually_collapsed_paths_;
+  PathKeySet expanded_paths_;
+  PathKeySet manually_collapsed_paths_;
   // Refreshes elapsed since the last full stale-key sweep (see MaybePruneDeletedDirectoryKeys).
   std::size_t refreshes_since_key_prune_ = 0;
   std::size_t selected_index_ = 0;
