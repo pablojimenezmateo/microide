@@ -63,6 +63,11 @@ void RunViewportFiletypeMemoRuleFixtures();
 // holds a WorkspaceShell by value and constructing it loads user-level state.
 void RunPerfHarnessIsolationOrderRuleFixtures();
 
+// Negative + positive control for CheckPerfMeasureBodiesDoNotBuildTheirOwnInput,
+// including the legitimate exemption (construction IS the measured work) and the
+// blind case (no Measure body found at all).
+void RunPerfMeasureBodyRuleFixtures();
+
 void RunAllRuleFixtures();
 
 }  // namespace microide::tests::architecture

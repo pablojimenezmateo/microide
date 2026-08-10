@@ -240,6 +240,88 @@ RuleResult CheckPerfScenariosUseNonThrowingFilesystemProbes(
   return result;
 }
 
+RuleResult CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(
+    const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "perf Measure bodies do not build their own input";
+  result.hard_fail = true;
+  // TD-2026-08-07-166. `plugin_status_item_update` composed
+  // `"plugin.status.item_" + std::to_string(i)` inside its `Measure(...)` body,
+  // so 95 % of the phase's 168,001 allocations were the scenario building its own
+  // input — an allocation gate on `operator+`, wearing the product function's
+  // name, that a real regression in that function could not have moved.
+  //
+  // The rule is narrow on purpose: string materialisation (`std::to_string`,
+  // `std::format`/`fmt::format`, or a `+` adjacent to a string literal) inside a
+  // `Measure(...)` lambda body. Everything a scenario needs to build is supposed
+  // to be built before the window opens.
+  //
+  // The legitimate case — a pure-unit scenario where CONSTRUCTION IS THE WORK —
+  // opts out by naming itself: put `perf-measure-builds-input:` and a reason in a
+  // comment inside the body. That keeps the exemption in the file a reader is
+  // already looking at, and makes it greppable.
+  const std::filesystem::path perf_dir = repo_root / "tests/perf";
+  std::error_code dir_ec;
+  if (!std::filesystem::is_directory(perf_dir, dir_ec) || dir_ec) {
+    return result;
+  }
+  // `" +` / `+ "` catches concatenation onto or from a literal without matching
+  // arithmetic; to_string/format are named directly.
+  const std::regex materializes(
+      R"((std::to_string\s*\()|((std|fmt)::format\s*\()|("\s*\+)|(\+\s*"))");
+  std::size_t measure_bodies_seen = 0;
+  for (const std::filesystem::path& path : SourceFilesUnder(perf_dir)) {
+    const std::string text = ReadText(path);
+    for (const std::size_t call : FindCodeLiteralOccurrences(text, "Measure(")) {
+      // The lambda body is the first `{` after the `]` that closes the capture
+      // list. Anything else (a Measure call spelled across a macro, a helper that
+      // takes a function pointer) is skipped rather than guessed at.
+      const std::size_t capture = text.find(']', call);
+      if (capture == std::string::npos) {
+        continue;
+      }
+      const std::size_t brace = text.find('{', capture);
+      if (brace == std::string::npos) {
+        continue;
+      }
+      const std::optional<std::string> body = ExtractBraceDelimitedBody(text, brace);
+      if (!body.has_value()) {
+        continue;
+      }
+      ++measure_bodies_seen;
+      if (body->find("perf-measure-builds-input:") != std::string::npos) {
+        continue;
+      }
+      std::smatch match;
+      if (!std::regex_search(*body, match, materializes)) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = path,
+          .line = LineNumberAt(text, brace),
+          .message = "a Measure(...) body must not materialize strings (std::to_string, "
+                     "std::format, or concatenation with a literal): the gate then measures the "
+                     "scenario's own operator+ rather than the product function it names. Build "
+                     "the input before the window opens, or, if construction genuinely IS the "
+                     "work, say so in the body with a `perf-measure-builds-input: <reason>` "
+                     "comment (TD-2026-08-07-166)",
+      });
+    }
+  }
+  // Loud-missing-target guard: a rule that found no Measure body at all is not
+  // passing, it is blind — the harness could have renamed the call and this would
+  // report green forever.
+  if (measure_bodies_seen == 0) {
+    result.violations.push_back(Violation{
+        .path = perf_dir,
+        .line = 1,
+        .message = "found no Measure(...) lambda body under tests/perf; this rule now scans "
+                   "nothing and cannot fail (TD-2026-08-07-166)",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckPerfHarnessIsolatesBeforeConstructingTheShell(
     const std::filesystem::path& repo_root) {
   RuleResult result;

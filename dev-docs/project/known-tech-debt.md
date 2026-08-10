@@ -1330,7 +1330,28 @@ lint is the one that fits the repo's existing habits — and per
 
 </details>
 
-### TD-2026-08-07-166 — nothing stops the next perf scenario from measuring its own `operator+`. OPEN.
+### TD-2026-08-07-166 — nothing stops the next perf scenario from measuring its own `operator+`. [RESOLVED 2026-08-10 — and the lint found one on its first run.]
+
+`CheckPerfMeasureBodiesDoNotBuildTheirOwnInput` walks every `Measure(...)` lambda
+body under `tests/perf` and rejects `std::to_string`, `std::format`/`fmt::format`,
+and `+` adjacent to a string literal. The entry's own preference, and the shape
+`ExtractBraceDelimitedBody` already supported.
+
+The legitimate case the entry insisted on covering — a pure-unit scenario where
+CONSTRUCTION IS THE WORK — opts out by naming itself: a
+`perf-measure-builds-input: <reason>` comment inside the body. The exemption
+lives in the file a reader is already looking at, and it greps.
+
+Four control fixtures, because a lint with an opt-out has one extra way to go
+quiet: the defect, the fix, the declared exemption, and the blind case (no
+`Measure` body found at all, which the rule reports as a violation rather than a
+pass).
+
+**It was not only insurance.** First run flagged `multi_tab.open_tabs`, which
+composed `"pkg0/file_" + std::to_string(i) + ".txt"` and a
+`std::filesystem::path` per tab — twenty paths' worth of construction inside a
+gate whose name says it measures opening a tab. Hoisted out of the window. The
+entry predicted a finding rate of 1 in 115 and got 1 in 115.
 
 [163](#td-2026-08-07-163)'s standing half. The audit found today's scaffolding-
 heavy gates (one, and it is legitimate); nothing prevents the next scenario from

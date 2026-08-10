@@ -663,6 +663,64 @@ void RunPerfHarnessIsolationOrderRuleFixtures() {
          "perf-isolation-order rule must fail loudly when its anchors are gone");
 }
 
+void RunPerfMeasureBodyRuleFixtures() {
+  // Four states, because this rule has an opt-out and an opt-out is the usual way
+  // a lint quietly stops gating: the defect, the fix, the legitimate exemption,
+  // and the blind case.
+  TemporaryDirectory scenarios_dir;
+  const std::filesystem::path& root = scenarios_dir.path();
+  std::filesystem::create_directories(root / "tests/perf");
+  const auto scenario = root / "tests/perf/ExampleScenarios.cpp";
+
+  // Negative control: the shipped defect — the scenario composes its own input
+  // per iteration, so the gate measures operator+ and std::to_string.
+  WriteFile(scenario,
+            "void RunThing(ScenarioContext& context) {\n"
+            "  context.Measure(\"thing.apply\", [&]() {\n"
+            "    for (int i = 0; i < 40; ++i) {\n"
+            "      Apply(\"item_\" + std::to_string(i));\n"
+            "    }\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.size() == 1,
+         "perf-measure rule must flag string composition inside a Measure body");
+
+  // Positive control: the fix — the input is built before the window opens, and
+  // the body only calls the product function.
+  WriteFile(scenario,
+            "void RunThing(ScenarioContext& context) {\n"
+            "  std::vector<std::string> input;\n"
+            "  for (int i = 0; i < 40; ++i) input.push_back(\"item_\" + std::to_string(i));\n"
+            "  context.Measure(\"thing.apply\", [&]() {\n"
+            "    for (const std::string& id : input) {\n"
+            "      Apply(id);\n"
+            "    }\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.empty(),
+         "perf-measure rule must accept composition done OUTSIDE the measured window");
+
+  // Positive control for the legitimate case the rule must not outlaw: a pure-unit
+  // scenario whose measured work IS the construction. It declares itself.
+  WriteFile(scenario,
+            "void RunThing(ScenarioContext& context) {\n"
+            "  context.Measure(\"config.encode\", [&]() {\n"
+            "    // perf-measure-builds-input: encoding a record IS the measured work.\n"
+            "    for (int i = 0; i < 40; ++i) {\n"
+            "      sink += \"key=\" + std::to_string(i);\n"
+            "    }\n"
+            "  });\n"
+            "}\n");
+  Expect(CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.empty(),
+         "perf-measure rule must honor a declared perf-measure-builds-input exemption");
+
+  // Loud-blind guard: no Measure body at all means the rule scans nothing, which
+  // must fail rather than report green.
+  WriteFile(scenario, "void RunThing(ScenarioContext& context) { context.PumpFrames(2); }\n");
+  Expect(!CheckPerfMeasureBodiesDoNotBuildTheirOwnInput(root).violations.empty(),
+         "perf-measure rule must fail loudly when it finds no Measure body to scan");
+}
+
 void RunAllRuleFixtures() {
   RunDescriptorCloseOnExecRuleFixtures();
   RunTerminalExtractedImplRuleFixtures();
@@ -677,6 +735,7 @@ void RunAllRuleFixtures() {
   RunPerfCounterProducerRuleFixtures();
   RunViewportFiletypeMemoRuleFixtures();
   RunPerfHarnessIsolationOrderRuleFixtures();
+  RunPerfMeasureBodyRuleFixtures();
 }
 
 }  // namespace microide::tests::architecture

@@ -502,10 +502,18 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
             context.PumpFrames(2);
+            // Built outside the window: composing the path per tab put a
+            // std::string concatenation, a std::to_string and a filesystem::path
+            // construction inside a gate that is supposed to measure opening a
+            // tab (TD-2026-08-07-166).
+            std::vector<std::filesystem::path> files;
+            files.reserve(20);
+            for (int i = 1; i <= 20; ++i) {
+              files.push_back(std::filesystem::path("tests/perf/fixtures/large_project") /
+                              ("pkg0/file_" + std::to_string(i) + ".txt"));
+            }
             context.Measure("multi_tab.open_tabs", [&]() {
-              for (int i = 1; i <= 20; ++i) {
-                const auto file = std::filesystem::path("tests/perf/fixtures/large_project") /
-                                  ("pkg0/file_" + std::to_string(i) + ".txt");
+              for (const std::filesystem::path& file : files) {
                 context.OpenTab(file);
                 context.PumpFrames(1);
               }
