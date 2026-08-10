@@ -1,6 +1,7 @@
 #include "workspace/persistence/RecentsService.h"
 
 #include <algorithm>
+#include <atomic>
 #include <utility>
 
 #include "platform/AppDirectories.h"
@@ -23,6 +24,13 @@ void PromoteToFront(std::vector<std::filesystem::path>& entries,
 }
 
 }  // namespace
+
+std::uint64_t RecentsService::NextInstanceId() {
+  // Atomic: services are host-owned and single-threaded in practice, but a test
+  // harness constructing one per worker must not hand two of them the same id.
+  static std::atomic<std::uint64_t> next{1};
+  return next.fetch_add(1, std::memory_order_relaxed);
+}
 
 void RecentsService::Configure(const PersistenceService& persistence) {
   persistence_ = &persistence;

@@ -542,7 +542,17 @@ class RenderViewModelBuilder {
   // command registry so the displayed key chords never drift from the real bindings.
   // Taking the service (not a span) lets both the render and hit-test callsites issue the
   // identical one-arg call, so their layouts can never drift apart.
-  editor::WelcomeViewModel BuildWelcomeView(const class RecentsService& recents) const;
+  //
+  // Memoized on (MRU revision, project root) into a builder-owned thread-local,
+  // because both callsites ask for it on paths that repeat with nothing changed:
+  // the render path once per painted frame while the focused group has no editor
+  // tab, and the hit-test path once per mouse-motion event through
+  // `ProbeWelcomeSurface`. Everything else the model holds is a static string
+  // literal or a compile-time accelerator out of the command-spec table, so a
+  // rebuild materialized ~30 strings to reproduce the previous frame's model
+  // byte for byte. The returned reference stays valid until the next call on
+  // this thread (same contract as `StickyScrollLines`).
+  const editor::WelcomeViewModel& BuildWelcomeView(const class RecentsService& recents) const;
   SettingsOverlayViewModel BuildSettingsOverlay(
       const WorkspaceLayout& layout,
       const class SettingsOverlayService& service,
@@ -552,6 +562,9 @@ class RenderViewModelBuilder {
   static void ResetStickyScrollCacheForTesting();
   static std::uint64_t StickyScrollCacheHitsForTesting();
   static std::uint64_t StickyScrollCacheMissesForTesting();
+  static void ResetWelcomeViewCacheForTesting();
+  static std::uint64_t WelcomeViewCacheHitsForTesting();
+  static std::uint64_t WelcomeViewCacheMissesForTesting();
 
   static void ResetOccurrenceCachesForTesting();
   static std::uint64_t OccurrenceSeedCacheHitsForTesting();

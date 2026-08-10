@@ -528,12 +528,12 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   // Intercept those clicks before the editor coordinator turns them into a text-selection
   // drag on the empty buffer.
   if (event.button.button == SDL_BUTTON_LEFT) {
-    editor::WelcomeViewModel welcome_model;
-    editor::WelcomeLayout welcome_layout;
+    const editor::WelcomeViewModel* welcome_model = nullptr;
+    const editor::WelcomeLayout* welcome_layout = nullptr;
     if (ProbeWelcomeSurface(&welcome_model, &welcome_layout)) {
       const float click_x = static_cast<float>(event.button.x);
       const float click_y = static_cast<float>(event.button.y);
-      for (const editor::WelcomeHitRegion& region : welcome_layout.hit_regions) {
+      for (const editor::WelcomeHitRegion& region : welcome_layout->hit_regions) {
         if (!Contains(region.rect, click_x, click_y)) {
           continue;
         }
@@ -542,16 +542,24 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         };
         switch (region.kind) {
           case editor::WelcomeHitRegion::Kind::RecentProject:
-            if (region.recent_index < welcome_model.recent_projects.size()) {
-              OpenProjectTab(welcome_model.recent_projects[region.recent_index].path, true, true);
+            if (region.recent_index < welcome_model->recent_projects.size()) {
+              // Copied, not referenced: opening changes the project root, which
+              // is part of the memo key `welcome_model` points into.
+              const std::filesystem::path project =
+                  welcome_model->recent_projects[region.recent_index].path;
+              OpenProjectTab(project, true, true);
             }
             break;
           case editor::WelcomeHitRegion::Kind::OpenFolder:
             run_action(ActionId::ProjectOpen);
             break;
           case editor::WelcomeHitRegion::Kind::RecentFile:
-            if (region.recent_index < welcome_model.recent_files.size()) {
-              OpenFile(welcome_model.recent_files[region.recent_index].path);
+            if (region.recent_index < welcome_model->recent_files.size()) {
+              // Copied for the same reason as RecentProject above: opening a file
+              // records it in the MRU, bumping the revision the memo is keyed on.
+              const std::filesystem::path file =
+                  welcome_model->recent_files[region.recent_index].path;
+              OpenFile(file);
             }
             break;
           case editor::WelcomeHitRegion::Kind::NewFile:
@@ -578,9 +586,33 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   return handled;
 }
 
-bool WorkspaceShell::ProbeWelcomeSurface(editor::WelcomeViewModel* model,
-                                         editor::WelcomeLayout* layout_out) const {
-  if (model == nullptr || layout_out == nullptr) {
+namespace {
+
+// The welcome surface's laid-out hit regions, memoized on everything they can
+// vary with. `ProbeWelcomeSurface` runs from `CursorKindForPosition`, i.e. once
+// per mouse-motion event, and the surface is static between MRU changes and
+// resizes -- so without this every pixel of pointer travel over the empty-editor
+// home screen rebuilt the whole layout to answer "pointer or I-beam?".
+// BuildWelcomeView carries the matching memo for the model itself.
+thread_local struct WelcomeProbeLayoutCache {
+  bool valid = false;
+  std::uint64_t recents_instance = 0;
+  std::uint64_t recents_revision = 0;
+  std::filesystem::path root;
+  SDL_FRect surface{};
+  float line_height = 0.0f;
+  editor::WelcomeLayout layout;
+} g_welcome_probe_layout_cache;
+
+bool SameRect(const SDL_FRect& a, const SDL_FRect& b) {
+  return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+}
+
+}  // namespace
+
+bool WorkspaceShell::ProbeWelcomeSurface(const editor::WelcomeViewModel** model_out,
+                                         const editor::WelcomeLayout** layout_out) const {
+  if (model_out == nullptr || layout_out == nullptr) {
     return false;
   }
   const editor::TextViewport* viewport = ActiveEditorViewport();
@@ -591,9 +623,27 @@ bool WorkspaceShell::ProbeWelcomeSurface(editor::WelcomeViewModel* model,
   if (!layout.has_value()) {
     return false;
   }
-  *model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_);
-  *layout_out = editor::ComputeWelcomeLayout(layout->editor_surface, *model,
-                                             text_renderer_.LineHeight());
+  // Borrowed from a builder-owned memo; valid until the next BuildWelcomeView on
+  // this thread. Callers that act on a row (opening a project or a file) must
+  // copy the path out first -- acting on it changes the root the memo is keyed
+  // on, which rebuilds the model the reference points into.
+  const editor::WelcomeViewModel& model = RenderViewModelBuilder(context_).BuildWelcomeView(recents_service_);
+  const float line_height = text_renderer_.LineHeight();
+  WelcomeProbeLayoutCache& cache = g_welcome_probe_layout_cache;
+  if (!cache.valid || cache.recents_instance != recents_service_.instance_id() ||
+      cache.recents_revision != recents_service_.revision() ||
+      cache.root != context_.current_project_state.root ||
+      !SameRect(cache.surface, layout->editor_surface) || cache.line_height != line_height) {
+    cache.valid = true;
+    cache.recents_instance = recents_service_.instance_id();
+    cache.recents_revision = recents_service_.revision();
+    cache.root = context_.current_project_state.root;
+    cache.surface = layout->editor_surface;
+    cache.line_height = line_height;
+    cache.layout = editor::ComputeWelcomeLayout(layout->editor_surface, model, line_height);
+  }
+  *model_out = &model;
+  *layout_out = &cache.layout;
   return true;
 }
 

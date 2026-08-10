@@ -66,6 +66,19 @@ class RecentsService {
   const std::vector<std::filesystem::path>& ExistingRecentFilesFor(
       const std::filesystem::path& project_root, std::size_t limit) const;
 
+  // The MRU revision the caches above key on, exposed so a presentation-layer
+  // memo (the welcome view model) can key on the same thing rather than
+  // rebuilding whenever it is asked.
+  //
+  // Paired with `instance_id()`, which is process-unique and never reused. The
+  // revision alone is NOT a key: it starts at 0 on every instance, so two
+  // different services with the same MRU depth are indistinguishable by it --
+  // which is not hypothetical, it is what a test suite constructing one service
+  // per case looks like, and a memo keyed on the revision alone hands the second
+  // case the first case's model.
+  std::uint64_t revision() const { return revision_; }
+  std::uint64_t instance_id() const { return instance_id_; }
+
   static constexpr std::size_t MaxProjects() { return 15; }
   static constexpr std::size_t MaxFiles() { return 60; }
 
@@ -79,6 +92,12 @@ class RecentsService {
   PersistedMruState state_;
   mutable bool save_pending_ = false;
   mutable std::chrono::steady_clock::time_point last_save_at_{};
+
+  // Process-unique and never reused, so (instance_id_, revision_) identifies one
+  // MRU state exactly. An address would not: a stack-allocated service can land
+  // on a freed one's address.
+  static std::uint64_t NextInstanceId();
+  const std::uint64_t instance_id_ = NextInstanceId();
 
   // Bumped on every MRU mutation (record/open, initial load); keys the validated
   // existing-path caches below.

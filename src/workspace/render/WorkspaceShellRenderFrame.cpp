@@ -797,13 +797,15 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             occurrences_highlight_enabled_global, occurrences_case_sensitive, sticky_active,
             sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
             debug_execution);
-        thread_local editor::WelcomeViewModel tls_welcome_vm;
-        tls_welcome_vm = editor_render_builder.BuildWelcomeView(recents_service_);
+        // Borrowed, not copied: BuildWelcomeView owns a memo keyed on (MRU
+        // revision, project root) and the renderer only reads the model.
+        const editor::WelcomeViewModel& welcome_vm =
+            editor_render_builder.BuildWelcomeView(recents_service_);
         editor_view_renderer_.Render(renderer, text_renderer_, theme_, *viewport, pane.rect,
                                      pane.active && draw_editor_caret, "", std::nullopt,
                                      std::nullopt, {}, &tls_editor_surface_vm,
                                      bracket_match_highlight_enabled, indent_guides_enabled,
-                                     render_whitespace_enabled, welcome_fold, &tls_welcome_vm);
+                                     render_whitespace_enabled, welcome_fold, &welcome_vm);
         continue;
       }
 

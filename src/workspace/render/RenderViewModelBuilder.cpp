@@ -79,6 +79,22 @@ thread_local struct StickyScrollViewportCache {
   std::vector<std::size_t> lines;
 } g_sticky_scroll_cache;
 
+// The welcome/placeholder surface's view model, memoized on everything it can
+// vary with. Everything else in it is a string literal or a compile-time
+// accelerator from the command-spec table, so a miss is the only time any of it
+// needs materializing. See BuildWelcomeView's declaration for why both callers
+// repeat with nothing changed.
+thread_local struct WelcomeViewCache {
+  bool valid = false;
+  std::uint64_t recents_instance = 0;
+  std::uint64_t recents_revision = 0;
+  std::filesystem::path root;
+  editor::WelcomeViewModel model;
+} g_welcome_view_cache;
+
+thread_local std::uint64_t g_welcome_view_hits = 0;
+thread_local std::uint64_t g_welcome_view_misses = 0;
+
 thread_local std::uint64_t g_sticky_scroll_hits = 0;
 thread_local std::uint64_t g_sticky_scroll_misses = 0;
 
@@ -1637,9 +1653,24 @@ std::string LabelWithChord(std::string label, ActionId id) {
 
 }  // namespace
 
-editor::WelcomeViewModel RenderViewModelBuilder::BuildWelcomeView(
+const editor::WelcomeViewModel& RenderViewModelBuilder::BuildWelcomeView(
     const RecentsService& recents) const {
-  editor::WelcomeViewModel vm;
+  const std::filesystem::path& cache_root = context_.current_project_state.root;
+  const std::uint64_t recents_instance = recents.instance_id();
+  const std::uint64_t recents_revision = recents.revision();
+  if (g_welcome_view_cache.valid && g_welcome_view_cache.recents_instance == recents_instance &&
+      g_welcome_view_cache.recents_revision == recents_revision &&
+      g_welcome_view_cache.root == cache_root) {
+    ++g_welcome_view_hits;
+    return g_welcome_view_cache.model;
+  }
+  ++g_welcome_view_misses;
+  g_welcome_view_cache.valid = true;
+  g_welcome_view_cache.recents_instance = recents_instance;
+  g_welcome_view_cache.recents_revision = recents_revision;
+  g_welcome_view_cache.root = cache_root;
+  editor::WelcomeViewModel& vm = g_welcome_view_cache.model;
+  vm = editor::WelcomeViewModel{};
   vm.shortcuts_heading = "Keyboard Shortcuts";
 
   // Curated, registry-sourced shortcut rows. Listing ActionIds (not literal chords)
@@ -2340,6 +2371,20 @@ std::uint64_t RenderViewModelBuilder::StickyScrollCacheHitsForTesting() {
 
 std::uint64_t RenderViewModelBuilder::StickyScrollCacheMissesForTesting() {
   return g_sticky_scroll_misses;
+}
+
+void RenderViewModelBuilder::ResetWelcomeViewCacheForTesting() {
+  g_welcome_view_cache = {};
+  g_welcome_view_hits = 0;
+  g_welcome_view_misses = 0;
+}
+
+std::uint64_t RenderViewModelBuilder::WelcomeViewCacheHitsForTesting() {
+  return g_welcome_view_hits;
+}
+
+std::uint64_t RenderViewModelBuilder::WelcomeViewCacheMissesForTesting() {
+  return g_welcome_view_misses;
 }
 
 std::uint64_t RenderViewModelBuilder::OccurrenceSeedCacheHitsForTesting() {

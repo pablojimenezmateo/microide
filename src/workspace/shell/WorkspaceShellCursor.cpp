@@ -889,10 +889,10 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   // click handler in WorkspaceShellMouse.cpp) so the pointer shows over clickable recents /
   // the open-folder row, and the I-beam elsewhere on the surface.
   {
-    editor::WelcomeViewModel welcome_model;
-    editor::WelcomeLayout welcome_layout;
+    const editor::WelcomeViewModel* welcome_model = nullptr;
+    const editor::WelcomeLayout* welcome_layout = nullptr;
     if (ProbeWelcomeSurface(&welcome_model, &welcome_layout)) {
-      for (const editor::WelcomeHitRegion& region : welcome_layout.hit_regions) {
+      for (const editor::WelcomeHitRegion& region : welcome_layout->hit_regions) {
         if (Contains(region.rect, x, y)) {
           return CursorKind::Pointer;
         }

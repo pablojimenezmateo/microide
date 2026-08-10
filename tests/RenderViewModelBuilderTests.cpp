@@ -675,6 +675,53 @@ void TestBuilderWelcomeViewPrunesMissingRecents() {
          "the surviving recent should be the one that still exists on disk");
 }
 
+// The welcome model is memoized on (MRU instance, MRU revision, project root)
+// because the render path asks for it once per painted frame and the hit-test
+// path once per mouse-motion event. Three things have to hold, and a memo that
+// silently stops hitting is the failure mode nothing else would notice:
+//   1. a repeat ask with nothing changed does no work,
+//   2. an MRU change is visible,
+//   3. a DIFFERENT service is never answered from another one's entry -- the
+//      revision starts at 0 on every instance, so it is not a key by itself.
+void TestBuilderWelcomeViewIsMemoized() {
+  TemporaryDirectory temp;
+  const std::filesystem::path first = temp.path() / "first";
+  const std::filesystem::path second = temp.path() / "second";
+  std::filesystem::create_directories(first);
+  std::filesystem::create_directories(second);
+
+  WorkspaceContext context;
+  RenderViewModelBuilder builder(context);
+  RenderViewModelBuilder::ResetWelcomeViewCacheForTesting();
+
+  RecentsService recents;
+  recents.RecordProjectOpen(first);
+  const editor::WelcomeViewModel& a = builder.BuildWelcomeView(recents);
+  Expect(RenderViewModelBuilder::WelcomeViewCacheMissesForTesting() == 1,
+         "the first build should miss");
+  Expect(a.recent_projects.size() == 1, "the first build should list the one recorded project");
+
+  const editor::WelcomeViewModel& b = builder.BuildWelcomeView(recents);
+  Expect(RenderViewModelBuilder::WelcomeViewCacheHitsForTesting() == 1,
+         "an unchanged repeat ask should hit the memo");
+  Expect(&a == &b, "a hit should hand back the same model, not a rebuilt copy");
+
+  recents.RecordProjectOpen(second);
+  const editor::WelcomeViewModel& c = builder.BuildWelcomeView(recents);
+  Expect(RenderViewModelBuilder::WelcomeViewCacheMissesForTesting() == 2,
+         "an MRU change should invalidate the memo");
+  Expect(c.recent_projects.size() == 2, "the rebuilt model should see the new project");
+
+  // A fresh service at revision 1 must not be answered from the entry above.
+  RecentsService other;
+  other.RecordProjectOpen(second);
+  const editor::WelcomeViewModel& d = builder.BuildWelcomeView(other);
+  Expect(RenderViewModelBuilder::WelcomeViewCacheMissesForTesting() == 3,
+         "a different RecentsService must miss, whatever its revision reads");
+  Expect(d.recent_projects.size() == 1,
+         "the other service's model should list only ITS recents");
+}
+
 void TestBuilderWelcomeViewProjectHomeShowsRecentFiles() {
   // A project is open but its focused group has no tab => ProjectHome variant: the hero is
   // the project name, the list shows this project's recent files, and the no-project
@@ -1391,6 +1438,8 @@ void RegisterRenderViewModelBuilderTests(std::vector<TestCase>& tests) {
           TestBuilderWelcomeViewIsRegistrySourcedWithRecents);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewPrunesMissingRecents",
           TestBuilderWelcomeViewPrunesMissingRecents);
+  AddTest(tests, "RenderViewModelBuilder/WelcomeViewIsMemoized",
+          TestBuilderWelcomeViewIsMemoized);
   AddTest(tests, "RenderViewModelBuilder/WelcomeViewProjectHomeShowsRecentFiles",
           TestBuilderWelcomeViewProjectHomeShowsRecentFiles);
   AddTest(tests, "RenderViewModelBuilder/ComputeWelcomeLayoutProducesHitRegions",

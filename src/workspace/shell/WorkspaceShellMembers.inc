@@ -945,8 +945,13 @@
   // Build the welcome-surface model + geometry for the current placeholder editor, so
   // the click handler and cursor resolver hit-test the same regions the renderer drew.
   // Returns false when the welcome home surface is not currently showing.
-  bool ProbeWelcomeSurface(editor::WelcomeViewModel* model,
-                           editor::WelcomeLayout* layout) const;
+  //
+  // Both outputs are BORROWED from memos (see the definition): valid until the
+  // next probe or welcome-view build on this thread, and invalidated by anything
+  // that changes the MRU or the project root. A caller acting on a listed path
+  // must copy it out first.
+  bool ProbeWelcomeSurface(const editor::WelcomeViewModel** model,
+                           const editor::WelcomeLayout** layout) const;
   void OpenComparison(const project::GitCommitEntry& commit);
   void OpenWorkingFileFromCompare();
   void MoveCompareSelection(int delta);

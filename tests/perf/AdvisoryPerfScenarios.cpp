@@ -654,6 +654,14 @@ const ScenarioRegistration g_perf_compare_scroll_large_fixture({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    // warmup: `compare_large.open_to_first_paint` allocates ~630 on the first
+    // iteration and ~318 on every one after it (the compare tab's first open
+    // fills caches the reopen reuses). The baseline is a p50 over 10 iterations,
+    // so it records the settled 318 -- but a SHORT run's p50 averages the two and
+    // reads 474, failing a +10% gate on an unchanged binary. Allocation gates are
+    // enforced at every iteration count precisely because they are meant to be
+    // deterministic; the scenario, not the gate, is what has to settle first.
+    .warmup_iterations = 1,
     .run = RunCompareScrollLargeFixture,
 }});
 const ScenarioRegistration g_perf_merge_model_build_interleaved({Scenario{
