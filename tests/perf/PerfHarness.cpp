@@ -457,6 +457,18 @@ bool ScenarioContext::WaitForDiagnostics(const std::filesystem::path& path,
   return workspace::WorkspaceShell::TestAccess::DiagnosticsForPath(shell_, path) != nullptr;
 }
 
+void ScenarioContext::PublishDiagnostics(std::string_view owner,
+                                         const std::filesystem::path& path,
+                                         std::vector<editor::Diagnostic> diagnostics) {
+  workspace::WorkspaceShell::TestAccess::PublishDiagnostics(shell_, owner, path,
+                                                            std::move(diagnostics));
+}
+
+bool ScenarioContext::HasDiagnostics(const std::filesystem::path& path) const {
+  const auto* published = workspace::WorkspaceShell::TestAccess::DiagnosticsForPath(shell_, path);
+  return published != nullptr && !published->empty();
+}
+
 bool ScenarioContext::WaitForFileIndexPath(const std::filesystem::path& relative_path,
                                            std::chrono::milliseconds timeout) {
   const auto deadline = std::chrono::steady_clock::now() + timeout;

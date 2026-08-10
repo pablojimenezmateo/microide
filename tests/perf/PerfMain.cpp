@@ -6,6 +6,7 @@
 #include "perf/ScenarioProcessIsolation.h"
 
 #include "editor/BracketScanner.h"
+#include "editor/DiagnosticsStore.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewport.h"
 #include "workspace/lsp/WorkspaceLspClient.h"
@@ -772,6 +773,9 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "linter_on_save",
       .smoke = true,
+      // Revision 2: the diagnostics wait moved OUT of the measured window (see
+      // below). Phase names and counts before and after are not comparable.
+      .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
             const std::filesystem::path project = "tests/perf/fixtures/linter_project";
@@ -781,10 +785,48 @@ void RegisterBuiltInScenarios() {
             context.OpenTab(source);
             context.Measure("linter.type_invalid_edit", [&]() { context.Type("\nconst broken = ;"); });
             context.Measure("linter.save", [&]() { (void)context.ExecuteCommand("save"); });
-            context.Measure("linter.wait_diagnostics", [&]() {
-              (void)context.WaitForDiagnostics(source, std::chrono::milliseconds(120));
+            // Diagnostics are PUBLISHED here, not waited for.
+            //
+            // This phase used to be `context.Measure("linter.wait_diagnostics",
+            // ... WaitForDiagnostics(source, 120ms))`, and it measured neither a
+            // linter nor diagnostics. Nothing in this repository lints
+            // JavaScript: there is no linter service, the fixture carries no
+            // linter config, and its node_modules/ is empty. Every run therefore
+            // spun the full 120 ms deadline, found nothing, and reported the
+            // POLL LOOP's allocations as an authoritative gated number -- one
+            // that counts how many times a wall-clock loop got round, so it moved
+            // with machine load and not with any code. Three runs of one
+            // unchanged binary read 3,561 / 3,644 / 3,711 against a committed
+            // baseline of 2,745 recorded on an idle runner.
+            //
+            // What this scenario is worth measuring is the DELIVERY path: the
+            // store update, the decoration rebuild it invalidates, and the frames
+            // that paint the squiggles and the status counts. That path is real
+            // and is what an LSP publish drives in production, so it is driven
+            // directly and deterministically here.
+            std::vector<editor::Diagnostic> diagnostics;
+            diagnostics.reserve(24);
+            for (std::size_t i = 0; i < 24; ++i) {
+              editor::Diagnostic diagnostic;
+              diagnostic.range.start.line = i * 2 + 1;
+              diagnostic.range.start.column = 3;
+              diagnostic.range.end.line = i * 2 + 1;
+              diagnostic.range.end.column = 12;
+              diagnostic.severity = (i % 3 == 0) ? editor::DiagnosticSeverity::Error
+                                                 : editor::DiagnosticSeverity::Warning;
+              diagnostic.message = "perf fixture diagnostic";
+              diagnostics.push_back(std::move(diagnostic));
+            }
+            context.Measure("linter.publish_diagnostics", [&]() {
+              context.PublishDiagnostics("linter", source, diagnostics);
+              context.PumpFrames(3);
             });
-            context.PumpFrames(2);
+            if (!context.HasDiagnostics(source)) {
+              // The vacuity guard the old phase never had: a publish that did not
+              // land leaves three frames painting an unannotated document, which
+              // is a different measurement wearing the same name.
+              context.SkipScenario("linter_on_save: published diagnostics did not reach the store");
+            }
           },
   });
   PerfHarness::RegisterScenario(Scenario{

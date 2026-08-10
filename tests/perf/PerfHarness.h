@@ -20,6 +20,7 @@
 #include "workspace/WorkspaceVirtualDocument.h"
 
 #include "compare/MergeModel.h"
+#include "editor/DiagnosticsStore.h"
 #include "editor/TextViewport.h"
 #include "perf/PerfHarnessIsolation.h"
 
@@ -323,6 +324,16 @@ class ScenarioContext {
   std::uint64_t Wait(std::chrono::milliseconds duration);
   bool WaitForDiagnostics(const std::filesystem::path& path,
                           std::chrono::milliseconds timeout);
+  // Publish diagnostics for `path` under `owner`, exactly as an LSP publish or a
+  // linter integration would. Deterministic stand-in for a wait: a scenario that
+  // wants to measure the delivery path should DRIVE it rather than spin a
+  // wall-clock loop hoping an external tool answers (see linter_on_save).
+  void PublishDiagnostics(std::string_view owner,
+                          const std::filesystem::path& path,
+                          std::vector<editor::Diagnostic> diagnostics);
+  // Whether the store currently holds any diagnostic for `path`. The vacuity
+  // check for a scenario that just published some.
+  bool HasDiagnostics(const std::filesystem::path& path) const;
   // Pump frames until `relative_path` appears in the project file index (the
   // initial background build has reached it) or the timeout elapses. Used to
   // take the async indexer out of a scenario's measured window so its metrics
