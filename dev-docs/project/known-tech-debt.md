@@ -1,5 +1,15 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-08-10. The 2026-08-10 second pass read the four phases
+[159](#td-2026-08-06-159) named as next, which produced two fixes
+(`PieceTree::ExtractLineRange`'s per-call walk stack, and the welcome surface
+rebuilt per frame *and* per mouse event), two read/inherent results, and one new
+entry: [181](#td-2026-08-10-181), twelve phase allocation gates that read
+differently at `--iterations=2` than at 10 — three of them named for an operation
+they never run. It also closed [174](#td-2026-08-10-174)'s scan half: every
+`x.lexically_normal() == normalized` comparison in `src/` now goes through
+`util::SameAsNormalizedPath`.
+
 Reviewed 2026-08-07. **84 open items.**
 ([162](#td-2026-08-07-162), [163](#td-2026-08-07-163) and
 [165](#td-2026-08-07-165) resolved; [164](#td-2026-08-07-164) and
@@ -277,6 +287,78 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-10-181 — twelve phase allocation gates fail on an unchanged binary, and three of them measure a re-open rather than an open. OPEN.
+
+Found while tracing [159](#td-2026-08-06-159): `compare_scroll_large_fixture`
+FAILed a phase gate at `--iterations=2` and PASSed at 6, on the same binary. The
+whole suite then does the same thing. **Twelve `p50_allocations` phase gates are
+functions of the iteration count**, on code that did not change:
+
+| phase | baseline (10 iters) | measured at 2 iters |
+| --- | ---: | ---: |
+| `merge_large.open_to_first_paint` | 185 | 27,293 |
+| `merge_interleaved.open_to_first_paint` | 179 | 6,205 |
+| `merge.open_many_conflicts` | 180 | 6,143 |
+| `merge_large.scroll_burst` | 3,200 | 14,682 |
+| `file_finder_cold.open_finder` | 65 | 367 |
+| `linter.publish_diagnostics` | 303 | 646 |
+| `open_tab.with_indent_detect` | 180 | 252 |
+| `editor_sticky_scroll_scroll.fast_scroll_frame` | 9,814 | 11,547 |
+| `multi_project.switch_cycles` | 17,390 | 19,497 |
+| `diff.stage_hunk` / `diff.stage_selected_lines` | 2,070 / 2,088 | 2,283 / 2,310 |
+| `column_selection.extend_down` | 0 | 15 |
+
+Every one of them PASSes at `--iterations=10`. Re-verified: the same list, run at
+10, is green apart from wall gates on a loaded machine.
+
+**Why this is not just "use ten iterations".** The harness already knows this
+class of problem and refuses to enforce `mean_rss_growth_bytes` and
+`p50_net_heap_bytes` below the baseline's iteration count, saying so in the
+verdict line ([148](#td-2026-08-06-148), [173](#td-2026-08-10-173)). Phase
+allocation gates get no such guard — precisely because they are *presented* as
+the deterministic ones. And the workflow this repository documents for finding
+where a phase allocates (`perf-harness.md` § Finding *where* a phase allocates)
+says to run `--iterations=2`. So the documented debugging loop produces twelve
+red gates and nothing explains them.
+
+**The three merge entries are a different and worse problem: those gates do not
+measure what they are named.** A baseline of **185** allocations for "open a
+large merge to first paint" is not an open. Each merge scenario re-runs its
+`merge ...` command per iteration against a driver that reuses the already-open
+merge tab, so iteration 0 pays the real cost (27,293) and iterations 1..9 pay a
+re-show. The p50 lands on the re-show. `merge_model_build_interleaved` exists
+*because* of this — its own comment says "NOTHING gated it: every merge scenario
+shares one driver across its iterations and reuses the already-open tab, so the
+build lands on iteration 0 and is absorbed by the warmup" — but the conclusion
+drawn there was to add a scenario, not that the three existing gates are naming
+an operation they never run. `max_allocations` (tolerance +50 %) does still see
+iteration 0, so these are half-vacuous rather than vacuous.
+
+**Two separate fixes, and only the first is cheap:**
+
+1. Scenarios whose first iteration legitimately warms a cache declare
+   `warmup_iterations`, as `editor_buffer_find_incremental` and
+   `editor_shaping_multi_caret` already do. Done for
+   `compare_scroll_large_fixture` (its `open_to_first_paint` is ~630 cold / ~318
+   warm, and a 2-iteration p50 averaged the two into 474 against a +10 % gate).
+2. The merge scenarios must close the merge tab between iterations so every
+   iteration opens one, then have those phases re-recorded with
+   `measurement_revision` bumped per [167](#td-2026-08-07-167). `ScenarioContext`
+   has no close-tab verb and `WorkspaceShell::TestAccess` exposes none; both need
+   adding. **Blocked on a quiet machine** — the rebaseline moves the wall/cpu half
+   of three baselines, same constraint as [161](#td-2026-08-07-161)/[172](#td-2026-08-10-172).
+
+Worth considering alongside (2): whether phase allocation gates should carry the
+same below-baseline-iteration-count non-enforcement the retention metrics have.
+The argument against is that it would soften a gate that is supposed to be exact;
+the argument for is the table above, which is what the gate actually does today.
+
+`column_selection.extend_down` is its own small case: a **zero** baseline is an
+exact gate (`WithinTolerance` gives a zero-width envelope), so its 15 allocations
+at 2 iterations are a hard fail with a meaningless "+0%" in the verdict line.
+Either it warms up or the metric's zero-baseline reporting needs the treatment
+`AddAbsoluteMetric` already gives net-heap.
+
 ### TD-2026-08-10-179 — a perf scenario measured a poll loop timing out, and called the number authoritative. [RESOLVED 2026-08-10.]
 
 Found while chasing what looked like a +32.7 % allocation regression in
@@ -528,6 +610,33 @@ by `PerfBaseline/NamesTailOnlyAllocationDivergence`, using this entry's own
 numbers (`cold_startup_no_project`, 681 → 9,364 with p50 matching exactly).
 
 ### TD-2026-08-10-174 — `lexically_normal()` is ~12 allocations and the codebase calls it 416 times, three of them on paths that run per keystroke. OPEN — 2026-08-10 pass took the per-entry and per-frame ones.
+
+#### 2026-08-10 pass 2: every remaining `x.lexically_normal() == normalized` scan
+
+`rg -n 'lexically_normal\(\) [=!]= ' src` is the mechanical grep for the shape the
+previous pass named and only half-swept: normalize the query once, then
+re-normalize every candidate to reject it. Ten hits, all converted to
+`util::SameAsNormalizedPath`, which answers a mismatch between two normal paths
+with a string compare.
+
+The one that runs unattended is **`ProjectChangeCoalescer::MergeFileChange`, on
+the watcher thread**: its comparator normalized BOTH sides per candidate, over a
+pending list the cap allows to reach 1,024, once per file change. A build writing
+files paid ~24 allocations per comparison to answer "different file". Its own
+header comment already named this ("a linear scan with two path normalizations
+per comparison") as the *reason for the cap* rather than as something to fix.
+
+The rest are open-tab / project-root / merge-output scans in the plugin edit
+apply path (`WorkspaceShellPlugins.cpp`, 5 sites), session restore, project-change
+invalidation, and the tab coordinator. `WorkspaceTabState.h`'s `EditorViewPathIs`
+was a byte-identical private copy of `SameAsNormalizedPath`'s two guards, written
+before the helper existed, and is now its caller.
+
+**Still open**, and unchanged by this pass: the ~27 remaining `lexically_normal`
+in `WorkspaceShellPlugins.cpp` that are single normalizations rather than scans,
+`DirectoryTree`'s per-item sites, and the ~390 elsewhere. `GitBlameService` is
+already clean — it memoizes both its root text and its path key thread-locally.
+
 
 #### 2026-08-10 pass: the per-filesystem-entry and per-frame sites
 
@@ -1045,6 +1154,85 @@ the two runs if it returns.
 
 
 ### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN — and every pass so far has found something.
+
+#### 2026-08-10 pass 2: the four named-next phases, and a fifth shape
+
+All four phases this entry named as "next by committed `p50_allocations`, unread"
+were read. Two fixes, two read/inherent, and the hit rate stays at 100 %.
+
+| phase | scenario total, before → after | what it was |
+| --- | ---: | --- |
+| `move_line_down.multi_caret_burst` | 7,865 → 3,553 | `PieceTree::ExtractLineRange` allocated its own walk stack per call |
+| `compare_large.scroll_burst` | 6,167 → 2,667 | the welcome surface rebuilt per frame AND per mouse event |
+| `merge_model.build_interleaved` | — | read, inherent |
+| `status_registry.apply_update` | — | read, inherent |
+
+**`move_line_down` — a fifth shape: a walk that allocates its own stack.**
+`ExtractLineRange`'s pruned in-order treap walk built a local
+`std::vector<Frame>`, so every `SliceLines` paid that vector's geometric growth
+(~4 allocations) before copying a single line. `CopyRange` sitting twenty lines
+away already knew not to — its `copy_stack_` is a member for exactly this reason
+([133](#td-2026-08-05-133)) — and the two frames are the same struct. With 32
+carets × 12 ops, ten of the phase's top twelve sites resolved into that one
+local. It carries: `mid_file_edit` -32 %, `first_line_edit` -38 %,
+`toggle_comment_large_selection` -3 %. **Look for this shape anywhere a tree walk
+is written as an explicit stack** — it reads as free and is four allocations.
+
+**`compare_large.scroll_burst` — a surface rebuilt to hit-test it.** 29 % of the
+phase was `RenderViewModelBuilder::BuildWelcomeView`, called twice per frame:
+once from the render path (the focused group holds a compare tab, so the editor
+pane draws the placeholder) and once from `CursorKindForPosition` →
+`ProbeWelcomeSurface`, which built the whole model *and* its layout to answer
+"pointer or I-beam?" per mouse event. Nothing in it varies per frame — the
+shortcut rows and chords come from the static command-spec table, the headings
+are literals, the recents are already exists-filtered behind an MRU-revision
+cache — so a rebuild materialized ~30 strings to reproduce the previous frame
+byte for byte. Now a builder-owned memo keyed on (MRU instance, MRU revision,
+project root), same shape as `StickyScrollLines`.
+
+Two traps that came out of it, both worth generalising:
+
+- **A revision is not a key.** The first version keyed on `RecentsService`'s
+  revision alone. It starts at 0 on every instance, so a test constructing one
+  service per case was handed the previous case's model — caught by an existing
+  test, and the reason `RecentsService` now carries a process-unique
+  `instance_id()`. Any memo keyed on a per-object counter needs the object's
+  identity beside it, and an address is not that (a stack object can land on a
+  freed one's address).
+- **A borrowed model must be copied out before acting on it.** The welcome click
+  handler passes a listed path to `OpenProjectTab`, which changes the root the
+  memo is keyed on. Returning a reference turned a copy into a use-after-invalidate
+  until the path was copied first.
+
+**Read, inherent** (recorded so the next pass does not re-read them):
+
+- `merge_model.build_interleaved` — 8,673 allocations, and 43 % of them are
+  `util::SplitLines` over the three inputs (1,244 lines each, one owned
+  `std::string` per line). The rest is ~8 vectors per hunk over 139 hunks:
+  `SliceBaseLines` plus two `ApplySideChangesToSlice` results, each of which
+  becomes a `MergeHunk` member. All of it is the model's own storage — `MergeModel`
+  outlives the input strings, so the lines must be owned. Cheaper only with a
+  shared-blob + views representation of `MergeModel`, which every consumer of
+  `base_lines`/`incoming_lines`/`current_lines` would have to move with.
+- `status_registry.apply_update` — 16,002 allocations over 2 iterations from
+  **three** sites, and 160,000 lookups contribute none of them. It is one
+  `rebuild_index()`: 4,000 key-string copies + 4,000 hash nodes + 1 bucket array
+  per iteration. That is `unordered_map<std::string, size_t>`'s floor, and the
+  keys duplicate strings the order vector already owns. A `string_view` key is
+  the obvious exit and is not safe here (a vector reallocation moves SSO strings'
+  data); a hash-keyed flat table needs collision handling the current
+  rebuild-and-retry cannot express. The rebuild runs once per structural change
+  on a synthetic 4,000-item registry no real plugin surface reaches.
+
+**Next unread**, re-ranked from the committed phase baselines rather than the
+stale table below: `multi_project.switch_cycles` (17,390),
+`compare_selection.scroll_burst` (~13,600), `first_line_edit`/`mid_file_edit`
+enter_backspace_burst (now ~7,500-8,200 after this pass), `diff.next_hunk_burst`.
+
+Reading these also turned up [181](#td-2026-08-10-181): twelve phase allocation
+gates read differently at `--iterations=2` than at 10, and three of them are
+named for an operation they never run. **Check a phase's iteration sensitivity
+before trusting a number the tracer workflow's own `--iterations=2` produced.**
 
 #### 2026-08-10 pass: two phases read, and the instrument was broken
 

@@ -348,9 +348,25 @@ Two rules come out of it:
 - **Before gating a statistic, ask whether it converges.** `mean_rss_growth_bytes`
   and `p50_net_heap_bytes` are both statistics over a settling series, and both
   had to learn separately (TD-2026-08-06-148, then TD-2026-08-10-173) to decline
-  a comparison against a baseline recorded over more iterations. Allocation
-  percentiles are safe by construction; durations carry machine state and are
-  already annotated. Nothing else has been checked.
+  a comparison against a baseline recorded over more iterations. Durations carry
+  machine state and are already annotated.
+- **"Allocation percentiles are safe by construction" was wrong, and this
+  document said it.** An allocation *count* is deterministic; a *percentile over
+  a settling series of them* is not. Twelve phase `p50_allocations` gates fail at
+  `--iterations=2` and pass at 10 on an unchanged binary (TD-2026-08-10-181) —
+  including `merge_large.open_to_first_paint`, whose 185-allocation baseline is
+  the *re-open* an already-open merge tab costs, while the open it is named for
+  costs 27,293 and happens only on iteration 0. Phase allocation gates carry no
+  "NOT ENFORCED at a short count" guard because they are believed exact, and the
+  tracer workflow this repo documents (`perf-harness.md` § Finding *where* a
+  phase allocates) tells you to run `--iterations=2`. So the documented debugging
+  loop produces a dozen red gates and nothing explains them.
+- **A phase gate whose baseline is far BELOW its own first iteration is naming an
+  operation it does not run.** That is the `merge_*.open_to_first_paint` shape:
+  the scenario re-runs its open command per iteration against a driver that
+  reuses the already-open tab. Compare a phase's committed `p50_allocations`
+  against its `max_allocations` in the same baseline — a two-orders-of-magnitude
+  gap is that tell, and it is visible without running anything.
 - **A red gate on a short run is a suspect, not a result.** Both metrics now say
   `NOT ENFORCED: this run measured 5 iterations against a baseline recorded over
   10`. Read the note before starting a bisect.
