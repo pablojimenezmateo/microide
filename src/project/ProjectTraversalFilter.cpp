@@ -4,7 +4,6 @@
 #include <utility>
 
 #include "util/PathMatch.h"
-#include "util/StringUtil.h"
 
 namespace microide::project {
 
@@ -18,6 +17,7 @@ ProjectTraversalFilter::ProjectTraversalFilter(std::filesystem::path root,
   if (!root_.has_filename() && root_.has_parent_path()) {
     root_ = root_.parent_path();
   }
+  root_native_ = root_.native();
   auto root_matcher = std::make_shared<IgnoreMatcher>();
   root_matcher->SetRoot(root_);
   // Defaults after the root .gitignore so they take precedence; user excludes last
@@ -28,69 +28,100 @@ ProjectTraversalFilter::ProjectTraversalFilter(std::filesystem::path root,
 }
 
 bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platform::PathType type) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
-  if (root_.empty() || normalized_path == root_) {
+  if (root_.empty()) {
+    return true;
+  }
+  // This runs ONCE PER FILESYSTEM ENTRY of every index walk, the poll re-walk, the
+  // inotify registration, the sidebar tree and the project scanner — so the whole
+  // body below is written to derive its answer from views into the caller's own
+  // path text rather than from `path` temporaries. `lexically_normal()` alone is
+  // ~12 allocations and a no-op for the normalized paths a directory iterator
+  // hands us (TD-2026-08-10-174), so it only runs for an unusually spelled input.
+  std::filesystem::path normalized_storage;
+  const std::filesystem::path* normalized = &path;
+  if (util::PathTextNeedsNormalizing(path.native())) {
+    normalized_storage = path.lexically_normal();
+    normalized = &normalized_storage;
+  }
+  const std::string_view normalized_text = normalized->native();
+  if (normalized_text == root_native_) {
     return true;
   }
   // A path that is not nested under the root escapes the project boundary
-  // (lexically_relative would yield a "../…" relative that RelativeToRoot used to
-  // accept). Reject it outright so a watcher/scanner/helper event for an
+  // (lexically_relative would yield a "../…" relative that the old prefix
+  // derivation accepted). Reject it outright so a watcher/scanner/helper event for an
   // out-of-root file cannot pass the filter and feed out-of-root indexing.
-  // Both sides are already normalized (normalized_path just above, root_ in the
-  // constructor), so use the allocation-free variant: this runs once per
-  // filesystem entry of every index walk.
-  if (!util::NormalizedPathEqualsOrWithin(normalized_path, root_)) {
+  // Both sides are already normalized (`normalized` just above, root_ in the
+  // constructor), so use the allocation-free variant.
+  if (!util::NormalizedPathEqualsOrWithin(*normalized, root_)) {
     return false;
   }
 
   const bool is_directory = type == platform::PathType::Directory;
 
-  const std::filesystem::path relative = RelativeToRoot(normalized_path);
+  // The containment check just proved the root is a prefix, so the relative part
+  // is that prefix removed — no lexically_relative()/lexically_normal() pair.
+  std::string_view relative = util::NormalizedRelativeView(normalized_text, root_native_);
   if (relative.empty()) {
     return true;
   }
+#ifdef _WIN32
+  // IgnoreMatcher speaks generic (forward-slash) relatives, which on POSIX the
+  // native text already is. On Windows it is not, so the separators are swapped
+  // into a reused member buffer -- one conversion per entry rather than the
+  // lexically_relative()/generic_string() pair, and no per-entry allocation once
+  // the buffer has grown.
+  generic_relative_scratch_.assign(relative);
+  for (char& c : generic_relative_scratch_) {
+    if (c == '\\') {
+      c = '/';
+    }
+  }
+  relative = generic_relative_scratch_;
+#endif
 
-  const std::shared_ptr<const IgnoreMatcher> matcher =
-      MatcherForParentDirectory(normalized_path.parent_path().lexically_normal());
+  const std::shared_ptr<const IgnoreMatcher> matcher = MatcherForParentDirectoryText(
+      util::NormalizedParentDirectoryView(normalized_text), *normalized);
   // `relative` is already lexically-normalized, so the string_view overload skips
   // the per-call re-normalization the path overload would otherwise perform.
-  if (matcher->IgnoredNormalized(relative.generic_string(), is_directory)) {
+  if (matcher->IgnoredNormalized(relative, is_directory)) {
     return false;
   }
-  // Each parent_path() of a normalized path is also normalized; no need to
-  // re-normalize per ancestor. (Ignored directories are also pruned via
-  // disable_recursion_pending in the walk, so this loop is defense-in-depth.)
-  static const std::filesystem::path kDot(".");
-  for (std::filesystem::path parent = relative.parent_path();
-       !parent.empty() && parent != kDot; parent = parent.parent_path()) {
-    if (matcher->IgnoredNormalized(parent.generic_string(), true)) {
+  // Walk the ancestor chain by trimming `relative` at each separator, innermost
+  // first — the same sequence `parent_path()` would yield, without a path per
+  // ancestor. (Ignored directories are also pruned via disable_recursion_pending
+  // in the walk, so this loop is defense-in-depth.)
+  for (std::string_view parent = util::NormalizedParentDirectoryView(relative);
+       !parent.empty() && parent != ".";) {
+    if (matcher->IgnoredNormalized(parent, true)) {
       return false;
     }
+    const std::string_view next = util::NormalizedParentDirectoryView(parent);
+    if (next.size() >= parent.size()) {
+      break;  // "/" is its own parent. A relative path never reaches it; this
+              // keeps a malformed input from spinning here rather than pruning.
+    }
+    parent = next;
   }
   return true;
 }
 
-std::filesystem::path ProjectTraversalFilter::RelativeToRoot(
-    const std::filesystem::path& path) const {
-  const std::filesystem::path relative = path.lexically_relative(root_);
-  if (!relative.empty()) {
-    return relative.lexically_normal();
+std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDirectoryText(
+    std::string_view directory_native, const std::filesystem::path& normalized_child) {
+  // The two answers that dominate a walk — "this entry sits directly in the
+  // project root" and "this directory's matcher is already cached" — are both
+  // reachable from the candidate's own text, so neither builds a path or a key.
+  if (directory_native.empty() || directory_native == root_native_) {
+    return root_matcher_;
   }
-#ifdef _WIN32
-  const std::string path_text = path.generic_string();
-  const std::string root_text = root_.generic_string();
-  if (path_text.size() <= root_text.size()) {
-    return {};
+  const auto existing = directory_matchers_.find(directory_native);
+  if (existing != directory_matchers_.end()) {
+    return existing->second;
   }
-  const std::string lower_path = util::ToLowerAscii(path_text);
-  const std::string lower_root = util::ToLowerAscii(root_text);
-  if (lower_path.rfind(lower_root, 0) != 0 || path_text[root_text.size()] != '/') {
-    return {};
-  }
-  return std::filesystem::path(path_text.substr(root_text.size() + 1)).lexically_normal();
-#else
-  return {};
-#endif
+  // First entry seen in this directory: build the matcher through the general
+  // form, which owns the recursion, the .gitignore load and the key insert.
+  // `normalized_child`'s parent is normalized because `normalized_child` is.
+  return MatcherForParentDirectory(normalized_child.parent_path());
 }
 
 std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDirectory(
@@ -101,14 +132,20 @@ std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDir
     return root_matcher_;
   }
 
-  const std::string key = directory.generic_string();
+  // Keyed on the NATIVE text, which is what the per-entry fast path above looks
+  // up: a generic key would silently never match it on Windows, turning every
+  // cache hit into a full ancestor recursion.
+  const std::string& key = directory.native();
   const auto existing = directory_matchers_.find(key);
   if (existing != directory_matchers_.end()) {
     return existing->second;
   }
 
+  // `directory` is normalized by every caller, and each parent_path() of a
+  // normalized path is normalized too — re-normalizing per ancestor is ~12
+  // allocations for a no-op (TD-2026-08-10-174).
   const std::shared_ptr<const IgnoreMatcher> parent_matcher =
-      MatcherForParentDirectory(directory.parent_path().lexically_normal());
+      MatcherForParentDirectory(directory.parent_path());
   // Inherit the ancestor chain as a shared layer and add only this directory's
   // own .gitignore rules — no copy of the inherited rule set (TD-2026-07-17A-055).
   std::shared_ptr<IgnoreMatcher> matcher = IgnoreMatcher::MakeChild(parent_matcher);

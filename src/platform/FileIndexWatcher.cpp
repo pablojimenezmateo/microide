@@ -3,6 +3,7 @@
 #include "platform/DescriptorRetire.h"
 #include "platform/HostPlatform.h"
 #include "project/ProjectTraversalFilter.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
@@ -22,6 +23,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <system_error>
 #include <thread>
 #include <vector>
@@ -59,7 +61,9 @@ bool IsGitMetadataRelativePath(const std::filesystem::path& relative_path) {
   if (it == relative_path.end()) {
     return false;
   }
-  const std::string first = it->string();
+  // A view, not a copy: this runs once per filesystem entry of the initial walk
+  // and of every poll re-walk, and `it->string()` is an allocation per entry.
+  const std::string_view first = it->native();
   if (first == ".git") {
     return true;
   }
@@ -84,14 +88,57 @@ bool IsEscapingRelativePath(const std::filesystem::path& relative_path) {
     return true;
   }
   const auto it = relative_path.begin();
-  return it != relative_path.end() && *it == std::filesystem::path("..");
+  // `it->native()` rather than a `path("..")` temporary: constructing that path
+  // per filesystem entry is an allocation for a two-character comparison.
+  return it != relative_path.end() && std::string_view(it->native()) == "..";
+}
+
+// `lexically_normal()`, skipped when the text already is normal — which is what a
+// directory iterator hands back, since it spells every entry as an already-normal
+// root plus a filename. Without the guard each entry of every tree walk pays the
+// ~12 allocations of a normalization that changes nothing (TD-2026-08-10-174).
+std::filesystem::path NormalizedCopy(const std::filesystem::path& path) {
+  if (util::PathTextNeedsNormalizing(path.native())) {
+    return path.lexically_normal();
+  }
+  return path;
 }
 
 bool TryComputeRelativePath(const std::filesystem::path& absolute_path,
                             const std::filesystem::path& root,
                             std::filesystem::path& relative_path) {
-  const std::filesystem::path normalized_path = absolute_path.lexically_normal();
-  const std::filesystem::path normalized_root = root.lexically_normal();
+  // Per filesystem entry of the initial walk and of every poll re-walk. Both
+  // inputs are normalized by their producers (the walk normalizes each entry, the
+  // impl normalizes the root once at watch start), and `lexically_normal()` is
+  // ~12 allocations even when it changes nothing — so confirm with the
+  // allocation-free scan and only pay for an unusually spelled input
+  // (TD-2026-08-10-174).
+  std::filesystem::path path_storage;
+  const std::filesystem::path* normalized_path_ptr = &absolute_path;
+  if (util::PathTextNeedsNormalizing(absolute_path.native())) {
+    path_storage = absolute_path.lexically_normal();
+    normalized_path_ptr = &path_storage;
+  }
+  std::filesystem::path root_storage;
+  const std::filesystem::path* normalized_root_ptr = &root;
+  if (util::PathTextNeedsNormalizing(root.native())) {
+    root_storage = root.lexically_normal();
+    normalized_root_ptr = &root_storage;
+  }
+  const std::filesystem::path& normalized_path = *normalized_path_ptr;
+  const std::filesystem::path& normalized_root = *normalized_root_ptr;
+
+  // The overwhelmingly common case: the entry sits under the root, so the
+  // relative part is the root prefix removed — one string instead of the
+  // `lexically_relative()` component walk and its path temporaries.
+  if (util::NormalizedPathEqualsOrWithin(normalized_path, normalized_root)) {
+    const std::string_view relative_text =
+        util::NormalizedRelativeView(normalized_path.native(), normalized_root.native());
+    if (!relative_text.empty()) {
+      relative_path.assign(relative_text);
+      return true;
+    }
+  }
   std::filesystem::path relative = normalized_path.lexically_relative(normalized_root);
   if (!relative.empty()) {
     relative_path = std::move(relative);
@@ -130,7 +177,11 @@ bool TryBuildTrackedRelativePath(const std::filesystem::path& absolute_path,
   if (!TryComputeRelativePath(absolute_path, root, rel) || rel.empty()) {
     return false;
   }
-  rel = rel.lexically_normal();
+  // `rel` comes out of TryComputeRelativePath already normal in every case but an
+  // oddly spelled input; the guard keeps the ~12-allocation no-op off the walk.
+  if (util::PathTextNeedsNormalizing(rel.native())) {
+    rel = rel.lexically_normal();
+  }
   if (IsGitMetadataRelativePath(rel) || IsEscapingRelativePath(rel)) {
     return false;
   }
@@ -149,7 +200,7 @@ bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& root,
     return false;
   }
   // The filter walks the full ancestor chain (nested .gitignore + defaults) itself.
-  return !filter->Includes((root / relative_path).lexically_normal(),
+  return !filter->Includes(NormalizedCopy(root / relative_path),
                            platform::PathType::RegularFile);
 }
 #endif
@@ -190,7 +241,7 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
     if (!std::filesystem::is_regular_file(status)) {
       continue;
     }
-    const std::filesystem::path abs_path = it->path().lexically_normal();
+    const std::filesystem::path abs_path = NormalizedCopy(it->path());
     std::filesystem::path rel;
     if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
       continue;
@@ -296,7 +347,7 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
     if (!std::filesystem::is_regular_file(status)) {
       continue;
     }
-    const std::filesystem::path abs_path = it->path().lexically_normal();
+    const std::filesystem::path abs_path = NormalizedCopy(it->path());
     std::filesystem::path rel;
     if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
       continue;
@@ -638,7 +689,7 @@ struct FileIndexWatcher::Impl {
       if (wd_to_path.size() >= kMaxIndexWatchEntries) {
         return false;  // budget exhausted -> partial-tree degradation
       }
-      const std::filesystem::path subdir = it->path().lexically_normal();
+      const std::filesystem::path subdir = NormalizedCopy(it->path());
       const int sub_wd = inotify_add_watch(inotify_fd, subdir.c_str(), kInotifyMask);
       if (sub_wd < 0) {
         if (errno == ENOSPC) {
@@ -791,7 +842,7 @@ struct FileIndexWatcher::Impl {
 
             if (ev->len > 0 && ev->name[0] != '\0') {
               const std::string name(ev->name, ::strnlen(ev->name, ev->len));
-              const std::filesystem::path abs_path = (dir / name).lexically_normal();
+              const std::filesystem::path abs_path = NormalizedCopy(dir / name);
 
               if (is_dir && (ev->mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
                 // New directory: add watches for it recursively. Build a fresh
@@ -1482,7 +1533,7 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
       !std::filesystem::is_directory(absolute_root, dir_error) || dir_error) {
     return false;
   }
-  impl_->root = absolute_root.lexically_normal();
+  impl_->root = NormalizedCopy(absolute_root);
   // Reset the dispatch-ordering guard for this watch: Unwatch() above joined the
   // previous watch's workers, so no worker can race this reset. The next initial
   // scan will re-arm initial_applied when its is_initial batch lands.

@@ -65,6 +65,62 @@ namespace microide::util {
   return is_separator(root_text.back()) || is_separator(candidate_text[root_text.size()]);
 }
 
+// The portion of `candidate_text` that is relative to `root_text`, as a view INTO
+// `candidate_text` — the allocation-free companion to
+// `NormalizedPathEqualsOrWithin`, whose preconditions it shares: both texts are
+// already lexically normal, and the containment check above has already returned
+// true for them. Returns an empty view when the two denote the same location.
+//
+// This exists so a per-entry traversal decision can be made without the
+// `lexically_relative()` + `lexically_normal()` + `generic_string()` temporaries
+// (a dozen-odd allocations) that deriving the same text through `path` costs. The
+// containment check has already established the prefix; the relative part is that
+// prefix removed, and nothing else.
+[[nodiscard]] inline std::string_view NormalizedRelativeView(std::string_view candidate_text,
+                                                             std::string_view root_text) {
+  const auto is_separator = [](char c) {
+#ifdef _WIN32
+    return c == '\\' || c == '/';
+#else
+    return c == '/';
+#endif
+  };
+  if (root_text.empty() || candidate_text == root_text) {
+    return {};
+  }
+  // A "." root is the current directory; its members are spelled with no prefix
+  // at all once normalized, so the whole candidate is the relative part.
+  if (root_text.size() == 1 && root_text[0] == '.') {
+    return candidate_text;
+  }
+  std::size_t offset = root_text.size();
+  if (!is_separator(root_text.back())) {
+    ++offset;  // skip the separator the containment check proved is there
+  }
+  if (offset >= candidate_text.size()) {
+    return {};
+  }
+  return candidate_text.substr(offset);
+}
+
+// The directory part of an already-normalized path's text, as a view into it —
+// what `path::parent_path()` would yield, without constructing a path. An empty
+// view means the path has no directory part (a bare relative filename).
+[[nodiscard]] inline std::string_view NormalizedParentDirectoryView(std::string_view text) {
+#ifdef _WIN32
+  const std::size_t last_separator = text.find_last_of("\\/");
+#else
+  const std::size_t last_separator = text.find_last_of('/');
+#endif
+  if (last_separator == std::string_view::npos) {
+    return {};
+  }
+  if (last_separator == 0) {
+    return text.substr(0, 1);  // the filesystem root itself keeps its separator
+  }
+  return text.substr(0, last_separator);
+}
+
 // True when `text` — a path's own separator-separated spelling — is NOT already in
 // lexically-normal form, i.e. when `lexically_normal()` would produce something
 // different and therefore has to run.

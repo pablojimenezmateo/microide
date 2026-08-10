@@ -72,9 +72,52 @@ void TestProjectTraversalFilterTrailingSeparatorRoot() {
          "a trailing-slash root should still skip VCS metadata");
 }
 
+// The per-entry hot path derives the relative text, the parent directory and the
+// ancestor chain from views into the candidate's own text rather than from
+// `path` operations (TD-2026-08-10-174). Those derivations are what every
+// .gitignore rule is matched against, so this pins the cases where a view-based
+// derivation could differ from the path-based one it replaced: a deep ancestor
+// that is itself ignored, an unnormalized input, and a path escaping the root.
+void TestProjectTraversalFilterDeepAncestorAndUnnormalizedInput() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / "a" / "b" / "c");
+  WriteFile(root / ".gitignore", "/b/\n");
+
+  ProjectTraversalFilter filter(root);
+
+  Expect(filter.Includes(root / "a" / "b" / "c" / "deep.cpp", PathType::RegularFile),
+         "a root-anchored '/b/' rule must not match the nested a/b, so the file stays included");
+
+  WriteFile(root / ".gitignore", "b/\n");
+  ProjectTraversalFilter nested_filter(root);
+  Expect(!nested_filter.Includes(root / "a" / "b" / "c" / "deep.cpp", PathType::RegularFile),
+         "a file three levels under an ignored ancestor directory is excluded — the ancestor "
+         "walk must reach a/b, not stop at the immediate parent");
+
+  ProjectTraversalFilter unnormalized_filter(root);
+  Expect(!unnormalized_filter.Includes(root / "a" / "." / "b" / "c" / "deep.cpp",
+                                       PathType::RegularFile),
+         "an unnormalized spelling of the same path reaches the same verdict");
+  Expect(unnormalized_filter.Includes(root / "a" / "x" / ".." / "keep.cpp",
+                                      PathType::RegularFile),
+         "an unnormalized spelling of an included path is still included");
+
+  Expect(!unnormalized_filter.Includes(temp_dir.path() / "outside.cpp", PathType::RegularFile),
+         "a sibling of the root escapes the project boundary");
+  Expect(!unnormalized_filter.Includes(root / ".." / "outside.cpp", PathType::RegularFile),
+         "a path climbing out of the root via .. escapes the project boundary");
+  Expect(!unnormalized_filter.Includes(std::filesystem::path(root.generic_string() + "ile") /
+                                           "x.cpp",
+                                       PathType::RegularFile),
+         "a sibling directory sharing the root's string prefix is not inside it");
+}
+
 }  // namespace
 
 void RegisterProjectTraversalFilterTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectTraversalFilter/DeepAncestorAndUnnormalizedInput",
+          TestProjectTraversalFilterDeepAncestorAndUnnormalizedInput);
   AddTest(tests, "ProjectTraversalFilter/ExcludesVcsAndBuildDirs",
           TestProjectTraversalFilterExcludesVcsAndBuildDirs);
   AddTest(tests, "ProjectTraversalFilter/HonorsNestedGitignore",

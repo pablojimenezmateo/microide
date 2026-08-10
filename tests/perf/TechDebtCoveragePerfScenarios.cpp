@@ -33,8 +33,10 @@
 #include "editor/SnippetEngine.h"
 #include "editor/TextViewport.h"
 #include "editor/TextViewportInternal.h"
+#include "platform/Filesystem.h"
 #include "plugin/PluginHost.h"
 #include "plugin/PluginRegistryInterop.h"
+#include "project/ProjectTraversalFilter.h"
 #include "util/TextFileIO.h"
 #include "workspace/AssistProviderMerge.h"
 #include "workspace/services/SettingsOverlayService.h"
@@ -485,6 +487,66 @@ void RunBranchReviewPresentationMarkers(ScenarioContext& context) {
   });
 }
 
+// ---- 174: ProjectTraversalFilter::Includes --------------------------------
+//
+// Every whole-tree walk in the app funnels through this one call, once per
+// filesystem entry: the initial file-index build (documented in FileIndexWatcher
+// as "the dominant single cost of opening a project"), the poll-fallback
+// re-walk, the inotify registration, the sidebar tree and the project scanner.
+// A project with 20,000 entries calls it 20,000 times per walk.
+//
+// TD-2026-08-10-174 is about `lexically_normal()` on paths that are already
+// normal — ~12 allocations for a no-op — and this is the hottest instance of it
+// in the tree. The scan below is pure path arithmetic: the per-directory matcher
+// cache is warmed before the measured phase, so the phase measures the filter's
+// own per-entry cost and nothing else. Allocation count is the oracle; a
+// re-added `lexically_normal()` on the entry path shows up as +12 per entry.
+void RunProjectTraversalFilterScan(ScenarioContext& context) {
+  // A root that does not exist on disk, deliberately: the only filesystem work
+  // Includes() does is IgnoreMatcher::LoadIgnoreFile per NEW directory, which the
+  // warm pass below absorbs into setup. The measured phase then touches no
+  // syscalls at all and is deterministic on any host.
+  const std::filesystem::path root("/microide-perf/traversal-root");
+  project::ProjectTraversalFilter filter(root, {});
+
+  // Shaped like a source tree: a few dozen directories, most entries at depth
+  // 3-4, a handful under an ignored build directory so the reject path is
+  // measured too.
+  // The entry kind is precomputed rather than derived per call: `path::extension()`
+  // builds a path and would put the scenario's own allocations inside the phase.
+  std::vector<std::pair<std::filesystem::path, platform::PathType>> entries;
+  entries.reserve(2048);
+  for (int dir = 0; dir < 32; ++dir) {
+    const std::string top = dir % 8 == 0 ? "build" : "src" + std::to_string(dir);
+    for (int sub = 0; sub < 4; ++sub) {
+      const std::string subdir = top + "/module" + std::to_string(sub);
+      entries.emplace_back(root / subdir, platform::PathType::Directory);
+      for (int file = 0; file < 15; ++file) {
+        entries.emplace_back(root / (subdir + "/unit" + std::to_string(file) + ".cpp"),
+                             platform::PathType::RegularFile);
+      }
+    }
+  }
+
+  const auto scan = [&filter, &entries] {
+    std::size_t kept = 0;
+    for (const auto& [entry, type] : entries) {
+      kept += filter.Includes(entry, type) ? 1u : 0u;
+    }
+    return kept;
+  };
+
+  // Warm the per-directory matcher cache (and the failed .gitignore opens behind
+  // it) so the measured phase is the filter's steady-state per-entry cost.
+  volatile std::size_t warm_sink = scan();
+  (void)warm_sink;
+
+  context.Measure("project.traversal_filter_scan", [&]() {
+    volatile std::size_t sink = scan();
+    (void)sink;
+  });
+}
+
 // ---- Registration ----------------------------------------------------------
 //
 // These are short-to-mid pure-unit micro-benchmarks (20-55 ms). Their ALLOCATION
@@ -568,6 +630,14 @@ const ScenarioRegistration g_perf_branch_review_presentation_markers({Scenario{
     .tolerance_p95_percent = tolerance::kJitterWallP95,
     .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunBranchReviewPresentationMarkers,
+}});
+const ScenarioRegistration g_perf_project_traversal_filter_scan({Scenario{
+    .name = "project_traversal_filter_scan",
+    .smoke = true,
+    .baseline_gated = true,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
+    .run = RunProjectTraversalFilterScan,
 }});
 
 }  // namespace

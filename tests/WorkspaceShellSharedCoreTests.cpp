@@ -679,6 +679,64 @@ void TestWorkspaceSharedPathMutationHelpers() {
            "a '/' root contains every absolute path");
   }
 
+  // NormalizedRelativeView and NormalizedParentDirectoryView replace
+  // lexically_relative() and parent_path() on the per-filesystem-entry traversal
+  // path (TD-2026-08-10-174), so they are checked against exactly those two, on
+  // the inputs the walk produces. A wrong relative here does not merely cost
+  // speed: it is the text every .gitignore rule is matched against.
+  {
+    using microide::util::NormalizedParentDirectoryView;
+    using microide::util::NormalizedRelativeView;
+    const std::vector<std::pair<std::string, std::string>> nested_cases = {
+        {"/tmp/project/src/main.cpp", "/tmp/project"},
+        {"/tmp/project/src", "/tmp/project"},
+        {"/tmp/project/a/b/c/d.txt", "/tmp/project"},
+        {"/tmp/project", "/tmp/project"},
+        {"a/b/c.cpp", "a/b"},
+        {"a/b/c.cpp", "."},
+        {"/tmp/x", "/"},
+    };
+    for (const auto& [candidate_text, root_text] : nested_cases) {
+      const std::filesystem::path candidate(candidate_text);
+      const std::filesystem::path root_path(root_text);
+      const std::string_view view = NormalizedRelativeView(candidate.native(), root_path.native());
+      const std::filesystem::path expected =
+          candidate == root_path ? std::filesystem::path{} : candidate.lexically_relative(root_path);
+      Expect(view == std::string_view(expected.native()),
+             "NormalizedRelativeView must agree with lexically_relative for '" + candidate_text +
+                 "' under '" + root_text + "': got '" + std::string(view) + "', want '" +
+                 expected.string() + "'");
+    }
+
+    const std::vector<std::string> parent_shapes = {
+        "/tmp/project/src/main.cpp", "/tmp/project", "/tmp", "/x", "a/b/c.cpp", "a/b", "a", "",
+    };
+    for (const std::string& shape : parent_shapes) {
+      const std::filesystem::path path(shape);
+      Expect(NormalizedParentDirectoryView(path.native()) ==
+                 std::string_view(path.parent_path().native()),
+             "NormalizedParentDirectoryView must agree with parent_path for '" + shape +
+                 "': got '" + std::string(NormalizedParentDirectoryView(path.native())) +
+                 "', want '" + path.parent_path().string() + "'");
+    }
+    // The ancestor walk in ProjectTraversalFilter::Includes trims a relative path
+    // with this until it empties. It must terminate, and it must yield the same
+    // sequence parent_path() does — an ancestor skipped here is an ignored
+    // directory whose contents stop being pruned.
+    std::string_view walked = "a/b/c/d.txt";
+    std::filesystem::path reference("a/b/c/d.txt");
+    for (int step = 0; step < 8; ++step) {
+      walked = NormalizedParentDirectoryView(walked);
+      reference = reference.parent_path();
+      Expect(walked == std::string_view(reference.native()),
+             "the view-based ancestor walk must track parent_path at every step");
+      if (walked.empty()) {
+        break;
+      }
+    }
+    Expect(walked.empty(), "the view-based ancestor walk must terminate");
+  }
+
   // PathTextNeedsNormalizing is the allocation-free "would lexically_normal()
   // change this?" scan that lets a per-entry loop spend one string instead of one
   // path (TD-2026-08-06-159). It is only useful if it never says "no" to a path
