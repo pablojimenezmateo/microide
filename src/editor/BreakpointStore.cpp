@@ -5,11 +5,37 @@
 #include <utility>
 
 #include "editor/EditTypes.h"
+#include "util/PathMatch.h"
 
 namespace microide::editor {
 
 std::string BreakpointStore::PathKey(const std::filesystem::path& path) {
-  return path.empty() ? std::string{} : path.lexically_normal().generic_string();
+  std::string scratch;
+  const std::string_view key = PathKeyView(path, scratch);
+  // The scratch already holds the answer whenever normalization ran; otherwise
+  // the view is into the path and this is the one copy the caller asked for.
+  return scratch.empty() ? std::string(key) : std::move(scratch);
+}
+
+std::string_view BreakpointStore::PathKeyView(const std::filesystem::path& path,
+                                              std::string& scratch) {
+  if (path.empty()) {
+    return {};
+  }
+#ifdef _WIN32
+  // The native separator is not the generic one, so the conversion is real work.
+  scratch = path.lexically_normal().generic_string();
+  return scratch;
+#else
+  // `lexically_normal()` is ~12 allocations (a fresh path plus a component list
+  // holding a string per component) and is a no-op for a path whose text is
+  // already normal — which is every path the editor opened a file with.
+  if (!util::PathTextNeedsNormalizing(path.native())) {
+    return path.native();
+  }
+  scratch = path.lexically_normal().generic_string();
+  return scratch;
+#endif
 }
 
 void BreakpointStore::BumpRevision() {
@@ -335,7 +361,8 @@ void BreakpointStore::ResetVerification() {
 
 bool BreakpointStore::ShiftForAppliedEdit(const std::filesystem::path& path,
                                           const AppliedEdit& edit) {
-  const auto entry_it = by_path_.find(PathKey(path));
+  std::string key_scratch;
+  const auto entry_it = by_path_.find(PathKeyView(path, key_scratch));
   if (entry_it == by_path_.end() || entry_it->second.breakpoints.empty()) {
     return false;
   }

@@ -159,6 +159,16 @@ class BreakpointStore {
                         std::optional<std::string> Breakpoint::*field,
                         std::optional<std::string> value);
   static std::string PathKey(const std::filesystem::path& path);
+  // The same key, without owning it, for a LOOKUP that may find nothing.
+  //
+  // `by_path_` hashes transparently, so a probe needs a view and not a string —
+  // and on an already-normal path (every path the editor holds) the key IS the
+  // path's own text, so the view costs nothing at all. `ShiftForAppliedEdit`
+  // runs on every keystroke and returns immediately when the file has no
+  // breakpoints, which is the common case, and it was paying ~13 allocations to
+  // discover that (TD-2026-08-06-159). `scratch` is written only for an
+  // unusually spelled path and must outlive the returned view.
+  static std::string_view PathKeyView(const std::filesystem::path& path, std::string& scratch);
   std::vector<Breakpoint>* MutableForKey(const std::string& key);
   // Find the breakpoint on `path:line`, creating it (sorted) when absent.
   // Returns nullptr only for an empty path.
