@@ -1434,6 +1434,18 @@ if(MICROIDE_PERF_HARNESS_BUILD)
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
   set_tests_properties(microide_perf_fixtures_kernel PROPERTIES FIXTURES_SETUP perf_fixtures)
 
+  # The seven git-workstation repositories were the last family with no contract
+  # and no setup: a shell script a human had to remember to run, so a fresh
+  # checkout could run none of the git/diff/merge scenarios and a drifted tree
+  # was undetectable. Their manifest folds `git status --porcelain` in on top of
+  # the worktree bytes, so a scenario that leaves the index staged also
+  # invalidates it and gets a clean tree next run (TD-2026-08-10-172, and the
+  # still-open half of TD-2026-08-06-155).
+  add_test(NAME microide_perf_fixtures_git
+           COMMAND python3 tests/perf/generate_git_workstation_fixtures.py --ensure
+           WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+  set_tests_properties(microide_perf_fixtures_git PROPERTIES FIXTURES_SETUP perf_fixtures)
+
   add_test(NAME microide_perf_tests
            COMMAND microide_perf --smoke --iterations=1
            WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})

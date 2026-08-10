@@ -360,8 +360,15 @@ def ensure_fixtures(cwd: Path, specs) -> int:
     The committed .sha256 is the contract: regenerate only when the on-disk tree is
     missing or does not match, and never rewrite the .sha256 here. If regeneration
     fails to reproduce the committed hash, abort loudly (Python/platform drift).
+
+    A spec is `(name, root, hash_out, writer)`, or the same with a fifth element
+    overriding the hasher. The git-workstation fixtures need that: their contract
+    has to skip the nondeterministic `.git` internals and pick up the index/status
+    state instead, which is the half a plain content hash cannot see.
     """
-    for name, root, hash_out, writer in specs:
+    for spec in specs:
+        name, root, hash_out, writer = spec[:4]
+        hasher = spec[4] if len(spec) > 4 else tree_hash
         ho = cwd / hash_out
         if not ho.exists():
             print(f"[{name}] missing committed checksum {hash_out}", flush=True)
@@ -369,12 +376,12 @@ def ensure_fixtures(cwd: Path, specs) -> int:
         expected = ho.read_text(encoding="utf-8").strip()
 
         root_abs = cwd / root
-        if root_abs.exists() and tree_hash(root_abs) == expected:
+        if root_abs.exists() and hasher(root_abs) == expected:
             print(f"[{name}] up to date ({root})")
             continue
 
         writer(root_abs)
-        actual = tree_hash(root_abs)
+        actual = hasher(root_abs)
         if actual != expected:
             print(
                 f"[{name}] regeneration drift for {root}: "

@@ -1158,8 +1158,17 @@ Generate deterministic Git workstation fixtures (not checked into git; listed in
 `tests/perf/fixtures/.gitignore`):
 
 ```bash
-bash tests/perf/generate_git_workstation_fixtures.sh
+python3 tests/perf/generate_git_workstation_fixtures.py           # rewrite all + .sha256
+python3 tests/perf/generate_git_workstation_fixtures.py --ensure  # what ctest runs
 ```
+
+The ctest `microide_perf_fixtures_git` setup runs the `--ensure` form before the
+perf suite, so a fresh checkout reproduces all seven repositories automatically.
+Unlike the other manifests, a git fixture's `.sha256` digests the worktree
+(skipping the non-reproducible `.git` internals) **and** `git status
+--porcelain` — so a scenario that leaves a file staged in the fixture's index
+invalidates the manifest and gets a regenerated tree on the next run, rather
+than handing its leftovers to the next measurement.
 
 Fixture roots:
 

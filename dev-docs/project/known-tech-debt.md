@@ -330,7 +330,7 @@ exactly while its max is 13x should be a loud, named condition in the harness
 human notices while chasing something else. Filed as part of 167's
 `measurement_revision` work rather than separately.
 
-### TD-2026-08-10-172 — `git_sidebar_activate`'s timing baseline describes a fixture that no longer exists. OPEN.
+### TD-2026-08-10-172 — `git_sidebar_activate`'s timing baseline describes a fixture that no longer exists. PARTIALLY RESOLVED 2026-08-10 — the fixture family now has a contract and a ctest setup; only the wall/cpu rerecord on an idle runner is left.
 
 The scenario names `tests/perf/fixtures/git_status_project`. Nothing produced
 that tree: `generate_git_workstation_fixtures.sh` builds six git fixtures and not
@@ -354,11 +354,60 @@ by `--update-baseline=deterministic` because this session's machine was thermall
 throttled (calibration moved 4x mid-run). Rerecord it with a full
 `--update-baseline` on an idle runner.
 
-**Also open, and larger**: the git fixtures are the one family with no ctest
-setup. The other three generators are `FIXTURES_SETUP` tests with `--ensure`;
-this one is a shell script a human has to remember to run, it has no `.sha256`
-contract, and it `rm -rf`s seven repositories every time. A fresh checkout cannot
-run any git-workstation scenario. Give it `--ensure` semantics and wire it in.
+**Also open, and larger** — RESOLVED 2026-08-10: the git fixtures were the one
+family with no ctest setup. The other three generators are `FIXTURES_SETUP` tests
+with `--ensure`; this one was a shell script a human had to remember to run, it
+had no `.sha256` contract, and it `rm -rf`'d seven repositories every time. A
+fresh checkout could not run any git-workstation scenario.
+
+`generate_git_workstation_fixtures.sh` is now
+`generate_git_workstation_fixtures.py`, sharing the one `ensure_fixtures`
+implementation with the other three generators (which grew a per-spec hasher for
+it), with seven committed `.sha256` manifests and a
+`microide_perf_fixtures_git` ctest setup on the same `perf_fixtures` label.
+`--ensure` is 3.8 s when everything matches; a full rewrite of all seven is 6.5 s
+(the bash version was minutes).
+
+**A git fixture's manifest is not a plain content hash**, and that is what makes
+it close [155](#td-2026-08-06-155)'s still-open half. It digests the worktree
+(skipping `.git`, whose object layout and index stat data are not reproducible)
+and then folds in `git status --porcelain`. So the **index** is part of the
+contract: the staging scenarios `git add` against these repositories, and a
+left-behind index now invalidates the manifest and gets regenerated on the next
+run instead of becoming the next measurement's starting state. Verified by
+staging `git_large_diff_project` by hand and watching `--ensure` heal it. This is
+the cheap version of that entry's "copy the tree into a per-run sandbox" — it
+does not stop a scenario polluting a tree *within* one run, but it does stop
+pollution surviving between runs, which was the part that made baselines
+unportable.
+
+**Two trees on this checkout were polluted, and nothing had noticed**, which is
+the entry's own point arriving a second time. TD-2026-08-06-155's truncate-back
+fix works (verified: five iterations of both external-change scenarios leave the
+files at their generated size), but the residue from *before* that fix was never
+cleaned up: `git_large_diff_project/src/large.cpp` still carried 130 leftover
+appends (a 263-line worktree delta where the generator writes 3) and
+`git_many_conflicts_project/current.cpp` 90. The six affected baselines were
+recorded against those polluted trees. Regenerating dropped every one of their
+allocation figures — `merge_open_many_conflicts` 327 → 263 p50 / 16,794 → 12,507
+max, `external_change_refresh_open_diff` 31,997 → 31,878, and
+`external_change_refresh_open_diff`'s `p50_net_heap_bytes` gate stops failing at
+3.02 MB against 27,959 — and the deterministic half is rerecorded. The
+wall/cpu half is untouched (this machine is loaded); it describes a slightly
+larger diff than the fixtures now hold, so it is loose rather than wrong.
+
+**Deleted while here**: `tests/perf/generate_git_fixture.sh`, a second,
+unreferenced generator for the *same* `git_status_project` path that wrote a
+different tree (1,000 clean tracked files, no worktree delta, no untracked). Two
+generators disagreeing about one fixture path is most of how this entry happened;
+running it would now also break the manifest, so it goes rather than gets
+repointed.
+
+**Still open**: git fixtures are not in `PerfMain`'s `kManifestBackedFixtures`
+in-process integrity check, because the porcelain half of their digest is not
+something the perf binary can compute without shelling out to git. The ctest
+setup is the only enforcement, so a lane that runs `microide_perf` directly
+(perf-canary) gets none — the same gap `file_finder_large` already has.
 
 ### TD-2026-08-10-171 — two architecture tests passed only on an idle machine. [RESOLVED 2026-08-10.]
 
@@ -2936,7 +2985,7 @@ Neither is urgent now that the per-keystroke cost is a third of what it was, and
 `file_finder_type_query` gates both phases exactly (p50 == max on every
 iteration), so a regression here is now visible.
 
-### TD-2026-08-06-155 — a perf scenario appended to a fixture in the repository 1,361 times, and every diff scenario reading that tree had been measuring the accumulation. [APPEND LEAK FIXED 2026-08-06; the index mutation is still open.]
+### TD-2026-08-06-155 — a perf scenario appended to a fixture in the repository 1,361 times, and every diff scenario reading that tree had been measuring the accumulation. [RESOLVED — append leak 2026-08-06; the index mutation 2026-08-10, by a manifest rather than a sandbox.]
 
 Found while auditing a +0.1 % allocation move on four git scenarios during the
 2026-08-06 rebaseline — the kind of drift the "investigate up" rule exists to
@@ -2976,7 +3025,7 @@ accumulation had been hiding:
 | `external_change_refresh_open_diff` | 61,759 | 56,208 | −9.0 % |
 | `diff_stage_selected_lines` | 60,834 | 55,306 | −9.1 % |
 
-**Still open, and the reason this entry is not RESOLVED.** The append was the
+**The index half, closed 2026-08-10 by the other end.** The append was the
 unbounded case, not the only one. `diff_stage_hunk_large_patch` and
 `diff_stage_selected_lines` run `git add` against the fixture repository, so they
 mutate its **index** — bounded (staging the same hunk twice is idempotent) but
@@ -2985,12 +3034,23 @@ cannot restore it without encoding each fixture's intended index state
 (`git_large_diff_project` wants nothing staged; `git_large_staged_project` wants
 800 files staged, which is its whole point).
 
-The durable fix is that a fixture tree is a read-only input: copy it into the
-per-run sandbox the harness already creates and let the scenario mutate the copy.
-That costs a 1,000-file copy per scenario and will move every git baseline, so it
-is its own change. Until then, a rebaseline of the staging scenarios should start
-from a freshly generated fixture
-(`bash tests/perf/generate_git_workstation_fixtures.sh`).
+This entry proposed making the fixture tree a read-only input and copying it into
+the per-run sandbox — a 1,000-file copy per scenario, moving every git baseline.
+What shipped instead ([172](#td-2026-08-10-172)) encodes the intended index state
+where it belongs, in the generator, and enforces it from the manifest: a git
+fixture's `.sha256` covers the worktree **and** `git status --porcelain`, so a
+left-behind `git add` invalidates the tree and `--ensure` regenerates it before
+the next run. No per-scenario copy, no baseline movement, and the generator is
+now the single statement of what each repository's index is supposed to look
+like. What it does not cover is pollution *within* one run — scenario A stages,
+scenario B measures it, in a fixed order — which the sandbox copy would have. If
+that ever matters, the sandbox is still the answer; nothing measured today says
+it does.
+
+The residue from before the append fix was still on disk and is cleaned up in
+172; regenerate with
+`python3 tests/perf/generate_git_workstation_fixtures.py --ensure` (or just run
+ctest, which does it).
 
 ### TD-2026-08-06-153 — `search_first_result`'s "authoritative, precise regression signal" is 99.3% project open. [RESOLVED 2026-08-06 — 114 phase gates armed across 82 baselines.]
 
