@@ -565,19 +565,31 @@ void PieceTree::ExtractLineRange(std::size_t begin_line, std::size_t end_line,
         const char* data = BufferOf(node.buffer).data() + node.start + (s - piece_start);
         const std::uint32_t len = piece_end - s;
         std::uint32_t seg_begin = 0;
-        for (std::uint32_t i = 0; i < len; ++i) {
-          if (data[i] == '\n') {
-            current.append(data + seg_begin, i - seg_begin);
+        while (seg_begin < len) {
+          const char* segment = data + seg_begin;
+          const auto* newline = static_cast<const char*>(
+              std::memchr(segment, '\n', len - seg_begin));
+          if (newline == nullptr) break;
+          const std::size_t segment_length = static_cast<std::size_t>(newline - segment);
+          if (current.empty()) {
+            // The whole line lies inside this piece — which is every line of an
+            // unedited region — so build it at its exact size. Appending into
+            // `current` first would take the string's growth curve (SSO, then a
+            // reallocation) for a length that is already known, and `current` has
+            // no capacity to reuse anyway: push_back moved its buffer away.
+            out.emplace_back(segment, segment_length);
+          } else {
+            current.append(segment, segment_length);
             out.push_back(std::move(current));
             current.clear();
-            seg_begin = i + 1;
-            if (out.size() == target) {
-              done = true;
-              break;
-            }
+          }
+          seg_begin = static_cast<std::uint32_t>(newline - data) + 1;
+          if (out.size() == target) {
+            done = true;
+            break;
           }
         }
-        if (!done) {
+        if (!done && seg_begin < len) {
           current.append(data + seg_begin, len - seg_begin);
         }
       }
