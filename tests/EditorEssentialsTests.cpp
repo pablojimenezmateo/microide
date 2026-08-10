@@ -1206,6 +1206,47 @@ void TestLanguageContractAppliesUserOverrides() {
   Expect(added_pattern, "user_open_patterns override should add custom indent suffixes");
 }
 
+// A Refresh with no plugin contribution and no user override reproduces the
+// defaults exactly, so it must neither rebuild the table (~5,000 allocations)
+// nor bump the revision — a bump drops the shared editor-view cache and
+// re-applies preferences to every open tab. Every project switch runs this path
+// (TD-2026-08-06-159).
+void TestLanguageContractSkipsNoOpRefresh() {
+  microide::workspace::WorkspaceLanguageContract registry;
+  microide::plugin::PluginHost host;
+
+  const std::size_t initial_revision = registry.revision();
+  const auto* cpp_before = registry.Find("cpp");
+  Expect(cpp_before != nullptr, "cpp contract should exist by default");
+
+  registry.Refresh(host);
+  Expect(registry.revision() == initial_revision,
+         "a refresh that changes nothing should not bump the contract revision");
+  Expect(registry.Find("cpp") == cpp_before,
+         "a no-op refresh should leave the existing contract storage in place");
+
+  // A user override still takes effect on the very next refresh...
+  const auto getter = [](std::string_view id) -> std::optional<std::string> {
+    if (id == "editor.comments.user_line") return std::string(";;");
+    return std::nullopt;
+  };
+  registry.Refresh(host, getter);
+  Expect(registry.revision() > initial_revision,
+         "a refresh that layers an override on top must bump the revision");
+  const auto* cpp_overridden = registry.Find("cpp");
+  Expect(cpp_overridden != nullptr && cpp_overridden->line_comment == ";;",
+         "the override should be applied after the skip-eligible refresh");
+
+  // ...and dropping it must rebuild rather than leave the override standing.
+  const std::size_t overridden_revision = registry.revision();
+  registry.Refresh(host);
+  Expect(registry.revision() > overridden_revision,
+         "dropping the override must rebuild the table, not skip");
+  const auto* cpp_restored = registry.Find("cpp");
+  Expect(cpp_restored != nullptr && cpp_restored->line_comment == "//",
+         "the defaults should be restored once the override is gone");
+}
+
 microide::editor::LanguageContractView MakeCStyleContractView() {
   microide::editor::LanguageContractView view;
   view.auto_close_pairs = {
@@ -1816,6 +1857,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestLanguageContractMissingLanguage);
   AddTest(tests, "EditorEssentials/LanguageContract/AppliesUserOverrides",
           TestLanguageContractAppliesUserOverrides);
+  AddTest(tests, "EditorEssentials/LanguageContract/SkipsNoOpRefresh",
+          TestLanguageContractSkipsNoOpRefresh);
   AddTest(tests, "EditorEssentials/IndentGuides/EmitsRunsAtNestedDepths",
           TestIndentGuidesEmitsRunsAtNestedDepths);
   AddTest(tests, "EditorEssentials/IndentGuides/RunsMatchNaiveCoverage",

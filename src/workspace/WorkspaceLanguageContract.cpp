@@ -180,6 +180,11 @@ std::unordered_map<std::string, LanguageContract> BuildDefaults() {
 struct WorkspaceLanguageContract::Impl {
   std::unordered_map<std::string, LanguageContract> table;
 
+  // True while `table` is exactly `BuildDefaults()` — no plugin contribution and
+  // no user override layered on it. Refresh reads it to skip a rebuild that
+  // would reproduce the same table (see Refresh).
+  bool table_is_pure_defaults = true;
+
   // Memo behind ResolveEditorView. Mutable because resolution is a pure query;
   // `views_revision == 0` means "never populated", which is distinguishable
   // because WorkspaceLanguageContract's revision starts at 1.
@@ -281,41 +286,63 @@ std::optional<LanguageBracketPair> ParseUserBracketPair(std::string_view token) 
                              std::string(token.substr(bar + 1))};
 }
 
-void ApplyUserOverrides(std::unordered_map<std::string, LanguageContract>& table,
-                        const WorkspaceLanguageContract::SettingGetter& get_setting) {
-  if (!get_setting) return;
-
+// The five user/project setting overrides, parsed once per Refresh. Kept as a
+// value so Refresh can ask whether any of them are set BEFORE deciding to
+// rebuild the table: with no overrides and no plugin contributions the rebuilt
+// table is byte-identical to the defaults, and building it costs ~5,000
+// allocations (TD-2026-08-06-159).
+struct UserOverrides {
   std::vector<LanguageBracketPair> add_pairs;
+  std::vector<LanguageBracketPair> disabled_pairs;
+  std::optional<std::string> line_comment;
+  std::vector<std::string> add_patterns;
+  std::vector<std::string> disabled_snippet_prefixes;
+
+  bool empty() const {
+    return add_pairs.empty() && disabled_pairs.empty() && !line_comment.has_value() &&
+           add_patterns.empty() && disabled_snippet_prefixes.empty();
+  }
+};
+
+UserOverrides ParseUserOverrides(const WorkspaceLanguageContract::SettingGetter& get_setting) {
+  UserOverrides overrides;
+  if (!get_setting) return overrides;
+
   if (auto value = get_setting("editor.brackets.user_pairs"); value && !value->empty()) {
     for (const auto& token : SplitCsv(*value)) {
       if (auto pair = ParseUserBracketPair(token)) {
-        add_pairs.push_back(std::move(*pair));
+        overrides.add_pairs.push_back(std::move(*pair));
       }
     }
   }
-  std::vector<LanguageBracketPair> disabled_pairs;
   if (auto value = get_setting("editor.brackets.user_disabled"); value && !value->empty()) {
     for (const auto& token : SplitCsv(*value)) {
       if (auto pair = ParseUserBracketPair(token)) {
-        disabled_pairs.push_back(std::move(*pair));
+        overrides.disabled_pairs.push_back(std::move(*pair));
       }
     }
   }
-
-  std::optional<std::string> line_comment_override;
   if (auto value = get_setting("editor.comments.user_line"); value && !value->empty()) {
-    line_comment_override = *value;
+    overrides.line_comment = *value;
   }
-
-  std::vector<std::string> add_patterns;
   if (auto value = get_setting("editor.indents.user_open_patterns"); value && !value->empty()) {
-    add_patterns = SplitCsv(*value);
+    overrides.add_patterns = SplitCsv(*value);
   }
-
-  std::vector<std::string> disabled_snippet_prefixes;
   if (auto value = get_setting("editor.snippets.user_disabled"); value && !value->empty()) {
-    disabled_snippet_prefixes = SplitCsv(*value);
+    overrides.disabled_snippet_prefixes = SplitCsv(*value);
   }
+  return overrides;
+}
+
+void ApplyUserOverrides(std::unordered_map<std::string, LanguageContract>& table,
+                        const UserOverrides& overrides) {
+  if (overrides.empty()) return;
+
+  const std::vector<LanguageBracketPair>& add_pairs = overrides.add_pairs;
+  const std::vector<LanguageBracketPair>& disabled_pairs = overrides.disabled_pairs;
+  const std::optional<std::string>& line_comment_override = overrides.line_comment;
+  const std::vector<std::string>& add_patterns = overrides.add_patterns;
+  const std::vector<std::string>& disabled_snippet_prefixes = overrides.disabled_snippet_prefixes;
 
   const auto pair_equals = [](const LanguageBracketPair& lhs,
                                const LanguageBracketPair& rhs) {
@@ -370,9 +397,25 @@ void WorkspaceLanguageContract::Refresh(const plugin::PluginHost& plugin_host,
   // Built-in defaults form the base layer. Plugin contributions append to the
   // matching language entry (or create a new one when no built-in exists).
   // User / project setting overrides are layered on top via `get_setting`.
-  // The revision counter advances on every Refresh so downstream caches
-  // invalidate cleanly.
+  // The revision counter advances on every Refresh that changes the table so
+  // downstream caches invalidate cleanly.
+  const bool has_contributions = !plugin_host.ContributedBrackets().empty() ||
+                                 !plugin_host.ContributedComments().empty() ||
+                                 !plugin_host.ContributedIndents().empty() ||
+                                 !plugin_host.ContributedSnippets().empty();
+  const UserOverrides overrides = ParseUserOverrides(get_setting);
+
+  // A Refresh with nothing layered on top produces exactly BuildDefaults(), so
+  // when the table already IS that, rebuilding it is ~5,000 allocations that
+  // change nothing — and the revision bump would additionally drop the shared
+  // editor-view cache and re-apply preferences to every open tab. Every project
+  // switch runs this path (the shared plugin host is torn down on switch-away,
+  // so it contributes nothing at reactivation time). TD-2026-08-06-159.
+  if (!has_contributions && overrides.empty() && impl_->table_is_pure_defaults) {
+    return;
+  }
   impl_->table = BuildDefaults();
+  impl_->table_is_pure_defaults = !has_contributions && overrides.empty();
 
   for (const auto& set : plugin_host.ContributedBrackets()) {
     if (set.language_id.empty()) continue;
@@ -391,7 +434,7 @@ void WorkspaceLanguageContract::Refresh(const plugin::PluginHost& plugin_host,
     MergeSnippet(EnsureContract(impl_->table, snippet.language_id), snippet);
   }
 
-  ApplyUserOverrides(impl_->table, get_setting);
+  ApplyUserOverrides(impl_->table, overrides);
 
   ++revision_;
 }
