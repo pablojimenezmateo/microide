@@ -800,6 +800,29 @@ std::optional<Aggregate> PerfHarness::RunScenario(const Scenario& scenario,
     return std::nullopt;
   }
 
+  // Process warm-up, before any measured iteration and independent of the
+  // scenario (TD-2026-08-10-168). The FIRST frames a process ever paints do
+  // several thousand allocations no later frame repeats — lazy first-paint state
+  // that is global to the process, not to the scenario. While the whole suite
+  // shared one process that cost landed on whichever scenario ran first and
+  // every other scenario inherited it warm; per-scenario isolation
+  // (TD-2026-08-06-152) gave each scenario its own process, so each one pays it
+  // again, in its own iteration 1, where it governs p95 and max:
+  //
+  //     cold_startup_no_project   p50 101, max 9,364   (committed max: 681)
+  //     typing_small_file         p50 261, max 12,382  (committed max: 3,703)
+  //
+  // A constant ~8.6k spike in exactly one iteration, across a third of the
+  // suite. This is deliberately NOT `warmup_iterations` — that runs the whole
+  // scenario, which would also warm what a scenario means to measure cold (a
+  // project open, a cold finder index). Pumping frames on the bare driver warms
+  // only the process, which is exactly what the shared-process regime handed
+  // every scenario but the first.
+  {
+    ScenarioContext warm_process(driver.shell, driver.window, driver.renderer);
+    warm_process.PumpFrames(3);
+  }
+
   Aggregate aggregate;
   aggregate.scenario_name = scenario.name;
   aggregate.smoke = scenario.smoke;

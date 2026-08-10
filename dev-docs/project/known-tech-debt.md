@@ -277,6 +277,79 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-10-168 — a third of the suite's allocation gates were red, because process isolation moved a cost the baselines never contained. [RESOLVED 2026-08-10.]
+
+Found while sanity-checking an unrelated perf number: `editor_scroll_only_no_content_bump`
+failed its p95/max allocation gate at **the exact commit that recorded its
+baseline**, on the machine that recorded it. A full-suite run said **34 of 100
+scenarios FAIL**, every one of them on `p95_allocations` / `max_allocations`,
+every one of them with a `p50_allocations` that matched its baseline **exactly**.
+
+That combination is the whole diagnosis. A code regression moves the median. Only
+the tail moved, and it moved by a near-constant amount:
+
+| scenario | committed max | measured max | p50 |
+| --- | ---: | ---: | ---: |
+| `cold_startup_no_project` | 681 | 9,364 | 101 (exact match) |
+| `typing_small_file` | 3,703 | 12,382 | 249 |
+| `compare_tab_open` | 2,445 | 11,114 | 187 |
+| `merge_tab_open` | 1,733 | 10,416 | 1,196 |
+| `window_resize_stress` | 3,853 | 12,422 | 1,264 |
+
+~8,600 allocations, in exactly one iteration, in scenarios with nothing in
+common. `cold_startup_no_project` is `PumpFrames(5)` and nothing else, so the
+cost is the first frames a **process** ever paints — lazy first-paint state that
+is global to the process, not to the scenario.
+
+The proof is one flag: with `--no-isolate`, `typing_small_file` **passes** —
+because `cold_startup_no_project` ran before it in the same process and absorbed
+the cost. That is the regime the baselines were recorded in. Per-scenario process
+isolation ([152](#td-2026-08-06-152)) then gave every scenario its own process,
+so every scenario pays it again, in its own iteration 1, where it governs p95 and
+max.
+
+**Fixed** by warming the process — not the scenario — before the measured loop:
+three pumped frames on the bare driver in `PerfHarness::RunScenario`. Deliberately
+not `warmup_iterations`, which runs the whole scenario and would also warm what a
+scenario means to measure cold (a project open, a cold finder index). After it,
+every allocation gate in the run passes against the **unchanged committed
+baselines** — which is the confirmation that matters: the fix restores the regime
+the baselines describe rather than moving the baselines to match a new one.
+
+**Generalisable, and it is [167](#td-2026-08-07-167)'s thesis with a second
+witness**: a harness change can invalidate a baseline without touching a line of
+product code, and nothing in the baseline file records which regime it was
+recorded in. 152 landed a day before the rebaseline and the rebaseline still came
+out of the old regime — so "rebaseline after the harness change" is not by itself
+a defence. Related trap: the tail metrics were the only ones affected, and the
+suite's habit of reading p50 first is what let it sit.
+
+**Left open**: nothing gates this. A scenario whose p50 matches its baseline
+exactly while its max is 13x should be a loud, named condition in the harness
+("tail-only divergence — suspect the harness, not the code"), not something a
+human notices while chasing something else. Filed as part of 167's
+`measurement_revision` work rather than separately.
+
+### TD-2026-08-10-169 — `switch_and_idle` retains 10.4 % more heap than its baseline, and no code change explains it. OPEN.
+
+    switch_and_idle  p50_net_heap_bytes  113,417 -> 125,164  (+10.4 %, tolerance +10 %)
+
+The one gate still red after [168](#td-2026-08-10-168) that is not a duration.
+It is 0.4 percentage points over its envelope, it reproduces exactly across runs
+(125,164 then 125,380), and it fails identically with and without 168's process
+warm-up, so it is neither noise nor an artifact of that fix.
+
+What makes it worth an entry rather than a rebaseline: like 168, it fails at a
+commit whose product code has not moved since the baseline was recorded. Either
+it is the same "recorded in another regime" story with a second mechanism, or
+something genuinely retains ~12 KB more per project switch. The two are
+distinguishable — `MICROIDE_PERF_BIG_ALLOC_BYTES` over the phase, or an A/B of
+the metric across the isolation commit — and neither has been done.
+
+Do not rebaseline it before that: a retention gate that gets widened whenever it
+trips is [139](#td-2026-08-06-139)'s exact failure, and this scenario's whole job
+is catching a project switch that does not free what it opened.
+
 ### TD-2026-08-07-167 — nothing records that a scenario changed what it measures, so cross-release perf claims are computed from incomparable numbers. OPEN.
 
 Cutting v2.9.0 needed one number: how much faster is this release than v2.8.1.
