@@ -5,6 +5,7 @@
 
 #include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
+#include "util/PathMatch.h"
 #include "util/StringUtil.h"
 
 namespace microide::project {
@@ -30,16 +31,25 @@ bool IsValidUtf8(std::string_view text) {
 }  // namespace
 
 GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::filesystem::path relative_path) {
-  relative_path = relative_path.lexically_normal();
-  const std::string generic = relative_path.generic_string();
+  // git's porcelain output is already relative, '/'-separated and normal, so
+  // `lexically_normal()` is a no-op for every real entry — but it costs ~12
+  // allocations (a fresh path plus a string per component) and this runs once per
+  // changed file on every refresh. Confirm the spelling instead, and keep the
+  // authoritative form for anything unusual (TD-2026-08-10-174).
+  if (util::PathTextNeedsNormalizing(relative_path.native())) {
+    relative_path = relative_path.lexically_normal();
+  }
+  std::string generic = relative_path.generic_string();
+  const bool valid_utf8 = IsValidUtf8(generic);
   GitRepositoryPathIdentity identity{
       .relative_path = std::move(relative_path),
-      .display_label = generic,
-      .path_is_valid_utf8 = IsValidUtf8(generic),
+      .display_label = {},
+      .path_is_valid_utf8 = valid_utf8,
   };
-  if (!identity.path_is_valid_utf8) {
-    identity.display_label = EscapeNonUtf8PathLabel(generic);
-  }
+  // The label IS the generic text in the common case; it used to be copied out of
+  // it and the original thrown away.
+  identity.display_label =
+      valid_utf8 ? std::move(generic) : EscapeNonUtf8PathLabel(generic);
   return identity;
 }
 
