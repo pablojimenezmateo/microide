@@ -4,6 +4,8 @@
 #include <chrono>
 #include <unordered_map>
 
+#include "util/PathMatch.h"
+
 namespace microide::compare {
 
 namespace {
@@ -344,20 +346,26 @@ void BranchReviewStateService::PruneForRepository(
     const std::filesystem::path& repository_root,
     const BranchReviewTargetIdentity* active_target) {
   ++revision_;
-  const std::filesystem::path normalized_root = repository_root.lexically_normal();
+  // Normalize the query once and reject a mismatching target with a string
+  // compare: every stored repository_root arrived normalized, so re-normalizing
+  // one per target (twice -- the partition and the erase both scanned) spent ~12
+  // allocations apiece to confirm what the text already said (TD-2026-08-10-174).
+  std::filesystem::path normalized_storage;
+  const std::filesystem::path& normalized_root =
+      util::PathTextNeedsNormalizing(repository_root.native())
+          ? (normalized_storage = repository_root.lexically_normal())
+          : repository_root;
+  const auto matches_root = [&normalized_root](const BranchReviewTargetState& state) {
+    return util::SameAsNormalizedPath(state.target.repository_root, normalized_root);
+  };
   std::vector<BranchReviewTargetState> matching;
   matching.reserve(targets_.size());
   for (const BranchReviewTargetState& target_state : targets_) {
-    if (target_state.target.repository_root.lexically_normal() == normalized_root) {
+    if (matches_root(target_state)) {
       matching.push_back(target_state);
     }
   }
-  targets_.erase(std::remove_if(targets_.begin(), targets_.end(),
-                                [&](const BranchReviewTargetState& existing) {
-                                  return existing.target.repository_root.lexically_normal() ==
-                                         normalized_root;
-                                }),
-                     targets_.end());
+  targets_.erase(std::remove_if(targets_.begin(), targets_.end(), matches_root), targets_.end());
 
   std::sort(matching.begin(), matching.end(),
             [](const BranchReviewTargetState& left, const BranchReviewTargetState& right) {

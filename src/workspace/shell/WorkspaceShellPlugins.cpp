@@ -1010,7 +1010,7 @@ void WorkspaceShell::NotifyLspBufferOpen(const std::filesystem::path& path) {
     return;
   }
   editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
+  if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     return;
   }
   std::string language_id;
@@ -1030,7 +1030,7 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
     return;
   }
   editor::TextViewport* viewport = ActiveEditableViewport();
-  if (viewport == nullptr || viewport->path().lexically_normal() != normalized_path) {
+  if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     return;
   }
   // Copied, not bound by reference: this is held across EnsureLspDocumentOpen and
@@ -1052,7 +1052,7 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
         // &current_project_state capture would otherwise publish diagnostics from an
         // old server into whatever project happens to be current now.
         ProjectWorkspaceState& current = context_.current_project_state;
-        if (current.root.lexically_normal() != project_root) {
+        if (!util::SameAsNormalizedPath(current.root, project_root)) {
           return;
         }
         PublishLspDiagnostics(current, std::move(uri), LspEncodingForClient(*client),
@@ -1147,7 +1147,7 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
   } else {
     const std::filesystem::path normalized = request.path.lexically_normal();
     if (editor::TextViewport* active = ActiveEditableViewport();
-        active != nullptr && active->path().lexically_normal() == normalized) {
+        active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
       viewport = active;
     } else {
       for (auto& group : context_.current_project_state.editor_groups) {
@@ -1156,8 +1156,10 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
             continue;
           }
           auto& state = *tab.editor_state;
+          // The scan is mostly mismatches, and a mismatch between two already-normal
+          // paths must not cost a path apiece (TD-2026-08-10-174).
           if (!state.needs_restore &&
-              state.viewport.path().lexically_normal() == normalized) {
+              util::SameAsNormalizedPath(state.viewport.path(), normalized)) {
             viewport = &state.viewport;
             break;
           }

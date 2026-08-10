@@ -679,6 +679,35 @@ void TestWorkspaceSharedPathMutationHelpers() {
            "a '/' root contains every absolute path");
   }
 
+  // SameAsNormalizedPath is the scan-shaped identity test: the reference has been
+  // normalized once outside the loop, so a mismatch between two already-normal
+  // paths must cost nothing. It has to agree with SamePathNormalized on every
+  // input whose reference IS normalized — the whole point is that it is cheaper,
+  // not that it answers differently.
+  {
+    using microide::util::SameAsNormalizedPath;
+    using microide::util::SamePathNormalized;
+    const std::vector<std::string> candidates = {
+        "/tmp/project/src/main.cpp", "/tmp/project/src/./main.cpp", "/tmp/project/src/../src/main.cpp",
+        "/tmp/project/src/other.cpp", "/tmp/project/src", "/tmp/project/srcx/main.cpp", "",
+    };
+    const std::vector<std::string> references = {
+        "/tmp/project/src/main.cpp", "/tmp/project/src", "/tmp", "",
+    };
+    for (const std::string& reference_text : references) {
+      const std::filesystem::path reference(reference_text);
+      Expect(!microide::util::PathTextNeedsNormalizing(reference.native()),
+             "the test's references must themselves be normalized: '" + reference_text + "'");
+      for (const std::string& candidate_text : candidates) {
+        const std::filesystem::path candidate(candidate_text);
+        Expect(SameAsNormalizedPath(candidate, reference) ==
+                   SamePathNormalized(candidate, reference),
+               "SameAsNormalizedPath must agree with SamePathNormalized for '" + candidate_text +
+                   "' vs '" + reference_text + "'");
+      }
+    }
+  }
+
   // NormalizedRelativeView and NormalizedParentDirectoryView replace
   // lexically_relative() and parent_path() on the per-filesystem-entry traversal
   // path (TD-2026-08-10-174), so they are checked against exactly those two, on

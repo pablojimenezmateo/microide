@@ -6,6 +6,7 @@
 #include <string>
 #include <vector>
 
+#include "util/PathMatch.h"
 #include "workspace/WorkspaceTextSearch.h"
 
 namespace microide::workspace {
@@ -387,7 +388,8 @@ void WorkspaceShell::ResetBufferSearchFoldRevealState(bool preserve_expanded_fol
     editor::TextViewport* viewport = ActiveEditorViewport();
     editor::FoldingModel* model = EnsureActiveFoldingModelFresh();
     if (viewport != nullptr && model != nullptr &&
-        viewport->path().lexically_normal() == buffer_search.temporarily_expanded_fold_tab_path) {
+        util::SameAsNormalizedPath(viewport->path(),
+                                   buffer_search.temporarily_expanded_fold_tab_path)) {
       bool changed = false;
       // CollapseRange, not Collapse(opener): the fold may no longer be inside the
       // resolved window now that the viewport has moved to the match.

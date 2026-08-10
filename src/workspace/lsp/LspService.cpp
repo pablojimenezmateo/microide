@@ -83,7 +83,17 @@ std::string SerializeViewportText(const editor::TextViewport& viewport) {
 // position-encoding conversion of diagnostics / semantic tokens.
 const editor::TextViewport* FindOpenEditorViewport(const ProjectWorkspaceState& state,
                                                    const std::filesystem::path& path) {
-  const std::filesystem::path normalized = path.lexically_normal();
+  // Normalize the QUERY once, then compare each tab's path against it with the
+  // scan-shaped helper: a mismatch between two already-normal paths costs a string
+  // compare, where re-normalizing per tab cost ~12 allocations per tab per inbound
+  // diagnostics/semantic-tokens message (TD-2026-08-10-174).
+  std::filesystem::path normalized_storage;
+  const std::filesystem::path* normalized_ptr = &path;
+  if (util::PathTextNeedsNormalizing(path.native())) {
+    normalized_storage = path.lexically_normal();
+    normalized_ptr = &normalized_storage;
+  }
+  const std::filesystem::path& normalized = *normalized_ptr;
   for (const auto& group : state.editor_groups) {
     for (const auto& tab : group.open_tabs) {
       if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
@@ -91,7 +101,7 @@ const editor::TextViewport* FindOpenEditorViewport(const ProjectWorkspaceState& 
       }
       const auto& editor_state = *tab.editor_state;
       if (!editor_state.needs_restore &&
-          editor_state.viewport.path().lexically_normal() == normalized) {
+          util::SameAsNormalizedPath(editor_state.viewport.path(), normalized)) {
         return &editor_state.viewport;
       }
     }
@@ -645,7 +655,8 @@ bool LspService::ConsumeDeferredBufferOpen() {
   // just deferred past the tab-switch frame.
   editor::TextViewport* viewport =
       operations_.active_editable_viewport ? operations_.active_editable_viewport() : nullptr;
-  if (viewport == nullptr || viewport->path().lexically_normal() != path) {
+  // `path` came out of ScheduleBufferOpen already normalized.
+  if (viewport == nullptr || !util::SameAsNormalizedPath(viewport->path(), path)) {
     return false;
   }
   std::string language_id;

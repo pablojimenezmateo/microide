@@ -11,7 +11,13 @@
 namespace microide::workspace {
 
 bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  // Normalize the query ONCE (and only when its text says it is needed); the scan
+  // below then rejects a mismatching tab with a string compare instead of a fresh
+  // path per tab -- the same shape DiskSignatureMatchesOpenView below uses.
+  std::filesystem::path normalized_storage;
+  const std::filesystem::path& normalized_path =
+      util::PathTextNeedsNormalizing(path.native()) ? (normalized_storage = path.lexically_normal())
+                                                    : path;
   bool saved_any = false;
   // Every group: a dirty split view of the same file must also be overwritten, not
   // just the focused group's view.
@@ -21,7 +27,7 @@ bool TabCoordinator::OverwriteEditorTabsForPath(const std::filesystem::path& pat
         continue;
       }
       editor::TextViewport& viewport = tab.editor_state->viewport;
-      if (viewport.path().lexically_normal() != normalized_path || !viewport.dirty()) {
+      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path) || !viewport.dirty()) {
         continue;
       }
       if (operations_.prepare_editor_view_for_save &&
@@ -73,10 +79,7 @@ bool TabCoordinator::DiskSignatureMatchesOpenView(const std::filesystem::path& p
       // of them to reject it is ~12 allocations spent to learn nothing, and a path
       // whose own text is already normal cannot become `normalized_path` by
       // normalizing, so the string compare has already answered for it.
-      const std::filesystem::path& view_path = viewport.path();
-      if (view_path != normalized_path &&
-          !(util::PathTextNeedsNormalizing(view_path.native()) &&
-            view_path.lexically_normal() == normalized_path)) {
+      if (!util::SameAsNormalizedPath(viewport.path(), normalized_path)) {
         continue;
       }
       matched_any_view = true;

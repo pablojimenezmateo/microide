@@ -16,6 +16,7 @@
 #endif
 
 #include "platform/Subprocess.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
@@ -66,17 +67,43 @@ bool HasGitMarker(const std::filesystem::path& root) {
 
 namespace {
 
+// `lexically_normal()`, skipped when the text already is normal. Every path this
+// subsystem holds arrives normalized (the project catalog, the git status ingress
+// and the branch-review store all normalize once on the way in), and the call is
+// ~12 allocations even when it changes nothing (TD-2026-08-10-174).
+std::filesystem::path NormalizedCopy(const std::filesystem::path& path) {
+  if (util::PathTextNeedsNormalizing(path.native())) {
+    return path.lexically_normal();
+  }
+  return path;
+}
+
 std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path) {
-  const std::filesystem::path relative =
-      absolute_path.lexically_normal().lexically_relative(root.lexically_normal());
+  const std::filesystem::path normalized_root = NormalizedCopy(root);
+  const std::filesystem::path normalized_path = NormalizedCopy(absolute_path);
+
+  // The overwhelmingly common answer -- the path sits under the root -- is a
+  // prefix strip, not a component walk. Taking it here matters on the MISS path
+  // of the memo below, which is where a bulk resolve lives: a git sidebar refresh
+  // resolves every changed file once, and each of those is a memo miss.
+  if (util::NormalizedPathEqualsOrWithin(normalized_path, normalized_root)) {
+    const std::string_view relative_text =
+        util::NormalizedRelativeView(normalized_path.native(), normalized_root.native());
+    if (!relative_text.empty()) {
+      return std::filesystem::path(relative_text);
+    }
+    return std::filesystem::path(".");
+  }
+
+  const std::filesystem::path relative = normalized_path.lexically_relative(normalized_root);
   if (relative.empty() ||
       (relative.begin() != relative.end() &&
        *relative.begin() == std::filesystem::path(".."))) {
 #if defined(_WIN32)
-    const std::string root_text = root.lexically_normal().generic_string();
-    const std::string path_text = absolute_path.lexically_normal().generic_string();
+    const std::string root_text = normalized_root.generic_string();
+    const std::string path_text = normalized_path.generic_string();
     std::string lowered_root = util::ToLowerAscii(root_text);
     std::string lowered_path = util::ToLowerAscii(path_text);
     const std::string lowered_root_prefix =
@@ -92,7 +119,7 @@ std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
 #endif
     return std::nullopt;
   }
-  return relative.lexically_normal();
+  return NormalizedCopy(relative);
 }
 
 }  // namespace

@@ -12,6 +12,7 @@
 #include "editor/EditTypes.h"
 #include "editor/SnippetEngine.h"
 #include "util/JsonValue.h"
+#include "util/PathMatch.h"
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/FileUri.h"
@@ -1825,7 +1826,7 @@ void AssistService::EmitReferenceEntry(
   //    zero-copy LineSpan — no file I/O and no whole-file line vector.
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const editor::TextViewport* viewport = operations_.active_editable_viewport();
-      viewport != nullptr && viewport->path().lexically_normal() == normalized_path) {
+      viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     const editor::LineSpan lines = viewport->lines();
     for (std::size_t line_number = first_line;
          line_number <= last_line && line_number <= lines.size(); ++line_number) {

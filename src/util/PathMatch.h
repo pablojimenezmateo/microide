@@ -65,6 +65,18 @@ namespace microide::util {
   return is_separator(root_text.back()) || is_separator(candidate_text[root_text.size()]);
 }
 
+// True when `candidate` denotes the same location as `normalized_reference`, which
+// the caller has ALREADY normalized (once, outside the loop).
+//
+// This is the shape a SCAN needs, and it is not `SamePathNormalized`. A scan is
+// mostly mismatches, and that helper normalizes BOTH sides on every mismatch — so
+// looking one path up among twenty open tabs costs ~19 x 24 allocations to answer
+// "no" nineteen times. Here a mismatch between two already-normal paths is a
+// string compare and nothing else; only an unusually spelled candidate normalizes,
+// and the reference never does.
+[[nodiscard]] inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
+                                               const std::filesystem::path& normalized_reference);
+
 // The portion of `candidate_text` that is relative to `root_text`, as a view INTO
 // `candidate_text` — the allocation-free companion to
 // `NormalizedPathEqualsOrWithin`, whose preconditions it shares: both texts are
@@ -164,6 +176,17 @@ namespace microide::util {
     }
     begin = end + 1;
   }
+}
+
+inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
+                                 const std::filesystem::path& normalized_reference) {
+  if (candidate.native() == normalized_reference.native()) {
+    return true;
+  }
+  if (!PathTextNeedsNormalizing(candidate.native())) {
+    return false;
+  }
+  return candidate.lexically_normal().native() == normalized_reference.native();
 }
 
 // True when `candidate` is `root` itself or a path nested under it. Purely
