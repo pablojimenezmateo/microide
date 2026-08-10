@@ -632,6 +632,66 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
     return seen;
   };
 
+  // Every identifier reached through `.` or `->` in each file, computed ONCE.
+  //
+  // This used to be a fresh `std::regex` per field, run over every file in that
+  // field's include scope — ~200 fields x ~1,000 files, i.e. the whole tree
+  // rescanned two hundred times. 3.3 s natively, and under TSAN with six ctest
+  // shards on four cores it went past the runner's 300 s per-test watchdog and
+  // took the lane red (the TD-2026-08-10-171 shape, on a rule that was already
+  // one case per rule). One pass per file and a set lookup per field is the same
+  // question asked once.
+  //
+  // Same acceptance as the regex it replaces: `(?:\.|->)\s*<name>\b`, minus the
+  // `.field =` designated initializer that wires the field up rather than calling
+  // it, and only at a position the code mask says is code.
+  const auto member_reads = [](const std::string& text, const std::vector<bool>& is_code) {
+    std::set<std::string> names;
+    const auto is_ident_start = [](unsigned char c) {
+      return std::isalpha(c) != 0 || c == '_';
+    };
+    const auto is_ident = [](unsigned char c) { return std::isalnum(c) != 0 || c == '_'; };
+    for (std::size_t i = 0; i < text.size(); ++i) {
+      std::size_t after_op = 0;
+      if (text[i] == '.') {
+        after_op = i + 1;
+      } else if (text[i] == '-' && i + 1 < text.size() && text[i + 1] == '>') {
+        after_op = i + 2;
+      } else {
+        continue;
+      }
+      if (i < is_code.size() && !is_code[i]) {
+        continue;
+      }
+      std::size_t start = after_op;
+      while (start < text.size() && std::isspace(static_cast<unsigned char>(text[start])) != 0) {
+        ++start;
+      }
+      if (start >= text.size() || !is_ident_start(static_cast<unsigned char>(text[start]))) {
+        continue;
+      }
+      std::size_t end = start;
+      while (end < text.size() && is_ident(static_cast<unsigned char>(text[end]))) {
+        ++end;
+      }
+      std::size_t after = end;
+      while (after < text.size() && std::isspace(static_cast<unsigned char>(text[after])) != 0) {
+        ++after;
+      }
+      if (after < text.size() && text[after] == '=' &&
+          (after + 1 >= text.size() || text[after + 1] != '=')) {
+        continue;  // `.field =`, the designated initializer, not a call
+      }
+      names.insert(text.substr(start, end - start));
+      i = end - 1;
+    }
+    return names;
+  };
+  std::map<std::string, std::set<std::string>> reads_of;
+  for (const auto& [key, text] : text_of) {
+    reads_of.emplace(key, member_reads(text, code_of.at(key)));
+  }
+
   const std::regex field_pattern(R"(std::function\s*<.*>\s+([a-z_][a-z0-9_]*)\s*;)");
   std::size_t structs_seen = 0;
   std::size_t fields_seen = 0;
@@ -688,29 +748,10 @@ RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo
 
     const std::set<std::string> scope = includers_of(key);
     for (const auto& [name, line] : fields) {
-      const std::regex use_pattern(R"((?:\.|->)\s*)" + name + R"(\b)");
       bool called = false;
       for (const std::string& reader : scope) {
-        const std::string& body = text_of.at(reader);
-        const std::vector<bool>& reader_code = code_of.at(reader);
-        for (std::sregex_iterator it(body.begin(), body.end(), use_pattern), last;
-             it != last && !called; ++it) {
-          const std::size_t at = static_cast<std::size_t>(it->position());
-          if (at < reader_code.size() && !reader_code[at]) {
-            continue;
-          }
-          std::size_t after = static_cast<std::size_t>(it->position() + it->length());
-          while (after < body.size() && std::isspace(static_cast<unsigned char>(body[after])) != 0) {
-            ++after;
-          }
-          // `.field =` is the designated initializer that wires it up, not a call.
-          if (after < body.size() && body[after] == '=' &&
-              (after + 1 >= body.size() || body[after + 1] != '=')) {
-            continue;
-          }
+        if (reads_of.at(reader).count(name) != 0) {
           called = true;
-        }
-        if (called) {
           break;
         }
       }

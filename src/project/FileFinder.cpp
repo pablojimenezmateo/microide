@@ -184,9 +184,9 @@ void FileFinder::Refresh() {
     std::sort(found.begin(), found.end());
 
     for (const auto& [rank, entry_index] : found) {
-      // Recents are deep-copied into results_ before the ranked tail applies its
-      // cap, so a large/corrupt persisted recents list would otherwise materialize
-      // an unbounded result set. Enforce the same visible budget here.
+      // Recents are written into results_ before the ranked tail applies its cap,
+      // so a large/corrupt persisted recents list would otherwise materialize an
+      // unbounded result set. Enforce the same visible budget here.
       if (results_size_ >= kMaxResults) {
         break;
       }
@@ -269,8 +269,10 @@ void FileFinder::Refresh() {
     return PathView(cached_entries_[lhs.index]) < PathView(cached_entries_[rhs.index]);
   };
 
-  // Only materialize (deep-copy) up to kMaxResults rows, accounting for any recent
-  // files already in results_. partial_sort avoids sorting the discarded tail.
+  // Only write up to kMaxResults rows, accounting for any recent files already in
+  // results_. partial_sort avoids sorting the discarded tail. The rows themselves
+  // reuse the storage a previous refresh left behind (see AppendResult), so the
+  // cap bounds the work rather than the allocations.
   const std::size_t remaining =
       results_size_ >= kMaxResults ? 0 : kMaxResults - results_size_;
   const std::size_t keep = std::min(ranked_refs.size(), remaining);

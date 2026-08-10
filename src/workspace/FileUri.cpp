@@ -24,18 +24,19 @@ std::string FileUriForPath(const std::filesystem::path& path) {
   // path the editor normalized when it opened the file. `PathTextNeedsNormalizing`
   // is the allocation-free scan that says so, leaving the common case at the one
   // allocation the result itself needs (TD-2026-08-06-159).
+#ifdef _WIN32
+  // Windows' `native()` is a wide string and its separator is not the generic
+  // one, so the guard's byte scan does not apply and the conversion is real work
+  // either way. Keep the original form there.
+  const std::string raw_storage = path.lexically_normal().generic_string();
+  const std::string_view raw = raw_storage;
+#else
   std::filesystem::path normalized;
   const std::filesystem::path* source = &path;
   if (util::PathTextNeedsNormalizing(path.native())) {
     normalized = path.lexically_normal();
     source = &normalized;
   }
-#ifdef _WIN32
-  // Windows' native separator is not the generic one, so the conversion is real
-  // work rather than a copy of the same bytes.
-  const std::string raw_storage = source->generic_string();
-  const std::string_view raw = raw_storage;
-#else
   const std::string_view raw = source->native();
 #endif
   std::string encoded = "file://";

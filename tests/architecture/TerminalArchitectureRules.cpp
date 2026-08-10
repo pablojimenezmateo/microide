@@ -372,7 +372,7 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
   result.hard_fail = true;
 
   struct Form {
-    std::regex pattern;
+    std::string_view name;
     std::string_view flag;
     std::string_view advice;
   };
@@ -381,22 +381,30 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
   // `openat` and NEVER plain `open(` — which silently made this rule blind to the
   // exact call form it exists to police (it passed with two real unflagged
   // `open()` sites in the tree). The fixture below is the positive control.
-  const std::array<Form, 6> forms = {
-      Form{std::regex(R"((^|[^\w:])(::)?socket\s*\()"), "SOCK_CLOEXEC",
-           "pass SOCK_CLOEXEC in socket()'s type argument"},
-      Form{std::regex(R"((^|[^\w:])(::)?accept4\s*\()"), "SOCK_CLOEXEC",
+  const std::array<Form, 7> forms = {
+      Form{"socket", "SOCK_CLOEXEC", "pass SOCK_CLOEXEC in socket()'s type argument"},
+      Form{"accept4", "SOCK_CLOEXEC",
            "pass SOCK_CLOEXEC to accept4() (and never plain accept())"},
       // Plain accept() cannot request close-on-exec at all, so every occurrence is
       // a violation: the flag string it is searched for can never appear in the
       // call, which is the point — the advice is "use accept4".
-      Form{std::regex(R"((^|[^\w:])(::)?accept\s*\()"), "SOCK_CLOEXEC",
+      Form{"accept", "SOCK_CLOEXEC",
            "use accept4() with SOCK_CLOEXEC; plain accept() cannot set close-on-exec atomically"},
-      Form{std::regex(R"((^|[^\w:])(::)?open(at)?\s*\()"), "O_CLOEXEC",
-           "pass O_CLOEXEC in open()'s flags"},
-      Form{std::regex(R"((^|[^\w:])(::)?pipe2\s*\()"), "O_CLOEXEC", "pass O_CLOEXEC to pipe2()"},
-      Form{std::regex(R"((^|[^\w:])(::)?inotify_init1\s*\()"), "IN_CLOEXEC",
-           "pass IN_CLOEXEC to inotify_init1()"},
+      Form{"openat", "O_CLOEXEC", "pass O_CLOEXEC in openat()'s flags"},
+      Form{"open", "O_CLOEXEC", "pass O_CLOEXEC in open()'s flags"},
+      Form{"pipe2", "O_CLOEXEC", "pass O_CLOEXEC to pipe2()"},
+      Form{"inotify_init1", "IN_CLOEXEC", "pass IN_CLOEXEC to inotify_init1()"},
   };
+  // ONE pass over each file, not one per form. Six separate `std::sregex_iterator`
+  // walks of every .cpp/.h/.inc in src cost 5.3 s natively, and an architecture
+  // rule at that scale is one busy machine away from the runner's 300 s per-test
+  // watchdog under TSAN — which is exactly how
+  // ArchitectureInvariants/Workspace/CheckCoordinatorOperationsAreCalled took the
+  // lane red (TD-2026-08-10-171's shape, again). The alternation is ordered
+  // longest-first so `accept4` and `openat` win over their prefixes, which is what
+  // the old `accept4`-before-`accept` form ordering and the `open(at)?` group did.
+  const std::regex creation_pattern(
+      R"((^|[^\w:])(::)?(socket|accept4|accept|openat|open|pipe2|inotify_init1)\s*\()");
 
   std::size_t scanned_creation_sites = 0;
   for (const std::filesystem::path& dir : {repo_root / "src"}) {
@@ -413,16 +421,24 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
       }
       const std::string text = ReadText(entry.path());
       const std::vector<bool> is_code = BuildCodeMask(text);
-      for (const Form& form : forms) {
-        for (std::sregex_iterator it(text.begin(), text.end(), form.pattern), last; it != last;
-             ++it) {
-          // The open paren is the final character of every pattern above; require
-          // it to be real code so string/comment occurrences are skipped.
+      {
+        for (std::sregex_iterator it(text.begin(), text.end(), creation_pattern), last;
+             it != last; ++it) {
+          // The open paren is the final character of the pattern; require it to be
+          // real code so string/comment occurrences are skipped.
           const std::size_t open_paren =
               static_cast<std::size_t>(it->position() + it->length()) - 1;
           if (open_paren >= is_code.size() || !is_code[open_paren]) {
             continue;
           }
+          const std::string matched_name = it->str(3);
+          const auto form_it = std::find_if(forms.begin(), forms.end(), [&](const Form& candidate) {
+            return candidate.name == matched_name;
+          });
+          if (form_it == forms.end()) {
+            continue;  // unreachable: the alternation only produces known names
+          }
+          const Form& form = *form_it;
           ++scanned_creation_sites;
           // Scan the balanced argument list, so a call wrapped across lines is
           // still judged on its whole flag expression.
