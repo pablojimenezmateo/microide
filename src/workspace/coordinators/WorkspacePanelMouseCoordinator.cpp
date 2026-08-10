@@ -513,7 +513,12 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
 }
 
 PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
-  auto terminal_panel = MakeTerminalPanelService();
+  // The terminal-panel hooks below construct the service INSIDE the lambda rather
+  // than capturing one. TerminalPanelService is nine std::functions -- 288 bytes --
+  // so capturing it by value overflows std::function's small-object buffer and
+  // heap-allocates a copy PER HOOK, seven times here, every time this coordinator
+  // is made. It is made per mouse event. Constructing it inside costs nothing:
+  // every one of its own hooks is a bare `this` capture and fits inline.
   return PanelMouseCoordinator(
       context_.current_project_state, context_.interaction_state,
       PanelMouseCoordinator::Operations{
@@ -548,22 +553,22 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
           .bottom_panel_content_rect =
               [](const WorkspaceLayout& layout) { return BottomPanelContentRect(layout); },
           .read_primary_selection_text =
-              [terminal_panel]() mutable { return terminal_panel.ReadPrimarySelectionText(); },
+              [this]() { return MakeTerminalPanelService().ReadPrimarySelectionText(); },
           .clear_terminal_selection =
-              [terminal_panel]() mutable { terminal_panel.ClearTerminalSelection(); },
+              [this]() { MakeTerminalPanelService().ClearTerminalSelection(); },
           .append_terminal_pending_input =
-              [terminal_panel](std::string_view input) mutable {
-                terminal_panel.AppendTerminalPendingInput(input);
+              [this](std::string_view input) {
+                MakeTerminalPanelService().AppendTerminalPendingInput(input);
               },
           .terminal_find_mouse_down =
               [this](float x, float y) { return HandleTerminalFindMouseDown(x, y); },
           .terminal_url_at_point =
-              [terminal_panel](float x, float y) mutable {
-                return terminal_panel.TerminalUrlAtPoint(x, y);
+              [this](float x, float y) {
+                return MakeTerminalPanelService().TerminalUrlAtPoint(x, y);
               },
           .open_external_url =
-              [terminal_panel](std::string_view url) mutable {
-                return terminal_panel.OpenExternalUrl(url);
+              [this](std::string_view url) {
+                return MakeTerminalPanelService().OpenExternalUrl(url);
               },
           .terminal_selection_position_for_point =
               [this](int x,
@@ -589,8 +594,8 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                 return ClampBottomPanelHeight(desired_height, window_height);
               },
           .sync_primary_selection_with_terminal_selection =
-              [terminal_panel]() mutable {
-                terminal_panel.SyncPrimarySelectionWithTerminalSelection();
+              [this]() {
+                MakeTerminalPanelService().SyncPrimarySelectionWithTerminalSelection();
               },
           .active_plugin_surface =
               [this]() -> const editor::SurfaceContent* {

@@ -640,7 +640,9 @@ void TabMouseCoordinator::PersistReorderedTabs(TabDragKind kind) {
 }
 
 TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
-  auto terminal_panel = MakeTerminalPanelService();
+  // Constructed inside the hooks, not captured: see MakePanelMouseCoordinator for
+  // why a captured TerminalPanelService is a heap allocation per hook, and this
+  // coordinator is made per mouse-wheel event.
   return TabMouseCoordinator(
       context_.project_catalog,
       context_.current_project_state,
@@ -668,8 +670,8 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
                     layout_mode_service_.CurrentMode(), rect);
               },
           .open_terminal =
-              [terminal_panel](std::string command) mutable {
-                terminal_panel.OpenTerminal(std::move(command));
+              [this](std::string command) {
+                MakeTerminalPanelService().OpenTerminal(std::move(command));
               },
           .compute_visible_bottom_panel_tabs =
               [this](const SDL_FRect& rect) {
@@ -692,8 +694,8 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
           .move_active_project_to = [this](std::size_t index) { return MoveActiveProjectTo(index); },
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .move_active_terminal_tab_to =
-              [terminal_panel](std::size_t index) mutable {
-                return terminal_panel.MoveActiveTerminalTabTo(index);
+              [this](std::size_t index) {
+                return MakeTerminalPanelService().MoveActiveTerminalTabTo(index);
               },
           .move_active_output_tab_to =
               [this](std::size_t index) { return MoveActiveOutputTabTo(index); },
