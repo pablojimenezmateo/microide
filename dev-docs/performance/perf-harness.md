@@ -728,6 +728,16 @@ MICROIDE_PERF_ALLOC_TRACE_PHASE=mouse_selection_drag \
 addr2line -e ./build/microide-perf-make/microide/microide_perf -f -C -p -i 0x330e2c
 ```
 
+**Ignore the gate verdict on a run this short.** A low `--iterations` is right for
+tracing — the counts divide out and the trace is smaller — but it is the wrong
+sample size for the baselines, which are recorded over 10. Twelve phase
+`p50_allocations` gates fail at `--iterations=2` and pass at 10 on an unchanged
+binary (TD-2026-08-10-181), so a FAIL line under the tracer is not evidence of
+anything until it is reproduced at the baseline's iteration count. Divide each
+site's count by (**warmup + measured** iterations × inner-loop count), not by
+`--iterations`: a scenario with `warmup_iterations = 12` runs its phase 14 times
+for `--iterations=2`, and the header lines print both.
+
 **A scenario the filter cannot be aimed at is a blind spot, not a clean one.**
 Only a scenario that calls `ScenarioContext::Measure` has a phase to filter on, so
 for a long time the five biggest interactive scroll scenarios could not be traced
