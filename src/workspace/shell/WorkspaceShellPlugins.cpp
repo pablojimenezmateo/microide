@@ -157,7 +157,9 @@ WorkspaceShell::WorkspaceShell() {
                 return ProjectCatalogEntry(index);
               },
           .project_catalog_root =
-              [this](std::size_t index) { return ProjectCatalogRoot(index); },
+              [this](std::size_t index) -> const std::filesystem::path& {
+                return ProjectCatalogRoot(index);
+              },
           .editor_tab_display_title =
               [this](std::size_t group_index, std::size_t index) {
                 return TabDisplayTitle(group_index, index);

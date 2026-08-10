@@ -33,7 +33,10 @@ class WorkspaceTabStripChrome {
     std::function<std::string(std::size_t)> project_tab_display_title;
     std::function<std::string(std::size_t)> project_tab_tooltip_label;
     std::function<const ProjectWorkspaceState*(std::size_t)> project_catalog_entry;
-    std::function<std::filesystem::path(std::size_t)> project_catalog_root;
+    // Returns a reference into the catalog: this is called once per project tab
+    // per painted frame, and a by-value path is a copy of a string plus a
+    // component list for something nobody mutates.
+    std::function<const std::filesystem::path&(std::size_t)> project_catalog_root;
     std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_display_title;
     std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_tooltip_label;
     std::function<std::optional<SDL_FRect>()> current_window_rect;

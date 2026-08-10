@@ -92,7 +92,7 @@ const WorkspaceShell::ProjectWorkspaceState* WorkspaceShell::ProjectCatalogEntry
   return context_.ProjectCatalogEntry(index);
 }
 
-std::filesystem::path WorkspaceShell::ProjectCatalogRoot(std::size_t index) const {
+const std::filesystem::path& WorkspaceShell::ProjectCatalogRoot(std::size_t index) const {
   return context_.ProjectCatalogRoot(index);
 }
 
@@ -166,7 +166,7 @@ void WorkspaceShell::RequestCloseProject(std::size_t index) {
   if (index >= context_.project_catalog.entries.size()) {
     return;
   }
-  if (!DirtyEditorTabIndicesForProject(index).empty()) {
+  if (HasDirtyEditorTabForProject(index)) {
     ShowDirtyPromptForProject(index);
     return;
   }

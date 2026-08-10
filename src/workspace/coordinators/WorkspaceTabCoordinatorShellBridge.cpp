@@ -450,6 +450,11 @@ std::vector<std::size_t> WorkspaceShell::DirtyEditorTabIndicesForProject(
   return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().DirtyIndicesForProject(project_index);
 }
 
+bool WorkspaceShell::HasDirtyEditorTabForProject(std::size_t project_index) const {
+  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().HasDirtyTabForProject(
+      project_index);
+}
+
 std::vector<GroupTabRef> WorkspaceShell::DirtyEditorGroupTabs() const {
   return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().DirtyGroupTabs();
 }

@@ -31,6 +31,10 @@ std::vector<std::size_t> EditorTabService::DirtyIndicesForProject(std::size_t pr
   return coordinator_.DirtyIndicesForProject(project_index);
 }
 
+bool EditorTabService::HasDirtyTabForProject(std::size_t project_index) const {
+  return coordinator_.HasDirtyTabForProject(project_index);
+}
+
 std::vector<GroupTabRef> EditorTabService::DirtyGroupTabs() const {
   return coordinator_.DirtyGroupTabs();
 }

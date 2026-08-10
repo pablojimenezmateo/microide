@@ -198,6 +198,31 @@ std::vector<std::size_t> TabCoordinator::DirtyIndices() const {
   return dirty_tabs;
 }
 
+bool TabCoordinator::HasDirtyTabForProject(std::size_t project_index) const {
+  // The predicate the tab strip actually asks, answered without the list. Callers
+  // that only need "is anything dirty" were paying a reserve()d vector sized to
+  // the project's tab count, once per project tab per painted frame, and then
+  // asking it .empty().
+  const ProjectWorkspaceState* project = nullptr;
+  if (project_index >= project_catalog_.entries.size()) {
+    return false;
+  }
+  if (!state_.root.empty() && project_index == project_catalog_.active_index) {
+    project = &state_;
+  } else {
+    project = project_catalog_.entries[project_index].get();
+  }
+  if (project == nullptr) {
+    return false;
+  }
+  for (const TabEntry& tab : project->focused_group().open_tabs) {
+    if (TabStateIsDirty(tab)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t project_index) const {
   if (project_index >= project_catalog_.entries.size()) {
     return {};

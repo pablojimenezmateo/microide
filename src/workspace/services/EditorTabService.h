@@ -22,6 +22,7 @@ class EditorTabService {
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  bool HasDirtyTabForProject(std::size_t project_index) const;
   std::vector<GroupTabRef> DirtyGroupTabs() const;
   std::vector<GroupTabRef> DirtyGroupTabsForProject(std::size_t project_index) const;
   bool ActiveTabIsEditor() const;

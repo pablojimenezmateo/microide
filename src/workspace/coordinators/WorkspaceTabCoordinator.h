@@ -91,6 +91,10 @@ class TabCoordinator {
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
+  // Allocation-free "is anything dirty in this project", for callers that only
+  // need the answer and not the indices — the tab strip asks it once per project
+  // tab per painted frame.
+  bool HasDirtyTabForProject(std::size_t project_index) const;
   // Dirty tabs across ALL editor groups of the active project.
   std::vector<GroupTabRef> DirtyGroupTabs() const;
   // Dirty tabs across ALL editor groups of any catalog project (active project

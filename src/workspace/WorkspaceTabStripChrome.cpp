@@ -105,7 +105,7 @@ std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleProjectTabs(
     tooltip_labels.push_back(operations_.project_tab_tooltip_label(i));
     widths.push_back(
         tab_strip_service_->MeasureProjectTabWidth(display_titles.back(), operations_.measure_width));
-    const std::filesystem::path root = operations_.project_catalog_root(i);
+    const std::filesystem::path& root = operations_.project_catalog_root(i);
     const bool is_active_project =
         !context_->current_project_state.root.empty() &&
         i == context_->project_catalog.active_index;

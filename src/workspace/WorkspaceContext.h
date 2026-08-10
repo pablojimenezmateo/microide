@@ -71,15 +71,20 @@ struct WorkspaceContext {
     return index < project_catalog.entries.size() ? project_catalog.entries[index].get() : nullptr;
   }
 
-  std::filesystem::path ProjectCatalogRoot(std::size_t index) const {
+  // BY REFERENCE. Both real answers are a path this context already owns, and the
+  // tab-strip chrome asks for one per project tab per painted frame -- returning
+  // by value copied a string plus libstdc++'s component list every time, for a
+  // path nobody mutates (TD-2026-08-10-174's neighbourhood).
+  const std::filesystem::path& ProjectCatalogRoot(std::size_t index) const {
+    static const std::filesystem::path kEmpty;
     if (index >= project_catalog.entries.size()) {
-      return {};
+      return kEmpty;
     }
     if (!current_project_state.root.empty() && index == project_catalog.active_index) {
       return current_project_state.root;
     }
     const auto* state = ProjectCatalogEntry(index);
-    return state != nullptr ? state->root : std::filesystem::path{};
+    return state != nullptr ? state->root : kEmpty;
   }
 };
 

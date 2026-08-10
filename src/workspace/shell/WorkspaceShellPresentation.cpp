@@ -5,6 +5,7 @@
 #include <string>
 
 #include "project/GitRepositoryMetadataTracker.h"
+#include "util/PathMatch.h"
 #include "workspace/git/GitRepositoryService.h"
 #include "workspace/WorkspaceProjectPresentation.h"
 
@@ -93,17 +94,30 @@ std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return {};
   }
-  const std::filesystem::path root = ProjectCatalogRoot(index);
+  const std::filesystem::path& root = ProjectCatalogRoot(index);
   const std::string label = ProjectLabelForRoot(root);
-  return DirtyEditorTabIndicesForProject(index).empty() ? label : "*" + label;
+  // The PREDICATE, not the list. This runs once per project tab per painted
+  // frame, and DirtyEditorTabIndicesForProject reserves a vector sized to the
+  // tab count before it finds out whether anything is dirty -- so the common
+  // "nothing dirty" answer cost a heap allocation per tab per frame.
+  return HasDirtyEditorTabForProject(index) ? "*" + label : label;
 }
 
 std::string WorkspaceShell::ProjectTabTooltipLabel(std::size_t index) const {
   if (index >= context_.project_catalog.entries.size()) {
     return {};
   }
-  const std::filesystem::path root = ProjectCatalogRoot(index);
-  return root.empty() ? ProjectLabelForRoot(root) : root.lexically_normal().string();
+  const std::filesystem::path& root = ProjectCatalogRoot(index);
+  if (root.empty()) {
+    return ProjectLabelForRoot(root);
+  }
+  // Catalog roots are normalized on the way in, so `lexically_normal()` here was
+  // ~12 allocations producing a path identical to the one it was given -- once
+  // per project tab per painted frame (TD-2026-08-10-174).
+  if (!util::PathTextNeedsNormalizing(root.native())) {
+    return root.string();
+  }
+  return root.lexically_normal().string();
 }
 
 SDL_FRect WorkspaceShell::ComputeCaretAnchoredOverlayRect(const SDL_FRect& editor_area,

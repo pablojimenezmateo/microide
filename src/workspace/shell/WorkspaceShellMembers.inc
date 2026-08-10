@@ -666,7 +666,7 @@
   bool HasActiveProjectCatalogEntry() const;
   ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index);
   const ProjectWorkspaceState* ProjectCatalogEntry(std::size_t index) const;
-  std::filesystem::path ProjectCatalogRoot(std::size_t index) const;
+  const std::filesystem::path& ProjectCatalogRoot(std::size_t index) const;
   void ResetProjectCatalogToWelcomeState();
   bool ReloadPluginsForCurrentProject(PluginReloadRequest request = {});
   // Post-reload consumption (registry rebuilds, sidebar/syntax refresh, redraws). Runs
@@ -749,6 +749,7 @@
   std::vector<std::size_t> DirtyEditorTabIndices() const;
   static std::vector<std::size_t> DirtyEditorTabIndices(const ProjectWorkspaceState& state);
   std::vector<std::size_t> DirtyEditorTabIndicesForProject(std::size_t project_index) const;
+  bool HasDirtyEditorTabForProject(std::size_t project_index) const;
   // All-groups dirty enumerators (VSCode "Save All" semantics) used by the quit
   // count and save-on-quit paths; the focused-group variants above stay for the
   // close-tab UI that is legitimately scoped to the focused group.
