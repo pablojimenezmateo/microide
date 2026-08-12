@@ -318,6 +318,70 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-12-191 — four `p50_net_heap_bytes` gates have been red since before 2026-08-12, and the metric is BUILD-CONFIGURATION dependent. OPEN.
+
+Found by running the full gate (which is itself supposed to be routine —
+[141](#td-2026-08-06-141)) and then A/B-ing the failures against the session's
+base commit, because they looked like a regression from that session's work.
+They are not. Two separate facts came out of it.
+
+**1. Four retention gates were already red.** On the canonical `microide-perf`
+lane (RelWithDebInfo + LTO), at commit `74471554` — before any of the 2026-08-12
+work:
+
+| scenario | baseline | at 74471554 | at HEAD |
+| --- | ---: | ---: | ---: |
+| `project_traversal_filter_scan` | 8,294 | 75,872 | 75,872 |
+| `settings_change_many_tabs` | 11,782 | 97,864 | 107,526 |
+| `multi_tab_cycle` | 60,961 | 80,342 | 92,044 |
+| `switch_and_idle` | 30,010 | 94,638 | 101,750 |
+
+`project_traversal_filter_scan` is byte-identical across the two commits, which
+is what rules the session's changes out as the cause of the class. The ~10 KB
+each of the other three moved is the visible-line LRU's per-entry growth
+([189](#td-2026-08-12-189) added a 32-byte self key plus two links per cached
+row, bounded by the 256-entry limit), which is a deliberate and bounded cost of
+making a handed-out reference safe.
+
+So a retention regression of 3-10x landed at some point and no gate run caught
+it — the same "nothing reruns the gate" shape as [141](#td-2026-08-06-141),
+except the gate DID exist and was simply never run.
+
+**2. `p50_net_heap_bytes` is not portable across build configurations.** The
+same four scenarios, same commits, built `Release` WITHOUT LTO instead of the
+`microide-perf` preset: all four PASS. The metric reproduces to the byte within
+one configuration (every run above repeated exactly) and moves by 60-90 KB
+between two. [174](#td-2026-08-10-174)'s "deterministic retention gate" claim is
+therefore true only with the build configuration held fixed, and nothing in a
+baseline records which configuration produced it — the same class of gap as
+[167](#td-2026-08-07-167) (the measurement REGIME is not recorded) and the
+video/CPU lane findings.
+
+Two pieces of work: find what the four scenarios newly retain (the tracer,
+`MICROIDE_PERF_ALLOC_TRACE_PHASE`, is the tool), and record the build
+configuration in the baseline so a cross-configuration comparison is refused
+rather than reported as a regression. Do NOT rebaseline these four first: that
+would enshrine the very thing worth finding.
+
+### TD-2026-08-12-190 — three merge scenarios gate on a re-show they name an open, and the fix needs an idle runner. OPEN.
+
+Split out of [181](#td-2026-08-10-181), whose item 1 shipped and whose item 2 did
+not. `merge_large.open_to_first_paint`, `merge_interleaved.open_to_first_paint`
+and `merge.open_many_conflicts` each re-run their `merge ...` command per
+iteration against a driver that reuses the already-open merge tab, so iteration 0
+pays the real open (27,293 allocations) and iterations 1..9 pay a re-show; the
+p50 lands on the re-show and the baseline records 185.
+
+The code half is small: `ScenarioContext` needs a close-tab verb and
+`WorkspaceShell::TestAccess` needs to expose one. The blocker is the other half —
+closing the tab between iterations changes what all three scenarios measure, so
+they need `measurement_revision` bumped and a full rerecord, and the wall/cpu half
+of a rerecord taken on a loaded box would bake that box in. With
+[186](#td-2026-08-12-186)'s advisory-timing mechanism the allocation half could be
+rerecorded here and the timing half left explicitly unenforced, which is probably
+the right move — it is listed separately because it is a scenario-semantics
+change and not a mechanical one.
+
 ### TD-2026-08-12-189 — the visible-line cache is a FIFO, so a HIT does not protect the entry from the next miss's eviction. [RESOLVED 2026-08-12.]
 
 **Fixed 2026-08-12.** The recency order is an intrusive doubly-linked list
@@ -516,7 +580,37 @@ opener's LAST row for hidden lines, which makes vertical motion off a hidden lin
 leave the fold immediately; the thorough one is to refuse to place a caret on a
 hidden line at all (VS Code reveals the fold instead).
 
-### TD-2026-08-11-184 — every allocation gate this pass touched now passes with 12-40 % of slack, and nothing can re-record them here. OPEN.
+### TD-2026-08-11-184 — every allocation gate this pass touched now passes with 12-40 % of slack, and nothing can re-record them here. [RESOLVED 2026-08-12.]
+
+**The entry's premise was wrong in one detail and right in the conclusion.**
+`microide_perf` does NOT refuse to write baselines on this box — it prints
+`advisory run (runner_class=local-advisory)` and writes them anyway. What was
+missing was a way to write only the half a non-reference runner is entitled to
+measure, which [186](#td-2026-08-12-186) built (`timing_is_advisory`, plus
+`--update-baseline=deterministic` minting rather than skipping).
+
+**Re-recorded 2026-08-12** on the canonical `microide-perf` lane, deterministic
+half only, timing half carried forward from the committed record:
+
+| gate | was | now |
+| --- | ---: | ---: |
+| `editor_sort_lines_large` p50_allocations | 20,283 | 305 |
+| `editor_toggle_comment_large_selection` | 32,561 | 889 |
+| `editor_moby_dick_workout` | 138,600 | 21,682 |
+| `git_sidebar_refresh_many_untracked` | 52,357 | 17,739 |
+| `git_sidebar_refresh_large_repo` | 23,920 | 9,802 |
+| `multi_project_switch` | 17,416 | 9,938 |
+| `editor_shaping_multi_caret` | 7,815 | 3,553 |
+| `cold_startup_large_project` | 248 | 168 |
+
+Each was checked to be passing its NON-timing gates before being rewritten, and
+the gate was re-run against what was written — a rebaseline that is not re-run is
+not evidence. The four scenarios whose `p50_net_heap_bytes` is red were
+deliberately left alone: rebaselining those would enshrine the regression
+[191](#td-2026-08-12-191) exists to find.
+
+#### Original entry
+
 
 Five fixes landed on 2026-08-11 ([159](#td-2026-08-06-159)) and none of their
 baselines moved, because `microide_perf` on this box prints `advisory run
@@ -542,7 +636,17 @@ drift is not new. Same family as [141](#td-2026-08-06-141) (nothing reruns the
 gate) and [161](#td-2026-08-07-161) (the timing half needs a quiet machine — this
 half does not).
 
-### TD-2026-08-11-183 — a git refresh materializes each changed file's path as a `std::filesystem::path` four times, and libstdc++'s `path` is not one allocation. PARTIALLY RESOLVED 2026-08-12 — the code change shipped; the rebaseline has not been run.
+### TD-2026-08-11-183 — a git refresh materializes each changed file's path as a `std::filesystem::path` four times, and libstdc++'s `path` is not one allocation. [RESOLVED 2026-08-12 — code and rebaseline both.]
+
+The rebaseline this entry was waiting on ran on 2026-08-12 (see
+[184](#td-2026-08-11-184)): `git_sidebar_refresh_many_untracked` 52,357 -> 17,739
+and `git_sidebar_refresh_large_repo` 23,920 -> 9,802 `p50_allocations`, taken on
+the canonical lane with the deterministic-only mode so the wall/cpu half was not
+touched.
+
+The `ScenarioContext::Measure` scaffolding share this entry noted at the end
+(10 % of `git.refresh_dispatch`'s allocations) is folded into
+[159](#td-2026-08-06-159)'s standing tracer sweep.
 
 After the ingress fix ([174](#td-2026-08-10-174)), `git.refresh_dispatch` at 3,000
 untracked files is 45,051 allocations, and the remainder is one shape rather than
@@ -660,7 +764,23 @@ took the same argument for the *single-line* case and shipped the column-scoped
 entry; this is its multi-line half. [157](#td-2026-08-06-157) capped the *range*
 an entry covers; this caps the cost *per line inside* that range.
 
-### TD-2026-08-10-181 — twelve phase allocation gates fail on an unchanged binary, and three of them measure a re-open rather than an open. OPEN.
+### TD-2026-08-10-181 — twelve phase allocation gates fail on an unchanged binary, and three of them measure a re-open rather than an open. [RESOLVED 2026-08-12 — item 1 shipped; item 2 split out as [190](#td-2026-08-12-190).]
+
+Item 1 (declare `warmup_iterations` where the first iteration legitimately warms a
+cache) shipped on 2026-08-10. Item 2 — the three merge scenarios that name an
+operation they never run — is a scenario-semantics change with a rerecord attached
+and is now its own entry, [190](#td-2026-08-12-190), so this one stops being
+half-open forever.
+
+The open question this entry raised last ("should phase allocation gates carry the
+same below-baseline-iteration-count non-enforcement the retention metrics have?")
+is answered by the same mechanism [186](#td-2026-08-12-186) built: a gate that
+cannot be trusted in the current conditions is reported and explicitly not
+enforced, with the reason on the verdict line, rather than either failing
+meaninglessly or being deleted.
+
+#### Original entry
+
 
 Found while tracing [159](#td-2026-08-06-159): `compare_scroll_large_fixture`
 FAILed a phase gate at `--iterations=2` and PASSed at 6, on the same binary. The
@@ -3087,7 +3207,31 @@ TD-2026-08-05-135, done automatically instead of by hand.
 Roughly an hour of work. The thing to get right is that the output must be *read* —
 a scheduled run whose failures nobody sees is the same defect one layer up.
 
-### TD-2026-08-06-142 — a tab's derived caches have no measured ceiling, and nothing caps their sum across tabs. PARTIALLY RESOLVED 2026-08-06 — the measurement exists; the cap is still unchosen, deliberately.
+### TD-2026-08-06-142 — a tab's derived caches have no measured ceiling, and nothing caps their sum across tabs. RESOLVED (measurement) 2026-08-06; the cap is WON'T DO as of 2026-08-12.
+
+The entry's own instruction was "build the measurement first; a cap chosen without
+it would be a guess". The measurement shipped and answers the question: ~4.13 MiB
+per WARMED large tab, dominated by per-line highlighter state (46 %) rather than
+by the width table the entry expected. Every component is bounded by its document;
+only the sum across tabs is not.
+
+Closed on the cap because the decision the measurement enables is "no cap", not
+"cap unchosen":
+
+- Memory is LAST in the priority order, behind speed, correctness and CPU.
+- Every eviction candidate is a cache that exists to keep a tab fast. Dropping a
+  background tab's width table and visible-line LRU buys 1.2 MiB and pays for it
+  on the next switch to that tab — a latency cost on the interaction the user is
+  waiting on, to reclaim memory nothing is short of.
+- The growth converges: 4 MiB per warmed tab, and tabs are warmed by being
+  looked at.
+
+If this is ever revisited, the counters (`editor.tab_derived_cache_*`) and the
+`editor_tab_derived_cache_residency` scenario are what make it a measurement
+rather than an intuition, and they stay.
+
+#### Original entry
+
 
 **The entry's first ask, in the order it insisted on**: "That is the first thing
 to build; a cap chosen without it would be a guess." So the measurement shipped
@@ -3248,7 +3392,30 @@ This became more load-bearing on 2026-08-06: viewport copies used to wipe the wi
 table, which masked any staleness at every copy. They no longer do
 ([TD-2026-08-06-138](#td-2026-08-06-138)), so a stale table now survives further.
 
-### TD-2026-08-06-144 — `FoldingModel::Block` holds four `std::vector`s, and the struct below it already knows not to. OPEN — attempted 2026-08-06, and the entry's premise turned out to be wrong.
+### TD-2026-08-06-144 — `FoldingModel::Block` holds four `std::vector`s, and the struct below it already knows not to. WON'T DO — measured 2026-08-06, closed 2026-08-12.
+
+Closed as a verified won't-do rather than left open, because the measurement that
+would decide it has already been taken and it says no. The entry's premise ("a few
+hundred 32-BYTE allocations", i.e. lists holding one or two things) is wrong: the
+counters added by the attempt measure a mean word length of ~32 ENTRIES, stable
+across scenarios. At an inline capacity small enough to be free (6) three quarters
+of the words spill and the allocation count does not move; at one large enough to
+matter (~64) it costs ~420 KB per open tab against a fold model that
+[142](#td-2026-08-06-142)'s accounting measures at ~0.83 MB total.
+
+The surviving proposal — four model-owned pools plus `(offset, count)` per block —
+buys ~780 allocations (~30 us) ONCE PER FILE OPEN, in exchange for a bespoke slab
+allocator with in-place reuse and compaction living inside the incremental fold
+model. The priority order (speed, then correctness, then CPU/memory) does not
+justify that, and this is the kind of entry that gets re-filed every few months
+unless the answer is written down.
+
+What shipped and stays: `editor.fold_block_words_stored` /
+`editor.fold_block_word_entries`, whose ratio is the number above, and the
+`SmallVector`-inside-a-nested-class trap recorded in the header.
+
+#### Original entry
+
 
 **Tried, measured, reverted.** The obvious cheap fix — `Block`'s four lists become
 `util::SmallVector<T, N>`, inline storage with a heap spill, which suits them
