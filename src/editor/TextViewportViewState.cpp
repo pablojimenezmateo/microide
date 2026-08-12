@@ -24,15 +24,21 @@ void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visibl
   // this path also skipped ClampScrollState, could leave scroll_line_ past the
   // last row entirely, painting an empty editor until the user scrolled. VS Code
   // keeps the top of the viewport pinned across a re-layout the same way.
-  const std::size_t anchor_line =
-      wrap_width_changed && document_ != nullptr ? VisualRowLineIndex(scroll_line_) : 0;
+  // `scroll_line_ == 0` needs no lookup: row 0 is the first visible line either
+  // way, and asking would force a wrapped-row build at the OLD width -- which for
+  // a tab whose first real SetViewportSize is also its first wrap width is a
+  // whole extra O(document) wrap of a width nothing will ever paint.
+  const bool reanchor = wrap_width_changed && document_ != nullptr && scroll_line_ != 0;
+  const std::size_t anchor_line = reanchor ? VisualRowLineIndex(scroll_line_) : 0;
   visible_lines_ = next_visible_lines;
   visible_columns_ = next_visible_columns;
   if (wrap_width_changed) {
     horizontal_scroll_ = 0;
     if (document_ != nullptr) {
       InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
-      scroll_line_ = VisualRowForLine(anchor_line);
+      if (reanchor) {
+        scroll_line_ = VisualRowForLine(anchor_line);
+      }
     }
   }
   ClampScrollState();
@@ -122,7 +128,10 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   // Same re-anchor as a wrap-width change, for the same reason: toggling wrap
   // renumbers every visual row, so the pre-toggle scroll_line_ points at an
   // unrelated part of the document afterwards.
-  const std::size_t anchor_line = document_ != nullptr ? VisualRowLineIndex(scroll_line_) : 0;
+  // Anchoring a view that is already at the top is the identity, and asking costs
+  // a wrapped-row build (see SetViewportSize).
+  const bool reanchor = document_ != nullptr && scroll_line_ != 0;
+  const std::size_t anchor_line = reanchor ? VisualRowLineIndex(scroll_line_) : 0;
   // Whether the caret was on screen decides which of the two anchors wins below.
   // Revealing it unconditionally threw the re-anchor away for the one case that
   // needs it most: wheel-scroll away from the caret, then toggle wrap, and the
@@ -144,7 +153,9 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   }
   if (document_ != nullptr) {
     InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
-    scroll_line_ = VisualRowForLine(anchor_line);
+    if (reanchor) {
+      scroll_line_ = VisualRowForLine(anchor_line);
+    }
   }
   ClampScrollState();
   if (caret_was_visible) {
@@ -415,10 +426,17 @@ void TextViewport::ClampCursorColumn() {
 }
 
 void TextViewport::ClampScrollState() {
-  const std::size_t total_visual_lines = visual_line_count();
-  const std::size_t max_vertical_scroll =
-      total_visual_lines > visible_lines_ ? total_visual_lines - visible_lines_ : 0;
-  scroll_line_ = std::min(scroll_line_, max_vertical_scroll);
+  // Same argument as the horizontal clamp below: this can only LOWER the offset,
+  // and zero is the floor. Reading the visual row count to reach that conclusion
+  // builds the whole document's wrapped-row table under soft wrap (or with a
+  // collapsed fold) -- an O(document) walk for an answer that is 0 either way,
+  // and ClampScrollState runs on every SetViewportSize, i.e. on every paint.
+  if (scroll_line_ != 0) {
+    const std::size_t total_visual_lines = visual_line_count();
+    const std::size_t max_vertical_scroll =
+        total_visual_lines > visible_lines_ ? total_visual_lines - visible_lines_ : 0;
+    scroll_line_ = std::min(scroll_line_, max_vertical_scroll);
+  }
 
   if (soft_wrap_) {
     horizontal_scroll_ = 0;
