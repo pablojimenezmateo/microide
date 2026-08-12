@@ -17,7 +17,22 @@ stepped one byte per cell. Five entries opened: [185](#td-2026-08-12-185)
 a quiet-runner baseline), [187](#td-2026-08-12-187) (the fallback whitespace walk),
 [188](#td-2026-08-12-188) (Home/End are logical-line verbs under wrap),
 [189](#td-2026-08-12-189) (the visible-line cache evicts by insertion order, so a
-cache HIT does not protect the entry a caller is reading).
+cache HIT does not protect the entry a caller is reading). **All five closed the
+same day**, along with [174](#td-2026-08-10-174), [181](#td-2026-08-10-181),
+[182](#td-2026-08-11-182), [183](#td-2026-08-11-183), [184](#td-2026-08-11-184),
+[142](#td-2026-08-06-142) and [144](#td-2026-08-06-144); two new ones were filed
+from what the gate run turned up ([190](#td-2026-08-12-190),
+[191](#td-2026-08-12-191)).
+
+Two things from that pass are worth carrying forward more than the fixes are.
+**A parity test between two implementations is blind to anything that does not
+change the answer** — the whitespace one could not see either the presence or the
+absence of the row-resume optimization, which is why 187 shipped with a counter
+(`editor.whitespace_marker_walk_bytes`) rather than with another parity fixture.
+And **a perf comparison is only a comparison if both sides are the same lane**:
+four net-heap "regressions" that looked like the session's work turned out to be
+present at its base commit under the `microide-perf` preset and ABSENT at both
+commits under plain `Release` ([191](#td-2026-08-12-191)).
 
 Reviewed 2026-08-11. The 2026-08-11 pass read the suite's two biggest phases
 ([159](#td-2026-08-06-159)): `multi_project.switch_cycles` (-42 %) and
