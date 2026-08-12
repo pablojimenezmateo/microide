@@ -69,14 +69,42 @@ def phases_from_baselines(scenario_filter: str | None) -> list[tuple[str, str, f
     return out
 
 
+# addr2line on an LTO binary costs seconds per invocation, and the same offsets
+# recur across phases (every stack ends in the same harness frames). Without this
+# the sweep spent most of its wall time re-resolving addresses it had already seen.
+_RESOLVE_CACHE: dict[str, list[str]] = {}
+
+
 def resolve(binary: pathlib.Path, offsets: list[str]) -> list[str]:
     if not offsets:
         return []
-    proc = subprocess.run(
-        ["addr2line", "-e", str(binary), "-f", "-C", "-p", "-i", *offsets],
-        capture_output=True, text=True, check=False,
-    )
-    lines = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+    unknown = [o for o in offsets if o not in _RESOLVE_CACHE]
+    if unknown:
+        proc = subprocess.run(
+            ["addr2line", "-e", str(binary), "-f", "-C", "-p", *unknown],
+            capture_output=True, text=True, check=False,
+        )
+        resolved = [line.strip() for line in proc.stdout.splitlines() if line.strip()]
+        # One line per offset without -i; with an inline chain addr2line emits the
+        # chain on continuation lines, which -p prefixes with "(inlined by)".
+        current: list[str] = []
+        index = 0
+        for line in resolved:
+            if line.startswith("(inlined by)") and current:
+                current.append(line)
+                continue
+            if current and index < len(unknown):
+                _RESOLVE_CACHE[unknown[index]] = current
+                index += 1
+            current = [line]
+        if current and index < len(unknown):
+            _RESOLVE_CACHE[unknown[index]] = current
+        for offset in unknown:
+            _RESOLVE_CACHE.setdefault(offset, [])
+
+    lines: list[str] = []
+    for offset in offsets:
+        lines.extend(_RESOLVE_CACHE.get(offset, []))
     # Keep the frames a reader can act on. An inlined libstdc++ stack resolves into
     # pages of variant/vtable mangling that bury the one `microide::` frame naming
     # the call site, so project frames come first and the rest are a fallback for a
@@ -176,6 +204,14 @@ def main() -> int:
         "",
     ]
 
+    def flush() -> None:
+        # Written after EVERY phase, not once at the end. A full sweep is over an
+        # hour of wall time, and the first version of this tool produced nothing at
+        # all when it was interrupted -- which made a partial answer impossible to
+        # keep, on exactly the runs where a partial answer is what you have.
+        if args.out:
+            args.out.write_text("\n".join(report) + "\n")
+
     for index, (scenario, phase, baseline_allocations) in enumerate(phases, start=1):
         print(f"[{index}/{len(phases)}] {scenario} :: {phase}", file=sys.stderr)
         result = trace_phase(args.binary, scenario, phase, args.iterations,
@@ -206,6 +242,7 @@ def main() -> int:
             for frame in site["frames"][1:3]:
                 report.append(f"  - {frame}")
         report.append("")
+        flush()
 
     text = "\n".join(report) + "\n"
     if args.out:

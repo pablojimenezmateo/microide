@@ -1876,7 +1876,40 @@ noise (memory: perf-scenario-context-dependence). Diff the `perf_counters` block
 the two runs if it returns.
 
 
-### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN — and every pass so far has found something.
+### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. [RESOLVED 2026-08-12 — all 122 swept, and the sweep is a tool now.]
+
+**Why this stayed open for months, and what actually fixed it.** Not difficulty:
+every pass over it found something on the first try. The problem was that each
+pass was hand-driven — pick a phase, remember two environment variables, run it,
+pipe offsets through `addr2line`, read the table — and nobody does that 122 times.
+(122, not 70: the phase count grew as phase gating spread.)
+
+`tools/trace-perf-phases.py` does it. It reads the phase list out of the committed
+baselines, so a new scenario is swept the moment it has one; traces each phase;
+resolves and trims the stacks to the frames a reader can act on; and writes a
+ranked report. The full sweep is in
+`dev-docs/performance/perf-phase-allocation-trace.md` — **122 of 122 phases, none
+skipped, none silently empty.**
+
+Two implementation notes that are the difference between a tool that gets used and
+one that does not: it memoizes `addr2line` (resolving an LTO binary's offsets was
+~95 % of the wall time, and the same harness frames recur in every stack — 3
+phases went from ~10 minutes to 20 seconds), and it writes the report after EVERY
+phase, because the first version produced nothing at all when interrupted, which
+is exactly the run where a partial answer is what you have.
+
+**What the whole-suite view shows that no single-phase trace could.** The report
+opens with two tables. The one that matters ranks functions by how many UNRELATED
+phases they top: `TextViewport::operator=` is the #1 allocator in **8** phases,
+`runtime_syntax::HighlightLine` and `SdlTtfTextBackend::ResolveEntry` in 7 each,
+`util::DecodeLines` and `KeyInputCoordinator::ActiveKeybindingContext` in 6. A
+site that tops one phase is that phase's problem; a site that tops eight is a
+shape, and worth fixing once. That ranking is the successor to this entry — it is
+a worklist, not a debt.
+
+The hand passes this entry recorded remain below, including the 2026-08-12 one
+that found the session-record encoder running inline on the project-switch path.
+
 
 #### 2026-08-12 pass: `switch_and_idle.switch_and_settle`, and the answer is the session WRITER
 
