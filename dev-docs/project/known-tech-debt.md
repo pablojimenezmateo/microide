@@ -405,33 +405,33 @@ a `RelWithDebInfo+lto` baseline PASSes on allocations and reports the other eigh
 metrics as not comparable. Baselines written before the field compare exactly as
 they did.
 
-**Still open: what the four scenarios actually retain — but the MECHANISM is now
-identified.** Tracing `project.traversal_filter_scan` returns *no allocations at
-all* (`[alloctrace] no allocation fell in [1, 100000000] bytes`) while the same
-phase's scenario reports 14,078 of them. The tracer and the phase allocation
-counters are armed **per thread**, deliberately, so background workers are
-excluded; `p50_net_heap_bytes` is computed from the **process-global**
-allocated/freed counters and is not.
+**Still open: what the four scenarios actually retain.**
 
-So for a scenario with background work — project traversal, and the tab/project
-switching the other three do — the retention metric measures *how much of the
-background work happened to land inside the measured window*, and anything that
-shifts that timing moves it. That is exactly the kind of thing cross-TU inlining
-changes, which is why the same commit reads 8,294 under one build configuration
-and 75,872 under another with **byte-identical allocation counts**: the counts are
-this thread's, the retention is everyone's.
+A mechanism was proposed on 2026-08-12 and is WRONG; it is recorded here so it is
+not proposed again. The theory was "`p50_net_heap_bytes` is process-global while
+the phase allocation counters are per-thread, so a scenario with background work
+measures whichever interleaving it got". The evidence for it was that tracing
+`project.traversal_filter_scan` returns no allocations at all while the scenario
+reports 14,078. Both halves fall apart on inspection:
 
-Three things follow, and the first is the one to do:
+- `Allocations::Snapshot()` reads `t_allocations` / `t_bytes_allocated` — all
+  four counters are `thread_local`. Net heap is per-thread exactly like the
+  allocation counts.
+- That phase's own committed `p50_allocations` is **0**. The tracer found nothing
+  because there is nothing; the 14,078 is the scenario TOTAL, which spans setup.
 
-1. Make `net_heap_bytes` per-thread like its neighbours, or state in the metric's
-   own documentation that it is not and exempt the scenarios with background
-   work (`gate_net_heap_metrics = false` is the existing mechanism, and
-   `multi_project_switch` already uses it for a related reason).
-2. Until then these four gates are measuring the scheduler. Do NOT rebaseline
-   them: a rebaseline would enshrine one particular interleaving.
-3. `switch_and_idle`'s own top allocation sites — the session-record encoder
-   running on the switch path — are a separate real finding, see
-   [159](#td-2026-08-06-159)'s 2026-08-12 entry.
+What remains is the actual open question, now sharper: **the same commit, same
+box, same measured window, byte-identical allocation COUNTS, and 67 KB more
+retained under `RelWithDebInfo+lto` than under `Release`.** Same count, different
+net bytes means either the allocation SIZES differ or something is freed inside
+the window in one build and outside it in the other. Inlining plausibly moves a
+temporary's lifetime across the window boundary; that is a hypothesis and not yet
+evidence.
+
+Do NOT rebaseline these four while this is open — a rebaseline would enshrine one
+build's answer. `switch_and_idle`'s own top allocation sites (the session-record
+encoder running on the switch path) are a separate real finding, see
+[159](#td-2026-08-06-159)'s 2026-08-12 entry.
 
 ### TD-2026-08-12-190 — three merge scenarios gate on a re-show they name an open, and the fix needs an idle runner. [RESOLVED 2026-08-12.]
 
