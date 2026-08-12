@@ -2334,7 +2334,13 @@ void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths
   const SDL_FRect rect{0.0f, 0.0f, 320.0f, 96.0f};
 
   microide::editor::TextViewport viewport;
-  viewport.LoadContent("\tint x = 1;\n  two  spaces\n", "/tmp/ws-parity.cpp");
+  // The third line starts with a multibyte character: the view-model builder used
+  // to step its whitespace walk one BYTE per cell, so every marker after a
+  // multibyte glyph landed a cell to the right of the real grid -- while the
+  // fallback path stepped by code point and got it right. An ASCII-only fixture
+  // could not tell the two apart.
+  viewport.LoadContent("\tint x = 1;\n  two  spaces\ncaf\xc3\xa9  au lait\n",
+                       "/tmp/ws-parity.cpp");
   viewport.SetTabSize(4);
   viewport.SetIndentWidth(4);
   viewport.SetViewportSize(4, 80);

@@ -5,6 +5,7 @@
 #include "workspace/git/WorkspaceGitSidebarPresentation.h"
 
 #include "editor/EditorInsetLayout.h"
+#include "editor/TextLayout.h"
 #include "editor/FoldingModel.h"
 #include "editor/PluginSurfaceStore.h"
 #include "render/TextRenderer.h"
@@ -490,14 +491,29 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
     const std::size_t row_start_visual = row_meta.visual_start;
     const std::size_t row_end_visual = row_meta.visual_end;
     std::size_t visual_col = 0;
-    for (char c : line_text) {
-      std::size_t cell_width = 1;
-      if (c == '\t') {
-        const std::size_t step = tab_size == 0 ? 1 : tab_size;
-        cell_width = step - (visual_col % step);
-      }
+    std::size_t byte = 0;
+    // Start at the row instead of at the line, when the bytes before it are all
+    // plain single-cell ASCII -- there byte offset IS visual column, so the walk
+    // can resume mid-line exactly. Without this every visible row re-walked its
+    // logical line from byte 0, which under soft wrap means walking the same long
+    // line once per row on screen (quadratic in the rows of one wrapped line).
+    // The scan itself is word-at-a-time; the per-cell loop below is not.
+    const std::size_t prefix_probe = std::min(row_start_visual, line_text.size());
+    if (util::FirstNonAsciiOrByte(line_text.substr(0, prefix_probe), '\t') >= prefix_probe) {
+      byte = prefix_probe;
+      visual_col = prefix_probe;
+    }
+    while (byte < line_text.size()) {
+      const char c = line_text[byte];
+      // One authoritative tab-stop/width step, stepping by CODE POINT: a per-byte
+      // walk over-counted columns after any multibyte glyph and shifted every
+      // later marker on the line one cell right of the real grid. The renderer's
+      // fallback path had this right and the view-model path -- the one actually
+      // used -- did not.
+      byte += util::Utf8SequenceLength(line_text, byte);
       const std::size_t cell_start = visual_col;
-      visual_col += cell_width;
+      visual_col = editor::TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
+      const std::size_t cell_width = visual_col - cell_start;
       if (cell_start >= row_end_visual) {
         break;
       }
