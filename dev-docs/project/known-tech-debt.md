@@ -1344,7 +1344,23 @@ harness costs a bisect; the run should be able to say "you asked for 5 of 10
 iterations — 1 gate declined" in its summary line rather than only in a
 per-metric note nobody greps for.
 
-### TD-2026-08-10-172 — `git_sidebar_activate`'s timing baseline describes a fixture that no longer exists. PARTIALLY RESOLVED 2026-08-10 — the fixture family now has a contract and a ctest setup; only the wall/cpu rerecord on an idle runner is left.
+### TD-2026-08-10-172 — `git_sidebar_activate`'s timing baseline describes a fixture that no longer exists. [RESOLVED 2026-08-12 — the gate stopped asserting a fiction.]
+
+The fixture contract and its ctest setup shipped 2026-08-10. What was left was a
+wall/cpu rerecord on an idle runner, which meant the gate went on enforcing
+numbers taken against a fixture that is not there any more — failing for a reason
+that has nothing to do with the code, on every run, indefinitely.
+
+Re-recorded 2026-08-12 with the mechanism [186](#td-2026-08-12-186) built: the
+deterministic half is measured against the fixture that actually exists and gates
+(p50_allocations 1,266), and the timing half is marked
+`timing_is_advisory`, so it is reported and explicitly NOT enforced with the
+reason on the verdict line rather than enforced against a fiction. An idle
+`--update-baseline --reference-runner=perf-runner-v1` arms the timing half
+whenever one is available.
+
+That is the general shape worth keeping: when a gate cannot be made correct here,
+making it say so beats leaving it wrong.
 
 The scenario names `tests/perf/fixtures/git_status_project`. Nothing produced
 that tree: `generate_git_workstation_fixtures.sh` builds six git fixtures and not
