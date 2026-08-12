@@ -338,26 +338,68 @@ LayoutLine TextViewport::VisibleWrappedRowLayout(std::size_t visual_row_index,
   if (!soft_wrap_) {
     return VisibleLineLayout(visual_row_index);
   }
+  LayoutLine layout = VisibleWrappedRowLayoutRef(visual_row_index);
+  const LineCaret caret = CaretForWrappedRow(visual_row_index, cursor_visual_row);
+  layout.caret_visible = caret.visible;
+  layout.caret_column = caret.column;
+  return layout;
+}
+
+const LayoutLine& TextViewport::VisibleWrappedRowLayoutRef(std::size_t visual_row_index) const {
+  static const LayoutLine kEmpty;
+  if (!soft_wrap_) {
+    return VisibleLineLayoutRef(visual_row_index);
+  }
   EnsureWrappedRowLayouts();
   if (visual_row_index >= WrappedRowCount()) {
-    return LayoutLine{};
+    return kEmpty;
   }
-
   const WrappedRowLayout row = WrappedRowAt(visual_row_index);
+  if (row.line_index >= document_->lines.size()) {
+    return kEmpty;
+  }
   const std::size_t row_columns =
       row.visual_end > row.visual_start ? row.visual_end - row.visual_start : 0;
-  LayoutLine layout = TextLayout::BuildVisibleLine(
-      document_->lines.LineView(row.line_index), row.visual_start,
-      std::min(visible_columns_, row_columns), tab_size_);
-  if (row.line_index == cursor_line_ && visual_row_index == cursor_visual_row) {
-    const std::size_t caret_visual = cursor_visual_column();
-    layout.caret_visible = true;
-    layout.caret_column = caret_visual >= row.visual_start ? caret_visual - row.visual_start : 0;
-  } else {
-    layout.caret_visible = false;
-    layout.caret_column = 0;
+  // Through the visible-line LRU, keyed on (line, row start, row width): a soft-
+  // wrapped row is exactly a windowed slice of its logical line, so it is the
+  // same cache entry shape the non-wrapped path uses. Building it fresh every frame
+  // was the whole difference between the two paths -- a wrapped frame rebuilt
+  // every visible row from scratch while an unwrapped one rebuilt none.
+  //
+  // The facts hint is what keeps that build off the whole line: the line's total
+  // visual width is where its LAST wrapped row ends, which the row table already
+  // knows. `plain_ascii` is deliberately understated (see the hint's contract).
+  return layout_cache_.VisibleLineLayoutRefCached(
+      document_->lines, row.line_index, row.visual_start,
+      std::min(visible_columns_, row_columns), tab_size_, document_->content_revision,
+      LineLayoutFacts{
+          .visual_columns = LineVisualWidthFromWrappedRows(row.line_index),
+          .plain_ascii = false,
+          .known = true,
+      });
+}
+
+std::size_t TextViewport::LineVisualWidthFromWrappedRows(std::size_t line_index) const {
+  return WrappedRowAt(
+             layout_cache_.WrappedRowRangeForLine(line_index, document_->lines.size()).second)
+      .visual_end;
+}
+
+TextViewport::LineCaret TextViewport::CaretForWrappedRow(std::size_t visual_row_index,
+                                                         std::size_t cursor_visual_row) const {
+  if (!soft_wrap_) {
+    return CaretForLine(visual_row_index);
   }
-  return layout;
+  if (visual_row_index != cursor_visual_row || visual_row_index >= WrappedRowCount()) {
+    return {};
+  }
+  const WrappedRowLayout row = WrappedRowAt(visual_row_index);
+  if (row.line_index != cursor_line_) {
+    return {};
+  }
+  const std::size_t caret_visual = cursor_visual_column();
+  return LineCaret{true,
+                   caret_visual >= row.visual_start ? caret_visual - row.visual_start : 0};
 }
 
 TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t visual_row_index) const {

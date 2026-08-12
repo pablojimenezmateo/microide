@@ -2067,6 +2067,46 @@ void TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows() {
          "downward motion advances by one real visual row");
 }
 
+// Soft-wrapped rows go through the same visible-line LRU the unwrapped path
+// uses, and are built from the width the wrapped-row table already knows. Before
+// that, a wrapped frame rebuilt EVERY visible row from scratch and each build
+// walked the whole logical line to measure it -- on a file with no line breaks
+// in it, megabytes per row, per frame.
+void TestTextViewportSoftWrapRowsReuseTheVisibleLineCache() {
+  TextViewport viewport;
+  std::string content(20000, 'a');
+  content += '\n';
+  TextViewport wrapped;
+  wrapped.LoadContent(content, "/tmp/soft-wrap-row-cache.txt");
+  wrapped.SetViewportSize(40, 100);
+  wrapped.SetSoftWrap(true);
+  Expect(wrapped.visual_line_count() > 40, "fixture: the long line wraps past one screenful");
+
+  for (std::size_t row = 0; row < 40; ++row) {
+    (void)wrapped.VisibleWrappedRowLayoutRef(row);
+  }
+
+  wrapped.ResetCacheStats();
+  util::ResetPerformanceCounters();
+  for (std::size_t row = 0; row < 40; ++row) {
+    (void)wrapped.VisibleWrappedRowLayoutRef(row);
+  }
+  const auto stats = wrapped.CacheStats();
+  Expect(stats.visible_line_queries == 40, "every wrapped row asks the visible-line cache");
+  Expect(stats.visible_line_hits == 40, "a repainted wrapped frame rebuilds no rows at all");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthMeasureBytes) == 0,
+         "and no row re-measures the logical line it belongs to");
+
+  // A cold pass over fresh rows must not measure the line either -- the width
+  // comes from the wrapped-row table.
+  util::ResetPerformanceCounters();
+  for (std::size_t row = 40; row < 80 && row < wrapped.visual_line_count(); ++row) {
+    (void)wrapped.VisibleWrappedRowLayoutRef(row);
+  }
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorLineWidthMeasureBytes) == 0,
+         "building a wrapped row uses the width the wrap table already computed");
+}
+
 // Regression (the wrap-boundary caret): a wrapped row ends where the next one
 // begins, so the wrap point is one text position that TWO rows can claim. It
 // used to always go to the next row, which made vertical motion bounce:
@@ -5234,6 +5274,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows);
   AddTest(tests, "TextViewport/SoftWrapHangingIndentAlignsContinuationRows",
           TestTextViewportSoftWrapHangingIndentAlignsContinuationRows);
+  AddTest(tests, "TextViewport/SoftWrapRowsReuseTheVisibleLineCache",
+          TestTextViewportSoftWrapRowsReuseTheVisibleLineCache);
   AddTest(tests, "TextViewport/SoftWrapVerticalMotionCrossesShortRows",
           TestTextViewportSoftWrapVerticalMotionCrossesShortRows);
   AddTest(tests, "TextViewport/SoftWrapCaretRendersAtWrappedRowEnd",

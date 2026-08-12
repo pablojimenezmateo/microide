@@ -202,6 +202,14 @@ void TextLayout::BuildVisibleLineInto(std::string_view line,
                                       LineLayoutFacts facts) {
   // Whole-line form: derive the width and the walk start here (both need bytes
   // this form has and the window form does not), then share one loop.
+  // Measuring the line here is an O(line) walk for one number, and it happens
+  // per BUILT ROW -- so a caller that renders many rows of one long line (soft
+  // wrap does exactly that) walks the whole line once per visible row unless it
+  // supplies the width it already knows. Counted because nothing else
+  // distinguishes "the row build" from "measuring the line the row is in".
+  if (!facts.known) {
+    util::AddPerformanceCounter(util::PerfCounterId::EditorLineWidthMeasureBytes, line.size());
+  }
   const std::size_t visual_columns =
       facts.known ? facts.visual_columns : VisualColumnForTextColumn(line, line.size(), tab_size);
   std::size_t start_byte = 0;

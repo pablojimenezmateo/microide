@@ -113,6 +113,10 @@ namespace microide::util {
   /* EnsureCursorVisible, the render pass) and per frame, so a regression that turns a   */      \
   /* per-frame resolve into a per-visible-row one shows up here and nowhere else.        */      \
   X(EditorWrapCaretRowResolves, "editor.wrap_caret_row_resolves")                                \
+  /* Bytes walked purely to learn a line's visual width while BUILDING a visible row,   */      \
+  /* i.e. rows built without the width their caller already knew. Nonzero on a steady   */      \
+  /* frame means some render path is re-measuring whole lines per row.                  */      \
+  X(EditorLineWidthMeasureBytes, "editor.line_width_measure_bytes")                              \
   X(EditorFiletypeMemoQueries, "editor.filetype_memo_queries")                                  \
   X(EditorFiletypeMemoHits, "editor.filetype_memo_hits")                                        \
   X(LanguageContractViewQueries, "language_contract.view_queries")                              \

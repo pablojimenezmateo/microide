@@ -549,8 +549,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         continue;
       }
       const auto row_meta = viewport.WrappedVisualRowLayout(opener_visual);
-      const auto row_layout = soft_wrap ? viewport.VisibleWrappedRowLayout(opener_visual)
-                                        : viewport.VisibleLineLayout(line_index);
+      const LayoutLine& row_layout = soft_wrap
+                                         ? viewport.VisibleWrappedRowLayoutRef(opener_visual)
+                                         : viewport.VisibleLineLayoutRef(line_index);
 
       DecoratedTextRow& sticky_row = sticky_scratch_row_;
       const std::vector<SyntaxTokenKind>* sticky_tokens = nullptr;
@@ -636,10 +637,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   // on the software/debug path (keeps it byte-for-byte the prior behaviour).
   const bool batch_gutter_numbers = text_renderer.BatchesRuns();
   gutter_number_scratch_.clear();
-  // Owned layout only for the soft-wrap branch (which builds a per-row slice the
-  // cache cannot serve by reference); reused across rows so the wrap path does
-  // not re-allocate its string/vectors each iteration.
-  LayoutLine wrapped_layout_scratch;
   // Resolve the caret's visual row once per frame; the soft-wrap layout only
   // needs it to flag the caret row, and recomputing it per visible row is an
   // O(visible_rows * caret_column) redundancy.
@@ -662,14 +659,13 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     // rest of the row loop in the ranked summary.
     const LayoutLine& row_layout = [&]() -> const LayoutLine& {
       util::PerformanceTrace::Scope layout_scope("EditorViewRenderer::Render::RowLayout");
-      return soft_wrap ? (wrapped_layout_scratch = viewport.VisibleWrappedRowLayout(
-                              visual_row_index, caret_visual_row))
+      return soft_wrap ? viewport.VisibleWrappedRowLayoutRef(visual_row_index)
                        : viewport.VisibleLineLayoutRef(line_index);
     }();
-    // Caret is per-call (not baked into the cached layout): the wrap branch
-    // already resolved it onto the scratch; the common branch resolves it here.
+    // Caret is per-call, never baked into the cached layout -- both branches
+    // resolve it here against the same cached row.
     const TextViewport::LineCaret row_caret =
-        soft_wrap ? TextViewport::LineCaret{row_layout.caret_visible, row_layout.caret_column}
+        soft_wrap ? viewport.CaretForWrappedRow(visual_row_index, caret_visual_row)
                   : viewport.CaretForLine(line_index);
     if (line_index >= lines.size()) {
       break;

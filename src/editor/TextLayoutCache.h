@@ -81,12 +81,21 @@ class TextLayoutCache {
   // `content_revision` is what lets a miss reuse the per-line width table this
   // cache already maintains, so building a row does not re-walk the line for its
   // width and its first visible cell.
+  //
+  // `facts_hint` is a fallback for callers that know the line's visual width from
+  // somewhere other than this cache's width table -- the soft-wrap path knows it
+  // from the wrapped-row table, whose last row for a line ENDS at that width.
+  // Without it a wrapped row is built with unknown facts, which walks the whole
+  // logical line to measure it: once per visible row, per frame, which on a file
+  // with no line breaks in it is megabytes per row. Ignored when the width table
+  // is current (that answer is strictly better -- it also knows plain-ASCII-ness).
   const LayoutLine& VisibleLineLayoutRefCached(LineSpan lines,
                                                std::size_t line_index,
                                                std::size_t horizontal_scroll,
                                                std::size_t visible_columns,
                                                std::size_t tab_size,
-                                               std::uint64_t content_revision) const;
+                                               std::uint64_t content_revision,
+                                               LineLayoutFacts facts_hint = {}) const;
 
   // ---- wrapped row layout (soft-wrap + folds) ---------------------------
   // Rebuilds the wrapped-row table when its keyed inputs changed. The

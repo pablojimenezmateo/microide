@@ -54,7 +54,8 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::size_t horizontal_scroll,
                                                               std::size_t visible_columns,
                                                               std::size_t tab_size,
-                                                              std::uint64_t content_revision) const {
+                                                              std::uint64_t content_revision,
+                                                              LineLayoutFacts facts_hint) const {
   ++visible_line_queries_;
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
@@ -70,19 +71,27 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   // not re-walk it for its visual width nor step code points to reach the first
   // visible cell. Both are O(line), and on a line with no newlines in it that is
   // the dominant cost of rendering a row (TD-2026-08-05-132, item 1).
-  const LineLayoutFacts facts =
+  LineLayoutFacts facts =
       LineFactsIfCurrent(lines.size(), line_index, tab_size, content_revision);
+  [[maybe_unused]] const bool facts_from_width_table = facts.known;
+  if (!facts.known) {
+    facts = facts_hint;
+  }
 #ifndef NDEBUG
   // The table is only as good as the invariant that every content edit either
   // splices it or drops it. Cross-check it here, where a stale entry would
   // silently mislay a row's glyphs rather than merely mis-size the scrollbar.
   // Bounded by line length so the check costs nothing on the pathological lines
-  // this whole path exists for.
+  // this whole path exists for. A caller-supplied hint is checked the same way --
+  // except for `plain_ascii`, which a hint is allowed to understate (the
+  // wrapped-row table knows widths, not encodings) but never to overstate.
   if (facts.known && lines.LineLength(line_index) <= 4096) {
     const LineLayoutFacts measured = TextLayout::MeasureLineFacts(lines[line_index], tab_size);
     assert(measured.visual_columns == facts.visual_columns &&
-           measured.plain_ascii == facts.plain_ascii &&
            "per-line width table went stale against the buffer");
+    assert((facts_from_width_table ? measured.plain_ascii == facts.plain_ascii
+                                   : (!facts.plain_ascii || measured.plain_ascii)) &&
+           "line layout facts claim plain ASCII for a line that is not");
   }
 #endif
   // Read only the bytes the build can visit, when the width table can tell us

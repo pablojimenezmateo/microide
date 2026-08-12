@@ -372,6 +372,17 @@ class TextViewport {
   // per visible row; pair it with CaretForLine for caret drawing.
   const LayoutLine& VisibleLineLayoutRef(std::size_t line_index) const;
 
+  // Reference to the cached layout of one soft-wrapped row -- the wrap-path
+  // sibling of VisibleLineLayoutRef, with the same contract: no caret fields set
+  // (pair it with CaretForWrappedRow), valid until the next call that can evict
+  // it. Bind this in the render loop; the by-value forms below copy a string and
+  // two vectors per row.
+  const LayoutLine& VisibleWrappedRowLayoutRef(std::size_t visual_row_index) const;
+  // Caret for one wrapped row. `cursor_visual_row` is threaded in by the caller
+  // so a frame resolves it once instead of per row.
+  LineCaret CaretForWrappedRow(std::size_t visual_row_index,
+                               std::size_t cursor_visual_row) const;
+
   LayoutLine VisibleWrappedRowLayout(std::size_t visual_row_index) const;
   // Overload for the per-frame render loop: the caller resolves the caret's
   // visual row once and threads it in, so this does not recompute
@@ -804,6 +815,10 @@ class TextViewport {
   std::size_t WrappedRowCount() const;
   // Document line for the row's offset table; identity in trivial mode.
   std::size_t WrappedLineRowOffset(std::size_t line_index) const;
+  // Full visual width of a logical line, read off the wrapped-row table: a line's
+  // LAST row ends exactly at its width. Lets a wrapped row be built without
+  // measuring the whole line it belongs to.
+  std::size_t LineVisualWidthFromWrappedRows(std::size_t line_index) const;
   void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column,
                             WrapRowAffinity& affinity, int delta) const;
   void AdvanceCaretHorizontal(TextPosition& caret, int delta) const;
