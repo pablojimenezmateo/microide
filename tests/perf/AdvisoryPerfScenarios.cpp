@@ -360,6 +360,13 @@ void RunMergeScrollLargeFixture(ScenarioContext& context) {
   if (!context.Open(root)) {
     throw std::runtime_error("merge_scroll_large_fixture: failed to open temp project root");
   }
+  // Close any merge tab a previous iteration left open BEFORE the measured
+  // window. The driver is reused across iterations, so without this the `merge`
+  // command re-shows the already-open tab and every iteration after the first
+  // measures a re-show -- the p50 then describes an operation this phase is not
+  // named for, and a baseline of 185 allocations for "open a large merge" is what
+  // that produced (TD-2026-08-12-190).
+  context.CloseActiveTab();
   context.Measure("merge_large.open_to_first_paint", [&] {
     if (!context.ExecuteCommand("merge base.txt incoming.txt current.txt result.txt")) {
       throw std::runtime_error("merge_scroll_large_fixture: merge command failed");
@@ -449,6 +456,13 @@ void RunMergeScrollInterleavedHunks(ScenarioContext& context) {
   if (!context.Open(root)) {
     throw std::runtime_error("merge_scroll_interleaved_hunks: failed to open temp project root");
   }
+  // Close any merge tab a previous iteration left open BEFORE the measured
+  // window. The driver is reused across iterations, so without this the `merge`
+  // command re-shows the already-open tab and every iteration after the first
+  // measures a re-show -- the p50 then describes an operation this phase is not
+  // named for, and a baseline of 185 allocations for "open a large merge" is what
+  // that produced (TD-2026-08-12-190).
+  context.CloseActiveTab();
   context.Measure("merge_interleaved.open_to_first_paint", [&] {
     if (!context.ExecuteCommand("merge base.cpp incoming.cpp current.cpp result.cpp")) {
       throw std::runtime_error("merge_scroll_interleaved_hunks: merge command failed");
@@ -647,6 +661,11 @@ const ScenarioRegistration g_perf_merge_scroll_large_fixture({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    // Bumped when the scenario started closing its merge tab between iterations,
+    // so every iteration measures an OPEN rather than a re-show. The old numbers
+    // describe a different operation and must not be differenced against these
+    // (TD-2026-08-12-190, TD-2026-08-07-167).
+    .measurement_revision = 2,
     .run = RunMergeScrollLargeFixture,
 }});
 const ScenarioRegistration g_perf_compare_scroll_large_fixture({Scenario{
@@ -676,6 +695,11 @@ const ScenarioRegistration g_perf_merge_scroll_interleaved_hunks({Scenario{
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    // Bumped when the scenario started closing its merge tab between iterations,
+    // so every iteration measures an OPEN rather than a re-show. The old numbers
+    // describe a different operation and must not be differenced against these
+    // (TD-2026-08-12-190, TD-2026-08-07-167).
+    .measurement_revision = 2,
     .run = RunMergeScrollInterleavedHunks,
 }});
 const ScenarioRegistration g_perf_compare_scroll_selection({Scenario{

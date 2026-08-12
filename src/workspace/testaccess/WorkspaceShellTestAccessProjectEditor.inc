@@ -593,6 +593,14 @@
   static void RequestCloseTab(WorkspaceShell& shell, std::size_t index) {
     shell.RequestCloseTab(index);
   }
+  // Unconditional close, bypassing the dirty prompt RequestCloseTab raises.
+  //
+  // The perf harness needs it: a scenario that re-runs `merge ...` per iteration
+  // against a driver that reuses the already-open tab measures a RE-SHOW on every
+  // iteration but the first, so its p50 describes an operation the scenario's
+  // name does not (TD-2026-08-12-190). Closing between iterations is what makes
+  // every iteration an open.
+  static void CloseTab(WorkspaceShell& shell, std::size_t index) { shell.CloseTab(index); }
   static void CloseProject(WorkspaceShell& shell, std::size_t index) { shell.CloseProject(index); }
   static void OpenFile(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.OpenFile(path);

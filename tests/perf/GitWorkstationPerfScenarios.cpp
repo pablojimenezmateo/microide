@@ -142,6 +142,13 @@ void RunDiffStageSelectedLines(ScenarioContext& context) {
 void RunMergeOpenManyConflicts(ScenarioContext& context) {
   PrimeGitWorkstationFixture(context, kManyConflictsFixture, "merge_open_many_conflicts");
   context.PumpFrames(2);
+  // Close any merge tab a previous iteration left open BEFORE the measured
+  // window. The driver is reused across iterations, so without this the `merge`
+  // command re-shows the already-open tab and every iteration after the first
+  // measures a re-show -- the p50 then describes an operation this phase is not
+  // named for, and a baseline of 185 allocations for "open a large merge" is what
+  // that produced (TD-2026-08-12-190).
+  context.CloseActiveTab();
   context.Measure("merge.open_many_conflicts", [&] {
     if (!context.ExecuteCommand(
             "merge base.cpp incoming.cpp current.cpp result.cpp")) {
@@ -439,7 +446,17 @@ const ScenarioRegistration g_perf_git_workstation_diff_stage_selected_lines({
     .tolerance_rss_percent = 150.0,
     .run = RunDiffStageSelectedLines,
 });
-REGISTER_GIT_WORKSTATION_SCENARIO(merge_open_many_conflicts, RunMergeOpenManyConflicts);
+// Not the macro: `measurement_revision` moved when the scenario started closing
+// its merge tab between iterations, so every iteration measures an OPEN rather
+// than a re-show (TD-2026-08-12-190).
+const ScenarioRegistration g_perf_git_workstation_merge_open_many_conflicts({
+    .name = "merge_open_many_conflicts",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .measurement_revision = 2,
+    .run = RunMergeOpenManyConflicts,
+});
 // Not the macro: this one needs a LONG warmup, and it is the reason to look at a
 // scenario's per-iteration series rather than only its summary. Re-opening this
 // merge settles over about seven iterations -- allocations 39,069 / 11,27x (x5) /

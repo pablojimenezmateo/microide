@@ -378,6 +378,14 @@ void ScenarioContext::OpenTab(const std::filesystem::path& path) {
   workspace::WorkspaceShell::TestAccess::OpenFile(shell_, resolved);
 }
 
+void ScenarioContext::CloseActiveTab() {
+  if (workspace::WorkspaceShell::TestAccess::FocusedGroupOpenTabCount(shell_) == 0) {
+    return;
+  }
+  workspace::WorkspaceShell::TestAccess::CloseTab(
+      shell_, workspace::WorkspaceShell::TestAccess::ActiveTabIndex(shell_));
+}
+
 void ScenarioContext::Type(std::string_view text) {
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;

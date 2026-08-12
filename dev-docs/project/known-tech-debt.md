@@ -389,7 +389,36 @@ they did.
 [159](#td-2026-08-06-159)'s 2026-08-12 entry. Do NOT rebaseline these four first:
 that would enshrine the very thing worth finding.
 
-### TD-2026-08-12-190 — three merge scenarios gate on a re-show they name an open, and the fix needs an idle runner. OPEN.
+### TD-2026-08-12-190 — three merge scenarios gate on a re-show they name an open, and the fix needs an idle runner. [RESOLVED 2026-08-12.]
+
+**Fixed 2026-08-12.** `ScenarioContext::CloseActiveTab()` (over a new
+`TestAccess::CloseTab`, the unconditional close that skips the dirty prompt)
+runs BEFORE the measured window, so the `merge ...` command opens a tab on every
+iteration instead of re-showing the one the previous iteration left. Each of the
+three scenarios bumped `measurement_revision` to 2, which is what made the run
+refuse to compare against the old numbers rather than silently reporting a
+1000x "regression".
+
+What the gates were actually worth, before and after:
+
+| phase | was (a re-show) | now (an open) |
+| --- | ---: | ---: |
+| `merge_large.open_to_first_paint` | 185 | **53,906** |
+| `merge_interleaved.open_to_first_paint` | 179 | **11,291** |
+| `merge.open_many_conflicts` | 180 | **11,363** |
+
+The rebaseline was the part this entry called blocked. It is not, with
+[186](#td-2026-08-12-186)'s mechanism: recorded here with the timing half marked
+advisory, so the allocation and retention gates are honest immediately and the
+wall/cpu half says it is waiting for a reference run.
+
+One trap worth recording: the scenario that owns
+`merge_interleaved.open_to_first_paint` is `merge_scroll_interleaved_hunks`, not
+`merge_model_build_interleaved`. The first attempt bumped the revision on — and
+rebaselined — the wrong one, which would have downgraded a reference-recorded
+timing half to advisory for a scenario that had not changed. The phase-name-to-
+scenario mapping is not the obvious one; read it off the `Measure()` call, not
+off the name.
 
 Split out of [181](#td-2026-08-10-181), whose item 1 shipped and whose item 2 did
 not. `merge_large.open_to_first_paint`, `merge_interleaved.open_to_first_paint`

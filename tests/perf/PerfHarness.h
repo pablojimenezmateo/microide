@@ -331,6 +331,11 @@ class ScenarioContext {
   void PumpEvents();
   bool Open(const std::filesystem::path& project_root);
   void OpenTab(const std::filesystem::path& path);
+  // Closes the focused group's active tab, unconditionally (no dirty prompt).
+  // For scenarios whose driver would otherwise reuse an already-open tab and
+  // measure a re-show instead of the open they are named for
+  // (TD-2026-08-12-190). No-op when no tab is open.
+  void CloseActiveTab();
   void Type(std::string_view text);
   void Scroll(int vertical_ticks);
   void KeyDown(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE);
