@@ -1954,7 +1954,16 @@ void TestTextViewportSoftWrapContinuationHitsUseVisualOffset() {
 }
 
 #ifndef NDEBUG
-void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheLazily() {
+// A wrap-width change rebuilds the wrapped-row table exactly ONCE, and every
+// read after it reuses that build.
+//
+// It used to be a deferred rebuild -- SetViewportSize returned without touching
+// the table (and, on the same early return, without clamping the scroll). It
+// cannot stay deferred: the new scroll anchor is a row index in the table being
+// invalidated, so re-anchoring the view has to resolve it in the new row space.
+// The build is not extra work, it is the same build the next paint would do;
+// what matters is that there is still only one of them per width change.
+void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheOncePerWidth() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-cache.txt");
   viewport.SetViewportSize(10, 8);
@@ -1964,16 +1973,22 @@ void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheLazily() {
   const std::size_t first_build_count = viewport.WrappedRowLayoutBuildCountForDebug();
 
   viewport.SetViewportSize(10, 12);
-  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count,
-         "resizing the viewport should not eagerly rebuild wrapped rows");
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
+         "a wrap-width change rebuilds the wrapped-row table once");
 
   (void)viewport.VisibleWrappedRowLayout(0);
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
-         "the first wrapped-row query after resize should rebuild the cache once");
+         "the first wrapped-row query after the resize reuses that rebuild");
 
   (void)viewport.VisibleWrappedRowLayout(0);
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
          "repeated wrapped-row queries without edits or resize should reuse the cached layout");
+
+  // A resize that does NOT change the wrap width must not rebuild at all.
+  viewport.SetViewportSize(20, 12);
+  (void)viewport.VisibleWrappedRowLayout(0);
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
+         "changing only the row count leaves the wrapped-row table alone");
 }
 #endif
 
@@ -5261,8 +5276,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/SoftWrapContinuationHitsUseVisualOffset",
           TestTextViewportSoftWrapContinuationHitsUseVisualOffset);
 #ifndef NDEBUG
-  AddTest(tests, "TextViewport/SoftWrapViewportResizeRebuildsWrapCacheLazily",
-          TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheLazily);
+  AddTest(tests, "TextViewport/SoftWrapViewportResizeRebuildsWrapCacheOncePerWidth",
+          TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheOncePerWidth);
 #endif
   AddTest(tests, "TextViewport/SoftWrapForcesHorizontalScrollToZero",
           TestTextViewportSoftWrapForcesHorizontalScrollToZero);

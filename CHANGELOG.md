@@ -38,6 +38,13 @@ than counted, because they now declare a different `measurement_revision`.
   a backspace grows the list back into buffers that are still there. Typing in
   the finder over a 10,000-file project: 4,672 → 538 allocations per keystroke
   burst (−88.5%), backspace 1,861 → 288, opening the finder 577 → 66.
+- **A soft-wrapped frame rebuilt every visible row, and each build re-measured
+  the whole logical line.** The wrap render path had no cache at all, where the
+  unwrapped path has had one for months, and it handed the row builder no line
+  facts — so painting one row of a wrapped megabyte line walked the megabyte
+  first, once per row, per frame. Wrapped rows now go through the same
+  visible-line cache (a wrapped row is exactly the windowed slice it keys on) and
+  take their line's width from the wrapped-row table, which already knows it.
 - **Diff rows stopped storing identical tokens twice.** An unchanged row whose
   two sides are byte-identical highlights to the same token run, and the compare
   tokenizer kept an owned copy for each pane. Jumping through the hunks of a
@@ -46,6 +53,35 @@ than counted, because they now declare a different `measurement_revision`.
 
 ### Fixed
 
+- **Moving the caret up out of a soft-wrapped line did nothing.** Wrapped rows
+  are contiguous in visual columns, so the wrap point is one text position that
+  two rows can both claim, and it always resolved to the later one. A preferred
+  column past the target row's width clamps to exactly that point — so Up onto a
+  shorter wrapped row resolved straight back to the row it had just left, at any
+  repeat count, and Down from a wide row skipped the short row beneath it.
+  Neither is an edge case: rows break at whitespace, so consecutive rows
+  routinely differ in width. The caret now carries an explicit wrap-boundary
+  affinity (VS Code's `PositionAffinity`) and renders at the trailing edge of the
+  row it was moved onto.
+- **Vertical motion drifted sideways across a hanging indent.** The sticky column
+  measured the offset into the wrapped row rather than the on-screen cell, so
+  every crossing between a line's first row and its indented continuation rows
+  moved the caret by the indent width.
+- **Resizing a soft-wrapped pane jumped to an unrelated part of the document**,
+  and widening it could leave the view scrolled past the last row, painting an
+  empty editor. A wrap-width change renumbers every visual row; both it and the
+  wrap toggle now re-anchor on the logical line that was at the top of the view.
+- **A click past the last glyph of a wrapped row put the caret on the row below**,
+  and a right-click on a continuation row retargeted the caret to near the start
+  of the whole wrapped line (it placed by screen column, which reads as an
+  absolute column in the logical line).
+- **Whitespace markers sat one cell right of the grid after a multibyte glyph**,
+  accumulating along the line: the whitespace builder the app paints from stepped
+  one byte per cell. The renderer's fallback path already stepped by code point;
+  the parity test between them could not see it because its fixture was ASCII.
+- **A soft-wrapped line with a diagnostic repeated its gutter marker** on every
+  continuation row; diagnostic and execution-line markers mark the logical line,
+  so they draw on its head row only.
 - **The retention gate could report a 476% regression on an unchanged binary.**
   `p50_net_heap_bytes` is a median over a series that settles as caches fill, so
   its value depends on how many iterations were taken — five of twelve editor

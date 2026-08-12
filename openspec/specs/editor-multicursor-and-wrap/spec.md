@@ -73,6 +73,12 @@ MicroIDE SHALL support soft wrap as a project-scoped editor presentation mode th
 
 Wrap break selection SHALL prefer the most recent ASCII whitespace (space or tab) boundary that lies inside the current row's window; when no such boundary exists inside the window (a single token longer than the wrap width), the layout SHALL hard-break at the column boundary so the unbreakable token still wraps.
 
+Wrapped rows SHALL be contiguous in visual columns, so the column at which one row ends and the next begins denotes ONE text position. Vertical caret motion and mouse hit-testing that land on such a wrap boundary SHALL resolve it to the row whose END it is — the caret SHALL render at that row's trailing edge — while every other caret placement SHALL resolve it to the row it STARTS. Without this rule the caret cannot leave a wrapped row upward at all: a preferred column past a shorter row's width clamps to exactly that boundary, which then resolves back to the row the motion started from.
+
+The preferred column that vertical motion carries SHALL be measured in ON-SCREEN cells of the caret's visual row, including any hanging indent the row is rendered with, so motion between a line's first row and its indented continuation rows keeps the caret under the same screen column.
+
+A change to the wrap width, and a toggle of soft wrap itself, SHALL re-anchor the vertical scroll position on the logical line that was at the top of the view, and SHALL leave the scroll position within the document. Both renumber every visual row, so a scroll offset carried across one unchanged denotes a different place in the document, or none at all.
+
 When soft wrap is enabled, horizontal scrolling SHALL be suppressed: the horizontal scroll offset SHALL clamp to zero and the editor SHALL NOT render a horizontal scrollbar.
 
 Toggling soft wrap from any user-invoked path (View menu action, keybinding, command palette, settings overlay) SHALL invalidate the active editor surface so previously-painted rows do not persist beyond the toggle.
@@ -100,6 +106,26 @@ Toggling soft wrap from any user-invoked path (View menu action, keybinding, com
 #### Scenario: Preferred column survives wrapped continuations
 - **WHEN** soft wrap is enabled and a caret moves vertically through a wrapped logical line whose continuation row is shorter than the preferred column
 - **THEN** the caret SHALL clamp to the end of the continuation row for that step, and on the next vertical move into a row that is wide enough, the caret SHALL return to the preferred column
+
+#### Scenario: Up off a wrapped row lands on the row above it
+- **WHEN** soft wrap is enabled, a logical line wraps into rows whose middle row is narrower than the caret's preferred column, and the caret is on a row below it
+- **THEN** each Up SHALL advance the caret exactly one visible row upward, clamping to the narrow row's end for that step, and SHALL NOT leave the caret on the row it started from
+
+#### Scenario: Down onto a narrow wrapped row stops on that row
+- **WHEN** soft wrap is enabled, the caret is on a wrapped row with a preferred column wider than the next row
+- **THEN** Down SHALL place the caret at the end of that next row and SHALL NOT skip past it to the row below
+
+#### Scenario: Vertical motion across a hanging indent keeps the screen column
+- **WHEN** soft wrap is enabled, a wrapped line begins with leading whitespace so its continuation rows carry a hanging indent, and the caret moves down from the line's first row
+- **THEN** the caret SHALL land at the same on-screen column, i.e. the indent cells plus the remaining offset into the continuation row's text
+
+#### Scenario: Click past a wrapped row's last glyph stays on that row
+- **WHEN** soft wrap is enabled and the user clicks to the right of the last glyph of a continuation row
+- **THEN** the caret SHALL be placed at that row's end and SHALL render there, not at the start of the row below
+
+#### Scenario: Changing the wrap width keeps the top of the view
+- **WHEN** soft wrap is enabled, the view is scrolled so logical line L is at the top, and the editor's visible-column width changes
+- **THEN** the view SHALL be re-anchored so logical line L is at the top again, and the scroll position SHALL remain within the re-wrapped document
 
 #### Scenario: Click on a continuation row places caret at the right logical column
 - **WHEN** soft wrap is enabled and the user clicks on a continuation row of a wrapped logical line

@@ -45,11 +45,7 @@ The format SHALL support adding new typed records without breaking older readers
 
 ### Requirement: Legacy Text Format Is Fully Retired
 
-The one-shot legacy-text-format importer has been removed (the source tree no
-longer contains any legacy command-style parser or importer). The application
-SHALL NOT parse, import, or retain any runtime fallback to the legacy
-command-style format. This supersedes the earlier one-shot-migration requirement,
-which has been satisfied and retired.
+The application SHALL NOT parse, import, or retain any runtime fallback to the legacy command-style format, and the source tree SHALL NOT contain a legacy command-style parser or importer; the one-shot legacy-text-format importer has been removed. This supersedes the earlier one-shot-migration requirement, which has been satisfied and retired.
 
 #### Scenario: No legacy parser or importer exists
 - **WHEN** the architectural-lint test runs over `src/`, `tests/`, and `tools/`
@@ -101,10 +97,7 @@ A debug tooling path SHALL exist to dump the contents of any persisted file in h
 
 ### Requirement: One-Shot Legacy Importer Removal Is Complete
 
-The one-shot legacy importer added in `comprehensive-tech-debt-cleanup` has been
-removed, along with its `LegacyImporterFuzz` target. No further end-of-life work
-is pending; the architectural-lint ban on legacy persistence symbols keeps it
-from returning.
+The one-shot legacy importer added in `comprehensive-tech-debt-cleanup` and its `LegacyImporterFuzz` target have been removed and SHALL NOT return; the architectural-lint ban on legacy persistence symbols is what enforces that. No further end-of-life work is pending.
 
 #### Scenario: End-of-life cleanup is complete
 - **WHEN** the source tree is inspected

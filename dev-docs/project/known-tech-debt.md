@@ -1,5 +1,22 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-08-12. A deep dive on **soft wrap**, prompted by a report that
+moving up out of a wrapped line did nothing. It did nothing: wrapped rows are
+contiguous in visual columns, so the wrap point is one text position two rows
+both answer for, and it always resolved to the later one — so Up onto a shorter
+row landed on the row it had just left, at any repeat count, and Down skipped the
+short row. Fixed with an explicit affinity bit (VS Code's `PositionAffinity`),
+along with the sticky column ignoring the hanging indent, a wrap-width change
+leaving the scroll pointing into the old row numbering (and skipping its clamp),
+a right-click retargeting the caret by screen column on a continuation row, and
+gutter markers repeating down every wrapped row. The perf half: wrapped rows were
+rebuilt from scratch every frame and each build re-measured the whole logical
+line, and the whitespace-run builder walked its line from byte 0 per row and
+stepped one byte per cell. Four entries opened: [175](#td-2026-08-12-175)
+(hidden-line row offsets), [176](#td-2026-08-12-176) (the new wrap scenarios need
+a quiet-runner baseline), [177](#td-2026-08-12-177) (the fallback whitespace walk),
+[178](#td-2026-08-12-178) (Home/End are logical-line verbs under wrap).
+
 Reviewed 2026-08-11. The 2026-08-11 pass read the suite's two biggest phases
 ([159](#td-2026-08-06-159)): `multi_project.switch_cycles` (-42 %) and
 `git.refresh_dispatch` (-14 % / -12 %). Five fixes, all of them the same
@@ -298,6 +315,71 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-12-178 — Home/End under soft wrap move by LOGICAL line, where VS Code moves by visual row. OPEN (product decision).
+
+With word wrap on, `MoveCursorLineStart`/`MoveCursorLineEnd` jump to column 0 /
+the end of the whole logical line, so pressing Home on the fourth wrapped row of
+a paragraph scrolls back up three rows. VS Code binds Home/End to `cursorHome`
+/ `cursorEnd`, which move within the **view line** (the wrapped row), with
+`cursorLineStart`/`cursorLineEnd` as the separate logical-line verbs.
+
+Left as an entry rather than a commit because it is a keybinding-semantics
+change, not a defect: this editor also diverges from VS Code on Home in a second
+way (no first-non-whitespace toggle), so "match VS Code" here is a two-part
+product decision. The pieces to build it on already exist:
+`TextViewport::WrappedVisualRowLayout` gives the row's `[visual_start,
+visual_end)`, and `WrapRowAffinity::kPreviousRow` is exactly what an End that
+lands on a wrap point needs so the caret renders at the row's trailing edge
+instead of the next row's start.
+
+### TD-2026-08-12-177 — the renderer's fallback whitespace walk still restarts at byte 0 of the line for every visible row. OPEN.
+
+`RenderViewModelBuilder`'s whitespace-run builder — the path production paints
+from — now resumes at the row's own start when the bytes before it are plain
+ASCII, so a soft-wrapped long line is no longer re-walked once per visible row.
+`EditorViewRenderer`'s text-iteration fallback (`use_vm_whitespace == false`) was
+left as it was: it still walks from byte 0 and stops at `row_end_visual`, which
+is the same quadratic shape over the rows of one wrapped line.
+
+It is reached only when no view model is supplied, which in the tree means the
+renderer's own tests and the parity test that pins the two paths together — so
+the cost is not paid in the app. Worth closing anyway, because the parity test is
+what keeps the two implementations honest, and a fallback that is
+asymptotically different from the real path is a fallback whose parity only holds
+on small fixtures.
+
+### TD-2026-08-12-176 — the two soft-wrap perf scenarios have no baseline, so only their hand-written invariants gate. OPEN.
+
+`editor_soft_wrap_long_line_scroll` and `editor_soft_wrap_long_line_typing`
+(added 2026-08-12 with the wrap fixes — soft wrap had no perf coverage at all
+before them) are registered `baseline_gated = false`. Their two hard invariants
+do gate on any box (a pure scroll must not re-measure a row's logical line, and
+must not rebuild the O(document) wrapped-row table), and both are protected from
+passing vacuously. What is missing is the wall/allocation envelope: they were
+written on a box under load average 14, where a recorded baseline would bake in
+the noise.
+
+Record them with `--update-baseline --scenarios=editor_soft_wrap_long_line_scroll,editor_soft_wrap_long_line_typing`
+on a quiet reference run, then flip `baseline_gated` to true. Same runner
+constraint as [184](#td-2026-08-11-184) and [161](#td-2026-08-07-161).
+
+### TD-2026-08-12-175 — a caret on a fold-hidden line resolves to the fold opener's FIRST wrapped row. OPEN.
+
+`TextLayoutCache`'s row-offset table stores, for every hidden line, the row index
+where the last VISIBLE line started. With soft wrap on, a collapsed opener that
+wraps into rows [R, R+3] therefore answers R for every line it hides, so a caret
+parked on a hidden line (a search hit, a restored session, a jump-to-definition
+into a folded body) resolves to the opener's first row and needs four Downs to
+escape a fold it should leave in one.
+
+The opener's own rows are handled — `WrappedRowRangeForLine` scans by
+`line_index` precisely so a wrapped opener does not collapse to a single row
+(that fix is covered by `SoftWrapCollapsedFoldOpenerVerticalMotionEscapes`) —
+this is the hidden-line half of the same table. The cheap fix is to store the
+opener's LAST row for hidden lines, which makes vertical motion off a hidden line
+leave the fold immediately; the thorough one is to refuse to place a caret on a
+hidden line at all (VS Code reveals the fold instead).
 
 ### TD-2026-08-11-184 — every allocation gate this pass touched now passes with 12-40 % of slack, and nothing can re-record them here. OPEN.
 
