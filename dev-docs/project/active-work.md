@@ -124,12 +124,27 @@ The emulator covers the full-screen and shell workflows exercised so far.
   record first. Rebaseline the same way: confirm no *allocation* gate is near its
   envelope before rewriting, because those are deterministic and a tight one means
   the code moved — rerecording then buries a regression instead of closing drift
-- **the allocation half is loose again as of 2026-08-11** (TD-2026-08-11-184).
-  Five wins landed without their baselines moving, so five gates now carry 12-40 %
-  of slack — enough to accept re-adding exactly the per-entry cost they were
-  tightened past. The deterministic metrics do not need a quiet machine (that is
-  the premise of the gating policy), only an authoritative runner class, which is
-  what blocks `--update-baseline=deterministic` here
+- **the allocation half was re-recorded 2026-08-12** (TD-2026-08-11-184, closed):
+  eight gates, 42-98 % tighter, on the canonical `microide-perf` lane with
+  `--update-baseline=deterministic`. What unblocked it: a baseline can now declare
+  its timing half ADVISORY (`timing_is_advisory`). The deterministic metrics
+  (allocations, phase allocations, net heap) gate normally and the
+  machine-sensitive ones are measured, printed, and explicitly not enforced with
+  the reason on the verdict line — so "no idle box available" no longer means "no
+  gate at all", which is what had left two soft-wrap scenarios gating on nothing
+  (TD-2026-08-12-186)
+- **four `p50_net_heap_bytes` gates are red and were red before 2026-08-12**
+  (TD-2026-08-12-191). Do not rebaseline them; that would enshrine the thing worth
+  finding. And the metric is **build-configuration dependent**: the same four
+  scenarios at the same commit PASS under `Release` without LTO and FAIL by 3-10x
+  under the `microide-perf` preset (RelWithDebInfo + LTO). "Deterministic to the
+  byte" holds WITHIN one configuration; nothing in a baseline records which one it
+  was captured in
+- **the wall gate is normalised against the machine clock as of 2026-08-12**
+  (TD-2026-08-06-140, step one), weighted by each iteration's own cpu/wall ratio —
+  full correction where wall is work, none where wall is sleep. Cutting the
+  100/150/200 envelopes down to something that actually gates is step two and
+  needs an idle runner plus a multi-run stability measurement
 - a scenario must not read the developer's home directory. Every scenario's shell
   loaded `~/.local/state/microide/recents` until 2026-08-07, because
   `PerfHarness::Driver` holds a `WorkspaceShell` **by value** and the isolated

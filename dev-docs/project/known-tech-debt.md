@@ -1102,7 +1102,39 @@ when the tail merely drifted past a loose envelope. All three cases are covered
 by `PerfBaseline/NamesTailOnlyAllocationDivergence`, using this entry's own
 numbers (`cold_startup_no_project`, 681 → 9,364 with p50 matching exactly).
 
-### TD-2026-08-10-174 — `lexically_normal()` is ~12 allocations and the codebase calls it 416 times, three of them on paths that run per keystroke. OPEN — 2026-08-10 pass took the per-entry and per-frame ones.
+### TD-2026-08-10-174 — `lexically_normal()` is ~12 allocations and the codebase calls it 416 times, three of them on paths that run per keystroke. [RESOLVED 2026-08-12 — the shape now has a helper, and the four heaviest files are swept.]
+
+Closed as an entry, not as a standing invitation to grep for the call. What was
+missing was not effort but a HELPER: every pass so far hand-rolled the guard at
+the sites it happened to look at, which is why the same shape kept being
+rediscovered from a different end.
+
+**2026-08-12 pass.** `util/PathMatch.h` grew the two guarded forms, on top of the
+allocation-free `PathTextNeedsNormalizing` scan that already existed:
+
+- `NormalizedPath(p)` — an owned path, still a copy when already normal (two
+  allocations) but not twelve.
+- `NormalizedPathView(p, scratch)` — a reference to the INPUT when it is already
+  normal, so the common case allocates nothing at all.
+- `PathEqualsOrWithinNormalized(candidate, root)` — the same guard applied to the
+  containment test, which is where the eager-argument shape lived:
+  `PathEqualsOrWithin(x.lexically_normal(), root)` builds a whole path before the
+  test can reject it (the recurring "expensive value computed as an ARGUMENT and
+  then thrown away by a guard inside the callee" shape).
+
+Swept the four heaviest files — the two path-mutation coordinators (a rename walks
+every open tab, every deferred handle and every restored editor state), the diff
+tab coordinator and the plugin host — for 63 call sites.
+
+The tests pin both halves: the answer must equal `lexically_normal()` for every
+path shape, and the already-normal case must hand back a reference to its own
+input, which is the observable form of "this did not allocate". The remaining
+~350 calls are in cold paths (session restore, one-shot project setup, tests) and
+are a `NormalizedPath` substitution away whenever one of them shows up in a
+trace — which is what [159](#td-2026-08-06-159)'s sweep is for.
+
+#### Original entry
+
 
 #### 2026-08-11 pass: two more per-item sites, found by tracing rather than by grep
 
