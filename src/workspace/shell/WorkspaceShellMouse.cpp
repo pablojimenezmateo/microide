@@ -472,10 +472,16 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
               text_renderer_, text_renderer_.CharWidth(), visual_column);
         }
       }
-      const int visual_row_hit = visual_row;
-      const editor::LogicalPosition hit =
-          viewport->LogicalPositionForVisualHit(visual_row_hit, static_cast<int>(visual_column));
-      viewport->MoveCursorToVisualColumn(hit.line, visual_column, false);
+      // Screen-relative column, like the left-click path: LogicalPositionForVisualHit
+      // re-adds the row's own visual origin. Placing the caret at the ABSOLUTE
+      // `visual_column` instead was wrong under soft wrap -- on a continuation row
+      // starting at visual column N, the pointer's screen column addresses N + it,
+      // so a right-click retargeted the caret to near the START of the logical line
+      // (and ignored the row's hanging indent).
+      const int hit_column =
+          std::max(0, static_cast<int>(visual_column) -
+                          static_cast<int>(viewport->horizontal_scroll()));
+      viewport->MoveCursorToVisualHit(visual_row, hit_column, false);
       return true;
     }();
     MakeMenuCoordinator().OpenAnchoredMenu(

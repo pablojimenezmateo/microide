@@ -1081,10 +1081,16 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
       util::PerformanceTrace::Scope row_render_scope("EditorViewRenderer::Render::DecoratedRow");
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer, row_desc);
     }
-    if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
-        severity.has_value()) {
-      DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
-                                 *severity);
+    // Gutter marks belong to the LOGICAL line, so they are drawn on its head row
+    // only -- like the line number, the fold arrow and the plugin marks below.
+    // Ungated, a soft-wrapped line with a diagnostic repeated its marker down the
+    // gutter once per continuation row.
+    if (IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
+      if (const auto severity = HighestDiagnosticSeverityForLine(diagnostics, line_index);
+          severity.has_value()) {
+        DrawDiagnosticGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height,
+                                   *severity);
+      }
     }
     // Plugin gutter marks share the breakpoint/diagnostic marker slot. Draw the
     // highest-priority mark (first after the line-sorted, priority-desc order)
@@ -1112,9 +1118,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                  bp_mark.verified, bp_kind, bp_mark.enabled);
       ++breakpoint_gutter_mark_index;
     }
-    if (is_execution_line) {
+    if (is_execution_line && IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       // Drawn after the breakpoint dot so the arrow overlays it when a session
-      // stops on a breakpoint line.
+      // stops on a breakpoint line. Head row only: see the diagnostic marker.
       DrawExecutionLineGutterMarker(renderer, theme, gutter.x, y, gutter.w, metrics.line_height);
     }
     if (fold_gutter_marks != nullptr && fold_gutter_mark_index < fold_gutter_marks->size() &&

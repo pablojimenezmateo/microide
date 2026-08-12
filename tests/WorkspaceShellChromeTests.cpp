@@ -3293,6 +3293,56 @@ void TestWorkspaceShellEditorClickHonorsHorizontalScroll() {
          "click caret column must honor the horizontal scroll exactly once (no double-count)");
 }
 
+// Regression: with word wrap on, a click on a CONTINUATION row must place the
+// caret under the pointer. Both mouse paths resolved the hit and then placed the
+// caret by column: the left click threw the row away by re-clamping, and the
+// right-click retarget passed the pointer's SCREEN column to
+// MoveCursorToVisualColumn, which reads it as an absolute column in the logical
+// line -- so a right-click halfway down a wrapped line jumped the caret to near
+// the line's start.
+void TestWorkspaceShellEditorClickOnWrappedContinuationRow() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "wrapped.txt";
+  // One long line of uniform content: visual column == text column, so the
+  // expected caret position is exactly "row start + screen cells".
+  WriteFile(source, std::string(2000, 'a') + "\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, source), "long file should open");
+  WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word");
+
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.soft_wrap(), "editor.wrap=word should reach the active editor");
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorRenderMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  Expect(char_width > 0.0f, "char width should be positive");
+  Expect(editor.visual_line_count() > 2, "the long line should wrap into several rows");
+  Expect(editor.scroll_line() == 0, "the view starts at the top");
+
+  // Second visible row = the line's first continuation row.
+  const auto row = editor.WrappedVisualRowLayout(1);
+  Expect(row.visual_start > 0, "row 1 is a continuation row of the same logical line");
+  const std::size_t screen_cells = 5;
+  const float click_x = metrics.text_x + (static_cast<float>(screen_cells) + 0.25f) * char_width;
+  const float click_y = metrics.first_line_y + metrics.line_height * 1.5f;
+
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_LEFT, 1),
+         "the editor click should be handled");
+  Expect(editor.cursor_line() == 0, "the click stays on the only logical line");
+  Expect(editor.cursor_column() == row.visual_start + screen_cells,
+         "a click on a continuation row lands under the pointer, not near the line start");
+
+  // The right-click retarget resolves the same position.
+  editor.MoveCursorTo(0, 0, false);
+  Expect(SendMouseDown(shell, click_x, click_y, SDL_BUTTON_RIGHT, 1),
+         "the editor right-click should be handled");
+  Expect(editor.cursor_line() == 0 && editor.cursor_column() == row.visual_start + screen_cells,
+         "right-click retargeting resolves the continuation row the same way");
+}
+
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TabSwitchDefersLspHydration",
           TestWorkspaceShellTabSwitchDefersLspHydration);
@@ -3300,6 +3350,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSettingsKeepSelectionVisibleScrollsToRow);
   AddTest(tests, "WorkspaceShell/EditorClickHonorsHorizontalScroll",
           TestWorkspaceShellEditorClickHonorsHorizontalScroll);
+  AddTest(tests, "WorkspaceShell/EditorClickOnWrappedContinuationRow",
+          TestWorkspaceShellEditorClickOnWrappedContinuationRow);
   AddTest(tests, "WorkspaceShell/ColorschemeChangeRequestsRepaint",
           TestColorschemeChangeRequestsRepaint);
   AddTest(tests, "WorkspaceShell/BreakpointGutterMenu", TestWorkspaceShellBreakpointGutterMenu);
