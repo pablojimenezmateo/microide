@@ -563,7 +563,20 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret,
   }
   const std::size_t base_row = layout_cache_.WrappedLineRowOffset(caret.line);
   if (folding_model_ != nullptr && folding_model_->IsLineHidden(caret.line)) {
-    return base_row;
+    // The row-offset table stores, for every hidden line, the row where the last
+    // VISIBLE line STARTED. Under soft wrap that opener can span several rows, so
+    // answering its first row parks a caret that is inside the fold (a search hit,
+    // a restored session, a jump-to-definition into a folded body) at the TOP of
+    // the opener — and vertical motion then has to walk the opener's own wrapped
+    // rows before it can leave a fold it is not even in (TD-2026-08-12-185).
+    //
+    // The fold's trailing edge is the honest answer: one Down leaves it, which is
+    // what the equivalent caret without soft wrap already does.
+    if (!soft_wrap_) {
+      return base_row;
+    }
+    const std::size_t opener_line = WrappedRowAt(base_row).line_index;
+    return layout_cache_.WrappedRowRangeForLine(opener_line, document_->lines.size()).second;
   }
   if (!soft_wrap_) {
     return base_row;

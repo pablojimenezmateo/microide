@@ -1847,6 +1847,45 @@ void TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes() {
          "down from a collapsed soft-wrapped opener must cross the fold to the next visible line");
 }
 
+// TD-2026-08-12-185: the row-offset table stores, for every hidden line, the row
+// where the last VISIBLE line STARTED — so with soft wrap on, a collapsed opener
+// that wraps into rows [R, R+3] answered R for every line it hides. A caret
+// parked inside the fold (a search hit, a restored session, a jump-to-definition
+// into a folded body) therefore resolved to the opener's FIRST row and needed one
+// Down per wrapped row to escape a fold it is not even in.
+void TestTextViewportSoftWrapCaretOnFoldHiddenLineEscapesInOneStep() {
+  TextViewport viewport;
+  viewport.LoadContent(
+      "top\nvoid aaaaaaaaaaaaaaaaaaaaaaaa() {\n  x();\n  y();\n}\nbottom\n",
+      "/tmp/soft-wrap-fold-hidden.cpp");
+  viewport.SetViewportSize(6, 8);  // narrow: the long opener wraps into several rows
+  viewport.SetSoftWrap(true);
+
+  FoldingModel folding_model;
+  FoldingModel::ComputeOptions fold_options;
+  fold_options.bracket_pairs = {{'{', '}'}};
+  fold_options.use_indent_source = true;
+  fold_options.tab_size = 4;
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), fold_options),
+         "fold compute should complete for the soft-wrap fold fixture");
+  Expect(folding_model.Collapse(1), "the wrapping function opener should collapse");
+  viewport.SetFoldingModel(&folding_model);
+  Expect(folding_model.IsLineHidden(2), "line 2 must be inside the collapsed fold");
+
+  // Control: the opener really does span more than one wrapped row, or the whole
+  // distinction between its first and last row is vacuous.
+  Expect(viewport.VisualRowForLine(5) - viewport.VisualRowForLine(1) > 1,
+         "the collapsed opener must wrap into several rows for this fixture to test anything");
+
+  viewport.MoveCursorTo(2, 0);
+  Expect(viewport.cursor_line() == 2, "caret starts on a fold-hidden line");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 5,
+         "down from a fold-hidden line must cross the fold in one step, not walk the opener's "
+         "own wrapped rows");
+}
+
 void TestTextViewportSoftWrapPageMovesByVisibleRows() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnopqrst\nABCDEFGH12345678\nxyz\n", "/tmp/soft-wrap-page.txt");
@@ -5279,6 +5318,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows);
   AddTest(tests, "TextViewport/SoftWrapCollapsedFoldOpenerVerticalMotionEscapes",
           TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes);
+  AddTest(tests, "TextViewport/SoftWrapCaretOnFoldHiddenLineEscapesInOneStep",
+          TestTextViewportSoftWrapCaretOnFoldHiddenLineEscapesInOneStep);
   AddTest(tests, "TextViewport/SoftWrapPageMovesByVisibleRows",
           TestTextViewportSoftWrapPageMovesByVisibleRows);
   AddTest(tests, "TextViewport/ShiftPageExtendsSelection",

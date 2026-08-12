@@ -318,7 +318,25 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-12-189 — the visible-line cache is a FIFO, so a HIT does not protect the entry from the next miss's eviction. OPEN.
+### TD-2026-08-12-189 — the visible-line cache is a FIFO, so a HIT does not protect the entry from the next miss's eviction. [RESOLVED 2026-08-12.]
+
+**Fixed 2026-08-12.** The recency order is an intrusive doubly-linked list
+threaded through the map's own nodes (`VisibleLineCacheEntry::lru_prev/lru_next`
+plus a self key so eviction can `extract()` the head without a reverse lookup),
+spliced to the tail on every hit. Intrusive rather than `std::list<Key>` because
+a list would pay 256 node allocations on first fill of every tab's cache, and it
+lets the recycle path splice head→tail without allocating at all; the side deque
+of keys is gone. An `unordered_map` node's address survives both rehash and
+`extract()`/`insert()` of the same node, which is what makes the pointers valid
+across the recycle.
+
+`TextLayout/HitProtectsEntryFromEviction` pins the property that separates an LRU
+from a FIFO — an entry re-read every round survives 512 misses and its reference
+keeps pointing at its own content — and was probed by disabling the touch, where
+it fails on the first eviction.
+
+#### Original entry
+
 
 `TextLayoutCache::VisibleLineLayoutRefCached` hands out a reference into a
 256-entry map and evicts by insertion order (`visible_line_cache_order_` is a
@@ -391,7 +409,24 @@ Record them with `--update-baseline --scenarios=editor_soft_wrap_long_line_scrol
 on a quiet reference run, then flip `baseline_gated` to true. Same runner
 constraint as [184](#td-2026-08-11-184) and [161](#td-2026-08-07-161).
 
-### TD-2026-08-12-185 — a caret on a fold-hidden line resolves to the fold opener's FIRST wrapped row. OPEN.
+### TD-2026-08-12-185 — a caret on a fold-hidden line resolves to the fold opener's FIRST wrapped row. [RESOLVED 2026-08-12.]
+
+**Fixed 2026-08-12.** `CursorVisualRowForCaret` answers the opener's LAST row for
+a hidden line under soft wrap (`WrappedRowRangeForLine(opener_line).second`),
+which is the fold's trailing edge — one Down leaves it, matching what the same
+caret already does with wrap off. The fix is scoped to the caret query rather
+than to the shared row-offset table: `VisualRowForLine` feeds scroll anchoring,
+inset placement and the blame overlay, where "the row the enclosing visible line
+starts at" is the right answer and changing it would move an unrelated set of
+behaviours.
+
+`TextViewport/SoftWrapCaretOnFoldHiddenLineEscapesInOneStep` pins it, with a
+control that the opener really does span several rows (otherwise first and last
+row are the same and the test proves nothing), and was probed by reverting the
+fix.
+
+#### Original entry
+
 
 `TextLayoutCache`'s row-offset table stores, for every hidden line, the row index
 where the last VISIBLE line started. With soft wrap on, a collapsed opener that
