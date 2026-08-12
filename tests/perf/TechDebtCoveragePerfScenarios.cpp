@@ -514,19 +514,31 @@ void RunProjectTraversalFilterScan(ScenarioContext& context) {
   // measured too.
   // The entry kind is precomputed rather than derived per call: `path::extension()`
   // builds a path and would put the scenario's own allocations inside the phase.
-  std::vector<std::pair<std::filesystem::path, platform::PathType>> entries;
-  entries.reserve(2048);
-  for (int dir = 0; dir < 32; ++dir) {
-    const std::string top = dir % 8 == 0 ? "build" : "src" + std::to_string(dir);
-    for (int sub = 0; sub < 4; ++sub) {
-      const std::string subdir = top + "/module" + std::to_string(sub);
-      entries.emplace_back(root / subdir, platform::PathType::Directory);
-      for (int file = 0; file < 15; ++file) {
-        entries.emplace_back(root / (subdir + "/unit" + std::to_string(file) + ".cpp"),
+  //
+  // Built ONCE for the process, not once per iteration. It is scenario INPUT, and
+  // 2,048 `std::filesystem::path`s cost ~14,000 allocations to construct — in a
+  // scenario whose measured phase allocates zero. That made every one of the
+  // scenario's iteration-level numbers a measurement of its own fixture:
+  // `p50_net_heap_bytes` scaled 1:1 with the entry count (doubling the tree took
+  // it from 67,680 to 135,056), so the retention gate was reporting how big the
+  // fixture is, not what the filter retains (TD-2026-08-12-191). Same rule as
+  // TD-2026-08-07-163: build scenario inputs outside the measured window.
+  static const std::vector<std::pair<std::filesystem::path, platform::PathType>> entries = [&] {
+    std::vector<std::pair<std::filesystem::path, platform::PathType>> built;
+    built.reserve(2048);
+    for (int dir = 0; dir < 32; ++dir) {
+      const std::string top = dir % 8 == 0 ? "build" : "src" + std::to_string(dir);
+      for (int sub = 0; sub < 4; ++sub) {
+        const std::string subdir = top + "/module" + std::to_string(sub);
+        built.emplace_back(root / subdir, platform::PathType::Directory);
+        for (int file = 0; file < 15; ++file) {
+          built.emplace_back(root / (subdir + "/unit" + std::to_string(file) + ".cpp"),
                              platform::PathType::RegularFile);
+        }
       }
     }
-  }
+    return built;
+  }();
 
   const auto scan = [&filter, &entries] {
     std::size_t kept = 0;
@@ -635,8 +647,16 @@ const ScenarioRegistration g_perf_project_traversal_filter_scan({Scenario{
     .name = "project_traversal_filter_scan",
     .smoke = true,
     .baseline_gated = true,
+    // Iteration 0 builds the process-wide entry fixture (see the scenario body);
+    // every iteration after it measures the filter alone. Declared rather than
+    // absorbed into the p50, which is what the warmup mechanism is for.
+    .warmup_iterations = 1,
     .tolerance_p95_percent = tolerance::kJitterWallP95,
     .tolerance_max_percent = tolerance::kJitterWallMax,
+    // Bumped with the fixture move: the old numbers are dominated by per-iteration
+    // fixture construction and describe a different measurement
+    // (TD-2026-08-12-191, TD-2026-08-07-167).
+    .measurement_revision = 2,
     .run = RunProjectTraversalFilterScan,
 }});
 

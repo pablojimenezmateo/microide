@@ -421,7 +421,28 @@ allocations and 75,872 → **67,680** net bytes. **Every committed
 `p50_net_heap_bytes` 8,192 too high**, which is a suite-wide deterministic
 re-record.
 
-**Still open: the remaining 67,680 bytes.**
+**Second cause found and fixed 2026-08-12: `project_traversal_filter_scan` was
+measuring its own fixture.** After the probe fix it still retained 67,680 bytes
+per iteration. Proved what that was by doubling the fixture: allocations went
+14,077 → 28,059 and net heap 67,680 → 135,056, i.e. **both scale 1:1 with the
+scenario's own entry count** — in a scenario whose measured phase allocates
+exactly zero. Building 2,048 `std::filesystem::path`s per iteration WAS the
+measurement.
+
+The entry vector is scenario INPUT, so it is now built once for the process
+(function-local static, with `warmup_iterations = 1` declaring the iteration that
+pays for it). Steady-state readings: **1,916 allocations (was 14,078, -86 %) and
+6,240 net bytes (was 75,872)**. `measurement_revision` bumped, rebaselined,
+re-gated green. Same rule as [163](#td-2026-08-07-163): build scenario inputs
+outside the measured window — this is the second scenario to have broken it, and
+the first where the giveaway was a retention gate rather than a duration.
+
+**Still open: the other three** — `settings_change_many_tabs`, `multi_tab_cycle`
+and `switch_and_idle`. They are shell scenarios rather than unit-shaped ones, so
+the fixture-scaling test above does not transfer directly; the method does. Note
+the canary scenario nets exactly **0** bytes over 2,000 balanced allocations, so
+the accounting itself is sound and anything these three report is real retention
+on the scenario thread.
 
 A mechanism was proposed on 2026-08-12 and is WRONG; it is recorded here so it is
 not proposed again. The theory was "`p50_net_heap_bytes` is process-global while
