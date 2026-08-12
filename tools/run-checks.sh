@@ -80,10 +80,21 @@ check_tests() {
   # after the last perf build reads as a "stale baseline") or, the dangerous
   # direction, passed a smoke run of yesterday's harness. The production microide
   # executable and the bench binaries are still skipped; ctest does not run them.
+  #
+  # microide_perf only EXISTS when the build dir was configured with
+  # MICROIDE_PERF_HARNESS_BUILD=ON, and so does the ctest entry that runs it.
+  # Naming it unconditionally made this lane fail outright ("No rule to make
+  # target 'microide_perf'") on the default configuration the lane itself
+  # creates, i.e. on any fresh checkout — the target list has to follow the same
+  # switch the add_test() does.
   run_logged "$log" bash -c '
     set -e
     cmake -S . -B build
-    cmake --build build --target microide_tests microide_perf -j'"$JOBS"'
+    targets=microide_tests
+    if grep -q "^MICROIDE_PERF_HARNESS_BUILD:BOOL=ON" build/CMakeCache.txt; then
+      targets="microide_tests microide_perf"
+    fi
+    cmake --build build --target $targets -j'"$JOBS"'
     ctest --test-dir build --output-on-failure -j'"$CTEST_JOBS"'
   '
   local rc=$?
