@@ -39,10 +39,13 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   std::size_t sink = state.entries.size() + state.tree_git_statuses.size() +
                      state.branch.branch_name.size();
   for (const microide::project::GitRepositoryEntry& entry : state.entries) {
-    sink += entry.path.relative_path.native().size();
+    // `relative_path` is generic '/'-separated TEXT, not a std::filesystem::path,
+    // since the git pipeline stopped materializing a path per entry
+    // (TD-2026-08-11-183). It has no .native().
+    sink += entry.path.relative_path.size();
     sink += entry.submodule ? 1u : 0u;
     if (entry.old_path.has_value()) {
-      sink += entry.old_path->relative_path.native().size();
+      sink += entry.old_path->relative_path.size();
     }
   }
   return static_cast<int>(sink & 0);

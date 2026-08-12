@@ -333,6 +333,28 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-12-192 — a fuzz target had not compiled since 2026-08-11 and nothing noticed. [RESOLVED 2026-08-12 — and the reason it went unnoticed is the entry.]
+
+`GitPorcelainV2ParserFuzz.cpp` called `.native()` on
+`GitRepositoryEntry::path.relative_path`, which stopped being a
+`std::filesystem::path` and became generic '/'-separated TEXT when the git
+pipeline stopped materializing a path per entry
+([183](#td-2026-08-11-183)). The target has not compiled since.
+
+**Nothing caught it because no default flow builds the fuzz targets.** They are
+behind `-DMICROIDE_FUZZ=ON` with a clang toolchain, so `tests`, all three
+sanitizer lanes, `clang-build` and the perf lanes are all green with a fuzz
+target that does not exist. That is the same shape as the bench binaries' curated
+source lists, except the bench targets ARE built by the sanitizer lanes and the
+fuzz ones are built by nothing.
+
+Fixed, and all 11 targets build; `GitPorcelainV2ParserFuzz` and
+`PieceTreeEquivalenceFuzz` were run against their committed corpora (2,205 and
+21,761 runs, no findings). **The habit to keep: run `tools/run-checks.sh fuzz
+--list` after any change to a type a fuzz target touches** — it configures the
+clang+fuzz tree and builds every target without running them, which is the cheap
+proof they still compile.
+
 ### TD-2026-08-12-191 — four `p50_net_heap_bytes` gates have been red since before 2026-08-12, and the metric is BUILD-CONFIGURATION dependent. OPEN (the configuration half shipped; the retention itself is unexplained).
 
 Found by running the full gate (which is itself supposed to be routine —
