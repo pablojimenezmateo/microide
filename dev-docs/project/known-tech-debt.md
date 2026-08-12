@@ -22,7 +22,11 @@ same day**, along with [174](#td-2026-08-10-174), [181](#td-2026-08-10-181),
 [182](#td-2026-08-11-182), [183](#td-2026-08-11-183), [184](#td-2026-08-11-184),
 [142](#td-2026-08-06-142) and [144](#td-2026-08-06-144); two new ones were filed
 from what the gate run turned up ([190](#td-2026-08-12-190),
-[191](#td-2026-08-12-191)).
+[191](#td-2026-08-12-191)). A closing A/B of the whole 36-commit range against
+`origin/main` then filed [193](#td-2026-08-12-193): nine phases cost more than
+they did at main and **not one of them tripped a gate**, because an envelope is
+an absolute ceiling and none of them reached it. Run both — the gate says
+"within contract", the A/B says "did it cost anything".
 
 Two things from that pass are worth carrying forward more than the fixes are.
 **A parity test between two implementations is blind to anything that does not
@@ -332,6 +336,56 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-08-12-193 — nine phases allocate more than they did at `origin/main`, every one of them under its gate, and one is the blob work's own conversion boundary.
+
+Found by A/B-ing the 36-commit push against `origin/main` with
+`tools/perf-compare.py` rather than against the baselines — which is the point:
+**no gate fired on any of them.** A baseline envelope is an absolute ceiling, so
+a phase can give back a real, deterministic amount and stay green as long as the
+ceiling is above where it lands. The gate answers "is this within contract"; only
+an A/B answers "did this change cost anything".
+
+Deterministic movement, `origin/main` → HEAD (allocation counts and
+`p50_net_heap_bytes` only — the run was taken at load ~25, so every wall/cpu/rss
+row in that report is lane noise and is excluded here):
+
+| phase / metric | main | HEAD | |
+| --- | ---: | ---: | ---: |
+| `editor.surround_multi_caret.insert` p50 | 229 | 250 | +9.2 % |
+| `moby.mid_edit_burst` p50 | 616 | 651 | +5.7 % |
+| `linter.type_invalid_edit` p50 | 27 | 28 | +3.7 % |
+| `scroll_large_file` p95 | 300 | 309 | +3.1 % |
+| `snippet.expand_20_placeholders` p50 | 105 | 108 | +2.9 % |
+| `merge_interleaved.scroll_burst` p50 | 2,880 | 2,947 | +2.3 % |
+| `editor_smart_indent_typing` p50 | 6,141 | 6,258 | +1.9 % |
+| `long_line_edit.cut` p50 | 54 | 55 | +1.9 % |
+| `merge_edit_result_then_scroll` p50 | 6,313 | 6,346 | +0.5 % |
+
+The largest one was traced. `editor.surround_multi_caret.insert`'s #2 site is
+`util::DecodeLines` under `TextViewport::TryMultiCaretPairInsert` — 14
+allocations of 32 bytes, a `LineBlob` being decoded back into a
+`vector<std::string>`. [182](#td-2026-08-11-182) made the undo pipeline
+blob-native precisely so that no caller would pay "exactly the allocations this
+removes" at a conversion boundary, and the multi-caret surround path is a
+boundary it did not reach. That one is a genuine loose end of the blob work, not
+a tradeoff.
+
+`editor_snippet_expand` is the one that also shows against its own baseline
+(`max_allocations` 463 → 469, `p95` 462.1 → 467.6) — the TD-2026-08-06-139
+class, drifting up inside an envelope with room.
+
+Not to be confused with the two things in the same report that are NOT
+regressions:
+
+- **the six merge scenarios reading +2,800 % to +29,000 %** are
+  [190](#td-2026-08-12-190)'s deliberate redefinition — the phase used to measure
+  a re-show and now measures an open. `measurement_revision` protects a
+  *baseline* comparison from this; it does nothing for an A/B, which runs both
+  binaries and cannot know the scenario changed meaning. **Read the revision bumps
+  in the range before reading an A/B report.**
+- **every scenario is −1 allocation and −8,192 net-heap bytes**, which is the RSS
+  probe leaving the measured window (`aff8d370`).
 
 ### TD-2026-08-12-192 — a fuzz target had not compiled since 2026-08-11 and nothing noticed. [RESOLVED 2026-08-12 — and the reason it went unnoticed is the entry.]
 

@@ -540,7 +540,8 @@ void RunProjectTraversalFilterScan(ScenarioContext& context) {
     return built;
   }();
 
-  const auto scan = [&filter, &entries] {
+  // `entries` is static, so it is named directly rather than captured.
+  const auto scan = [&filter] {
     std::size_t kept = 0;
     for (const auto& [entry, type] : entries) {
       kept += filter.Includes(entry, type) ? 1u : 0u;
