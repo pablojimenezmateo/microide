@@ -380,6 +380,20 @@ class TextViewport {
                                      std::size_t cursor_visual_row) const;
   WrappedVisualRow WrappedVisualRowLayout(std::size_t visual_row_index) const;
   LogicalPosition LogicalPositionForVisualHit(int visual_row, int visual_col) const;
+  // Hit-test result including which wrapped row the hit belongs to when it lands
+  // on a wrap boundary (see WrapRowAffinity).
+  struct VisualHit {
+    LogicalPosition position;
+    WrapRowAffinity affinity = WrapRowAffinity::kNextRow;
+  };
+  VisualHit ResolveVisualHit(int visual_row, int visual_col) const;
+  // Hit-test + placement in one step, for the mouse paths. Doing it here is what
+  // lets a click PAST the last glyph of a soft-wrapped row keep the caret on that
+  // row: the resolved position is the wrap boundary, which the plain
+  // MoveCursorTo(line, column) path would render at the start of the row below
+  // (VS Code keeps it at the end of the clicked row). Identical to
+  // MoveCursorTo(LogicalPositionForVisualHit(...)) in every non-wrapped case.
+  void MoveCursorToVisualHit(int visual_row, int visual_col, bool extend_selection = false);
   int VisualRowCount() const;
   std::size_t visual_line_count() const;
   std::size_t visual_scroll_line() const { return scroll_line_; }
@@ -639,7 +653,12 @@ class TextViewport {
   // updates the preferred column (unless `keep_preferred_column`, used by vertical
   // motion which tracks a sticky column), and re-syncs the navigation anchor so the
   // caret reads as "navigated" rather than "edited" (see CaretIsFromActiveTextEdit).
-  void PlacePrimaryCaret(std::size_t line, std::size_t column, bool keep_preferred_column = false);
+  // `affinity` is the wrap-boundary tiebreaker for the placed caret; it defaults
+  // to kNextRow so every ordinary placement RESETS a sticky previous-row bit and
+  // only the two paths that deliberately land on a boundary (vertical motion,
+  // hit-testing) pass kPreviousRow.
+  void PlacePrimaryCaret(std::size_t line, std::size_t column, bool keep_preferred_column = false,
+                         WrapRowAffinity affinity = WrapRowAffinity::kNextRow);
   void BeginSelectionIfNeeded(bool extend_selection);
   bool DeleteSelection();
   ViewState CaptureViewState() const;
@@ -785,16 +804,35 @@ class TextViewport {
   std::size_t WrappedRowCount() const;
   // Document line for the row's offset table; identity in trivial mode.
   std::size_t WrappedLineRowOffset(std::size_t line_index) const;
-  void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column, int delta) const;
+  void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column,
+                            WrapRowAffinity& affinity, int delta) const;
   void AdvanceCaretHorizontal(TextPosition& caret, int delta) const;
   void DedupeSecondaryCaretsAgainstPrimary();
-  std::size_t PreferredColumnForCaret(const TextPosition& caret) const;
+  std::size_t PreferredColumnForCaret(const TextPosition& caret,
+                                      WrapRowAffinity affinity = WrapRowAffinity::kNextRow) const;
   std::size_t CursorVisualRow() const;
-  std::size_t CursorVisualRowForCaret(const TextPosition& caret) const;
-  std::size_t ResolveSoftWrapCursorColumnForTargetRow(const TextPosition& caret,
-                                                       std::size_t preferred_column,
-                                                       std::size_t target_row) const;
-  std::size_t ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const;
+  std::size_t CursorVisualRowForCaret(const TextPosition& caret,
+                                      WrapRowAffinity affinity = WrapRowAffinity::kNextRow) const;
+  // Absolute visual column the caret should take on `target_row`, given a
+  // preferred column measured in ON-SCREEN cells (hanging indent included).
+  std::size_t ResolveSoftWrapCursorColumnForTargetRow(std::size_t preferred_column,
+                                                      std::size_t target_row) const;
+  // kPreviousRow when `visual_column` sits exactly on `row`'s trailing wrap
+  // boundary, i.e. the caret belongs at the END of that row rather than at the
+  // start of the next one. kNextRow everywhere else, including the last row of a
+  // logical line (whose end is the end of the line, not a wrap point).
+  WrapRowAffinity AffinityForRowLanding(std::size_t row_index, std::size_t visual_column) const;
+  // The primary caret's affinity, honoured only while the caret is still exactly
+  // where the affinity was set. Every path that moves the caret without going
+  // through PlacePrimaryCaret (edit application, undo restore, language
+  // behaviours) therefore drops it instead of leaving a stale bit behind.
+  WrapRowAffinity EffectiveCaretAffinity() const {
+    return caret_wrap_affinity_ == WrapRowAffinity::kPreviousRow &&
+                   caret_wrap_affinity_position_.line == cursor_line_ &&
+                   caret_wrap_affinity_position_.column == cursor_column_
+               ? WrapRowAffinity::kPreviousRow
+               : WrapRowAffinity::kNextRow;
+  }
   static TextEncoding DetectEncoding(std::string_view content);
   static TextEncoding DetectEncoding(LineSpan lines);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
@@ -805,7 +843,16 @@ class TextViewport {
   std::shared_ptr<DocumentState> document_;
   std::size_t cursor_line_ = 0;
   std::size_t cursor_column_ = 0;
+  // Sticky column for vertical motion, measured in ON-SCREEN cells of the caret's
+  // visual row: under soft wrap it is `hanging indent + offset into the row`, so
+  // moving between rows with different hanging indents keeps the caret under the
+  // same screen column (VS Code's view-column model) instead of drifting by the
+  // indent. Without soft wrap it is the absolute visual column.
   std::size_t preferred_column_ = 0;
+  // Wrap-boundary tiebreaker for the primary caret + the position it was set at.
+  // See EffectiveCaretAffinity().
+  WrapRowAffinity caret_wrap_affinity_ = WrapRowAffinity::kNextRow;
+  TextPosition caret_wrap_affinity_position_;
   // `content_revision` as of the last navigation move. Equal to the document's
   // current `content_revision` ⇒ caret is settled at a navigated position; not
   // equal ⇒ an edit has advanced the revision since, i.e. the caret is mid-edit.

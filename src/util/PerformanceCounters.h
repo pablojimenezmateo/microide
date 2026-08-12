@@ -108,6 +108,11 @@ namespace microide::util {
   X(EditorPresentationRevisionBumps, "editor.presentation_revision_bumps")                      \
   X(EditorEnsureWrappedRowLayoutsRebuilds, "editor.ensure_wrapped_row_layouts_rebuilds")        \
   X(EditorEnsureWrappedRowLayoutsLineVisits, "editor.ensure_wrapped_row_layouts_line_visits")   \
+  /* Soft-wrap caret->visual-row resolutions. Each one is a binary search over the       */      \
+  /* caret line's rows, but it is called several times per keystroke (preferred column,  */      \
+  /* EnsureCursorVisible, the render pass) and per frame, so a regression that turns a   */      \
+  /* per-frame resolve into a per-visible-row one shows up here and nowhere else.        */      \
+  X(EditorWrapCaretRowResolves, "editor.wrap_caret_row_resolves")                                \
   X(EditorFiletypeMemoQueries, "editor.filetype_memo_queries")                                  \
   X(EditorFiletypeMemoHits, "editor.filetype_memo_hits")                                        \
   X(LanguageContractViewQueries, "language_contract.view_queries")                              \

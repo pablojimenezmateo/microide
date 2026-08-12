@@ -529,11 +529,44 @@ std::pair<std::size_t, std::size_t> TextLayoutCache::WrappedRowRangeForLine(
   // contribute no rows and reuse the opener's offset, so a soft-wrapped fold
   // opener (rows [R, R+k-1]) collapsed to {R, R}, sticking vertical motion on it.
   const std::size_t owner_line = wrapped_row_layouts_[clamped_first].line_index;
-  std::size_t last = clamped_first;
-  while (last + 1 < row_count && wrapped_row_layouts_[last + 1].line_index == owner_line) {
-    ++last;
+  // `line_index` is non-decreasing across the table, so the first row past this
+  // line is a binary search rather than a walk. The walk was O(rows in the line)
+  // -- on a megabyte line at a narrow wrap width that is tens of thousands of
+  // steps, paid every time the caret's row is resolved.
+  const auto* const begin = wrapped_row_layouts_.data();
+  const auto* const past = std::partition_point(
+      begin + static_cast<std::ptrdiff_t>(clamped_first), begin + static_cast<std::ptrdiff_t>(row_count),
+      [owner_line](const WrappedRow& row) { return row.line_index <= owner_line; });
+  const std::size_t last = static_cast<std::size_t>(past - begin);
+  return {clamped_first, last > clamped_first ? last - 1 : clamped_first};
+}
+
+std::size_t TextLayoutCache::WrappedRowForVisualColumn(std::size_t first_row,
+                                                       std::size_t last_row,
+                                                       std::size_t visual_column,
+                                                       bool prefer_previous_row) const {
+  if (wrapped_row_layouts_.empty() || last_row <= first_row) {
+    return first_row;
   }
-  return {clamped_first, last};
+  const std::size_t row_count = wrapped_row_layouts_.size();
+  const std::size_t clamped_last = std::min(last_row, row_count - 1);
+  if (first_row >= clamped_last) {
+    return std::min(first_row, clamped_last);
+  }
+  // Row spans partition the line's visual columns, so the owning row is the
+  // first one whose end is past the caret -- or, with previous-row affinity, the
+  // first one whose end reaches it. Only rows [first_row, clamped_last) are
+  // searched: the line's last row owns everything at or past its end (the
+  // end-of-line caret included), so it is the fallthrough answer either way.
+  const auto* const begin = wrapped_row_layouts_.data();
+  const auto* const hit = std::partition_point(
+      begin + static_cast<std::ptrdiff_t>(first_row),
+      begin + static_cast<std::ptrdiff_t>(clamped_last),
+      [visual_column, prefer_previous_row](const WrappedRow& row) {
+        return prefer_previous_row ? row.visual_end < visual_column
+                                   : row.visual_end <= visual_column;
+      });
+  return static_cast<std::size_t>(hit - begin);
 }
 
 std::size_t TextLayoutCache::WrappedRowCount(std::size_t lines_size) const {

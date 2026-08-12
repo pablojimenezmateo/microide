@@ -138,6 +138,20 @@ class TextLayoutCache {
   // first). Never returns last_row < first_row.
   std::pair<std::size_t, std::size_t> WrappedRowRangeForLine(std::size_t line_index,
                                                              std::size_t lines_size) const;
+  // Index of the row in [first_row, last_row] whose span owns `visual_column`.
+  //
+  // Rows of one line are contiguous and their `visual_end` is non-decreasing, so
+  // this is a binary search, not the linear walk it replaced: a megabyte line at
+  // wrap 100 is ten thousand rows, and the caret's row is re-resolved several
+  // times per keystroke and once per frame.
+  //
+  // `prefer_previous_row` picks the answer at a wrap boundary (a column that is
+  // both one past row R's end and row R+1's start): false hands back R+1, true
+  // hands back R. See WrapRowAffinity.
+  std::size_t WrappedRowForVisualColumn(std::size_t first_row,
+                                        std::size_t last_row,
+                                        std::size_t visual_column,
+                                        bool prefer_previous_row) const;
   bool wrapped_row_layouts_trivial() const { return wrapped_row_layouts_trivial_; }
 
   // ---- max visual columns cache -----------------------------------------

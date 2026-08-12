@@ -35,6 +35,8 @@ TextViewport::TextViewport(const TextViewport& other)
       cursor_line_(other.cursor_line_),
       cursor_column_(other.cursor_column_),
       preferred_column_(other.preferred_column_),
+      caret_wrap_affinity_(other.caret_wrap_affinity_),
+      caret_wrap_affinity_position_(other.caret_wrap_affinity_position_),
       caret_navigation_content_revision_(other.caret_navigation_content_revision_),
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
@@ -115,6 +117,8 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       cursor_line_(other.cursor_line_),
       cursor_column_(other.cursor_column_),
       preferred_column_(other.preferred_column_),
+      caret_wrap_affinity_(other.caret_wrap_affinity_),
+      caret_wrap_affinity_position_(other.caret_wrap_affinity_position_),
       caret_navigation_content_revision_(other.caret_navigation_content_revision_),
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
@@ -179,6 +183,8 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   cursor_line_ = other.cursor_line_;
   cursor_column_ = other.cursor_column_;
   preferred_column_ = other.preferred_column_;
+  caret_wrap_affinity_ = other.caret_wrap_affinity_;
+  caret_wrap_affinity_position_ = other.caret_wrap_affinity_position_;
   caret_navigation_content_revision_ = other.caret_navigation_content_revision_;
   scroll_line_ = other.scroll_line_;
   horizontal_scroll_ = other.horizontal_scroll_;
@@ -369,6 +375,10 @@ TextViewport::WrappedVisualRow TextViewport::WrappedVisualRowLayout(std::size_t 
 }
 
 LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int visual_col) const {
+  return ResolveVisualHit(visual_row, visual_col).position;
+}
+
+TextViewport::VisualHit TextViewport::ResolveVisualHit(int visual_row, int visual_col) const {
   if (document_->lines.empty()) {
     return {};
   }
@@ -387,10 +397,34 @@ LogicalPosition TextViewport::LogicalPositionForVisualHit(int visual_row, int vi
   const std::size_t local = hit_col > layout.indent ? hit_col - layout.indent : 0;
   const std::size_t clamped_local = std::min<std::size_t>(local, width);
   const std::size_t target_visual = layout.visual_start + clamped_local;
-  return LogicalPosition{
-      .line = layout.line_index,
-      .column = TextColumnAtVisualColumn(layout.line_index, target_visual),
+  return VisualHit{
+      .position =
+          LogicalPosition{
+              .line = layout.line_index,
+              .column = TextColumnAtVisualColumn(layout.line_index, target_visual),
+          },
+      // A click past the row's last glyph resolves to the wrap point, which the
+      // next row also owns. Keep the caret on the row that was actually clicked.
+      .affinity = AffinityForRowLanding(clamped_row, target_visual),
   };
+}
+
+void TextViewport::MoveCursorToVisualHit(int visual_row, int visual_col, bool extend_selection) {
+  if (document_->lines.empty()) {
+    return;
+  }
+  const VisualHit hit = ResolveVisualHit(visual_row, visual_col);
+  undo_history_.NotifyCursorMoved();
+  BeginSelectionIfNeeded(extend_selection);
+  const std::size_t clamped_line = std::min(hit.position.line, document_->lines.size() - 1);
+  const std::size_t line_length = document_->lines.LineLength(clamped_line);
+  const std::size_t clamped_column = TextLayout::ClampTextColumn(
+      document_->lines.LineView(clamped_line), std::min(hit.position.column, line_length));
+  PlacePrimaryCaret(clamped_line, clamped_column, /*keep_preferred_column=*/false, hit.affinity);
+  for (SecondaryCaret& caret : secondary_carets_) {
+    caret.preferred_column = PreferredColumnForCaret(caret.position, caret.wrap_affinity);
+  }
+  EnsureCursorVisible();
 }
 
 int TextViewport::VisualRowCount() const {

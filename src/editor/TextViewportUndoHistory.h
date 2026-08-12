@@ -46,6 +46,11 @@ class TextViewportUndoHistory {
     TextPosition position;
     std::size_t preferred_column = 0;
     std::optional<TextPosition> selection_anchor;
+    // Wrap-boundary tiebreaker, same meaning as the primary caret's (see
+    // WrapRowAffinity). Only vertical motion sets it; every other path that
+    // builds or moves a secondary caret leaves it at the kNextRow default, which
+    // is the reset.
+    WrapRowAffinity wrap_affinity = WrapRowAffinity::kNextRow;
   };
 
   struct ViewState {

@@ -17,14 +17,23 @@ void TextViewport::SetViewportSize(std::size_t visible_lines, std::size_t visibl
   const std::size_t next_visible_lines = std::max<std::size_t>(1, visible_lines);
   const std::size_t next_visible_columns = std::max<std::size_t>(8, visible_columns);
   const bool wrap_width_changed = soft_wrap_ && visible_columns_ != next_visible_columns;
+  // The logical line at the top of the view, resolved against the OLD wrap width
+  // (so before visible_columns_ moves). scroll_line_ counts VISUAL rows, and a
+  // width change renumbers every one of them: without re-anchoring, widening a
+  // soft-wrapped pane scrolled the document to an unrelated place -- and, since
+  // this path also skipped ClampScrollState, could leave scroll_line_ past the
+  // last row entirely, painting an empty editor until the user scrolled. VS Code
+  // keeps the top of the viewport pinned across a re-layout the same way.
+  const std::size_t anchor_line =
+      wrap_width_changed && document_ != nullptr ? VisualRowLineIndex(scroll_line_) : 0;
   visible_lines_ = next_visible_lines;
   visible_columns_ = next_visible_columns;
   if (wrap_width_changed) {
     horizontal_scroll_ = 0;
     if (document_ != nullptr) {
       InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
+      scroll_line_ = VisualRowForLine(anchor_line);
     }
-    return;
   }
   ClampScrollState();
 }
@@ -110,16 +119,37 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   if (soft_wrap_ == soft_wrap) {
     return;
   }
+  // Same re-anchor as a wrap-width change, for the same reason: toggling wrap
+  // renumbers every visual row, so the pre-toggle scroll_line_ points at an
+  // unrelated part of the document afterwards.
+  const std::size_t anchor_line = document_ != nullptr ? VisualRowLineIndex(scroll_line_) : 0;
+  // Whether the caret was on screen decides which of the two anchors wins below.
+  // Revealing it unconditionally threw the re-anchor away for the one case that
+  // needs it most: wheel-scroll away from the caret, then toggle wrap, and the
+  // view snapped back to the caret instead of staying where the reader was.
+  const bool caret_was_visible = [&] {
+    if (document_ == nullptr) {
+      return true;
+    }
+    const std::size_t caret_row = CursorVisualRow();
+    return caret_row >= scroll_line_ && caret_row < scroll_line_ + visible_lines_;
+  }();
   soft_wrap_ = soft_wrap;
+  // The rows the caret's affinity referred to no longer exist.
+  caret_wrap_affinity_ = WrapRowAffinity::kNextRow;
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   for (SecondaryCaret& caret : secondary_carets_) {
+    caret.wrap_affinity = WrapRowAffinity::kNextRow;
     caret.preferred_column = PreferredColumnForCaret(caret.position);
   }
   if (document_ != nullptr) {
     InvalidateDerivedCaches(InvalidationReason::LayoutShape, 0);
+    scroll_line_ = VisualRowForLine(anchor_line);
   }
   ClampScrollState();
-  EnsureCursorVisible();
+  if (caret_was_visible) {
+    EnsureCursorVisible();
+  }
 }
 
 void TextViewport::SetFoldingModel(const FoldingModel* folding_model) {
@@ -148,11 +178,12 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
   undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
-  AdvanceCaretVertical(primary, preferred_column_, delta);
-  PlacePrimaryCaret(primary.line, primary.column, /*keep_preferred_column=*/true);
+  WrapRowAffinity primary_affinity = EffectiveCaretAffinity();
+  AdvanceCaretVertical(primary, preferred_column_, primary_affinity, delta);
+  PlacePrimaryCaret(primary.line, primary.column, /*keep_preferred_column=*/true, primary_affinity);
 
   for (SecondaryCaret& caret : secondary_carets_) {
-    AdvanceCaretVertical(caret.position, caret.preferred_column, delta);
+    AdvanceCaretVertical(caret.position, caret.preferred_column, caret.wrap_affinity, delta);
   }
   DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
@@ -198,6 +229,7 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
         }
         caret.selection_anchor.reset();
         caret.preferred_column = PreferredColumnForCaret(caret.position);
+        caret.wrap_affinity = WrapRowAffinity::kNextRow;
       }
       selection_anchor_.reset();
       PlacePrimaryCaret(primary.line, primary.column);
@@ -215,6 +247,7 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
   for (SecondaryCaret& caret : secondary_carets_) {
     AdvanceCaretHorizontal(caret.position, delta);
     caret.preferred_column = PreferredColumnForCaret(caret.position);
+    caret.wrap_affinity = WrapRowAffinity::kNextRow;
   }
   DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
@@ -369,8 +402,12 @@ void TextViewport::ClampCursorColumn() {
     // near the start of the logical line on any continuation row. Resolve it to an
     // absolute visual column for the caret's current row first (mirrors
     // AdvanceCaretVertical).
-    const std::size_t target_visual = ResolveSoftWrapCursorColumnForTargetRow(CursorVisualRow());
+    const std::size_t row = CursorVisualRow();
+    const std::size_t target_visual =
+        ResolveSoftWrapCursorColumnForTargetRow(preferred_column_, row);
     cursor_column_ = TextColumnAtVisualColumn(cursor_line_, target_visual);
+    caret_wrap_affinity_ = AffinityForRowLanding(row, target_visual);
+    caret_wrap_affinity_position_ = TextPosition{cursor_line_, cursor_column_};
     return;
   }
 
@@ -406,11 +443,14 @@ void TextViewport::ClampScrollState() {
 
 void TextViewport::PlacePrimaryCaret(std::size_t line,
                                      std::size_t column,
-                                     bool keep_preferred_column) {
+                                     bool keep_preferred_column,
+                                     WrapRowAffinity affinity) {
   cursor_line_ = line;
   cursor_column_ = column;
+  caret_wrap_affinity_ = affinity;
+  caret_wrap_affinity_position_ = TextPosition{line, column};
   if (!keep_preferred_column) {
-    preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+    preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_}, affinity);
   }
   caret_navigation_content_revision_ =
       document_ != nullptr ? document_->content_revision : 0;
@@ -460,14 +500,16 @@ void TextViewport::EnsureCursorVisible() {
 }
 
 std::size_t TextViewport::CursorVisualRow() const {
-  return CursorVisualRowForCaret(TextPosition{cursor_line_, cursor_column_});
+  return CursorVisualRowForCaret(TextPosition{cursor_line_, cursor_column_},
+                                 EffectiveCaretAffinity());
 }
 
 std::size_t TextViewport::cursor_visual_row() const {
   return CursorVisualRow();
 }
 
-std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) const {
+std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret,
+                                                  WrapRowAffinity affinity) const {
   if (caret.line >= document_->lines.size()) {
     return 0;
   }
@@ -479,11 +521,16 @@ std::size_t TextViewport::PreferredColumnForCaret(const TextPosition& caret) con
   if (WrappedRowCount() == 0) {
     return 0;
   }
-  const WrappedRowLayout row = WrappedRowAt(CursorVisualRowForCaret(caret));
-  return visual >= row.visual_start ? visual - row.visual_start : 0;
+  const WrappedRowLayout row = WrappedRowAt(CursorVisualRowForCaret(caret, affinity));
+  // ON-SCREEN cell, not offset-into-the-row: continuation rows render their
+  // content shifted right by the hanging indent, so a preferred column that
+  // ignored it moved the caret sideways by the indent width every time vertical
+  // motion crossed between a first row and a continuation row.
+  return row.indent + (visual >= row.visual_start ? visual - row.visual_start : 0);
 }
 
-std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) const {
+std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret,
+                                                  WrapRowAffinity affinity) const {
   EnsureWrappedRowLayouts();
   if (document_->lines.empty() || caret.line >= document_->lines.size()) {
     return 0;
@@ -505,27 +552,18 @@ std::size_t TextViewport::CursorVisualRowForCaret(const TextPosition& caret) con
   // belong to this line, the one whose [visual_start, visual_end) span owns the
   // caret's visual column. The builder wraps at whitespace, so spans are
   // non-uniform — integer division by the wrap width would land on the wrong
-  // row whenever a line breaks before its column limit.
+  // row whenever a line breaks before its column limit. `affinity` decides the
+  // one column two rows both answer for: the wrap point itself.
   const std::size_t caret_visual = VisualColumnAt(caret.line, caret.column);
   const auto [first_row, last_row] =
       layout_cache_.WrappedRowRangeForLine(caret.line, document_->lines.size());
-  for (std::size_t row = first_row; row < last_row; ++row) {
-    if (caret_visual < WrappedRowAt(row).visual_end) {
-      return row;
-    }
-  }
-  return last_row;
+  util::AddPerformanceCounter(util::PerfCounterId::EditorWrapCaretRowResolves);
+  return layout_cache_.WrappedRowForVisualColumn(first_row, last_row, caret_visual,
+                                                 affinity == WrapRowAffinity::kPreviousRow);
 }
 
-std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(std::size_t target_row) const {
-  return ResolveSoftWrapCursorColumnForTargetRow(
-      TextPosition{cursor_line_, cursor_column_}, preferred_column_, target_row);
-}
-
-std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(
-    const TextPosition& /*caret*/,
-    std::size_t preferred_column,
-    std::size_t target_row) const {
+std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(std::size_t preferred_column,
+                                                                  std::size_t target_row) const {
   EnsureWrappedRowLayouts();
   const std::size_t row_count = WrappedRowCount();
   if (row_count == 0) {
@@ -543,7 +581,30 @@ std::size_t TextViewport::ResolveSoftWrapCursorColumnForTargetRow(
   if (target.visual_end <= target.visual_start) {
     return target.visual_start;
   }
-  return std::min(target.visual_start + preferred_column, target.visual_end);
+  // preferred_column counts on-screen cells; the row's first `indent` of them are
+  // the hanging-indent gutter, which holds no text. A caret aimed inside the
+  // gutter lands on the row's first column, exactly as a click there does.
+  const std::size_t content_offset =
+      preferred_column > target.indent ? preferred_column - target.indent : 0;
+  return std::min(target.visual_start + content_offset, target.visual_end);
+}
+
+WrapRowAffinity TextViewport::AffinityForRowLanding(std::size_t row_index,
+                                                    std::size_t visual_column) const {
+  if (!soft_wrap_) {
+    return WrapRowAffinity::kNextRow;
+  }
+  const WrappedRowLayout row = WrappedRowAt(row_index);
+  if (visual_column != row.visual_end) {
+    return WrapRowAffinity::kNextRow;
+  }
+  // The end of the line's LAST row is the end of the line, not a wrap point: no
+  // other row answers for it, so there is nothing to disambiguate.
+  if (row_index + 1 >= WrappedRowCount() ||
+      WrappedRowAt(row_index + 1).line_index != row.line_index) {
+    return WrapRowAffinity::kNextRow;
+  }
+  return WrapRowAffinity::kPreviousRow;
 }
 
 void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const {
@@ -605,21 +666,28 @@ void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
 
 void TextViewport::AdvanceCaretVertical(TextPosition& caret,
                                         std::size_t& preferred_column,
+                                        WrapRowAffinity& affinity,
                                         int delta) const {
   EnsureWrappedRowLayouts();
   const std::size_t row_count = WrappedRowCount();
   if (row_count == 0) {
     return;
   }
-  const std::size_t current_row = CursorVisualRowForCaret(caret);
+  const std::size_t current_row = CursorVisualRowForCaret(caret, affinity);
   const int max_row = static_cast<int>(row_count) - 1;
   const std::size_t target_row =
       static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
   const WrappedRowLayout target = WrappedRowAt(target_row);
   const std::size_t target_visual_column =
-      ResolveSoftWrapCursorColumnForTargetRow(caret, preferred_column, target_row);
+      ResolveSoftWrapCursorColumnForTargetRow(preferred_column, target_row);
   caret.line = target.line_index;
   caret.column = TextColumnAtVisualColumn(target.line_index, target_visual_column);
+  // A preferred column past the target row's last cell lands exactly on that
+  // row's wrap point. That position is also the next row's first column, so
+  // without the affinity the caret resolves BACK to the row we just left: Up off
+  // the last row of a wrapped line did nothing at all, and Down from a wide row
+  // skipped the short one under it.
+  affinity = AffinityForRowLanding(target_row, target_visual_column);
 }
 
 void TextViewport::EnsureDocument() {

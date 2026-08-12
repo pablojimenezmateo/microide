@@ -2,6 +2,7 @@
 
 #include <cctype>
 #include <cstddef>
+#include <cstdint>
 #include <string>
 #include "util/StringUtil.h"
 
@@ -21,6 +22,24 @@ struct TextPosition {
 };
 
 using LogicalPosition = TextPosition;
+
+// Which soft-wrapped row owns a caret that sits exactly on a wrap boundary.
+//
+// Wrapped rows are contiguous in visual columns: row N ends where row N+1
+// begins, so ONE text position -- the wrap point -- is addressable as both "one
+// past the end of row N" and "the start of row N+1". Without a tiebreaker the
+// row that owns it is always the next one, which makes vertical motion onto a
+// short row bounce straight back down (Up appeared to do nothing at all) and
+// makes a click past a wrapped row's last glyph land on the row below. VS Code
+// models the same ambiguity as PositionAffinity; this is that bit.
+//
+// kNextRow is the default and the only value a caret ever *keeps*: it is set by
+// vertical motion and hit-testing when they deliberately land on a boundary, and
+// every other caret placement resets it.
+enum class WrapRowAffinity : std::uint8_t {
+  kNextRow = 0,
+  kPreviousRow = 1,
+};
 
 inline bool operator==(const TextPosition& lhs, const TextPosition& rhs) {
   return lhs.line == rhs.line && lhs.column == rhs.column;

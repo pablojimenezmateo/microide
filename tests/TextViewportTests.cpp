@@ -2067,6 +2067,160 @@ void TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows() {
          "downward motion advances by one real visual row");
 }
 
+// Regression (the wrap-boundary caret): a wrapped row ends where the next one
+// begins, so the wrap point is one text position that TWO rows can claim. It
+// used to always go to the next row, which made vertical motion bounce:
+//
+//   "aaaa bbbb cc dddddddddd" at wrap 10 wraps to [0,10) [10,13) [13,23).
+//
+// Pressing Up from the last row with a preferred column past 3 resolved to
+// column 13 -- the start of the row it just left -- so the caret never moved, no
+// matter how many times Up was pressed. Down had the mirror bug: it skipped the
+// short row entirely. See WrapRowAffinity.
+void TestTextViewportSoftWrapVerticalMotionCrossesShortRows() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa bbbb cc dddddddddd\nX\n", "/tmp/soft-wrap-boundary.txt");
+  viewport.SetViewportSize(10, 10);
+  viewport.SetSoftWrap(true);
+  Expect(viewport.WrappedVisualRowLayout(1).visual_start == 10 &&
+             viewport.WrappedVisualRowLayout(1).visual_end == 13,
+         "fixture: the middle row is the short one, spanning visual columns [10,13)");
+
+  viewport.MoveCursorTo(0, 22);
+  Expect(viewport.cursor_visual_row() == 2, "caret starts on the line's last wrapped row");
+
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_visual_row() == 1,
+         "up from a wrapped row must land on the short row above, not bounce back down");
+  Expect(viewport.cursor_column() == 13,
+         "a preferred column past the short row's width clamps to that row's end");
+
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_visual_row() == 0 && viewport.cursor_column() == 9,
+         "the preferred column survives the clamped row and reapplies on the row above");
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_visual_row() == 1,
+         "down from a wide row must stop on the short row under it, not skip past it");
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_visual_row() == 2 && viewport.cursor_column() == 22,
+         "down off the clamped short row restores the preferred column");
+}
+
+// The caret that sits on a wrap boundary renders at the END of the row it was
+// moved onto (VS Code's PositionAffinity.Left), not at the start of the row
+// below -- otherwise "up" looks like it did nothing even when the model moved.
+void TestTextViewportSoftWrapCaretRendersAtWrappedRowEnd() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa bbbb cc dddddddddd\n", "/tmp/soft-wrap-boundary-render.txt");
+  viewport.SetViewportSize(10, 10);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 22);
+  viewport.MoveCursorVertical(-1);
+
+  const auto short_row = viewport.VisibleWrappedRowLayout(1);
+  Expect(short_row.caret_visible, "the caret renders on the row vertical motion landed on");
+  Expect(short_row.caret_column == 3, "and at that row's trailing edge (its full width)");
+  Expect(!viewport.VisibleWrappedRowLayout(2).caret_visible,
+         "the row below must not also claim the boundary caret");
+
+  // A horizontal step is unambiguous again: the boundary belongs to the next row.
+  viewport.MoveCursorHorizontal(-1);
+  Expect(viewport.cursor_visual_row() == 1 && viewport.cursor_column() == 12,
+         "left off the boundary steps back inside the short row");
+  viewport.MoveCursorTo(0, 13);
+  Expect(viewport.cursor_visual_row() == 2,
+         "an ordinary placement at the wrap point resets to the next row");
+}
+
+// A click past a wrapped row's last glyph keeps the caret on the clicked row.
+void TestTextViewportSoftWrapClickPastRowEndStaysOnThatRow() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa bbbb cc dddddddddd\n", "/tmp/soft-wrap-boundary-click.txt");
+  viewport.SetViewportSize(10, 10);
+  viewport.SetSoftWrap(true);
+
+  viewport.MoveCursorToVisualHit(1, 8);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 13,
+         "clicking past a wrapped row's end resolves to the wrap point");
+  Expect(viewport.cursor_visual_row() == 1,
+         "and the caret stays on the row that was clicked, not the one below");
+}
+
+// Vertical motion preserves the ON-SCREEN column. Continuation rows are drawn
+// shifted right by the hanging indent, so a preferred column that measured the
+// offset INTO the row moved the caret sideways by the indent width every time
+// motion crossed between a first row and a continuation row.
+void TestTextViewportSoftWrapHangingIndentPreservesScreenColumn() {
+  TextViewport viewport;
+  viewport.LoadContent("    aaaa bbbb cccc dddd eeee\n", "/tmp/soft-wrap-indent-column.txt");
+  viewport.SetViewportSize(10, 12);
+  viewport.SetSoftWrap(true);
+  const auto row1 = viewport.WrappedVisualRowLayout(1);
+  Expect(row1.indent == 4 && row1.visual_start == 9,
+         "fixture: the first continuation row carries a 4-column hanging indent");
+
+  viewport.MoveCursorTo(0, 6);  // screen column 6 on the first row (no indent)
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_visual_row() == 1,
+         "down from the first row lands on the continuation row");
+  Expect(viewport.cursor_column() == 11,
+         "the caret keeps its screen column: 4 indent cells + 2 into the row's text");
+
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_visual_row() == 0 && viewport.cursor_column() == 6,
+         "and the round trip back over the indent boundary returns to the same screen column");
+}
+
+// A wrap-width change renumbers every visual row, so scroll_line_ -- a visual row
+// index -- has to be re-derived. It used to be left as-is AND skip the clamp, so
+// widening a soft-wrapped pane both jumped to an unrelated place and could park
+// the scroll past the last row, painting an empty editor.
+void TestTextViewportSoftWrapWidthChangeReanchorsScroll() {
+  std::string content;
+  for (int i = 0; i < 10; ++i) {
+    content += std::string(60, static_cast<char>('a' + i));
+    content += '\n';
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/soft-wrap-resize.txt");
+  viewport.SetViewportSize(5, 20);
+  viewport.SetSoftWrap(true);
+  Expect(viewport.visual_line_count() == 31,
+         "fixture: ten 60-column lines wrap to three rows each at width 20, plus the tail line");
+
+  viewport.SetScrollLine(12);
+  Expect(viewport.VisualRowLineIndex(viewport.visual_scroll_line()) == 4,
+         "fixture: row 12 is the top of logical line 4");
+
+  viewport.SetViewportSize(5, 60);
+  Expect(viewport.visual_line_count() == 11, "widening the pane unwraps every line");
+  Expect(viewport.VisualRowLineIndex(viewport.visual_scroll_line()) == 4,
+         "the logical line at the top of the view survives a wrap-width change");
+  Expect(viewport.visual_scroll_line() + 5 <= viewport.visual_line_count(),
+         "and the re-anchored scroll stays inside the document");
+}
+
+// Same contract for the wrap toggle itself.
+void TestTextViewportSoftWrapToggleReanchorsScroll() {
+  std::string content;
+  for (int i = 0; i < 10; ++i) {
+    content += std::string(60, static_cast<char>('a' + i));
+    content += '\n';
+  }
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/soft-wrap-toggle-anchor.txt");
+  viewport.SetViewportSize(5, 20);
+  viewport.SetSoftWrap(true);
+  viewport.SetScrollLine(12);
+  viewport.SetSoftWrap(false);
+  Expect(viewport.VisualRowLineIndex(viewport.visual_scroll_line()) == 4,
+         "turning soft wrap off keeps the top of the view on the same logical line");
+  viewport.SetSoftWrap(true);
+  Expect(viewport.VisualRowLineIndex(viewport.visual_scroll_line()) == 4,
+         "and turning it back on re-derives the same anchor in wrapped-row space");
+}
+
 void TestTextViewportSoftWrapHangingIndentAlignsContinuationRows() {
   // Four leading spaces become the hanging indent for continuation rows. At
   // wrap 12 the indent is min(4, 12/2) = 4.
@@ -5080,6 +5234,18 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapVerticalMotionFollowsNonUniformRows);
   AddTest(tests, "TextViewport/SoftWrapHangingIndentAlignsContinuationRows",
           TestTextViewportSoftWrapHangingIndentAlignsContinuationRows);
+  AddTest(tests, "TextViewport/SoftWrapVerticalMotionCrossesShortRows",
+          TestTextViewportSoftWrapVerticalMotionCrossesShortRows);
+  AddTest(tests, "TextViewport/SoftWrapCaretRendersAtWrappedRowEnd",
+          TestTextViewportSoftWrapCaretRendersAtWrappedRowEnd);
+  AddTest(tests, "TextViewport/SoftWrapClickPastRowEndStaysOnThatRow",
+          TestTextViewportSoftWrapClickPastRowEndStaysOnThatRow);
+  AddTest(tests, "TextViewport/SoftWrapHangingIndentPreservesScreenColumn",
+          TestTextViewportSoftWrapHangingIndentPreservesScreenColumn);
+  AddTest(tests, "TextViewport/SoftWrapWidthChangeReanchorsScroll",
+          TestTextViewportSoftWrapWidthChangeReanchorsScroll);
+  AddTest(tests, "TextViewport/SoftWrapToggleReanchorsScroll",
+          TestTextViewportSoftWrapToggleReanchorsScroll);
   AddTest(tests, "TextViewport/SoftWrapEditGrowsWrapRowCount",
           TestTextViewportSoftWrapEditGrowsWrapRowCount);
   AddTest(tests, "TextViewport/SoftWrapEnterSplitUpdatesRowMapping",
