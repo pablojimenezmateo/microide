@@ -1734,6 +1734,38 @@ the two runs if it returns.
 
 ### TD-2026-08-06-159 — 63 of the suite's 70 interactive phases have never been read through the allocation tracer. OPEN — and every pass so far has found something.
 
+#### 2026-08-12 pass: `switch_and_idle.switch_and_settle`, and the answer is the session WRITER
+
+Traced because the scenario is one of the four whose `p50_net_heap_bytes` is red
+([191](#td-2026-08-12-191)), so the question was "what does a project switch newly
+hold onto". The phase does **18,004 allocations over 2 iterations from 1,586
+distinct sites**, and every one of the top twelve resolves into the same stack:
+
+```
+AppendLe<std::uint32_t>(std::vector<std::byte>*, std::uint32_t)
+  <- persistence::PrimitiveWriter::WriteString(std::string_view)
+  <- persistence::PrimitiveWriter::WritePath(const std::filesystem::path&)
+  <- workspace::EncodeProjectSessionRecord(const PersistedProjectSessionState&, ...)
+```
+
+Eight sites at 126 allocations / 588 bytes each, four more at 120 allocations /
+2-3.7 KB — i.e. ~4.7 bytes per allocation, which is not geometric growth of one
+buffer but many buffers each grown from empty a few bytes at a time. So switching
+project **encodes the session record on the switch path**, and the encoder's
+output buffer is unreserved.
+
+Two things to check when this is picked up, in this order:
+
+1. Whether the encode belongs on the switch path at all. The state writes are
+   queued off-thread, but the ENCODE runs where the queue is filled.
+2. Whether `PrimitiveWriter` should take a reserved buffer. A record whose size
+   is knowable up front (path lengths are all in hand) turns ~1,000 tiny
+   allocations into one.
+
+Also worth noting for whoever reads a tracer table next: 1,586 distinct sites in
+one phase is close enough to the bucket ceiling to check the drop warning before
+trusting the ranking ([178](#td-2026-08-10-178)). This run printed none.
+
 #### 2026-08-11 pass: the two biggest remaining phases, and a rule about the tracer's own output
 
 Read `multi_project.switch_cycles` (17,390, the largest unread interactive phase)
