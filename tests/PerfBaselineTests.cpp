@@ -746,6 +746,63 @@ void TestPerfBaselineNormalisesCpuAgainstTheBaselineClock() {
   Expect(!unnormalised.clock.applied, "and must report that it did not normalise");
 }
 
+// TD-2026-08-06-140 step one: wall carries the machine's clock exactly as cpu does,
+// but only for the part of it that is WORK. So the correction is weighted by each
+// iteration's own cpu/wall ratio -- full where wall is work, none where wall is
+// sleep -- rather than by a per-scenario opt-out list.
+void TestPerfBaselineNormalisesWallByItsWorkFraction() {
+  const auto make_run = [](double wall_ms, double cpu_ms, std::uint64_t calibration_ns) {
+    perf::Aggregate aggregate;
+    aggregate.scenario_name = "test";
+    std::vector<double> walls;
+    for (int i = 0; i < 4; ++i) {
+      perf::Iteration iteration;
+      iteration.index = static_cast<std::size_t>(i);
+      iteration.metrics.wall_ms = wall_ms;
+      iteration.metrics.cpu_ms = cpu_ms;
+      iteration.metrics.cpu_calibration_ns = calibration_ns;
+      walls.push_back(wall_ms);
+      aggregate.iterations.push_back(std::move(iteration));
+    }
+    aggregate.metrics.p50_wall_ms = perf::Percentile(walls, 0.50);
+    aggregate.metrics.p95_wall_ms = perf::Percentile(walls, 0.95);
+    aggregate.metrics.max_wall_ms = wall_ms;
+    aggregate.metrics.p50_cpu_calibration_ns = static_cast<double>(calibration_ns);
+    aggregate.metrics.p50_allocations = 100.0;
+    aggregate.metrics.p95_allocations = 100.0;
+    aggregate.metrics.max_allocations = 100.0;
+    return aggregate;
+  };
+
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.metrics.p50_wall_ms = 10.0;
+  baseline.metrics.p95_wall_ms = 10.0;
+  baseline.metrics.max_wall_ms = 10.0;
+  baseline.tolerances.p50_percent = 10.0;
+  baseline.tolerances.p95_percent = 10.0;
+  baseline.tolerances.max_percent = 10.0;
+  baseline.has_calibration = true;
+  baseline.metrics.p50_cpu_calibration_ns = 670000.0;
+
+  // CPU-bound scenario (cpu == wall) on a 1.4x slower machine: fully corrected.
+  const perf::BaselineComparison work =
+      perf::CompareToBaseline(baseline, make_run(14.0, 14.0, 938000));
+  Expect(work.passed,
+         "a wall rise the calibration probe attributes to the machine must not fail a "
+         "cpu-bound scenario");
+
+  // The same +40% at the baseline's own clock is a real regression. Negative
+  // control: without it the check above passes against a gate that stopped gating.
+  Expect(!perf::CompareToBaseline(baseline, make_run(14.0, 14.0, 670000)).passed,
+         "a +40% wall rise at an unchanged clock must still fail");
+
+  // A scenario that SLEEPS for its wall time (idle_soak_30s is ~0.05% cpu) gets
+  // essentially no correction, because a slower clock does not lengthen a sleep.
+  // The correction here is 1 + 0.4 * 0.0005, so 14 ms stays 14 ms and fails.
+  Expect(!perf::CompareToBaseline(baseline, make_run(14.0, 0.007, 938000)).passed,
+         "a sleep-dominated scenario must not have its wall scaled by the machine clock");
+}
+
 // The failure that opened the TD was a clock that stepped MID-run: five iterations
 // at one clock and five at another, one clean step, application counters identical
 // across it. A single per-run factor would smear that across both halves; each
@@ -1460,6 +1517,8 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
           TestPerfEnvelopeConsumptionAgreesWithTheGate);
   AddTest(tests, "PerfBaseline/NormalisesCpuAgainstTheBaselineClock",
           TestPerfBaselineNormalisesCpuAgainstTheBaselineClock);
+  AddTest(tests, "PerfBaseline/NormalisesWallByItsWorkFraction",
+          TestPerfBaselineNormalisesWallByItsWorkFraction);
   AddTest(tests, "PerfBaseline/NormalisesEachIterationAgainstItsOwnClock",
           TestPerfBaselineNormalisesEachIterationAgainstItsOwnClock);
   AddTest(tests, "PerfBaseline/ClampsAnAbsurdClockFactor",

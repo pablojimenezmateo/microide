@@ -2314,10 +2314,10 @@ int main(int argc, char** argv) {
         return {};
       }
       std::ostringstream note;
-      note << "  [cpu normalised for machine clock: this run measured "
+      note << "  [cpu+wall normalised for machine clock: this run measured "
            << comparison.clock.factor << "x the baseline's calibration"
            << (comparison.clock.clamped ? ", CLAMPED — probe reading is out of range, treat the cpu"
-                                          " gate as unenforced"
+                                          " and wall gates as unenforced"
                                         : "")
            << "]";
       return note.str();

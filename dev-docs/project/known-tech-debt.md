@@ -2907,7 +2907,37 @@ commit, so they are already inside the recorded number and cannot be the cause �
 which is the trap this note exists to close. Check `git merge-base --is-ancestor
 932ad5d2 <candidate>` before spending a session on a suspect.
 
-### TD-2026-08-06-140 — the wall gate cannot catch a regression under 2x, and now has the data to. OPEN.
+### TD-2026-08-06-140 — the wall gate cannot catch a regression under 2x, and now has the data to. STEP ONE SHIPPED 2026-08-12; step two is the envelope re-cut and needs an idle runner.
+
+**Shipped 2026-08-12 — the normalisation.** `NormalizeWallAgainstBaselineClock`
+re-expresses each iteration's wall in the baseline's machine state, weighted by
+that iteration's own cpu/wall ratio:
+
+```
+normalized_wall = wall * (1 + (clock_factor - 1) * cpu_fraction)
+```
+
+Full correction where wall is work, none where wall is sleep, decided per
+scenario from measured data rather than from a per-scenario opt-out list somebody
+has to maintain. The ratio is clamped to [0, 1] (a threaded scenario can burn
+more CPU than wall, and that extra is not this thread's clock exposure), and the
+same `ClampNormalizationFactor` sanity clamp the CPU path uses applies. A
+baseline with no recorded clock compares raw, exactly as before.
+
+`PerfBaseline/NormalisesWallByItsWorkFraction` pins all three regimes: a
+cpu-bound scenario is fully corrected, the same rise at an UNCHANGED clock still
+fails (the negative control), and a sleep-dominated scenario gets essentially no
+correction. The verdict line now says `cpu+wall normalised`.
+
+**Step two — cutting the 100/150/200 envelopes down to something that gates — is
+deliberately not in this change**, exactly as the entry asks: it needs its own
+rebaseline plus a multi-run stability measurement, and a too-tight wall gate is
+how a suite goes red on half its runs and stops being read. That measurement
+needs an idle runner, which is the same constraint as
+[161](#td-2026-08-07-161)/[172](#td-2026-08-10-172)/[184](#td-2026-08-11-184).
+
+#### Original entry
+
 
 Wall envelopes sit at 100/150/200% because wall carries everything the code does not:
 scheduler jitter, the 1.44x per-thread clock swing measured in

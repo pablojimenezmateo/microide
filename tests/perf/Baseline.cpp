@@ -143,6 +143,69 @@ struct NormalizedCpu {
   ClockNormalization clock;
 };
 
+// Re-express this run's WALL durations in the baseline's machine state, scaled by
+// how much of each iteration's wall time was actually work.
+//
+// The CPU correction above is unconditional because cpu_ms IS work. Wall is not:
+// `idle_soak_30s` sleeps for 27 of its 30 seconds, and a clock that runs 40 %
+// slower does not make a sleep 40 % longer. So the correction is weighted by that
+// iteration's own cpu/wall ratio -- full where wall is work, none where wall is
+// sleep, decided per scenario from measured data rather than from a per-scenario
+// opt-out list somebody has to maintain (TD-2026-08-06-140).
+//
+//   normalized_wall = wall * (1 + (clock_factor - 1) * cpu_fraction)
+//
+// The ratio is clamped to [0, 1]: above 1 means the scenario used more CPU than
+// wall (threads), where the extra CPU is not this thread's clock exposure and
+// scaling by it would over-correct.
+//
+// This is step ONE of the entry, and deliberately alone: it makes the wall gate
+// machine-state-independent WITHOUT touching any envelope. Cutting the 100/150/200
+// envelopes down to something that actually gates is step two, and it needs a
+// rebaseline plus a multi-run stability measurement on an idle runner.
+double WallClockCorrection(double clock_factor, double cpu_ms, double wall_ms) {
+  if (wall_ms <= 0.0) {
+    return 1.0;
+  }
+  const double cpu_fraction = std::clamp(cpu_ms / wall_ms, 0.0, 1.0);
+  return 1.0 + (clock_factor - 1.0) * cpu_fraction;
+}
+
+NormalizedCpu NormalizeWallAgainstBaselineClock(const BaselineRecord& baseline,
+                                                const Aggregate& aggregate) {
+  NormalizedCpu out;
+  out.metrics = aggregate.metrics;
+  const double baseline_ns = baseline.metrics.p50_cpu_calibration_ns;
+  if (!baseline.has_calibration || baseline_ns <= 0.0) {
+    return out;
+  }
+  std::vector<double> normalized;
+  normalized.reserve(aggregate.iterations.size());
+  std::vector<double> measured_ns;
+  measured_ns.reserve(aggregate.iterations.size());
+  for (const Iteration& iteration : aggregate.iterations) {
+    if (iteration.metrics.cpu_calibration_ns == 0) {
+      continue;
+    }
+    const double iteration_ns = static_cast<double>(iteration.metrics.cpu_calibration_ns);
+    measured_ns.push_back(iteration_ns);
+    const double clock_factor =
+        ClampNormalizationFactor(baseline_ns / iteration_ns, &out.clock.clamped);
+    normalized.push_back(iteration.metrics.wall_ms *
+                         WallClockCorrection(clock_factor, iteration.metrics.cpu_ms,
+                                             iteration.metrics.wall_ms));
+  }
+  if (normalized.empty()) {
+    return out;
+  }
+  out.metrics.p50_wall_ms = Percentile(normalized, 0.50);
+  out.metrics.p95_wall_ms = Percentile(normalized, 0.95);
+  out.metrics.max_wall_ms = *std::max_element(normalized.begin(), normalized.end());
+  out.clock.applied = true;
+  out.clock.factor = Percentile(measured_ns, 0.50) / baseline_ns;
+  return out;
+}
+
 NormalizedCpu NormalizeCpuAgainstBaselineClock(const BaselineRecord& baseline,
                                                const Aggregate& aggregate) {
   NormalizedCpu out;
@@ -712,12 +775,14 @@ double EnvelopeUsedPercent(const MetricComparison& metric) {
 BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggregate& aggregate) {
   BaselineComparison result;
   result.scenario_name = aggregate.scenario_name;
-  AddMetric(&result, "p50_wall_ms", baseline.metrics.p50_wall_ms, aggregate.metrics.p50_wall_ms,
-            baseline.tolerances.p50_percent);
-  AddMetric(&result, "p95_wall_ms", baseline.metrics.p95_wall_ms, aggregate.metrics.p95_wall_ms,
-            baseline.tolerances.p95_percent);
-  AddMetric(&result, "max_wall_ms", baseline.metrics.max_wall_ms, aggregate.metrics.max_wall_ms,
-            baseline.tolerances.max_percent);
+  const NormalizedCpu wall = NormalizeWallAgainstBaselineClock(baseline, aggregate);
+  AddMetric(&result, "p50_wall_ms", baseline.metrics.p50_wall_ms, wall.metrics.p50_wall_ms,
+            baseline.tolerances.p50_percent, aggregate.metrics.p50_wall_ms);
+  AddMetric(&result, "p95_wall_ms", baseline.metrics.p95_wall_ms, wall.metrics.p95_wall_ms,
+            baseline.tolerances.p95_percent, aggregate.metrics.p95_wall_ms);
+  AddMetric(&result, "max_wall_ms", baseline.metrics.max_wall_ms, wall.metrics.max_wall_ms,
+            baseline.tolerances.max_percent, aggregate.metrics.max_wall_ms);
+  result.clock = wall.clock;
   AddMetric(&result, "p50_allocations", baseline.metrics.p50_allocations,
             aggregate.metrics.p50_allocations, baseline.tolerances.alloc_p50_percent);
   AddMetric(&result, "p95_allocations", baseline.metrics.p95_allocations,
@@ -726,6 +791,7 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
             aggregate.metrics.max_allocations, baseline.tolerances.alloc_max_percent);
   if (baseline.has_cpu_metrics) {
     const NormalizedCpu cpu = NormalizeCpuAgainstBaselineClock(baseline, aggregate);
+    // Same normalization for both halves, so one clock note describes the run.
     result.clock = cpu.clock;
     AddMetric(&result, "p50_cpu_ms", baseline.metrics.p50_cpu_ms, cpu.metrics.p50_cpu_ms,
               baseline.tolerances.cpu_p50_percent, aggregate.metrics.p50_cpu_ms);
