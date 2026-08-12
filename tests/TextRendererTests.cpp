@@ -9,6 +9,7 @@
 #include "editor/GutterMetrics.h"
 #include "editor/TextViewport.h"
 #include "platform/RuntimePaths.h"
+#include "util/PerformanceCounters.h"
 #include <cstdint>
 #include <cstring>
 
@@ -2328,42 +2329,32 @@ void TestTextLayoutIdentifierRangeAt() {
 // no view model is supplied. Both now build their fill rects through the shared
 // PushWhitespaceMarker helper, so for a fully-visible, non-wrapped buffer they
 // must paint pixel-for-pixel identically. This guards the dedup that unified them.
-void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths() {
+// `soft_wrap` + a narrow `columns` is what exercises the two paths' shared
+// resume-at-the-row optimization: both start their walk at the row's own start
+// when every byte before it is plain single-cell ASCII, and fall back to a
+// walk from byte 0 otherwise. Getting that condition wrong on either side moves
+// every marker on a continuation row.
+void ExpectWhitespaceMarkerParity(std::string_view content,
+                                  int canvas_width,
+                                  int canvas_height,
+                                  bool soft_wrap,
+                                  bool expect_wrapped_rows,
+                                  const char* what) {
   EnsureDummySdlVideo();
   const SDL_Color background{0x08, 0x08, 0x08, 0xff};
-  const SDL_FRect rect{0.0f, 0.0f, 320.0f, 96.0f};
+  const SDL_FRect rect{0.0f, 0.0f, static_cast<float>(canvas_width),
+                       static_cast<float>(canvas_height)};
 
   microide::editor::TextViewport viewport;
-  // The third line starts with a multibyte character: the view-model builder used
-  // to step its whitespace walk one BYTE per cell, so every marker after a
-  // multibyte glyph landed a cell to the right of the real grid -- while the
-  // fallback path stepped by code point and got it right. An ASCII-only fixture
-  // could not tell the two apart.
-  viewport.LoadContent("\tint x = 1;\n  two  spaces\ncaf\xc3\xa9  au lait\n",
-                       "/tmp/ws-parity.cpp");
+  viewport.LoadContent(std::string(content), "/tmp/ws-parity.cpp");
   viewport.SetTabSize(4);
   viewport.SetIndentWidth(4);
-  viewport.SetViewportSize(4, 80);
+  viewport.SetSoftWrap(soft_wrap);
   viewport.SetScrollLine(0);
 
   microide::render::Theme theme = microide::render::MakeDefaultTheme();
   theme.editor_background = background;
   theme.gutter_background = SDL_Color{0x12, 0x12, 0x12, 0xff};
-
-  // View-model path: build the CSR whitespace glyph runs the fast path iterates.
-  microide::workspace::WorkspaceContext ctx;
-  microide::workspace::RenderViewModelBuilder builder(ctx);
-  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
-  microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
-  microide::editor::EditorViewModel vm;
-  builder.BuildEditorViewModelInto(vm, viewport, /*visible_rows=*/4, /*folding_model=*/nullptr,
-                                   /*occurrences_highlight_enabled=*/false,
-                                   /*occurrences_case_sensitive=*/false,
-                                   /*sticky_scroll_enabled=*/false,
-                                   /*sticky_max_depth=*/3,
-                                   /*render_whitespace_enabled=*/true);
-  Expect(!vm.whitespace_glyph_runs.empty(),
-         "whitespace parity test should produce glyph runs to exercise the view-model path");
 
   const auto render_to = [&](SoftwareCanvas& canvas, const microide::editor::EditorViewModel* view_model) {
     microide::render::TextRenderer text_renderer;
@@ -2380,8 +2371,35 @@ void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths
                     /*render_whitespace_enabled=*/true);
   };
 
-  SoftwareCanvas vm_canvas(320, 96);
-  SoftwareCanvas fallback_canvas(320, 96);
+  // The RENDERER owns the viewport's geometry: it derives rows/columns from the
+  // rect and calls SetViewportSize itself. So the view model has to be built
+  // against the size a render leaves behind, exactly as the shell does it -- a
+  // size set by the test here is overwritten by the first render, and the view
+  // model would then describe a different wrap width than the pixels it is
+  // compared against.
+  SoftwareCanvas warmup_canvas(canvas_width, canvas_height);
+  render_to(warmup_canvas, /*view_model=*/nullptr);
+  const std::size_t visible_rows = viewport.visible_lines();
+  Expect(expect_wrapped_rows == (viewport.visual_line_count() > viewport.lines().size()),
+         "whitespace parity fixture must wrap exactly when the case says it does");
+
+  // View-model path: build the CSR whitespace glyph runs the fast path iterates.
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+  microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
+  microide::editor::EditorViewModel vm;
+  builder.BuildEditorViewModelInto(vm, viewport, visible_rows, /*folding_model=*/nullptr,
+                                   /*occurrences_highlight_enabled=*/false,
+                                   /*occurrences_case_sensitive=*/false,
+                                   /*sticky_scroll_enabled=*/false,
+                                   /*sticky_max_depth=*/3,
+                                   /*render_whitespace_enabled=*/true);
+  Expect(!vm.whitespace_glyph_runs.empty(),
+         "whitespace parity test should produce glyph runs to exercise the view-model path");
+
+  SoftwareCanvas vm_canvas(canvas_width, canvas_height);
+  SoftwareCanvas fallback_canvas(canvas_width, canvas_height);
   render_to(vm_canvas, &vm);
   render_to(fallback_canvas, /*view_model=*/nullptr);
 
@@ -2391,10 +2409,143 @@ void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths
          "whitespace parity test should read software pixels");
   Expect(NonBackgroundBounds(vm_pixels, background).valid(),
          "whitespace parity test should paint visible content");
-  Expect(CountPixelDifferences(vm_pixels, fallback_pixels) == 0,
-         "view-model whitespace path and text-iteration fallback must paint identical pixels");
+  Expect(CountPixelDifferences(vm_pixels, fallback_pixels) == 0, what);
   SDL_DestroySurface(vm_pixels);
   SDL_DestroySurface(fallback_pixels);
+}
+
+void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths() {
+  // The third line starts with a multibyte character: the view-model builder used
+  // to step its whitespace walk one BYTE per cell, so every marker after a
+  // multibyte glyph landed a cell to the right of the real grid -- while the
+  // fallback path stepped by code point and got it right. An ASCII-only fixture
+  // could not tell the two apart.
+  ExpectWhitespaceMarkerParity("\tint x = 1;\n  two  spaces\ncaf\xc3\xa9  au lait\n",
+                               /*canvas_width=*/320, /*canvas_height=*/96, /*soft_wrap=*/false,
+                               /*expect_wrapped_rows=*/false,
+                               "view-model whitespace path and text-iteration fallback must paint "
+                               "identical pixels");
+}
+
+// The parity test above cannot see the resume at all: walking from byte 0 gives
+// the same markers, only slower. So the resume needs its own instrument.
+// EditorWhitespaceMarkerWalkBytes counts the bytes each row's walk visits, in
+// both producers. Under soft wrap a from-byte-0 walk is quadratic in the rows of
+// one wrapped line; a resuming walk is linear in the line (TD-2026-08-12-187).
+void ExpectWhitespaceWalkBytes(std::string_view content,
+                               bool use_view_model,
+                               std::uint64_t& out_bytes,
+                               std::size_t& out_rows) {
+  EnsureDummySdlVideo();
+  const SDL_Color background{0x08, 0x08, 0x08, 0xff};
+  const SDL_FRect rect{0.0f, 0.0f, 96.0f, 700.0f};
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(std::string(content), "/tmp/ws-walk.txt");
+  viewport.SetTabSize(4);
+  viewport.SetIndentWidth(4);
+  viewport.SetSoftWrap(true);
+  viewport.SetScrollLine(0);
+
+  microide::render::Theme theme = microide::render::MakeDefaultTheme();
+  theme.editor_background = background;
+
+  const auto render_to = [&](SoftwareCanvas& canvas, const microide::editor::EditorViewModel* vm) {
+    microide::render::TextRenderer text_renderer;
+    TextRendererTestAccess::SetBackend(text_renderer, std::make_unique<CountingTextBackend>());
+    microide::editor::EditorViewRenderer renderer;
+    renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, /*draw_caret=*/false,
+                    /*search_query=*/{}, /*active_search_match=*/std::nullopt,
+                    /*blame_overlay=*/std::nullopt, /*diagnostics=*/{}, vm,
+                    /*bracket_match_highlight_enabled=*/false, /*indent_guides_enabled=*/false,
+                    /*render_whitespace_enabled=*/true);
+  };
+
+  SoftwareCanvas canvas(96, 700);
+  render_to(canvas, /*vm=*/nullptr);  // settles the renderer-owned geometry
+  out_rows = viewport.visual_line_count();
+  Expect(out_rows > viewport.lines().size(), "the walk-bytes fixture must actually wrap");
+
+  const std::uint64_t before =
+      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes);
+  if (use_view_model) {
+    microide::workspace::WorkspaceContext ctx;
+    microide::workspace::RenderViewModelBuilder builder(ctx);
+    microide::workspace::RenderViewModelBuilder::ResetOccurrenceCachesForTesting();
+    microide::workspace::RenderViewModelBuilder::ResetStickyScrollCacheForTesting();
+    microide::editor::EditorViewModel vm;
+    builder.BuildEditorViewModelInto(vm, viewport, viewport.visible_lines(),
+                                     /*folding_model=*/nullptr,
+                                     /*occurrences_highlight_enabled=*/false,
+                                     /*occurrences_case_sensitive=*/false,
+                                     /*sticky_scroll_enabled=*/false,
+                                     /*sticky_max_depth=*/3,
+                                     /*render_whitespace_enabled=*/true);
+    Expect(!vm.whitespace_glyph_runs.empty(), "the view-model walk must produce runs");
+  } else {
+    render_to(canvas, /*vm=*/nullptr);
+  }
+  out_bytes = microide::util::ReadPerformanceCounter(
+                  microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes) -
+              before;
+}
+
+void TestEditorViewRendererWhitespaceWalkResumesAtTheRow() {
+  // One long line of plain ASCII: every visible row can resume, so the total
+  // bytes walked is bounded by the line, not by line x rows.
+  std::string plain;
+  for (int i = 0; i < 120; ++i) {
+    plain += "word ";
+  }
+  plain += "\n";
+  // Same length, but a TAB in column 0 makes byte offset stop being visual
+  // column, so no row past the first can resume and every row walks from 0.
+  const std::string tabbed = "\t" + plain;
+
+  for (const bool use_view_model : {false, true}) {
+    std::uint64_t plain_bytes = 0;
+    std::uint64_t tabbed_bytes = 0;
+    std::size_t plain_rows = 0;
+    std::size_t tabbed_rows = 0;
+    ExpectWhitespaceWalkBytes(plain, use_view_model, plain_bytes, plain_rows);
+    ExpectWhitespaceWalkBytes(tabbed, use_view_model, tabbed_bytes, tabbed_rows);
+
+    Expect(plain_rows > 8 && tabbed_rows > 8,
+           "the fixtures must wrap into enough rows for the two shapes to differ");
+    // Linear: each row visits only its own slice, so the sum is about one pass
+    // over the line (plus the rows that end mid-codepoint, which is none here).
+    Expect(plain_bytes <= plain.size() * 2,
+           "a resuming whitespace walk must cost about one pass over the line, not one per row");
+    // Quadratic control: without a resume the same fixture is rows x line. If
+    // this stops holding, the check above has stopped meaning anything.
+    Expect(tabbed_bytes > plain_bytes * 4,
+           "the un-resumable fixture must cost dramatically more, or the linear bound above "
+           "proves nothing");
+  }
+}
+
+// TD-2026-08-12-187: both producers resume their whitespace walk at the row's own
+// start when the bytes before it are plain single-cell ASCII, instead of
+// re-walking the logical line from byte 0 once per visible row. The fallback got
+// that only on 2026-08-12; before then it was asymptotically different from the
+// path production paints from, so this parity test only held on fixtures where no
+// line wrapped.
+//
+// Three lines, each hitting a different branch of the resume condition: plain
+// ASCII (resumes), a tab before the wrap point (cannot resume -- byte offset is
+// not visual column past a tab), and a multibyte glyph before it (same).
+void TestEditorViewRendererWhitespaceMarkersMatchUnderSoftWrap() {
+  // Narrow canvas: the renderer derives the wrap width from the rect, so this is
+  // what makes the lines below wrap at all (the fixture control in the helper
+  // fails if they stop).
+  ExpectWhitespaceMarkerParity(
+      "aaa bbb ccc ddd eee fff ggg hhh iii jjj kkk lll mmm nnn ooo ppp qqq\n"
+      "\txx yy zz ww vv uu tt ss rr qq pp oo nn mm ll kk jj hh gg ff dd ss\n"
+      "caf\xc3\xa9 one two three four five six seven eight nine ten eleven twelve\n",
+      /*canvas_width=*/96, /*canvas_height=*/224, /*soft_wrap=*/true,
+      /*expect_wrapped_rows=*/true,
+      "under soft wrap the two whitespace producers must still paint identical pixels -- the "
+      "row-resume condition has to match on both sides");
 }
 
 // TD-2026-07-17-042: TruncateToWidthEphemeralView returns a view into a
@@ -2489,6 +2640,12 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer editor view whitespace markers match across view-model and fallback paths",
           TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths);
+  AddTest(tests,
+          "TextRenderer editor view whitespace markers match under soft wrap",
+          TestEditorViewRendererWhitespaceMarkersMatchUnderSoftWrap);
+  AddTest(tests,
+          "TextRenderer editor view whitespace walk resumes at the row",
+          TestEditorViewRendererWhitespaceWalkResumesAtTheRow);
   AddTest(tests,
           "TextRenderer diagnostic line severity prefers the most severe match",
           TestHighestDiagnosticSeverityForLinePrefersTheMostSevereMatch);

@@ -378,7 +378,32 @@ visual_end)`, and `WrapRowAffinity::kPreviousRow` is exactly what an End that
 lands on a wrap point needs so the caret renders at the row's trailing edge
 instead of the next row's start.
 
-### TD-2026-08-12-187 — the renderer's fallback whitespace walk still restarts at byte 0 of the line for every visible row. OPEN.
+### TD-2026-08-12-187 — the renderer's fallback whitespace walk still restarts at byte 0 of the line for every visible row. [RESOLVED 2026-08-12.]
+
+**Fixed 2026-08-12.** `EditorViewRenderer`'s fallback resumes at the row's own
+start under the same plain-ASCII-prefix condition the view-model builder uses, so
+the two paths now have the same asymptotic shape and not merely the same answer.
+
+Two things the fix surfaced, both worth more than the fix itself:
+
+- **The parity test could not have caught this, and could not catch a WRONG
+  resume either.** Walking from byte 0 produces identical markers, just slower —
+  so parity is blind to the whole optimization. It needed an instrument:
+  `editor.whitespace_marker_walk_bytes` counts the bytes each row's walk visits,
+  in both producers, once per row. `TextRenderer editor view whitespace walk
+  resumes at the row` asserts the resuming fixture costs about ONE pass over the
+  line while an un-resumable one (a tab in column 0) costs many, and runs against
+  both producers. Probed by deleting each resume in turn.
+- **The parity test's soft-wrap case exposed that the RENDERER owns the viewport
+  geometry**: `Render` calls `SetViewportSize(metrics.visible_rows,
+  metrics.visible_columns)` from the rect, so a size set by a test is overwritten
+  by the first render, and a view model built before that render describes a
+  different wrap width than the pixels it is compared against. The helper now
+  renders once to settle geometry, then builds — which is the order the shell
+  uses — and carries a control that the fixture really does wrap.
+
+#### Original entry
+
 
 `RenderViewModelBuilder`'s whitespace-run builder — the path production paints
 from — now resumes at the row's own start when the bytes before it are plain

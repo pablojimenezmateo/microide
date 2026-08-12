@@ -55,6 +55,15 @@ namespace microide::util {
   X(EditorVisibleLineLayoutPrefixBytesScanned,                                                   \
     "editor.visible_line_layout_prefix_bytes_scanned")                                           \
   X(EditorVisualColumnWalkBytes, "editor.visual_column_walk_bytes")                              \
+  /* Bytes the render-whitespace marker walk visits, summed over visible rows, by    */          \
+  /* BOTH producers (RenderViewModelBuilder's CSR run builder and EditorViewRenderer's*/         \
+  /* text-iteration fallback). Each walks one logical line per visible row, so under  */         \
+  /* soft wrap a walk that restarts at byte 0 is quadratic in the rows of one wrapped */         \
+  /* line -- a wrapped megabyte line is thousands of rows. Both resume at the row's   */         \
+  /* own start when the bytes before it are plain single-cell ASCII, and this counter */         \
+  /* is what makes "resumed" a testable claim rather than a comment                   */          \
+  /* (TD-2026-08-12-187). Bumped once per row, not per glyph.                         */          \
+  X(EditorWhitespaceMarkerWalkBytes, "editor.whitespace_marker_walk_bytes")                      \
   /* What an open editor tab costs to KEEP open, in retained heap bytes, broken   */             \
   /* down by which cache holds it. Bumped ONLY by the measurement surface         */             \
   /* (WorkspaceShell::TestAccess::EditorDerivedCacheResidency, driven by the      */             \

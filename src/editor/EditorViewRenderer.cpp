@@ -14,6 +14,7 @@
 #include "editor/GutterMetrics.h"
 #include "editor/WelcomeView.h"
 #include "render/SurfacePrimitives.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 #include "workspace/WorkspaceUiText.h"
@@ -989,10 +990,26 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::string_view line_text = lines.LineView(line_index);
         const std::size_t tab_size = viewport.tab_size();
         std::size_t visual_col = 0;
+        std::size_t start_byte = 0;
+        // Start at the row instead of at the line, when the bytes before it are
+        // all plain single-cell ASCII -- there byte offset IS visual column, so
+        // the walk resumes mid-line exactly. Without it every visible row
+        // re-walks its logical line from byte 0, which under soft wrap is the
+        // same long line once per row on screen: quadratic in the rows of one
+        // wrapped line (TD-2026-08-12-187). The view-model path this mirrors
+        // (RenderViewModelBuilder's CollectWhitespaceGlyphRuns) does the same,
+        // and a parity test between two implementations of different asymptotic
+        // shape only holds on fixtures small enough to hide the difference.
+        const std::size_t prefix_probe = std::min(row_start_visual, line_text.size());
+        if (util::FirstNonAsciiOrByte(line_text.substr(0, prefix_probe), '\t') >= prefix_probe) {
+          start_byte = prefix_probe;
+          visual_col = prefix_probe;
+        }
         // Advance one visual cell per codepoint (tabs expand): stepping per byte
         // over-counted columns after any multibyte glyph, shifting every later
         // whitespace marker right of the real grid.
-        for (std::size_t i = 0; i < line_text.size();) {
+        std::size_t i = start_byte;
+        for (; i < line_text.size();) {
           const char c = line_text[i];
           i += util::Utf8SequenceLength(line_text, i);
           // One authoritative tab-stop/width step (tabs expand to the next stop,
@@ -1013,6 +1030,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                  cell_w, y, metrics.line_height, theme.text_disabled);
           }
         }
+        // Bytes this row's walk actually visited, so "resumed at the row" is a
+        // measurement rather than a comment. Once per row, not per glyph.
+        util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerWalkBytes,
+                                    i - start_byte);
       }
     }
 

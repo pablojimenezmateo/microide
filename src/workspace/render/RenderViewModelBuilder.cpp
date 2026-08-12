@@ -503,6 +503,7 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
       byte = prefix_probe;
       visual_col = prefix_probe;
     }
+    const std::size_t walk_start_byte = byte;
     while (byte < line_text.size()) {
       const char c = line_text[byte];
       // One authoritative tab-stop/width step, stepping by CODE POINT: a per-byte
@@ -537,6 +538,11 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
         out->push_back(run);
       }
     }
+    // Bytes this row's walk actually visited (the loop stops at the row's end),
+    // so "resumed at the row" is a measurement rather than a comment. Once per
+    // row, not per glyph -- AddPerformanceCounter is a locked read-modify-write.
+    util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerWalkBytes,
+                                byte - walk_start_byte);
     out_row_offsets->push_back(out->size());
   }
 }
