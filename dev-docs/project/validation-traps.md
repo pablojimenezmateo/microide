@@ -52,6 +52,27 @@ announces itself.
 - The same applies to `/tmp/microide-perf-*.log`, `--report-json` output paths, and
   any other fixed-path artifact reused across sessions.
 
+### The documented inner-loop build is Release, so `#ifndef NDEBUG` tests never run in it
+
+`cmake -S . -B build` produces `CMAKE_BUILD_TYPE=Release`, and a family of tests
+is compiled out there: every counter behind `#ifndef NDEBUG`
+(`WrappedRowLayoutBuildCountForDebug`, the incremental splice/in-place counters,
+the visual-column ones) and every `AddTest` registration guarded by the same.
+`microide_tests` prints a smaller test count in `build/` than in a sanitizer build
+and says nothing about the difference.
+
+Hit on 2026-08-12: a change to `SetViewportSize` broke
+`SoftWrapViewportResizeRebuildsWrapCacheLazily`, and three full green
+`./build/microide/microide_tests` runs (2,819 passed) did not notice, because that
+test does not exist in a Release build. The ASAN lane — which is Debug — failed it
+on the first try, at 2,825 tests.
+
+- A green Release run is not evidence for anything a debug-only counter asserts.
+  Before concluding, run the same change through a Debug build: either a
+  sanitizer lane, or `./build/microide-asan/microide/microide_tests <filter>`.
+- The test-count difference between the two builds is the tell. If it is not the
+  number you expect, some assertions are compiled out.
+
 ### Editing source while a build or sanitizer run is in flight
 
 This produces an object set where some TUs saw the old class layout and some the
