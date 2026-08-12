@@ -405,7 +405,23 @@ a `RelWithDebInfo+lto` baseline PASSes on allocations and reports the other eigh
 metrics as not comparable. Baselines written before the field compare exactly as
 they did.
 
-**Still open: what the four scenarios actually retain.**
+**One cause found and fixed 2026-08-12: the RSS probe allocated inside the
+measured window.** `ProcessResidentBytes()` read `/proc/self/statm` with a
+`std::ifstream`, and the `rss_before` reading is taken AFTER the allocation
+snapshot opens — so a filebuf's 8 KB stream buffer was one allocation and 8,192
+bytes charged to **every scenario's window, on every iteration**. It surfaced as
+two 10-allocation trace sites in a 10-iteration run of a scenario whose own phase
+allocates nothing: the instrument inside its own measurement, the shape
+[163](#td-2026-08-07-163) audits for.
+
+Now an `open`/`read` into a stack buffer, and the numbers moved by exactly the
+predicted amount: `project_traversal_filter_scan` 14,078 → **14,077**
+allocations and 75,872 → **67,680** net bytes. **Every committed
+`p50_allocations` baseline is therefore one too high and every
+`p50_net_heap_bytes` 8,192 too high**, which is a suite-wide deterministic
+re-record.
+
+**Still open: the remaining 67,680 bytes.**
 
 A mechanism was proposed on 2026-08-12 and is WRONG; it is recorded here so it is
 not proposed again. The theory was "`p50_net_heap_bytes` is process-global while

@@ -18,6 +18,7 @@
 
 #if defined(__unix__)
 #include <sys/resource.h>
+#include <fcntl.h>
 #include <unistd.h>
 #endif
 
@@ -257,14 +258,41 @@ std::uint64_t ProcessResidentBytes() {
   // statm's second field is resident pages. ru_maxrss would be cheaper but it is
   // a high-water mark that never comes down, so it cannot express the growth of
   // one iteration inside a long-lived process.
-  std::ifstream statm("/proc/self/statm");
-  if (!statm) {
+  //
+  // open/read into a stack buffer, NOT std::ifstream: the `rss_before` reading is
+  // taken AFTER the allocation snapshot opens, so a filebuf's 8 KB stream buffer
+  // is one allocation and 8 KB charged to every scenario's measured window, on
+  // every iteration. It showed up as two 10-allocation sites in a 10-iteration
+  // trace of a scenario that allocates nothing in its own phase — the instrument
+  // inside its own measurement, the shape TD-2026-08-07-163 audits for.
+  //
+  // The read is one syscall into a fixed buffer; statm's first two fields are
+  // small decimal integers, so 128 bytes is far more than the prefix needs.
+  const int fd = ::open("/proc/self/statm", O_RDONLY | O_CLOEXEC);
+  if (fd < 0) {
     return 0;
   }
-  std::uint64_t total_pages = 0;
-  std::uint64_t resident_pages = 0;
-  if (!(statm >> total_pages >> resident_pages)) {
+  char buffer[128];
+  const ssize_t read_bytes = ::read(fd, buffer, sizeof(buffer) - 1);
+  ::close(fd);
+  if (read_bytes <= 0) {
     return 0;
+  }
+  buffer[read_bytes] = '\0';
+  // "<total> <resident> ..." — skip the first field, then parse the second.
+  const char* cursor = buffer;
+  while (*cursor != '\0' && *cursor != ' ') {
+    ++cursor;
+  }
+  while (*cursor == ' ') {
+    ++cursor;
+  }
+  std::uint64_t resident_pages = 0;
+  if (*cursor < '0' || *cursor > '9') {
+    return 0;
+  }
+  for (; *cursor >= '0' && *cursor <= '9'; ++cursor) {
+    resident_pages = resident_pages * 10 + static_cast<std::uint64_t>(*cursor - '0');
   }
   const long page_size = sysconf(_SC_PAGESIZE);
   if (page_size <= 0) {
