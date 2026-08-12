@@ -178,6 +178,34 @@ namespace microide::util {
   }
 }
 
+// `path.lexically_normal()`, skipped when the path is ALREADY normal.
+//
+// `lexically_normal()` is ~12 allocations: a fresh path plus a component list
+// with a string per component, built eagerly by libstdc++'s constructor. Almost
+// every path the workspace holds is already normal (the git ingress, the project
+// catalog and the branch-review store each normalize once on the way in), so the
+// call is usually an expensive way to reproduce its own input.
+//
+// Two forms, and the second is the one a hot path wants:
+//   - `NormalizedPath` returns an owned path. Still a path COPY (two
+//     allocations) in the already-normal case, but not twelve.
+//   - `NormalizedPathView` returns a reference to the input when it is already
+//     normal and to `scratch` otherwise, so the common case allocates nothing at
+//     all. The reference is valid as long as both arguments are.
+[[nodiscard]] inline std::filesystem::path NormalizedPath(const std::filesystem::path& path) {
+  return PathTextNeedsNormalizing(path.native()) ? path.lexically_normal() : path;
+}
+
+[[nodiscard]] inline const std::filesystem::path& NormalizedPathView(
+    const std::filesystem::path& path,
+    std::filesystem::path& scratch) {
+  if (!PathTextNeedsNormalizing(path.native())) {
+    return path;
+  }
+  scratch = path.lexically_normal();
+  return scratch;
+}
+
 inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
                                  const std::filesystem::path& normalized_reference) {
   if (candidate.native() == normalized_reference.native()) {
@@ -188,6 +216,13 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
   }
   return candidate.lexically_normal().native() == normalized_reference.native();
 }
+
+// `PathEqualsOrWithin` for a candidate that may not be normalized yet, without
+// paying `lexically_normal()` when it already is. The eager-argument form
+// (`PathEqualsOrWithin(x.lexically_normal(), root)`) builds a whole path before
+// the containment test can reject it.
+[[nodiscard]] inline bool PathEqualsOrWithinNormalized(const std::filesystem::path& candidate,
+                                                       const std::filesystem::path& root);
 
 // True when `candidate` is `root` itself or a path nested under it. Purely
 // lexical: it never touches the filesystem (no symlink resolution, no cwd
@@ -268,6 +303,12 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
     return normalized_path;
   }
   return (normalized_new_prefix / relative).lexically_normal();
+}
+
+inline bool PathEqualsOrWithinNormalized(const std::filesystem::path& candidate,
+                                         const std::filesystem::path& root) {
+  std::filesystem::path scratch;
+  return PathEqualsOrWithin(NormalizedPathView(candidate, scratch), root);
 }
 
 }  // namespace microide::util

@@ -11,7 +11,7 @@ namespace microide::workspace {
 
 std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::DirtyPathTargetsForPath(
     const std::filesystem::path& path) const {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   std::vector<DirtyPathTarget> targets;
   const auto& state = CurrentProjectState();
   // Scan EVERY editor group, not just the focused one: a dirty editor/compare/merge
@@ -26,7 +26,7 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
         const auto& editor_state = *tab.editor_state;
         if (!editor_state.needs_restore && !editor_state.viewport.path().empty() &&
             editor_state.viewport.dirty() &&
-            PathEqualsOrWithin(editor_state.viewport.path().lexically_normal(), normalized_path)) {
+            util::PathEqualsOrWithinNormalized(editor_state.viewport.path(), normalized_path)) {
           targets.push_back(DirtyPathTarget{
               .kind = DirtyPathTarget::Kind::EditorView,
               .group_index = g,
@@ -38,7 +38,7 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
 
       if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
           tab.compare->right_editable && tab.compare->right_viewport.dirty() &&
-          PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), normalized_path)) {
+          util::PathEqualsOrWithinNormalized(tab.compare->right_path, normalized_path)) {
         targets.push_back(DirtyPathTarget{
             .kind = DirtyPathTarget::Kind::CompareTab,
             .group_index = g,
@@ -49,10 +49,10 @@ std::vector<PathMutationCoordinator::DirtyPathTarget> PathMutationCoordinator::D
 
       if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
           tab.merge->result_viewport.dirty() &&
-          (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
-           PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), normalized_path) ||
-           PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), normalized_path) ||
-           PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), normalized_path))) {
+          (util::PathEqualsOrWithinNormalized(tab.merge->base_path, normalized_path) ||
+           util::PathEqualsOrWithinNormalized(tab.merge->incoming_path, normalized_path) ||
+           util::PathEqualsOrWithinNormalized(tab.merge->current_path, normalized_path) ||
+           util::PathEqualsOrWithinNormalized(tab.merge->output_path, normalized_path))) {
         targets.push_back(DirtyPathTarget{
             .kind = DirtyPathTarget::Kind::MergeTab,
             .group_index = g,
@@ -80,22 +80,22 @@ std::vector<std::size_t> PathMutationCoordinator::DirtyTabIndicesForPath(
 bool PathMutationCoordinator::CompareTabAffectedByPath(
     const TabEntry& tab, const std::filesystem::path& normalized_path) {
   return tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-         PathEqualsOrWithin(tab.compare->path.lexically_normal(), normalized_path);
+         util::PathEqualsOrWithinNormalized(tab.compare->path, normalized_path);
 }
 
 bool PathMutationCoordinator::MergeTabAffectedByPath(
     const TabEntry& tab, const std::filesystem::path& normalized_path) {
   return tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
-         (PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), normalized_path) ||
-          PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), normalized_path) ||
-          PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), normalized_path) ||
-          PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), normalized_path));
+         (util::PathEqualsOrWithinNormalized(tab.merge->base_path, normalized_path) ||
+          util::PathEqualsOrWithinNormalized(tab.merge->incoming_path, normalized_path) ||
+          util::PathEqualsOrWithinNormalized(tab.merge->current_path, normalized_path) ||
+          util::PathEqualsOrWithinNormalized(tab.merge->output_path, normalized_path));
 }
 
 std::vector<std::size_t> PathMutationCoordinator::AffectedCompareTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   const auto& state = CurrentProjectState();
   for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
     if (CompareTabAffectedByPath(state.focused_group().open_tabs[i], normalized_path)) {
@@ -108,7 +108,7 @@ std::vector<std::size_t> PathMutationCoordinator::AffectedCompareTabIndices(
 std::vector<std::size_t> PathMutationCoordinator::AffectedMergeTabIndices(
     const std::filesystem::path& path) const {
   std::vector<std::size_t> indices;
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   const auto& state = CurrentProjectState();
   for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
     if (MergeTabAffectedByPath(state.focused_group().open_tabs[i], normalized_path)) {
@@ -209,7 +209,7 @@ bool PathMutationCoordinator::ResolveDirtyTabsForPath(
       }
       saved_any = true;
 
-      editor_state.restored_path = viewport->path().lexically_normal();
+      editor_state.restored_path = util::NormalizedPath(viewport->path());
       editor_state.restored_cursor_line = viewport->cursor_line();
       editor_state.restored_cursor_column = viewport->cursor_column();
       editor_state.restored_scroll_line = viewport->scroll_line();

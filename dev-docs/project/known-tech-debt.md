@@ -573,7 +573,42 @@ Also visible in that trace and worth its own look: `ScenarioContext::Measure` is
 audited scaffolding share once and found one offender; this is a second, inside
 the suite's biggest gate.
 
-### TD-2026-08-11-182 — an undo entry stores one owned `std::string` per line it covers, which is the floor a 1,000-line edit cannot get under. OPEN.
+### TD-2026-08-11-182 — an undo entry stores one owned `std::string` per line it covers, which is the floor a 1,000-line edit cannot get under. [RESOLVED 2026-08-12.]
+
+**Shipped 2026-08-12**, and the win is an order of magnitude larger than the
+entry's "2n → 4" estimate, because going blob-native removed the *producers'*
+per-line strings too:
+
+| scenario | p50_allocations before | after |
+| --- | ---: | ---: |
+| `editor_sort_lines_large` | 20,283 | **305** |
+| `editor_toggle_comment_large_selection` | 32,561 | **889** |
+| `editor_shaping_multi_caret` | 7,815 | **3,553** |
+
+`editor::LineBlob` is a run of lines as one byte buffer plus a line-start table.
+The pipeline is blob-native end to end rather than converting at a boundary — a
+conversion would have paid exactly the allocations this removes:
+
+- `PieceTree`'s line walk is templated on its sink, so one pruned treap walk
+  serves the vector and the blob; `ReplaceLineRange` likewise has one body for
+  both, so the join, the byte ceiling and the line-count bookkeeping cannot
+  drift apart.
+- `push_joined()` composes a line from views with no temporary `std::string`,
+  which is what took the per-line owned string out of toggle-comment, surround
+  and the range-replace composer.
+- Sort Lines sorts a PERMUTATION of line indices and appends in that order:
+  three allocations for a region, against one per line for the slice plus the
+  sort's moves.
+- The group-merge splices (`prepend`/`append`/`replace_range`) are one pass over
+  the bytes into a buffer reserved to its final size.
+
+The public `ReplaceLines(vector)` stays for callers that already own a vector.
+The allocation baselines for the three scenarios above still hold the old
+numbers; they are part of the deterministic rebaseline
+[184](#td-2026-08-11-184) describes.
+
+#### Original entry
+
 
 `toggle_line_comment.1000_lines` traces to 2.35 allocations per toggled line, and
 two of them are structural, not wasteful:

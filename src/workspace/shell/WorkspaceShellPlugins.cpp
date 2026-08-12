@@ -115,13 +115,13 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
       }
       if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
           tab.compare->right_editable && !tab.compare->right_viewport.path().empty()) {
-        callback(tab.compare->right_viewport.path().lexically_normal(),
+        callback(util::NormalizedPath(tab.compare->right_viewport.path()),
                  &tab.compare->right_viewport);
         continue;
       }
       if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value() &&
           !tab.merge->result_viewport.path().empty()) {
-        callback(tab.merge->result_viewport.path().lexically_normal(),
+        callback(util::NormalizedPath(tab.merge->result_viewport.path()),
                  &tab.merge->result_viewport);
       }
     }
@@ -402,7 +402,7 @@ WorkspaceShell::WorkspaceShell() {
           [](std::string_view name) { return FindWorkspaceActionByCommand(name) == nullptr; },
       .open_file =
           [this](const plugin::PluginHost::OpenFileRequest& request) {
-            const std::filesystem::path normalized_path = request.path.lexically_normal();
+            const std::filesystem::path normalized_path = util::NormalizedPath(request.path);
             const std::string requested = request.path.generic_string();
             const bool is_virtual = IsVirtualDocumentUri(requested);
             const bool opened = is_virtual ? OpenVirtualDocumentInNewTab(requested)
@@ -443,7 +443,7 @@ WorkspaceShell::WorkspaceShell() {
               return std::nullopt;
             }
             return plugin::PluginHost::ActiveBuffer{
-                .path = viewport->path().lexically_normal(),
+                .path = util::NormalizedPath(viewport->path()),
                 .line = viewport->cursor_line() + 1,
                 .column = viewport->cursor_column() + 1,
                 .content_revision = viewport->content_revision(),
@@ -986,7 +986,7 @@ void WorkspaceShell::NotifyPluginsAboutOpenBuffers(bool replay_plugin_buffer_ope
 }
 
 void WorkspaceShell::NotifyPluginBufferOpen(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (!plugin_runtime_.enabled() && normalized_path.empty()) {
     return;
   }
@@ -1007,7 +1007,7 @@ void WorkspaceShell::NotifyLspBufferOpen(const std::filesystem::path& path) {
   // manual-open path (NotifyPluginBufferOpen) and tab activation/restore, so a
   // file that was already open at startup engages the LSP too. EnsureLspDocumentOpen
   // is idempotent (HasOpenDocument), so re-activations are cheap no-ops.
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (normalized_path.empty()) {
     return;
   }
@@ -1024,7 +1024,7 @@ void WorkspaceShell::NotifyLspBufferOpen(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (plugin_runtime_.enabled() && !normalized_path.empty()) {
     plugin_runtime_.Host().OnBufferSave(normalized_path);
   }
@@ -1047,7 +1047,7 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
     return;
   }
   client->SetDiagnosticsCallback(
-      [this, project_root = context_.current_project_state.root.lexically_normal(), client](
+      [this, project_root = util::NormalizedPath(context_.current_project_state.root), client](
           std::string uri, std::vector<LspClient::Diagnostic> diagnostics) {
         // Resolve the active project at dispatch time and drop the publish if the
         // active project changed since this callback was installed. A raw
@@ -1080,7 +1080,7 @@ void WorkspaceShell::NotifyPluginBufferSave(const std::filesystem::path& path) {
 }
 
 void WorkspaceShell::NotifyLspBufferClose(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (normalized_path.empty()) {
     return;
   }
@@ -1147,7 +1147,7 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
   if (request.path.empty()) {
     viewport = ActiveEditableViewport();
   } else {
-    const std::filesystem::path normalized = request.path.lexically_normal();
+    const std::filesystem::path normalized = util::NormalizedPath(request.path);
     if (editor::TextViewport* active = ActiveEditableViewport();
         active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
       viewport = active;
@@ -1273,7 +1273,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
     if (path.empty()) {
       return ActiveEditableViewport();
     }
-    const std::filesystem::path normalized = path.lexically_normal();
+    const std::filesystem::path normalized = util::NormalizedPath(path);
     if (editor::TextViewport* active = ActiveEditableViewport();
         active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
       return active;
@@ -1299,7 +1299,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
   // touched_files) worst case the parser caps still permit.
   std::unordered_map<std::string, editor::TextViewport*> resolve_cache;
   const auto resolve = [&](const std::filesystem::path& path) -> editor::TextViewport* {
-    std::string key = path.lexically_normal().generic_string();
+    std::string key = util::NormalizedPath(path).generic_string();
     const auto it = resolve_cache.find(key);
     if (it != resolve_cache.end()) {
       return it->second;
@@ -1582,7 +1582,7 @@ void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
     if (edit.path.empty()) {
       continue;
     }
-    const std::filesystem::path normalized = edit.path.lexically_normal();
+    const std::filesystem::path normalized = util::NormalizedPath(edit.path);
     if (!affected_seen.insert(normalized.generic_string()).second) {
       continue;
     }
@@ -1653,7 +1653,7 @@ void WorkspaceShell::CommitPendingRenameSave() {
         continue;
       }
       editor::TextViewport& viewport = tab.editor_state->viewport;
-      const std::filesystem::path normalized = viewport.path().lexically_normal();
+      const std::filesystem::path normalized = util::NormalizedPath(viewport.path());
       if (std::find(pending.affected_paths.begin(), pending.affected_paths.end(), normalized) ==
           pending.affected_paths.end()) {
         continue;
@@ -1749,7 +1749,7 @@ void WorkspaceShell::PublishPluginGhostText(
   if (viewport == nullptr) {
     return;
   }
-  const std::filesystem::path path = viewport->path().lexically_normal();
+  const std::filesystem::path path = util::NormalizedPath(viewport->path());
   if (!request.path.empty() && !util::SameAsNormalizedPath(request.path, path)) {
     return;
   }
@@ -1884,7 +1884,7 @@ void WorkspaceShell::SamplePluginEditorEvents() {
     sel_end_column = normalized.end.column + 1;
   }
   plugin_editor_event_tracker_.Sample(
-      viewport->path().lexically_normal(), viewport->content_revision(),
+      util::NormalizedPath(viewport->path()), viewport->content_revision(),
       viewport->cursor_line() + 1, viewport->cursor_column() + 1, selection_present,
       sel_start_line, sel_start_column, sel_end_line, sel_end_column, SDL_GetTicks(),
       kPluginEditorEventDebounceMs);

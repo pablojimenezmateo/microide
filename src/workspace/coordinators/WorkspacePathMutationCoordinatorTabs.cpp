@@ -19,14 +19,14 @@ PathMutationCoordinator::RetargetSpecialTabForRename(TabEntry& tab,
   auto& state = CurrentProjectState();
 
   if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
-      PathEqualsOrWithin(tab.compare->path.lexically_normal(), old_path)) {
+      util::PathEqualsOrWithinNormalized(tab.compare->path, old_path)) {
     const std::filesystem::path updated_path =
         util::ReplacePathPrefix(tab.compare->path, old_path, new_path);
     if (preserve_unsaved_state && tab.compare->right_editable &&
         tab.compare->right_viewport.dirty()) {
-      tab.compare->path = updated_path.lexically_normal();
+      tab.compare->path = util::NormalizedPath(updated_path);
       if (tab.compare->right_ref == "WORKTREE" &&
-          PathEqualsOrWithin(tab.compare->right_path.lexically_normal(), old_path)) {
+          util::PathEqualsOrWithinNormalized(tab.compare->right_path, old_path)) {
         tab.compare->right_path =
             util::ReplacePathPrefix(tab.compare->right_path, old_path, new_path).lexically_normal();
         tab.compare->right_viewport.SetPath(tab.compare->right_path);
@@ -46,9 +46,9 @@ PathMutationCoordinator::RetargetSpecialTabForRename(TabEntry& tab,
       return SpecialTabRetargetOutcome::Retargeted;
     }
     CompareTabState updated_compare = *tab.compare;
-    updated_compare.path = updated_path.lexically_normal();
+    updated_compare.path = util::NormalizedPath(updated_path);
     if (updated_compare.right_ref == "WORKTREE" &&
-        PathEqualsOrWithin(updated_compare.right_path.lexically_normal(), old_path)) {
+        util::PathEqualsOrWithinNormalized(updated_compare.right_path, old_path)) {
       updated_compare.right_path =
           util::ReplacePathPrefix(updated_compare.right_path, old_path, new_path).lexically_normal();
     }
@@ -65,14 +65,14 @@ PathMutationCoordinator::RetargetSpecialTabForRename(TabEntry& tab,
   }
 
   auto update_merge_path = [&](const std::filesystem::path& path) {
-    return PathEqualsOrWithin(path.lexically_normal(), old_path)
+    return util::PathEqualsOrWithinNormalized(path, old_path)
                ? util::ReplacePathPrefix(path, old_path, new_path).lexically_normal()
-               : path.lexically_normal();
+               : util::NormalizedPath(path);
   };
-  if (!PathEqualsOrWithin(tab.merge->base_path.lexically_normal(), old_path) &&
-      !PathEqualsOrWithin(tab.merge->incoming_path.lexically_normal(), old_path) &&
-      !PathEqualsOrWithin(tab.merge->current_path.lexically_normal(), old_path) &&
-      !PathEqualsOrWithin(tab.merge->output_path.lexically_normal(), old_path)) {
+  if (!util::PathEqualsOrWithinNormalized(tab.merge->base_path, old_path) &&
+      !util::PathEqualsOrWithinNormalized(tab.merge->incoming_path, old_path) &&
+      !util::PathEqualsOrWithinNormalized(tab.merge->current_path, old_path) &&
+      !util::PathEqualsOrWithinNormalized(tab.merge->output_path, old_path)) {
     return SpecialTabRetargetOutcome::Unaffected;
   }
 
@@ -215,7 +215,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     // the persisted path no longer exists.
     if (tab.kind == TabEntry::Kind::Editor && tab.deferred_handle.has_value()) {
       auto& handle = *tab.deferred_handle;
-      if (!handle.path.empty() && PathEqualsOrWithin(handle.path.lexically_normal(), old_path)) {
+      if (!handle.path.empty() && util::PathEqualsOrWithinNormalized(handle.path, old_path)) {
         handle.path = util::ReplacePathPrefix(handle.path, old_path, new_path).lexically_normal();
         tab.path = handle.path;
         tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
@@ -254,7 +254,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         // Deferred split-view tab: retarget its deferred-open path so a later
         // activation (or persistence round-trip) resolves the new path.
         auto& handle = *tab.deferred_handle;
-        if (!handle.path.empty() && PathEqualsOrWithin(handle.path.lexically_normal(), old_path)) {
+        if (!handle.path.empty() && util::PathEqualsOrWithinNormalized(handle.path, old_path)) {
           handle.path = util::ReplacePathPrefix(handle.path, old_path, new_path).lexically_normal();
           tab.path = handle.path;
           tab.title = tab.path.empty() ? "untitled" : tab.path.filename().string();
@@ -273,7 +273,7 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       if (editor_state.needs_restore) {
         // Restore-pending tab: fix the deferred-open target path.
         if (!editor_state.restored_path.empty() &&
-            PathEqualsOrWithin(editor_state.restored_path.lexically_normal(), old_path)) {
+            util::PathEqualsOrWithinNormalized(editor_state.restored_path, old_path)) {
           editor_state.restored_path =
               util::ReplacePathPrefix(editor_state.restored_path, old_path, new_path)
                   .lexically_normal();
@@ -354,7 +354,7 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     editor_tabs_.SyncActiveEditorTab();
   }
 
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   std::vector<std::size_t> indices;
   for (std::size_t i = 0; i < state.focused_group().open_tabs.size(); ++i) {
     auto& tab = state.focused_group().open_tabs[i];
@@ -367,7 +367,7 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
     if (tab.editor_state.has_value()) {
       current_path = operations_.editor_view_path(*tab.editor_state);
     } else if (tab.deferred_handle.has_value()) {
-      current_path = tab.deferred_handle->path.lexically_normal();
+      current_path = util::NormalizedPath(tab.deferred_handle->path);
     } else {
       continue;
     }
@@ -412,7 +412,7 @@ void PathMutationCoordinator::CloseOpenTabsForPath(const std::filesystem::path& 
       if (tab.editor_state.has_value()) {
         current_path = operations_.editor_view_path(*tab.editor_state);
       } else if (tab.deferred_handle.has_value()) {
-        current_path = tab.deferred_handle->path.lexically_normal();
+        current_path = util::NormalizedPath(tab.deferred_handle->path);
       } else {
         continue;
       }

@@ -35,7 +35,7 @@ void NotifyBufferOpenForEditableTab(const TabEntry& tab,
 }  // namespace
 
 std::optional<CompareInput> ReadFileCompareInput(const std::filesystem::path& path, bool editable) {
-  const std::filesystem::path normalized = path.lexically_normal();
+  const std::filesystem::path normalized = util::NormalizedPath(path);
   const util::TextFileReadResult read = util::ReadTextFileClassified(normalized);
   if (read.is_error()) {
     return std::nullopt;
@@ -53,7 +53,7 @@ DiffTabCoordinator::DiffTabCoordinator(ProjectWorkspaceState& state, Operations 
 
 std::optional<std::size_t> DiffTabCoordinator::FindOpenCompareTabIndex(
     const std::filesystem::path& path, std::string_view left_ref, std::string_view right_ref) const {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
     const auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
@@ -69,7 +69,7 @@ std::optional<std::size_t> DiffTabCoordinator::FindOpenCompareTabIndex(
 
 std::optional<std::size_t> DiffTabCoordinator::FindOpenMergeTabIndex(
     const std::filesystem::path& path) const {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
     const auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Merge || !tab.merge.has_value()) {
@@ -84,8 +84,8 @@ std::optional<std::size_t> DiffTabCoordinator::FindOpenMergeTabIndex(
 
 std::optional<std::size_t> DiffTabCoordinator::FindOpenPlainCompareTabIndex(
     const std::filesystem::path& left_path, const std::filesystem::path& right_path) const {
-  const std::filesystem::path normalized_left = left_path.lexically_normal();
-  const std::filesystem::path normalized_right = right_path.lexically_normal();
+  const std::filesystem::path normalized_left = util::NormalizedPath(left_path);
+  const std::filesystem::path normalized_right = util::NormalizedPath(right_path);
   for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
     const auto& tab = state_.focused_group().open_tabs[i];
     if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value() ||
@@ -100,8 +100,8 @@ std::optional<std::size_t> DiffTabCoordinator::FindOpenPlainCompareTabIndex(
 }
 
 bool DiffTabCoordinator::OpenPlainComparison(CompareInput left, CompareInput right) {
-  const std::filesystem::path left_path = left.path.lexically_normal();
-  const std::filesystem::path right_path = right.path.lexically_normal();
+  const std::filesystem::path left_path = util::NormalizedPath(left.path);
+  const std::filesystem::path right_path = util::NormalizedPath(right.path);
   // Dedup only when both sides are real files. A clipboard/untitled side has no
   // stable identity and its content may have changed, so re-running always opens
   // a fresh tab reflecting the caller's freshly-resolved content.
@@ -213,7 +213,7 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
     opened.compare->review_mode = compare::CompareReviewMode::Commit;
     opened.compare->review_files = review_files;
     const auto current = std::find(review_files.begin(), review_files.end(),
-                                   opened.compare->path.lexically_normal());
+                                   util::NormalizedPath(opened.compare->path));
     if (current != review_files.end()) {
       opened.compare->review_file_index =
           static_cast<std::size_t>(current - review_files.begin());
@@ -227,10 +227,10 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
                                          const std::filesystem::path& incoming_path,
                                          const std::filesystem::path& current_path,
                                          const std::filesystem::path& output_path) {
-  const std::filesystem::path normalized_base = base_path.lexically_normal();
-  const std::filesystem::path normalized_incoming = incoming_path.lexically_normal();
-  const std::filesystem::path normalized_current = current_path.lexically_normal();
-  const std::filesystem::path normalized_output = output_path.lexically_normal();
+  const std::filesystem::path normalized_base = util::NormalizedPath(base_path);
+  const std::filesystem::path normalized_incoming = util::NormalizedPath(incoming_path);
+  const std::filesystem::path normalized_current = util::NormalizedPath(current_path);
+  const std::filesystem::path normalized_output = util::NormalizedPath(output_path);
 
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_output); existing_index.has_value()) {
     operations_.sync_active_editor_tab();
@@ -267,7 +267,7 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
 bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& path,
                                                    const std::string& left_ref,
                                                    const std::string& left_label) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, "WORKTREE");
       existing_index.has_value()) {
     operations_.sync_active_editor_tab();
@@ -320,7 +320,7 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
                                                   const std::string& left_label,
                                                   const std::string& right_ref,
                                                   const std::string& right_label) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, right_ref);
       existing_index.has_value()) {
     operations_.sync_active_editor_tab();
@@ -375,7 +375,7 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
 }
 
 bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path) {
-  const std::filesystem::path normalized_path = path.lexically_normal();
+  const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path);
       existing_index.has_value() && state_.focused_group().open_tabs[*existing_index].merge.has_value() &&
       state_.focused_group().open_tabs[*existing_index].merge->result_viewport.dirty()) {

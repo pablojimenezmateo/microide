@@ -797,6 +797,61 @@ void TestWorkspaceSharedPathMutationHelpers() {
            "an ordinary relative path is recognized as already normal");
   }
 
+  // NormalizedPath / NormalizedPathView are the guarded forms of
+  // lexically_normal() (TD-2026-08-10-174). Two claims to pin: the ANSWER must
+  // equal lexically_normal() for every shape, and the already-normal case must
+  // not allocate a new path at all -- which is observable as the view form
+  // handing back a reference to its own INPUT.
+  {
+    using microide::util::NormalizedPath;
+    using microide::util::NormalizedPathView;
+    const std::vector<std::string> shapes = {
+        "",        "a",       "a/b/c.cpp", "/a/b/c.cpp", "./a",   "a/./b",
+        "a/../b",  "../a",    "a//b",      "a/b/.",      "a/b/..", "/../a",
+        "a/b/../../c",
+    };
+    for (const std::string& shape : shapes) {
+      const std::filesystem::path path(shape);
+      Expect(NormalizedPath(path).native() == path.lexically_normal().native(),
+             "NormalizedPath must answer exactly what lexically_normal() answers: '" + shape + "'");
+      std::filesystem::path scratch;
+      const std::filesystem::path& viewed = NormalizedPathView(path, scratch);
+      Expect(viewed.native() == path.lexically_normal().native(),
+             "NormalizedPathView must answer exactly what lexically_normal() answers: '" + shape +
+                 "'");
+      // A reference to the input, not to scratch, is the observable form of "this
+      // did not allocate", and it must track the SCAN, not lexically_normal()'s
+      // answer: the scan is allowed to say "needs normalizing" for a path that
+      // normalizes to itself ("../a"), which costs an allocation but never a
+      // wrong answer. Saying "already normal" for a path that does change would
+      // be the correctness bug, and the equality below is what catches it.
+      Expect(microide::util::PathTextNeedsNormalizing(path.native()) == (&viewed != &path),
+             "NormalizedPathView must hand back the INPUT exactly when the scan says the path "
+             "is already normal: '" + shape + "'");
+    }
+  }
+
+  // PathEqualsOrWithinNormalized is the same guard applied to the containment
+  // test, so a caller stops building a whole path as an ARGUMENT that the test
+  // then rejects.
+  {
+    using microide::util::PathEqualsOrWithin;
+    using microide::util::PathEqualsOrWithinNormalized;
+    const std::filesystem::path base("/tmp/project/src");
+    const std::vector<std::string> candidates = {
+        "/tmp/project/src",        "/tmp/project/src/main.cpp", "/tmp/project/src/./main.cpp",
+        "/tmp/project/src/../src/main.cpp", "/tmp/project/other", "/tmp/project/srcx/a.cpp",
+        "",
+    };
+    for (const std::string& text : candidates) {
+      const std::filesystem::path candidate(text);
+      Expect(PathEqualsOrWithinNormalized(candidate, base) ==
+                 PathEqualsOrWithin(candidate.lexically_normal(), base),
+             "PathEqualsOrWithinNormalized must match the eager-argument form it replaced: '" +
+                 text + "'");
+    }
+  }
+
   Expect(ReplacePathPrefix(nested, root / "src", root / "lib") ==
              std::filesystem::path("/tmp/project/lib/main.cpp"),
          "path prefix replacement should preserve the relative suffix");
