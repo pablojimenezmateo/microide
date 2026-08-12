@@ -12,10 +12,12 @@ a right-click retargeting the caret by screen column on a continuation row, and
 gutter markers repeating down every wrapped row. The perf half: wrapped rows were
 rebuilt from scratch every frame and each build re-measured the whole logical
 line, and the whitespace-run builder walked its line from byte 0 per row and
-stepped one byte per cell. Four entries opened: [175](#td-2026-08-12-175)
-(hidden-line row offsets), [176](#td-2026-08-12-176) (the new wrap scenarios need
-a quiet-runner baseline), [177](#td-2026-08-12-177) (the fallback whitespace walk),
-[178](#td-2026-08-12-178) (Home/End are logical-line verbs under wrap).
+stepped one byte per cell. Five entries opened: [185](#td-2026-08-12-185)
+(hidden-line row offsets), [186](#td-2026-08-12-186) (the new wrap scenarios need
+a quiet-runner baseline), [187](#td-2026-08-12-187) (the fallback whitespace walk),
+[188](#td-2026-08-12-188) (Home/End are logical-line verbs under wrap),
+[189](#td-2026-08-12-189) (the visible-line cache evicts by insertion order, so a
+cache HIT does not protect the entry a caller is reading).
 
 Reviewed 2026-08-11. The 2026-08-11 pass read the suite's two biggest phases
 ([159](#td-2026-08-06-159)): `multi_project.switch_cycles` (-42 %) and
@@ -316,7 +318,32 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-12-178 — Home/End under soft wrap move by LOGICAL line, where VS Code moves by visual row. OPEN (product decision).
+### TD-2026-08-12-189 — the visible-line cache is a FIFO, so a HIT does not protect the entry from the next miss's eviction. OPEN.
+
+`TextLayoutCache::VisibleLineLayoutRefCached` hands out a reference into a
+256-entry map and evicts by insertion order (`visible_line_cache_order_` is a
+`deque` that a hit never touches). The header's safety argument — "a frame's
+working set is far below the limit, so a frame never evicts what it is still
+reading" — covers entries the frame BUILDS, not entries it merely HITS: an entry
+inserted many frames ago sits at the front of the FIFO no matter how recently it
+was read, so a miss taken while a caller holds a reference to it recycles that
+node underneath the caller. The result is a row painted with another row's
+glyphs, not a crash: `extract`/`insert` keeps the node alive and rewrites it in
+place.
+
+Reachability is narrow and got narrower on 2026-08-12: the render loop now takes
+exactly ONE cache reference per row (the end-of-line decoration path used to take
+a second one, for a line width it can read off the wrapped-row table instead).
+What remains is any future caller that holds a row layout across another layout
+query. `visible_line_evictions` already counts the evictions this argument turns
+on, which is what makes the claim testable.
+
+The fix is to make it a real LRU: an intrusive `std::list` of keys with the
+iterator stored beside the layout, spliced to the back on a hit. Then the
+eviction victim is always older than anything the current frame has touched, and
+the invariant holds for hits as well as builds.
+
+### TD-2026-08-12-188 — Home/End under soft wrap move by LOGICAL line, where VS Code moves by visual row. OPEN (product decision).
 
 With word wrap on, `MoveCursorLineStart`/`MoveCursorLineEnd` jump to column 0 /
 the end of the whole logical line, so pressing Home on the fourth wrapped row of
@@ -333,7 +360,7 @@ visual_end)`, and `WrapRowAffinity::kPreviousRow` is exactly what an End that
 lands on a wrap point needs so the caret renders at the row's trailing edge
 instead of the next row's start.
 
-### TD-2026-08-12-177 — the renderer's fallback whitespace walk still restarts at byte 0 of the line for every visible row. OPEN.
+### TD-2026-08-12-187 — the renderer's fallback whitespace walk still restarts at byte 0 of the line for every visible row. OPEN.
 
 `RenderViewModelBuilder`'s whitespace-run builder — the path production paints
 from — now resumes at the row's own start when the bytes before it are plain
@@ -349,7 +376,7 @@ what keeps the two implementations honest, and a fallback that is
 asymptotically different from the real path is a fallback whose parity only holds
 on small fixtures.
 
-### TD-2026-08-12-176 — the two soft-wrap perf scenarios have no baseline, so only their hand-written invariants gate. OPEN.
+### TD-2026-08-12-186 — the two soft-wrap perf scenarios have no baseline, so only their hand-written invariants gate. OPEN.
 
 `editor_soft_wrap_long_line_scroll` and `editor_soft_wrap_long_line_typing`
 (added 2026-08-12 with the wrap fixes — soft wrap had no perf coverage at all
@@ -364,7 +391,7 @@ Record them with `--update-baseline --scenarios=editor_soft_wrap_long_line_scrol
 on a quiet reference run, then flip `baseline_gated` to true. Same runner
 constraint as [184](#td-2026-08-11-184) and [161](#td-2026-08-07-161).
 
-### TD-2026-08-12-175 — a caret on a fold-hidden line resolves to the fold opener's FIRST wrapped row. OPEN.
+### TD-2026-08-12-185 — a caret on a fold-hidden line resolves to the fold opener's FIRST wrapped row. OPEN.
 
 `TextLayoutCache`'s row-offset table stores, for every hidden line, the row index
 where the last VISIBLE line started. With soft wrap on, a collapsed opener that

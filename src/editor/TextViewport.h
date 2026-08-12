@@ -372,6 +372,14 @@ class TextViewport {
   // per visible row; pair it with CaretForLine for caret drawing.
   const LayoutLine& VisibleLineLayoutRef(std::size_t line_index) const;
 
+  // Full visual width of a logical line. Under soft wrap this is read off the
+  // wrapped-row table (a line's last row ends at its width) rather than built as
+  // a layout, so a caller that only needs the width -- end-of-line decorations
+  // anchor past it -- does not build a whole-line LayoutLine per decorated line
+  // per frame, and does not take a second reference out of the visible-line cache
+  // while it is already holding one.
+  std::size_t LogicalLineVisualWidth(std::size_t line_index) const;
+
   // Reference to the cached layout of one soft-wrapped row -- the wrap-path
   // sibling of VisibleLineLayoutRef, with the same contract: no caret fields set
   // (pair it with CaretForWrappedRow), valid until the next call that can evict

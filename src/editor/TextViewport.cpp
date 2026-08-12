@@ -379,6 +379,17 @@ const LayoutLine& TextViewport::VisibleWrappedRowLayoutRef(std::size_t visual_ro
       });
 }
 
+std::size_t TextViewport::LogicalLineVisualWidth(std::size_t line_index) const {
+  if (document_ == nullptr || line_index >= document_->lines.size()) {
+    return 0;
+  }
+  if (!soft_wrap_) {
+    return VisibleLineLayoutRef(line_index).visual_columns;
+  }
+  EnsureWrappedRowLayouts();
+  return LineVisualWidthFromWrappedRows(line_index);
+}
+
 std::size_t TextViewport::LineVisualWidthFromWrappedRows(std::size_t line_index) const {
   return WrappedRowAt(
              layout_cache_.WrappedRowRangeForLine(line_index, document_->lines.size()).second)

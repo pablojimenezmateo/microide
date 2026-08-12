@@ -1216,8 +1216,7 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         // the wrap branch (where row_layout is a single wrapped slice) needs the
         // full-line width, served by reference from the cache.
         const std::size_t full_line_visual_columns =
-            soft_wrap ? viewport.VisibleLineLayoutRef(line_index).visual_columns
-                      : row_layout.visual_columns;
+            soft_wrap ? viewport.LogicalLineVisualWidth(line_index) : row_layout.visual_columns;
         // Push the anchor past the line's mid-line inlay hints so end-of-line
         // decorations still sit beyond the visually-last glyph.
         const float anchor_x =

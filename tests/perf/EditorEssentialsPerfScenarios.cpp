@@ -1309,7 +1309,7 @@ const ScenarioRegistration g_perf_editor_long_line_select_all_edit({Scenario{
 // Both soft-wrap scenarios carry their own hard invariants (see the bodies), so
 // they gate on any box without a baseline. The wall/alloc envelopes are NOT
 // gated yet: a baseline has to be recorded on a quiet reference run, and this
-// pair was added on a loaded one (TD-2026-08-12-176).
+// pair was added on a loaded one (TD-2026-08-12-186).
 const ScenarioRegistration g_perf_editor_soft_wrap_long_line_scroll({Scenario{
     .name = "editor_soft_wrap_long_line_scroll",
     .smoke = true,
