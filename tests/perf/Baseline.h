@@ -110,6 +110,21 @@ struct BaselineRecord {
   // False on every baseline written before this field existed, which is correct:
   // those were all recorded on the reference runner.
   bool timing_is_advisory = false;
+  // Which BUILD this baseline's numbers came out of ("RelWithDebInfo+lto",
+  // "Release", ...). Empty on a baseline written before the field existed.
+  //
+  // `p50_net_heap_bytes` is the reason. It reproduces to the byte within one
+  // configuration -- that is the premise of the whole retention gate -- and moves
+  // by 60-90 KB between `RelWithDebInfo+lto` and plain `Release`, on the same
+  // commit and the same box. Four scenarios FAIL that gate by 3-10x under the
+  // `microide-perf` preset and PASS under a hand-rolled Release build, so an A/B
+  // that configures its two sides differently reports a regression that is not
+  // there, and a whole session can be spent chasing it (TD-2026-08-12-191).
+  //
+  // Recorded rather than enforced-on: a mismatch unenforces the metrics that are
+  // known to move with it and says so, which is the same treatment
+  // `measurement_revision` gets for the same reason.
+  std::string build_config;
 };
 
 // Ceiling on the clock-normalisation factor, in either direction. A machine

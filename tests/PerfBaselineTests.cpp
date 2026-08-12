@@ -866,6 +866,70 @@ void TestPerfBaselineAdvisoryTimingHalfGatesAllocationsOnly() {
          "a reference-lane baseline must still enforce its timing half");
 }
 
+// TD-2026-08-12-191: p50_net_heap_bytes reproduces to the byte WITHIN one build
+// configuration and moves by 60-90 KB between RelWithDebInfo+LTO and plain
+// Release, on the same commit. An A/B that configures its two sides differently
+// therefore reports a regression that is not there. The baseline records which
+// build produced it, and a mismatch unenforces the metrics that move with it.
+void TestPerfBaselineDeclinesComparisonAcrossBuildConfigurations() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.build_config = "RelWithDebInfo+lto";
+  baseline.has_net_heap_metrics = true;
+  baseline.metrics.p50_net_heap_bytes = 8294.0;
+  baseline.tolerances.net_heap_percent = 10.0;
+
+  const auto run_with = [&](const std::string& config, double net_heap) {
+    perf::Aggregate aggregate;
+    aggregate.scenario_name = "test";
+    aggregate.metrics = baseline.metrics;
+    aggregate.metrics.p50_net_heap_bytes = net_heap;
+    aggregate.build_config = config;
+    return perf::CompareToBaseline(baseline, aggregate);
+  };
+
+  // Same configuration, 9x the retention: a real regression, still enforced.
+  Expect(!run_with("RelWithDebInfo+lto", 75872.0).passed,
+         "a retention regression measured in the baseline's own build must still fail");
+
+  // Different configuration, same reading: not a comparison.
+  const perf::BaselineComparison crossed = run_with("Release", 75872.0);
+  Expect(crossed.passed,
+         "a retention reading from a different build configuration must not be gated");
+  bool noted = false;
+  for (const auto& metric : crossed.metrics) {
+    if (metric.metric == "p50_net_heap_bytes") {
+      Expect(!metric.enforced, "the net-heap metric must be reported as unenforced");
+      Expect(metric.note.find("Release") != std::string::npos &&
+                 metric.note.find("RelWithDebInfo+lto") != std::string::npos,
+             "and must name BOTH configurations, so the reader can see which is which");
+      noted = true;
+    }
+  }
+  Expect(noted, "the crossed comparison must still carry the metric, measured and printed");
+
+  // Allocation counts came out byte-identical across the two configurations
+  // measured, which is what makes them the half worth keeping enforced.
+  perf::Aggregate alloc_regression;
+  alloc_regression.scenario_name = "test";
+  alloc_regression.metrics = baseline.metrics;
+  alloc_regression.metrics.p50_allocations = baseline.metrics.p50_allocations * 4.0;
+  alloc_regression.build_config = "Release";
+  Expect(!perf::CompareToBaseline(baseline, alloc_regression).passed,
+         "an allocation regression must fail even across build configurations");
+
+  // A baseline with no recorded configuration -- every one written before the
+  // field existed -- compares exactly as it did.
+  perf::BaselineRecord unlabelled = baseline;
+  unlabelled.build_config.clear();
+  perf::Aggregate labelled;
+  labelled.scenario_name = "test";
+  labelled.metrics = baseline.metrics;
+  labelled.metrics.p50_net_heap_bytes = 75872.0;
+  labelled.build_config = "Release";
+  Expect(!perf::CompareToBaseline(unlabelled, labelled).passed,
+         "an unlabelled baseline must compare raw rather than assume a mismatch");
+}
+
 // The failure that opened the TD was a clock that stepped MID-run: five iterations
 // at one clock and five at another, one clean step, application counters identical
 // across it. A single per-run factor would smear that across both halves; each
@@ -1584,6 +1648,8 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
           TestPerfBaselineNormalisesWallByItsWorkFraction);
   AddTest(tests, "PerfBaseline/AdvisoryTimingHalfGatesAllocationsOnly",
           TestPerfBaselineAdvisoryTimingHalfGatesAllocationsOnly);
+  AddTest(tests, "PerfBaseline/DeclinesComparisonAcrossBuildConfigurations",
+          TestPerfBaselineDeclinesComparisonAcrossBuildConfigurations);
   AddTest(tests, "PerfBaseline/NormalisesEachIterationAgainstItsOwnClock",
           TestPerfBaselineNormalisesEachIterationAgainstItsOwnClock);
   AddTest(tests, "PerfBaseline/ClampsAnAbsurdClockFactor",

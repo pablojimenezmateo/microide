@@ -1394,10 +1394,17 @@ if(MICROIDE_PERF_HARNESS_BUILD)
   if(NOT MICROIDE_LUA_TARGET STREQUAL "")
     target_link_libraries(microide_perf PRIVATE ${MICROIDE_LUA_TARGET})
   endif()
+  # Which build the numbers came out of, baked in so a BASELINE can record it.
+  # p50_net_heap_bytes reproduces to the byte within one configuration and moves
+  # by 60-90 KB between RelWithDebInfo+LTO and plain Release, so a comparison
+  # across two configurations reports a regression that is not there
+  # (TD-2026-08-12-191). Build type plus the IPO flag is the whole difference that
+  # mattered; extend this string if another axis ever does.
   target_compile_definitions(microide_perf PRIVATE
     MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
     MICROIDE_TESTING=1
     MICROIDE_PERF_HARNESS_BUILD=1
+    MICROIDE_PERF_BUILD_CONFIG="${CMAKE_BUILD_TYPE}$<$<BOOL:${CMAKE_INTERPROCEDURAL_OPTIMIZATION}>:+lto>"
   )
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")

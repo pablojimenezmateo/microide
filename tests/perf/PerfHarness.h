@@ -213,6 +213,17 @@ struct PhaseMetricSet {
   std::size_t iterations = 0;
 };
 
+// The build this binary was compiled as, e.g. "RelWithDebInfo+lto". Empty when
+// the definition is absent (a target that does not set it), which reads as
+// "unknown" and compares exactly as it did before the field existed.
+inline std::string PerfBuildConfig() {
+#ifdef MICROIDE_PERF_BUILD_CONFIG
+  return MICROIDE_PERF_BUILD_CONFIG;
+#else
+  return {};
+#endif
+}
+
 struct Aggregate {
   std::string scenario_name;
   std::vector<Iteration> iterations;
@@ -225,6 +236,11 @@ struct Aggregate {
   // and why comparing two numbers recorded at different revisions is not a
   // comparison.
   std::size_t measurement_revision = 1;
+  // Which BUILD produced these numbers (see BaselineRecord::build_config).
+  // Filled from MICROIDE_PERF_BUILD_CONFIG, which CMake bakes into the perf
+  // binary, so a comparison across two configurations is declined rather than
+  // reported as a regression (TD-2026-08-12-191).
+  std::string build_config = PerfBuildConfig();
   // Non-empty when the scenario declared it could not run (see
   // ScenarioContext::SkipScenario). Its metrics describe nothing and must not be
   // compared to a baseline, written as one, or reported as a pass.

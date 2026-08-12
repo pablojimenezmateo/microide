@@ -333,7 +333,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-12-191 — four `p50_net_heap_bytes` gates have been red since before 2026-08-12, and the metric is BUILD-CONFIGURATION dependent. OPEN.
+### TD-2026-08-12-191 — four `p50_net_heap_bytes` gates have been red since before 2026-08-12, and the metric is BUILD-CONFIGURATION dependent. OPEN (the configuration half shipped; the retention itself is unexplained).
 
 Found by running the full gate (which is itself supposed to be routine —
 [141](#td-2026-08-06-141)) and then A/B-ing the failures against the session's
@@ -372,11 +372,22 @@ baseline records which configuration produced it — the same class of gap as
 [167](#td-2026-08-07-167) (the measurement REGIME is not recorded) and the
 video/CPU lane findings.
 
-Two pieces of work: find what the four scenarios newly retain (the tracer,
-`MICROIDE_PERF_ALLOC_TRACE_PHASE`, is the tool), and record the build
-configuration in the baseline so a cross-configuration comparison is refused
-rather than reported as a regression. Do NOT rebaseline these four first: that
-would enshrine the very thing worth finding.
+Two pieces of work were named. **The second shipped 2026-08-12**: a baseline
+records `build_config` (CMake bakes `MICROIDE_PERF_BUILD_CONFIG` — build type
+plus the IPO flag — into the perf binary), and a mismatch unenforces exactly the
+metrics that move with it (wall, cpu, `mean_rss_growth_bytes`,
+`p50_net_heap_bytes`) with both configuration names on the verdict line.
+Allocation counts stay enforced, because they came out byte-identical across the
+two configurations measured. Verified live: the `Release+lto` binary run against
+a `RelWithDebInfo+lto` baseline PASSes on allocations and reports the other eight
+metrics as not comparable. Baselines written before the field compare exactly as
+they did.
+
+**Still open: what the four scenarios actually retain.** The tracer
+(`MICROIDE_PERF_ALLOC_TRACE_PHASE`) is the tool, and a first pass on
+`switch_and_idle` already points at the session encoder — see
+[159](#td-2026-08-06-159)'s 2026-08-12 entry. Do NOT rebaseline these four first:
+that would enshrine the very thing worth finding.
 
 ### TD-2026-08-12-190 — three merge scenarios gate on a re-show they name an open, and the fix needs an idle runner. OPEN.
 

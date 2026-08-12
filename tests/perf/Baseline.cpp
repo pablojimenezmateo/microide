@@ -528,6 +528,9 @@ BaselineRecord MergeDeterministicMetrics(const BaselineRecord& existing,
   // whose revision moved needs a full rerecord anyway, and stamping the new
   // revision is what lets the run stop shouting about it.
   merged.measurement_revision = fresh.measurement_revision;
+  // The label describes the numbers this record now holds, and the deterministic
+  // ones are fresh, so it has to come from the fresh side.
+  merged.build_config = fresh.build_config;
   merged.metrics.p50_allocations = fresh.metrics.p50_allocations;
   merged.metrics.p95_allocations = fresh.metrics.p95_allocations;
   merged.metrics.max_allocations = fresh.metrics.max_allocations;
@@ -641,6 +644,7 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   // Absent on every baseline written before the field existed, and false is the
   // right answer for those: they were all recorded on the reference runner.
   record.timing_is_advisory = (*parsed)["timing_is_advisory"].AsBool(false);
+  record.build_config = (*parsed)["build_config"].AsString();
 
   record.tolerances.cpu_p50_percent =
       tolerances["cpu_p50_percent"].AsDouble(record.tolerances.p50_percent);
@@ -726,6 +730,9 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   // the committed set does not churn.
   if (baseline.timing_is_advisory) {
     root["timing_is_advisory"] = true;
+  }
+  if (!baseline.build_config.empty()) {
+    root["build_config"] = baseline.build_config;
   }
   // Written whenever the run measured phases at all. A scenario with no
   // Measure() call writes no "phases" key, which is the same state as a
@@ -815,6 +822,43 @@ void UnenforceAdvisoryTimingHalf(BaselineComparison* out, const BaselineRecord& 
                        "advisory runner, so the number describes that machine as much as the "
                        "code. Rerun --update-baseline on the reference runner to arm it "
                        "(TD-2026-08-11-184)");
+  }
+}
+
+// Unenforce the metrics that move with the BUILD configuration when this run's
+// does not match the baseline's.
+//
+// Not everything: allocation counts came out byte-identical across the two
+// configurations measured (14,078 either way), which is what makes them the half
+// worth keeping enforced. Retention and durations are not — see
+// BaselineRecord::build_config for the numbers.
+//
+// Silent when either side is unknown, which is every baseline written before the
+// field existed: those compare exactly as they did.
+void UnenforceMetricsThatMoveWithBuildConfig(BaselineComparison* out,
+                                             const BaselineRecord& baseline,
+                                             const Aggregate& aggregate) {
+  if (baseline.build_config.empty() || aggregate.build_config.empty() ||
+      baseline.build_config == aggregate.build_config) {
+    return;
+  }
+  static constexpr std::string_view kConfigSensitive[] = {
+      "p50_wall_ms", "p95_wall_ms", "max_wall_ms",           "p50_cpu_ms",
+      "p95_cpu_ms",  "max_cpu_ms",  "mean_rss_growth_bytes", "p50_net_heap_bytes",
+  };
+  for (std::size_t index = 0; index < out->metrics.size(); ++index) {
+    const std::string& metric = out->metrics[index].metric;
+    const bool sensitive = std::find(std::begin(kConfigSensitive), std::end(kConfigSensitive),
+                                     metric) != std::end(kConfigSensitive);
+    if (!sensitive || !out->metrics[index].enforced) {
+      continue;
+    }
+    Unenforce(out, index,
+              metric + " NOT ENFORCED: this baseline was recorded from a '" +
+                  baseline.build_config + "' build and this run is '" + aggregate.build_config +
+                  "'. Retention and duration move with the build configuration, so this is "
+                  "not a comparison — rebuild with `cmake --preset microide-perf` "
+                  "(TD-2026-08-12-191)");
   }
 }
 
@@ -926,6 +970,7 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
   ComparePhaseAllocations(&result, baseline, aggregate);
   NoteTailOnlyAllocationDivergence(&result);
   UnenforceAdvisoryTimingHalf(&result, baseline);
+  UnenforceMetricsThatMoveWithBuildConfig(&result, baseline, aggregate);
   RefuseComparisonAcrossMeasurementRevisions(&result, baseline, aggregate);
   return result;
 }

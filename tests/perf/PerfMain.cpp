@@ -2247,6 +2247,10 @@ int main(int argc, char** argv) {
       // below), so a reference-recorded timing half is never downgraded by a
       // local allocation rebaseline.
       record.timing_is_advisory = !reference_lane;
+      // Which build these numbers came out of. Written on both paths, including
+      // the deterministic merge below (which starts from `existing` and would
+      // otherwise carry an older configuration's label onto fresh numbers).
+      record.build_config = PerfBuildConfig();
       if (options->update_deterministic_only) {
         const std::optional<BaselineRecord> existing = LoadBaseline(baseline_path);
         if (!existing.has_value()) {
