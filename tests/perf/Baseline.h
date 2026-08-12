@@ -125,7 +125,33 @@ struct BaselineRecord {
   // known to move with it and says so, which is the same treatment
   // `measurement_revision` gets for the same reason.
   std::string build_config;
+  // Spread of this baseline's own NORMALISED wall series, as a percentage:
+  // (p95 - p50) / p50 * 100, measured over the iterations that produced it. Zero
+  // on a baseline written before the field existed.
+  //
+  // This is step two of TD-2026-08-06-140. Step one made wall comparable across
+  // machine states by normalising it against the recorded clock; the envelope was
+  // left at 100/150/200 %, which cannot detect a constant-factor regression under
+  // 2x. The entry's blocker was that cutting those envelopes needed "a per-scenario
+  // review" nobody was going to do by hand for a hundred scenarios.
+  //
+  // Measuring it removes the review: the envelope a scenario can hold is a property
+  // of that scenario's own jitter, and the run that records the baseline is exactly
+  // where that jitter is observable. `EffectiveWallTolerance` widens the measured
+  // spread by a safety factor, floors it so a perfectly flat scenario does not get
+  // a hair-trigger gate, and CAPS it at the scenario's declared tolerance -- so it
+  // can only ever tighten a gate, never loosen one, and a scenario that
+  // deliberately widened its envelope keeps that widening.
+  double wall_spread_percent = 0.0;
 };
+
+// Wall envelope actually applied, given what the baseline recorded about its own
+// jitter. See BaselineRecord::wall_spread_percent.
+//
+// `declared` is the scenario's tolerance (the ceiling). `spread_percent` is the
+// baseline's measured spread; 0 means "not recorded", which yields the declared
+// value unchanged -- every baseline written before the field existed.
+[[nodiscard]] double EffectiveWallTolerance(double declared, double spread_percent);
 
 // Ceiling on the clock-normalisation factor, in either direction. A machine
 // genuinely 3x off the one a baseline was captured on is not the same reference

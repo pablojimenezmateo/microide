@@ -531,6 +531,9 @@ BaselineRecord MergeDeterministicMetrics(const BaselineRecord& existing,
   // The label describes the numbers this record now holds, and the deterministic
   // ones are fresh, so it has to come from the fresh side.
   merged.build_config = fresh.build_config;
+  // NOT from `fresh`: the spread describes the timing half, which this mode does
+  // not re-record. Taking it from a run declared untrustworthy for timing would
+  // re-cut the wall envelope from exactly the measurement the mode avoids.
   merged.metrics.p50_allocations = fresh.metrics.p50_allocations;
   merged.metrics.p95_allocations = fresh.metrics.p95_allocations;
   merged.metrics.max_allocations = fresh.metrics.max_allocations;
@@ -645,6 +648,7 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
   // right answer for those: they were all recorded on the reference runner.
   record.timing_is_advisory = (*parsed)["timing_is_advisory"].AsBool(false);
   record.build_config = (*parsed)["build_config"].AsString();
+  record.wall_spread_percent = (*parsed)["wall_spread_percent"].AsDouble(0.0);
 
   record.tolerances.cpu_p50_percent =
       tolerances["cpu_p50_percent"].AsDouble(record.tolerances.p50_percent);
@@ -733,6 +737,9 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   }
   if (!baseline.build_config.empty()) {
     root["build_config"] = baseline.build_config;
+  }
+  if (baseline.wall_spread_percent > 0.0) {
+    root["wall_spread_percent"] = baseline.wall_spread_percent;
   }
   // Written whenever the run measured phases at all. A scenario with no
   // Measure() call writes no "phases" key, which is the same state as a
@@ -862,16 +869,44 @@ void UnenforceMetricsThatMoveWithBuildConfig(BaselineComparison* out,
   }
 }
 
+// Safety factor on the measured spread, and the floor below which a gate stops
+// being a gate and becomes a coin flip.
+//
+// 3x because the spread recorded is one run's p95-over-p50 and the run being gated
+// is a different draw from the same distribution; 25% because a scenario whose
+// baseline run happened to be perfectly flat would otherwise get a zero-width
+// envelope, which is the mistake `p50_net_heap_bytes` and the resident gate each
+// had to be rescued from.
+inline constexpr double kWallSpreadSafetyFactor = 3.0;
+inline constexpr double kWallSpreadFloorPercent = 25.0;
+
+double EffectiveWallTolerance(double declared, double spread_percent) {
+  if (!(spread_percent > 0.0)) {
+    return declared;  // not recorded: every baseline written before the field existed
+  }
+  const double derived =
+      std::max(spread_percent * kWallSpreadSafetyFactor, kWallSpreadFloorPercent);
+  // Never widen. A scenario that declared a wide envelope did so for a reason the
+  // baseline run cannot see (see the tolerance:: constants).
+  return std::min(declared, derived);
+}
+
 BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggregate& aggregate) {
   BaselineComparison result;
   result.scenario_name = aggregate.scenario_name;
   const NormalizedCpu wall = NormalizeWallAgainstBaselineClock(baseline, aggregate);
+  // Envelopes derived from the baseline's own measured jitter where it recorded
+  // any, capped at the declared tolerance (TD-2026-08-06-140 step two).
+  const double wall_spread = baseline.wall_spread_percent;
   AddMetric(&result, "p50_wall_ms", baseline.metrics.p50_wall_ms, wall.metrics.p50_wall_ms,
-            baseline.tolerances.p50_percent, aggregate.metrics.p50_wall_ms);
+            EffectiveWallTolerance(baseline.tolerances.p50_percent, wall_spread),
+            aggregate.metrics.p50_wall_ms);
   AddMetric(&result, "p95_wall_ms", baseline.metrics.p95_wall_ms, wall.metrics.p95_wall_ms,
-            baseline.tolerances.p95_percent, aggregate.metrics.p95_wall_ms);
+            EffectiveWallTolerance(baseline.tolerances.p95_percent, wall_spread),
+            aggregate.metrics.p95_wall_ms);
   AddMetric(&result, "max_wall_ms", baseline.metrics.max_wall_ms, wall.metrics.max_wall_ms,
-            baseline.tolerances.max_percent, aggregate.metrics.max_wall_ms);
+            EffectiveWallTolerance(baseline.tolerances.max_percent, wall_spread),
+            aggregate.metrics.max_wall_ms);
   result.clock = wall.clock;
   AddMetric(&result, "p50_allocations", baseline.metrics.p50_allocations,
             aggregate.metrics.p50_allocations, baseline.tolerances.alloc_p50_percent);

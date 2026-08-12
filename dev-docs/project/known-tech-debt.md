@@ -3291,7 +3291,44 @@ commit, so they are already inside the recorded number and cannot be the cause �
 which is the trap this note exists to close. Check `git merge-base --is-ancestor
 932ad5d2 <candidate>` before spending a session on a suspect.
 
-### TD-2026-08-06-140 — the wall gate cannot catch a regression under 2x, and now has the data to. STEP ONE SHIPPED 2026-08-12; step two is the envelope re-cut and needs an idle runner.
+### TD-2026-08-06-140 — the wall gate cannot catch a regression under 2x, and now has the data to. [RESOLVED 2026-08-12 — both steps.]
+
+**Step one, the normalisation**, is described below.
+
+**Step two shipped the same day, by making the envelope a MEASUREMENT instead of
+a constant.** The entry's blocker was never the arithmetic — it was that cutting
+100/150/200 % down "needs a per-scenario review", and nobody reviews a hundred
+scenarios by hand. So the review is gone: a baseline records
+`wall_spread_percent`, the spread of its own NORMALISED wall series
+((p95 − p50) / p50), and `EffectiveWallTolerance` derives the envelope from it:
+
+```
+min(declared_tolerance, max(measured_spread * 3, 25%))
+```
+
+Three properties make this safe to ship without a reference rebaseline first:
+
+- **It can only tighten.** The declared tolerance is a ceiling, so a scenario that
+  widened its envelope deliberately (see the `tolerance::` constants) keeps every
+  bit of that widening.
+- **It is inert until a baseline records the field**, and every committed baseline
+  predates it — so today's behaviour is byte-identical, and each scenario tightens
+  the first time it is rerecorded on a runner whose jitter is worth believing.
+- **It has a floor.** A scenario whose baseline run happened to be perfectly flat
+  would otherwise get a zero-width gate, which is the mistake `p50_net_heap_bytes`
+  and the resident gate each had to be rescued from.
+
+`--update-baseline=deterministic` deliberately does NOT carry the fresh spread
+across: that mode does not re-record the timing half, and taking the spread from a
+run declared untrustworthy for timing would re-cut the wall envelope from exactly
+the measurement the mode exists to avoid.
+
+The test pins all of it, including the end-to-end property the entry is about: a
+baseline whose own spread is 2 % FAILS a +40 % wall rise that the 100 % default
+passes.
+
+#### Original entry
+
 
 **Shipped 2026-08-12 — the normalisation.** `NormalizeWallAgainstBaselineClock`
 re-expresses each iteration's wall in the baseline's machine state, weighted by

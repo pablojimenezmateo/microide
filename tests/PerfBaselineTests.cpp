@@ -930,6 +930,63 @@ void TestPerfBaselineDeclinesComparisonAcrossBuildConfigurations() {
          "an unlabelled baseline must compare raw rather than assume a mismatch");
 }
 
+// TD-2026-08-06-140 step two: the wall envelope comes from the baseline's own
+// measured jitter instead of a hand-picked 100/150/200%. The entry's blocker was
+// that cutting those constants needed a per-scenario review nobody would do a
+// hundred times; measuring the spread on the run that records the baseline makes
+// the review unnecessary, because the envelope is per-scenario by construction.
+void TestPerfBaselineWallEnvelopeComesFromMeasuredSpread() {
+  using perf::EffectiveWallTolerance;
+
+  // Not recorded (every baseline written before the field): unchanged.
+  Expect(EffectiveWallTolerance(100.0, 0.0) == 100.0,
+         "a baseline with no recorded spread must keep the declared envelope");
+
+  // A steady scenario (2% spread) tightens to the floor, not to 6%: a zero-width
+  // gate is the mistake the net-heap and resident gates each had to be rescued
+  // from.
+  Expect(EffectiveWallTolerance(100.0, 2.0) == 25.0,
+         "a steady scenario tightens to the floor rather than to 3x a tiny spread");
+
+  // A jittery one keeps more room, proportional to what it measured.
+  Expect(EffectiveWallTolerance(100.0, 20.0) == 60.0,
+         "a jittery scenario derives its envelope from its own spread");
+
+  // Never widens: a scenario that declared a wide envelope did so for a reason the
+  // baseline run cannot see. This is the property that makes the change safe to
+  // ship before any reference rebaseline.
+  Expect(EffectiveWallTolerance(100.0, 200.0) == 100.0,
+         "the derived envelope is capped at the declared tolerance, never above it");
+  Expect(EffectiveWallTolerance(20.0, 2.0) == 20.0,
+         "a scenario declaring TIGHTER than the floor keeps its own value");
+
+  // End to end: a baseline that recorded a 2% spread fails a +40% wall rise that
+  // the 100% default would have passed -- which is the whole point of the entry.
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.metrics.p50_wall_ms = 10.0;
+  baseline.metrics.p95_wall_ms = 10.0;
+  baseline.metrics.max_wall_ms = 10.0;
+  baseline.tolerances.p50_percent = 100.0;
+  baseline.tolerances.p95_percent = 150.0;
+  baseline.tolerances.max_percent = 200.0;
+  baseline.wall_spread_percent = 2.0;
+
+  perf::Aggregate run;
+  run.scenario_name = "test";
+  run.metrics = baseline.metrics;
+  run.metrics.p50_wall_ms = 14.0;
+  run.metrics.p95_wall_ms = 14.0;
+  run.metrics.max_wall_ms = 14.0;
+  Expect(!perf::CompareToBaseline(baseline, run).passed,
+         "a +40% wall rise must fail a scenario whose own measured spread is 2%");
+
+  perf::BaselineRecord unrecorded = baseline;
+  unrecorded.wall_spread_percent = 0.0;
+  Expect(perf::CompareToBaseline(unrecorded, run).passed,
+         "and must still pass against the 100% default, which is what the entry says "
+         "cannot catch a regression under 2x");
+}
+
 // The failure that opened the TD was a clock that stepped MID-run: five iterations
 // at one clock and five at another, one clean step, application counters identical
 // across it. A single per-run factor would smear that across both halves; each
@@ -1650,6 +1707,8 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
           TestPerfBaselineAdvisoryTimingHalfGatesAllocationsOnly);
   AddTest(tests, "PerfBaseline/DeclinesComparisonAcrossBuildConfigurations",
           TestPerfBaselineDeclinesComparisonAcrossBuildConfigurations);
+  AddTest(tests, "PerfBaseline/WallEnvelopeComesFromMeasuredSpread",
+          TestPerfBaselineWallEnvelopeComesFromMeasuredSpread);
   AddTest(tests, "PerfBaseline/NormalisesEachIterationAgainstItsOwnClock",
           TestPerfBaselineNormalisesEachIterationAgainstItsOwnClock);
   AddTest(tests, "PerfBaseline/ClampsAnAbsurdClockFactor",

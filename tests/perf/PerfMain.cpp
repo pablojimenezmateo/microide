@@ -2273,6 +2273,15 @@ int main(int argc, char** argv) {
       // the deterministic merge below (which starts from `existing` and would
       // otherwise carry an older configuration's label onto fresh numbers).
       record.build_config = PerfBuildConfig();
+      // The scenario's own jitter, measured on the run that is recording it. This
+      // is what lets the wall envelope be a property of the scenario instead of a
+      // constant nobody can review a hundred times (TD-2026-08-06-140 step two).
+      // From the NORMALISED series, because that is what the gate compares.
+      record.wall_spread_percent =
+          aggregate->metrics.p50_wall_ms > 0.0
+              ? std::max(0.0, (aggregate->metrics.p95_wall_ms - aggregate->metrics.p50_wall_ms) /
+                                  aggregate->metrics.p50_wall_ms * 100.0)
+              : 0.0;
       if (options->update_deterministic_only) {
         const std::optional<BaselineRecord> existing = LoadBaseline(baseline_path);
         if (!existing.has_value()) {
