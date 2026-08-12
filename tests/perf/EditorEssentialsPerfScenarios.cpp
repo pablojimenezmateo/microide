@@ -1307,20 +1307,23 @@ const ScenarioRegistration g_perf_editor_long_line_select_all_edit({Scenario{
     .run = RunEditorLongLineSelectAllEdit,
 }});
 // Both soft-wrap scenarios carry their own hard invariants (see the bodies), so
-// they gate on any box without a baseline. The wall/alloc envelopes are NOT
-// gated yet: a baseline has to be recorded on a quiet reference run, and this
-// pair was added on a loaded one (TD-2026-08-12-186).
+// they gate on any box without a baseline. Baseline-gated as of 2026-08-12 with
+// the timing half marked ADVISORY: allocations and net-heap retention are
+// deterministic and gate immediately, while wall/cpu/rss are reported and
+// explicitly not enforced until a reference run arms them. That beats the
+// previous state, where "no quiet machine available" meant gating on nothing at
+// all (TD-2026-08-12-186).
 const ScenarioRegistration g_perf_editor_soft_wrap_long_line_scroll({Scenario{
     .name = "editor_soft_wrap_long_line_scroll",
     .smoke = true,
-    .baseline_gated = false,
+    .baseline_gated = true,
     .warmup_iterations = 1,
     .run = RunEditorSoftWrapLongLineScroll,
 }});
 const ScenarioRegistration g_perf_editor_soft_wrap_long_line_typing({Scenario{
     .name = "editor_soft_wrap_long_line_typing",
     .smoke = true,
-    .baseline_gated = false,
+    .baseline_gated = true,
     .warmup_iterations = 1,
     .run = RunEditorSoftWrapLongLineTyping,
 }});

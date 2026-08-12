@@ -638,6 +638,9 @@ std::optional<BaselineRecord> LoadBaseline(const std::filesystem::path& path) {
     const double revision = (*parsed)["measurement_revision"].AsDouble();
     record.measurement_revision = revision >= 1.0 ? static_cast<std::size_t>(revision) : 1;
   }
+  // Absent on every baseline written before the field existed, and false is the
+  // right answer for those: they were all recorded on the reference runner.
+  record.timing_is_advisory = (*parsed)["timing_is_advisory"].AsBool(false);
 
   record.tolerances.cpu_p50_percent =
       tolerances["cpu_p50_percent"].AsDouble(record.tolerances.p50_percent);
@@ -719,6 +722,11 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
   // omitting the common case would throw that away for every baseline that has
   // not yet needed a bump.
   root["measurement_revision"] = static_cast<std::int64_t>(baseline.measurement_revision);
+  // Written only when true, so a reference-lane baseline's JSON is unchanged and
+  // the committed set does not churn.
+  if (baseline.timing_is_advisory) {
+    root["timing_is_advisory"] = true;
+  }
   // Written whenever the run measured phases at all. A scenario with no
   // Measure() call writes no "phases" key, which is the same state as a
   // pre-phase-gating baseline and compares the same way.
@@ -770,6 +778,44 @@ double EnvelopeUsedPercent(const MetricComparison& metric) {
     return 0.0;
   }
   return MetricDeltaPercent(metric) / metric.tolerance_percent * 100.0;
+}
+
+// A baseline whose timing half was recorded off the reference lane gates on its
+// deterministic metrics only, and says so per metric.
+//
+// The point is that "cannot record a trustworthy wall number here" stops meaning
+// "cannot record anything here". Before this, a scenario written on a loaded box
+// had two options, and both were bad: bake the noise into a wall gate that then
+// fails or passes at random, or register `baseline_gated = false` and gate on
+// NOTHING -- which is what the two soft-wrap scenarios did (TD-2026-08-12-186),
+// and what left five allocation gates 12-40 % loose with no way to tighten them
+// (TD-2026-08-11-184). Allocation counts and net-heap retention are
+// deterministic; wall, cpu and resident growth are not.
+//
+// Unenforced, not absent: the numbers are still measured, still printed, and
+// still comparable by eye. What they no longer do is decide the run.
+void UnenforceAdvisoryTimingHalf(BaselineComparison* out, const BaselineRecord& baseline) {
+  if (!baseline.timing_is_advisory) {
+    return;
+  }
+  static constexpr std::string_view kMachineSensitive[] = {
+      "p50_wall_ms",  "p95_wall_ms",         "max_wall_ms", "p50_cpu_ms",
+      "p95_cpu_ms",   "max_cpu_ms",          "mean_rss_growth_bytes",
+  };
+  for (std::size_t index = 0; index < out->metrics.size(); ++index) {
+    const std::string& metric = out->metrics[index].metric;
+    const bool machine_sensitive =
+        std::find(std::begin(kMachineSensitive), std::end(kMachineSensitive), metric) !=
+        std::end(kMachineSensitive);
+    if (!machine_sensitive || !out->metrics[index].enforced) {
+      continue;
+    }
+    Unenforce(out, index,
+              metric + " NOT ENFORCED: this baseline's timing half was recorded on an "
+                       "advisory runner, so the number describes that machine as much as the "
+                       "code. Rerun --update-baseline on the reference runner to arm it "
+                       "(TD-2026-08-11-184)");
+  }
 }
 
 BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggregate& aggregate) {
@@ -879,6 +925,7 @@ BaselineComparison CompareToBaseline(const BaselineRecord& baseline, const Aggre
   }
   ComparePhaseAllocations(&result, baseline, aggregate);
   NoteTailOnlyAllocationDivergence(&result);
+  UnenforceAdvisoryTimingHalf(&result, baseline);
   RefuseComparisonAcrossMeasurementRevisions(&result, baseline, aggregate);
   return result;
 }

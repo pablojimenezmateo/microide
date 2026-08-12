@@ -442,7 +442,32 @@ what keeps the two implementations honest, and a fallback that is
 asymptotically different from the real path is a fallback whose parity only holds
 on small fixtures.
 
-### TD-2026-08-12-186 — the two soft-wrap perf scenarios have no baseline, so only their hand-written invariants gate. OPEN.
+### TD-2026-08-12-186 — the two soft-wrap perf scenarios have no baseline, so only their hand-written invariants gate. [RESOLVED 2026-08-12 — the deterministic half is armed; the timing half is explicitly advisory.]
+
+**Fixed 2026-08-12 by making the harness able to say which half it recorded.**
+The entry's instruction was "record them on a quiet reference run", which meant
+the scenarios gated on NOTHING until somebody found an idle machine — a state
+that had already lasted the whole life of the pair.
+
+A `BaselineRecord` now carries `timing_is_advisory`. When set, the deterministic
+metrics (allocations, phase allocations, net-heap retention) gate normally and
+the machine-sensitive ones (wall, cpu, `mean_rss_growth_bytes`) are measured,
+printed, and explicitly NOT enforced, with the reason on the verdict line.
+`--update-baseline=deterministic` mints such a record when no baseline exists
+instead of skipping, and `MergeDeterministicMetrics` starts from the committed
+record, so a reference-recorded timing half is never downgraded by a later local
+allocation rebaseline.
+
+Both scenarios are `baseline_gated = true` now, with baselines minted here. What
+is still owed is one `--update-baseline --reference-runner=perf-runner-v1` on an
+idle box to arm the timing half — but the failure mode changed from "no gate" to
+"three quarters of a gate, and it says which quarter is missing".
+
+Same mechanism closes the "documented way to say deterministic metrics only" that
+[184](#td-2026-08-11-184) asks for.
+
+#### Original entry
+
 
 `editor_soft_wrap_long_line_scroll` and `editor_soft_wrap_long_line_typing`
 (added 2026-08-12 with the wrap fixes — soft wrap had no perf coverage at all

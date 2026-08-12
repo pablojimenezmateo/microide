@@ -1972,6 +1972,20 @@ int main(int argc, char** argv) {
               << ") measures window-system present cost and is advisory\n";
     return 1;
   }
+  // Is this run authoritative for the TIMING half of a baseline? Same predicate
+  // the report metadata uses for `provenance`, hoisted because the baselines are
+  // written inside the scenario loop below, long before the report is built.
+  //
+  // A run that is not authoritative can still write a baseline: the deterministic
+  // metrics (allocations, phase allocations, net heap) are portable, and the
+  // record carries `timing_is_advisory` so the machine-sensitive half is reported
+  // and explicitly not enforced until an idle reference run arms it. The
+  // alternative was all-or-nothing, which is why two scenarios shipped gating on
+  // nothing (TD-2026-08-12-186) and five allocation gates could not be tightened
+  // here (TD-2026-08-11-184).
+  const bool reference_lane = !gpu_lane && !windowed_lane && !unpinned_lane &&
+                              options->reference_runner.has_value() &&
+                              *options->reference_runner == std::string("perf-runner-v1");
   // A baseline recorded over fewer iterations than the gate will run is a gate
   // that can never be held — the p95s land on a cold pass, and the resident mean
   // records the settling series (memory: perf-baseline-drift-and-iteration-count,
@@ -2227,16 +2241,33 @@ int main(int argc, char** argv) {
       // release diff can refuse to difference them against numbers taken from a
       // different definition of the same scenario (TD-2026-08-07-167).
       record.measurement_revision = scenario.measurement_revision;
+      // Off the reference lane the timing half is a statement about THIS machine,
+      // so mark it as such rather than pretending otherwise. `=deterministic`
+      // preserves whatever the committed baseline already said (see the merge
+      // below), so a reference-recorded timing half is never downgraded by a
+      // local allocation rebaseline.
+      record.timing_is_advisory = !reference_lane;
       if (options->update_deterministic_only) {
         const std::optional<BaselineRecord> existing = LoadBaseline(baseline_path);
         if (!existing.has_value()) {
-          // No committed baseline to preserve the timing half of, so there is
-          // nothing to merge into. Writing the whole record from a run that was
-          // explicitly declared untrustworthy for timing would mint a timing gate
-          // out of exactly the measurement this mode exists to avoid taking.
-          std::cerr << "[perf] --update-baseline=deterministic: no committed baseline for "
-                    << scenario.name
-                    << "; skipping (run a full --update-baseline on an idle runner to mint it)\n";
+          // No committed baseline to preserve the timing half of. This used to
+          // skip, on the grounds that minting a timing gate out of a measurement
+          // this mode exists to avoid taking would be worse than nothing. It is
+          // representable now: mint the record with its timing half marked
+          // advisory, so the deterministic metrics gate immediately and the
+          // machine-sensitive ones are reported and explicitly not enforced until
+          // a reference run arms them (TD-2026-08-12-186). Skipping meant a new
+          // scenario gated on NOTHING until somebody found an idle machine.
+          BaselineRecord minted = record;
+          minted.timing_is_advisory = true;
+          if (!SaveBaseline(baseline_path, minted)) {
+            std::cerr << "failed to save baseline: " << baseline_path << '\n';
+            return 1;
+          }
+          std::cerr << "[perf] " << scenario.name
+                    << ": minted a baseline with the timing half ADVISORY (allocations and net "
+                       "heap gate now; rerun --update-baseline on the reference runner to arm "
+                       "wall/cpu/rss)\n";
           continue;
         }
         const double prior_p50 = existing->metrics.p50_allocations;
@@ -2328,11 +2359,35 @@ int main(int argc, char** argv) {
     // unenforced gate that only shows up in a failing run is a gate nobody knows
     // stopped gating (TD-2026-08-06-148).
     std::string metric_notes;
-    for (const MetricComparison& metric : comparison.metrics) {
-      if (metric.note.empty()) {
-        continue;
+    {
+      // Deduped by TEXT, and named metrics folded into one line. An
+      // advisory-timing baseline unenforces seven metrics for one reason, and
+      // seven copies of the same paragraph is a verdict line nobody reads.
+      std::vector<std::pair<std::string, std::string>> notes;  // (reason, metrics)
+      for (const MetricComparison& metric : comparison.metrics) {
+        if (metric.note.empty()) {
+          continue;
+        }
+        // The note conventionally begins with the metric's own name; strip it so
+        // two metrics unenforced for the same reason collapse.
+        std::string reason = metric.note;
+        if (reason.rfind(metric.metric, 0) == 0) {
+          reason = reason.substr(metric.metric.size());
+          if (!reason.empty() && reason.front() == ' ') {
+            reason.erase(0, 1);
+          }
+        }
+        const auto existing = std::find_if(notes.begin(), notes.end(),
+                                           [&](const auto& entry) { return entry.first == reason; });
+        if (existing == notes.end()) {
+          notes.emplace_back(reason, metric.metric);
+        } else {
+          existing->second += ", " + metric.metric;
+        }
       }
-      metric_notes += "  [" + metric.note + "]";
+      for (const auto& [reason, metrics] : notes) {
+        metric_notes += "  [" + metrics + " " + reason + "]";
+      }
     }
     std::cerr << "[perf] " << verdict << ' ' << scenario.name << " (p50_wall="
               << aggregate->metrics.p50_wall_ms << "ms, p50_alloc="

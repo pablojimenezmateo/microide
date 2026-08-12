@@ -803,6 +803,69 @@ void TestPerfBaselineNormalisesWallByItsWorkFraction() {
          "a sleep-dominated scenario must not have its wall scaled by the machine clock");
 }
 
+// TD-2026-08-11-184 / TD-2026-08-12-186: a baseline whose timing half was recorded
+// off the reference lane gates on its DETERMINISTIC metrics only. The point is
+// that "cannot record a trustworthy wall number here" stops meaning "cannot
+// record anything here" -- which is what left two scenarios gating on nothing and
+// five allocation gates 12-40% loose with no way to tighten them.
+void TestPerfBaselineAdvisoryTimingHalfGatesAllocationsOnly() {
+  perf::BaselineRecord baseline = MakeBaseline();
+  baseline.timing_is_advisory = true;
+  baseline.has_cpu_metrics = true;
+  baseline.metrics.p50_cpu_ms = 10.0;
+  baseline.metrics.p95_cpu_ms = 10.0;
+  baseline.metrics.max_cpu_ms = 10.0;
+
+  // Wall blown wide open, allocations exactly on baseline: must PASS.
+  perf::Aggregate wall_blowout;
+  wall_blowout.scenario_name = "test";
+  wall_blowout.metrics = baseline.metrics;
+  wall_blowout.metrics.p50_wall_ms = baseline.metrics.p50_wall_ms * 50.0;
+  wall_blowout.metrics.p95_wall_ms = baseline.metrics.p95_wall_ms * 50.0;
+  wall_blowout.metrics.max_wall_ms = baseline.metrics.max_wall_ms * 50.0;
+  wall_blowout.metrics.p50_cpu_ms = 500.0;
+  const perf::BaselineComparison timing = perf::CompareToBaseline(baseline, wall_blowout);
+  Expect(timing.passed,
+         "an advisory-timing baseline must not fail on wall or cpu -- those numbers describe "
+         "the machine that recorded them");
+  bool wall_noted = false;
+  for (const auto& metric : timing.metrics) {
+    if (metric.metric == "p50_wall_ms") {
+      Expect(!metric.enforced, "the wall metric must be reported as unenforced");
+      Expect(metric.note.find("advisory runner") != std::string::npos,
+             "and must say WHY it is unenforced, on the verdict line");
+      wall_noted = true;
+    }
+  }
+  Expect(wall_noted, "the comparison must still carry the wall metric, measured and printed");
+
+  // The deterministic half still gates: this is the negative control, without
+  // which the check above passes against a baseline that gates on nothing at all.
+  perf::Aggregate alloc_regression;
+  alloc_regression.scenario_name = "test";
+  alloc_regression.metrics = baseline.metrics;
+  alloc_regression.metrics.p50_allocations = baseline.metrics.p50_allocations * 4.0;
+  Expect(!perf::CompareToBaseline(baseline, alloc_regression).passed,
+         "an advisory-timing baseline must still fail on an allocation regression");
+
+  // And the flag survives a save/load round trip, or the whole thing is a
+  // one-run property.
+  const std::filesystem::path path =
+      std::filesystem::temp_directory_path() / "microide-advisory-timing-baseline.json";
+  Expect(perf::SaveBaseline(path, baseline), "the advisory baseline should save");
+  const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
+  Expect(loaded.has_value() && loaded->timing_is_advisory,
+         "timing_is_advisory must survive a save/load round trip");
+  std::filesystem::remove(path);
+
+  // A baseline WITHOUT the flag -- every one committed before it existed -- gates
+  // exactly as it did.
+  perf::BaselineRecord reference = baseline;
+  reference.timing_is_advisory = false;
+  Expect(!perf::CompareToBaseline(reference, wall_blowout).passed,
+         "a reference-lane baseline must still enforce its timing half");
+}
+
 // The failure that opened the TD was a clock that stepped MID-run: five iterations
 // at one clock and five at another, one clean step, application counters identical
 // across it. A single per-run factor would smear that across both halves; each
@@ -1519,6 +1582,8 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
           TestPerfBaselineNormalisesCpuAgainstTheBaselineClock);
   AddTest(tests, "PerfBaseline/NormalisesWallByItsWorkFraction",
           TestPerfBaselineNormalisesWallByItsWorkFraction);
+  AddTest(tests, "PerfBaseline/AdvisoryTimingHalfGatesAllocationsOnly",
+          TestPerfBaselineAdvisoryTimingHalfGatesAllocationsOnly);
   AddTest(tests, "PerfBaseline/NormalisesEachIterationAgainstItsOwnClock",
           TestPerfBaselineNormalisesEachIterationAgainstItsOwnClock);
   AddTest(tests, "PerfBaseline/ClampsAnAbsurdClockFactor",

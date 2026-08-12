@@ -92,6 +92,24 @@ struct BaselineRecord {
   // field existed, which reads as 1 — correct by construction, because 1 is what
   // every scenario declares until somebody changes what it measures.
   std::size_t measurement_revision = 1;
+  // Set when the timing/resident half of this baseline was recorded on a runner
+  // that is NOT the reference lane -- a developer box under load, where a wall,
+  // cpu or resident number is a statement about that machine as much as about
+  // the code.
+  //
+  // The alternative the harness had was all-or-nothing: refuse to write the
+  // baseline at all, which is why two scenarios shipped with `baseline_gated =
+  // false` and gated on nothing (TD-2026-08-12-186), and why five allocation
+  // gates sat 12-40 % loose with no way to tighten them here
+  // (TD-2026-08-11-184). Allocation counts and net-heap retention are
+  // deterministic and portable; the timing half is not. So a baseline can now
+  // say which half it is: the deterministic metrics gate normally, and the
+  // machine-sensitive ones are reported and explicitly NOT enforced, with the
+  // reason on the verdict line, until an idle reference run arms them.
+  //
+  // False on every baseline written before this field existed, which is correct:
+  // those were all recorded on the reference runner.
+  bool timing_is_advisory = false;
 };
 
 // Ceiling on the clock-normalisation factor, in either direction. A machine
