@@ -845,6 +845,27 @@ class TextViewport {
   // start of the next one. kNextRow everywhere else, including the last row of a
   // logical line (whose end is the end of the line, not a wrap point).
   WrapRowAffinity AffinityForRowLanding(std::size_t row_index, std::size_t visual_column) const;
+  // Text-column bounds of the VIEW line a caret sits on: the wrapped row under
+  // soft wrap, the whole logical line otherwise. `[first, last]` are text
+  // columns; `last_is_wrap_point` says the row ends at a wrap boundary rather
+  // than at the end of the logical line, which is what an End landing there
+  // needs in order to render at the row's trailing edge (WrapRowAffinity).
+  //
+  // Home/End are view-line verbs in VS Code (`cursorHome`/`cursorEnd`), with
+  // `cursorLineStart`/`cursorLineEnd` as the separate logical-line pair
+  // (TD-2026-08-12-188).
+  struct ViewLineBounds {
+    std::size_t first = 0;
+    std::size_t last = 0;
+    bool last_is_wrap_point = false;
+  };
+  ViewLineBounds ViewLineBoundsForCaret(const TextPosition& caret,
+                                        WrapRowAffinity affinity) const;
+  // First non-whitespace text column at or after `bounds.first`, or
+  // `bounds.first` when the view line is blank. The target of the first Home
+  // press; a second press falls back to `bounds.first`, as VS Code does.
+  std::size_t FirstNonWhitespaceColumnInView(std::size_t line,
+                                             const ViewLineBounds& bounds) const;
   // The primary caret's affinity, honoured only while the caret is still exactly
   // where the affinity was set. Every path that moves the caret without going
   // through PlacePrimaryCaret (edit application, undo restore, language

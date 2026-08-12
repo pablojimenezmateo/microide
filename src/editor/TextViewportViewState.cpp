@@ -266,27 +266,90 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
   EnsureCursorVisible();
 }
 
+TextViewport::ViewLineBounds TextViewport::ViewLineBoundsForCaret(
+    const TextPosition& caret,
+    WrapRowAffinity affinity) const {
+  const std::size_t line_length =
+      caret.line < document_->lines.size() ? document_->lines.LineLength(caret.line) : 0;
+  const ViewLineBounds whole_line{0, line_length, false};
+  if (!soft_wrap_ || document_->lines.empty() || caret.line >= document_->lines.size()) {
+    return whole_line;
+  }
+  EnsureWrappedRowLayouts();
+  if (layout_cache_.wrapped_row_layouts_trivial() || WrappedRowCount() == 0) {
+    return whole_line;
+  }
+  const std::size_t row = CursorVisualRowForCaret(caret, affinity);
+  const WrappedRowLayout layout = WrappedRowAt(row);
+  // A caret on a fold-hidden line resolves to the OPENER's row, which belongs to
+  // another logical line: Home/End must stay on the caret's own line there.
+  if (layout.line_index != caret.line || layout.visual_end <= layout.visual_start) {
+    return whole_line;
+  }
+  const std::size_t first = TextColumnAtVisualColumn(caret.line, layout.visual_start);
+  const std::size_t last =
+      std::min(TextColumnAtVisualColumn(caret.line, layout.visual_end), line_length);
+  return ViewLineBounds{first, std::max(first, last), last < line_length};
+}
+
+std::size_t TextViewport::FirstNonWhitespaceColumnInView(std::size_t line,
+                                                         const ViewLineBounds& bounds) const {
+  if (line >= document_->lines.size()) {
+    return bounds.first;
+  }
+  const std::string_view text = document_->lines.LineView(line);
+  const std::size_t limit = std::min(bounds.last, text.size());
+  for (std::size_t column = std::min(bounds.first, limit); column < limit; ++column) {
+    if (text[column] != ' ' && text[column] != '\t') {
+      return column;
+    }
+  }
+  return bounds.first;
+}
+
+// Home. VS Code's `cursorHome`: within the VIEW line (so with word wrap on it
+// stops at the start of the wrapped row, not three rows back up the paragraph),
+// and to the first non-whitespace character, toggling to the row's true start
+// when the caret is already there (TD-2026-08-12-188).
 void TextViewport::MoveCursorLineStart(bool extend_selection) {
   undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
-  PlacePrimaryCaret(cursor_line_, 0);
+  const auto home_target = [&](const TextPosition& caret, WrapRowAffinity affinity) {
+    const ViewLineBounds bounds = ViewLineBoundsForCaret(caret, affinity);
+    const std::size_t indent_end = FirstNonWhitespaceColumnInView(caret.line, bounds);
+    return caret.column == indent_end ? bounds.first : indent_end;
+  };
+  PlacePrimaryCaret(cursor_line_,
+                    home_target(TextPosition{cursor_line_, cursor_column_},
+                                EffectiveCaretAffinity()));
   for (SecondaryCaret& caret : secondary_carets_) {
-    caret.position.column = 0;
+    caret.position.column = home_target(caret.position, caret.wrap_affinity);
     caret.preferred_column = PreferredColumnForCaret(caret.position);
+    caret.wrap_affinity = WrapRowAffinity::kNextRow;
   }
   DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
 }
 
+// End. VS Code's `cursorEnd`: the end of the VIEW line. Landing exactly on a
+// wrap point takes kPreviousRow affinity, or the caret would render at the start
+// of the NEXT row -- the one position two rows both claim.
 void TextViewport::MoveCursorLineEnd(bool extend_selection) {
   undo_history_.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
-  PlacePrimaryCaret(cursor_line_, CurrentLineLength());
+  const ViewLineBounds primary_bounds =
+      ViewLineBoundsForCaret(TextPosition{cursor_line_, cursor_column_}, EffectiveCaretAffinity());
+  PlacePrimaryCaret(cursor_line_, primary_bounds.last, /*keep_preferred_column=*/false,
+                    primary_bounds.last_is_wrap_point ? WrapRowAffinity::kPreviousRow
+                                                      : WrapRowAffinity::kNextRow);
   for (SecondaryCaret& caret : secondary_carets_) {
     if (caret.position.line < document_->lines.size()) {
-      caret.position.column = document_->lines.LineLength(caret.position.line);
+      const ViewLineBounds bounds = ViewLineBoundsForCaret(caret.position, caret.wrap_affinity);
+      caret.position.column = bounds.last;
+      caret.wrap_affinity =
+          bounds.last_is_wrap_point ? WrapRowAffinity::kPreviousRow : WrapRowAffinity::kNextRow;
     }
-    caret.preferred_column = PreferredColumnForCaret(caret.position);
+    caret.preferred_column = PreferredColumnForCaret(caret.position, caret.wrap_affinity);
   }
   DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();

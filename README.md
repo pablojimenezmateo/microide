@@ -583,6 +583,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+s` | Save |
 | `Ctrl+Shift+p` | Open command palette |
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
+| `Home` / `End` | Start / end of the view line (the wrapped row under word wrap); `Home` toggles between the first non-whitespace character and column 0 |
 | `Ctrl+Shift+Alt+arrows` | Column (box) selection |
 | `PageUp` / `PageDown` | Scroll viewport |
 | `d` on sidebar file | Open compare commit picker |

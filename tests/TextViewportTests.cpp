@@ -1847,6 +1847,76 @@ void TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes() {
          "down from a collapsed soft-wrapped opener must cross the fold to the next visible line");
 }
 
+// TD-2026-08-12-188: Home/End are VIEW-line verbs in VS Code (`cursorHome` /
+// `cursorEnd`), with `cursorLineStart`/`cursorLineEnd` as the separate
+// logical-line pair. This editor moved by logical line in both, so with word wrap
+// on, Home on the fourth wrapped row of a paragraph scrolled back up three rows.
+void TestTextViewportHomeAndEndMoveWithinTheWrappedRow() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa bbbb cccc dddd eeee ffff gggg hhhh\n", "/tmp/home-end-wrap.txt");
+  viewport.SetViewportSize(8, 10);
+  viewport.SetSoftWrap(true);
+
+  const std::size_t line_length = viewport.lines().LineLength(0);
+  viewport.MoveCursorTo(0, line_length - 2);
+  const std::size_t last_row = viewport.cursor_visual_row();
+  Expect(last_row > 0, "the fixture must wrap, or view-line and logical-line motion coincide");
+
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_visual_row() == last_row,
+         "Home must stay on the caret's own wrapped row, not jump to the top of the paragraph");
+  Expect(viewport.cursor_column() > 0,
+         "Home on a continuation row must land at the ROW's start, not the logical line's");
+
+  viewport.MoveCursorTo(0, viewport.cursor_column() + 1);
+  viewport.MoveCursorLineEnd();
+  Expect(viewport.cursor_visual_row() == last_row,
+         "End must stay on the caret's own wrapped row");
+  Expect(viewport.cursor_column() == line_length,
+         "End on the LAST wrapped row lands at the end of the logical line");
+
+  // A middle row: End stops at the wrap point, and the caret stays on that row
+  // rather than rendering at the start of the next one.
+  viewport.MoveCursorTo(0, 0);
+  const std::size_t first_row = viewport.cursor_visual_row();
+  viewport.MoveCursorLineEnd();
+  Expect(viewport.cursor_column() < line_length,
+         "End on a middle wrapped row must stop at the row's end, not the line's");
+  Expect(viewport.cursor_visual_row() == first_row,
+         "an End that lands exactly on a wrap point must render at that row's trailing edge");
+}
+
+// The other half of the same entry: VS Code's Home goes to the first
+// non-whitespace character and toggles to true column 0 when the caret is
+// already there.
+void TestTextViewportHomeTogglesBetweenIndentAndColumnZero() {
+  TextViewport viewport;
+  viewport.LoadContent("    int x = 1;\n", "/tmp/home-indent.txt");
+  viewport.SetViewportSize(4, 80);
+
+  viewport.MoveCursorTo(0, 10);
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_column() == 4, "Home first lands on the first non-whitespace character");
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_column() == 0, "Home again falls through to column 0");
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_column() == 4, "and toggles back to the indent");
+
+  // A line with no indent has nothing to toggle between.
+  viewport.LoadContent("int y = 2;\n", "/tmp/home-no-indent.txt");
+  viewport.MoveCursorTo(0, 5);
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_column() == 0, "with no leading whitespace Home goes straight to 0");
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_column() == 0, "and stays there");
+
+  // A blank line: first-non-whitespace does not exist, so both are column 0.
+  viewport.LoadContent("      \n", "/tmp/home-blank.txt");
+  viewport.MoveCursorTo(0, 6);
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_column() == 0, "an all-whitespace line homes to column 0");
+}
+
 // TD-2026-08-12-185: the row-offset table stores, for every hidden line, the row
 // where the last VISIBLE line STARTED — so with soft wrap on, a collapsed opener
 // that wraps into rows [R, R+3] answered R for every line it hides. A caret
@@ -5318,6 +5388,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows);
   AddTest(tests, "TextViewport/SoftWrapCollapsedFoldOpenerVerticalMotionEscapes",
           TestTextViewportSoftWrapCollapsedFoldOpenerVerticalMotionEscapes);
+  AddTest(tests, "TextViewport/HomeAndEndMoveWithinTheWrappedRow",
+          TestTextViewportHomeAndEndMoveWithinTheWrappedRow);
+  AddTest(tests, "TextViewport/HomeTogglesBetweenIndentAndColumnZero",
+          TestTextViewportHomeTogglesBetweenIndentAndColumnZero);
   AddTest(tests, "TextViewport/SoftWrapCaretOnFoldHiddenLineEscapesInOneStep",
           TestTextViewportSoftWrapCaretOnFoldHiddenLineEscapesInOneStep);
   AddTest(tests, "TextViewport/SoftWrapPageMovesByVisibleRows",

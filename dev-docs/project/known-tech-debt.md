@@ -361,7 +361,30 @@ iterator stored beside the layout, spliced to the back on a hit. Then the
 eviction victim is always older than anything the current frame has touched, and
 the invariant holds for hits as well as builds.
 
-### TD-2026-08-12-188 — Home/End under soft wrap move by LOGICAL line, where VS Code moves by visual row. OPEN (product decision).
+### TD-2026-08-12-188 — Home/End under soft wrap move by LOGICAL line, where VS Code moves by visual row. [RESOLVED 2026-08-12 — both halves.]
+
+**Shipped 2026-08-12**, taking VS Code's semantics for both halves the entry
+named:
+
+- **View-line motion.** `ViewLineBoundsForCaret` resolves the caret's wrapped row
+  and converts its `[visual_start, visual_end)` to text columns; with wrap off,
+  or on a trivial layout, it hands back the whole logical line, so the non-wrap
+  behaviour is unchanged by construction. An End that lands exactly on a wrap
+  point takes `WrapRowAffinity::kPreviousRow`, so it renders at that row's
+  trailing edge instead of the next row's start. A caret on a fold-hidden line
+  resolves to the OPENER's row, which belongs to a different logical line — that
+  case falls back to the whole line rather than moving the caret onto someone
+  else's row.
+- **The first-non-whitespace toggle.** Home goes to the first non-whitespace
+  character of the view line, and to the row's true start when the caret is
+  already there.
+
+Both applied to secondary carets too. Worth recording: **the whole suite stayed
+green after the semantics changed**, so nothing had pinned the old Home
+behaviour — the two new tests are the first coverage this verb has had.
+
+#### Original entry
+
 
 With word wrap on, `MoveCursorLineStart`/`MoveCursorLineEnd` jump to column 0 /
 the end of the whole logical line, so pressing Home on the fourth wrapped row of
