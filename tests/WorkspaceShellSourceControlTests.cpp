@@ -149,7 +149,7 @@ void TestWorkspaceShellGitSidebarLeftClickDoesNotFireActions() {
              entries[0].section == WorkspaceShell::GitSidebarEntry::Section::Changed &&
              !entries[0].staged,
          "left-clicking a git sidebar entry must not stage it");
-  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == entries[0].path.lexically_normal(),
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == std::filesystem::path(entries[0].path).lexically_normal(),
          "left-clicking a git sidebar entry should open its comparison");
   Expect(!WorkspaceShellTestAccess::GitEntryContextMenuOpen(shell),
          "left-clicking a git sidebar entry should not open the context menu");
@@ -242,7 +242,7 @@ void TestWorkspaceShellOpeningGitSidebarEntryAlsoInvalidatesSidebarSelection() {
          "opening a git sidebar entry should stay on a partial redraw path");
   Expect(AnyRectIntersects(result.redraw.rects, layout.sidebar),
          "opening a git sidebar entry should also invalidate the sidebar selection state");
-  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == entries[1].path.lexically_normal(),
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).path == std::filesystem::path(entries[1].path).lexically_normal(),
          "clicking a git sidebar entry should open the selected comparison target");
 }
 
@@ -287,7 +287,8 @@ void TestWorkspaceShellGitSidebarUntrackedEntryOpensEditor() {
   Expect(result.handled, "clicking an untracked git sidebar entry should be handled");
   const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
   Expect(!tabs.empty(), "clicking an untracked entry should open a tab");
-  Expect(tabs.back().path == entries[untracked_index].path.lexically_normal(),
+  Expect(tabs.back().path ==
+             std::filesystem::path(entries[untracked_index].path).lexically_normal(),
          "clicking an untracked entry should open the file in an editor tab");
   Expect(tabs.back().kind == TabEntry::Kind::Editor,
          "untracked entries should open as editor tabs, not compare tabs");

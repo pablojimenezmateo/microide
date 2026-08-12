@@ -128,12 +128,15 @@ MergeResolverStatus BuildMergeResolverStatus(const MergeTabState& merge_tab,
 std::optional<project::GitRepositoryEntry> FindConflictRepositoryEntry(
     const project::GitRepositoryState& repository_state,
     const std::filesystem::path& relative_path) {
+  // Repository entries carry generic text, not a `path` (TD-2026-08-11-183), so
+  // derive the key once here instead of per entry.
+  const std::string key = relative_path.generic_string();
   for (const project::GitRepositoryEntry& entry : repository_state.entries) {
-    if (entry.conflicted && entry.path.relative_path == relative_path) {
+    if (entry.conflicted && entry.path.relative_path == key) {
       return entry;
     }
     if (entry.conflicted && entry.old_path.has_value() &&
-        entry.old_path->relative_path == relative_path) {
+        entry.old_path->relative_path == key) {
       return entry;
     }
   }

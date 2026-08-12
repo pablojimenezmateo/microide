@@ -29,18 +29,15 @@ struct GitSidebarTreeNode {
 // A row paired with its sort/group key, computed ONCE. The comparator used to
 // derive this key from scratch on both sides of every comparison, which made the
 // sort O(n log n) path normalizations for an O(n) amount of distinct text.
+//
+// The key is a VIEW into the row's own `relative_path`, which is already the
+// normalized generic text git reported (TD-2026-08-11-183) — so grouping a
+// 3,000-file refresh no longer copies 3,000 strings out of it. The rows live in the
+// caller's view model and outlive every use of these views.
 struct KeyedRow {
   const GitSidebarRowViewModel* row = nullptr;
-  std::string key;
+  std::string_view key;
 };
-
-// `path` as one normalized generic string. One allocation on the overwhelmingly
-// common already-normalized input; the fallback is the authoritative form.
-std::string NormalizedGenericPath(const std::filesystem::path& path) {
-  std::string text = path.generic_string();
-  if (!util::PathTextNeedsNormalizing(text)) return text;
-  return path.lexically_normal().generic_string();
-}
 
 std::string FileLeafLabel(const GitSidebarRowViewModel& row, std::string_view normalized_key) {
   if (!row.primary_label.empty()) {
@@ -119,19 +116,27 @@ void EmitGitSidebarTreeLines(const GitSidebarTreeNode& node,
 
 }  // namespace
 
-GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(const std::filesystem::path& relative_path,
+GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(std::string_view relative_path,
                                                        bool staged) {
-  const std::filesystem::path normalized_path = relative_path.lexically_normal();
-
+  // The input is the normalized generic text git reported, so the leaf and its
+  // parent are one `find_last_of('/')`. This used to run `lexically_normal()` plus
+  // `filename()` plus `parent_path()` per changed file — roughly fifteen
+  // allocations each, on the path that rebuilds the whole git panel
+  // (TD-2026-08-11-183).
   GitSidebarEntryTextModel model;
-  model.primary_label = normalized_path.filename().string();
-  if (model.primary_label.empty()) {
-    model.primary_label = normalized_path.empty() ? "." : normalized_path.generic_string();
+  const std::size_t slash = relative_path.find_last_of('/');
+  const std::string_view leaf =
+      slash == std::string_view::npos ? relative_path : relative_path.substr(slash + 1);
+  if (!leaf.empty()) {
+    model.primary_label.assign(leaf);
+  } else {
+    model.primary_label = relative_path.empty() ? "." : std::string(relative_path);
   }
 
-  const std::filesystem::path parent = normalized_path.parent_path();
+  const std::string_view parent =
+      slash == std::string_view::npos ? std::string_view{} : relative_path.substr(0, slash);
   if (!parent.empty() && parent != ".") {
-    model.secondary_label = parent.generic_string();
+    model.secondary_label.assign(parent);
   }
   if (staged) {
     if (!model.secondary_label.empty()) {
@@ -170,7 +175,7 @@ std::vector<GitSidebarLineSpec> BuildGitSidebarLineSpecs(
     std::vector<KeyedRow> sorted_rows;
     sorted_rows.reserve(section.rows.size());
     for (const GitSidebarRowViewModel& row : section.rows) {
-      sorted_rows.push_back(KeyedRow{.row = &row, .key = NormalizedGenericPath(row.relative_path)});
+      sorted_rows.push_back(KeyedRow{.row = &row, .key = row.relative_path});
     }
     std::sort(sorted_rows.begin(), sorted_rows.end(),
               [](const KeyedRow& lhs, const KeyedRow& rhs) {

@@ -117,13 +117,13 @@ void TestWorkspaceSharedGitSidebarEmptyStates() {
 }
 
 void TestWorkspaceSharedGitSidebarEntryTextModel() {
-  const auto nested = BuildGitSidebarEntryTextModel(std::filesystem::path("src/deep/main.cpp"), false);
+  const auto nested = BuildGitSidebarEntryTextModel("src/deep/main.cpp", false);
   Expect(nested.primary_label == "main.cpp",
          "git sidebar text model should prioritize the filename");
   Expect(nested.secondary_label == "src/deep",
          "git sidebar text model should move the parent path into the secondary label");
 
-  const auto staged = BuildGitSidebarEntryTextModel(std::filesystem::path("main.cpp"), true);
+  const auto staged = BuildGitSidebarEntryTextModel("main.cpp", true);
   Expect(staged.primary_label == "main.cpp",
          "git sidebar text model should preserve root-level filenames");
   Expect(staged.secondary_label == "[staged]",

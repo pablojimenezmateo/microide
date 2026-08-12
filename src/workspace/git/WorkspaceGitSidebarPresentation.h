@@ -54,7 +54,9 @@ std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
 std::optional<std::size_t> FindSelectedGitSidebarLineIndex(
     const std::vector<GitSidebarLine>& lines,
     std::size_t selected_entry_index);
-GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(const std::filesystem::path& relative_path,
+// `relative_path` is the normalized generic ('/'-separated) text a GitSidebarEntry
+// carries, not a filesystem path.
+GitSidebarEntryTextModel BuildGitSidebarEntryTextModel(std::string_view relative_path,
                                                        bool staged);
 
 // The git view model plus its flattened rows, built together from one walk of state.

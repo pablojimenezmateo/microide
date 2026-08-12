@@ -80,8 +80,14 @@ struct GitSidebarEntry {
   };
 
   Section section = Section::Changed;
-  std::filesystem::path path;
-  std::filesystem::path relative_path;
+  // Both are '/'-separated generic TEXT, not `std::filesystem::path`: `path` is the
+  // repository root joined to `relative_path`, and neither is ever traversed by
+  // component here. Holding two `path`s cost ~4 allocations per changed file on
+  // every refresh — a `path` is its pathname plus an eagerly built component list —
+  // and the only consumer that needs a real path (opening the file, staging it)
+  // builds one at the point of use (TD-2026-08-11-183).
+  std::string path;
+  std::string relative_path;
   project::GitFileStatus status = project::GitFileStatus::Clean;
   bool conflicted = false;
   bool staged = false;
@@ -128,7 +134,8 @@ struct ProblemsSidebarEntry {
 struct GitSidebarState {
   struct RefreshSnapshotEntry {
     GitSidebarEntry::Section section = GitSidebarEntry::Section::Changed;
-    std::filesystem::path relative_path;
+    // Generic '/'-separated text, straight from GitRepositoryPathIdentity.
+    std::string relative_path;
     project::GitFileStatus status = project::GitFileStatus::Clean;
     bool conflicted = false;
     bool staged = false;

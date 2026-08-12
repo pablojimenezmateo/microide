@@ -325,7 +325,7 @@ drift is not new. Same family as [141](#td-2026-08-06-141) (nothing reruns the
 gate) and [161](#td-2026-08-07-161) (the timing half needs a quiet machine — this
 half does not).
 
-### TD-2026-08-11-183 — a git refresh materializes each changed file's path as a `std::filesystem::path` four times, and libstdc++'s `path` is not one allocation. OPEN.
+### TD-2026-08-11-183 — a git refresh materializes each changed file's path as a `std::filesystem::path` four times, and libstdc++'s `path` is not one allocation. PARTIALLY RESOLVED 2026-08-12 — the code change shipped; the rebaseline has not been run.
 
 After the ingress fix ([174](#td-2026-08-10-174)), `git.refresh_dispatch` at 3,000
 untracked files is 45,051 allocations, and the remainder is one shape rather than
@@ -352,6 +352,29 @@ an absolute `path` at the point of use. It is a wide change (`GitRepositoryEntry
 consumer of `.path`), which is why it is an entry and not a commit. Worth it: git
 refresh is the single largest gated phase in the suite, and it runs on every
 external file change.
+
+**Shipped 2026-08-12.** All four stages now carry `std::string` generic text:
+`GitRepositoryPathIdentity` holds the text plus an `escaped_label` populated only
+for a non-UTF-8 path (the valid case no longer stores a second copy of its own
+label), `RefreshGit` joins root and relative by string concatenation into one
+reserved buffer instead of `root / relative`, and the presentation layer's
+grouping keys are `string_view`s into the row's own `relative_path` rather than
+normalized copies. `GenericPathView` lost its scratch parameter — the stored text
+*is* the key — and `DisplayLabelView` now names the escape-aware read.
+
+The invariant this rests on is enforced at both ingresses, not assumed:
+`MakeGitRepositoryPathIdentity` normalizes behind `PathTextNeedsNormalizing`, and
+`CollectGitBranchOutgoingFiles` calls `lexically_normal()` — so the presentation
+layer can trust the text it is handed. `GitSidebarCommandCenter/
+TreeGroupingMatchesPathAlgebra` moved its fixture's normalization to where the
+ingress does it, which is what caught that the contract had to be stated.
+
+**Left open: the allocation rebaseline.** The gate is one-sided (`actual <=
+expected + delta`), so the improvement passes against the old numbers and
+`git_sidebar_refresh_many_untracked` keeps a `p50_allocations` of 52,001 it no
+longer spends — exactly the "allocation drift down" the sweep exists to close.
+Re-record on an idle `perf-runner-v1`; this pass had no idle machine, and a
+rebaseline taken on a busy one would enshrine noise in the wall/cpu fields.
 
 Also visible in that trace and worth its own look: `ScenarioContext::Measure` is
 **10 %** of `git.refresh_dispatch`'s allocations. [163](#td-2026-08-07-163)

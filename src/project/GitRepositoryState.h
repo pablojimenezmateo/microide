@@ -65,9 +65,20 @@ enum class GitOperationResultCategory {
   UnknownError,
 };
 
+// A changed file's identity as the '/'-separated generic TEXT git reported, not as
+// a `std::filesystem::path`. libstdc++'s `path` is `_M_pathname` plus `_M_cmpts` (a
+// component list the constructor builds eagerly), so holding one here cost two-plus
+// allocations per changed file before anything downstream asked for a path — and
+// nothing downstream does: the tree-status map, the sidebar tree, the grouping keys
+// and the row labels all index by this text, and only "open this file" wants a real
+// path, which it builds at the point of use (TD-2026-08-11-183).
 struct GitRepositoryPathIdentity {
-  std::filesystem::path relative_path;
-  std::string display_label;
+  // Normalized generic text, relative to the repository root.
+  std::string relative_path;
+  // Hex escape of a path git reported with non-UTF-8 bytes. Empty when the path is
+  // valid UTF-8 — in that case the display label IS `relative_path`, and storing a
+  // second copy of it was a per-entry allocation the refresh path did not need.
+  std::string escaped_label;
   bool path_is_valid_utf8 = true;
 };
 
@@ -135,15 +146,22 @@ struct GitRepositoryState {
 // "upstream" label unreachable.
 GitOperationStateKind DetectGitOperationState(const std::filesystem::path& repository_root);
 
-GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::filesystem::path relative_path);
+// `relative_path` is the generic text git already emits, so the common case is one
+// string move and a UTF-8 scan; only an unnormalized spelling pays a path round-trip.
+GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::string relative_path);
 
 // The identity's normalized generic-form ('/'-separated) path — the key form the
-// tree-status map and DirectoryTree index by, which is NOT always display_label.
-// MakeGitRepositoryPathIdentity sets display_label to exactly that string when the
-// path is valid UTF-8, so the common case returns a view and does no work; an
-// invalid-UTF-8 path escapes its label, so the real key is rebuilt into `scratch`.
-// `scratch` must outlive the returned view.
-std::string_view GenericPathView(const GitRepositoryPathIdentity& identity, std::string& scratch);
+// tree-status map and DirectoryTree index by. It is the stored text itself.
+[[nodiscard]] inline std::string_view GenericPathView(const GitRepositoryPathIdentity& identity) {
+  return identity.relative_path;
+}
+
+// What to SHOW for this path: the generic text, unless git reported bytes that are
+// not valid UTF-8, in which case the escaped form stands in for it.
+[[nodiscard]] inline std::string_view DisplayLabelView(const GitRepositoryPathIdentity& identity) {
+  return identity.path_is_valid_utf8 ? std::string_view(identity.relative_path)
+                                     : std::string_view(identity.escaped_label);
+}
 GitRefreshErrorCategory ClassifyGitRefreshFailure(int exit_code, std::string_view stderr_text);
 GitConflictKind ConflictKindFromUnmergedCodes(std::string_view xy);
 GitFileStatus StatusFromPorcelainV2XY(std::string_view xy, bool conflicted);

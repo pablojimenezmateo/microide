@@ -11,6 +11,7 @@
 #include "editor/TextViewport.h"
 #include "project/FileOperationService.h"
 #include "project/GitStatusService.h"
+#include "util/PathMatch.h"
 #include "workspace/SelectionMovement.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 
@@ -76,12 +77,9 @@ void SidebarCoordinator::ReportGitOperationFailure(const std::string_view verb,
   if (operations_.set_command_feedback == nullptr) {
     return;
   }
-  const std::filesystem::path& shown =
-      entry.relative_path.empty() ? entry.path : entry.relative_path;
-  std::string name = shown.generic_string();
-  if (name.empty()) {
-    name = "selection";
-  }
+  const std::string_view shown =
+      entry.relative_path.empty() ? std::string_view(entry.path) : std::string_view(entry.relative_path);
+  const std::string name(shown.empty() ? std::string_view("selection") : shown);
   operations_.set_command_feedback("Failed to " + std::string(verb) + " " + name +
                                    " (see git output)");
 }
@@ -392,7 +390,7 @@ bool SidebarCoordinator::StageAllGitEntries() {
         entry.section != GitSidebarEntry::Section::Untracked) {
       continue;
     }
-    affected_paths.push_back(entry.path.lexically_normal());
+    affected_paths.emplace_back(entry.path);
   }
   std::sort(affected_paths.begin(), affected_paths.end());
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
@@ -442,7 +440,7 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
     if (!IsGitWorkflowSection(entry.section)) {
       continue;
     }
-    affected_paths.push_back(entry.path.lexically_normal());
+    affected_paths.emplace_back(entry.path);
     // Files with no committed content to restore are the ones DiscardAll would
     // permanently delete: untracked files (removed by `git clean`) and staged NEW
     // files (status Added — after `reset HEAD` they become untracked and are
@@ -452,7 +450,7 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
     // trashed.
     if (entry.section == GitSidebarEntry::Section::Untracked ||
         entry.status == project::GitFileStatus::Added) {
-      untracked_paths.push_back(entry.path.lexically_normal());
+      untracked_paths.emplace_back(entry.path);
     }
   }
   std::sort(affected_paths.begin(), affected_paths.end());
@@ -531,9 +529,18 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
   // reorder/shrink the entries before the user confirms. Re-validate that the index
   // still points at the exact path they confirmed, so a discard (which destroys
   // working-tree changes) never lands on a different file that slid into the slot.
-  if (expected_path.has_value() &&
-      entry->path.lexically_normal() != expected_path->lexically_normal()) {
-    return false;
+  // `entry->path` is already normalized generic text — a normalized root joined to
+  // the normalized relative text git reported — and `expected_path` is that same
+  // text round-tripped through the prompt surface. So compare the text, and pay a
+  // normalization only for a spelling that actually needs one.
+  if (expected_path.has_value()) {
+    std::string expected = expected_path->generic_string();
+    if (util::PathTextNeedsNormalizing(expected)) {
+      expected = expected_path->lexically_normal().generic_string();
+    }
+    if (entry->path != expected) {
+      return false;
+    }
   }
 
   std::string blocking_label;

@@ -109,25 +109,23 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
 void RecordTreeGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                          const GitRepositoryEntry& entry) {
   const GitFileStatus status = entry.conflicted ? GitFileStatus::Conflicted : entry.status;
-  // MakeGitRepositoryPathIdentity already normalized these paths and already built
-  // their generic string, so re-deriving both per entry was pure duplicated work on
-  // the refresh path that every project pays on every git change.
-  std::string scratch;
-  GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(entry.path, scratch),
-                                                status);
+  // MakeGitRepositoryPathIdentity already normalized these paths and stores exactly
+  // the generic text this map keys by, so re-deriving it per entry was pure
+  // duplicated work on the refresh path that every project pays on every git change.
+  GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(entry.path), status);
   if (entry.old_path.has_value()) {
     // The rename/copy source no longer exists at its old path in the working tree,
     // so badge it Deleted rather than inheriting the destination's status (which
     // painted the now-gone source as Modified/Added).
-    GitPorcelainParser::RecordNormalizedGitStatus(
-        statuses, GenericPathView(*entry.old_path, scratch), GitFileStatus::Deleted);
+    GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(*entry.old_path),
+                                                  GitFileStatus::Deleted);
   }
 }
 
 GitRepositoryEntry MakeEntry(GitRepositoryEntryKind kind,
                              std::string_view xy,
-                             std::filesystem::path path,
-                             std::optional<std::filesystem::path> old_path,
+                             std::string path,
+                             std::optional<std::string> old_path,
                              bool conflicted,
                              bool submodule = false) {
   GitRepositoryEntry entry{
@@ -238,7 +236,7 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
           break;
         }
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Ordinary, xy,
-                                          std::filesystem::path(path), std::nullopt,
+                                          std::string(path), std::nullopt,
                                           xy.find('U') != std::string_view::npos,
                                           SubmoduleField(body, 1)));
         break;
@@ -257,13 +255,13 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
         // for any file whose name began with '#', '1', '2', 'u', '?' or '!'
         // (e.g. "1-notes.md", "2023-log.txt", "#readme"), losing its tree badge
         // and leaving the origPath record to be misparsed as a bogus entry.
-        std::optional<std::filesystem::path> old_path;
+        std::optional<std::string> old_path;
         if (index + 1 < records.size()) {
-          old_path = std::filesystem::path(records[index + 1]);
+          old_path = std::string(records[index + 1]);
           ++index;
         }
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Renamed, xy,
-                                          std::filesystem::path(path), std::move(old_path),
+                                          std::string(path), std::move(old_path),
                                           false, SubmoduleField(body, 1)));
         break;
       }
@@ -274,18 +272,18 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
           break;
         }
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Unmerged, xy,
-                                          std::filesystem::path(path), std::nullopt, true,
+                                          std::string(path), std::nullopt, true,
                                           SubmoduleField(body, 1)));
         break;
       }
       case '?': {
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Untracked, "??",
-                                          std::filesystem::path(body), std::nullopt, false));
+                                          std::string(body), std::nullopt, false));
         break;
       }
       case '!': {
         state.entries.push_back(MakeEntry(GitRepositoryEntryKind::Ignored, "!!",
-                                          std::filesystem::path(body), std::nullopt, false));
+                                          std::string(body), std::nullopt, false));
         break;
       }
       default:

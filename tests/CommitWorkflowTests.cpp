@@ -52,19 +52,17 @@ GitRepositoryState MakeRepositoryState() {
   };
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Ordinary,
-      .path = {.relative_path = std::filesystem::path("tracked.cpp"),
-               .display_label = "tracked.cpp"},
+      .path = {.relative_path = "tracked.cpp"},
       .staged = true,
   });
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Ordinary,
-      .path = {.relative_path = std::filesystem::path("tracked.cpp"),
-               .display_label = "tracked.cpp"},
+      .path = {.relative_path = "tracked.cpp"},
       .staged = false,
   });
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Untracked,
-      .path = {.relative_path = std::filesystem::path("new.cpp"), .display_label = "new.cpp"},
+      .path = {.relative_path = "new.cpp"},
       .staged = false,
   });
   return state;
@@ -161,7 +159,7 @@ void TestPartialStageWarnsForV2SingleModifiedEntry() {
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Ordinary,
       .status = microide::project::GitFileStatus::Modified,
-      .path = {.relative_path = std::filesystem::path("mm.cpp"), .display_label = "mm.cpp"},
+      .path = {.relative_path = "mm.cpp"},
       .staged = true,
       .worktree_dirty = true,
   });
@@ -204,7 +202,7 @@ void TestRunCommitPreChecksPrecomputedSummaryMatchesRecompute() {
   state.entries.push_back({
       .kind = GitRepositoryEntryKind::Ordinary,
       .status = microide::project::GitFileStatus::Modified,
-      .path = {.relative_path = std::filesystem::path("mm.cpp"), .display_label = "mm.cpp"},
+      .path = {.relative_path = "mm.cpp"},
       .staged = true,
       .worktree_dirty = true,
   });

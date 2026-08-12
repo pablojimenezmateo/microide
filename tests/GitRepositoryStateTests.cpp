@@ -36,16 +36,16 @@ void TestPorcelainV2WorkingTreeFixture() {
   bool saw_untracked = false;
   bool saw_spaced_path = false;
   for (const auto& entry : state.entries) {
-    if (entry.path.relative_path == std::filesystem::path("README.md")) {
+    if (entry.path.relative_path == "README.md") {
       saw_modified = entry.status == GitFileStatus::Modified;
     }
-    if (entry.path.relative_path == std::filesystem::path("src/session.cpp")) {
+    if (entry.path.relative_path == "src/session.cpp") {
       saw_deleted = entry.status == GitFileStatus::Deleted;
     }
-    if (entry.path.relative_path == std::filesystem::path("file with spaces.txt")) {
+    if (entry.path.relative_path == "file with spaces.txt") {
       saw_spaced_path = true;
       saw_untracked = entry.kind == GitRepositoryEntryKind::Untracked;
-      Expect(entry.path.display_label == "file with spaces.txt",
+      Expect(DisplayLabelView(entry.path) == "file with spaces.txt",
              "spaced path label should preserve spaces");
     }
   }
@@ -68,7 +68,7 @@ void TestPorcelainV2PathWithLeadingSpace() {
   const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
   bool saw_leading_space = false;
   for (const auto& entry : state.entries) {
-    if (entry.path.relative_path == std::filesystem::path(" leading.cpp")) {
+    if (entry.path.relative_path == " leading.cpp") {
       saw_leading_space = true;
     }
   }
@@ -87,7 +87,7 @@ void TestPorcelainV2UntrackedPathWithLeadingSpace() {
   bool saw_untracked_leading_space = false;
   for (const auto& entry : state.entries) {
     if (entry.kind == GitRepositoryEntryKind::Untracked &&
-        entry.path.relative_path == std::filesystem::path(" leading.txt")) {
+        entry.path.relative_path == " leading.txt") {
       saw_untracked_leading_space = true;
     }
   }
@@ -112,10 +112,10 @@ void TestPorcelainV2RenamePair() {
   Expect(state.entries.size() == 1, "rename fixture should produce one entry");
   Expect(state.entries.front().kind == GitRepositoryEntryKind::Renamed,
          "rename fixture entry should be classified as renamed");
-  Expect(state.entries.front().path.relative_path == std::filesystem::path("new-name.txt"),
+  Expect(state.entries.front().path.relative_path == "new-name.txt",
          "rename fixture should preserve the new path");
   Expect(state.entries.front().old_path.has_value(), "rename fixture should include old path");
-  Expect(state.entries.front().old_path->relative_path == std::filesystem::path("old.txt"),
+  Expect(state.entries.front().old_path->relative_path == "old.txt",
          "rename fixture old path mismatch");
   // Regression: the rename SOURCE no longer exists at its old path, so the tree
   // status map badges it Deleted rather than inheriting the destination's status.
@@ -133,9 +133,9 @@ void TestPorcelainV2RenamePathWithSpaces() {
   bool saw_rename = false;
   for (const auto& entry : state.entries) {
     if (entry.kind == GitRepositoryEntryKind::Renamed &&
-        entry.path.relative_path == std::filesystem::path("new name.txt")) {
+        entry.path.relative_path == "new name.txt") {
       saw_rename = entry.old_path.has_value() &&
-                    entry.old_path->relative_path == std::filesystem::path("old path.txt");
+                    entry.old_path->relative_path == "old path.txt";
     }
   }
   Expect(saw_rename, "rename pair should preserve spaced paths");
@@ -164,13 +164,13 @@ void TestPorcelainV2RenameSourceStartingWithStatusSigil() {
   bool saw_b = false;
   for (const auto& entry : state.entries) {
     Expect(entry.kind == GitRepositoryEntryKind::Renamed, "both entries should be renames");
-    if (entry.path.relative_path == std::filesystem::path("renamed_a.txt")) {
+    if (entry.path.relative_path == "renamed_a.txt") {
       saw_a = entry.old_path.has_value() &&
-              entry.old_path->relative_path == std::filesystem::path("2data.txt");
+              entry.old_path->relative_path == "2data.txt";
     }
-    if (entry.path.relative_path == std::filesystem::path("renamed_b.txt")) {
+    if (entry.path.relative_path == "renamed_b.txt") {
       saw_b = entry.old_path.has_value() &&
-              entry.old_path->relative_path == std::filesystem::path("user.txt");
+              entry.old_path->relative_path == "user.txt";
     }
   }
   Expect(saw_a, "rename source '2data.txt' should be preserved as old_path");
@@ -195,7 +195,7 @@ void TestPorcelainV2ConflictClassification() {
   Expect(!state.entries.empty(), "conflict fixture should produce an entry");
   Expect(state.entries.front().kind == GitRepositoryEntryKind::Unmerged,
          "conflict fixture entry should be unmerged");
-  Expect(state.entries.front().path.relative_path == std::filesystem::path("conflict.txt"),
+  Expect(state.entries.front().path.relative_path == "conflict.txt",
          "conflict fixture should preserve path");
   Expect(state.entries.front().conflicted, "conflict entry should be marked conflicted");
   Expect(state.entries.front().conflict_kind == GitConflictKind::BothModified,

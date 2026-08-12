@@ -58,9 +58,10 @@ std::size_t GitEntrySignature(const std::optional<project::GitRepositoryEntry>& 
   };
   std::size_t signature = 1;
   signature = mix(signature, static_cast<std::size_t>(entry->kind));
-  signature = mix(signature, std::filesystem::hash_value(entry->path.relative_path));
+  const std::hash<std::string> hash_text;
+  signature = mix(signature, hash_text(entry->path.relative_path));
   if (entry->old_path.has_value()) {
-    signature = mix(signature, std::filesystem::hash_value(entry->old_path->relative_path));
+    signature = mix(signature, hash_text(entry->old_path->relative_path));
   }
   return signature;
 }
@@ -134,7 +135,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
       .old_path = {},
   };
   if (input.git_entry.has_value() && input.git_entry->old_path.has_value()) {
-    semantic_input.old_path = input.git_entry->old_path->relative_path;
+    semantic_input.old_path = std::filesystem::path(input.git_entry->old_path->relative_path);
   }
   compare_tab.semantic_file = compare::InferCompareSemanticFileMetadata(semantic_input);
 }

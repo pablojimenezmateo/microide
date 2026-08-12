@@ -47,7 +47,9 @@ struct GitSidebarActionAvailability {
 struct GitSidebarRowViewModel {
   int entry_index = -1;
   GitSidebarRowKind row_kind = GitSidebarRowKind::Changed;
-  std::filesystem::path relative_path;
+  // Normalized generic ('/'-separated) text; the presentation layer's grouping keys
+  // are views into it (TD-2026-08-11-183).
+  std::string relative_path;
   std::string primary_label;
   std::string secondary_label;
   std::string review_marker_label;

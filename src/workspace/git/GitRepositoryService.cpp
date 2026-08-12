@@ -201,7 +201,7 @@ project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
     if (!entry.conflicted) {
       continue;
     }
-    const auto is_directory_at = [&request](const std::filesystem::path& relative) {
+    const auto is_directory_at = [&request](std::string_view relative) {
       std::error_code error;
       return std::filesystem::is_directory(request.project_root / relative, error) && !error;
     };
@@ -215,14 +215,19 @@ project::GitRepositoryState GitRepositoryService::BuildRepositoryState(
     // directory, and be misreported as file/directory — which also sets
     // TextHunksAvailable false and denies the user the three-way merge editor for
     // an ordinary conflict. (Reproduced against real git before this was fixed.)
-    const std::string leaf = entry.path.relative_path.filename().generic_string();
+    const std::string_view relative_text = entry.path.relative_path;
+    const std::size_t slash = relative_text.find_last_of('/');
+    const std::string_view leaf =
+        slash == std::string_view::npos ? relative_text : relative_text.substr(slash + 1);
     const std::size_t tilde = leaf.rfind('~');
     // `tilde == 0` would leave an empty prefix, which would probe the parent.
-    if (tilde == std::string::npos || tilde == 0) {
+    if (tilde == std::string_view::npos || tilde == 0) {
       continue;
     }
-    entry.path_is_directory =
-        is_directory_at(entry.path.relative_path.parent_path() / leaf.substr(0, tilde));
+    // The record's own path with the `~<branch>` suffix stripped off its last
+    // component — i.e. the directory git left in place.
+    entry.path_is_directory = is_directory_at(
+        relative_text.substr(0, (slash == std::string_view::npos ? 0 : slash + 1) + tilde));
   }
   state.refreshing = false;
   return state;
@@ -282,20 +287,20 @@ GitSidebarState::RefreshSnapshot GitRepositoryService::BuildSidebarSnapshot(
     conflicted_paths.reserve(snapshot.entries.size());
     for (const GitSidebarState::RefreshSnapshotEntry& entry : snapshot.entries) {
       if (entry.conflicted) {
-        conflicted_paths.insert(entry.relative_path.generic_string());
+        conflicted_paths.insert(entry.relative_path);
       }
     }
 
     const auto outgoing_entries =
         project::CollectGitBranchOutgoingFiles(request.project_root, snapshot.base_ref);
     for (const auto& entry : outgoing_entries) {
-      const std::string path_key = entry.relative_path.generic_string();
+      std::string path_key = entry.relative_path.generic_string();
       if (conflicted_paths.contains(path_key)) {
         continue;
       }
       snapshot.entries.push_back(GitSidebarState::RefreshSnapshotEntry{
           .section = GitSidebarEntry::Section::Outgoing,
-          .relative_path = entry.relative_path,
+          .relative_path = std::move(path_key),
           .status = entry.status,
           .conflicted = false,
           .staged = false,

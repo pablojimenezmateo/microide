@@ -189,7 +189,8 @@ void Emit(const Node& node, int section, int depth, std::vector<Line>* out) {
   for (const auto* row : node.files) {
     std::string leaf = row->primary_label;
     if (leaf.empty()) {
-      const std::filesystem::path normalized = row->relative_path.lexically_normal();
+      const std::filesystem::path normalized =
+          std::filesystem::path(row->relative_path).lexically_normal();
       leaf = normalized.filename().string();
       if (leaf.empty()) {
         leaf = normalized.empty() ? "." : normalized.generic_string();
@@ -209,8 +210,10 @@ std::vector<Line> Build(const microide::workspace::GitSidebarSectionViewModel& s
   std::sort(sorted.begin(), sorted.end(),
             [](const microide::workspace::GitSidebarRowViewModel* lhs,
                const microide::workspace::GitSidebarRowViewModel* rhs) {
-              const std::string l = lhs->relative_path.lexically_normal().generic_string();
-              const std::string r = rhs->relative_path.lexically_normal().generic_string();
+              const std::string l =
+                  std::filesystem::path(lhs->relative_path).lexically_normal().generic_string();
+              const std::string r =
+                  std::filesystem::path(rhs->relative_path).lexically_normal().generic_string();
               if (l != r) return l < r;
               return lhs->entry_index < rhs->entry_index;
             });
@@ -218,7 +221,8 @@ std::vector<Line> Build(const microide::workspace::GitSidebarSectionViewModel& s
   for (const auto* row : sorted) {
     Node* node = &root;
     int depth = 0;
-    for (const std::string& segment : ParentPathSegments(row->relative_path.lexically_normal())) {
+    for (const std::string& segment :
+         ParentPathSegments(std::filesystem::path(row->relative_path).lexically_normal())) {
       if (depth >= 64) break;
       Node& child = node->directories[segment];
       if (child.path.empty()) child.path = node->path / segment;
@@ -257,7 +261,14 @@ void TestGitSidebarTreeGroupingMatchesPathAlgebra() {
   for (std::size_t i = 0; i < paths.size(); ++i) {
     GitSidebarRowViewModel row;
     row.entry_index = static_cast<int>(i);
-    row.relative_path = paths[i];
+    // `GitSidebarRowViewModel::relative_path` is normalized generic text by
+    // contract (TD-2026-08-11-183): every ingress normalizes before the row is
+    // built — MakeGitRepositoryPathIdentity for status entries,
+    // CollectGitBranchOutgoingFiles' lexically_normal() for outgoing ones — and
+    // the grouping keys are views into it rather than normalized copies. So
+    // normalize here too, exactly where the shipping path does it, and let the
+    // awkward spellings above go on exercising normalization *into* the grouping.
+    row.relative_path = std::filesystem::path(paths[i]).lexically_normal().generic_string();
     // Left deliberately empty so FileLeafLabel's derive-from-path branch runs;
     // in the shipping path BuildGitSidebarViewModel always fills it.
     section.rows.push_back(row);
@@ -528,7 +539,7 @@ std::string DigestPresentation(const GitSidebarViewModel& vm,
     add("empty", section.empty_label);
     for (const auto& row : section.rows) {
       add("row_idx", std::to_string(row.entry_index));
-      add("row_path", row.relative_path.string());
+      add("row_path", row.relative_path);
       add("row_primary", row.primary_label);
       add("row_secondary", row.secondary_label);
       add("row_marker", row.review_marker_label);

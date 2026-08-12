@@ -30,35 +30,25 @@ bool IsValidUtf8(std::string_view text) {
 
 }  // namespace
 
-GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::filesystem::path relative_path) {
+GitRepositoryPathIdentity MakeGitRepositoryPathIdentity(std::string relative_path) {
   // git's porcelain output is already relative, '/'-separated and normal, so
   // `lexically_normal()` is a no-op for every real entry — but it costs ~12
   // allocations (a fresh path plus a string per component) and this runs once per
-  // changed file on every refresh. Confirm the spelling instead, and keep the
-  // authoritative form for anything unusual (TD-2026-08-10-174).
-  if (util::PathTextNeedsNormalizing(relative_path.native())) {
-    relative_path = relative_path.lexically_normal();
+  // changed file on every refresh. Confirm the spelling instead, and pay the path
+  // round-trip only for the unusual spellings (TD-2026-08-10-174).
+  if (util::PathTextNeedsNormalizing(relative_path)) {
+    relative_path = std::filesystem::path(relative_path).lexically_normal().generic_string();
   }
-  std::string generic = relative_path.generic_string();
-  const bool valid_utf8 = IsValidUtf8(generic);
+  const bool valid_utf8 = IsValidUtf8(relative_path);
   GitRepositoryPathIdentity identity{
       .relative_path = std::move(relative_path),
-      .display_label = {},
+      .escaped_label = {},
       .path_is_valid_utf8 = valid_utf8,
   };
-  // The label IS the generic text in the common case; it used to be copied out of
-  // it and the original thrown away.
-  identity.display_label =
-      valid_utf8 ? std::move(generic) : EscapeNonUtf8PathLabel(generic);
-  return identity;
-}
-
-std::string_view GenericPathView(const GitRepositoryPathIdentity& identity, std::string& scratch) {
-  if (identity.path_is_valid_utf8) {
-    return identity.display_label;
+  if (!valid_utf8) {
+    identity.escaped_label = EscapeNonUtf8PathLabel(identity.relative_path);
   }
-  scratch = identity.relative_path.generic_string();
-  return scratch;
+  return identity;
 }
 
 GitRefreshErrorCategory ClassifyGitRefreshFailure(int exit_code,

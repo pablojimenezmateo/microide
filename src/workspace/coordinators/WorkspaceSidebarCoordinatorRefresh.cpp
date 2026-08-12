@@ -67,14 +67,25 @@ void ApplyGitRefreshSnapshot(GitSidebarState& git_state,
   // MakeGitRepositoryPathIdentity, so joining it to a normalized root produces a
   // normalized absolute path and the per-entry `lexically_normal()` this used to
   // run was ~6 allocations spent to confirm that (TD-2026-08-06-159).
-  const std::filesystem::path root = util::PathTextNeedsNormalizing(project_root.native())
-                                         ? project_root.lexically_normal()
-                                         : project_root;
+  //
+  // The join is now string concatenation into one reserved buffer rather than
+  // `path / path`, which built a fresh pathname AND re-split the whole joined
+  // string into a component list for every changed file (TD-2026-08-11-183).
+  const std::filesystem::path normalized_root =
+      util::PathTextNeedsNormalizing(project_root.native()) ? project_root.lexically_normal()
+                                                            : project_root;
+  std::string root = normalized_root.generic_string();
+  while (root.size() > 1 && root.back() == '/') {
+    root.pop_back();
+  }
   for (auto& entry : snapshot.entries) {
-    std::filesystem::path absolute = root / entry.relative_path;
-    if (util::PathTextNeedsNormalizing(absolute.native())) {
-      absolute = absolute.lexically_normal();
+    std::string absolute;
+    absolute.reserve(root.size() + 1 + entry.relative_path.size());
+    absolute += root;
+    if (!absolute.empty() && absolute.back() != '/' && !entry.relative_path.empty()) {
+      absolute += '/';
     }
+    absolute += entry.relative_path;
     GitSidebarEntry git_entry{
         .section = entry.section,
         .path = std::move(absolute),
@@ -122,10 +133,10 @@ void SidebarCoordinator::RefreshGit() {
       state_.directory_tree.ApplyGitStatuses(std::move(pending_snapshot.tree_git_statuses));
     }
 
-    const std::filesystem::path previous_path =
+    const std::string previous_path =
         state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
             ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].path
-            : std::filesystem::path{};
+            : std::string{};
     const GitSidebarEntry::Section previous_section =
         state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
             ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].section
@@ -155,10 +166,10 @@ void SidebarCoordinator::RefreshGit() {
     return;
   }
 
-  const std::filesystem::path previous_path =
+  const std::string previous_path =
       state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
           ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].path
-          : std::filesystem::path{};
+          : std::string{};
   const GitSidebarEntry::Section previous_section =
       state_.sidebar.git.selected_index < state_.sidebar.git.entries.size()
           ? state_.sidebar.git.entries[state_.sidebar.git.selected_index].section

@@ -148,8 +148,8 @@ std::string GitSidebarCommitSummaryLine(const GitSidebarState& git_state,
 
 std::string GitSidebarSelectionSummaryLine(const GitSidebarEntry& entry,
                                            std::string_view primary_action_label) {
-  const std::string path_label =
-      entry.relative_path.empty() ? entry.path.generic_string() : entry.relative_path.generic_string();
+  const std::string_view path_label =
+      entry.relative_path.empty() ? std::string_view(entry.path) : std::string_view(entry.relative_path);
   std::string line = "Selected: ";
   line.append(primary_action_label.data(), primary_action_label.size());
   if (!path_label.empty()) {
@@ -383,9 +383,12 @@ std::string BuildGitRefreshErrorBanner(const std::string_view refresh_error) {
 
 std::string BuildGitDiscardPreviewSummary(const GitSidebarEntry& entry,
                                           const std::string_view project_label) {
-  const std::string path_label = entry.relative_path.empty()
-                                     ? entry.path.filename().string()
-                                     : entry.relative_path.generic_string();
+  const std::string_view absolute_text = entry.path;
+  const std::size_t slash = absolute_text.find_last_of('/');
+  const std::string path_label(
+      entry.relative_path.empty()
+          ? (slash == std::string_view::npos ? absolute_text : absolute_text.substr(slash + 1))
+          : std::string_view(entry.relative_path));
   switch (entry.section) {
     case GitSidebarEntry::Section::Untracked:
       return "Remove untracked file " + path_label +

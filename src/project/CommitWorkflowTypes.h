@@ -29,8 +29,10 @@ struct CommitPreCheck {
   std::string message;
 };
 
+// Repository-relative generic ("/"-separated) text, matching
+// GitRepositoryPathIdentity::relative_path. Nothing here opens the file.
 struct CommitStagedFileSummary {
-  std::filesystem::path relative_path;
+  std::string relative_path;
   int added_lines = 0;
   int deleted_lines = 0;
 };

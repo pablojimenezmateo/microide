@@ -64,7 +64,7 @@ std::unordered_set<std::string> PartiallyStagedPaths(const GitRepositoryState& r
   std::unordered_map<std::string, StageFlags> flags;
   flags.reserve(repository_state.entries.size());
   for (const GitRepositoryEntry& entry : repository_state.entries) {
-    StageFlags& f = flags[entry.path.relative_path.generic_string()];
+    StageFlags& f = flags[entry.path.relative_path];
     if (entry.staged) {
       f.staged = true;
     }
@@ -153,7 +153,7 @@ CommitStagedSummary BuildCommitStagedSummary(const GitRepositoryState& repositor
             std::clamp<std::int64_t>(*parsed, 0, std::numeric_limits<int>::max()));
       }
     }
-    file_summary.relative_path = std::filesystem::path(path_text);
+    file_summary.relative_path = std::string(path_text);
     // Accumulate in 64-bit and clamp: two files each clamped to INT_MAX would overflow
     // a plain `int` aggregate (UB / a wrapped negative "+N" in the sidebar). Both
     // operands are already in [0, INT_MAX], so the running sum stays well within
@@ -268,7 +268,7 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
   const std::unordered_set<std::string> partially_staged = PartiallyStagedPaths(repository_state);
   bool any_partial_stage = false;
   for (const CommitStagedFileSummary& file : staged_summary.files) {
-    if (partially_staged.count(file.relative_path.generic_string()) != 0) {
+    if (partially_staged.count(file.relative_path) != 0) {
       any_partial_stage = true;
       break;
     }
