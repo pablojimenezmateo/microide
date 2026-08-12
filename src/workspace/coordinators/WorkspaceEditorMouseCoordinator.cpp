@@ -468,8 +468,12 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     {
       util::PerformanceTrace::Scope move_scope(
           "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
-      viewport->MoveCursorTo(hit.line, hit.column,
-                             !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
+      // Hit-test and place in one call: under soft wrap a click past a wrapped
+      // row's last glyph resolves to the wrap point, which the plain
+      // MoveCursorTo(line, column) form renders at the start of the row BELOW the
+      // one that was clicked. Same result everywhere else.
+      viewport->MoveCursorToVisualHit(visual_row, hit_column,
+                                      !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
     }
     if (alt_left_click) {
       viewport->AddSecondaryCaret(anchor.line, anchor.column);
@@ -608,7 +612,7 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
                              interaction_state_.editor_box_anchor_column},
         editor::TextPosition{hit.line, hit.column});
   } else {
-    viewport->MoveCursorTo(hit.line, hit.column, true);
+    viewport->MoveCursorToVisualHit(visual_row, hit_column, true);
   }
   operations_.reset_caret_blink();
   operations_.request_focused_editor_redraw();
