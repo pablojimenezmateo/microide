@@ -1954,41 +1954,55 @@ void TestTextViewportSoftWrapContinuationHitsUseVisualOffset() {
 }
 
 #ifndef NDEBUG
-// A wrap-width change rebuilds the wrapped-row table exactly ONCE, and every
+// A wrap-width change rebuilds the wrapped-row table at most ONCE, and every
 // read after it reuses that build.
 //
-// It used to be a deferred rebuild -- SetViewportSize returned without touching
-// the table (and, on the same early return, without clamping the scroll). It
-// cannot stay deferred: the new scroll anchor is a row index in the table being
-// invalidated, so re-anchoring the view has to resolve it in the new row space.
-// The build is not extra work, it is the same build the next paint would do;
-// what matters is that there is still only one of them per width change.
+// Which side of the resize the build lands on depends on whether the view is
+// scrolled. At the top there is nothing to re-anchor, so the rebuild stays lazy
+// (the first query after the resize pays it). Scrolled, the new scroll position
+// is a row index in the table being invalidated, so re-anchoring has to resolve
+// it in the new row space -- that build is not extra work, it is the one the next
+// paint would have done, and what matters is that there is still only one.
 void TestTextViewportSoftWrapViewportResizeRebuildsWrapCacheOncePerWidth() {
   TextViewport viewport;
-  viewport.LoadContent("abcdefghijklmnopqrst\n", "/tmp/soft-wrap-cache.txt");
-  viewport.SetViewportSize(10, 8);
+  viewport.LoadContent("abcdefghijklmnopqrst\nabcdefghijklmnopqrst\nabcdefghijklmnopqrst\n",
+                       "/tmp/soft-wrap-cache.txt");
+  viewport.SetViewportSize(2, 8);
   viewport.SetSoftWrap(true);
 
   (void)viewport.VisibleWrappedRowLayout(0);
   const std::size_t first_build_count = viewport.WrappedRowLayoutBuildCountForDebug();
 
-  viewport.SetViewportSize(10, 12);
-  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
-         "a wrap-width change rebuilds the wrapped-row table once");
+  // At the top of the document: still lazy.
+  viewport.SetViewportSize(2, 12);
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count,
+         "a resize with the view at the top does not eagerly rebuild wrapped rows");
 
   (void)viewport.VisibleWrappedRowLayout(0);
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
-         "the first wrapped-row query after the resize reuses that rebuild");
+         "the first wrapped-row query after that resize rebuilds the cache once");
 
   (void)viewport.VisibleWrappedRowLayout(0);
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
          "repeated wrapped-row queries without edits or resize should reuse the cached layout");
 
   // A resize that does NOT change the wrap width must not rebuild at all.
-  viewport.SetViewportSize(20, 12);
+  viewport.SetViewportSize(4, 12);
   (void)viewport.VisibleWrappedRowLayout(0);
   Expect(viewport.WrappedRowLayoutBuildCountForDebug() == first_build_count + 1,
          "changing only the row count leaves the wrapped-row table alone");
+
+  // Scrolled: the resize re-anchors, which costs exactly one rebuild, and the
+  // next query reuses it.
+  viewport.SetScrollLine(2);
+  Expect(viewport.visual_scroll_line() == 2, "the fixture scrolls off the top row");
+  const std::size_t scrolled_build_count = viewport.WrappedRowLayoutBuildCountForDebug();
+  viewport.SetViewportSize(4, 8);
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == scrolled_build_count + 1,
+         "a width change on a scrolled view rebuilds once, to resolve the new anchor");
+  (void)viewport.VisibleWrappedRowLayout(0);
+  Expect(viewport.WrappedRowLayoutBuildCountForDebug() == scrolled_build_count + 1,
+         "and the first query after it reuses that rebuild");
 }
 #endif
 
