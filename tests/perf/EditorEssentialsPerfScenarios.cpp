@@ -782,6 +782,111 @@ void RunEditorLongLineBufferSearch(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
+// Soft wrap had NO perf coverage at all -- not one scenario in the suite turned
+// it on -- while being the mode where a long line is most expensive: wrapping a
+// megabyte line at ~200 columns turns it into thousands of visual rows, and every
+// per-row cost is paid on every one of them that is on screen.
+//
+// Two hard invariants are asserted here rather than gated on a baseline, so they
+// fail loudly on any box:
+//
+//   * a pure scroll must not re-measure the logical line a row belongs to
+//     (editor.line_width_measure_bytes), which is what a row build does when it
+//     is not told the width the wrapped-row table already knows;
+//   * a pure scroll must not rebuild the wrapped-row table
+//     (editor.ensure_wrapped_row_layouts_rebuilds) -- that table is O(document)
+//     to build and depends on nothing a scroll changes.
+void RunEditorSoftWrapLongLineScroll(ScenarioContext& context) {
+  editor::TextViewport* viewport =
+      OpenMinifiedFixtureOrSkip(context, "editor_soft_wrap_long_line_scroll");
+  if (viewport == nullptr) {
+    return;
+  }
+  context.SetSetting("editor.wrap", "word");
+  viewport->MoveCursorTo(0, 0, false);
+  context.PumpFrames(4);
+  if (!context.ActiveViewport().soft_wrap()) {
+    throw std::runtime_error(
+        "editor_soft_wrap_long_line_scroll: editor.wrap=word did not reach the viewport");
+  }
+  if (context.ActiveViewport().visual_line_count() < 100) {
+    throw std::runtime_error(
+        "editor_soft_wrap_long_line_scroll: the fixture line did not wrap into rows");
+  }
+
+  const std::uint64_t measure_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorLineWidthMeasureBytes);
+  const std::uint64_t rebuilds_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorEnsureWrappedRowLayoutsRebuilds);
+  context.Measure("soft_wrap_long_line.scroll_frames", [&] {
+    for (int i = 0; i < 64; ++i) {
+      context.Scroll(-3);
+      context.PumpFrames(1);
+    }
+  });
+  const std::uint64_t measure_after = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorLineWidthMeasureBytes);
+  const std::uint64_t rebuilds_after = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorEnsureWrappedRowLayoutsRebuilds);
+  if (measure_after != measure_before) {
+    throw std::runtime_error(
+        "editor_soft_wrap_long_line_scroll: scrolling re-measured whole lines to build "
+        "rows (bytes=" +
+        std::to_string(measure_after - measure_before) + ")");
+  }
+  if (rebuilds_after != rebuilds_before) {
+    throw std::runtime_error(
+        "editor_soft_wrap_long_line_scroll: scrolling rebuilt the wrapped-row table (" +
+        std::to_string(rebuilds_after - rebuilds_before) + " times)");
+  }
+
+  // Vertical caret motion through wrapped rows: each step resolves the caret's
+  // visual row inside a line with thousands of them, then re-resolves it for the
+  // preferred column and again for the render pass.
+  context.Measure("soft_wrap_long_line.down_arrow_burst", [&] {
+    for (int i = 0; i < 64; ++i) {
+      context.KeyDown(SDLK_DOWN);
+      context.PumpFrames(1);
+    }
+  });
+  context.Measure("soft_wrap_long_line.up_arrow_burst", [&] {
+    for (int i = 0; i < 64; ++i) {
+      context.KeyDown(SDLK_UP);
+      context.PumpFrames(1);
+    }
+  });
+}
+
+// Typing inside a soft-wrapped long line. The wrapped-row table is maintained
+// incrementally on edits; if that splice ever stops applying, this is where the
+// O(document) rebuild per keystroke shows up.
+void RunEditorSoftWrapLongLineTyping(ScenarioContext& context) {
+  editor::TextViewport* viewport =
+      OpenMinifiedFixtureOrSkip(context, "editor_soft_wrap_long_line_typing");
+  if (viewport == nullptr) {
+    return;
+  }
+  context.SetSetting("editor.wrap", "word");
+  viewport->MoveCursorTo(0, viewport->lines().front().size() / 2, false);
+  context.PumpFrames(4);
+  if (!context.ActiveViewport().soft_wrap()) {
+    throw std::runtime_error(
+        "editor_soft_wrap_long_line_typing: editor.wrap=word did not reach the viewport");
+  }
+  context.Measure("soft_wrap_long_line.type_burst", [&] {
+    for (int i = 0; i < 16; ++i) {
+      context.Type("x");
+      context.PumpFrames(1);
+    }
+  });
+  context.Measure("soft_wrap_long_line.backspace_burst", [&] {
+    for (int i = 0; i < 16; ++i) {
+      context.KeyDown(SDLK_BACKSPACE);
+      context.PumpFrames(1);
+    }
+  });
+}
+
 // Whole-document edit verbs on a line with no line breaks in it: select all, cut,
 // paste, undo, redo. The same five the Moby-Dick workout drives, on the file shape
 // where "the affected line" is the whole document -- so the undo entry, the
@@ -1200,6 +1305,24 @@ const ScenarioRegistration g_perf_editor_long_line_select_all_edit({Scenario{
     .warmup_iterations = 1,
     .tolerance_alloc_p50_percent = 1.0,
     .run = RunEditorLongLineSelectAllEdit,
+}});
+// Both soft-wrap scenarios carry their own hard invariants (see the bodies), so
+// they gate on any box without a baseline. The wall/alloc envelopes are NOT
+// gated yet: a baseline has to be recorded on a quiet reference run, and this
+// pair was added on a loaded one (TD-2026-08-12-176).
+const ScenarioRegistration g_perf_editor_soft_wrap_long_line_scroll({Scenario{
+    .name = "editor_soft_wrap_long_line_scroll",
+    .smoke = true,
+    .baseline_gated = false,
+    .warmup_iterations = 1,
+    .run = RunEditorSoftWrapLongLineScroll,
+}});
+const ScenarioRegistration g_perf_editor_soft_wrap_long_line_typing({Scenario{
+    .name = "editor_soft_wrap_long_line_typing",
+    .smoke = true,
+    .baseline_gated = false,
+    .warmup_iterations = 1,
+    .run = RunEditorSoftWrapLongLineTyping,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",
