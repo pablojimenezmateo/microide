@@ -56,7 +56,7 @@ class TextLayoutCache {
   struct Stats {
     std::size_t visible_line_queries = 0;
     std::size_t visible_line_hits = 0;
-    // Entries dropped by the FIFO to stay under kVisibleLineCacheLimit.
+    // Entries dropped by the LRU to stay under kVisibleLineCacheLimit.
     //
     // VisibleLineLayoutRefCached hands out a reference INTO this cache, so an
     // eviction is what could invalidate a reference a caller still holds. The
@@ -72,11 +72,12 @@ class TextLayoutCache {
   // Returns the LayoutLine for `line_index` from the cache, or builds it on
   // miss. Caller is responsible for caret-row decoration (the cache does not
   // know which row the cursor is on). Hands back the cached LayoutLine in place
-  // instead of copying it out. The returned reference is stable until the next
-  // call that can evict it (the per-frame working set is far below
-  // kVisibleLineCacheLimit, so a renderer that consumes each row before
-  // requesting the next never sees its own entry evicted mid-use). Like the
-  // by-value variant, the cache does not set caret fields.
+  // instead of copying it out. The returned reference stays valid for the next
+  // kVisibleLineCacheLimit queries: the order is a true LRU, so a query can only
+  // recycle an entry that is older than every entry touched since — including
+  // the ones a caller merely READ (a FIFO gave that guarantee only to entries the
+  // frame had built, TD-2026-08-12-189). Like the by-value variant, the cache
+  // does not set caret fields.
   //
   // `content_revision` is what lets a miss reuse the per-line width table this
   // cache already maintains, so building a row does not re-walk the line for its
@@ -360,10 +361,45 @@ class TextLayoutCache {
 
   static constexpr std::size_t kVisibleLineCacheLimit = 256;
 
-  // Visible-line LRU
-  mutable std::unordered_map<VisibleLineCacheKey, LayoutLine, VisibleLineCacheKeyHash>
+  // Visible-line LRU.
+  //
+  // The recency order is an intrusive doubly-linked list threaded through the
+  // map's own nodes, not a side container of keys: an `unordered_map` node's
+  // address is stable across rehash AND across extract()/insert() of the same
+  // node, which is what lets the recycle path below splice a node from the head
+  // to the tail without allocating, and what a `std::list<Key>` of 256 nodes
+  // would have paid for on first fill.
+  //
+  // Recency is what makes VisibleLineLayoutRefCached's reference-stability claim
+  // hold for HITS, not just for builds (TD-2026-08-12-189): a FIFO evicted the
+  // oldest INSERT, so an entry a caller was still reading could be recycled
+  // underneath it if it had been inserted long enough ago. With move-to-tail on
+  // hit, the eviction victim is strictly older than anything touched since.
+  struct VisibleLineCacheEntry {
+    LayoutLine layout;
+    // Self key, so eviction can extract() the head without a reverse lookup.
+    VisibleLineCacheKey key;
+    // Null on both ends of the list. `lru_prev` is toward the least recently
+    // used end (the eviction victim), `lru_next` toward the most recent.
+    VisibleLineCacheEntry* lru_prev = nullptr;
+    VisibleLineCacheEntry* lru_next = nullptr;
+  };
+
+  void VisibleLineLruUnlink(VisibleLineCacheEntry& entry) const;
+  void VisibleLineLruPushBack(VisibleLineCacheEntry& entry) const;
+  void VisibleLineLruTouch(VisibleLineCacheEntry& entry) const {
+    if (visible_line_lru_tail_ == &entry) {
+      return;
+    }
+    VisibleLineLruUnlink(entry);
+    VisibleLineLruPushBack(entry);
+  }
+
+  mutable std::unordered_map<VisibleLineCacheKey, VisibleLineCacheEntry, VisibleLineCacheKeyHash>
       visible_line_cache_;
-  mutable std::deque<VisibleLineCacheKey> visible_line_cache_order_;
+  // Least / most recently used ends of the intrusive list above.
+  mutable VisibleLineCacheEntry* visible_line_lru_head_ = nullptr;
+  mutable VisibleLineCacheEntry* visible_line_lru_tail_ = nullptr;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;
   mutable std::size_t visible_line_evictions_ = 0;

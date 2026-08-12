@@ -65,7 +65,11 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   };
   if (const auto it = visible_line_cache_.find(cache_key); it != visible_line_cache_.end()) {
     ++visible_line_hits_;
-    return it->second;
+    // A hit is what makes this an LRU rather than a FIFO: without it, an entry
+    // read on every frame still ages out by insertion order and can be recycled
+    // while a caller holds the reference this returns (TD-2026-08-12-189).
+    VisibleLineLruTouch(it->second);
+    return it->second.layout;
   }
   // Hand the builder what this cache already knows about the line, so a miss does
   // not re-walk it for its visual width nor step code points to reach the first
@@ -165,22 +169,54 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     // entry reached the front of the LRU a few hundred rows later. `extract`
     // hands back the node with its buffers intact; rewriting the key and
     // reinserting reuses all four.
-    auto node = visible_line_cache_.extract(visible_line_cache_order_.front());
-    visible_line_cache_order_.pop_front();
+    //
+    // The victim is the LRU head, so it is older than every entry any caller has
+    // read since — including the ones this frame merely HIT.
+    assert(visible_line_lru_head_ != nullptr);
+    VisibleLineCacheEntry& victim = *visible_line_lru_head_;
+    VisibleLineLruUnlink(victim);
+    auto node = visible_line_cache_.extract(victim.key);
     if (!node.empty()) {
-      build_into(node.mapped());
+      build_into(node.mapped().layout);
+      node.mapped().key = cache_key;
       node.key() = cache_key;
       util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
       const auto result = visible_line_cache_.insert(std::move(node));
-      visible_line_cache_order_.push_back(cache_key);
-      return result.position->second;
+      VisibleLineLruPushBack(result.position->second);
+      return result.position->second.layout;
     }
   }
-  LayoutLine layout;
-  build_into(layout);
-  const auto [it, _] = visible_line_cache_.emplace(cache_key, std::move(layout));
-  visible_line_cache_order_.push_back(cache_key);
-  return it->second;
+  const auto [it, _] = visible_line_cache_.emplace(cache_key, VisibleLineCacheEntry{});
+  it->second.key = cache_key;
+  build_into(it->second.layout);
+  VisibleLineLruPushBack(it->second);
+  return it->second.layout;
+}
+
+void TextLayoutCache::VisibleLineLruUnlink(VisibleLineCacheEntry& entry) const {
+  if (entry.lru_prev != nullptr) {
+    entry.lru_prev->lru_next = entry.lru_next;
+  } else if (visible_line_lru_head_ == &entry) {
+    visible_line_lru_head_ = entry.lru_next;
+  }
+  if (entry.lru_next != nullptr) {
+    entry.lru_next->lru_prev = entry.lru_prev;
+  } else if (visible_line_lru_tail_ == &entry) {
+    visible_line_lru_tail_ = entry.lru_prev;
+  }
+  entry.lru_prev = nullptr;
+  entry.lru_next = nullptr;
+}
+
+void TextLayoutCache::VisibleLineLruPushBack(VisibleLineCacheEntry& entry) const {
+  entry.lru_prev = visible_line_lru_tail_;
+  entry.lru_next = nullptr;
+  if (visible_line_lru_tail_ != nullptr) {
+    visible_line_lru_tail_->lru_next = &entry;
+  } else {
+    visible_line_lru_head_ = &entry;
+  }
+  visible_line_lru_tail_ = &entry;
 }
 
 
@@ -823,21 +859,19 @@ void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
   cached_max_visual_columns_tab_size_ = 0;
   cached_max_visual_columns_content_revision_ = 0;
   visible_line_cache_.clear();
-  visible_line_cache_order_.clear();
+  visible_line_lru_head_ = nullptr;
+  visible_line_lru_tail_ = nullptr;
 }
 
 void TextLayoutCache::InvalidateVisibleLineCacheFrom(std::size_t start_line) {
   for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {
     if (it->first.line_index >= start_line) {
+      VisibleLineLruUnlink(it->second);
       it = visible_line_cache_.erase(it);
     } else {
       ++it;
     }
   }
-  visible_line_cache_order_.erase(
-      std::remove_if(visible_line_cache_order_.begin(), visible_line_cache_order_.end(),
-                     [&](const VisibleLineCacheKey& key) { return key.line_index >= start_line; }),
-      visible_line_cache_order_.end());
 }
 
 bool TextLayoutCache::has_wrapped_line_row_offsets(std::size_t lines_size) const {
@@ -878,13 +912,14 @@ std::size_t TextLayoutCache::ApproximateResidentBytes() const {
   bytes += wrapped_row_layouts_.capacity() * sizeof(WrappedRow);
   bytes += wrapped_line_row_offsets_.capacity() * sizeof(std::size_t);
   bytes += line_window_scratch_.capacity();
-  bytes += deque_bytes(visible_line_cache_order_.size(), sizeof(VisibleLineCacheKey));
   bytes += visible_line_cache_.bucket_count() * sizeof(void*);
-  for (const auto& [key, layout] : visible_line_cache_) {
-    bytes += sizeof(VisibleLineCacheKey) + sizeof(LayoutLine) + sizeof(void*) * 2;
-    bytes += layout.text.capacity();
-    bytes += layout.source_columns.capacity() * sizeof(std::size_t);
-    bytes += layout.text_offsets.capacity() * sizeof(std::size_t);
+  for (const auto& [key, entry] : visible_line_cache_) {
+    // The recency order is intrusive now (two pointers inside the entry, counted
+    // by sizeof(VisibleLineCacheEntry)), so there is no side container to add.
+    bytes += sizeof(VisibleLineCacheKey) + sizeof(VisibleLineCacheEntry) + sizeof(void*) * 2;
+    bytes += entry.layout.text.capacity();
+    bytes += entry.layout.source_columns.capacity() * sizeof(std::size_t);
+    bytes += entry.layout.text_offsets.capacity() * sizeof(std::size_t);
   }
   return bytes;
 }

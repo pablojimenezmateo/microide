@@ -502,6 +502,52 @@ void TestTextLayoutCacheRecycledEntriesMatchFreshBuilds() {
   }
 }
 
+// TD-2026-08-12-189: the recency order used to be a FIFO over insertions, so a
+// HIT did not protect an entry from the next miss's eviction. An entry inserted
+// many frames ago sat at the front of the queue no matter how recently it had
+// been read, so a caller holding the reference VisibleLineLayoutRefCached hands
+// out could have that node recycled underneath it — the node stays alive
+// (extract/insert rewrites it in place), so the symptom is a row painted with
+// another row's glyphs, not a crash.
+//
+// Pin the property that distinguishes an LRU from a FIFO: an entry read on every
+// round survives an unbounded number of misses, and the reference stays pointed
+// at its own content.
+void TestTextLayoutCacheHitProtectsEntryFromEviction() {
+  std::vector<std::string> lines;
+  lines.reserve(1024);
+  for (std::size_t i = 0; i < 1024; ++i) {
+    lines.push_back("line " + std::to_string(i) + " with distinguishable content");
+  }
+  microide::editor::TextLayoutCache cache;
+
+  // Fill past the limit so every query below takes the eviction path.
+  for (std::size_t i = 0; i < 512; ++i) {
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
+  }
+
+  const microide::editor::LayoutLine& pinned =
+      cache.VisibleLineLayoutRefCached(lines, 0, 0, 80, kTabSize, /*content_revision=*/0);
+  const std::string expected = pinned.text;
+  Expect(expected.find("line 0 ") == 0, "the pinned entry must hold line 0's own text");
+
+  cache.ResetStats();
+  for (std::size_t i = 512; i < lines.size(); ++i) {
+    (void)cache.VisibleLineLayoutRefCached(lines, i, 0, 80, kTabSize, /*content_revision=*/0);
+    // Re-reading line 0 every round is what an LRU is for. Under the old FIFO
+    // this was a miss after the very first eviction, and the node `pinned` refers
+    // to had already been recycled for line 512.
+    const microide::editor::LayoutLine& again =
+        cache.VisibleLineLayoutRefCached(lines, 0, 0, 80, kTabSize, /*content_revision=*/0);
+    Expect(&again == &pinned, "an entry hit every round must not be evicted or relocated");
+    Expect(pinned.text == expected, "a held reference must never observe another row's glyphs");
+  }
+  Expect(cache.stats().visible_line_evictions > 0,
+         "the loop must actually evict, or this proves nothing");
+  Expect(cache.stats().visible_line_hits >= lines.size() - 512,
+         "each round's re-read of line 0 must be a hit");
+}
+
 // TD-2026-08-06-143: MaxVisualColumns rebuilt on a tab-size or line-count change
 // but NOT on a content-revision change — and then stamped the new revision onto
 // the table it had just declined to verify. `LineWidthsAreCurrent`, the predicate
@@ -683,6 +729,8 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
           TestTextLayoutCacheRecycledEntriesMatchFreshBuilds);
   AddTest(tests, "TextLayout/VisibleWorkingSetDoesNotEvict",
           TestTextLayoutCacheVisibleWorkingSetDoesNotEvict);
+  AddTest(tests, "TextLayout/HitProtectsEntryFromEviction",
+          TestTextLayoutCacheHitProtectsEntryFromEviction);
   AddTest(tests, "TextLayout/AdvanceVisualColumnTabStops", TestAdvanceVisualColumnTabStops);
   AddTest(tests, "TextLayout/VisualColumnMapMatchesDirectWalk",
           TestVisualColumnMapMatchesDirectWalk);
