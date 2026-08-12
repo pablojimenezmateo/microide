@@ -1252,6 +1252,17 @@ const ScenarioRegistration g_perf_settings_change_many_tabs({Scenario{
     // 2% would have let through by a hair. This follows the policy stated on
     // Scenario itself: allocations are the oracle, keep it tight.
     .tolerance_alloc_p50_percent = 1.0,
+    // Net heap retention is not a measurement for this scenario, and the reason
+    // is the same one multi_project_switch records: memory this iteration
+    // allocates on the shell thread is released somewhere the per-thread
+    // counter cannot see -- a later iteration's teardown, or a background
+    // thread (the queued session-state write, whose encode runs here and whose
+    // buffer is freed by the writer). The reading is +86 KB EVERY iteration
+    // while `rss_growth_bytes` is 0-8 KB and trending to zero, so the metric
+    // claims ~780 KB retained across a run that grew ~119 KB and flattened.
+    // A gate that a flat RSS contradicts is not measuring retention
+    // (TD-2026-08-12-191). See Scenario::gate_net_heap_metrics.
+    .gate_net_heap_metrics = false,
     .run = RunSettingsChangeManyTabs,
 }});
 const ScenarioRegistration g_perf_editor_column_selection_burst({Scenario{

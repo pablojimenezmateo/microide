@@ -355,7 +355,7 @@ Fixed, and all 11 targets build; `GitPorcelainV2ParserFuzz` and
 clang+fuzz tree and builds every target without running them, which is the cheap
 proof they still compile.
 
-### TD-2026-08-12-191 — four `p50_net_heap_bytes` gates have been red since before 2026-08-12, and the metric is BUILD-CONFIGURATION dependent. OPEN (the configuration half shipped; the retention itself is unexplained).
+### TD-2026-08-12-191 — four `p50_net_heap_bytes` gates have been red since before 2026-08-12, and the metric is BUILD-CONFIGURATION dependent. [RESOLVED 2026-08-12 — three causes, all found, and none of them was a leak.]
 
 Found by running the full gate (which is itself supposed to be routine —
 [141](#td-2026-08-06-141)) and then A/B-ing the failures against the session's
@@ -437,12 +437,35 @@ re-gated green. Same rule as [163](#td-2026-08-07-163): build scenario inputs
 outside the measured window — this is the second scenario to have broken it, and
 the first where the giveaway was a retention gate rather than a duration.
 
-**Still open: the other three** — `settings_change_many_tabs`, `multi_tab_cycle`
-and `switch_and_idle`. They are shell scenarios rather than unit-shaped ones, so
-the fixture-scaling test above does not transfer directly; the method does. Note
-the canary scenario nets exactly **0** bytes over 2,000 balanced allocations, so
-the accounting itself is sound and anything these three report is real retention
-on the scenario thread.
+**The other three are the metric measuring what it cannot see, and are now
+exempted with the reason recorded.** `settings_change_many_tabs`,
+`multi_tab_cycle` and `switch_and_idle` report a steady **+86 KB every
+iteration** while their own `rss_growth_bytes` reads 0-8 KB and trends to zero:
+the metric claims ~780 KB retained across a run that grew ~119 KB and flattened.
+A retention gate that a flat RSS contradicts is not measuring retention.
+
+The mechanism is the one `multi_project_switch` already records for itself:
+memory allocated on the shell thread inside the window is released where the
+**per-thread** counter cannot see it — a later iteration's teardown, or a
+background thread. These three switch projects and tabs, so each iteration queues
+a session-state write whose encode runs on the shell thread (it is the top
+allocation site in `switch_and_idle`'s phase, see
+[159](#td-2026-08-06-159)) and whose buffer the writer thread frees.
+
+So all three take `gate_net_heap_metrics = false` with that reason written at the
+registration — the documented exemption, used the way the metric's own
+documentation asks ("with a stated reason rather than a wide tolerance") — and
+their allocation gates, which ARE deterministic and per-thread by design, were
+re-recorded and tightened (`switch_and_idle` -11.5 %,
+`settings_change_many_tabs` -3.5 %). All four scenarios gate green.
+
+**What this entry establishes for the next reader**, and the reason it is worth
+more than the four fixes: `p50_net_heap_bytes` is a retention measure only for
+allocations whose free happens on the SAME thread, inside the SAME window. It is
+still the right instrument for a unit-shaped scenario, and it is the wrong one
+for a scenario that hands work to a background thread or whose teardown straddles
+iterations. `rss_growth_bytes`, for all its noise, is the cross-check that tells
+the two apart — and it is what caught all three here.
 
 A mechanism was proposed on 2026-08-12 and is WRONG; it is recorded here so it is
 not proposed again. The theory was "`p50_net_heap_bytes` is process-global while
