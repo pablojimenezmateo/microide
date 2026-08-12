@@ -266,6 +266,14 @@ class TextViewport {
                     std::size_t end_line,
                     std::vector<std::string> replacement,
                     bool record_undo = true);
+  // Blob form: the shaping ops (toggle comment, sort, move line, indent) build
+  // their replacement straight into one buffer plus a line-start table, so an
+  // n-line op costs a constant number of allocations rather than n
+  // (TD-2026-08-11-182).
+  bool ReplaceLines(std::size_t start_line,
+                    std::size_t end_line,
+                    LineBlob replacement,
+                    bool record_undo = true);
   std::size_t ReplaceAll(std::string_view needle, std::string_view replacement);
   // Apply a precomputed, ascending-sorted set of single-line match ranges as one
   // grouped Replace-All edit, WITHOUT re-scanning/re-folding the document. Each
@@ -654,6 +662,8 @@ class TextViewport {
   // on load/reset, so a downgrade after deleting the last non-ASCII content is
   // recovered on the next reload (matching typical editor behavior).
   void UpgradeEncodingForInsertedLines(const std::vector<std::string>& inserted_lines);
+  void UpgradeEncodingForInsertedLines(const LineBlob& inserted_lines);
+  void UpgradeEncodingFromDelta(TextEncoding delta);
   // Column-scoped counterpart: an in-line splice can only raise the document's
   // classification through the bytes it actually spliced in. Every other byte on
   // the line was scanned when it first entered the document, and the line form's
@@ -707,8 +717,8 @@ class TextViewport {
   // missed ClearRedo leaves a redo stack that replays against text that no
   // longer exists. Consumes both line vectors into the undo entry.
   void CommitLineRangeEdit(std::size_t first_changed_line,
-                           std::vector<std::string> before_changed_lines,
-                           std::vector<std::string> after_changed_lines,
+                           LineBlob before_changed_lines,
+                           LineBlob after_changed_lines,
                            const ViewState& before_state);
   void FlushActiveUndoGroup();
   void ApplyHistoryEntry(const HistoryEntry& entry, bool forward);
@@ -728,7 +738,7 @@ class TextViewport {
   void WidenInlineEntryToLines(HistoryEntry& entry) const;
   HistoryEntry BuildLineHistoryEntry(std::size_t start_line,
                                      std::size_t end_line,
-                                     std::vector<std::string> replacement) const;
+                                     LineBlob replacement) const;
   // The three multi-caret edit fan-outs share one pipeline (collect+sort+dedup
   // carets, capture the affected slice, reverse-walk applying one history entry
   // per caret with position remap, then commit one aggregate undo entry). Only
@@ -764,7 +774,7 @@ class TextViewport {
                                std::string_view close);
   bool ApplyLineEdit(std::size_t start_line,
                      std::size_t end_line,
-                     std::vector<std::string> replacement,
+                     LineBlob replacement,
                      bool record_undo);
   std::string AutoIndentForNewline(std::size_t line, std::size_t column) const;
   std::string IndentUnit() const;

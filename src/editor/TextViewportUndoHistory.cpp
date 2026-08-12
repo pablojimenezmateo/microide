@@ -16,10 +16,10 @@ std::size_t EntryContentBytes(const TextViewportUndoHistory::Entry& entry) {
     return entry.removed_text.size() + entry.inserted_text.size();
   }
   std::size_t bytes = 0;
-  const auto add_lines = [&bytes](const std::vector<std::string>& lines) {
-    for (const std::string& line : lines) {
-      bytes += line.size() + 1;
-    }
+  const auto add_lines = [&bytes](const LineBlob& lines) {
+    // Content bytes plus one separator per line -- the same number the vector
+    // form summed, so the byte budget is unchanged by the storage change.
+    bytes += lines.content_bytes() + lines.size();
   };
   add_lines(entry.before_lines);
   add_lines(entry.after_lines);
@@ -414,8 +414,8 @@ void TextViewportUndoHistory::ApplyEntryToBuffer(TextBuffer& lines, const Entry&
   // already spliced (TD-2026-08-06-157).
   if (entry.is_multi_range()) {
     entry.ForEachPartInApplyOrder(
-        forward, [&lines](std::size_t start, const std::vector<std::string>& removed,
-                          const std::vector<std::string>& inserted) {
+        forward, [&lines](std::size_t start, const LineBlob& removed,
+                          const LineBlob& inserted) {
           lines.ReplaceLineRange(std::min(start, lines.size()), removed.size(), inserted);
         });
     if (lines.empty()) {
@@ -478,22 +478,22 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
     };
   }
 
-  const std::vector<std::string>& before_lines = forward ? entry.before_lines : entry.after_lines;
-  const std::vector<std::string>& after_lines = forward ? entry.after_lines : entry.before_lines;
+  const LineBlob& before_lines = forward ? entry.before_lines : entry.after_lines;
+  const LineBlob& after_lines = forward ? entry.after_lines : entry.before_lines;
   if (before_lines.empty() || after_lines.empty()) {
     return std::nullopt;
   }
 
-  const std::string& before_first = before_lines.front();
-  const std::string& after_first = after_lines.front();
+  const std::string_view before_first = before_lines.front();
+  const std::string_view after_first = after_lines.front();
   std::size_t common_prefix = 0;
   const std::size_t max_prefix = std::min(before_first.size(), after_first.size());
   while (common_prefix < max_prefix && before_first[common_prefix] == after_first[common_prefix]) {
     ++common_prefix;
   }
 
-  const std::string& before_last = before_lines.back();
-  const std::string& after_last = after_lines.back();
+  const std::string_view before_last = before_lines.back();
+  const std::string_view after_last = after_lines.back();
   std::size_t common_suffix = 0;
   const std::size_t max_suffix = std::min(before_last.size(), after_last.size());
   while (common_suffix < max_suffix &&
@@ -519,10 +519,9 @@ std::optional<AppliedEdit> TextViewportUndoHistory::BuildAppliedEdit(const Entry
   // `last` trims the back, and for size()==1 the line is both.
   std::string replacement_text;
   {
-    std::size_t total = after_lines.size() - 1;  // the '\n' between each pair
-    for (const std::string& line : after_lines) {
-      total += line.size();
-    }
+    // Content bytes plus the '\n' between each pair -- one read off the blob,
+    // where the vector form summed one string at a time.
+    std::size_t total = after_lines.content_bytes() + after_lines.size() - 1;
     const std::size_t trimmed = common_prefix + common_suffix;
     replacement_text.reserve(total > trimmed ? total - trimmed : 0);
     for (std::size_t i = 0; i < after_lines.size(); ++i) {
@@ -580,8 +579,8 @@ std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLine
     };
   }
 
-  const std::vector<std::string>& before = forward ? entry.before_lines : entry.after_lines;
-  const std::vector<std::string>& after = forward ? entry.after_lines : entry.before_lines;
+  const LineBlob& before = forward ? entry.before_lines : entry.after_lines;
+  const LineBlob& after = forward ? entry.after_lines : entry.before_lines;
 
   std::size_t prefix = 0;
   while (prefix < before.size() && prefix < after.size() && before[prefix] == after[prefix]) {
@@ -605,8 +604,8 @@ std::optional<AppliedEditLineSpan> TextViewportUndoHistory::BuildAppliedEditLine
 }
 
 TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentChange(
-    std::vector<std::string> before_lines, const ViewState& before_state,
-    std::vector<std::string> after_lines, const ViewState& after_state) {
+    LineBlob before_lines, const ViewState& before_state,
+    LineBlob after_lines, const ViewState& after_state) {
   std::size_t prefix = 0;
   while (prefix < before_lines.size() && prefix < after_lines.size() &&
          before_lines[prefix] == after_lines[prefix]) {
@@ -623,12 +622,10 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::BuildEntryForDocumentCha
 
   Entry entry;
   entry.start_line = prefix;
-  entry.before_lines.assign(
-      std::make_move_iterator(before_lines.begin() + static_cast<std::ptrdiff_t>(prefix)),
-      std::make_move_iterator(before_lines.begin() + static_cast<std::ptrdiff_t>(before_end)));
-  entry.after_lines.assign(
-      std::make_move_iterator(after_lines.begin() + static_cast<std::ptrdiff_t>(prefix)),
-      std::make_move_iterator(after_lines.begin() + static_cast<std::ptrdiff_t>(after_end)));
+  // SubRange copies the trimmed byte span once each, where the vector form moved
+  // (before_end - prefix) + (after_end - prefix) individual strings.
+  entry.before_lines = before_lines.SubRange(prefix, before_end);
+  entry.after_lines = after_lines.SubRange(prefix, after_end);
   entry.before_state = before_state;
   entry.after_state = after_state;
   return entry;
@@ -663,10 +660,7 @@ bool TextViewportUndoHistory::CanMergeGroupEntry(const Entry& aggregate, const E
     return false;
   }
   const std::size_t relative_start = next_start - aggregate_after_start;
-  const std::size_t relative_end = relative_start + next.before_lines.size();
-  return std::equal(next.before_lines.begin(), next.before_lines.end(),
-                    aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
-                    aggregate.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end));
+  return aggregate.after_lines.range_equals(relative_start, next.before_lines);
 }
 
 // Precondition: CanMergeGroupEntry(aggregate, next). Split from the check so the
@@ -691,18 +685,14 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::MergeGroupEntry(Entry ag
     // value. Inserting at the front keeps the aggregate's vectors in place and
     // copies only `next`, which is the smaller side by construction.
     merged.start_line = next.start_line;
-    merged.before_lines.insert(merged.before_lines.begin(), next.before_lines.begin(),
-                               next.before_lines.end());
-    merged.after_lines.insert(merged.after_lines.begin(), next.after_lines.begin(),
-                              next.after_lines.end());
+    merged.before_lines.prepend(next.before_lines);
+    merged.after_lines.prepend(next.after_lines);
     return merged;
   }
 
   if (next_start == aggregate_after_end) {
-    merged.before_lines.insert(merged.before_lines.end(), next.before_lines.begin(),
-                               next.before_lines.end());
-    merged.after_lines.insert(merged.after_lines.end(), next.after_lines.begin(),
-                              next.after_lines.end());
+    merged.before_lines.append(next.before_lines);
+    merged.after_lines.append(next.after_lines);
     return merged;
   }
 
@@ -710,10 +700,7 @@ TextViewportUndoHistory::Entry TextViewportUndoHistory::MergeGroupEntry(Entry ag
   // replaced lines match, so this is a straight splice.
   const std::size_t relative_start = next_start - aggregate_after_start;
   const std::size_t relative_end = relative_start + next.before_lines.size();
-  merged.after_lines.erase(merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
-                            merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_end));
-  merged.after_lines.insert(merged.after_lines.begin() + static_cast<std::ptrdiff_t>(relative_start),
-                             next.after_lines.begin(), next.after_lines.end());
+  merged.after_lines.replace_range(relative_start, relative_end, next.after_lines);
   return merged;
 }
 
@@ -728,11 +715,8 @@ std::size_t EntryBytes(const TextViewportUndoHistory::Entry& entry) {
   std::size_t bytes = sizeof(TextViewportUndoHistory::Entry);
   bytes += entry.removed_text.capacity();
   bytes += entry.inserted_text.capacity();
-  const auto add_lines = [&bytes](const std::vector<std::string>& lines) {
-    bytes += lines.capacity() * sizeof(std::string);
-    for (const std::string& line : lines) {
-      bytes += line.capacity();
-    }
+  const auto add_lines = [&bytes](const LineBlob& lines) {
+    bytes += lines.ApproximateResidentBytes();
   };
   add_lines(entry.before_lines);
   add_lines(entry.after_lines);

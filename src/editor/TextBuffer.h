@@ -92,12 +92,22 @@ class TextBuffer {
   const_iterator end() const { return Snapshot().end(); }
 
   // Copy lines [begin, end) into a fresh vector (undo before/after capture).
+  // Blob form of SliceLines: the lines of [begin, end) as one buffer plus a
+  // line-start table, which is 2 allocations instead of (end - begin).
+  LineBlob SliceLinesBlob(std::size_t begin, std::size_t end) const {
+    LineBlob out;
+    tree_.AppendLines(begin, end, out);
+    return out;
+  }
   std::vector<std::string> SliceLines(std::size_t begin, std::size_t end) const {
     return tree_.SliceLines(begin, end);
   }
   // The same lines appended to a caller-owned vector, for a caller assembling a
   // larger one (see PieceTree::AppendLines).
   void AppendLines(std::size_t begin, std::size_t end, std::vector<std::string>& out) const {
+    tree_.AppendLines(begin, end, out);
+  }
+  void AppendLines(std::size_t begin, std::size_t end, LineBlob& out) const {
     tree_.AppendLines(begin, end, out);
   }
   // Full materialized copy of the document.
@@ -149,6 +159,12 @@ class TextBuffer {
   // `inserted` at `start`. Mirrors the undo-entry apply model.
   void ReplaceLineRange(std::size_t start, std::size_t removed,
                         const std::vector<std::string>& inserted) {
+    tree_.ReplaceLineRange(start, removed, inserted);
+    InvalidateSnapshot();
+  }
+  // Blob form: one buffer plus a line-start table, which is what an undo entry
+  // stores and what the shaping ops build (TD-2026-08-11-182).
+  void ReplaceLineRange(std::size_t start, std::size_t removed, const LineBlob& inserted) {
     tree_.ReplaceLineRange(start, removed, inserted);
     InvalidateSnapshot();
   }

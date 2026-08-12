@@ -97,8 +97,8 @@ class TextViewportUndoHistory {
     // come sit below and are therefore unshifted by the ones already applied.
     std::size_t before_start = 0;
     std::size_t after_start = 0;
-    std::vector<std::string> before_lines;
-    std::vector<std::string> after_lines;
+    LineBlob before_lines;
+    LineBlob after_lines;
   };
 
   struct Entry {
@@ -107,8 +107,11 @@ class TextViewportUndoHistory {
     std::size_t start_column = 0;
     std::string removed_text;
     std::string inserted_text;
-    std::vector<std::string> before_lines;
-    std::vector<std::string> after_lines;
+    // Blob-backed, not one owned string per line: a line-shaped edit costs 2
+    // allocations per direction instead of 2n, and undo/redo frees two blocks
+    // instead of n (TD-2026-08-11-182).
+    LineBlob before_lines;
+    LineBlob after_lines;
     // Disjoint ranges this entry ALSO replaces, strictly above the primary range
     // and sorted ascending. Empty for every entry except a non-contiguous
     // multi-caret or grouped edit (TD-2026-08-06-157).
@@ -225,9 +228,9 @@ class TextViewportUndoHistory {
   // them, and on a multi-caret edit whose carets sit far apart each vector is the
   // whole span between the outermost carets — copying them here doubled the cost
   // of the edit for nothing.
-  static Entry BuildEntryForDocumentChange(std::vector<std::string> before_lines,
+  static Entry BuildEntryForDocumentChange(LineBlob before_lines,
                                             const ViewState& before_state,
-                                            std::vector<std::string> after_lines,
+                                            LineBlob after_lines,
                                             const ViewState& after_state);
 
  private:

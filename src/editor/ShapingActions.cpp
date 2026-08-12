@@ -165,7 +165,7 @@ namespace {
 bool BuildToggledCommentRegion(const TextBuffer& lines,
                                LineRange range,
                                std::string_view marker,
-                               std::vector<std::string>* updated) {
+                               LineBlob* updated) {
   bool all_commented = true;
   bool any_non_blank = false;
   std::size_t min_indent = std::string::npos;
@@ -186,11 +186,11 @@ bool BuildToggledCommentRegion(const TextBuffer& lines,
   if (min_indent == std::string::npos) min_indent = 0;
 
   updated->clear();
-  updated->reserve(range.line_count());
+  updated->reserve_lines(range.line_count());
   for (std::size_t i = range.first; i <= range.last; ++i) {
     const std::string_view line = lines.LineView(i);
     if (LineIsEmptyOrWhitespace(line)) {
-      updated->emplace_back(line);
+      updated->push_back(line);
       continue;
     }
     if (all_commented) {
@@ -202,19 +202,12 @@ bool BuildToggledCommentRegion(const TextBuffer& lines,
       std::size_t pos = lead + marker.size();
       // Strip a single space after marker if present (common style).
       if (pos < line.size() && line[pos] == ' ') ++pos;
-      std::string out;
-      out.reserve(lead + (line.size() - pos));
-      out.append(line, 0, lead);
-      out.append(line, pos, line.size() - pos);
-      updated->push_back(std::move(out));
+      // Straight into the blob: the toggled line no longer needs an owned string
+      // of its own, which was the per-line allocation TD-2026-08-11-182 named.
+      updated->push_joined(line.substr(0, lead), line.substr(pos));
     } else {
-      std::string out;
-      out.reserve(line.size() + marker.size() + 1);
-      out.append(line, 0, min_indent);
-      out.append(marker);
-      out.push_back(' ');
-      out.append(line.begin() + static_cast<std::ptrdiff_t>(min_indent), line.end());
-      updated->push_back(std::move(out));
+      updated->push_joined(line.substr(0, min_indent), marker, std::string_view(" "),
+                           line.substr(min_indent));
     }
   }
   return true;
@@ -228,7 +221,7 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
   if (ranges.empty()) return false;
   const TextBuffer& lines = viewport.lines();
 
-  std::vector<std::string> updated;
+  LineBlob updated;
   if (ranges.size() == 1) {
     // One region is the overwhelmingly common case (any single caret, any single
     // selection) and it needs no group frame: the replace is already one entry.
@@ -404,19 +397,17 @@ void RestoreCaretsAfterLineMove(TextViewport& viewport,
 // One piece-tree walk for the block: the per-line `lines[i]` this replaced goes
 // through TextBuffer::LineRef, which materialises a string AND inserts it into the
 // buffer's line cache.
-std::vector<std::string> BuildLineMoveReplacement(const TextBuffer& lines,
-                                                  LineRange range,
-                                                  bool downward) {
-  std::vector<std::string> updated;
-  updated.reserve(range.line_count() + 1);
+LineBlob BuildLineMoveReplacement(const TextBuffer& lines, LineRange range, bool downward) {
+  LineBlob updated;
+  updated.reserve_lines(range.line_count() + 1);
   if (downward) {
-    updated.push_back(std::string(lines.LineView(range.last + 1)));
+    updated.push_back(lines.LineView(range.last + 1));
   }
   // Appended, not sliced-then-moved: SliceLines' return vector was one heap
   // allocation per caret per keystroke for a vector that only ever fed this one.
   lines.AppendLines(range.first, range.last + 1, updated);
   if (!downward) {
-    updated.push_back(std::string(lines.LineView(range.first - 1)));
+    updated.push_back(lines.LineView(range.first - 1));
   }
   return updated;
 }
@@ -449,7 +440,7 @@ bool MoveLines(TextViewport& viewport, bool downward) {
   viewport.BeginUndoGroup();
   bool changed = false;
   for (const LineRange& range : regions) {
-    std::vector<std::string> updated = BuildLineMoveReplacement(lines, range, downward);
+    LineBlob updated = BuildLineMoveReplacement(lines, range, downward);
     const std::size_t start = downward ? range.first : range.first - 1;
     const std::size_t end = downward ? range.last + 2 : range.last + 1;
     changed |= viewport.ReplaceLines(start, end, std::move(updated), /*record_undo=*/true);
@@ -488,7 +479,9 @@ bool DuplicateSelection(TextViewport& viewport) {
   // LineRef, which materialises the line AND interns it in the buffer's line
   // cache — two of each to produce two copies of one line.
   const std::string_view source = lines.LineView(line_index);
-  std::vector<std::string> updated{std::string(source), std::string(source)};
+  LineBlob updated;
+  updated.push_back(source);
+  updated.push_back(source);
   return viewport.ReplaceLines(line_index, line_index + 1, std::move(updated),
                                /*record_undo=*/true);
 }
@@ -615,22 +608,26 @@ bool ReindentRegions(TextViewport& viewport, Transform&& transform) {
   deltas.flat.reserve(total_lines);
   deltas.region_offset.reserve(regions.size());
 
-  std::vector<std::string> updated;
+  LineBlob updated;
+  // One reusable scratch for the transform's output, appended into the blob and
+  // then reset: `std::string out` inside the loop was one allocation per line of
+  // the region, per region (TD-2026-08-11-182).
+  std::string out;
   bool changed = false;
   viewport.BeginUndoGroup();
   for (const LineRange& region : regions) {
     deltas.BeginRegion();
     updated.clear();
-    updated.reserve(region.line_count());
+    updated.reserve_lines(region.line_count());
     bool region_changed = false;
     for (std::size_t i = region.first; i <= region.last; ++i) {
       // LineView, not lines[i]: LineRef would also insert every line of the
       // region into the buffer's line cache (see BuildLineMoveReplacement).
-      std::string out;
+      out.clear();
       const std::ptrdiff_t delta = transform(lines.LineView(i), &out);
       deltas.flat.push_back(delta);
       region_changed |= delta != 0;
-      updated.push_back(std::move(out));
+      updated.push_back(out);
     }
     if (!region_changed) continue;
     changed |= viewport.ReplaceLines(region.first, region.last + 1, std::move(updated),
@@ -703,16 +700,33 @@ bool SortLines(TextViewport& viewport, bool ascending) {
   if (regions.empty()) return false;
   const TextBuffer& lines = viewport.lines();
 
+  // Sorted by PERMUTATION, not by moving strings: the region is sliced into one
+  // blob, an index vector is sorted by the lines it points at, and the result is
+  // appended in that order. Three allocations for the whole region instead of one
+  // per line for the slice plus whatever the sort's moves cost.
+  std::vector<std::uint32_t> order;
+  LineBlob region_lines;
+  LineBlob sorted;
   const auto sort_region = [&](const LineRange& region) {
-    // See BuildLineMoveReplacement for why this is one SliceLines walk and not a
-    // per-line read.
-    std::vector<std::string> sorted = lines.SliceLines(region.first, region.last + 1);
-    if (ascending) {
-      std::sort(sorted.begin(), sorted.end());
-    } else {
-      std::sort(sorted.begin(), sorted.end(), std::greater<std::string>());
+    region_lines.clear();
+    lines.AppendLines(region.first, region.last + 1, region_lines);
+    order.clear();
+    order.reserve(region_lines.size());
+    for (std::uint32_t i = 0; i < region_lines.size(); ++i) {
+      order.push_back(i);
     }
-    return viewport.ReplaceLines(region.first, region.last + 1, std::move(sorted),
+    std::sort(order.begin(), order.end(),
+              [&](std::uint32_t a, std::uint32_t b) {
+                return ascending ? region_lines[a] < region_lines[b]
+                                 : region_lines[b] < region_lines[a];
+              });
+    sorted.clear();
+    sorted.reserve_lines(order.size());
+    sorted.reserve_bytes(region_lines.content_bytes());
+    for (const std::uint32_t index : order) {
+      sorted.push_back(region_lines[index]);
+    }
+    return viewport.ReplaceLines(region.first, region.last + 1, sorted,
                                  /*record_undo=*/true);
   };
 

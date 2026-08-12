@@ -532,8 +532,9 @@ std::size_t PieceTree::LineLength(std::size_t index) const {
   return end - start;
 }
 
-void PieceTree::ExtractLineRange(std::size_t begin_line, std::size_t end_line,
-                                 std::vector<std::string>& out) const {
+template <typename Sink>
+void PieceTree::ExtractLineRangeInto(std::size_t begin_line, std::size_t end_line,
+                                     Sink& out) const {
   const std::size_t count = end_line - begin_line;
   const std::size_t target = out.size() + count;
   out.reserve(target);
@@ -606,6 +607,24 @@ void PieceTree::ExtractLineRange(std::size_t begin_line, std::size_t end_line,
   }
 }
 
+// The two sinks this walk serves: a vector of owned lines, and the blob form an
+// undo entry stores (one buffer + a line-start table, TD-2026-08-11-182). Both
+// expose the same three operations the loop above uses, so there is one
+// extractor rather than two copies of a pruned treap walk.
+template void PieceTree::ExtractLineRangeInto<std::vector<std::string>>(
+    std::size_t, std::size_t, std::vector<std::string>&) const;
+template void PieceTree::ExtractLineRangeInto<LineBlob>(std::size_t, std::size_t, LineBlob&) const;
+
+void PieceTree::ExtractLineRange(std::size_t begin_line, std::size_t end_line,
+                                 std::vector<std::string>& out) const {
+  ExtractLineRangeInto(begin_line, end_line, out);
+}
+
+void PieceTree::AppendLines(std::size_t begin, std::size_t end, LineBlob& out) const {
+  if (begin >= end || begin >= line_count_) return;
+  ExtractLineRangeInto(begin, std::min(end, line_count_), out);
+}
+
 std::vector<std::string> PieceTree::SliceLines(std::size_t begin, std::size_t end) const {
   if (begin >= end || begin >= line_count_) return {};
   end = std::min(end, line_count_);
@@ -637,8 +656,9 @@ std::vector<std::string> PieceTree::ToVector() const {
 
 // --- mutation ---
 
-void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
-                                 std::span<const std::string> inserted) {
+template <typename Lines>
+void PieceTree::ReplaceLineRangeFrom(std::size_t start, std::size_t removed,
+                                     const Lines& inserted) {
   util::AddPerformanceCounter(util::PerfCounterId::DocumentEdits);
   const std::size_t n = line_count_;
   start = std::min(start, n);
@@ -673,7 +693,7 @@ void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
   std::string replacement;
   if (!inserted.empty()) {
     std::size_t total = inserted.size() - 1;  // the '\n' between each pair
-    for (const std::string& line : inserted) {
+    for (const std::string_view line : inserted) {
       total += line.size();
     }
     replacement.reserve(total + (newline_before ? 1 : 0) + (newline_after ? 1 : 0));
@@ -703,6 +723,19 @@ void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
   InsertText(old_start, replacement);
   line_count_ = n - removed + inserted.size();
   BumpRevision();
+}
+
+// The two line containers that reach the splice: an owned-per-line vector, and
+// the blob form an undo entry stores (TD-2026-08-11-182). One body, because the
+// join, the byte ceiling and the line-count bookkeeping must not drift apart.
+void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
+                                 std::span<const std::string> inserted) {
+  ReplaceLineRangeFrom(start, removed, inserted);
+}
+
+void PieceTree::ReplaceLineRange(std::size_t start, std::size_t removed,
+                                 const LineBlob& inserted) {
+  ReplaceLineRangeFrom(start, removed, inserted);
 }
 
 PieceTree::ByteSpan PieceTree::ResolveByteSpan(std::size_t start_line, std::size_t start_column,

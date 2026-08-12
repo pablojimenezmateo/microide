@@ -1,5 +1,7 @@
 #pragma once
 
+#include "editor/LineBlob.h"
+
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -98,6 +100,10 @@ class PieceTree {
   // value) per call -- which on a multi-caret line op is one per caret per
   // keystroke.
   void AppendLines(std::size_t begin, std::size_t end, std::vector<std::string>& out) const;
+  // The same lines appended to a LineBlob: one buffer plus a line-start table
+  // instead of one owned string per line. This is the form an undo entry stores
+  // (TD-2026-08-11-182); the walk is shared with the vector form.
+  void AppendLines(std::size_t begin, std::size_t end, LineBlob& out) const;
   // Full materialized copy of every line.
   std::vector<std::string> ToVector() const;
 
@@ -114,6 +120,9 @@ class PieceTree {
                         const std::vector<std::string>& inserted) {
     ReplaceLineRange(start, removed, std::span<const std::string>(inserted));
   }
+  // Blob form: the lines an undo entry stores, spliced without materializing one
+  // std::string per line first.
+  void ReplaceLineRange(std::size_t start, std::size_t removed, const LineBlob& inserted);
 
   // Byte-range splice in (line, column) coordinates: replace the document bytes
   // between (start_line, start_column) and (end_line, end_column) with `text`.
@@ -300,6 +309,14 @@ class PieceTree {
   // begin_line < end_line <= line_count_.
   void ExtractLineRange(std::size_t begin_line, std::size_t end_line,
                         std::vector<std::string>& out) const;
+  // `Sink` needs `size()`, `emplace_back(const char*, size_t)` and
+  // `push_back(std::string&&)`; explicitly instantiated for the two that exist.
+  template <typename Sink>
+  void ExtractLineRangeInto(std::size_t begin_line, std::size_t end_line, Sink& out) const;
+  // `Lines` needs `size()`, `empty()` and iteration yielding something
+  // convertible to string_view.
+  template <typename Lines>
+  void ReplaceLineRangeFrom(std::size_t start, std::size_t removed, const Lines& inserted);
   // If [pos, pos+length) lies wholly inside one piece, return a view into the
   // backing buffer; otherwise return an empty optional-substitute via `ok`.
   std::string_view TryViewRange(std::uint32_t pos, std::uint32_t length, bool& ok) const;

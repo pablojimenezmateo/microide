@@ -364,7 +364,29 @@ void TextViewport::UpgradeEncodingForInsertedLines(
   if (document_->encoding == TextEncoding::Bytes) {
     return;  // already the worst classification; an insert cannot raise it further.
   }
-  const TextEncoding delta = DetectEncoding(LineSpan(inserted_lines));
+  UpgradeEncodingFromDelta(DetectEncoding(LineSpan(inserted_lines)));
+}
+
+void TextViewport::UpgradeEncodingForInsertedLines(const LineBlob& inserted_lines) {
+  util::AddPerformanceCounter(util::PerfCounterId::EditorRefreshEncodingCalls);
+  if (document_->encoding == TextEncoding::Bytes) {
+    return;
+  }
+  // One classification pass over the blob's own bytes; no vector to build first.
+  TextEncoding delta = TextEncoding::ASCII;
+  for (const std::string_view line : inserted_lines) {
+    const TextEncoding line_encoding = DetectEncoding(line);
+    if (static_cast<int>(line_encoding) > static_cast<int>(delta)) {
+      delta = line_encoding;
+    }
+    if (delta == TextEncoding::Bytes) {
+      break;
+    }
+  }
+  UpgradeEncodingFromDelta(delta);
+}
+
+void TextViewport::UpgradeEncodingFromDelta(TextEncoding delta) {
   if (static_cast<int>(delta) > static_cast<int>(document_->encoding)) {
     document_->encoding = delta;
   }

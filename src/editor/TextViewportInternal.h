@@ -276,7 +276,7 @@ class DisjointEditCapture {
     open_start_ = std::min(start, buffer_->size());
     open_before_size_ = std::clamp(end_exclusive, open_start_, buffer_->size()) - open_start_;
     document_size_at_begin_ = buffer_->size();
-    open_before_lines_ = buffer_->SliceLines(open_start_, open_start_ + open_before_size_);
+    open_before_lines_ = buffer_->SliceLinesBlob(open_start_, open_start_ + open_before_size_);
     open_ = true;
   }
 
@@ -294,7 +294,7 @@ class DisjointEditCapture {
     parts_.push_back(Captured{
         .before_start = open_start_,
         .before_lines = std::move(open_before_lines_),
-        .after_lines = buffer_->SliceLines(std::min(open_start_, after_end), after_end),
+        .after_lines = buffer_->SliceLinesBlob(std::min(open_start_, after_end), after_end),
     });
   }
 
@@ -344,13 +344,13 @@ class DisjointEditCapture {
  private:
   struct Captured {
     std::size_t before_start = 0;
-    std::vector<std::string> before_lines;
-    std::vector<std::string> after_lines;
+    LineBlob before_lines;
+    LineBlob after_lines;
   };
 
   const TextBuffer* buffer_;
   std::vector<Captured> parts_;
-  std::vector<std::string> open_before_lines_;
+  LineBlob open_before_lines_;
   std::size_t open_start_ = 0;
   std::size_t open_before_size_ = 0;
   std::size_t document_size_at_begin_ = 0;

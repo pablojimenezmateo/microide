@@ -1201,12 +1201,15 @@ void TestApplyEntryToBufferAppliesEveryDisjointPart() {
 
   TextViewportUndoHistory::Entry entry;
   entry.start_line = 1;
-  entry.before_lines = {"line1"};
-  entry.after_lines = {"ONE-a", "ONE-b"};
+  entry.before_lines = microide::editor::LineBlob::Of({"line1"});
+  entry.after_lines = microide::editor::LineBlob::Of({"ONE-a", "ONE-b"});
   entry.extra_parts.push_back(TextViewportUndoHistory::DisjointPart{
-      .before_start = 5, .after_start = 6, .before_lines = {"line5"}, .after_lines = {"FIVE"}});
+      .before_start = 5,
+      .after_start = 6,
+      .before_lines = microide::editor::LineBlob::Of({"line5"}),
+      .after_lines = microide::editor::LineBlob::Of({"FIVE"})});
   entry.extra_parts.push_back(TextViewportUndoHistory::DisjointPart{
-      .before_start = 8, .after_start = 9, .before_lines = {"line8"}, .after_lines = {}});
+      .before_start = 8, .after_start = 9, .before_lines = microide::editor::LineBlob::Of({"line8"}), .after_lines = {}});
   Expect(entry.is_multi_range(), "the fixture entry must actually be multi-range");
 
   TextBuffer buffer;

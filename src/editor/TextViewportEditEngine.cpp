@@ -249,6 +249,16 @@ bool TextViewport::ReplaceLines(std::size_t start_line,
                                 std::size_t end_line,
                                 std::vector<std::string> replacement,
                                 bool record_undo) {
+  // Boundary overload: a caller that already owns a vector pays one pass to pack
+  // it. Callers on the hot shaping paths build the blob directly (see
+  // ReplaceLines(LineBlob) below) and skip that.
+  return ApplyLineEdit(start_line, end_line, LineBlob(replacement), record_undo);
+}
+
+bool TextViewport::ReplaceLines(std::size_t start_line,
+                                std::size_t end_line,
+                                LineBlob replacement,
+                                bool record_undo) {
   return ApplyLineEdit(start_line, end_line, std::move(replacement), record_undo);
 }
 
@@ -273,8 +283,8 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   std::size_t replacements = 0;
   std::size_t first_changed_line = document_->lines.size();
   std::size_t last_changed_line = 0;
-  std::vector<std::string> before_changed_lines;
-  std::vector<std::string> after_changed_lines;
+  LineBlob before_changed_lines;
+  LineBlob after_changed_lines;
 
   // Build the final content of the changed span in one pass, then apply it with a
   // single ReplaceLineRange so InvalidateDerivedCaches / RefreshEncoding run once
@@ -312,9 +322,9 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
       // Carry the unchanged gap lines between the previous changed line and this
       // one so the before/after spans stay contiguous for a single range edit.
       for (std::size_t gap = last_changed_line + 1; gap < line_index; ++gap) {
-        std::string gap_line(document_->lines.LineView(gap));
+        const std::string_view gap_line = document_->lines.LineView(gap);
         before_changed_lines.push_back(gap_line);
-        after_changed_lines.push_back(std::move(gap_line));
+        after_changed_lines.push_back(gap_line);
       }
     }
     before_changed_lines.push_back(std::move(current_line));
@@ -336,8 +346,8 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
 }
 
 void TextViewport::CommitLineRangeEdit(std::size_t first_changed_line,
-                                       std::vector<std::string> before_changed_lines,
-                                       std::vector<std::string> after_changed_lines,
+                                       LineBlob before_changed_lines,
+                                       LineBlob after_changed_lines,
                                        const ViewState& before_state) {
   document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
                                     after_changed_lines);
@@ -395,18 +405,18 @@ std::optional<std::size_t> TextViewport::ReplaceAllRanges(
 
   const std::size_t first_changed_line = matches.front().start.line;
   const std::size_t last_changed_line = matches.back().start.line;
-  std::vector<std::string> before_changed_lines;
-  std::vector<std::string> after_changed_lines;
+  LineBlob before_changed_lines;
+  LineBlob after_changed_lines;
   std::string new_line;
 
   std::size_t match_index = 0;
   for (std::size_t line_index = first_changed_line; line_index <= last_changed_line; ++line_index) {
-    std::string current_line(document_->lines.LineView(line_index));
+    const std::string_view current_line = document_->lines.LineView(line_index);
     if (match_index >= matches.size() || matches[match_index].start.line != line_index) {
       // Unchanged gap line between changed lines: carry it into both spans so the
       // before/after ranges stay contiguous for a single ReplaceLineRange.
       before_changed_lines.push_back(current_line);
-      after_changed_lines.push_back(std::move(current_line));
+      after_changed_lines.push_back(current_line);
       continue;
     }
 
@@ -422,7 +432,7 @@ std::optional<std::size_t> TextViewport::ReplaceAllRanges(
     }
     new_line.append(current_line, copy_from);
 
-    before_changed_lines.push_back(std::move(current_line));
+    before_changed_lines.push_back(current_line);
     if (replacement_has_break) {
       for (std::string& piece : util::SplitLines(new_line)) {
         after_changed_lines.push_back(std::move(piece));
@@ -450,26 +460,30 @@ bool TextViewport::SurroundRangeBoundaries(const SelectionRange& norm,
   const std::size_t first = norm.start.line;
   const std::size_t last = norm.end.line;
   const std::size_t span = last - first + 1;
-  std::vector<std::string> before_lines;
-  std::vector<std::string> after_lines;
-  before_lines.reserve(span);
-  after_lines.reserve(span);
+  LineBlob before_lines;
+  LineBlob after_lines;
+  before_lines.reserve_lines(span);
+  after_lines.reserve_lines(span);
 
   for (std::size_t line_index = first; line_index <= last; ++line_index) {
-    std::string original(document_->lines.LineView(line_index));
-    std::string modified = original;
+    // Composed straight into the blob from views: no per-line owned copy, and no
+    // insert() shifting the tail of a string that is about to be appended anyway.
+    const std::string_view original = document_->lines.LineView(line_index);
+    before_lines.push_back(original);
     if (line_index == first && line_index == last) {
-      // Single-line selection: insert `close` at the higher column first so the
-      // `open` insertion at the lower column does not shift `close`'s position.
-      modified.insert(norm.end.column, close.data(), close.size());
-      modified.insert(norm.start.column, open.data(), open.size());
+      after_lines.push_joined(original.substr(0, norm.start.column), open,
+                              original.substr(norm.start.column,
+                                              norm.end.column - norm.start.column),
+                              close, original.substr(norm.end.column));
     } else if (line_index == first) {
-      modified.insert(norm.start.column, open.data(), open.size());
+      after_lines.push_joined(original.substr(0, norm.start.column), open,
+                              original.substr(norm.start.column));
     } else if (line_index == last) {
-      modified.insert(norm.end.column, close.data(), close.size());
+      after_lines.push_joined(original.substr(0, norm.end.column), close,
+                              original.substr(norm.end.column));
+    } else {
+      after_lines.push_back(original);
     }
-    before_lines.push_back(std::move(original));
-    after_lines.push_back(std::move(modified));
   }
 
   document_->lines.ReplaceLineRange(first, span, after_lines);
@@ -588,8 +602,8 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
     {
       util::PerformanceTrace::Scope scope("TextViewport::ApplyHistoryEntry::ApplyEntryToBuffer");
       entry.ForEachPartInApplyOrder(
-          forward, [this](std::size_t start, const std::vector<std::string>& removed,
-                          const std::vector<std::string>& inserted) {
+          forward, [this](std::size_t start, const LineBlob& removed,
+                          const LineBlob& inserted) {
             const std::size_t clamped = std::min(start, document_->lines.size());
             document_->lines.ReplaceLineRange(clamped, removed.size(), inserted);
             UpgradeEncodingForInsertedLines(inserted);
@@ -682,16 +696,16 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     return BuildInlineHistoryEntry(start.line, start.column, end.column, replacement);
   }
 
-  std::vector<std::string> before_lines;
+  LineBlob before_lines;
   {
     util::PerformanceTrace::Scope slice_scope("TextViewport::BuildRangeHistoryEntry::SliceBefore");
-    before_lines = document_->lines.SliceLines(start.line, end.line + 1);
+    before_lines = document_->lines.SliceLinesBlob(start.line, end.line + 1);
   }
   const std::vector<std::string> replacement_lines =
       util::SplitLines(util::NormalizeLineEndings(replacement));
 
-  std::vector<std::string> after_lines;
-  after_lines.reserve(std::max<std::size_t>(1, replacement_lines.size()));
+  LineBlob after_lines;
+  after_lines.reserve_lines(std::max<std::size_t>(1, replacement_lines.size()));
   // `start.column` is exact, not a clamp: ClampTextColumn already bounded it to
   // the line and snapped it to a codepoint boundary, so the prefix is that many
   // bytes and the caret arithmetic below can use it without materializing one.
@@ -710,25 +724,13 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     const std::string_view prefix = document_->lines.LineView(start.line).substr(0, start.column);
     const std::string_view suffix = document_->lines.LineView(end.line).substr(end.column);
     if (replacement_lines.size() == 1) {
-      std::string composed;
-      composed.reserve(prefix.size() + replacement_lines.front().size() + suffix.size());
-      composed.append(prefix);
-      composed.append(replacement_lines.front());
-      composed.append(suffix);
-      after_lines.push_back(std::move(composed));
+      after_lines.push_joined(prefix, std::string_view(replacement_lines.front()), suffix);
     } else {
-      std::string first;
-      first.reserve(prefix.size() + replacement_lines.front().size());
-      first.append(prefix);
-      first.append(replacement_lines.front());
-      after_lines.push_back(std::move(first));
-      after_lines.insert(after_lines.end(), replacement_lines.begin() + 1,
-                         replacement_lines.end() - 1);
-      std::string last;
-      last.reserve(replacement_lines.back().size() + suffix.size());
-      last.append(replacement_lines.back());
-      last.append(suffix);
-      after_lines.push_back(std::move(last));
+      after_lines.push_joined(prefix, std::string_view(replacement_lines.front()));
+      for (std::size_t i = 1; i + 1 < replacement_lines.size(); ++i) {
+        after_lines.push_back(replacement_lines[i]);
+      }
+      after_lines.push_joined(std::string_view(replacement_lines.back()), suffix);
     }
   }
 
@@ -747,7 +749,7 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
       after_lines.size() == 1 ? prefix_size + replacement_lines.front().size()
                               : replacement_lines.back().size();
   after_state.preferred_column = TextLayout::VisualColumnForTextColumn(
-      after_lines.back(), after_state.cursor_column, tab_size_);
+      std::string(after_lines.back()), after_state.cursor_column, tab_size_);
   after_state.selection_anchor.reset();
   after_state.placeholder = false;
   after_state.dirty = true;
@@ -818,8 +820,10 @@ void TextViewport::WidenInlineEntryToLines(HistoryEntry& entry) const {
   const std::size_t column = std::min(entry.start_column, before_line.size());
   before_line.replace(column, std::min(entry.inserted_text.size(), before_line.size() - column),
                       entry.removed_text);
-  entry.before_lines.assign(1, std::move(before_line));
-  entry.after_lines.assign(1, std::move(after_line));
+  entry.before_lines.clear();
+  entry.before_lines.push_back(before_line);
+  entry.after_lines.clear();
+  entry.after_lines.push_back(after_line);
   entry.is_inline = false;
   entry.start_line = line;
   entry.start_column = 0;
@@ -830,11 +834,11 @@ void TextViewport::WidenInlineEntryToLines(HistoryEntry& entry) const {
 TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
     std::size_t start_line,
     std::size_t end_line,
-    std::vector<std::string> replacement) const {
+    LineBlob replacement) const {
   const std::size_t clamped_start = std::min(start_line, document_->lines.size());
   const std::size_t clamped_end = std::clamp(end_line, clamped_start, document_->lines.size());
 
-  std::vector<std::string> after_lines = std::move(replacement);
+  LineBlob after_lines = std::move(replacement);
   if (after_lines.empty()) {
     after_lines.push_back("");
   }
@@ -851,7 +855,7 @@ TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
 
   return HistoryEntry{
       .start_line = clamped_start,
-      .before_lines = document_->lines.SliceLines(clamped_start, clamped_end),
+      .before_lines = document_->lines.SliceLinesBlob(clamped_start, clamped_end),
       .after_lines = std::move(after_lines),
       .before_state = CaptureViewStateForGroupedEntry(),
       .after_state = after_state,
@@ -890,7 +894,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
 
 bool TextViewport::ApplyLineEdit(std::size_t start_line,
                                  std::size_t end_line,
-                                 std::vector<std::string> replacement,
+                                 LineBlob replacement,
                                  bool record_undo) {
   EnsureDocument();
   if (document_->lines.empty()) {
