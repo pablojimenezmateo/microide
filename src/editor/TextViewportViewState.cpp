@@ -136,10 +136,12 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   // Revealing it unconditionally threw the re-anchor away for the one case that
   // needs it most: wheel-scroll away from the caret, then toggle wrap, and the
   // view snapped back to the caret instead of staying where the reader was.
-  const bool caret_was_visible = [&] {
-    if (document_ == nullptr) {
-      return true;
-    }
+  //
+  // Only asked of a view that is scrolled, and for two reasons: a view at the top
+  // has nothing to preserve, and resolving the caret's row in the OLD wrap mode
+  // would build that mode's row table -- for EVERY open tab, since a wrap toggle
+  // runs this on all of them, including ones no frame has ever painted.
+  const bool caret_was_visible = reanchor && [&] {
     const std::size_t caret_row = CursorVisualRow();
     return caret_row >= scroll_line_ && caret_row < scroll_line_ + visible_lines_;
   }();
