@@ -405,11 +405,33 @@ a `RelWithDebInfo+lto` baseline PASSes on allocations and reports the other eigh
 metrics as not comparable. Baselines written before the field compare exactly as
 they did.
 
-**Still open: what the four scenarios actually retain.** The tracer
-(`MICROIDE_PERF_ALLOC_TRACE_PHASE`) is the tool, and a first pass on
-`switch_and_idle` already points at the session encoder — see
-[159](#td-2026-08-06-159)'s 2026-08-12 entry. Do NOT rebaseline these four first:
-that would enshrine the very thing worth finding.
+**Still open: what the four scenarios actually retain — but the MECHANISM is now
+identified.** Tracing `project.traversal_filter_scan` returns *no allocations at
+all* (`[alloctrace] no allocation fell in [1, 100000000] bytes`) while the same
+phase's scenario reports 14,078 of them. The tracer and the phase allocation
+counters are armed **per thread**, deliberately, so background workers are
+excluded; `p50_net_heap_bytes` is computed from the **process-global**
+allocated/freed counters and is not.
+
+So for a scenario with background work — project traversal, and the tab/project
+switching the other three do — the retention metric measures *how much of the
+background work happened to land inside the measured window*, and anything that
+shifts that timing moves it. That is exactly the kind of thing cross-TU inlining
+changes, which is why the same commit reads 8,294 under one build configuration
+and 75,872 under another with **byte-identical allocation counts**: the counts are
+this thread's, the retention is everyone's.
+
+Three things follow, and the first is the one to do:
+
+1. Make `net_heap_bytes` per-thread like its neighbours, or state in the metric's
+   own documentation that it is not and exempt the scenarios with background
+   work (`gate_net_heap_metrics = false` is the existing mechanism, and
+   `multi_project_switch` already uses it for a related reason).
+2. Until then these four gates are measuring the scheduler. Do NOT rebaseline
+   them: a rebaseline would enshrine one particular interleaving.
+3. `switch_and_idle`'s own top allocation sites — the session-record encoder
+   running on the switch path — are a separate real finding, see
+   [159](#td-2026-08-06-159)'s 2026-08-12 entry.
 
 ### TD-2026-08-12-190 — three merge scenarios gate on a re-show they name an open, and the fix needs an idle runner. [RESOLVED 2026-08-12.]
 
