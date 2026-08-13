@@ -12,6 +12,7 @@
 #include "editor/DiagnosticsRender.h"
 #include "editor/ExecutionLineRender.h"
 #include "editor/GutterMetrics.h"
+#include "editor/RowDecorationBuilder.h"
 #include "editor/WelcomeView.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceCounters.h"
@@ -45,28 +46,6 @@ SDL_FRect MakeRowBackgroundRect(const SDL_FRect& rect, float y, float line_heigh
 // marks). With soft-wrap off every row is a head; with it on only visual_start==0.
 bool IsLogicalLineHead(bool soft_wrap, std::size_t visual_start) {
   return !soft_wrap || visual_start == 0;
-}
-
-// Append the render-whitespace marker for one cell: a 2x2 dot centered in the
-// cell for a space, or a thin horizontal bar spanning the tab's cells. Both the
-// view-model glyph-run path and the text-iteration fallback build byte-identical
-// rects, so they share this one constructor. `cell_span_width` is the tab's full
-// pixel width (cell count * char_width); it is unused for spaces.
-void PushWhitespaceMarker(std::vector<DecoratedTextFill>& scratch, bool is_tab, float cell_x,
-                          float char_width, float cell_span_width, float y, float line_height,
-                          SDL_Color color) {
-  if (is_tab) {
-    scratch.push_back(DecoratedTextFill{
-        .rect = SDL_FRect{cell_x + 2.0f, y + line_height * 0.5f, cell_span_width - 4.0f, 1.0f},
-        .color = color,
-    });
-  } else {
-    scratch.push_back(DecoratedTextFill{
-        .rect = SDL_FRect{cell_x + char_width * 0.5f - 1.0f, y + line_height * 0.5f - 1.0f, 2.0f,
-                          2.0f},
-        .color = color,
-    });
-  }
 }
 
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count,

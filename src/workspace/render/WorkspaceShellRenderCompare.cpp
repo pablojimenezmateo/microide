@@ -16,6 +16,7 @@
 #include "editor/TextLayout.h"
 #include "render/Theme.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/SettingFlags.h"
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/OverviewRuler.h"
@@ -308,6 +309,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderCompareSurface::SideRows");
   const bool wrapped = compare_tab->wrap_layout.active();
   const float char_width_px = text_renderer_.CharWidth();
+  // Read once per frame, not per row: the lookup is string-keyed.
+  const bool render_whitespace_enabled =
+      SettingFlagEnabled(GetSettingValue("editor.view.render_whitespace"), false);
   for (int row = 0; row < surface.visible_rows; ++row) {
     const int visual_index = compare_tab->scroll_row + row;
     if (visual_index < 0 ||
@@ -531,6 +535,15 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       left_input.layout = CompareVisibleLayoutForRow(
           *compare_tab, model_index, false, left_row_start,
           wrapped ? left_row_end - left_row_start : surface.left_visible_columns);
+      if (render_whitespace_enabled) {
+        compare_whitespace_scratch_.clear();
+        editor::AppendWhitespaceMarkers(
+            compare_whitespace_scratch_, compare_row.left_text,
+            compare_tab->right_viewport.tab_size(), left_row_start, left_row_end,
+            left_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled);
+        left_input.prepositioned_fills =
+            std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
+      }
       left_input.text_renderer = &text_renderer_;
       left_input.theme = &theme_;
       editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
@@ -662,6 +675,19 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       right_input.layout = CompareVisibleLayoutForRow(
           *compare_tab, model_index, true, right_row_start,
           wrapped ? right_row_end - right_row_start : surface.right_visible_columns);
+      if (render_whitespace_enabled) {
+        // The editable pane is where working-tree review edits happen, and it was
+        // the one text surface in the product where "Render Whitespace" did
+        // nothing (TD-2026-08-13-206). Same marker geometry as the editor pane —
+        // one implementation, in RowDecorationBuilder.
+        compare_whitespace_scratch_.clear();
+        editor::AppendWhitespaceMarkers(
+            compare_whitespace_scratch_, compare_row.right_text,
+            compare_tab->right_viewport.tab_size(), right_row_start, right_row_end,
+            right_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled);
+        right_input.prepositioned_fills =
+            std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
+      }
       if (right_diagnostics != nullptr) {
         right_input.diagnostics =
             std::span<const editor::PublishedDiagnostic>(*right_diagnostics);

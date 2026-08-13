@@ -35,6 +35,36 @@ void AppendChangedSpanUnderlines(DecoratedTextRow& row,
                                  std::span<const compare::CompareTextSpan> changed_spans,
                                  SDL_Color underline_color);
 
+// Append the render-whitespace marker for one cell: a 2x2 dot centered in the
+// cell for a space, or a thin horizontal bar spanning the tab's cells. Lives here
+// so the editor pane and the diff panes cannot draw the same marker differently.
+void PushWhitespaceMarker(std::vector<DecoratedTextFill>& fills,
+                          bool is_tab,
+                          float cell_x,
+                          float char_width,
+                          float cell_span_width,
+                          float y,
+                          float line_height,
+                          SDL_Color color);
+
+// Append render-whitespace markers for the visible window [row_visual_start,
+// row_visual_end) of `text`, walking one visual cell per codepoint so tabs
+// expand and a multi-byte glyph does not shift every later marker right.
+//
+// The editor pane has its own copy of this walk because its markers also carry
+// the inlay-hint displacement; this is the plain form, for surfaces without
+// inlays (the compare panes).
+void AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
+                             std::string_view text,
+                             std::size_t tab_size,
+                             std::size_t row_visual_start,
+                             std::size_t row_visual_end,
+                             float text_x,
+                             float char_width,
+                             float y,
+                             float line_height,
+                             SDL_Color color);
+
 // A row background/match/selection/bracket highlight expressed in source byte
 // columns. The builder resolves source -> visual columns (via the row layout or
 // the visual-column map) and emits the pixel fill. Express fills in submission

@@ -2312,5 +2312,9 @@
   // filling, so reuse keeps the per-visible-row path allocation-free.
   editor::DecoratedTextRow compare_left_scratch_row_;
   editor::DecoratedTextRow compare_right_scratch_row_;
+  // Render-whitespace markers for the compare panes, reused per row like the
+  // scratch rows above: the markers are pre-positioned fills, so they are built
+  // per painted row and must not allocate on a scroll (TD-2026-08-13-206).
+  std::vector<editor::DecoratedTextFill> compare_whitespace_scratch_;
   editor::DecoratedTextRow merge_incoming_scratch_row_;
   editor::DecoratedTextRow merge_current_scratch_row_;
