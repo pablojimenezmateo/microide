@@ -337,6 +337,89 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-13-197 — the perf phase trace's headline table ranks a symbol GCC invented, because `-fipa-icf` folds unrelated functions onto one name.
+
+`dev-docs/performance/perf-phase-allocation-trace.md`'s cross-phase summary opens
+with "the same function is the #1 allocator in many unrelated phases", and its
+top row is `microide::editor::TextViewport::operator=() [clone .part.0]` in eight
+phases. It is not. Its reported parent frames across those eight are
+`ProjectStateDirectoryName`, `DefaultProjectBaseColor`, `RelativePathLabel`,
+`IgnoreMatcher::SetRoot`, `BuildFileKey` and `WorkspaceShell::MakeEditorTabState`
+— none of which copy-assign a `TextViewport` — and every one of its allocations
+is exactly 304 bytes, which no single `TextViewport::operator=` produces.
+
+The cause is `-fipa-icf`, on by default at `-O2`, which folds
+functionally-identical function bodies and keeps ONE of their symbols. `addr2line`
+then resolves every folded body to whichever name survived. The perf preset adds
+`-flto` on top, so the folding is whole-program.
+
+Consequences, in order of how much they cost a reader:
+
+- the cross-phase "shape" table is the part of that sweep with the most leverage
+  (a site topping eight phases is worth fixing once), and it is the part ICF
+  contaminates most, because folding is what MAKES one name appear everywhere.
+- a single-phase row is contaminated too, just less visibly: the #1 allocator of
+  a phase can be attributed to a function that phase never calls.
+- the sweep is not wrong about the ALLOCATIONS. Counts, sizes and phases are
+  measured. Only the names are unreliable.
+
+Fix shape: give `tools/trace-perf-phases.py` a binary built with `-fno-ipa-icf`
+(a third preset, or a cache variable on the perf preset), and have the tool
+refuse to run against a binary without it rather than print a table it cannot
+stand behind. Do NOT make it the perf lane's default: ICF is real codegen the
+timing baselines were recorded under.
+
+Until then, treat a top-site NAME in that report as a hypothesis, and confirm it
+by reading the code before acting on it. The `[clone .part.0]`/`[clone .isra.0]`
+suffixes and a suspiciously uniform allocation size are the tell.
+
+### TD-2026-08-13-198 — the project tab strip is rebuilt from scratch by every caller that asks what is on it, several times a frame.
+
+`WorkspaceTabStripChrome::ComputeVisibleProjectTabs` builds four vectors sized to
+the catalog and, per entry, a display-title `std::string`, a tooltip-label
+`std::string`, a badge-text `std::string` and a text measurement — then hands all
+of it to `TabStripService::ComputeVisibleProjectTabs`, which builds the
+`ChromeTabRenderItem` list and copies each title again into a `VisibleStripTab`.
+
+Nothing memoizes any of it, and five call sites ask per frame or per motion
+event: `WorkspaceShellRenderChrome` (paint), `HoverTooltipSurface` (tooltip),
+`WorkspaceShellCursor` twice (cursor shape, hit test) and
+`WorkspaceTabMouseCoordinator`. This is the shape
+[149](#td-2026-08-06-149) fixed for the menu bar and
+[145](#td-2026-08-06-145) for the pane layout; the project strip is the one that
+was not swept.
+
+The editor strip next to it already has both caches (`TabStripGeometryCache` +
+`VisibleEditorTabsCache`), so the fix is to give the project strip the same pair
+rather than to invent a mechanism. The awkward part, and the reason this is filed
+rather than done: the invalidation key needs the per-entry dirty state and the
+catalog roots, and the titles are what is expensive to produce, so the key has to
+be derived from the roots' `native()` (no allocation) plus the dirty bits, not
+from the titles themselves.
+
+`TabStripService::ComputeVisibleEditorTabs` has the smaller sibling defect: on a
+cache HIT it returns `visible_cache.tabs` **by value**, so the memoized path
+still copies two `std::string`s per visible tab per call. It should return a
+`const&`.
+
+### TD-2026-08-13-199 — decoding user config allocates every setting id and every disabled id twice, to dedupe them.
+
+`DecodeUserConfigRecord` keeps three side indexes — an
+`unordered_map<std::string, size_t>` over setting ids and two
+`unordered_set<std::string>` over disabled keybinding/plugin ids — and each one
+stores its own copy of a string the decoded state also stores. So a persisted id
+costs one heap string for the record plus one for the index, plus a node.
+
+The dedupe itself is right and was added deliberately (a hostile config with
+thousands of unique ids must not be O(n^2)); it is the copies that are avoidable.
+A `string_view` index is NOT the fix — a short id lives inside its `std::string`
+and moves with it when the owning vector reallocates. The fix is an index of
+*indices* into the owning vector with a transparent hash/equality pair that
+dereferences the vector at call time, which stores no strings at all.
+
+Deferred because the realistic config is small and this is a startup path, not a
+frame path: the 2,000-setting perf fixture is what makes the doubling visible.
+
 ### TD-2026-08-12-193 — nine phases allocate more than they did at `origin/main`, every one of them under its gate, and one is the blob work's own conversion boundary.
 
 Found by A/B-ing the 36-commit push against `origin/main` with
@@ -370,6 +453,17 @@ blob-native precisely so that no caller would pay "exactly the allocations this
 removes" at a conversion boundary, and the multi-caret surround path is a
 boundary it did not reach. That one is a genuine loose end of the blob work, not
 a tradeoff.
+
+**The traced one is fixed (2026-08-13).** It was not the `LineBlob` conversion
+the paragraph above names — the tracer pointed at `util::DecodeLines`, and the
+call under it is `SplitLines(NormalizeLineEndings(inner))` inside
+`PostSurroundInnerSelection`, which read exactly two numbers off the result: how
+many lines the surrounded text has, and how long its last one is. It now measures
+them with `util::MeasureLines` and allocates nothing. The same helper's two
+callers were also handing it a `substr` of the selection's first line purely to
+read `.size()`, which is the start column — on a minified line that copy was the
+line. The rest of the table is unaddressed; it is drift inside envelopes with
+room, and the entry stays open for it.
 
 `editor_snippet_expand` is the one that also shows against its own baseline
 (`max_allocations` 463 → 469, `p95` 462.1 → 467.6) — the TD-2026-08-06-139

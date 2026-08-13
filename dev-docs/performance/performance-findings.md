@@ -25,6 +25,51 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-13 (seventh pass) the two per-line caches free what the next frame rebuilds
+
+Found by running the allocation tracer against the real binary rather than
+reading the committed sweep — which is also how TD-2026-08-13-197 (the sweep's
+top-site NAMES are `-fipa-icf` folds) was found. In
+`editor_typing_minified_line.type_burst`, four of the five biggest sites were the
+same two shapes, resolved through `addr2line -i`:
+
+| allocations / iteration | site | what it is |
+| ---: | --- | --- |
+| 32 (40 B each) | `highlight_cache_.emplace` ← `HighlightedLineTokens` ← `EditorViewRenderer::Render` | a hash node per cached line |
+| 32 (192 B each) | `visible_line_cache_.emplace` ← `VisibleLineLayoutRefCached` ← `Render` | a hash node per rendered row |
+| 16 (1,536 B each) | `vector<size_t>::reserve` under the same | a `LayoutLine` buffer |
+
+Both caches were **erasing** on invalidation and re-emplacing on the repaint that
+immediately followed, so a keystroke freed a screenful of buffers and allocated
+the same screenful back on the same frame. The two fixes are the same idea:
+
+- **the per-line token cache stamps a generation instead of erasing.** An edit
+  bumps a counter (whole-document invalidation) or stales the suffix at/after the
+  edited line by zeroing those entries' stamps; the entry, its hash node and its
+  token vector all stay, and the retokenize writes straight into the vector via
+  the new `runtime_syntax::HighlightLineInto`. Lines *below* the edit keep their
+  stamp and are not recomputed, which is what the old suffix erase already did.
+  Retained bytes are bounded by the entry cap the live cache already had.
+- **the visible-line layout cache retires a `LayoutLine` into a pool.** The
+  eviction path already recycled a node (scrolling misses on every row); the edit
+  path did not. `InvalidateVisibleLineCacheFrom` and the width-table resync in
+  `ClearVisibleLineAndMaxColumns` now both move the layout into
+  `visible_line_layout_pool_`, and the next miss builds into it —
+  `BuildVisibleLineWindowInto` already `clear()`s rather than reassigns, so the
+  capacity survives. `InvalidateAll` stays the one call that releases the pool.
+
+The pool is a `vector<LayoutLine>` rather than extracted map nodes because a
+`node_type` is move-only and `TextLayoutCache` must stay copyable — a split pane
+copies its sibling's caches. That leaves the map node to allocate and reuses the
+three per-row buffers, which are the ones sized to the row.
+
+The trap worth remembering: the first version of the layout pool measured as
+doing nothing, because `UpdateVisualColumnCacheAfterEdit` calls
+`ClearVisibleLineAndMaxColumns` on any edit the per-line width table cannot
+splice — one call *after* the invalidation had filled the pool, and it cleared
+it. A regression test asserting the `editor.visible_line_layout_recycled` counter
+moves is what caught it; the code review had not.
+
 ## 2026-08-06 (sixth pass) opening a file you already have open (perf-runner-v1)
 
 TD-2026-08-06-138 filed a counter reading: `editor.line_width_full_measures` was
