@@ -70,6 +70,40 @@ splice — one call *after* the invalidation had filled the pool, and it cleared
 it. A regression test asserting the `editor.visible_line_layout_recycled` counter
 moves is what caught it; the code review had not.
 
+### Measured (perf lane, `p50_allocations` vs the committed baselines)
+
+Allocation counts are deterministic within one build configuration, so these
+hold despite the run being taken at load ~10; every wall/cpu/rss number from the
+same run is lane noise and is excluded. All eight scenarios PASS.
+
+| scenario | baseline | after | |
+| --- | ---: | ---: | ---: |
+| `lsp_document_symbols_parse` | 324,474 | 120,473 | −62.9 % |
+| `editor_soft_wrap_long_line_typing` | 7,959.5 | 3,713.5 | −53.3 % |
+| `editor_surround_multi_caret` | 808.5 | 645 | −20.2 % |
+| `editor_typing_minified_line` | 1,843.5 | 1,583.5 | −14.1 % |
+| `editor_smart_indent_typing` | 6,515 | 6,035 | −7.4 % |
+| `scroll_large_file` | 259 | 258 | −0.4 % |
+| `dap_protocol_encode_decode` | 330,309 | 329,508 | −0.2 % |
+| `merge_scroll_interleaved_hunks` | 14,296 | 14,295 | −0.0 % |
+
+Two of those numbers say something the headline does not:
+
+- **`dap_protocol_encode_decode` barely moves, and that is expected.** The −801
+  is the two envelope reserves; the deep-copy fix cannot show here because the
+  scenario passes `vars_body` as a const lvalue that it reuses across 200
+  iterations, so `MakeRequest` still has to copy it. The product path hands it a
+  temporary and now moves. A scenario measuring the *shape* of a call is not
+  automatically a scenario that can see the shape change.
+- **`merge_scroll_interleaved_hunks` does not move at all.** Its scroll burst is
+  compare-surface highlighting through `PopulateCompareSyntaxTokensForWindow`,
+  which does not go through the viewport token cache these two fixes touch.
+
+Nothing here can fail an allocation gate by getting cheaper — the gates are
+one-sided — so the evidence that the work still happens is the correctness
+tests, not the PASS: the two staleness tests, the recycle counter test, and the
+full suite at 29/29.
+
 ## 2026-08-06 (sixth pass) opening a file you already have open (perf-runner-v1)
 
 TD-2026-08-06-138 filed a counter reading: `editor.line_width_full_measures` was
