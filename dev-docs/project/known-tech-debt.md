@@ -36,6 +36,22 @@ strands the secondary carets too), [204](#td-2026-08-13-204) (no drag-and-drop o
 selected text), [205](#td-2026-08-13-205) (the terminal is the third surface with
 no selection autoscroll).
 
+Then, from the same pass, **word wrap in the diff and merge surfaces**
+([200](#td-2026-08-13-200), resolved). It turned out to be one theme, not one
+bug: the compare and merge panes share the editor's *document* (the same
+`editor::TextViewport`, the same undo history, the same action layer) but fork
+the *plumbing around* it, and every fork had drifted. The preferences walk
+skipped those tabs entirely; three action sites had each re-implemented "rebuild
+the diff after this pane was edited" and every other edit action simply did not
+do it, so a move-line on a compare tab was invisible; four call sites were
+already confusing model rows, presentation rows and on-screen rows, which was
+wrong under a collapsed diff before wrap existed. Wrap is what made the drift
+visible, because it is the first feature that needs all three row spaces to be
+distinct. What is left of the theme is filed as [206](#td-2026-08-13-206) (the
+compare surface still paints through its own row loop) and
+[207](#td-2026-08-13-207) (its key handler is a hand-copied subset of the
+editor's); [208](#td-2026-08-13-208) is the perf half.
+
 Reviewed 2026-08-12. A deep dive on **soft wrap**, prompted by a report that
 moving up out of a wrapped line did nothing. It did nothing: wrapped rows are
 contiguous in visual columns, so the wrap point is one text position two rows
@@ -373,6 +389,82 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-13-208 — a wrapped compare pane re-wraps the whole file on every keystroke, because the diff below it is rebuilt whole on every keystroke.
+
+`EnsureCompareWrapLayout` is keyed on the presentation + model revision, and
+`RefreshCompareTabDerivedState` bumps the model revision on every content change
+of the editable right pane. So one keystroke in a wrapped compare tab re-wraps
+every row of both sides: O(total bytes), not O(edit).
+
+This is not a regression the wrap work introduced — the rebuild underneath it is
+older and larger. `RefreshCompareTabDerivedState` already serializes the whole
+right buffer and runs `BuildCompareModel` over both files on every content
+change, and the presentation model is rebuilt whole on top of that. The wrap pass
+is proportionally the cheapest of the three, which is exactly why it was left
+alone: fixing it alone would move a small constant while the O(file) diff rebuild
+stays. The editor surface solved its half of this already
+(`TextLayoutCache::UpdateWrappedRowsAfterEdit` splices only the edited line
+range), so the incremental machinery exists and could be pointed here once the
+model rebuild below it is incremental too.
+
+Order of work, if taken: incremental compare model first (or a debounce on the
+rebuild), then hang the wrap-table splice off the same edited-range signal. Doing
+the wrap splice first buys nothing measurable.
+
+Prerequisite before starting: a perf scenario that types into a large wrapped
+compare tab. There is none — `soft_wrap_*` measures the editor surface only.
+
+### TD-2026-08-13-207 — `HandleCompareKeyDown` is a hand-maintained subset of the editor's key handler, so the compare pane silently lacks whatever nobody remembered to copy.
+
+The compare surface's editable right pane runs the same `editor::TextViewport`
+and reaches the same *action* layer as an editor tab (`ActiveEditableViewport`),
+so keybinding-driven verbs — move-line, copy-line, insert-line, multi-caret,
+format, comment toggle — work there. But raw key handling does not: the compare
+tab is served by `KeyInputCoordinator::HandleCompareKeyDown`, an independent
+switch over Tab / Enter / Backspace / Delete / arrows / Home / End, rather than
+falling through to `HandleDefaultEditorKeyDown`.
+
+That means every future key the editor gains has to be remembered twice, and the
+failure mode is silence: the key simply does nothing on a compare tab, with no
+error and no test to fail. This is the same shape as the two defects
+[200](#td-2026-08-13-200) fixed (the preferences walk that skipped these tabs,
+and the post-edit refresh that three action sites had each re-implemented) — a
+surface that shares the model but forks the plumbing around it.
+
+Fix shape: give `HandleDefaultEditorKeyDown` the small hook the compare path
+needs (refresh the diff model + re-anchor the surface selection after an edit,
+which is now one call — `RefreshActiveCompareAfterViewportEdit`) and delete the
+compare switch, keeping only the genuinely compare-specific bindings (Alt+[ / ]
+hunk jump, Alt+O open working file, Esc closes the tab).
+
+Do not take this without first enumerating the behavioural differences between
+the two switches — Esc means "close the tab" on compare and "collapse carets" in
+the editor, and that divergence is deliberate.
+
+### TD-2026-08-13-206 — the compare surface paints through its own row loop, so its editable pane is missing the editor's view features.
+
+The merge result pane renders through `EditorViewRenderer` and gets indent
+guides, bracket-match highlight, render-whitespace, the current-line highlight,
+folding and plugin decorations. The compare right pane — which is just as
+editable, and is where working-tree review edits actually happen — is painted by
+a bespoke loop in `WorkspaceShellRenderCompare.cpp` and has none of them.
+
+The loop is not gratuitous: it paints two panes side by side with per-row diff
+tint, an edge stripe, intra-line changed-span underlines and (now) a wrapped-row
+model with alignment padding, none of which `EditorViewRenderer` knows about. So
+this is not "delete the loop and call the renderer"; it is either teaching the
+editor renderer to paint a diff pane (row decorations + a supplied row model) or
+lifting the missing features into shared row-decoration helpers the compare loop
+can also call.
+
+The second is much the cheaper half and is worth doing on its own: indent guides,
+whitespace markers and bracket-match are all already computed by helpers
+(`editor/IndentGuides.h`, `editor/RowDecorationBuilder.h`) that take positions
+rather than a viewport.
+
+Related: [207](#td-2026-08-13-207), and the resolved [200](#td-2026-08-13-200),
+which is where this pattern was catalogued.
+
 ### TD-2026-08-13-201 — the selection-drag fixes stop at the editor surface: compare and merge get the clamp but not the autoscroll or the granularity. [RESOLVED 2026-08-13 — both halves, and the clamp itself was broken.]
 
 **Fixed 2026-08-13, behind one seam each, as the entry asked.**
@@ -524,7 +616,74 @@ implicit grab already delivers the motion (if it does, the benefit is zero and
 this becomes a WON'T DO with a recorded reason), and only then add the capture
 behind the same single disarm seam the autoscroll now uses.
 
-### TD-2026-08-13-200 — `editor.wrap` is silently a no-op in the diff and merge panels, and making it work is a row-model change, not a plumbing fix.
+### TD-2026-08-13-200 — `editor.wrap` is silently a no-op in the diff and merge panels, and making it work is a row-model change, not a plumbing fix. [RESOLVED 2026-08-13 — both defects, plus four mixed-row-space bugs the row model exposed.]
+
+**Fixed 2026-08-13.**
+
+*The flag arrives.* `ApplyEditorPreferencesToAllTabs` now switches on tab kind
+and applies the preferences to a compare tab's `right_viewport` and a merge tab's
+`result_viewport` as well. That is not only wrap: tab size, indent width, soft
+tabs, both save-normalization flags, the save line ending and the language
+contract had all stopped following the settings on those panes too.
+
+*The row model exists.* `workspace/DiffWrapLayout.h` is a wrapped-row table over
+an aligned two-pane surface. A unit occupies `max(left segments, right segments)`
+on-screen rows and the shorter side is padded with blank rows — VS Code's
+`diffEditor.wordWrap` alignment strategy. With wrap off the table is empty and
+every accessor is the identity behind one branch, so the wrap-off path pays a
+predicted branch and keeps zero rows resident.
+
+- **Compare**: units are presentation rows. `scroll_row` indexes the table in
+  both modes; `selected_row` stays a presentation row, so a selected wrapped line
+  highlights whole. Gutter numbers, diff markers, diagnostics gutter icons and
+  the divider marker paint on the first row of a unit only; the row band and the
+  edge stripe paint on all of them.
+- **Merge**: the two read-only source panes wrap through their own table (padded
+  to a shared budget so they stay aligned with each other); the result pane wraps
+  through its own viewport, whose `scroll_line()` already is a visual row. Rather
+  than teach every piece of conflict geometry about wrapping,
+  `MergeVisualConflicts` (`workspace/MergeWrapRows.h`) hands back the conflict
+  list with each line field projected into on-screen rows, so the bands, accept
+  buttons, hover classifier and overview lane are unchanged and correct in both
+  modes. Indices are preserved, so the model-facing list still owns the choices.
+
+*One wrap implementation.* `TextLayout::WrapLineSegments` is now the single break
+decision; `TextLayoutCache::WrapSingleLine` is a thin adapter over it. A line
+cannot break differently in an editor tab and a diff pane.
+
+*Layout convergence.* With wrap on, both surfaces reserve the vertical scrollbar
+strip unconditionally and drop horizontal scroll. Otherwise the wrap column
+depends on the scrollbar, which depends on the row count, which depends on the
+wrap column — a loop that does not converge and would re-wrap the whole diff up
+to four times per layout call.
+
+*What the row model exposed.* Four places were already mixing row spaces, each
+wrong under a collapsed diff before wrap existed:
+
+- a pointer drag in the compare right pane fed an on-screen row straight into the
+  model-row lookup, selecting the wrong document line;
+- the compare inline blame annotation was placed at the MODEL row against a
+  scroll offset counted in presentation rows;
+- `RequestCompareRightLineToBottomRedraw` passed a model row to a helper that
+  names presentation rows;
+- `BuildCompareRightInteractionLayout` paired a presentation-row `scroll_line`
+  with a model-row `line_count`, so its clamp was against the wrong extent.
+
+A merge click/drag also resolved its row as a document line; it now goes through
+`MoveCursorToVisualHit`, the viewport's own wrap-aware resolver.
+
+Pinned by `WorkspaceShell/CompareWordWrapExpandsRowsAndKeepsPanesAligned` and
+`WorkspaceShell/MergeWordWrapExpandsRows`.
+
+Opened by this pass: [206](#td-2026-08-13-206) (the compare surface still paints
+through its own row loop instead of `EditorViewRenderer`), [207](#td-2026-08-13-207)
+(`HandleCompareKeyDown` is a hand-maintained subset of the editor key handler),
+[208](#td-2026-08-13-208) (a wrapped diff re-wraps the whole file on every
+keystroke).
+
+The original entry follows.
+
+---
 
 Reported from use: turning Word Wrap on does nothing to a compare or merge
 surface. It is two defects stacked, and only the first one looks like a bug.

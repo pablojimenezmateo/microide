@@ -217,7 +217,13 @@ TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
   const float pane_width = incoming ? surface.left_width : surface.right_width;
   // On-screen rows, not document lines: `scroll_line` below is one, and the hit
   // tests built on this layout resolve into the projected (row-space) conflicts.
-  const std::size_t line_count = MergeSourceVisualRowCount(merge_tab);
+  // Under wrap the two source panes share a padded row budget, so they share this
+  // count; without it each pane still bounds hit-testing by its own length.
+  const std::size_t line_count =
+      merge_tab.wrap_layout.active()
+          ? MergeSourceVisualRowCount(merge_tab)
+          : (incoming ? merge_tab.model.incoming_lines.size()
+                      : merge_tab.model.current_lines.size());
   return ComputeTextGridInteractionLayout(
       MakeRect(pane_x, surface.rows_y, surface.gutter_width + pane_width,
                static_cast<float>(surface.visible_rows) * surface.line_height),
