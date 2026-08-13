@@ -607,11 +607,72 @@ void TestShapingDuplicateLine() {
   TextViewport viewport;
   viewport.LoadContent("hello\n", "/tmp/sample.txt");
   viewport.MoveCursorTo(0, 0);
-  Expect(microide::editor::DuplicateSelection(viewport),
-         "DuplicateSelection should produce a change");
+  Expect(microide::editor::CopyLines(viewport, true),
+         "CopyLines should produce a change");
   Expect(viewport.lines().size() >= 2, "duplicate should add a line");
   Expect(viewport.lines()[0] == "hello" && viewport.lines()[1] == "hello",
          "first two lines should both be 'hello'");
+}
+
+// Copy-lines is line-granular in both directions (VS Code copyLinesUp/Down): a
+// PARTIAL selection duplicates the lines it touches, not the selected text. The
+// two directions produce identical text and differ only in which copy the caret
+// lands on.
+void TestShapingCopyLinesDirections() {
+  TextViewport viewport;
+  viewport.LoadContent("one\ntwo\nthree\n", "/tmp/sample.txt");
+
+  viewport.MoveCursorTo(1, 1);
+  Expect(microide::editor::CopyLines(viewport, /*downward=*/true), "copy down should change");
+  Expect(viewport.lines()[1] == "two" && viewport.lines()[2] == "two",
+         "copy down should leave two adjacent copies");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
+         "copy down should put the caret on the LOWER copy");
+
+  TextViewport up;
+  up.LoadContent("one\ntwo\nthree\n", "/tmp/sample.txt");
+  up.MoveCursorTo(1, 1);
+  Expect(microide::editor::CopyLines(up, /*downward=*/false), "copy up should change");
+  Expect(up.lines()[1] == "two" && up.lines()[2] == "two",
+         "copy up should produce the same two copies");
+  Expect(up.cursor_line() == 1 && up.cursor_column() == 1,
+         "copy up should leave the caret on the UPPER copy");
+
+  // A selection of three characters inside one line still copies the WHOLE line.
+  TextViewport partial;
+  partial.LoadContent("hello world\n", "/tmp/sample.txt");
+  partial.MoveCursorTo(0, 1);
+  partial.MoveCursorTo(0, 4, /*extend_selection=*/true);
+  Expect(microide::editor::CopyLines(partial, /*downward=*/true), "partial copy should change");
+  Expect(partial.lines().size() >= 2 && partial.lines()[0] == "hello world" &&
+             partial.lines()[1] == "hello world",
+         "a partial selection copies its whole line, not the selected fragment");
+}
+
+// Ctrl+Enter / Ctrl+Shift+Enter open a line regardless of where in the line the
+// caret sits -- that is the whole point of them over pressing Enter.
+void TestShapingInsertLineBelowAndAbove() {
+  TextViewport viewport;
+  viewport.LoadContent("    body;\nnext;\n", "/tmp/sample.cpp");
+  viewport.SetIndentWidth(2);
+  viewport.SetSoftTabs(true);
+
+  // Caret in the MIDDLE of the line: the line must not be split.
+  viewport.MoveCursorTo(0, 6);
+  Expect(microide::editor::InsertLineBelow(viewport), "insert-below should change");
+  Expect(viewport.lines()[0] == "    body;", "the source line stays intact");
+  Expect(viewport.cursor_line() == 1, "the caret moves to the new line");
+  Expect(viewport.lines()[1] == "    ", "the new line carries the source line's indent");
+  Expect(viewport.cursor_column() == 4, "the caret sits after that indent");
+
+  TextViewport above;
+  above.LoadContent("    body;\nnext;\n", "/tmp/sample.cpp");
+  above.MoveCursorTo(0, 6);
+  Expect(microide::editor::InsertLineAbove(above), "insert-above should change");
+  Expect(above.lines()[1] == "    body;", "the source line is pushed down intact");
+  Expect(above.cursor_line() == 0 && above.cursor_column() == 4,
+         "the caret sits on the new line above, at the same indent");
+  Expect(above.lines()[0] == "    ", "the new line takes the pushed-down line's indent");
 }
 
 void TestShapingIndentSelection() {
@@ -1813,6 +1874,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineUpKeepsSecondaryCaretAndSelection);
   AddTest(tests, "EditorEssentials/Shaping/DuplicateLine",
           TestShapingDuplicateLine);
+  AddTest(tests, "EditorEssentials/Shaping/CopyLinesDirections",
+          TestShapingCopyLinesDirections);
+  AddTest(tests, "EditorEssentials/Shaping/InsertLineBelowAndAbove",
+          TestShapingInsertLineBelowAndAbove);
   AddTest(tests, "EditorEssentials/Shaping/IndentSelection",
           TestShapingIndentSelection);
   AddTest(tests, "EditorEssentials/Shaping/ToggleLineComment",

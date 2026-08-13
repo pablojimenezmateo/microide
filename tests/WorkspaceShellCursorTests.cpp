@@ -897,6 +897,43 @@ void TestWorkspaceShellEditorCtrlArrowsAreWordGranular() {
   Expect(viewport.cursor_column() == 2, "plain left must remain character-granular");
 }
 
+// The line-op chords have to survive the editor key path, which has its own
+// SDLK_RETURN arm: the keybinding registry must win, or Ctrl+Enter just splits
+// the line like a plain Enter.
+void TestWorkspaceShellEditorLineOpenChordsReachTheEditor() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "    body;\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 6);
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_CTRL), "ctrl+enter should be handled");
+  Expect(viewport.lines()[0] == "    body;",
+         "ctrl+enter must open a line below, not split the current one");
+  Expect(viewport.cursor_line() == 1, "the caret should be on the opened line");
+
+  viewport.MoveCursorTo(0, 6);
+  Expect(SendKeyDown(shell, SDLK_RETURN, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "ctrl+shift+enter should be handled");
+  Expect(viewport.lines()[1] == "    body;", "ctrl+shift+enter should push the line down");
+  Expect(viewport.cursor_line() == 0, "the caret should be on the line opened above");
+
+  // And Shift+Alt+Up is bound now, not just Shift+Alt+Down.
+  editor::TextViewport& copy_viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const std::size_t before = copy_viewport.line_count();
+  Expect(SendKeyDown(shell, SDLK_UP, static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT)),
+         "shift+alt+up should be handled");
+  Expect(copy_viewport.line_count() == before + 1, "shift+alt+up should copy the line up");
+}
+
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/NotificationToastIsClickable",
           TestWorkspaceShellNotificationToastIsClickable);
@@ -936,6 +973,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity);
   AddTest(tests, "WorkspaceShell/EditorCtrlArrowsAreWordGranular",
           TestWorkspaceShellEditorCtrlArrowsAreWordGranular);
+  AddTest(tests, "WorkspaceShell/EditorLineOpenChordsReachTheEditor",
+          TestWorkspaceShellEditorLineOpenChordsReachTheEditor);
 }
 
 }  // namespace microide::tests

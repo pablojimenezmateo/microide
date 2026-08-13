@@ -154,7 +154,14 @@ enum class ActionId {
   ColumnSelectDown,
   ColumnSelectLeft,
   ColumnSelectRight,
+  // VS Code's copyLinesDownAction / copyLinesUpAction. DuplicateLine keeps its
+  // name for the down form because that is the command id already in the wild.
   DuplicateLine,
+  CopyLineUp,
+  // insertLineAfter / insertLineBefore: open a line below/above the caret's line
+  // and go there, wherever in the line the caret was.
+  InsertLineBelow,
+  InsertLineAbove,
   DeleteLine,
   IndentLines,
   OutdentLines,

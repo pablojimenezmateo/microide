@@ -626,6 +626,36 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          .id = "copy-line-up",
+          .action = ActionId::CopyLineUp,
+          .key = SDLK_UP,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "insert-line-below",
+          .action = ActionId::InsertLineBelow,
+          .key = SDLK_RETURN,
+          .modifiers = SDL_KMOD_CTRL,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "insert-line-above",
+          .action = ActionId::InsertLineAbove,
+          .key = SDLK_RETURN,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "delete-line",
           .action = ActionId::DeleteLine,
           .key = SDLK_K,
@@ -991,6 +1021,15 @@ std::string FormatKeyChord(SDL_Keycode key, SDL_Keymod modifiers) {
   }
   if (modifiers & SDL_KMOD_GUI) {
     result += "Super+";
+  }
+  // SDL names a few keys after the character they historically sent rather than
+  // after the legend printed on the key. "Return" is the one that shows: the key
+  // says Enter, VS Code's keybinding UI says Enter, and this is the only place
+  // that spells a chord for the menus, the shortcuts overlay and Help/About --
+  // so the alias belongs here and cannot drift between them.
+  if (key == SDLK_RETURN || key == SDLK_KP_ENTER) {
+    result += "Enter";
+    return result;
   }
   const char* name = SDL_GetKeyName(key);
   if (name != nullptr && name[0] != '\0') {

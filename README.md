@@ -749,7 +749,10 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `toggle-block-comment`
 - `move-line-up`
 - `move-line-down`
-- `duplicate-line`
+- `copy-line-down`
+- `copy-line-up`
+- `insert-line-below`
+- `insert-line-above`
 - `delete-line`
 - `indent-lines`
 - `outdent-lines`

@@ -342,6 +342,49 @@ void RestoreSecondaryCaretRanges(TextViewport& viewport,
   viewport.SetSecondaryCaretsWithRanges(ranges);
 }
 
+// Restore every caret and selection after a whole-line transform, given the two
+// line remaps that transform implies. `shift` maps a line INSIDE a region;
+// `shift_boundary` maps the exclusive end line of a whole-line selection, which
+// is the line just past a region and therefore needs its own rule.
+//
+// A line move and a line copy differ only in those two functions, so they share
+// this body rather than each owning a copy of the selection-covers-the-block
+// reasoning below.
+template <typename ShiftFn, typename ShiftBoundaryFn>
+void RestoreCaretsAfterLineTransform(TextViewport& viewport,
+                                     const LineMoveCaretSnapshot& snapshot,
+                                     std::span<const LineRange> regions,
+                                     ShiftFn&& shift,
+                                     ShiftBoundaryFn&& shift_boundary) {
+  viewport.ClearSecondaryCarets();
+  // The primary selection lives inside exactly one region (it is what produced
+  // it), so "covers the block" is a question about that region alone.
+  const LineRange* selection_region =
+      snapshot.selection.has_value()
+          ? RegionContaining(regions, snapshot.selection->start.line)
+          : nullptr;
+  const bool selection_covers_block =
+      selection_region != nullptr &&
+      (snapshot.selection->end.line <= selection_region->last ||
+       (snapshot.selection->end.line == selection_region->last + 1 &&
+        snapshot.selection->end.column == 0));
+  if (selection_covers_block) {
+    viewport.MoveCursorTo(shift(snapshot.selection->start.line),
+                          snapshot.selection->start.column);
+    viewport.MoveCursorTo(shift_boundary(snapshot.selection->end.line),
+                          snapshot.selection->end.column, /*extend_selection=*/true);
+  } else {
+    viewport.MoveCursorTo(shift(snapshot.primary_line), snapshot.primary_column);
+  }
+
+  // Rebuild the shifted secondary carets in a single pass, preserving each
+  // caret's selection anchor (A-120): a line move shifts a caret's line while
+  // its column is unchanged.
+  RestoreSecondaryCaretRanges(viewport, snapshot.secondaries, [&](const TextPosition& pos) {
+    return TextPosition{shift(pos.line), pos.column};
+  });
+}
+
 void RestoreCaretsAfterLineMove(TextViewport& viewport,
                                 const LineMoveCaretSnapshot& snapshot,
                                 std::span<const LineRange> moved,
@@ -364,33 +407,7 @@ void RestoreCaretsAfterLineMove(TextViewport& viewport,
     return shifted < 0 ? 0 : static_cast<std::size_t>(shifted);
   };
 
-  viewport.ClearSecondaryCarets();
-  // The primary selection lives inside exactly one region (it is what produced
-  // it), so "covers the block" is a question about that region alone.
-  const LineRange* selection_region =
-      snapshot.selection.has_value()
-          ? RegionContaining(moved, snapshot.selection->start.line)
-          : nullptr;
-  const bool selection_covers_block =
-      selection_region != nullptr &&
-      (snapshot.selection->end.line <= selection_region->last ||
-       (snapshot.selection->end.line == selection_region->last + 1 &&
-        snapshot.selection->end.column == 0));
-  if (selection_covers_block) {
-    viewport.MoveCursorTo(shift(snapshot.selection->start.line),
-                          snapshot.selection->start.column);
-    viewport.MoveCursorTo(shift_boundary(snapshot.selection->end.line),
-                          snapshot.selection->end.column, /*extend_selection=*/true);
-  } else {
-    viewport.MoveCursorTo(shift(snapshot.primary_line), snapshot.primary_column);
-  }
-
-  // Rebuild the shifted secondary carets in a single pass, preserving each
-  // caret's selection anchor (A-120): a line move shifts a caret's line while
-  // its column is unchanged.
-  RestoreSecondaryCaretRanges(viewport, snapshot.secondaries, [&](const TextPosition& pos) {
-    return TextPosition{shift(pos.line), pos.column};
-  });
+  RestoreCaretsAfterLineTransform(viewport, snapshot, moved, shift, shift_boundary);
 }
 
 // The moved block plus the neighbour it swaps with, as one replacement vector.
@@ -460,30 +477,87 @@ bool MoveLineUp(TextViewport& viewport) { return MoveLines(viewport, /*downward=
 
 bool MoveLineDown(TextViewport& viewport) { return MoveLines(viewport, /*downward=*/true); }
 
-bool DuplicateSelection(TextViewport& viewport) {
-  auto sel = viewport.selection_range();
-  const auto& lines = viewport.lines();
-  if (sel) {
-    SelectionRange n = *sel;
-    if (n.start.line > n.end.line ||
-        (n.start.line == n.end.line && n.start.column > n.end.column)) {
-      std::swap(n.start, n.end);
-    }
-    std::string text = viewport.SelectedText();
-    SelectionRange empty{n.end, n.end};
-    return viewport.ReplaceRange(empty, text, /*record_undo=*/true);
+bool CopyLines(TextViewport& viewport, bool downward) {
+  const std::vector<LineRange> regions = ResolveLineRanges(viewport);
+  const TextBuffer& lines = viewport.lines();
+  if (regions.empty() || lines.size() == 0) return false;
+
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  // One undo group for the edits plus the caret restore, for the same reason
+  // MoveLines needs one: the per-region ReplaceLines entry snaps after_state to
+  // (region_first, 0), so redo would lose the real column and every secondary.
+  viewport.BeginUndoGroup();
+  bool changed = false;
+  // Descending: a region's insertion shifts every line after it, so applying the
+  // later regions first leaves the earlier regions' indices still valid.
+  for (auto region = regions.rbegin(); region != regions.rend(); ++region) {
+    LineBlob updated;
+    updated.reserve_lines(region->line_count() * 2);
+    lines.AppendLines(region->first, region->last + 1, updated);
+    lines.AppendLines(region->first, region->last + 1, updated);
+    changed |= viewport.ReplaceLines(region->first, region->last + 1, std::move(updated),
+                                     /*record_undo=*/true);
   }
-  std::size_t line_index = viewport.cursor_line();
-  if (line_index >= lines.size()) return false;
-  // One LineView read, copied twice. `lines[line_index]` twice went through
-  // LineRef, which materialises the line AND interns it in the buffer's line
-  // cache — two of each to produce two copies of one line.
-  const std::string_view source = lines.LineView(line_index);
-  LineBlob updated;
-  updated.push_back(source);
-  updated.push_back(source);
-  return viewport.ReplaceLines(line_index, line_index + 1, std::move(updated),
-                               /*record_undo=*/true);
+  if (!changed) {
+    viewport.EndUndoGroup();
+    return false;
+  }
+
+  // Every region above `line` has doubled, so a caret below them slides down by
+  // the total inserted; a caret inside a region slides only when the copy went
+  // downward (VS Code: copyLinesDown leaves the caret on the lower copy,
+  // copyLinesUp on the upper one -- which is the same text, a different caret).
+  const auto shift_by = [&](std::size_t line, bool include_own_region) -> std::size_t {
+    std::size_t offset = 0;
+    for (const LineRange& region : regions) {
+      if (region.last < line) {
+        offset += region.line_count();
+        continue;
+      }
+      if (include_own_region && downward && region.first <= line) {
+        offset += region.line_count();
+      }
+      break;
+    }
+    return line + offset;
+  };
+  RestoreCaretsAfterLineTransform(
+      viewport, snapshot, regions,
+      [&](std::size_t line) { return shift_by(line, /*include_own_region=*/true); },
+      // The exclusive end of a whole-line selection sits one past its region, so
+      // it must slide with that region rather than counting it as "above".
+      [&](std::size_t line) { return shift_by(line == 0 ? line : line - 1, true) +
+                                     (line == 0 ? 0 : 1); });
+  viewport.EndUndoGroup();
+  return true;
+}
+
+bool InsertLineBelow(TextViewport& viewport) {
+  const TextBuffer& lines = viewport.lines();
+  const std::size_t line = viewport.cursor_line();
+  if (line >= lines.size()) return false;
+  // End-of-line then Enter, which is exactly what the action means and gets the
+  // language's smart indent (and its brace bump) for free rather than
+  // reimplementing AutoIndentForNewline here.
+  viewport.MoveCursorTo(line, lines.LineLength(line));
+  viewport.InsertNewline();
+  return true;
+}
+
+bool InsertLineAbove(TextViewport& viewport) {
+  const TextBuffer& lines = viewport.lines();
+  const std::size_t line = viewport.cursor_line();
+  if (line >= lines.size()) return false;
+  // The new line takes the indent of the line it is pushing down, which is what
+  // makes Ctrl+Shift+Enter inside a block land at the block's depth. Deliberately
+  // NOT the smart-indent form: the line below has not been opened by anything.
+  const std::size_t indent_bytes = LeadingWhitespaceCount(lines.LineView(line));
+  std::string inserted(lines.LineView(line).substr(0, indent_bytes));
+  inserted.push_back('\n');
+  viewport.MoveCursorTo(line, 0);
+  viewport.InsertText(inserted);
+  viewport.MoveCursorTo(line, indent_bytes);
+  return true;
 }
 
 bool DeleteLine(TextViewport& viewport) {
