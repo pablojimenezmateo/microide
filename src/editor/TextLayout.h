@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "util/StringUtil.h"
+
 namespace microide::editor {
 
 struct LayoutLine {
@@ -203,6 +205,105 @@ class TextLayout {
     const std::size_t safe_tab_size = std::max<std::size_t>(1, tab_size);
     const std::size_t remainder = visual_column % safe_tab_size;
     return visual_column + (remainder == 0 ? safe_tab_size : safe_tab_size - remainder);
+  }
+
+  // Soft-wrap a single logical line into visual rows, emitting each one as
+  // `emit(visual_start, visual_end, indent)` — a half-open visual-column span plus
+  // the hanging indent a continuation row renders under. Always emits at least one
+  // row, even for an empty line. `wrap_columns` must already be clamped to >= 1.
+  //
+  // The one wrap implementation in the tree: the editor's wrapped-row table and the
+  // compare/merge diff surfaces both go through it, so a break decision cannot
+  // differ between a file opened in the editor and the same file opened in a diff.
+  // A template over the sink rather than a vector out-param so neither caller pays
+  // a per-line copy through shared scratch.
+  template <typename EmitFn>
+  static void WrapLineSegments(std::string_view line_text,
+                               std::size_t tab_size,
+                               std::size_t wrap_columns,
+                               EmitFn&& emit) {
+    if (line_text.empty()) {
+      emit(std::size_t{0}, std::size_t{0}, std::size_t{0});
+      return;
+    }
+
+    // Hanging indent: continuation rows of this line render aligned under the
+    // line's leading whitespace. Compute that indent once, clamped so a deep
+    // indent never collapses continuation rows to a degenerate width.
+    std::size_t hanging_indent = 0;
+    {
+      std::size_t indent_visual = 0;
+      for (std::size_t k = 0; k < line_text.size(); ++k) {
+        const char ch = line_text[k];
+        if (ch != ' ' && ch != '\t') {
+          break;
+        }
+        indent_visual = AdvanceVisualColumn(indent_visual, ch, tab_size);
+      }
+      hanging_indent = std::min(indent_visual, wrap_columns / 2);
+    }
+
+    // Single pass: walk the line tracking the visual column, the last whitespace
+    // break opportunity, and the current row's text start. Break before any
+    // character that would push the row past the row's available width; prefer
+    // breaking after the most recent whitespace if one is available inside the
+    // current row. Hard-break inside a long word only when no whitespace fits.
+    // Continuation rows (row_start_visual > 0) lose `hanging_indent` columns of
+    // width to the rendered indent.
+    std::size_t row_start_visual = 0;
+    std::size_t row_start_text = 0;
+    std::size_t last_break_visual = 0;
+    std::size_t last_break_text = 0;
+    std::size_t visual = 0;
+    std::size_t i = 0;
+    const std::size_t line_size = line_text.size();
+    while (i < line_size) {
+      const char ch = line_text[i];
+      const std::size_t seq_len = util::Utf8SequenceLength(line_text, i);
+      const std::size_t next_visual = AdvanceVisualColumn(visual, ch, tab_size);
+      const std::size_t effective_wrap =
+          wrap_columns - (row_start_visual == 0 ? 0 : hanging_indent);
+
+      if (next_visual - row_start_visual > effective_wrap && i > row_start_text) {
+        std::size_t break_visual;
+        std::size_t break_text;
+        if (last_break_text > row_start_text) {
+          break_visual = last_break_visual;
+          break_text = last_break_text;
+        } else {
+          break_visual = visual;
+          break_text = i;
+        }
+        emit(row_start_visual, break_visual, row_start_visual == 0 ? std::size_t{0} : hanging_indent);
+        row_start_visual = break_visual;
+        row_start_text = break_text;
+        last_break_visual = row_start_visual;
+        last_break_text = row_start_text;
+        visual = break_visual;
+        i = break_text;
+        continue;
+      }
+
+      visual = next_visual;
+      i += seq_len;
+      if (ch == ' ' || ch == '\t') {
+        last_break_visual = visual;
+        last_break_text = i;
+      }
+    }
+    emit(row_start_visual, visual, row_start_visual == 0 ? std::size_t{0} : hanging_indent);
+  }
+
+  // Number of visual rows `WrapLineSegments` would emit for this line. Kept beside
+  // it so the two cannot disagree; used where only the row budget is needed (the
+  // diff surfaces' per-row max across panes).
+  static std::size_t WrapLineRowCount(std::string_view line_text,
+                                      std::size_t tab_size,
+                                      std::size_t wrap_columns) {
+    std::size_t rows = 0;
+    WrapLineSegments(line_text, tab_size, wrap_columns,
+                     [&rows](std::size_t, std::size_t, std::size_t) { ++rows; });
+    return rows;
   }
 
   // A half-open byte range [start, end) within a line. Empty when start >= end.

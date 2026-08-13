@@ -22,6 +22,7 @@
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
 #include "util/PathMatch.h"
+#include "workspace/DiffWrapLayout.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -121,6 +122,13 @@ struct CompareTabState {
   editor::SyntaxState right_current_syntax_state;
   compare::CompareModel model;
   editor::TextViewport right_viewport;
+  // Soft-wrap row table for the two panes. Inactive (and empty) unless
+  // `editor.wrap` is on, in which case a presentation row occupies
+  // max(left segments, right segments) on-screen rows and the shorter side is
+  // padded with blank rows so the panes stay aligned (TD-2026-08-13-200).
+  // `scroll_row` is an index into THIS table; `selected_row` stays a
+  // presentation-row index, so a selected wrapped line highlights whole.
+  DiffWrapLayout wrap_layout;
   std::vector<std::vector<editor::SyntaxTokenKind>> left_tokens_by_row;
   std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
   // Non-zero where this row's right-pane tokens ARE its left-pane tokens, so the
@@ -233,6 +241,11 @@ struct MergeTabState {
   std::size_t incoming_syntax_rows_tokenized = 0;
   std::size_t current_syntax_rows_tokenized = 0;
   editor::TextViewport result_viewport;
+  // Soft-wrap row table for the two read-only source panes (incoming = left,
+  // current = right). Inactive unless `editor.wrap` is on. The result pane wraps
+  // through its own viewport; the three panes share `scroll_row`, which is a
+  // visual-row index in every mode.
+  DiffWrapLayout wrap_layout;
   std::optional<std::string> persisted_output_baseline;
   std::vector<MergeTrackedConflict> conflicts;
   std::optional<MergeHoverState> hover_state;

@@ -464,7 +464,12 @@ void WorkspaceShell::RequestCompareRightLineToBottomRedraw(std::size_t start_lin
     RequestFocusedEditorRedraw();
     return;
   }
-  RequestCompareRowToBottomRedraw(CompareRowIndexForRightLine(*compare_tab, start_line));
+  // A MODEL row is not a presentation row (a collapsed run or a metadata line
+  // shifts them apart), and RequestCompareRowToBottomRedraw names presentation
+  // rows -- so project it rather than passing the model index through.
+  const std::size_t model_row = CompareRowIndexForRightLine(*compare_tab, start_line);
+  RequestCompareRowToBottomRedraw(
+      compare::ComparePresentationRowForModelRow(compare_tab->presentation, model_row));
 }
 
 void WorkspaceShell::RequestMergeResultLineRangeRedraw(std::size_t start_line,

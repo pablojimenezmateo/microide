@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <charconv>
 #include <cmath>
+#include <limits>
 #include <optional>
 #include <string_view>
 #include <vector>
@@ -57,8 +58,13 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
                                   const SDL_FRect& inner_lane,
                                   std::uint64_t theme_token,
                                   CompareTabState& compare_tab) {
+  // The wrapped row count is part of what the markers are scaled against, so it is
+  // part of the key: a divider drag that re-wraps must not keep stale marker rows.
+  const std::uint64_t marker_revision =
+      compare_tab.presentation_revision ^
+      (static_cast<std::uint64_t>(CompareTabVisualRowCount(compare_tab)) << 32);
   if (compare_tab.scrollbar_marker_cache_valid &&
-      compare_tab.scrollbar_marker_cache_revision == compare_tab.presentation_revision &&
+      compare_tab.scrollbar_marker_cache_revision == marker_revision &&
       compare_tab.scrollbar_marker_cache_theme_token == theme_token &&
       RectsEqual(compare_tab.scrollbar_marker_cache_track, inner_lane)) {
     return;
@@ -69,15 +75,21 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
   std::vector<overview::MarkerInput> inputs;
   inputs.reserve(runs.size());
   for (const CompareScrollbarRun& run : runs) {
-    inputs.push_back(overview::MarkerInput{.start_row = run.start_row,
-                                           .end_row = run.end_row,
-                                           .color = CompareMarkerColor(theme, run.kind),
-                                           .priority = 0});
+    // Runs are presentation rows; the lane is scaled to on-screen rows, which soft
+    // wrap makes a different (larger) space. Project both ends through the wrap
+    // table so a marker keeps pointing at its hunk.
+    inputs.push_back(overview::MarkerInput{
+        .start_row = static_cast<int>(ComparePresentationRowToVisualRow(
+            compare_tab, static_cast<std::size_t>(std::max(0, run.start_row)))),
+        .end_row = static_cast<int>(ComparePresentationRowToVisualRow(
+            compare_tab, static_cast<std::size_t>(std::max(0, run.end_row)))),
+        .color = CompareMarkerColor(theme, run.kind),
+        .priority = 0});
   }
   compare_tab.scrollbar_marker_cache =
-      overview::BuildMarkers(inner_lane, compare_tab.presentation.rows.size(), inputs);
+      overview::BuildMarkers(inner_lane, CompareTabVisualRowCount(compare_tab), inputs);
   compare_tab.scrollbar_marker_cache_track = inner_lane;
-  compare_tab.scrollbar_marker_cache_revision = compare_tab.presentation_revision;
+  compare_tab.scrollbar_marker_cache_revision = marker_revision;
   compare_tab.scrollbar_marker_cache_theme_token = theme_token;
   compare_tab.scrollbar_marker_cache_valid = true;
 }
@@ -183,12 +195,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // presentation scroll position directly capped tokenization far below the visible
   // model rows, leaving hunks deep in a collapsed diff unhighlighted.
   const std::size_t presentation_row_count = compare_tab->presentation.rows.size();
-  const auto model_row_for_presentation = [&](std::size_t presentation_index) -> std::size_t {
+  const auto model_row_for_visual = [&](std::size_t visual_index) -> std::size_t {
     if (presentation_row_count == 0) {
       return compare_tab->model.rows.size();
     }
     const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(
-        *compare_tab, std::min(presentation_index, presentation_row_count - 1));
+        *compare_tab,
+        std::min(CompareVisualRowToPresentationRow(*compare_tab, visual_index),
+                 presentation_row_count - 1));
     if (row == nullptr) {
       return compare_tab->model.rows.size();
     }
@@ -197,9 +211,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     }
     return row->model_row_index;
   };
-  const std::size_t syntax_model_start = model_row_for_presentation(visible_start_row);
+  const std::size_t syntax_model_start = model_row_for_visual(visible_start_row);
   const std::size_t syntax_model_end =
-      std::min(compare_tab->model.rows.size(), model_row_for_presentation(visible_end_row) + 1);
+      std::min(compare_tab->model.rows.size(), model_row_for_visual(visible_end_row) + 1);
   PopulateCompareSyntaxTokensForWindow(*compare_tab, syntax_model_start, syntax_model_end);
   // The tokenizer is cumulative and capped per frame; if it has not yet reached the
   // deepest visible model row (e.g. after scrolling past a giant collapsed run),
@@ -232,8 +246,17 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                     .visible_rows = surface.visible_rows,
                     .visible_columns = surface.visible_columns,
                 },
-                [this, compare_tab](std::size_t line_index) {
-                  return CompareRowIndexForRightLine(*compare_tab, line_index);
+                [compare_tab](std::size_t line_index, std::size_t line_visual_columns)
+                    -> std::optional<EditorBlameOverlayService::CompareBlameAnchor> {
+                  const CompareRightLineAnchor anchor = CompareRightLineBlameAnchor(
+                      *compare_tab, line_index, line_visual_columns);
+                  if (!anchor.valid) {
+                    return std::nullopt;
+                  }
+                  return EditorBlameOverlayService::CompareBlameAnchor{
+                      .visual_row = anchor.visual_row,
+                      .end_column = anchor.end_column,
+                  };
                 })
           : std::nullopt;
   const auto* right_diagnostics =
@@ -283,23 +306,28 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // RenderCompareSurface's 74 us-per-frame self time and had no scope of its own,
   // exactly as the merge surface's did.
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderCompareSurface::SideRows");
+  const bool wrapped = compare_tab->wrap_layout.active();
+  const float char_width_px = text_renderer_.CharWidth();
   for (int row = 0; row < surface.visible_rows; ++row) {
-    const int presentation_index = compare_tab->scroll_row + row;
-    if (presentation_index < 0 ||
-        static_cast<std::size_t>(presentation_index) >=
-            CompareTabPresentationRowCount(*compare_tab)) {
+    const int visual_index = compare_tab->scroll_row + row;
+    if (visual_index < 0 ||
+        static_cast<std::size_t>(visual_index) >= CompareTabVisualRowCount(*compare_tab)) {
       break;
     }
+    const DiffWrapRow wrap_row =
+        compare_tab->wrap_layout.RowAt(static_cast<std::size_t>(visual_index));
+    const std::size_t presentation_index = wrap_row.unit;
 
     const compare::ComparePresentationRow* presentation_row =
-        CompareTabPresentationRowAt(*compare_tab, static_cast<std::size_t>(presentation_index));
+        CompareTabPresentationRowAt(*compare_tab, presentation_index);
     if (presentation_row == nullptr) {
       break;
     }
 
     const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
-    const bool selected =
-        static_cast<std::size_t>(presentation_index) == compare_tab->selected_row;
+    // The whole wrapped block of the selected row highlights, not just its first
+    // segment -- selection is a presentation-row concept.
+    const bool selected = presentation_index == compare_tab->selected_row;
     if (presentation_row->kind != compare::ComparePresentationRowKind::Model) {
       const SDL_Color summary_background = selected
                                                ? theme_.row_highlight
@@ -345,8 +373,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                      presentation_row](CompareHoverKind kind) {
           return compare_tab->hover_state.has_value() &&
                  compare_tab->hover_state->kind == kind &&
-                 compare_tab->hover_state->presentation_row ==
-                     static_cast<std::size_t>(presentation_index) &&
+                 compare_tab->hover_state->presentation_row == presentation_index &&
                  compare_tab->hover_state->collapsed_run_start_model_row ==
                      presentation_row->collapsed_run_start_model_row &&
                  compare_tab->hover_state->collapsed_run_length ==
@@ -449,7 +476,16 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       }
     }();
 
-    if (compare_row.left_line > 0) {
+    const std::size_t left_row_start = wrapped ? wrap_row.left_start : compare_tab->horizontal_scroll;
+    const std::size_t left_row_end =
+        wrapped ? wrap_row.left_end : compare_tab->horizontal_scroll + surface.left_visible_columns;
+    const std::size_t right_row_start =
+        wrapped ? wrap_row.right_start : compare_tab->horizontal_scroll;
+    const std::size_t right_row_end = wrapped
+                                          ? wrap_row.right_end
+                                          : compare_tab->horizontal_scroll +
+                                                surface.right_visible_columns;
+    if (compare_row.left_line > 0 && wrap_row.left_present) {
       std::array<char, 20> line_number_buf;
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
           static_cast<std::size_t>(model_index) < compare_tab->left_tokens_by_row.size()
@@ -460,12 +496,15 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       const bool left_diff_edge = compare_row.kind == compare::CompareRowKind::Deleted ||
                                   compare_row.kind == compare::CompareRowKind::Modified;
       editor::RowDecorationInput left_input;
-      left_input.text_x = surface.left_x + surface.gutter_width;
+      // Continuation rows render under the line's own indent (hanging indent), so
+      // the glyph origin shifts right by it while the visual span stays absolute.
+      left_input.text_x = surface.left_x + surface.gutter_width +
+                          static_cast<float>(wrap_row.left_indent) * char_width_px;
       left_input.y = y;
-      left_input.char_width = text_renderer_.CharWidth();
+      left_input.char_width = char_width_px;
       left_input.line_height = surface.line_height;
-      left_input.row_visual_start = compare_tab->horizontal_scroll;
-      left_input.row_visual_end = compare_tab->horizontal_scroll + surface.left_visible_columns;
+      left_input.row_visual_start = left_row_start;
+      left_input.row_visual_end = left_row_end;
       left_input.text = compare_row.left_text;
       left_input.line_length = left_input.text.size();
       left_input.tokens = cached_tokens;
@@ -489,19 +528,30 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       left_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Deleted
                                           ? theme_.diff_deleted
                                           : theme_.diff_modified;
-      left_input.layout =
-          CompareVisibleLayoutForRow(*compare_tab, model_index, false, surface.left_visible_columns);
+      left_input.layout = CompareVisibleLayoutForRow(
+          *compare_tab, model_index, false, left_row_start,
+          wrapped ? left_row_end - left_row_start : surface.left_visible_columns);
       left_input.text_renderer = &text_renderer_;
       left_input.theme = &theme_;
       editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
       editor::BuildDecoratedRow(left_row, left_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, left_row);
-      draw_text(surface.left_x + kDiffGutterNumberInset,
-                surface.gutter_width - 4.0f - kDiffGutterNumberInset,
-                selected ? theme_.current_line_number : theme_.line_number,
-                FormatLineNumber(static_cast<std::size_t>(compare_row.left_line), line_number_buf));
+      if (wrap_row.first) {
+        draw_text(surface.left_x + kDiffGutterNumberInset,
+                  surface.gutter_width - 4.0f - kDiffGutterNumberInset,
+                  selected ? theme_.current_line_number : theme_.line_number,
+                  FormatLineNumber(static_cast<std::size_t>(compare_row.left_line),
+                                   line_number_buf));
+      }
+    } else if (wrapped && compare_row.left_line > 0) {
+      // Padding row: this side ran out of segments before the other did. Paint the
+      // row band so the pane stays a continuous column of the diff tint.
+      DrawFilledRect(renderer,
+                     MakeRect(surface.left_x, y - 1.0f,
+                              surface.gutter_width + surface.left_width, surface.line_height),
+                     left_row_background);
     }
-    if (compare_row.right_line > 0) {
+    if (compare_row.right_line > 0 && wrap_row.right_present) {
       std::array<char, 20> line_number_buf;
       const std::size_t right_line_index = static_cast<std::size_t>(compare_row.right_line - 1);
       // The same right_text is queried for the selection fill and (potentially) the caret
@@ -576,12 +626,13 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       const bool right_diff_edge = compare_row.kind == compare::CompareRowKind::Added ||
                                    compare_row.kind == compare::CompareRowKind::Modified;
       editor::RowDecorationInput right_input;
-      right_input.text_x = right_interaction.text_x;
+      right_input.text_x = right_interaction.text_x +
+                           static_cast<float>(wrap_row.right_indent) * char_width_px;
       right_input.y = y;
       right_input.char_width = right_interaction.char_width;
       right_input.line_height = surface.line_height;
-      right_input.row_visual_start = compare_tab->horizontal_scroll;
-      right_input.row_visual_end = compare_tab->horizontal_scroll + surface.right_visible_columns;
+      right_input.row_visual_start = right_row_start;
+      right_input.row_visual_end = right_row_end;
       right_input.text = compare_row.right_text;
       right_input.line_length = right_input.text.size();
       right_input.tokens = cached_tokens;
@@ -608,14 +659,16 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       right_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Added
                                            ? theme_.diff_added
                                            : theme_.diff_modified;
-      right_input.layout =
-          CompareVisibleLayoutForRow(*compare_tab, model_index, true, surface.right_visible_columns);
+      right_input.layout = CompareVisibleLayoutForRow(
+          *compare_tab, model_index, true, right_row_start,
+          wrapped ? right_row_end - right_row_start : surface.right_visible_columns);
       if (right_diagnostics != nullptr) {
         right_input.diagnostics =
             std::span<const editor::PublishedDiagnostic>(*right_diagnostics);
         right_input.diagnostic_line_index = right_line_index;
-        right_input.diagnostic_horizontal_scroll = compare_tab->horizontal_scroll;
-        right_input.diagnostic_visible_columns = surface.right_visible_columns;
+        right_input.diagnostic_horizontal_scroll = right_row_start;
+        right_input.diagnostic_visible_columns =
+            wrapped ? right_row_end - right_row_start : surface.right_visible_columns;
         right_input.tab_size = compare_tab->right_viewport.tab_size();
       }
       right_input.text_renderer = &text_renderer_;
@@ -623,7 +676,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       editor::DecoratedTextRow& right_row = compare_right_scratch_row_;
       editor::BuildDecoratedRow(right_row, right_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, right_row);
-      if (right_diagnostics != nullptr) {
+      if (right_diagnostics != nullptr && wrap_row.first) {
         if (const auto severity = editor::HighestDiagnosticSeverityForLine(
                 std::span<const editor::PublishedDiagnostic>(*right_diagnostics), right_line_index);
             severity.has_value()) {
@@ -632,10 +685,13 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                              *severity);
         }
       }
-      draw_text(surface.right_x + kDiffGutterNumberInset,
-                surface.gutter_width - 4.0f - kDiffGutterNumberInset,
-                selected ? theme_.current_line_number : theme_.line_number,
-                FormatLineNumber(static_cast<std::size_t>(compare_row.right_line), line_number_buf));
+      if (wrap_row.first) {
+        draw_text(surface.right_x + kDiffGutterNumberInset,
+                  surface.gutter_width - 4.0f - kDiffGutterNumberInset,
+                  selected ? theme_.current_line_number : theme_.line_number,
+                  FormatLineNumber(static_cast<std::size_t>(compare_row.right_line),
+                                   line_number_buf));
+      }
       if (draw_compare_caret && right_line_index == compare_tab->right_viewport.cursor_line()) {
         const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
         const std::size_t caret_visual =
@@ -643,15 +699,29 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                 ? caret_map->VisualColumnFor(compare_tab->right_viewport.cursor_column())
                 : std::min(compare_tab->right_viewport.cursor_column(),
                            compare_row.right_text.size());
-        if (caret_visual >= compare_tab->horizontal_scroll &&
-            caret_visual <= compare_tab->horizontal_scroll + surface.right_visible_columns) {
+        // Under wrap the caret belongs to exactly one segment, and its on-screen
+        // cell is the hanging indent plus the offset into that segment.
+        const bool caret_on_this_row =
+            wrapped ? compare_tab->wrap_layout.RowForUnitColumn(
+                          presentation_index, caret_visual, /*right_side=*/true) ==
+                          static_cast<std::size_t>(visual_index)
+                    : caret_visual >= right_row_start && caret_visual <= right_row_end;
+        if (caret_on_this_row) {
+          const std::size_t caret_cell =
+              wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
           DrawFilledRect(
-              renderer, MakeRect(TextGridCursorX(right_interaction, caret_visual), y - 1.0f, 1.5f,
+              renderer, MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f,
                                  surface.line_height),
               theme_.cursor);
         }
       }
-      if (blame_overlay.has_value() && blame_overlay->visible) {
+      // The annotation is anchored past the END of the line, i.e. on its last
+      // wrapped row; the rect is absolute, so painting it once there is enough.
+      const bool blame_row =
+          !wrapped || compare_tab->wrap_layout.RowForUnitColumn(
+                          presentation_index, std::numeric_limits<std::size_t>::max(),
+                          /*right_side=*/true) == static_cast<std::size_t>(visual_index);
+      if (blame_row && blame_overlay.has_value() && blame_overlay->visible) {
         while (blame_index < blame_overlay->lines.size() &&
                blame_overlay->lines[blame_index].line_index < right_line_index) {
           ++blame_index;
@@ -664,8 +734,15 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                      blame_overlay->lines[blame_index].text);
         }
       }
+    } else if (wrapped && compare_row.right_line > 0) {
+      DrawFilledRect(renderer,
+                     MakeRect(surface.right_x, y - 1.0f,
+                              surface.gutter_width + surface.right_width, surface.line_height),
+                     right_row_background);
     }
-    draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
+    if (wrap_row.first) {
+      draw_text(divider_x, surface.divider_width, marker_color, std::string_view(&marker, 1));
+    }
   }
   }
 }

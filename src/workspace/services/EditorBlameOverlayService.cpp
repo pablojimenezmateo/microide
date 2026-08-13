@@ -153,7 +153,8 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
     project::GitBlameService& git_blame_service,
     CompareTabState& compare_tab,
     const CompareOverlayLayout& layout,
-    const std::function<std::size_t(std::size_t)>& compare_row_index_for_right_line) const {
+    const std::function<std::optional<CompareBlameAnchor>(std::size_t, std::size_t)>&
+        compare_blame_anchor) const {
   if (!compare_tab.right_editable || !compare_tab.right_view_active) {
     return std::nullopt;
   }
@@ -210,26 +211,22 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
       continue;
     }
 
-    const std::size_t model_row = compare_row_index_for_right_line(line.line);
-    if (model_row >= compare_tab.model.rows.size()) {
+    const editor::LayoutLine layout_line = compare_tab.right_viewport.VisibleLineLayout(line.line);
+    const std::optional<CompareBlameAnchor> anchor =
+        compare_blame_anchor(line.line, layout_line.visual_columns);
+    if (!anchor.has_value()) {
       continue;
     }
-    const auto& compare_row = compare_tab.model.rows[model_row];
-    if (compare_row.right_line != static_cast<int>(line.line + 1)) {
-      continue;
-    }
-    if (model_row < static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)) ||
-        model_row >= static_cast<std::size_t>(std::max(0, compare_tab.scroll_row) + layout.visible_rows)) {
+    const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
+    if (anchor->visual_row < scroll_row ||
+        anchor->visual_row >= scroll_row + static_cast<std::size_t>(layout.visible_rows)) {
       continue;
     }
 
-    const editor::LayoutLine layout_line = compare_tab.right_viewport.VisibleLineLayout(line.line);
-    const float y =
-        layout.rows_y +
-        static_cast<float>(model_row - static_cast<std::size_t>(std::max(0, compare_tab.scroll_row))) *
-            layout.line_height;
+    const float y = layout.rows_y +
+                    static_cast<float>(anchor->visual_row - scroll_row) * layout.line_height;
     const float x = layout.right_x + layout.gutter_width +
-                    static_cast<float>(layout_line.visual_columns) * char_width + inline_gap;
+                    static_cast<float>(anchor->end_column) * char_width + inline_gap;
     const float max_width = std::max(0.0f, right_limit - x);
     if (max_width < char_width * 4.0f) {
       continue;

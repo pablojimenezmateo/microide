@@ -329,8 +329,17 @@
             .visible_rows = surface.visible_rows,
             .visible_columns = surface.visible_columns,
         },
-        [&shell, &compare](std::size_t line_index) {
-          return shell.CompareRowIndexForRightLine(compare, line_index);
+        [&compare](std::size_t line_index, std::size_t line_visual_columns)
+            -> std::optional<EditorBlameOverlayService::CompareBlameAnchor> {
+          const CompareRightLineAnchor anchor =
+              CompareRightLineBlameAnchor(compare, line_index, line_visual_columns);
+          if (!anchor.valid) {
+            return std::nullopt;
+          }
+          return EditorBlameOverlayService::CompareBlameAnchor{
+              .visual_row = anchor.visual_row,
+              .end_column = anchor.end_column,
+          };
         });
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveMergeBlameOverlay(

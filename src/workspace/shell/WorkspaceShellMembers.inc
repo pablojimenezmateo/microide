@@ -837,6 +837,7 @@
                                      std::size_t visible_columns) const;
   void ClampCompareHorizontalScroll(CompareTabState& compare_tab,
                                     std::size_t visible_columns) const;
+  void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows) const;
   void RevealActiveCompareSelection();
   bool ActiveTabIsMerge() const;
   MergeTabState* ActiveMergeTab();
@@ -914,8 +915,6 @@
   void RefreshCompareTabDerivedState(CompareTabState& compare_tab) const;
   std::size_t CompareRowIndexForRightLine(const CompareTabState& compare_tab,
                                           std::size_t line_index) const;
-  std::size_t CompareRightLineForRow(const CompareTabState& compare_tab,
-                                     std::size_t row_index) const;
   void SyncCompareViewportScroll(CompareTabState& compare_tab) const;
   void SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
                                         bool reveal_selection) const;

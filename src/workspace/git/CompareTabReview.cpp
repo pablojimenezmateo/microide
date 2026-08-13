@@ -1,5 +1,7 @@
 #include "workspace/git/CompareTabReview.h"
 
+#include <algorithm>
+#include <limits>
 #include <string>
 #include <unordered_map>
 
@@ -346,6 +348,167 @@ const compare::ComparePresentationRow* CompareTabPresentationRowAt(
   return &compare_tab.presentation.rows[presentation_row];
 }
 
+namespace {
+
+// What the wrap table needs to know about presentation row `unit`: the two panes'
+// text, or "this row is a full-width summary that never wraps".
+DiffWrapLayout::UnitText CompareWrapUnitText(const CompareTabState& compare_tab,
+                                            std::size_t unit) {
+  DiffWrapLayout::UnitText text;
+  std::size_t model_row = unit;
+  if (!compare_tab.presentation.rows.empty()) {
+    const compare::ComparePresentationRow* row = CompareTabPresentationRowAt(compare_tab, unit);
+    if (row == nullptr || row->kind != compare::ComparePresentationRowKind::Model) {
+      // Metadata / hunk-header / collapsed-context rows span the whole surface and
+      // are truncated, not wrapped — one row each, exactly as with wrap off.
+      text.single_row = true;
+      text.has_left = true;
+      return text;
+    }
+    model_row = row->model_row_index;
+  }
+  if (model_row >= compare_tab.model.rows.size()) {
+    text.single_row = true;
+    return text;
+  }
+  const compare::CompareRow& model = compare_tab.model.rows[model_row];
+  text.has_left = model.left_line > 0;
+  text.has_right = model.right_line > 0;
+  text.left = model.left_text;
+  text.right = model.right_text;
+  return text;
+}
+
+}  // namespace
+
+void EnsureCompareWrapLayout(const CompareTabState& compare_tab,
+                             bool soft_wrap,
+                             std::size_t left_columns,
+                             std::size_t right_columns) {
+  // Both revisions in the key: the presentation is rebuilt whenever the model
+  // changes today, but a table that silently kept a deleted row's text is the kind
+  // of bug that only shows up under a later refactor.
+  const std::uint64_t content_key =
+      compare_tab.presentation_revision * 0x9E3779B97F4A7C15ull ^ compare_tab.model_revision;
+  compare_tab.wrap_layout.Ensure(
+      content_key, soft_wrap, left_columns,
+      right_columns, compare_tab.right_viewport.tab_size(),
+      CompareTabPresentationRowCount(compare_tab),
+      [&compare_tab](std::size_t unit) { return CompareWrapUnitText(compare_tab, unit); });
+}
+
+void RefreshCompareWrapLayoutForContent(const CompareTabState& compare_tab) {
+  if (!compare_tab.wrap_layout.active()) {
+    return;
+  }
+  EnsureCompareWrapLayout(compare_tab, true, compare_tab.wrap_layout.built_left_columns(),
+                          compare_tab.wrap_layout.built_right_columns());
+}
+
+std::size_t CompareTabVisualRowCount(const CompareTabState& compare_tab) {
+  return compare_tab.wrap_layout.RowCount(CompareTabPresentationRowCount(compare_tab));
+}
+
+std::size_t CompareVisualRowToPresentationRow(const CompareTabState& compare_tab,
+                                              std::size_t visual_row) {
+  return compare_tab.wrap_layout.UnitForRow(visual_row);
+}
+
+std::size_t ComparePresentationRowToVisualRow(const CompareTabState& compare_tab,
+                                              std::size_t presentation_row) {
+  return compare_tab.wrap_layout.FirstRowForUnit(presentation_row);
+}
+
+std::size_t CompareTabRightLineForModelRow(const CompareTabState& compare_tab,
+                                           std::size_t model_row) {
+  if (compare_tab.right_viewport.line_count() == 0) {
+    return 0;
+  }
+  if (model_row >= compare_tab.model.rows.size()) {
+    return compare_tab.right_viewport.line_count() - 1;
+  }
+  if (const int line = compare_tab.model.rows[model_row].right_line; line > 0) {
+    return static_cast<std::size_t>(line - 1);
+  }
+  for (std::size_t i = model_row + 1; i < compare_tab.model.rows.size(); ++i) {
+    if (compare_tab.model.rows[i].right_line > 0) {
+      return static_cast<std::size_t>(compare_tab.model.rows[i].right_line - 1);
+    }
+  }
+  return compare_tab.right_viewport.line_count() - 1;
+}
+
+CompareRightCaretPlacement CompareRightCaretPlacementFor(const CompareTabState& compare_tab,
+                                                         std::size_t right_line,
+                                                         std::size_t visual_column) {
+  const std::size_t presentation_row = compare::ComparePresentationRowForModelRow(
+      compare_tab.presentation, CompareTabModelRowForRightLine(compare_tab, right_line));
+  if (!compare_tab.wrap_layout.active()) {
+    return CompareRightCaretPlacement{
+        .visual_row = ComparePresentationRowToVisualRow(compare_tab, presentation_row),
+        .column = visual_column,
+    };
+  }
+  const std::size_t visual_row =
+      compare_tab.wrap_layout.RowForUnitColumn(presentation_row, visual_column, /*right_side=*/true);
+  const DiffWrapRow row = compare_tab.wrap_layout.RowAt(visual_row);
+  const std::size_t offset = visual_column > row.right_start ? visual_column - row.right_start : 0;
+  return CompareRightCaretPlacement{
+      .visual_row = visual_row,
+      .column = row.right_indent + offset,
+  };
+}
+
+CompareRightPaneHit CompareRightPaneHitAt(const CompareTabState& compare_tab,
+                                          std::size_t visual_row,
+                                          std::size_t screen_column) {
+  const std::size_t presentation_row = CompareVisualRowToPresentationRow(compare_tab, visual_row);
+  const std::size_t model_row =
+      compare_tab.presentation.rows.empty()
+          ? presentation_row
+          : compare::ComparePresentationToModelRow(compare_tab.presentation, presentation_row);
+  CompareRightPaneHit hit{
+      .presentation_row = presentation_row,
+      .model_row = model_row,
+      .line = CompareTabRightLineForModelRow(compare_tab, model_row),
+      .visual_column = screen_column,
+  };
+  if (!compare_tab.wrap_layout.active()) {
+    return hit;
+  }
+  // Clicking a padding row (this side has no segment here) resolves to the unit's
+  // last row that does, which is where the caret can actually land.
+  DiffWrapRow row = compare_tab.wrap_layout.RowAt(visual_row);
+  if (!row.right_present) {
+    row = compare_tab.wrap_layout.RowAt(compare_tab.wrap_layout.RowForUnitColumn(
+        presentation_row, std::numeric_limits<std::size_t>::max(), /*right_side=*/true));
+  }
+  const std::size_t within =
+      screen_column > row.right_indent ? screen_column - row.right_indent : 0;
+  hit.visual_column = std::min<std::size_t>(row.right_start + within, row.right_end);
+  return hit;
+}
+
+CompareRightLineAnchor CompareRightLineBlameAnchor(const CompareTabState& compare_tab,
+                                                   std::size_t right_line,
+                                                   std::size_t line_visual_columns) {
+  const std::size_t model_row = CompareTabModelRowForRightLine(compare_tab, right_line);
+  if (model_row >= compare_tab.model.rows.size() ||
+      compare_tab.model.rows[model_row].right_line != static_cast<int>(right_line + 1)) {
+    return CompareRightLineAnchor{};
+  }
+  // The end of the line is past every segment's start, so the caret placement
+  // resolves to the last row carrying right-pane text -- which is where an inline
+  // annotation belongs.
+  const CompareRightCaretPlacement placement =
+      CompareRightCaretPlacementFor(compare_tab, right_line, line_visual_columns);
+  return CompareRightLineAnchor{
+      .visual_row = placement.visual_row,
+      .end_column = placement.column,
+      .valid = true,
+  };
+}
+
 std::size_t CompareTabModelRowForRightLine(const CompareTabState& compare_tab,
                                            std::size_t right_line_index) {
   if (compare_tab.model.rows.empty()) {
@@ -454,10 +617,16 @@ bool ExpandCompareCollapsedContext(CompareTabState& compare_tab,
   if (!changed) {
     return false;
   }
+  // Anchor the viewport top in PRESENTATION space across the rebuild: `scroll_row`
+  // indexes on-screen rows, and expanding a run inserts presentation rows above it.
+  const std::size_t previous_top_presentation_row =
+      CompareVisualRowToPresentationRow(compare_tab, static_cast<std::size_t>(
+                                                         std::max(0, previous_scroll_row)));
   RefreshCompareTabPresentation(compare_tab);
+  RefreshCompareWrapLayoutForContent(compare_tab);
   if (revealed_before > 0) {
-    compare_tab.scroll_row =
-        std::max(0, previous_scroll_row + static_cast<int>(revealed_before));
+    compare_tab.scroll_row = static_cast<int>(ComparePresentationRowToVisualRow(
+        compare_tab, previous_top_presentation_row + revealed_before));
   }
   const auto matches_collapsed_row = [&](const compare::ComparePresentationRow& candidate) {
     return candidate.kind == compare::ComparePresentationRowKind::CollapsedContext &&
@@ -489,19 +658,21 @@ std::optional<CompareCollapsedContextRowHit> CompareCollapsedContextRowAt(
     return std::nullopt;
   }
   const int visible_row = static_cast<int>((y - rows_y) / line_height);
-  const int presentation_row = compare_tab.scroll_row + visible_row;
-  if (visible_row < 0 || presentation_row < 0 ||
-      static_cast<std::size_t>(presentation_row) >= CompareTabPresentationRowCount(compare_tab)) {
+  const int visual_row = compare_tab.scroll_row + visible_row;
+  if (visible_row < 0 || visual_row < 0 ||
+      static_cast<std::size_t>(visual_row) >= CompareTabVisualRowCount(compare_tab)) {
     return std::nullopt;
   }
+  const std::size_t presentation_row =
+      CompareVisualRowToPresentationRow(compare_tab, static_cast<std::size_t>(visual_row));
   const compare::ComparePresentationRow* row =
-      CompareTabPresentationRowAt(compare_tab, static_cast<std::size_t>(presentation_row));
+      CompareTabPresentationRowAt(compare_tab, presentation_row);
   if (row == nullptr || row->kind != compare::ComparePresentationRowKind::CollapsedContext) {
     return std::nullopt;
   }
   return CompareCollapsedContextRowHit{
       .row = row,
-      .presentation_row = static_cast<std::size_t>(presentation_row),
+      .presentation_row = presentation_row,
       .visible_row = visible_row,
       .block_rect = CompareCollapsedContextBlockRect(editor_surface, rows_y, line_height,
                                                      show_vertical_scrollbar, visible_row),
