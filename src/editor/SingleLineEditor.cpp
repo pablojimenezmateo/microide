@@ -4,6 +4,7 @@
 #include <cctype>
 
 #include "editor/EditTypes.h"
+#include "editor/WordBoundary.h"
 #include "util/StringUtil.h"
 
 namespace microide::editor {
@@ -46,53 +47,6 @@ std::size_t ClampCaret(std::string_view text, std::size_t offset) {
     --offset;
   }
   return offset;
-}
-
-// Whether the code point beginning at byte `index` is identifier content. Unlike
-// the byte-wise IsIdentifierByte this decodes the whole scalar, so non-ASCII
-// letters (é, ä, CJK, …) count as word characters and word motion does not stop
-// at every multibyte boundary.
-bool IsIdentifierCodepointAt(std::string_view text, std::size_t index) {
-  const std::size_t len = util::Utf8SequenceLength(text, index);
-  const std::size_t clamped_len = (len == 0) ? 1 : len;
-  return util::Utf8IsIdentifierCodepoint(
-      util::DecodeUtf8Codepoint(text.substr(index, clamped_len)));
-}
-
-// Previous word edge: skip non-word code points immediately left of `caret`, then the word.
-std::size_t WordBoundaryLeft(std::string_view text, std::size_t caret) {
-  std::size_t index = std::min(caret, text.size());
-  while (index > 0) {
-    const std::size_t start = util::PreviousUtf8Boundary(text, index);
-    if (IsIdentifierCodepointAt(text, start)) {
-      break;
-    }
-    index = start;
-  }
-  while (index > 0) {
-    const std::size_t start = util::PreviousUtf8Boundary(text, index);
-    if (!IsIdentifierCodepointAt(text, start)) {
-      break;
-    }
-    index = start;
-  }
-  return index;
-}
-
-// Next word edge: skip non-word code points at `caret`, then the word.
-std::size_t WordBoundaryRight(std::string_view text, std::size_t caret) {
-  std::size_t index = std::min(caret, text.size());
-  const auto advance = [&]() {
-    const std::size_t len = util::Utf8SequenceLength(text, index);
-    index += (len == 0) ? 1 : len;
-  };
-  while (index < text.size() && !IsIdentifierCodepointAt(text, index)) {
-    advance();
-  }
-  while (index < text.size() && IsIdentifierCodepointAt(text, index)) {
-    advance();
-  }
-  return index;
 }
 
 }  // namespace
@@ -293,7 +247,7 @@ bool SingleLineEditor::DeleteWordLeft() {
   if (caret_ == 0) {
     return false;
   }
-  const std::size_t target = WordBoundaryLeft(text_, caret_);
+  const std::size_t target = DeleteWordBoundaryLeft(text_, caret_);
   text_.erase(target, caret_ - target);
   caret_ = target;
   return true;
@@ -307,7 +261,7 @@ bool SingleLineEditor::DeleteWordRight() {
   if (caret_ >= text_.size()) {
     return false;
   }
-  const std::size_t target = WordBoundaryRight(text_, caret_);
+  const std::size_t target = DeleteWordBoundaryRight(text_, caret_);
   text_.erase(caret_, target - caret_);
   return true;
 }

@@ -850,6 +850,53 @@ void TestWorkspaceShellNotificationToastIsClickable() {
 
 }  // namespace
 
+// Ctrl+Left/Right and Ctrl+Backspace/Delete must reach the editor as WORD verbs.
+// They used to fall through the key coordinator's plain arrow/backspace arms with
+// the modifier ignored, so the main editor -- unlike every single-line field in
+// the same window -- moved and deleted one character at a time.
+void TestWorkspaceShellEditorCtrlArrowsAreWordGranular() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha beta gamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+
+  Expect(SendKeyDown(shell, SDLK_RIGHT, SDL_KMOD_CTRL), "ctrl+right should be handled");
+  Expect(viewport.cursor_column() == 5,
+         "ctrl+right should land past the first word, not one character in");
+
+  Expect(SendKeyDown(shell, SDLK_RIGHT, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "ctrl+shift+right should be handled");
+  const auto selection = viewport.selection_range();
+  Expect(selection.has_value() && selection->start.column == 5 && selection->end.column == 10,
+         "ctrl+shift+right should extend the selection by a whole word");
+
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(0, 10);
+  Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_CTRL), "ctrl+backspace should be handled");
+  Expect(viewport.lines().LineView(0) == "alpha  gamma",
+         "ctrl+backspace should remove the whole word, not one character");
+
+  viewport.MoveCursorTo(0, 0);
+  Expect(SendKeyDown(shell, SDLK_DELETE, SDL_KMOD_CTRL), "ctrl+delete should be handled");
+  Expect(viewport.lines().LineView(0) == "  gamma",
+         "ctrl+delete should remove the whole word forward");
+
+  // And plain Left is still a character step -- the modifier is what changes it.
+  viewport.MoveCursorTo(0, 3);
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_NONE), "plain left should be handled");
+  Expect(viewport.cursor_column() == 2, "plain left must remain character-granular");
+}
+
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/NotificationToastIsClickable",
           TestWorkspaceShellNotificationToastIsClickable);
@@ -887,6 +934,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss);
   AddTest(tests, "WorkspaceShell/EditorMultiClickDragKeepsItsGranularity",
           TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity);
+  AddTest(tests, "WorkspaceShell/EditorCtrlArrowsAreWordGranular",
+          TestWorkspaceShellEditorCtrlArrowsAreWordGranular);
 }
 
 }  // namespace microide::tests

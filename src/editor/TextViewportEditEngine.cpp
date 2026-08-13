@@ -156,6 +156,37 @@ void TextViewport::Backspace() {
       "", true);
 }
 
+void TextViewport::DeleteWord(int direction) {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::DeleteWord");
+  if (document_->lines.empty() || direction == 0) {
+    return;
+  }
+  if (has_multiple_carets()) {
+    (void)ApplyMultiCaretEdit(direction < 0 ? MultiCaretEditKind::DeleteWordBackward
+                                            : MultiCaretEditKind::DeleteWordForward,
+                              "", true);
+    return;
+  }
+
+  // A word delete over a selection is a selection delete, exactly as in VS Code:
+  // the modifier does not widen what is already explicitly selected.
+  if (const auto selected = selection_range(); selected.has_value()) {
+    (void)ApplyRangeEdit(*selected, "", true);
+    return;
+  }
+
+  const TextPosition caret{cursor_line_, cursor_column_};
+  const TextPosition target = WordTargetForCaret(caret, direction, /*for_deletion=*/true);
+  if (target.line == caret.line && target.column == caret.column) {
+    return;
+  }
+  // A word delete is never coalesced into the neighbouring single-character undo
+  // entry: Ctrl+Backspace is one user-visible action and one Undo must put the
+  // whole word back.
+  (void)ApplyRangeEdit(direction < 0 ? SelectionRange{target, caret} : SelectionRange{caret, target},
+                       "", true);
+}
+
 void TextViewport::DeleteForward() {
   util::PerformanceTrace::Scope perf_scope("TextViewport::DeleteForward");
   if (document_->lines.empty()) {

@@ -19,6 +19,23 @@ bool EditorShapingLineOpsSettingEnabled(const KeyInputCoordinator::Operations& o
                             /*default_value=*/true);
 }
 
+// One horizontal caret step for every multi-line text surface in the shell: the
+// editor, the compare and merge panes, and the git commit body. Ctrl makes the
+// step word-granular (VS Code's cursorWordStartLeft / cursorWordEndRight) and
+// Shift extends, in either granularity.
+//
+// It is a shared helper rather than four copies of the same `if` because the
+// four surfaces had already drifted once — three of them had no word step at
+// all, and neither did the editor.
+void MoveCursorHorizontalStep(editor::TextViewport& viewport, int delta, SDL_Keymod modifiers) {
+  const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
+  if ((modifiers & SDL_KMOD_CTRL) != 0) {
+    viewport.MoveCursorWord(delta, extend_selection);
+  } else {
+    viewport.MoveCursorHorizontal(delta, extend_selection);
+  }
+}
+
 template <typename EditFn>
 bool ApplyDefaultEditorEdit(KeyInputCoordinator::Operations& operations,
                             editor::TextViewport& viewport,
@@ -119,9 +136,21 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_KP_ENTER:
         return apply_compare_edit([&]() { viewport.InsertNewline(); });
       case SDLK_BACKSPACE:
-        return apply_compare_edit([&]() { viewport.Backspace(); });
+        return apply_compare_edit([&]() {
+          if ((modifiers & SDL_KMOD_CTRL) != 0) {
+            viewport.DeleteWord(-1);
+          } else {
+            viewport.Backspace();
+          }
+        });
       case SDLK_DELETE:
-        return apply_compare_edit([&]() { viewport.DeleteForward(); });
+        return apply_compare_edit([&]() {
+          if ((modifiers & SDL_KMOD_CTRL) != 0) {
+            viewport.DeleteWord(1);
+          } else {
+            viewport.DeleteForward();
+          }
+        });
       case SDLK_UP: {
         const std::size_t previous_selected_row = compare_tab->selected_row;
         viewport.MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
@@ -134,12 +163,12 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       }
       case SDLK_LEFT: {
         const std::size_t previous_selected_row = compare_tab->selected_row;
-        viewport.MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
+        MoveCursorHorizontalStep(viewport, -1, modifiers);
         return sync_compare_navigation(previous_selected_row);
       }
       case SDLK_RIGHT: {
         const std::size_t previous_selected_row = compare_tab->selected_row;
-        viewport.MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
+        MoveCursorHorizontalStep(viewport, 1, modifiers);
         return sync_compare_navigation(previous_selected_row);
       }
       case SDLK_PAGEUP: {
@@ -358,9 +387,21 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_KP_ENTER:
       return apply_merge_edit([&]() { viewport.InsertNewline(); });
     case SDLK_BACKSPACE:
-      return apply_merge_edit([&]() { viewport.Backspace(); });
+      return apply_merge_edit([&]() {
+        if ((modifiers & SDL_KMOD_CTRL) != 0) {
+          viewport.DeleteWord(-1);
+        } else {
+          viewport.Backspace();
+        }
+      });
     case SDLK_DELETE:
-      return apply_merge_edit([&]() { viewport.DeleteForward(); });
+      return apply_merge_edit([&]() {
+        if ((modifiers & SDL_KMOD_CTRL) != 0) {
+          viewport.DeleteWord(1);
+        } else {
+          viewport.DeleteForward();
+        }
+      });
     case SDLK_UP:
       viewport.MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
       return sync_merge_navigation();
@@ -368,10 +409,10 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
       viewport.MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       return sync_merge_navigation();
     case SDLK_LEFT:
-      viewport.MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      MoveCursorHorizontalStep(viewport, -1, modifiers);
       return sync_merge_navigation();
     case SDLK_RIGHT:
-      viewport.MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      MoveCursorHorizontalStep(viewport, 1, modifiers);
       return sync_merge_navigation();
     case SDLK_PAGEUP:
       viewport.Page(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
@@ -458,10 +499,18 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
       viewport.InsertNewline();
       return after_edit();
     case SDLK_BACKSPACE:
-      viewport.Backspace();
+      if ((modifiers & SDL_KMOD_CTRL) != 0) {
+        viewport.DeleteWord(-1);
+      } else {
+        viewport.Backspace();
+      }
       return after_edit();
     case SDLK_DELETE:
-      viewport.DeleteForward();
+      if ((modifiers & SDL_KMOD_CTRL) != 0) {
+        viewport.DeleteWord(1);
+      } else {
+        viewport.DeleteForward();
+      }
       return after_edit();
     case SDLK_UP:
       viewport.MoveCursorVertical(-1, extend_selection);
@@ -470,10 +519,10 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
       viewport.MoveCursorVertical(1, extend_selection);
       return after_edit();
     case SDLK_LEFT:
-      viewport.MoveCursorHorizontal(-1, extend_selection);
+      MoveCursorHorizontalStep(viewport, -1, modifiers);
       return after_edit();
     case SDLK_RIGHT:
-      viewport.MoveCursorHorizontal(1, extend_selection);
+      MoveCursorHorizontalStep(viewport, 1, modifiers);
       return after_edit();
     case SDLK_PAGEUP:
       viewport.Page(-1, extend_selection);
@@ -592,6 +641,15 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
           operations_.try_snippet_backspace_in_editor(editable_viewport)) {
         return true;
       }
+      // Ctrl+Backspace deletes the word to the left, as everywhere else. The
+      // single-line surfaces have had this since they shipped; the main editor
+      // used to fall through here and delete one character.
+      if ((modifiers & SDL_KMOD_CTRL) != 0) {
+        return ApplyDefaultEditorEdit(
+            operations_, *editable_viewport,
+            "KeyInputCoordinator::HandleDefaultEditorKeyDown::DeleteWordBackward",
+            [&]() { editable_viewport->DeleteWord(-1); });
+      }
       return ApplyDefaultEditorEdit(operations_, *editable_viewport,
                                     "KeyInputCoordinator::HandleDefaultEditorKeyDown::Backspace",
                                     [&]() { editable_viewport->Backspace(); });
@@ -603,6 +661,12 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       if (operations_.try_snippet_delete_forward_in_editor &&
           operations_.try_snippet_delete_forward_in_editor(editable_viewport)) {
         return true;
+      }
+      if ((modifiers & SDL_KMOD_CTRL) != 0) {
+        return ApplyDefaultEditorEdit(
+            operations_, *editable_viewport,
+            "KeyInputCoordinator::HandleDefaultEditorKeyDown::DeleteWordForward",
+            [&]() { editable_viewport->DeleteWord(1); });
       }
       return ApplyDefaultEditorEdit(
           operations_, *editable_viewport,
@@ -630,11 +694,14 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       after_editor_caret_motion();
       return true;
     case SDLK_LEFT:
-      viewport->MoveCursorHorizontal(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      // Ctrl steps a word at a time. The column-select chord
+      // Ctrl+Shift+Alt+Left is dispatched by the keybinding registry before this
+      // handler runs, so Alt never reaches here holding Ctrl.
+      MoveCursorHorizontalStep(*viewport, -1, modifiers);
       after_editor_caret_motion();
       return true;
     case SDLK_RIGHT:
-      viewport->MoveCursorHorizontal(1, (modifiers & SDL_KMOD_SHIFT) != 0);
+      MoveCursorHorizontalStep(*viewport, 1, modifiers);
       after_editor_caret_motion();
       return true;
     case SDLK_PAGEUP:

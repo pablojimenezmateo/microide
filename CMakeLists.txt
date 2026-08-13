@@ -243,6 +243,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/ShapingActions.cpp
   src/editor/SingleLineEditor.cpp
   src/editor/SingleLineKeyHandler.cpp
+  src/editor/WordBoundary.cpp
   src/editor/SnippetEngine.cpp
   src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
@@ -1072,6 +1073,7 @@ add_executable(microide_tests
   tests/TextLayoutTests.cpp
   tests/PieceTreeTests.cpp
   tests/EditorEssentialsTests.cpp
+  tests/EditorWordMotionTests.cpp
   tests/EditorRenderViewModelAllocationTests.cpp
   tests/PluginPresentationAllocationTests.cpp
   tests/PluginPathContainmentTests.cpp
@@ -1486,6 +1488,7 @@ add_executable(microide_diff_bench
   src/editor/TextBuffer.cpp
   src/editor/PieceTree.cpp
   src/editor/TextLayoutCache.cpp
+  src/editor/WordBoundary.cpp
   src/editor/TextViewport.cpp
   src/editor/TextViewportEditEngine.cpp
   src/editor/TextViewportFileIO.cpp

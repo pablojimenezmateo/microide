@@ -176,6 +176,7 @@ void RegisterTerminalLifecycleStressTests(std::vector<TestCase>& tests);
 void RegisterPatternCacheTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceToolDownloaderTests(std::vector<TestCase>& tests);
 void RegisterEditorEssentialsTests(std::vector<TestCase>& tests);
+void RegisterEditorWordMotionTests(std::vector<TestCase>& tests);
 void RegisterEditorRenderViewModelAllocationTests(std::vector<TestCase>& tests);
 void RegisterPluginPresentationAllocationTests(std::vector<TestCase>& tests);
 void RegisterPluginPathContainmentTests(std::vector<TestCase>& tests);
@@ -559,6 +560,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterPatternCacheTests(tests);
   microide::tests::RegisterWorkspaceToolDownloaderTests(tests);
   microide::tests::RegisterEditorEssentialsTests(tests);
+  microide::tests::RegisterEditorWordMotionTests(tests);
   microide::tests::RegisterEditorRenderViewModelAllocationTests(tests);
   microide::tests::RegisterPluginPresentationAllocationTests(tests);
   microide::tests::RegisterPluginPathContainmentTests(tests);

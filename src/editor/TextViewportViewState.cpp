@@ -3,6 +3,7 @@
 
 #include <algorithm>
 
+#include "editor/WordBoundary.h"
 #include "util/PerformanceCounters.h"
 
 namespace microide::editor {
@@ -259,6 +260,63 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
 
   for (SecondaryCaret& caret : secondary_carets_) {
     AdvanceCaretHorizontal(caret.position, delta);
+    caret.preferred_column = PreferredColumnForCaret(caret.position);
+    caret.wrap_affinity = WrapRowAffinity::kNextRow;
+  }
+  DedupeSecondaryCaretsAgainstPrimary();
+  EnsureCursorVisible();
+}
+
+TextPosition TextViewport::WordTargetForCaret(const TextPosition& caret,
+                                             int delta,
+                                             bool for_deletion) const {
+  if (document_->lines.empty()) {
+    return caret;
+  }
+  const std::size_t line = std::min(caret.line, document_->lines.size() - 1);
+  const std::size_t length = document_->lines.LineLength(line);
+  const std::size_t column = std::min(caret.column, length);
+  if (delta < 0) {
+    // At the line start the step is the line break itself, which is what makes
+    // Ctrl+Left walk into the previous line and Ctrl+Backspace join them.
+    if (column == 0) {
+      return line == 0 ? TextPosition{0, 0}
+                       : TextPosition{line - 1, document_->lines.LineLength(line - 1)};
+    }
+    // LineView, not operator[]: the latter materializes an owned copy of the line
+    // into a per-revision cache, which on a file with no line breaks in it is the
+    // whole document per keystroke (TD-2026-08-05-133).
+    const std::string_view text = document_->lines.LineView(line);
+    return TextPosition{line, for_deletion ? DeleteWordBoundaryLeft(text, column)
+                                           : WordBoundaryLeft(text, column)};
+  }
+  if (column >= length) {
+    return line + 1 < document_->lines.size() ? TextPosition{line + 1, 0}
+                                             : TextPosition{line, length};
+  }
+  const std::string_view text = document_->lines.LineView(line);
+  return TextPosition{line, for_deletion ? DeleteWordBoundaryRight(text, column)
+                                         : WordBoundaryRight(text, column)};
+}
+
+void TextViewport::MoveCursorWord(int delta, bool extend_selection) {
+  if (document_->lines.empty() || delta == 0) {
+    return;
+  }
+
+  undo_history_.NotifyCursorMoved();
+  // Unlike the character form, a word step over a selection does NOT merely
+  // collapse to the selection's edge: VS Code's cursorWordStartLeft /
+  // cursorWordEndRight move word-wise from the active caret and let the anchor
+  // go, which is also what a GTK/Qt entry does. BeginSelectionIfNeeded drops the
+  // anchors on a plain move and seeds them on a Shift move, per caret.
+  BeginSelectionIfNeeded(extend_selection);
+  const TextPosition primary =
+      WordTargetForCaret(TextPosition{cursor_line_, cursor_column_}, delta, /*for_deletion=*/false);
+  PlacePrimaryCaret(primary.line, primary.column);
+
+  for (SecondaryCaret& caret : secondary_carets_) {
+    caret.position = WordTargetForCaret(caret.position, delta, /*for_deletion=*/false);
     caret.preferred_column = PreferredColumnForCaret(caret.position);
     caret.wrap_affinity = WrapRowAffinity::kNextRow;
   }

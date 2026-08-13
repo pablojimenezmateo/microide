@@ -220,6 +220,17 @@ class TextViewport {
   bool soft_wrap() const { return soft_wrap_; }
   void MoveCursorVertical(int delta, bool extend_selection = false);
   void MoveCursorHorizontal(int delta, bool extend_selection = false);
+  // Word-granular horizontal motion: Ctrl+Left (`delta < 0`, VS Code
+  // `cursorWordStartLeft`) and Ctrl+Right (`delta > 0`, `cursorWordEndRight`),
+  // with Shift extending. Crosses the line boundary in both directions the way
+  // the character form does. Applies to every caret; the boundary rule is
+  // `editor/WordBoundary.h`, shared with the single-line surfaces.
+  void MoveCursorWord(int delta, bool extend_selection = false);
+  // Word-granular deletion: Ctrl+Backspace (`direction < 0`) and Ctrl+Delete
+  // (`direction > 0`). Deletes the selection instead when there is one, joins
+  // with the neighbouring line at a line edge, and takes an indent run on its
+  // own (see `DeleteWordBoundaryLeft`). Applies to every caret.
+  void DeleteWord(int direction);
   void MoveCursorLineStart(bool extend_selection = false);
   void MoveCursorLineEnd(bool extend_selection = false);
   void MoveCursorTo(std::size_t line, std::size_t column, bool extend_selection = false);
@@ -766,7 +777,13 @@ class TextViewport {
   // carets, capture the affected slice, reverse-walk applying one history entry
   // per caret with position remap, then commit one aggregate undo entry). Only
   // the per-caret edit differs, so they route through ApplyMultiCaretEdit.
-  enum class MultiCaretEditKind { Insert, Backspace, DeleteForward };
+  enum class MultiCaretEditKind {
+    Insert,
+    Backspace,
+    DeleteForward,
+    DeleteWordBackward,
+    DeleteWordForward,
+  };
   // `per_caret_insert`, when non-null and sized to the deduped caret set on an
   // Insert, supplies a distinct string per caret in sorted order (distribute-
   // paste); otherwise every caret gets `insert_text`.
@@ -863,6 +880,13 @@ class TextViewport {
   void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column,
                             WrapRowAffinity& affinity, int delta) const;
   void AdvanceCaretHorizontal(TextPosition& caret, int delta) const;
+  // Where a word-granular step from `caret` lands. `for_deletion` picks the
+  // whitespace-heuristic boundary (Ctrl+Backspace eats an indent run whole)
+  // rather than the motion boundary; the two differ only in front of a run of
+  // two or more spaces.
+  TextPosition WordTargetForCaret(const TextPosition& caret,
+                                  int delta,
+                                  bool for_deletion) const;
   void DedupeSecondaryCaretsAgainstPrimary();
   std::size_t PreferredColumnForCaret(const TextPosition& caret,
                                       WrapRowAffinity affinity = WrapRowAffinity::kNextRow) const;
