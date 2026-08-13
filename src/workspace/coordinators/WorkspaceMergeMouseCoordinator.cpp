@@ -445,13 +445,17 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
   const auto interaction =
       operations_.build_merge_interaction_layout(layout.editor_surface, surface_layout, *merge_tab);
-  if (!Contains(interaction.result.rect, event.motion.x, event.motion.y)) {
-    return false;
-  }
+  // Same as the editor and compare surfaces: a drag that leaves the result pane
+  // keeps extending toward the pointer rather than freezing where it crossed the
+  // edge. The row was already clamped through ClampTextGridLineAtY; only the
+  // Contains gate in front of it made that clamp unreachable from outside.
+  const SDL_FRect& result_rect = interaction.result.rect;
+  const float pointer_x = std::clamp(static_cast<float>(event.motion.x), result_rect.x,
+                                     result_rect.x + std::max(0.0f, result_rect.w - 1.0f));
 
   const std::size_t line = ClampTextGridLineAtY(interaction.result.text, event.motion.y);
   const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
-  const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, event.motion.x);
+  const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, pointer_x);
   merge_tab->result_viewport.MoveCursorToVisualColumn(line, visual_column, true);
   if (const auto conflict_index = operations_.find_merge_tracked_conflict_at_result_line(*merge_tab, line);
       conflict_index.has_value()) {

@@ -288,19 +288,21 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 
   const auto surface_layout =
       operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
-  if (event.motion.x < surface_layout.right_x) {
-    return false;
-  }
   const TextGridInteractionLayout right_interaction =
       operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
-  const auto hovered_row = VisibleTextGridLineAtY(right_interaction, event.motion.y);
-  if (!hovered_row.has_value()) {
-    return false;
-  }
+  // A drag that leaves the right pane -- sideways into the left pane, or above /
+  // below the rows -- keeps extending the selection toward the pointer. The two
+  // refusals that used to sit here (`x < right_x`, and an unhittable row) froze
+  // it instead, which on this surface is easy to trip: the left pane is right
+  // there, half a drag away. Clamp the pointer onto the right pane's own grid
+  // and carry on; `ClampTextGridLineAtY` is the same projection the merge result
+  // pane already used.
+  const float pointer_x = std::max(static_cast<float>(event.motion.x), surface_layout.right_x);
+  const std::size_t row = ClampTextGridLineAtY(right_interaction, static_cast<float>(event.motion.y));
 
-  const std::size_t line = operations_.compare_right_line_for_row(*compare_tab, *hovered_row);
+  const std::size_t line = operations_.compare_right_line_for_row(*compare_tab, row);
   const std::size_t previous_selected_row = compare_tab->selected_row;
-  const std::size_t visual_column = TextGridVisualColumnAtX(right_interaction, event.motion.x);
+  const std::size_t visual_column = TextGridVisualColumnAtX(right_interaction, pointer_x);
   compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, true);
   operations_.sync_compare_selection_from_viewport(*compare_tab, false);
   operations_.reset_caret_blink();

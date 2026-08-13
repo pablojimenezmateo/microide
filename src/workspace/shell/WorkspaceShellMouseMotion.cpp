@@ -342,11 +342,17 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   }
 
   if (context_.interaction_state.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0) {
-    if (!Contains(layout.editor_surface, event.motion.x, event.motion.y)) {
-      UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
-      return false;
-    }
-
+    // Deliberately NOT gated on the pointer being inside `layout.editor_surface`.
+    // It used to be, which is why a selection drag stopped extending the moment
+    // the pointer crossed into the tab strip, the sidebar, the bottom panel or
+    // off the window -- and stayed stopped while the button was still down. The
+    // surface handlers below clamp the pointer onto their own visible text band,
+    // so "outside" is a position to project, not a reason to refuse.
+    //
+    // The cursor is not updated here either: during a drag the pointer is
+    // logically still on text wherever it physically is, so re-resolving the
+    // cursor kind per motion event would both flicker it over other surfaces and
+    // do a hit-test this path has no use for.
     if (ActiveTabIsCompare()) {
       const bool handled = MakeCompareMouseCoordinator().HandleSelectionMotion(event, layout);
       if (handled) {

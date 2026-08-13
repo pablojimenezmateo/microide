@@ -529,6 +529,69 @@ void TestWorkspaceShellRenderDoesNotPollLivePointer() {
 // stale shape until some unrelated repaint. While the caret blinks its periodic
 // frames hide this; when it stops, the staleness becomes visible. See
 // dev-docs/platform/wayland-stale-cursor.md.
+// The reported bug: a selection drag stopped extending the moment the pointer
+// left the editor area, and stayed stopped while the button was still down.
+// There were two independent refusals -- the shell required the pointer inside
+// `layout.editor_surface`, and the editor coordinator required it inside the
+// active pane rect -- so the selection froze at whatever cell it last crossed.
+//
+// The assertion is about the pointer being TRACKED outside, not about a specific
+// column: two different out-of-bounds positions on the same row must select
+// different text, and dragging down past the last visible row must reach a later
+// line than dragging along the first one.
+void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source,
+            "alpha bravo charlie delta echo\n"
+            "foxtrot golf hotel india juliet\n"
+            "kilo lima mike november oscar\n"
+            "papa quebec romeo sierra tango\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float first_row_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float start_x = metrics.text_x + 0.1f;
+
+  Expect(SendMouseDown(shell, start_x, first_row_y, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start a selection");
+
+  // Left of the editor surface entirely -- over the sidebar.
+  Expect(SendMouseMotion(shell, pane.x - 300.0f, first_row_y, SDL_BUTTON_LMASK),
+         "dragging left out of the editor area should still be handled");
+  const std::string after_left = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+
+  // Right of it, past the window edge.
+  Expect(SendMouseMotion(shell, pane.x + pane.w + 500.0f, first_row_y, SDL_BUTTON_LMASK),
+         "dragging right out of the editor area should still be handled");
+  const std::string after_right = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(after_right != after_left,
+         "two different out-of-area pointer positions must select different text");
+  Expect(after_right.find("alpha") != std::string::npos,
+         "dragging right along the first row should select that row's text");
+
+  // Below the last visible row -- over the status bar / off the window.
+  Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 400.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the editor area should still be handled");
+  const std::string after_down = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(after_down.find('\n') != std::string::npos,
+         "dragging below the first row must extend the selection past it, not pin it "
+         "to the row where the pointer left the pane");
+
+  Expect(SendMouseUp(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 400.0f, SDL_BUTTON_LEFT),
+         "releasing after the out-of-area drag should be handled");
+}
+
 void TestWorkspaceShellCursorChangeRequestsPresent() {
   EnsureDummySdlVideoInitialized();
 
@@ -650,6 +713,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenderDoesNotPollLivePointer);
   AddTest(tests, "WorkspaceShell/CursorChangeRequestsPresent",
           TestWorkspaceShellCursorChangeRequestsPresent);
+  AddTest(tests, "WorkspaceShell/EditorDragSelectionSurvivesLeavingTheEditorArea",
+          TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea);
 }
 
 }  // namespace microide::tests

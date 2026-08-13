@@ -111,6 +111,31 @@ editor::EditorViewMetrics ResolveEditorPointerMetrics(
   return metrics;
 }
 
+// Project a pointer onto the nearest cell of the pane's visible text band.
+//
+// The band is the rows the renderer actually painted -- `first_line_y` through
+// `visible_rows` -- not the pane rect, which also covers the sticky-scroll band
+// and any bottom slack. Clamping to the rect instead would map a pointer dragged
+// above the text onto a sticky header row rather than onto the first document
+// row.
+//
+// The half-cell inset on each edge keeps the clamped point strictly inside the
+// band, so the row/column arithmetic that follows lands on the edge cell rather
+// than one past it.
+SDL_FPoint ClampPointerToVisibleTextBand(const SDL_FRect& editor_rect,
+                                         const editor::EditorViewMetrics& metrics,
+                                         float x, float y) {
+  const float line_height = std::max(1.0f, metrics.line_height);
+  const float band_top = metrics.first_line_y;
+  const float band_bottom =
+      metrics.first_line_y +
+      static_cast<float>(std::max<std::size_t>(1, metrics.visible_rows)) * line_height;
+  return SDL_FPoint{
+      .x = std::clamp(x, editor_rect.x, editor_rect.x + std::max(0.0f, editor_rect.w - 1.0f)),
+      .y = std::clamp(y, band_top, std::max(band_top, band_bottom - line_height * 0.5f)),
+  };
+}
+
 bool SettingOn(const std::function<std::optional<std::string>(std::string_view)>& get_setting_value,
                std::string_view id) {
   if (!get_setting_value) {
@@ -573,9 +598,6 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
                    [](const WorkspaceShell::EditorPaneLayout& pane) { return pane.active; });
   const SDL_FRect editor_rect =
       active_pane != panes.end() ? active_pane->rect : layout.editor_surface;
-  if (!Contains(editor_rect, event.motion.x, event.motion.y)) {
-    return false;
-  }
   editor::TextViewport* viewport = operations_.active_editor_viewport();
   if (viewport == nullptr) {
     return false;
@@ -586,10 +608,25 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       operations_.ensure_active_folding_model_fresh,
       "EditorMouseCoordinator::HandleSelectionMotion::FallbackPointerLayout");
 
-  const std::size_t row = ResolveGapAwareRow(state_, *viewport, metrics,
-                                             event.motion.y, operations_.get_setting_value)
-                              .row;
-  const float text_offset_x = std::max(0.0f, event.motion.x - metrics.text_x);
+  // A selection drag does not stop at the pane edge. This used to refuse any
+  // pointer outside `editor_rect`, so dragging up into the tab strip, down into
+  // the panel, sideways into a split sibling, or off the window froze the
+  // selection at wherever it last crossed the boundary -- and it stayed frozen
+  // while the button was still held. Every other editor (VS Code included)
+  // extends toward the pointer wherever the pointer goes.
+  //
+  // Clamping into the visible text band is what that means geometrically: the
+  // row/column math below is unchanged and simply reads a pointer that has been
+  // projected back onto the nearest visible cell. Autoscroll then walks that
+  // clamped edge through the document while the pointer sits still outside it,
+  // which is the half a clamp alone cannot do.
+  const SDL_FPoint pointer = ClampPointerToVisibleTextBand(editor_rect, metrics,
+                                                           static_cast<float>(event.motion.x),
+                                                           static_cast<float>(event.motion.y));
+
+  const std::size_t row =
+      ResolveGapAwareRow(state_, *viewport, metrics, pointer.y, operations_.get_setting_value).row;
+  const float text_offset_x = std::max(0.0f, pointer.x - metrics.text_x);
   const int display_visual_column = static_cast<int>(viewport->horizontal_scroll() +
       static_cast<std::size_t>(std::max(
           0L, std::lround(text_offset_x / std::max(1.0f, text_renderer_.CharWidth())))));
