@@ -67,6 +67,7 @@ TextViewport::TextViewport(const TextViewport& other)
       secondary_caret_candidates_scratch_(),
       layout_cache_(other.layout_cache_),
       highlight_cache_(other.highlight_cache_),
+      highlight_cache_generation_(other.highlight_cache_generation_),
       highlight_cache_order_(other.highlight_cache_order_),
       initial_highlight_state_(other.initial_highlight_state_),
       line_highlight_states_(other.line_highlight_states_),
@@ -147,6 +148,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       secondary_caret_candidates_scratch_(std::move(other.secondary_caret_candidates_scratch_)),
       layout_cache_(std::move(other.layout_cache_)),
       highlight_cache_(std::move(other.highlight_cache_)),
+      highlight_cache_generation_(other.highlight_cache_generation_),
       highlight_cache_order_(std::move(other.highlight_cache_order_)),
       initial_highlight_state_(std::move(other.initial_highlight_state_)),
       line_highlight_states_(std::move(other.line_highlight_states_)),
@@ -211,6 +213,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   secondary_caret_candidates_scratch_ = std::move(other.secondary_caret_candidates_scratch_);
   layout_cache_ = std::move(other.layout_cache_);
   highlight_cache_ = std::move(other.highlight_cache_);
+  highlight_cache_generation_ = other.highlight_cache_generation_;
   highlight_cache_order_ = std::move(other.highlight_cache_order_);
   initial_highlight_state_ = std::move(other.initial_highlight_state_);
   line_highlight_states_ = std::move(other.line_highlight_states_);
@@ -1180,8 +1183,7 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     if (reason == InvalidationReason::SyntaxConfig) {
       // Highlight cache depends on syntax_revision. Drop it fully — the
       // start_line argument is meaningless for a theme/contract change.
-      highlight_cache_.clear();
-      highlight_cache_order_.clear();
+      DropHighlightTokenCache();
       initial_highlight_state_.reset();
       line_highlight_states_.clear();
       line_highlight_states_valid_through_ = 0;
@@ -1224,8 +1226,7 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     // against 1 (3.1 ms) at line 25000. Typing at the top of a large file was the
     // slowest place to type.
     layout_cache_.InvalidateVisibleLineCacheFrom(0);
-    highlight_cache_.clear();
-    highlight_cache_order_.clear();
+    DropHighlightTokenCache();
     initial_highlight_state_.reset();
     // Drop the validity cursors, NOT the storage. Every read of these two is
     // gated on its cursor (`line < line_highlight_states_valid_through_`,
@@ -1243,17 +1244,12 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
 
   layout_cache_.InvalidateVisibleLineCacheFrom(safe_start);
 
-  for (auto it = highlight_cache_.begin(); it != highlight_cache_.end();) {
-    if (it->first >= safe_start) {
-      it = highlight_cache_.erase(it);
-    } else {
-      ++it;
-    }
-  }
-  highlight_cache_order_.erase(
-      std::remove_if(highlight_cache_order_.begin(), highlight_cache_order_.end(),
-                     [&](std::size_t line_index) { return line_index >= safe_start; }),
-      highlight_cache_order_.end());
+  // Stale the suffix rather than erase it: the entries at or after the edit are
+  // no longer valid, but their token buffers are exactly the ones this frame's
+  // repaint is about to refill. Erasing them freed a hash node and a token vector
+  // per visible line below the caret, per keystroke, and allocated both back on
+  // the same frame.
+  StaleHighlightTokensFrom(safe_start);
 
   if (line_highlight_states_.size() != document_->lines.size()) {
     line_highlight_states_.resize(document_->lines.size());

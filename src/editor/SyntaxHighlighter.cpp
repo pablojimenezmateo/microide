@@ -24,6 +24,15 @@ HighlightedLine SyntaxHighlighter::HighlightLine(std::string_view line,
   return runtime_syntax::HighlightLine(line, path, state, first_line);
 }
 
+SyntaxState SyntaxHighlighter::HighlightLineInto(std::string_view line,
+                                                 const std::filesystem::path& path,
+                                                 const SyntaxState& state,
+                                                 std::vector<SyntaxTokenKind>* tokens,
+                                                 std::string_view first_line) {
+  util::PerformanceTrace::Scope perf_scope("SyntaxHighlighter::HighlightLine");
+  return runtime_syntax::HighlightLineInto(line, path, state, tokens, first_line);
+}
+
 SyntaxState SyntaxHighlighter::AdvanceState(std::string_view line,
                                             const std::filesystem::path& path,
                                             const SyntaxState& state,

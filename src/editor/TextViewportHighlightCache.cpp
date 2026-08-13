@@ -64,6 +64,36 @@ std::string_view TokenizableLineView(const TextBuffer& lines, std::size_t line_i
 
 }  // namespace
 
+void TextViewport::DropHighlightTokenCache() const {
+  ++highlight_cache_generation_;
+}
+
+void TextViewport::StaleHighlightTokensFrom(std::size_t start_line) const {
+  if (start_line == 0) {
+    DropHighlightTokenCache();
+    return;
+  }
+  // Generation 0 is never current (the counter starts at 1), so this stales the
+  // suffix while leaving both the token buffers and the eviction order intact.
+  // `highlight_cache_order_` must stay 1:1 with the map -- eviction pops its
+  // front and erases that key -- which is the reason the entries are not removed
+  // from either container here.
+  for (auto& [line, entry] : highlight_cache_) {
+    if (line >= start_line) {
+      entry.generation = 0;
+    }
+  }
+}
+
+const TextViewport::HighlightCacheEntry* TextViewport::CurrentHighlightCacheEntry(
+    std::size_t line_index) const {
+  const auto it = highlight_cache_.find(line_index);
+  if (it == highlight_cache_.end() || it->second.generation != highlight_cache_generation_) {
+    return nullptr;
+  }
+  return &it->second;
+}
+
 const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
     std::size_t line_index) const {
   util::PerformanceTrace::Scope perf_scope("TextViewport::HighlightedLineTokens");
@@ -78,29 +108,52 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   ++highlight_queries_;
   EnsureHighlightCaches();
 
-  if (const auto it = highlight_cache_.find(line_index); it != highlight_cache_.end()) {
+  if (const HighlightCacheEntry* entry = CurrentHighlightCacheEntry(line_index);
+      entry != nullptr) {
     util::PerformanceTrace::Scope hit_scope("TextViewport::HighlightedLineTokens::CacheHit");
     ++highlight_hits_;
-    return it->second;
+    return entry->tokens;
   }
 
   util::PerformanceTrace::Scope miss_scope("TextViewport::HighlightedLineTokens::CacheMiss");
   util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheForcedMisses);
   const SyntaxState previous_state = HighlightStateBeforeLine(line_index);
   const bool exact = last_highlight_state_exact_;
-  HighlightedLine highlighted;
+  // Retokenize straight into whatever buffer this line's (stale) entry already
+  // owns. In the steady state -- typing, with the same lines on screen either
+  // side of the edit -- that takes the per-line cost of a repaint to zero
+  // allocations.
+  //
+  // Evict BEFORE taking the slot reference: erasing while holding a reference
+  // into the same map is how this would go wrong, and the eviction can only pick
+  // a line other than this one (which is not in the map yet on the new-entry
+  // path, and is refreshed in place on the stale path).
+  const bool slot_is_new = highlight_cache_.find(line_index) == highlight_cache_.end();
+  if (slot_is_new && highlight_cache_.size() >= kHighlightCacheLimit &&
+      !highlight_cache_order_.empty()) {
+    highlight_cache_.erase(highlight_cache_order_.front());
+    highlight_cache_order_.pop_front();
+    util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
+  }
+  HighlightCacheEntry& slot = highlight_cache_[line_index];
+  SyntaxState end_state;
   {
     util::PerformanceTrace::Scope highlight_scope(
         "TextViewport::HighlightedLineTokens::HighlightLine");
-    highlighted = SyntaxHighlighter::HighlightLine(TokenizableLineView(document_->lines, line_index), document_->path,
-                                                   previous_state);
+    end_state = SyntaxHighlighter::HighlightLineInto(
+        TokenizableLineView(document_->lines, line_index), document_->path, previous_state,
+        &slot.tokens);
+  }
+  slot.generation = highlight_cache_generation_;
+  if (slot_is_new) {
+    highlight_cache_order_.push_back(line_index);
   }
   // Only record the per-line end state (and advance the validity frontier) when
   // the resume state was exact. An approximate deep-jump result must not be
   // promoted to authoritative; the off-thread backfill makes a later repaint
   // exact (and clears this token-cache entry so it is recomputed).
   if (exact) {
-    line_highlight_states_[line_index] = highlighted.end_state;
+    line_highlight_states_[line_index] = end_state;
     // Advance the frontier only on a contiguous write. A write above the frontier
     // (line_index > valid_through) would jump it over the intervening, still-stale
     // [valid_through, line_index) entries and falsely mark them valid — a later
@@ -111,14 +164,7 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
     }
   }
 
-  if (highlight_cache_.size() >= kHighlightCacheLimit) {
-    highlight_cache_.erase(highlight_cache_order_.front());
-    highlight_cache_order_.pop_front();
-    util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
-  }
-  auto [it, _] = highlight_cache_.emplace(line_index, std::move(highlighted.tokens));
-  highlight_cache_order_.push_back(line_index);
-  return it->second;
+  return slot.tokens;
 }
 
 std::span<const SyntaxTokenKind> TextViewport::HighlightedLineTokensIfCached(
@@ -129,11 +175,11 @@ std::span<const SyntaxTokenKind> TextViewport::HighlightedLineTokensIfCached(
   if (!syntax_highlighting_enabled()) {
     return {};
   }
-  const auto it = highlight_cache_.find(line_index);
-  if (it == highlight_cache_.end()) {
+  const HighlightCacheEntry* entry = CurrentHighlightCacheEntry(line_index);
+  if (entry == nullptr) {
     return {};
   }
-  return std::span<const SyntaxTokenKind>(it->second.data(), it->second.size());
+  return std::span<const SyntaxTokenKind>(entry->tokens.data(), entry->tokens.size());
 }
 
 void TextViewport::AppendCachedHighlightedLines(std::vector<std::size_t>& out) const {
@@ -142,8 +188,11 @@ void TextViewport::AppendCachedHighlightedLines(std::vector<std::size_t>& out) c
   }
   const std::size_t first = out.size();
   out.reserve(first + highlight_cache_.size());
-  for (const auto& entry : highlight_cache_) {
-    out.push_back(entry.first);
+  for (const auto& [line, entry] : highlight_cache_) {
+    // Stale entries still hold their buffer but are not cached data.
+    if (entry.generation == highlight_cache_generation_) {
+      out.push_back(line);
+    }
   }
   std::sort(out.begin() + static_cast<std::ptrdiff_t>(first), out.end());
 }
@@ -197,8 +246,7 @@ void TextViewport::EnsureHighlightCaches() const {
     // sibling split pane edited the shared document, or a plugin syntax reload)
     // keeps serving pre-edit colors until LRU eviction. Mirrors the chain-advance
     // clear in InstallHighlightCheckpoints and the SyntaxConfig invalidation path.
-    highlight_cache_.clear();
-    highlight_cache_order_.clear();
+    DropHighlightTokenCache();
   }
   if (line_highlight_states_.size() != document_->lines.size()) {
     line_highlight_states_.resize(document_->lines.size());
@@ -293,7 +341,7 @@ bool TextViewport::HasHighlightPrefetchGap(std::size_t start_line, std::size_t c
   }
   const std::size_t end = std::min(document_->lines.size(), start_line + count);
   for (std::size_t line = start_line; line < end; ++line) {
-    if (highlight_cache_.find(line) == highlight_cache_.end()) {
+    if (CurrentHighlightCacheEntry(line) == nullptr) {
       return true;
     }
   }
@@ -353,10 +401,16 @@ void TextViewport::InstallPrefetchedHighlights(HighlightPrefetchResult result) {
         line_highlight_states_valid_through_ = line + 1;
       }
     }
-    // Single hash lookup: emplace reports whether the line was already cached,
-    // so we skip the separate find() probe.
-    auto [it, inserted] = highlight_cache_.emplace(line, std::move(result.tokens[offset]));
-    if (!inserted) {
+    // A CURRENT entry is authoritative; leave it alone. A stale one is a buffer
+    // to overwrite, and an absent one is a new entry to order and cap.
+    if (CurrentHighlightCacheEntry(line) != nullptr) {
+      continue;
+    }
+    const bool slot_is_new = highlight_cache_.find(line) == highlight_cache_.end();
+    HighlightCacheEntry& slot = highlight_cache_[line];
+    slot.tokens = std::move(result.tokens[offset]);
+    slot.generation = highlight_cache_generation_;
+    if (!slot_is_new) {
       continue;
     }
     highlight_cache_order_.push_back(line);
@@ -510,8 +564,7 @@ void TextViewport::InstallHighlightCheckpoints(const HighlightCheckpointResult& 
   // on the next repaint. Cheap (<= kHighlightCacheLimit entries) and only happens
   // while a deep-jump backfill is converging.
   if (highlight_checkpoints_valid_through_ != previous_valid_through) {
-    highlight_cache_.clear();
-    highlight_cache_order_.clear();
+    DropHighlightTokenCache();
   }
 }
 
@@ -520,10 +573,12 @@ TextViewportDerivedCacheBytes TextViewport::DerivedCacheBytes() const {
   out.layout_cache = layout_cache_.ApproximateResidentBytes();
 
   out.highlight_tokens = highlight_cache_.bucket_count() * sizeof(void*);
-  for (const auto& [line, tokens] : highlight_cache_) {
+  // Counts stale entries too: their buffers are still resident, which is exactly
+  // what this number is for.
+  for (const auto& [line, entry] : highlight_cache_) {
     out.highlight_tokens +=
-        sizeof(std::size_t) + sizeof(std::vector<SyntaxTokenKind>) + sizeof(void*) * 2;
-    out.highlight_tokens += tokens.capacity() * sizeof(SyntaxTokenKind);
+        sizeof(std::size_t) + sizeof(HighlightCacheEntry) + sizeof(void*) * 2;
+    out.highlight_tokens += entry.tokens.capacity() * sizeof(SyntaxTokenKind);
   }
   // The FIFO that keys the LRU. libstdc++ deques allocate in 512-byte chunks.
   out.highlight_tokens += ((highlight_cache_order_.size() * sizeof(std::size_t) + 511) / 512) * 512;

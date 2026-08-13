@@ -672,6 +672,22 @@ class TextViewport {
   void UpgradeEncodingForInsertedText(std::string_view text);
   void EnsureInitialHighlightState() const;
   void EnsureHighlightCaches() const;
+  // One line's cached tokens plus the generation they were computed in. See
+  // highlight_cache_ for why staleness is stamped rather than erased.
+  struct HighlightCacheEntry {
+    std::vector<SyntaxTokenKind> tokens;
+    std::uint64_t generation = 0;
+  };
+  // Invalidate every per-line token cache entry without freeing it. See
+  // highlight_cache_generation_.
+  void DropHighlightTokenCache() const;
+  // Invalidate the entries at or after `start_line`, keeping the ones below it —
+  // the shape a content edit needs, since the syntax state chains forward and
+  // only lines from the edit on can have changed. Also without freeing.
+  void StaleHighlightTokensFrom(std::size_t start_line) const;
+  // The entry for `line_index` if it was computed in the current generation,
+  // else nullptr. The single place staleness is decided.
+  const HighlightCacheEntry* CurrentHighlightCacheEntry(std::size_t line_index) const;
   void EnsureHighlightCheckpoints() const;
   SyntaxState HighlightStateBeforeLine(std::size_t line_index) const;
   std::size_t CurrentLineLength() const;
@@ -945,7 +961,22 @@ class TextViewport {
   std::vector<SelectionRange> box_ranges_scratch_;
   std::vector<SecondaryCaret> secondary_caret_candidates_scratch_;
   mutable TextLayoutCache layout_cache_;
-  mutable std::unordered_map<std::size_t, std::vector<SyntaxTokenKind>> highlight_cache_;
+  // Per-line token cache. Entries carry the generation they were computed in
+  // rather than being erased when the document changes: an edit bumps
+  // `highlight_cache_generation_`, every entry becomes a miss, and the next paint
+  // re-tokenizes each visible line straight back INTO the vector already sitting
+  // in the map. Clearing instead freed one hash node plus one token vector per
+  // cached line on every keystroke and re-allocated both on the same frame — a
+  // screenful of churn per character typed, for a cache whose keys and sizes are
+  // almost always identical either side of the edit.
+  //
+  // A stale entry keeps its token buffer resident until it is evicted, so the
+  // retained bytes are the entry cap (kHighlightCacheLimit lines) times the
+  // per-line token cap, which is the same ceiling the live cache already had.
+  mutable std::unordered_map<std::size_t, HighlightCacheEntry> highlight_cache_;
+  // Starts at 1 so a default-constructed entry (generation 0) can never read as
+  // current. Bumped by DropHighlightTokenCache; never reset.
+  mutable std::uint64_t highlight_cache_generation_ = 1;
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
   mutable std::vector<SyntaxState> line_highlight_states_;
