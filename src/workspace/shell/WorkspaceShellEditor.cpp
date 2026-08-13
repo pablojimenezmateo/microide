@@ -102,7 +102,7 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contr
   // re-applies it. SetFontFamily no-ops when the family is unchanged.
   text_renderer_.SetFontFamily(GetSettingValue("editor.font_family").value_or(""));
   MarkLayoutDirty();
-  tab_strip_service_.InvalidateEditorTabGeometry();
+  tab_strip_service_.InvalidateTabStripGeometry();
   RequestWindowRedraw();
   // Apply to EVERY editor group, not just the focused one: preference fields (tab_size,
   // soft_wrap, auto_close, smart_indent, save-trim, …) live on each per-tab TextViewport,

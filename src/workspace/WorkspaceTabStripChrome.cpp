@@ -4,6 +4,7 @@
 #include <utility>
 #include <vector>
 
+#include "util/Fnv1a.h"
 #include "workspace/services/LayoutModeService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectPresentation.h"
@@ -16,11 +17,10 @@ namespace {
 // save/edit that flips dirtiness rebuilds the strip without needing a resize.
 std::uint64_t EditorTabsDirtyFingerprint(
     const microide::workspace::EditorGroup& group) {
-  std::uint64_t fingerprint = 1469598103934665603ull;  // FNV-1a offset basis
+  std::uint64_t fingerprint = microide::util::kFnv1aOffsetBasis;
   for (const auto& tab : group.open_tabs) {
-    const std::uint64_t bit =
-        microide::workspace::TabCoordinator::TabStateIsDirty(tab) ? 1u : 0u;
-    fingerprint = (fingerprint ^ bit) * 1099511628211ull;  // FNV-1a prime
+    fingerprint = microide::util::Fnv1aByte(
+        fingerprint, microide::workspace::TabCoordinator::TabStateIsDirty(tab) ? 1u : 0u);
   }
   return fingerprint;
 }
@@ -60,12 +60,88 @@ void WorkspaceTabStripChrome::Configure(WorkspaceContext& context,
   operations_ = std::move(operations);
 }
 
-float WorkspaceTabStripChrome::ProjectTabWidthForIndex(std::size_t index) const {
-  if (index >= context_->project_catalog.entries.size()) {
-    return 156.0f;
+std::uint64_t WorkspaceTabStripChrome::ComputeProjectStripFingerprint() const {
+  const ProjectCatalogState& catalog = context_->project_catalog;
+  std::uint64_t fingerprint = util::kFnv1aOffsetBasis;
+  fingerprint = util::Fnv1aValue(fingerprint, catalog.entries.size());
+  fingerprint = util::Fnv1aValue(
+      fingerprint, static_cast<std::uint64_t>(layout_mode_service_->CurrentMode()));
+  // Font metrics change without any state here changing; the service bumps this
+  // epoch on the same event that drops the editor strip's geometry cache.
+  fingerprint = util::Fnv1aValue(fingerprint, tab_strip_service_->GeometryEpoch());
+  for (std::size_t i = 0; i < catalog.entries.size(); ++i) {
+    const std::filesystem::path& root = operations_.project_catalog_root(i);
+    fingerprint = util::Fnv1aBytes(fingerprint, root.native());
+    // Answered straight off the catalog: routing this through the shell would
+    // build a TabCoordinator (~40 std::function constructions) per project.
+    fingerprint = util::Fnv1aValue(
+        fingerprint,
+        TabCoordinator::ProjectHasDirtyTab(catalog, context_->current_project_state, i) ? 1u : 0u);
+    const bool is_active_project =
+        !context_->current_project_state.root.empty() && i == catalog.active_index;
+    const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
+                                                             : operations_.project_catalog_entry(i);
+    // The badge color resolves from the project's explicit base color, or from
+    // the root when it has none — so hashing the override (and the root above)
+    // is exactly the color's input set, without resolving the color itself.
+    std::uint64_t color_key = 0;
+    if (project != nullptr && project->project_base_color.has_value()) {
+      const SDL_Color color = *project->project_base_color;
+      color_key = 1ull | (static_cast<std::uint64_t>(color.r) << 8) |
+                  (static_cast<std::uint64_t>(color.g) << 16) |
+                  (static_cast<std::uint64_t>(color.b) << 24) |
+                  (static_cast<std::uint64_t>(color.a) << 32);
+    }
+    fingerprint = util::Fnv1aValue(fingerprint, color_key);
   }
-  return tab_strip_service_->MeasureProjectTabWidth(
-      operations_.project_tab_display_title(index), operations_.measure_width);
+  return fingerprint;
+}
+
+const WorkspaceTabStripChrome::ProjectStripSourceCache&
+WorkspaceTabStripChrome::RefreshProjectStripSources() const {
+  ProjectStripSourceCache& sources = project_strip_sources_;
+  const std::uint64_t fingerprint = ComputeProjectStripFingerprint();
+  if (sources.valid && sources.fingerprint == fingerprint) {
+    return sources;
+  }
+
+  const std::size_t entry_count = context_->project_catalog.entries.size();
+  sources.fingerprint = fingerprint;
+  sources.widths.clear();
+  sources.display_titles.clear();
+  sources.tooltip_labels.clear();
+  sources.badge_styles.clear();
+  sources.widths.reserve(entry_count);
+  sources.display_titles.reserve(entry_count);
+  sources.tooltip_labels.reserve(entry_count);
+  sources.badge_styles.reserve(entry_count);
+  for (std::size_t i = 0; i < entry_count; ++i) {
+    sources.display_titles.push_back(operations_.project_tab_display_title(i));
+    sources.tooltip_labels.push_back(operations_.project_tab_tooltip_label(i));
+    sources.widths.push_back(tab_strip_service_->MeasureProjectTabWidth(
+        sources.display_titles.back(), operations_.measure_width));
+    const std::filesystem::path& root = operations_.project_catalog_root(i);
+    const bool is_active_project =
+        !context_->current_project_state.root.empty() &&
+        i == context_->project_catalog.active_index;
+    const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
+                                                             : operations_.project_catalog_entry(i);
+    sources.badge_styles.push_back(ProjectTabBadgeStyle{
+        .text = tab_strip_service_->BuildProjectBadgeText(ProjectLabelForRoot(root)),
+        .color = project != nullptr ? ProjectTabBadgeColor(*project, root)
+                                    : DefaultProjectBaseColor(root),
+        .show_badge = layout_mode_service_->CurrentMode() != LayoutMode::Compact,
+    });
+  }
+  ++sources.version;
+  sources.valid = true;
+  visible_project_tabs_cache_.valid = false;
+  return sources;
+}
+
+float WorkspaceTabStripChrome::ProjectTabWidthForIndex(std::size_t index) const {
+  const ProjectStripSourceCache& sources = RefreshProjectStripSources();
+  return index < sources.widths.size() ? sources.widths[index] : 156.0f;
 }
 
 void WorkspaceTabStripChrome::EnsureActiveProjectVisible() {
@@ -74,54 +150,42 @@ void WorkspaceTabStripChrome::EnsureActiveProjectVisible() {
     return;
   }
 
-  std::vector<float> widths;
-  widths.reserve(context_->project_catalog.entries.size());
-  for (std::size_t i = 0; i < context_->project_catalog.entries.size(); ++i) {
-    widths.push_back(ProjectTabWidthForIndex(i));
-  }
-
+  const ProjectStripSourceCache& sources = RefreshProjectStripSources();
   const auto window_rect = operations_.current_window_rect();
   const float strip_width = window_rect.has_value() ? window_rect->w : 1440.0f;
-  tab_strip_service_->EnsureActiveProjectVisible(context_->project_catalog, strip_width, widths);
+  tab_strip_service_->EnsureActiveProjectVisible(context_->project_catalog, strip_width,
+                                                 sources.widths);
 }
 
-std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleProjectTabs(
+const std::vector<VisibleStripTab>& WorkspaceTabStripChrome::ComputeVisibleProjectTabs(
     const SDL_FRect& project_tab_strip) const {
-  if (context_->project_catalog.entries.empty()) {
-    return {};
+  VisibleProjectTabsCache& cache = visible_project_tabs_cache_;
+  const ProjectCatalogState& catalog = context_->project_catalog;
+  if (catalog.entries.empty()) {
+    cache.valid = false;
+    cache.tabs.clear();
+    return cache.tabs;
   }
 
-  std::vector<float> widths;
-  std::vector<std::string> display_titles;
-  std::vector<std::string> tooltip_labels;
-  std::vector<ProjectTabBadgeStyle> badge_styles;
-  const std::size_t entry_count = context_->project_catalog.entries.size();
-  widths.reserve(entry_count);
-  display_titles.reserve(entry_count);
-  tooltip_labels.reserve(entry_count);
-  badge_styles.reserve(entry_count);
-  for (std::size_t i = 0; i < entry_count; ++i) {
-    display_titles.push_back(operations_.project_tab_display_title(i));
-    tooltip_labels.push_back(operations_.project_tab_tooltip_label(i));
-    widths.push_back(
-        tab_strip_service_->MeasureProjectTabWidth(display_titles.back(), operations_.measure_width));
-    const std::filesystem::path& root = operations_.project_catalog_root(i);
-    const bool is_active_project =
-        !context_->current_project_state.root.empty() &&
-        i == context_->project_catalog.active_index;
-    const ProjectWorkspaceState* project = is_active_project ? &context_->current_project_state
-                                                             : operations_.project_catalog_entry(i);
-    badge_styles.push_back(ProjectTabBadgeStyle{
-        .text = tab_strip_service_->BuildProjectBadgeText(ProjectLabelForRoot(root)),
-        .color = project != nullptr ? ProjectTabBadgeColor(*project, root)
-                                    : DefaultProjectBaseColor(root),
-        .show_badge = layout_mode_service_->CurrentMode() != LayoutMode::Compact,
-    });
+  const ProjectStripSourceCache& sources = RefreshProjectStripSources();
+  const bool strip_matches =
+      cache.strip.x == project_tab_strip.x && cache.strip.y == project_tab_strip.y &&
+      cache.strip.w == project_tab_strip.w && cache.strip.h == project_tab_strip.h;
+  if (cache.valid && cache.source_version == sources.version && strip_matches &&
+      cache.active_index == catalog.active_index &&
+      cache.tab_scroll_index == catalog.tab_scroll_index) {
+    return cache.tabs;
   }
 
-  return tab_strip_service_->ComputeVisibleProjectTabs(context_->project_catalog, project_tab_strip,
-                                                       widths, display_titles, tooltip_labels,
-                                                       badge_styles);
+  cache.tabs = tab_strip_service_->ComputeVisibleProjectTabs(
+      catalog, project_tab_strip, sources.widths, sources.display_titles, sources.tooltip_labels,
+      sources.badge_styles);
+  cache.source_version = sources.version;
+  cache.strip = project_tab_strip;
+  cache.active_index = catalog.active_index;
+  cache.tab_scroll_index = catalog.tab_scroll_index;
+  cache.valid = true;
+  return cache.tabs;
 }
 
 namespace {
@@ -165,17 +229,17 @@ void WorkspaceTabStripChrome::EnsureActiveTabVisibleForGroup(std::size_t group_i
       EditorTabsDirtyFingerprint(state.editor_groups[group_index]));
 }
 
-std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleTabs(
+const std::vector<VisibleStripTab>& WorkspaceTabStripChrome::ComputeVisibleTabs(
     const SDL_FRect& tab_strip) const {
   return ComputeVisibleTabsForGroup(context_->current_project_state.focused_group_index, tab_strip);
 }
 
-std::vector<VisibleStripTab> WorkspaceTabStripChrome::ComputeVisibleTabsForGroup(
+const std::vector<VisibleStripTab>& WorkspaceTabStripChrome::ComputeVisibleTabsForGroup(
     std::size_t group_index, const SDL_FRect& tab_strip) const {
   const ProjectWorkspaceState& state = context_->current_project_state;
   group_index = ClampGroupIndex(state, group_index);
   if (group_index >= state.editor_groups.size()) {
-    return {};
+    return TabStripService::EmptyVisibleTabs();
   }
   return tab_strip_service_->ComputeVisibleEditorTabs(
       state.editor_groups[group_index], group_index, tab_strip, operations_.measure_width,

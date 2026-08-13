@@ -88,7 +88,10 @@ class TabStripService {
                                     const TitleProvider& display_title,
                                     const TitleProvider& tooltip_label,
                                     std::uint64_t dirty_fingerprint) const;
-  std::vector<VisibleStripTab> ComputeVisibleEditorTabs(
+  // Returns the memoized vector by reference: on a cache hit a by-value return
+  // still copied two std::strings per visible tab per call, and this is called
+  // from paint, hit-test, cursor and tooltip paths several times a frame.
+  const std::vector<VisibleStripTab>& ComputeVisibleEditorTabs(
       const EditorGroup& group,
       std::size_t group_index,
       const SDL_FRect& tab_strip,
@@ -96,7 +99,12 @@ class TabStripService {
       const TitleProvider& display_title,
       const TitleProvider& tooltip_label,
       std::uint64_t dirty_fingerprint) const;
-  void InvalidateEditorTabGeometry();
+  static const std::vector<VisibleStripTab>& EmptyVisibleTabs();
+  // Drops every strip's memoized geometry. The project strip's cache lives in
+  // WorkspaceTabStripChrome (that is where its titles/badges are produced), so
+  // it folds this epoch into its own key rather than needing a second hook.
+  void InvalidateTabStripGeometry();
+  std::uint64_t GeometryEpoch() const { return geometry_epoch_; }
 
   TabStripOverflowControls ComputeProjectTabOverflowControls(
       const SDL_FRect& project_tab_strip,
@@ -215,6 +223,7 @@ class TabStripService {
   mutable std::array<TabStripGeometryCache, kMaxEditorGroups> editor_tab_geometry_cache_;
   mutable std::array<VisibleEditorTabsCache, kMaxEditorGroups> visible_editor_tabs_cache_;
   mutable BottomPanelTabsCache bottom_panel_tabs_cache_;
+  std::uint64_t geometry_epoch_ = 0;
 };
 
 }  // namespace microide::workspace

@@ -11,6 +11,7 @@
 
 #include "platform/AppDirectories.h"
 #include "util/Fnv1a.h"
+#include "util/PathMatch.h"
 #include "util/Hex.h"
 #include "util/StringUtil.h"
 #include "workspace/persistence/PersistenceService.h"
@@ -184,7 +185,13 @@ SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root) {
       SDL_Color{0x5a, 0x90, 0xca, 0xff},
       SDL_Color{0xd8, 0x4d, 0xa0, 0xff},
   };
-  const std::uint64_t hash = StablePathHash(project_root.lexically_normal().string());
+  // Catalog roots are normalized on the way in, so `lexically_normal()` here was
+  // ~12 allocations producing the string it was handed — once per project tab per
+  // painted frame for any project with no explicit base color (TD-2026-08-10-174,
+  // same shape as the tooltip path). Only pay it when the text actually needs it.
+  const std::uint64_t hash = util::PathTextNeedsNormalizing(project_root.native())
+                                 ? StablePathHash(project_root.lexically_normal().string())
+                                 : StablePathHash(project_root.native());
   return kPalette[static_cast<std::size_t>(hash % kPalette.size())];
 }
 

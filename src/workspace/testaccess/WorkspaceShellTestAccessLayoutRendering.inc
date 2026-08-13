@@ -68,13 +68,14 @@
   static WorkspaceShell::TabStripOverflowControls EditorTabOverflowControls(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto visible = shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
+    const auto& visible = shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
     return shell.tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, visible);
   }
   static WorkspaceShell::TabStripOverflowControls ProjectTabOverflowControls(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto visible = shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+    const auto& visible =
+        shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     return shell.tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible);
   }
   static bool ScrollEditorTabStrip(WorkspaceShell& shell, int direction) {

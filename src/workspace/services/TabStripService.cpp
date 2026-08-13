@@ -246,7 +246,12 @@ void TabStripService::EnsureActiveEditorTabVisible(EditorGroup& group,
   group.tab_scroll_index = static_cast<int>(first_visible);
 }
 
-std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
+const std::vector<VisibleStripTab>& TabStripService::EmptyVisibleTabs() {
+  static const std::vector<VisibleStripTab> kEmpty;
+  return kEmpty;
+}
+
+const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
     const EditorGroup& group,
     std::size_t group_index,
     const SDL_FRect& tab_strip,
@@ -259,7 +264,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
   if (group.open_tabs.empty()) {
     geometry.valid = false;
     visible_cache.valid = false;
-    return {};
+    return EmptyVisibleTabs();
   }
 
   RefreshEditorGeometryCache(group, group_index, tab_strip.w, measure_width, display_title,
@@ -323,18 +328,19 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
   visible_cache.strip = tab_strip;
   visible_cache.active_tab_index = group.active_tab_index;
   visible_cache.tab_scroll_index = group.tab_scroll_index;
-  visible_cache.tabs = tabs;
+  visible_cache.tabs = std::move(tabs);
   visible_cache.valid = true;
-  return tabs;
+  return visible_cache.tabs;
 }
 
-void TabStripService::InvalidateEditorTabGeometry() {
+void TabStripService::InvalidateTabStripGeometry() {
   for (TabStripGeometryCache& geometry : editor_tab_geometry_cache_) {
     geometry.valid = false;
   }
   for (VisibleEditorTabsCache& visible_cache : visible_editor_tabs_cache_) {
     visible_cache.valid = false;
   }
+  ++geometry_epoch_;
 }
 
 TabStripOverflowControls TabStripService::BuildOverflowControls(

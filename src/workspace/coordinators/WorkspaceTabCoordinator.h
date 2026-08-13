@@ -63,7 +63,7 @@ class TabCoordinator {
     // (tab_count, window_width) and is indexed by group slot — a collapse that
     // shifts a group into another slot with the same tab_count/width would
     // otherwise render the destroyed group's cached titles for the survivor.
-    std::function<void()> invalidate_editor_tab_geometry;
+    std::function<void()> invalidate_tab_strip_geometry;
     std::function<void()> request_editor_surface_redraw;
     std::function<void()> request_automatic_git_sidebar_refresh;
     // Raised when a save is refused because the file changed on disk since the
@@ -95,6 +95,13 @@ class TabCoordinator {
   // need the answer and not the indices — the tab strip asks it once per project
   // tab per painted frame.
   bool HasDirtyTabForProject(std::size_t project_index) const;
+  // The same predicate, without a coordinator. Building one costs ~40
+  // std::function constructions (MakeTabCoordinator), and the tab-strip cache
+  // key needs this bit for every project on every frame — a call it must be
+  // able to make without paying for a shell coordinator per project per frame.
+  static bool ProjectHasDirtyTab(const ProjectCatalogState& catalog,
+                                 const ProjectWorkspaceState& current_project,
+                                 std::size_t project_index);
   // Dirty tabs across ALL editor groups of the active project.
   std::vector<GroupTabRef> DirtyGroupTabs() const;
   // Dirty tabs across ALL editor groups of any catalog project (active project

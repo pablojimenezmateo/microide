@@ -132,7 +132,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // Skip all project-tab work when the strip is hidden (zero height): no tab measuring,
   // overflow controls, or drag ghost.
   if (layout.project_tab_strip.h > 0.0f) {
-    const auto visible_project_tabs =
+    const auto& visible_project_tabs =
         tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     for (const VisibleStripTab& tab : visible_project_tabs) {
       if (tab_lifted(TabDragKind::Project, 0, tab.index)) {
@@ -204,10 +204,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                               group_tab_strip.w, kWorkspaceDividerThickness),
                      theme_.border);
     }
-    std::vector<VisibleStripTab> visible_tabs;
-    if (HasActiveProjectCatalogEntry()) {
-      visible_tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip);
-    }
+    const std::vector<VisibleStripTab>& visible_tabs =
+        HasActiveProjectCatalogEntry()
+            ? tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip)
+            : TabStripService::EmptyVisibleTabs();
     if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
       const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(group_tab_strip);
       DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,
