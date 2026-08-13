@@ -322,6 +322,63 @@ void RunMergeEditResultThenScroll(ScenarioContext& context) {
   });
 }
 
+// TD-2026-08-13-208's prerequisite: typing into a LARGE WRAPPED compare tab.
+//
+// The entry is about a cost nothing measures — `RefreshCompareTabDerivedState`
+// serializes the whole right buffer and re-runs BuildCompareModel over both
+// files on every content change, the presentation model is rebuilt on top of
+// that, and (with wrap on) `EnsureCompareWrapLayout` re-wraps every row of both
+// sides because it keys on the model revision the rebuild just bumped. All three
+// are O(file), not O(edit), on a per-keystroke path.
+//
+// The existing diff scenarios open, jump and stage; none of them TYPES, and
+// `soft_wrap_*` measures the editor surface. So the work the entry describes had
+// no number attached to it, which is why the entry says to build this first.
+//
+// Deliberately not gated yet: a baseline recorded on a loaded machine is a
+// fiction, and this scenario's whole purpose is to be the before/after for work
+// that has not started. `baseline_gated=false` means it runs and reports without
+// asserting; arm it in the same pass that records its baseline on an idle runner.
+void RunCompareTypeInWrappedDiff(ScenarioContext& context) {
+  PrimeGitWorkstationFixture(context, kLargeDiffFixture, "compare_type_in_wrapped_diff");
+  const std::filesystem::path source =
+      TA::ProjectRoot(context.Shell()) / "src" / "large.cpp";
+  if (!TA::OpenWorkingTreeComparison(context.Shell(), source, "HEAD", "HEAD")) {
+    throw std::runtime_error("compare_type_in_wrapped_diff: compare open failed");
+  }
+  // Applied AFTER the open: opening a project reloads config, which resets a
+  // setting applied before it.
+  context.SetSetting("editor.wrap", "word");
+  context.PumpFrames(4);
+
+  auto& compare = TA::ActiveCompare(context.Shell());
+  if (!compare.right_editable) {
+    throw std::runtime_error(
+        "compare_type_in_wrapped_diff: the working-tree pane is not editable, so this "
+        "scenario would measure nothing");
+  }
+  if (!compare.wrap_layout.active()) {
+    throw std::runtime_error(
+        "compare_type_in_wrapped_diff: editor.wrap=word did not reach the compare surface");
+  }
+  const std::size_t model_rows = compare.model.rows.size();
+  if (model_rows < 500) {
+    throw std::runtime_error(
+        "compare_type_in_wrapped_diff: expected a large diff, got " +
+        std::to_string(model_rows) + " rows");
+  }
+
+  // One keystroke at a time, each pumped: the point is the per-keystroke rebuild,
+  // and a burst typed into one frame would amortize exactly the cost being
+  // measured.
+  context.Measure("compare.type_in_wrapped_diff", [&] {
+    for (int i = 0; i < 16; ++i) {
+      context.Type("x");
+      context.PumpFrames(1);
+    }
+  });
+}
+
 void RunCommitOpenWithLargeStagedSet(ScenarioContext& context) {
   PrimeGitWorkstationFixture(context, kLargeStagedFixture, "commit_open_with_large_staged_set");
   context.PumpFrames(2);
@@ -498,6 +555,14 @@ const ScenarioRegistration g_perf_git_workstation_merge_edit_result_then_scroll(
     .run_by_default = true,
     .warmup_iterations = 12,
     .run = RunMergeEditResultThenScroll,
+});
+// Ungated on purpose — see the runner's comment.
+const ScenarioRegistration g_perf_git_workstation_compare_type_in_wrapped_diff({
+    .name = "compare_type_in_wrapped_diff",
+    .smoke = false,
+    .baseline_gated = false,
+    .run_by_default = true,
+    .run = RunCompareTypeInWrappedDiff,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(commit_open_with_large_staged_set, RunCommitOpenWithLargeStagedSet);
 // The third of the same family; see diff_stage_hunk_large_patch above.

@@ -389,7 +389,37 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-13-208 — a wrapped compare pane re-wraps the whole file on every keystroke, because the diff below it is rebuilt whole on every keystroke.
+### TD-2026-08-13-208 — a wrapped compare pane re-wraps the whole file on every keystroke, because the diff below it is rebuilt whole on every keystroke. [PREREQUISITE DONE 2026-08-14 — the scenario exists, and it is worse than the entry guessed.]
+
+**The prerequisite this entry names is landed: `compare_type_in_wrapped_diff`**
+(tests/perf/GitWorkstationPerfScenarios.cpp). It opens the large-diff fixture as a
+working-tree comparison, turns `editor.wrap` on, refuses to run unless the pane is
+editable, the wrap layout is active and the model has 500+ rows — and then types
+16 characters, one per pumped frame, because a burst typed into one frame would
+amortize exactly the cost being measured.
+
+**First numbers, and they are the argument for doing the work:**
+
+| | |
+| --- | ---: |
+| `compare.type_in_wrapped_diff` p50 allocations (16 keystrokes) | 391,891 |
+| per keystroke | ~24,500 |
+| p50 wall (16 keystrokes) | 766 ms |
+| per keystroke | ~48 ms |
+| share of the scenario's total allocations | 93.7 % |
+
+Forty-eight milliseconds and twenty-four thousand allocations for ONE character.
+The entry's ordering advice is confirmed by the share column: the phase is nearly
+all of the scenario, so the incremental compare model is the fix that matters and
+the wrap-table splice on its own would move a constant.
+
+Deliberately **not** baseline-gated yet: a baseline recorded on a loaded machine
+is a fiction, and this scenario's purpose is to be the before/after for work that
+has not started. Arm it in the same pass that records its baseline on an idle
+runner.
+
+#### Original entry
+
 
 `EnsureCompareWrapLayout` is keyed on the presentation + model revision, and
 `RefreshCompareTabDerivedState` bumps the model revision on every content change
@@ -632,7 +662,36 @@ sites. Prefer the first: the second is the shape that let these four diverge.
 
 Nothing currently pins the behaviour of any of them with more than one caret.
 
-### TD-2026-08-13-204 — a selection cannot be dragged; the gesture places a caret inside it instead.
+### TD-2026-08-13-204 — a selection cannot be dragged; the gesture places a caret inside it instead. [RESOLVED 2026-08-14 — built as the entry specified, all three parts.]
+
+**Fixed 2026-08-14.**
+
+- **The third state.** `InteractionState::TextDragState{None, Pending, Dragging}`.
+  A press inside a selection moves no caret and clears no selection; under a 4px
+  threshold the RELEASE performs the click the press deferred, which is exactly
+  why the press cannot do it eagerly.
+- **The indicator.** A 2px accent bar at the drop point, drawn after the active
+  pane. The real caret sits inside the selection being dragged, so without it the
+  drop is a guess.
+- **One undo entry.** `editor/TextDragDrop.h` wraps the delete and the insert in a
+  `BeginUndoGroup`.
+
+The arithmetic the entry flagged ("the delete shifts the insert point when the
+drop is after the source") has a case worth naming: a drop on the source's LAST
+line lands at the splice join plus its offset into the tail, not at its own
+column — a line-count-only adjustment is wrong there. Nine `TextDragDrop/*` tests
+cover it, plus drop-inside-source (a no-op, not a destructive edit) and a
+right-to-left source range.
+
+`editor.drag_and_drop` is registered, default on, as in VS Code.
+
+**One existing test changed meaning**: `EditorMultiClickDragKeepsItsGranularity`
+ended with a press inside the selection its previous step had left behind, which
+is now a text drag rather than a new selection. It collapses the selection first
+and records why — the granularity contract it exists for is unchanged.
+
+#### Original entry
+
 
 VS Code's `editor.dragAndDrop` (on by default): press inside an existing
 selection, drag, and the selected text MOVES to the drop point — with Ctrl held,
