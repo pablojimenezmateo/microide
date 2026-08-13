@@ -52,6 +52,25 @@ announces itself.
 - The same applies to `/tmp/microide-perf-*.log`, `--report-json` output paths, and
   any other fixed-path artifact reused across sessions.
 
+### Piping `run-checks.sh` into `tail` throws away the exit code that says whether it ran
+
+`tools/run-checks.sh <lane> 2>&1 | tail -8` is the natural way to read a long lane's
+result, and it is wrong: in a pipeline the shell reports **`tail`'s** status, which
+is always 0. The wrapper's own exit code — the one that distinguishes "the lane ran
+and passed" from "the lane never got past its build" — is discarded.
+
+Hit on 2026-08-13. A TSAN run reported success while its *build* had failed on a
+missing include: the last eight lines of a 323-step ninja build are eight
+`Building CXX object` lines, so the tail looked exactly like a healthy run in
+progress, and the harness that reported the command's status saw `tail`'s zero.
+The failure was two lines further down (`ninja: build stopped`), and the wrapper had
+written `run-checks: tsan finished (exit 1)` to the log.
+
+- Redirect, then read: `tools/run-checks.sh tsan > /tmp/out 2>&1; echo $?`.
+- Or grep the log for the wrapper's own last line, `run-checks: <lane> finished
+  (exit N)`, and believe the N — never the tail's shape.
+- `set -o pipefail` fixes it in a script; it is not on in an interactive shell.
+
 ### The documented inner-loop build is Release, so `#ifndef NDEBUG` tests never run in it
 
 `cmake -S . -B build` produces `CMAKE_BUILD_TYPE=Release`, and a family of tests
