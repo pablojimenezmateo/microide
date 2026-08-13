@@ -92,6 +92,33 @@ std::size_t DeleteWordBoundaryLeft(std::string_view text, std::size_t caret) {
   return WordBoundaryLeft(text, caret);
 }
 
+WordSpan IdentifierRunAt(std::string_view text, std::size_t index) {
+  if (index >= text.size()) {
+    return WordSpan{};
+  }
+  // A caret can land mid-scalar (mouse hit-test, a plugin-supplied column, a
+  // restored session); walk back off any continuation byte first.
+  while (index > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[index]))) {
+    --index;
+  }
+  if (ClassifyWordCodepointAt(text, index) != WordClass::kWord) {
+    return WordSpan{};
+  }
+  std::size_t start = index;
+  while (start > 0) {
+    const std::size_t previous = util::PreviousUtf8Boundary(text, start);
+    if (ClassifyWordCodepointAt(text, previous) != WordClass::kWord) {
+      break;
+    }
+    start = previous;
+  }
+  std::size_t end = index;
+  while (end < text.size() && ClassifyWordCodepointAt(text, end) == WordClass::kWord) {
+    end += ScalarLengthAt(text, end);
+  }
+  return WordSpan{start, end};
+}
+
 std::size_t DeleteWordBoundaryRight(std::string_view text, std::size_t caret) {
   std::size_t index = std::min(caret, text.size());
   std::size_t whitespace_end = index;

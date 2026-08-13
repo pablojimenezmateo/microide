@@ -86,6 +86,33 @@ void TestDeleteWordBoundaryTakesAWhitespaceRunOnItsOwn() {
          "a lone space is deleted together with the following word");
 }
 
+// Double-click-to-select and the occurrence highlight both stand on the same
+// identifier run. Both used to scan with a byte-wise ASCII predicate, so a word
+// with any non-ASCII letter in it was selected only up to that letter.
+void TestViewportSelectsMultibyteWordsWhole() {
+  TextViewport viewport;
+  viewport.SetViewportSize(10, 80);
+  viewport.LoadContent("int café = résumé;\n", "/tmp/word.txt");
+
+  // Caret on the 'c' of café.
+  viewport.MoveCursorTo(0, 4);
+  viewport.SelectWordAtCursor();
+  Expect(viewport.SelectedText() == "café",
+         "double-click on café should select all of it, not just caf");
+
+  // And from inside the accented tail, where the byte-wise rule selected nothing.
+  const auto range = viewport.WordRangeAt(editor::TextPosition{0, 7});
+  Expect(range.has_value(), "a position inside the multi-byte tail is still inside the word");
+  Expect(range->start.column == 4 && range->end.column == 9,
+         "the run should span the whole of café");
+
+  // A caret mid-scalar (a mouse hit can land there) resolves to the same word
+  // rather than to nothing.
+  const auto mid_scalar = viewport.WordRangeAt(editor::TextPosition{0, 8});
+  Expect(mid_scalar.has_value() && mid_scalar->start.column == 4 && mid_scalar->end.column == 9,
+         "a caret inside a multi-byte character still resolves to its word");
+}
+
 void TestViewportWordMotionCrossesLines() {
   TextViewport viewport;
   viewport.SetViewportSize(10, 80);
@@ -211,6 +238,8 @@ void RegisterEditorWordMotionTests(std::vector<TestCase>& tests) {
           TestWordBoundaryKeepsMultibyteWordsWhole);
   AddTest(tests, "EditorWordMotion/DeleteBoundaryTakesWhitespaceRunAlone",
           TestDeleteWordBoundaryTakesAWhitespaceRunOnItsOwn);
+  AddTest(tests, "EditorWordMotion/ViewportSelectsMultibyteWordsWhole",
+          TestViewportSelectsMultibyteWordsWhole);
   AddTest(tests, "EditorWordMotion/ViewportMotionCrossesLines",
           TestViewportWordMotionCrossesLines);
   AddTest(tests, "EditorWordMotion/ViewportMotionSelectionSemantics",

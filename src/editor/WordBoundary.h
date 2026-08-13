@@ -55,4 +55,21 @@ enum class WordClass : std::uint8_t {
 // a run of two or more whitespace code points at the caret goes on its own.
 [[nodiscard]] std::size_t DeleteWordBoundaryRight(std::string_view text, std::size_t caret);
 
+struct WordSpan {
+  std::size_t start = 0;
+  std::size_t end = 0;
+
+  [[nodiscard]] bool empty() const { return start >= end; }
+};
+
+// The maximal run of identifier code points covering byte `index`, or an empty
+// span when the code point there is not identifier content. `index` is snapped
+// back to a UTF-8 boundary first, so a caret placed mid-scalar by a mouse hit or
+// a plugin cannot split a character.
+//
+// This is what double-click-to-select-a-word and occurrence highlighting stand
+// on. Both used to scan with a byte-wise ASCII predicate, so double-clicking
+// `café` selected `caf` and highlighted the wrong occurrences with it.
+[[nodiscard]] WordSpan IdentifierRunAt(std::string_view text, std::size_t index);
+
 }  // namespace microide::editor

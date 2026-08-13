@@ -2,6 +2,7 @@
 #include "editor/PathKey.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewportInternal.h"
+#include "editor/WordBoundary.h"
 
 #include <algorithm>
 
@@ -1011,18 +1012,11 @@ std::optional<SelectionRange> TextViewport::WordRangeAt(TextPosition position) c
   }
   const std::string_view line = document_->lines.LineView(position.line);
   const std::size_t col = std::min(position.column, line.size());
-  if (col >= line.size() || !IsIdentifierByte(line[col])) {
+  const WordSpan span = IdentifierRunAt(line, col);
+  if (span.empty()) {
     return std::nullopt;
   }
-  std::size_t start = col;
-  std::size_t end = col;
-  while (start > 0 && IsIdentifierByte(line[start - 1])) {
-    --start;
-  }
-  while (end < line.size() && IsIdentifierByte(line[end])) {
-    ++end;
-  }
-  return SelectionRange{TextPosition{position.line, start}, TextPosition{position.line, end}};
+  return SelectionRange{TextPosition{position.line, span.start}, TextPosition{position.line, span.end}};
 }
 
 SelectionRange TextViewport::LineRangeAt(std::size_t line_index) const {
@@ -1074,27 +1068,16 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
   const std::size_t line_index = cursor_line_;
   const std::string_view line = document_->lines.LineView(line_index);
   const std::size_t col = std::min(cursor_column_, line.size());
-  std::size_t anchor_col = col;
-  if (col < line.size() && IsIdentifierByte(line[col])) {
-    // Primary caret indexes a word character.
-  } else if (col > 0 && IsIdentifierByte(line[col - 1])) {
-    anchor_col = col - 1;
-  } else {
+  // A caret sitting just PAST a word still seeds on that word, which is what
+  // makes the highlight follow a caret typed to the end of an identifier.
+  WordSpan span = IdentifierRunAt(line, col);
+  if (span.empty() && col > 0) {
+    span = IdentifierRunAt(line, util::PreviousUtf8Boundary(line, col));
+  }
+  if (span.empty()) {
     return std::nullopt;
   }
-
-  std::size_t start = anchor_col;
-  std::size_t end = anchor_col;
-  while (start > 0 && IsIdentifierByte(line[start - 1])) {
-    --start;
-  }
-  while (end < line.size() && IsIdentifierByte(line[end])) {
-    ++end;
-  }
-  if (start >= end) {
-    return std::nullopt;
-  }
-  return SelectionRange{{line_index, start}, {line_index, end}};
+  return SelectionRange{{line_index, span.start}, {line_index, span.end}};
 }
 
 void TextViewport::SelectLineAtCursor() {
