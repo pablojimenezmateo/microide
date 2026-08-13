@@ -337,7 +337,41 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-13-201 — the selection-drag fixes stop at the editor surface: compare and merge get the clamp but not the autoscroll or the granularity.
+### TD-2026-08-13-201 — the selection-drag fixes stop at the editor surface: compare and merge get the clamp but not the autoscroll or the granularity. [RESOLVED 2026-08-13 — both halves, and the clamp itself was broken.]
+
+**Fixed 2026-08-13, behind one seam each, as the entry asked.**
+
+- `selection_autoscroll` split its step into `BeginStep` (the deltas) and
+  `FinishStep` (did anything move?), so a surface that does not scroll a
+  `TextViewport` can drive it. Compare scrolls its own `scroll_row` through
+  `ScrollCompareRows` + `SyncCompareViewportScroll`; merge scrolls the result
+  viewport and re-syncs its mirror. `Arm` now takes a `Band`, built from either
+  an `EditorViewMetrics` or a `TextGridInteractionLayout`, so the overshoot ramp
+  is one implementation rather than three.
+- the granularity seed and its drag extension moved out of
+  `WorkspaceEditorMouseCoordinator.cpp`'s file-local statics into
+  `coordinators/SelectionGranularity.{h,cpp}`, and all three button-down paths
+  call `ApplyClick`. A double-click in a diff or a merge result pane selects the
+  word now; it used to place a bare caret for any click count.
+
+**What the work turned up is worth more than the fix.** `ClampTextGridLineAtY`
+clamped a hit against the DOCUMENT end, not the visible band -- so a pointer held
+200 px below a diff pane resolved to a row fifteen screens down and a single
+motion event teleported the selection there, and a large enough overshoot went
+straight to the end of the file. That is why the autoscroll appeared to do
+nothing on merge: the pointer had already resolved past everything there was to
+scroll into. The editor never had this because it clamps the POINTER one step
+earlier (`ClampPointerToVisibleTextBand`).
+
+Its unit test had been asserting the broken value with the correct description:
+`ClampTextGridLineAtY(layout, 120.0f) == 9` under the message "should clamp
+result-surface hits below the window to the **last visible line**", where line 9
+is one past the last visible row -- and the assertion two lines above it rejects
+that same row as outside the window. A test can pin the bug and read as if it
+pins the fix.
+
+#### Original entry
+
 
 `7e99a209` fixed the reported "selection stops when the pointer leaves the editor"
 on all three text surfaces, because the refusal was the same shape on each. The

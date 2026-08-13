@@ -588,8 +588,23 @@ std::size_t ClampTextGridLineAtY(const TextGridInteractionLayout& layout, float 
   }
 
   const float local_y = std::max(0.0f, y - layout.first_line_y);
-  const std::size_t row =
+  std::size_t row =
       static_cast<std::size_t>(std::floor(local_y / std::max(1.0f, layout.line_height)));
+  // Clamp into the VISIBLE band, not merely into the document. A pointer held
+  // below the pane during a selection drag is 200-odd pixels past the last row,
+  // and resolving that literally addressed a row fifteen screens down: one motion
+  // event teleported the selection there, and a big enough overshoot went
+  // straight to the end of the file. It also made the drag autoscroll
+  // unobservable, because the pointer had already resolved past everything the
+  // autoscroll could scroll into.
+  //
+  // This is what the editor surface does with ClampPointerToVisibleTextBand, one
+  // step earlier: clamp onto the nearest visible cell and let the autoscroll walk
+  // that edge through the document. A pointer genuinely inside the pane is
+  // unaffected -- it cannot exceed the band by construction.
+  if (layout.visible_rows > 0) {
+    row = std::min(row, layout.visible_rows - 1);
+  }
   return std::min(layout.scroll_line + row, layout.line_count - 1);
 }
 

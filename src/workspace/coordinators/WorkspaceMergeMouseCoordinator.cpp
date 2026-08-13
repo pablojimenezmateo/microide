@@ -1,5 +1,8 @@
 #include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
 
+#include "workspace/coordinators/SelectionAutoscroll.h"
+#include "workspace/coordinators/SelectionGranularity.h"
+
 #include "workspace/render/DiffDividerGeometry.h"
 
 #include <algorithm>
@@ -246,6 +249,10 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       }
       return true;
     }
+    // Double-click selects the word, triple-click the line, and the drag that
+    // follows keeps that granularity -- as on the editor and compare surfaces.
+    selection_granularity::ApplyClick(interaction_state_, merge_tab->result_viewport,
+                                      event.button.clicks);
     if (merge_tab->selected_hunk != previous_selected_hunk) {
       operations_.request_merge_conflict_redraw(previous_selected_hunk);
       operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
@@ -453,10 +460,25 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   const float pointer_x = std::clamp(static_cast<float>(event.motion.x), result_rect.x,
                                      result_rect.x + std::max(0.0f, result_rect.w - 1.0f));
 
+  // See the compare surface: the clamp keeps the selection pointed at the edge
+  // cell, the autoscroll is what walks that edge through the document while the
+  // pointer sits still outside the pane.
+  selection_autoscroll::Arm(interaction_state_,
+                            selection_autoscroll::BandFor(interaction.result.text),
+                            static_cast<float>(event.motion.x),
+                            static_cast<float>(event.motion.y));
   const std::size_t line = ClampTextGridLineAtY(interaction.result.text, event.motion.y);
   const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
   const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, pointer_x);
-  merge_tab->result_viewport.MoveCursorToVisualColumn(line, visual_column, true);
+  if (selection_granularity::DragIsGranular(interaction_state_)) {
+    merge_tab->result_viewport.MoveCursorToVisualColumn(line, visual_column, false);
+    selection_granularity::ExtendToPointer(
+        interaction_state_, merge_tab->result_viewport,
+        editor::TextPosition{merge_tab->result_viewport.cursor_line(),
+                             merge_tab->result_viewport.cursor_column()});
+  } else {
+    merge_tab->result_viewport.MoveCursorToVisualColumn(line, visual_column, true);
+  }
   if (const auto conflict_index = operations_.find_merge_tracked_conflict_at_result_line(*merge_tab, line);
       conflict_index.has_value()) {
     merge_tab->selected_hunk = *conflict_index;

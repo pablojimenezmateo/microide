@@ -1851,9 +1851,139 @@ void TestWorkspaceShellCompareWithClipboardOpensPlainCompare() {
          "the right pane should be editable when its side is a real file");
 }
 
+// TD-2026-08-13-201: the drag CLAMP reached compare and merge, the two behaviours
+// built on top of it did not. A drag held past the bottom of a diff pane froze
+// the selection at the last visible row, and a double-click there placed a bare
+// caret instead of selecting the word.
+void TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  std::string base;
+  std::string head;
+  for (int i = 0; i < 300; ++i) {
+    base += "alpha bravo " + std::to_string(i) + "\n";
+    head += "alpha charlie " + std::to_string(i) + "\n";
+  }
+  WriteFile(source, base);
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, head);
+  CommitAll(root, "head fixture", "head fixture");
+
+  const auto history = microide::project::CollectGitFileHistory(root, source).commits;
+  Expect(history.size() == 2, "compare autoscroll fixture should have two commits");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenBranchHeadComparison(shell, source, history[1].hash, "base",
+                                                            history[0].hash, "head"),
+         "branch comparison should open");
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float row_y = surface.rows_y + surface.line_height * 0.5f;
+  const float right_x = surface.right_x + 24.0f;
+
+  // --- granularity: a double-click in the right pane selects the word ---
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "the first click should be handled");
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/2),
+         "the double-click should be handled");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto word_selection = compare.right_viewport.selection_range();
+  Expect(word_selection.has_value() && word_selection->start.column != word_selection->end.column,
+         "a double-click in the compare right pane should select a word, not place a caret");
+  Expect(SendMouseUp(shell, right_x, row_y, SDL_BUTTON_LEFT), "release should be handled");
+
+  // --- autoscroll: hold the pointer past the bottom of the pane ---
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "pressing in the right pane should start a selection");
+  Expect(SendMouseMotion(shell, right_x, layout.editor_surface.y + layout.editor_surface.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the compare surface should be handled");
+
+  const int scroll_after_motion = WorkspaceShellTestAccess::ActiveCompare(shell).scroll_row;
+  for (int tick = 0; tick < 5; ++tick) {
+    const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    Expect(result.handled, "an armed compare autoscroll should keep the wake busy");
+  }
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).scroll_row > scroll_after_motion,
+         "holding the pointer past the bottom of a diff must keep scrolling on the wake");
+  Expect(SendMouseUp(shell, right_x, row_y, SDL_BUTTON_LEFT), "release should be handled");
+}
+
+// The merge half of TD-2026-08-13-201, on the result pane.
+void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "conflict.txt";
+  std::string body;
+  for (int i = 0; i < 300; ++i) {
+    body += "alpha bravo " + std::to_string(i) + "\n";
+  }
+  WriteFile(base, body);
+  WriteFile(incoming, body + "incoming tail\n");
+  WriteFile(current, body + "current tail\n");
+  WriteFile(output, body);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge autoscroll fixture should open");
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const auto interaction = WorkspaceShellTestAccess::ActiveMergeInteractionLayout(shell);
+  const SDL_FRect& result_rect = interaction.result.rect;
+  const float x = result_rect.x + std::min(24.0f, result_rect.w * 0.25f);
+  const float y = interaction.result.text.first_line_y + interaction.result.text.line_height * 0.5f;
+
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/1), "first click handled");
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/2), "double-click handled");
+  const auto word_selection =
+      WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.selection_range();
+  Expect(word_selection.has_value() && word_selection->start.column != word_selection->end.column,
+         "a double-click in the merge result pane should select a word, not place a caret");
+  Expect(SendMouseUp(shell, x, y, SDL_BUTTON_LEFT), "release handled");
+
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/1), "press handled");
+  Expect(SendMouseMotion(shell, x, layout.editor_surface.y + layout.editor_surface.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the merge surface should be handled");
+
+  const int scroll_after_motion = WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row;
+  for (int tick = 0; tick < 5; ++tick) {
+    const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    Expect(result.handled, "an armed merge autoscroll should keep the wake busy");
+  }
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row > scroll_after_motion,
+         "holding the pointer past the bottom of a merge must keep scrolling on the wake");
+  // The mirror the layout reads must not be left behind by the wake's scrolling.
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row ==
+             static_cast<int>(
+                 WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.scroll_line()),
+         "the merge tab's scroll mirror must track the result viewport");
+  Expect(SendMouseUp(shell, x, y, SDL_BUTTON_LEFT), "release handled");
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
           TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
+  AddTest(tests, "WorkspaceShell/CompareDragAutoscrollsAndKeepsGranularity",
+          TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity);
+  AddTest(tests, "WorkspaceShell/MergeDragAutoscrollsAndKeepsGranularity",
+          TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",

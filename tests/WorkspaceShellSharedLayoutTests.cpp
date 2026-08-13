@@ -477,8 +477,16 @@ void TestWorkspaceSharedTextGridInteractionLayout() {
          "text-grid interaction layout should translate visible row offsets into line indices");
   Expect(!VisibleTextGridLineAtY(layout, 112.0f).has_value(),
          "text-grid interaction layout should reject points past the visible row window");
-  Expect(ClampTextGridLineAtY(layout, 120.0f) == 9,
+  // The last VISIBLE line, which with scroll_line 4 and 5 visible rows is 8 --
+  // rows 0..4 map to lines 4..8, and `VisibleTextGridLineAtY` rejects y=112
+  // (row 5) two assertions above for exactly that reason. This asserted 9 while
+  // its own message said "last visible line": the clamp was against the document
+  // end only, so a pointer held below a pane during a selection drag resolved to
+  // a row far past the band and one motion event teleported the selection there.
+  Expect(ClampTextGridLineAtY(layout, 120.0f) == 8,
          "text-grid interaction layout should clamp result-surface hits below the window to the last visible line");
+  Expect(ClampTextGridLineAtY(layout, 4000.0f) == 8,
+         "an arbitrarily large overshoot clamps to the same last visible line, not to the document end");
   Expect(TextGridVisualColumnAtX(layout, 42.0f) == 6 &&
              TextGridVisualColumnAtX(layout, 66.0f) == 9,
          "text-grid interaction layout should translate x positions into visual columns from the text origin");

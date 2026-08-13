@@ -16,7 +16,9 @@
 #include "util/PerformanceTrace.h"
 #include "util/SdlWake.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
+#include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
@@ -1149,30 +1151,86 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   // Scrolls content, so the repaint is the editor surface rather than a strip.
   // Only the re-extend below needs the shell; the step itself is in
   // workspace/coordinators/SelectionAutoscroll.
-  if (context_.interaction_state.selection_autoscroll_active() && ActiveTabIsEditor()) {
-    if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-      if (selection_autoscroll::Step(context_.interaction_state, *viewport)) {
-        // Re-extend the selection to the held pointer against the scrolled
-        // viewport. Replaying the pointer through the ordinary handler is what
-        // keeps the scrolled-into rows selected; without it the view would move
-        // under a stationary selection.
-        const auto layout = CurrentWorkspaceLayout();
-        if (layout.has_value()) {
-          SDL_Event synthetic{};
-          synthetic.type = SDL_EVENT_MOUSE_MOTION;
-          synthetic.motion.x = context_.interaction_state.selection_pointer_x;
-          synthetic.motion.y = context_.interaction_state.selection_pointer_y;
-          synthetic.motion.state = SDL_BUTTON_LMASK;
-          (void)MakeEditorMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
-        }
-        return EventResult{
-            .handled = true,
-            .redraw = layout.has_value()
-                          ? RenderInvalidation{.full = false, .rects = {layout->editor_surface}}
-                          : RenderInvalidation{.full = true, .rects = {}},
-        };
+  // One autoscroll tick against whichever text surface is active. The editor and
+  // the merge result pane scroll a TextViewport; the compare surface scrolls its
+  // own `scroll_row` through the clamping helper that owns it, which is why the
+  // autoscroll hands out deltas rather than reaching for a viewport (TD-201).
+  //
+  // A lambda rather than a member: the shell's declaration budget is a hard
+  // invariant, and nothing outside this wake needs to step an autoscroll.
+  const auto step_selection_autoscroll = [this]() -> bool {
+    if (ActiveTabIsCompare()) {
+      CompareTabState* compare_tab = ActiveCompareTab();
+      if (compare_tab == nullptr) {
+        return false;
+      }
+      const std::optional<selection_autoscroll::StepDelta> delta =
+          selection_autoscroll::BeginStep(context_.interaction_state);
+      if (!delta.has_value()) {
+        return false;
+      }
+      const int before_row = compare_tab->scroll_row;
+      const std::size_t before_columns = compare_tab->horizontal_scroll;
+      if (delta->rows != 0) {
+        ScrollCompareRows(delta->rows);
+      }
+      if (delta->columns != 0) {
+        ScrollCompareColumns(delta->columns);
+      }
+      SyncCompareViewportScroll(*compare_tab);
+      return selection_autoscroll::FinishStep(
+          context_.interaction_state,
+          compare_tab->scroll_row != before_row ||
+              compare_tab->horizontal_scroll != before_columns);
+    }
+    if (ActiveTabIsMerge()) {
+      MergeTabState* merge_tab = ActiveMergeTab();
+      if (merge_tab == nullptr) {
+        return false;
+      }
+      const bool stepped =
+          selection_autoscroll::Step(context_.interaction_state, merge_tab->result_viewport);
+      // The merge surface keeps its own mirror of the result pane's scroll;
+      // leaving it stale would make the next layout snap the view back.
+      merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
+      merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
+      return stepped;
+    }
+    if (!ActiveTabIsEditor()) {
+      selection_autoscroll::Disarm(context_.interaction_state);
+      return false;
+    }
+    editor::TextViewport* viewport = ActiveEditorViewport();
+    return viewport != nullptr && selection_autoscroll::Step(context_.interaction_state, *viewport);
+  };
+  if (context_.interaction_state.selection_autoscroll_active() && step_selection_autoscroll()) {
+    const auto layout = CurrentWorkspaceLayout();
+    // Re-extend the selection to the held pointer against the scrolled surface.
+    // Replaying the pointer through the ordinary handler is what keeps the
+    // scrolled-into rows selected; without it the view would move under a
+    // stationary selection. Each surface's own motion handler does that, and
+    // each refuses when its tab is not the active one, so the dispatch is just
+    // offering the event to all three.
+    if (layout.has_value()) {
+      SDL_Event synthetic{};
+      synthetic.type = SDL_EVENT_MOUSE_MOTION;
+      synthetic.motion.x = context_.interaction_state.selection_pointer_x;
+      synthetic.motion.y = context_.interaction_state.selection_pointer_y;
+      synthetic.motion.state = SDL_BUTTON_LMASK;
+      if (ActiveTabIsCompare()) {
+        (void)MakeCompareMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+      } else if (ActiveTabIsMerge()) {
+        (void)MakeMergeMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+      } else {
+        (void)MakeEditorMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
       }
     }
+    return EventResult{
+        .handled = true,
+        .redraw = layout.has_value()
+                      ? RenderInvalidation{.full = false, .rects = {layout->editor_surface}}
+                      : RenderInvalidation{.full = true, .rects = {}},
+    };
   }
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
 }
