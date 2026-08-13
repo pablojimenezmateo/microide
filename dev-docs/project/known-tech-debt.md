@@ -389,6 +389,53 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-209 — the bottom-panel strip is the third strip with no visible-list cache, and its four callers ask per frame.
+
+[198](#td-2026-08-13-198) gave the project strip the cache pair the editor strip
+already had. The bottom panel did not get one, and it has the same shape:
+`TabStripService::ComputeVisibleBottomPanelTabs` builds a `VisibleStripTab` list
+(a display title and a tooltip label per tab) and returns it BY VALUE, and four
+call sites ask per frame or per motion event — `WorkspaceShellRenderFrame` (into
+the prepared view model), `WorkspaceShellCursor` twice (cursor shape, hit test)
+and `WorkspaceTabMouseCoordinator`.
+
+Half the work is already done and is what makes this cheap: `BuildBottomPanelTabs`
+underneath it IS memoized, on a content fingerprint of every input that shapes the
+model list (`BottomPanelTabsCache`). What is missing is the second cache — the
+laid-out list keyed on that fingerprint plus the header rect and the scroll index
+— and the `const&` return, exactly as
+[198](#td-2026-08-13-198) did for the other two.
+
+`ComputeVisibleTerminalTabs` is the same function for the terminal-only strip and
+wants the same treatment.
+
+Smaller than 198 was: the fingerprint already exists, so this is the cache and the
+reference return, not a new invalidation key.
+
+### TD-2026-08-14-210 — render-whitespace is walked by two implementations of different asymptotic shape.
+
+[206](#td-2026-08-13-206) put the marker walk in
+`editor/RowDecorationBuilder` (`AppendWhitespaceMarkers`) so the compare panes
+could paint whitespace at all. The editor pane still has its own copy, because its
+markers additionally carry the inlay-hint displacement — and it has a THIRD form,
+the view-model glyph-run path (`RenderViewModelBuilder::CollectWhitespaceGlyphRuns`
++ the CSR row-offset table), which is what actually runs on the editor surface most
+of the time.
+
+Three walks, one contract. `dev-docs/project/validation-traps.md` names this exact
+trap: "a parity test between two implementations of different asymptotic shape only
+holds on fixtures small enough to hide the difference" — written about the editor's
+own two, before there were three.
+
+What would close it: give the shared walk an optional per-cell x-displacement
+callback (identity for the surfaces without inlays) and delete the editor's copy,
+leaving the view-model path as the only genuinely different one — it is a
+precomputed run table, not a walk, and is the fast path by design.
+
+Until then, a change to whitespace-marker geometry has to be made in three places,
+and only two of them have a test.
+
+
 ### TD-2026-08-13-208 — a wrapped compare pane re-wraps the whole file on every keystroke, because the diff below it is rebuilt whole on every keystroke. [PREREQUISITE DONE 2026-08-14 — the scenario exists, and it is worse than the entry guessed.]
 
 **The prerequisite this entry names is landed: `compare_type_in_wrapped_diff`**
