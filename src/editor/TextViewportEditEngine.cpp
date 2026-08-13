@@ -329,8 +329,10 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
     }
     before_changed_lines.push_back(std::move(current_line));
     if (replacement_has_break) {
-      for (std::string& piece : util::SplitLines(new_line)) {
-        after_changed_lines.push_back(std::move(piece));
+      // Views: the blob copies the bytes in, so owning a string per piece first
+      // was one allocation per produced line for nothing.
+      for (std::string_view piece : util::SplitLineViews(new_line)) {
+        after_changed_lines.push_back(piece);
       }
     } else {
       after_changed_lines.push_back(new_line);
@@ -434,8 +436,10 @@ std::optional<std::size_t> TextViewport::ReplaceAllRanges(
 
     before_changed_lines.push_back(current_line);
     if (replacement_has_break) {
-      for (std::string& piece : util::SplitLines(new_line)) {
-        after_changed_lines.push_back(std::move(piece));
+      // Views: the blob copies the bytes in, so owning a string per piece first
+      // was one allocation per produced line for nothing.
+      for (std::string_view piece : util::SplitLineViews(new_line)) {
+        after_changed_lines.push_back(piece);
       }
     } else {
       after_changed_lines.push_back(new_line);
@@ -701,8 +705,11 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     util::PerformanceTrace::Scope slice_scope("TextViewport::BuildRangeHistoryEntry::SliceBefore");
     before_lines = document_->lines.SliceLinesBlob(start.line, end.line + 1);
   }
-  const std::vector<std::string> replacement_lines =
-      util::SplitLines(util::NormalizeLineEndings(replacement));
+  // Views, not owned lines: `SplitLines(NormalizeLineEndings(x))` and
+  // `SplitLineViews(x)` produce the same split -- '\r\n' and a lone '\r' are each
+  // one break in both -- so the normalized copy of the whole replacement plus one
+  // string per line bought nothing. `replacement` outlives every use below.
+  const std::vector<std::string_view> replacement_lines = util::SplitLineViews(replacement);
 
   LineBlob after_lines;
   after_lines.reserve_lines(std::max<std::size_t>(1, replacement_lines.size()));
@@ -748,8 +755,10 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
   after_state.cursor_column =
       after_lines.size() == 1 ? prefix_size + replacement_lines.front().size()
                               : replacement_lines.back().size();
-  after_state.preferred_column = TextLayout::VisualColumnForTextColumn(
-      std::string(after_lines.back()), after_state.cursor_column, tab_size_);
+  // `back()` is already a view into the blob and the callee takes one; the
+  // `std::string` round trip that used to sit here copied the composed line.
+  after_state.preferred_column =
+      TextLayout::VisualColumnForTextColumn(after_lines.back(), after_state.cursor_column, tab_size_);
   after_state.selection_anchor.reset();
   after_state.placeholder = false;
   after_state.dirty = true;
