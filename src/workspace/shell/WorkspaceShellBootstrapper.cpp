@@ -243,6 +243,9 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .end_selection_gesture =
               [shell]() {
                 shell->context_.interaction_state.mouse_selecting = false;
+                shell->context_.interaction_state.text_drag =
+                    InteractionState::TextDragState::None;
+                shell->context_.interaction_state.text_drag_has_drop = false;
                 shell->context_.interaction_state.editor_box_selecting = false;
                 selection_autoscroll::Disarm(shell->context_.interaction_state);
               },

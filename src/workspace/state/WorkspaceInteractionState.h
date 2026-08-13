@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "workspace/state/WorkspaceTextInputState.h"
@@ -102,6 +103,37 @@ struct InteractionState {
   bool editor_box_selecting = false;
   std::size_t editor_box_anchor_line = 0;
   std::size_t editor_box_anchor_column = 0;
+  // Dragging a selection to move it (VS Code's `editor.dragAndDrop`). A press
+  // INSIDE an existing selection is ambiguous: it is either a click that
+  // collapses the caret there — which is what it has always done, and must keep
+  // doing — or the start of a move. So the press commits to neither until the
+  // pointer travels past a threshold, which is why this is a third state rather
+  // than another bool next to `mouse_selecting` (TD-2026-08-13-204).
+  //
+  // Pending: pressed inside a selection, undecided.
+  // Dragging: past the threshold; the drop indicator is live and release moves
+  // the text (copies it, with Ctrl held).
+  enum class TextDragState : std::uint8_t { None, Pending, Dragging };
+  TextDragState text_drag = TextDragState::None;
+  float text_drag_press_x = 0.0f;
+  float text_drag_press_y = 0.0f;
+  // Where the press landed in the document, resolved at press time. The release
+  // path needs it to perform the click the press deferred, and re-hit-testing
+  // there would need a layout it does not have.
+  std::size_t text_drag_press_line = 0;
+  std::size_t text_drag_press_column = 0;
+  // The selection captured at press. The edit reads its text from THIS range at
+  // release rather than from the live selection, so a drop cannot move whatever
+  // happens to be selected at the time.
+  std::size_t text_drag_source_start_line = 0;
+  std::size_t text_drag_source_start_column = 0;
+  std::size_t text_drag_source_end_line = 0;
+  std::size_t text_drag_source_end_column = 0;
+  // Live drop point while Dragging; drives the insertion-point indicator.
+  std::size_t text_drag_drop_line = 0;
+  std::size_t text_drag_drop_column = 0;
+  bool text_drag_has_drop = false;
+  bool text_dragging() const { return text_drag == TextDragState::Dragging; }
   // Selection-drag autoscroll. A drag whose pointer is held past an edge of the
   // visible text band clamps onto the edge cell, so without this the selection
   // stops growing at the first/last visible row -- you cannot select more than a

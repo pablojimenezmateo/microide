@@ -574,6 +574,10 @@ class TextViewport {
     return last_applied_edit_line_span_;
   }
   std::string SelectedText() const;
+  // The text of an arbitrary range. Public because a drag-and-drop move captures
+  // its source at press time and applies the edit at release, so it cannot read
+  // "whatever is selected now" (editor/TextDragDrop.h).
+  std::string TextInRange(const SelectionRange& range) const;
   // VSCode-style multi-caret copy: each caret's selection text joined by '\n' in
   // caret position order. Returns nullopt unless there are multiple carets and
   // every caret has a non-empty selection (the Ctrl-D case) — callers then fall
@@ -814,7 +818,6 @@ class TextViewport {
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
   // Extract the document text spanned by a normalized (start <= end) range.
-  std::string TextInRange(const SelectionRange& range) const;
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
                       CoalesceHint hint = CoalesceHint{});
   // Wrap `norm` (normalized, validated) by prepending `open` to its first line at

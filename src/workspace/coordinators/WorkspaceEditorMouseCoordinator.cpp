@@ -13,6 +13,7 @@
 #include "editor/PluginSurfaceStore.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
+#include "editor/TextDragDrop.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/coordinators/SelectionGranularity.h"
 #include "workspace/ListSelection.h"
@@ -130,6 +131,18 @@ bool SettingOn(const std::function<std::optional<std::string>(std::string_view)>
     return false;
   }
   return SettingFlagEnabled(get_setting_value(id));
+}
+
+// Same, for a setting whose registered default is ON: an unbound getter and an
+// unset value both have to read as enabled, or the feature is off wherever the
+// host has not wired settings (and in every test that does not set it).
+bool SettingOnByDefault(
+    const std::function<std::optional<std::string>(std::string_view)>& get_setting_value,
+    std::string_view id) {
+  if (!get_setting_value) {
+    return true;
+  }
+  return SettingFlagEnabled(get_setting_value(id), /*default_value=*/true);
 }
 
 // Resolve the gap-aware visible-row offset for a pointer at screen-y `y`. When an
@@ -469,6 +482,40 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       event.button.button == SDL_BUTTON_LEFT &&
       (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0;
   interaction_state_.editor_box_selecting = false;
+  interaction_state_.text_drag = InteractionState::TextDragState::None;
+  interaction_state_.text_drag_has_drop = false;
+
+  // A plain single press INSIDE an existing selection commits to nothing yet: it
+  // is either a click that collapses the caret there (what it has always done)
+  // or the start of a drag that MOVES the selected text (VS Code's
+  // editor.dragAndDrop). Which one it is only becomes knowable once the pointer
+  // moves — see HandleSelectionMotion's threshold (TD-2026-08-13-204).
+  if (plain_left_click && event.button.clicks == 1 && !viewport->has_multiple_carets() &&
+      SettingOnByDefault(operations_.get_setting_value, "editor.drag_and_drop")) {
+    if (const auto selection = viewport->selection_range();
+        selection.has_value() &&
+        editor::text_drag_drop::PositionWithin(*selection,
+                                               editor::TextPosition{hit.line, hit.column})) {
+      const editor::SelectionRange source = editor::TextViewport::NormalizeRange(*selection);
+      interaction_state_.text_drag = InteractionState::TextDragState::Pending;
+      interaction_state_.text_drag_press_x = event.button.x;
+      interaction_state_.text_drag_press_y = event.button.y;
+      interaction_state_.text_drag_press_line = hit.line;
+      interaction_state_.text_drag_press_column = hit.column;
+      interaction_state_.text_drag_source_start_line = source.start.line;
+      interaction_state_.text_drag_source_start_column = source.start.column;
+      interaction_state_.text_drag_source_end_line = source.end.line;
+      interaction_state_.text_drag_source_end_column = source.end.column;
+      // The caret is deliberately NOT moved and the selection deliberately NOT
+      // cleared: both are what a plain click would do, and the release path does
+      // exactly that if the gesture turns out to have been a click.
+      interaction_state_.mouse_selecting = true;
+      operations_.reset_caret_blink();
+      state_.surface.focus = FocusTarget::Editor;
+      return true;
+    }
+  }
+
   if (plain_left_click && viewport->has_multiple_carets()) {
     viewport->ClearSecondaryCarets();
   }
@@ -633,6 +680,29 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       std::max(0, visual_column - static_cast<int>(viewport->horizontal_scroll()));
   const editor::LogicalPosition hit = viewport->LogicalPositionForVisualHit(visual_row, hit_column);
 
+  if (interaction_state_.text_drag != InteractionState::TextDragState::None) {
+    // Threshold first: a press-and-release with a pixel of jitter is still a
+    // click, and must collapse the caret rather than move the text.
+    if (interaction_state_.text_drag == InteractionState::TextDragState::Pending) {
+      const float dx = static_cast<float>(event.motion.x) - interaction_state_.text_drag_press_x;
+      const float dy = static_cast<float>(event.motion.y) - interaction_state_.text_drag_press_y;
+      constexpr float kTextDragThresholdPx = 4.0f;
+      if (dx * dx + dy * dy < kTextDragThresholdPx * kTextDragThresholdPx) {
+        return true;  // still undecided; the selection stays exactly as it was
+      }
+      interaction_state_.text_drag = InteractionState::TextDragState::Dragging;
+    }
+    // The drop point is where the text would land. Recorded rather than applied:
+    // nothing is edited until the button comes up.
+    interaction_state_.text_drag_drop_line = hit.line;
+    interaction_state_.text_drag_drop_column = hit.column;
+    interaction_state_.text_drag_has_drop = true;
+    operations_.reset_caret_blink();
+    operations_.request_focused_editor_redraw();
+    state_.surface.focus = FocusTarget::Editor;
+    return true;
+  }
+
   if (selection_granularity::DragIsGranular(interaction_state_) &&
       !interaction_state_.editor_box_selecting) {
     selection_granularity::ExtendToPointer(interaction_state_, *viewport,
@@ -651,6 +721,69 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   operations_.reset_caret_blink();
   operations_.request_focused_editor_redraw();
   state_.surface.focus = FocusTarget::Editor;
+  return true;
+}
+
+bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
+  // Read the whole gesture out before disarming it: the drop flag is cleared
+  // here, and reading it after the clear is how this returned "no drop" for every
+  // drag that actually had one.
+  const InteractionState::TextDragState state = interaction_state_.text_drag;
+  const bool has_drop = interaction_state_.text_drag_has_drop;
+  interaction_state_.text_drag = InteractionState::TextDragState::None;
+  interaction_state_.text_drag_has_drop = false;
+  if (state == InteractionState::TextDragState::None) {
+    return false;
+  }
+
+  editor::TextViewport* viewport = operations_.active_editor_viewport();
+  if (viewport == nullptr) {
+    return false;
+  }
+  const editor::SelectionRange source{
+      editor::TextPosition{interaction_state_.text_drag_source_start_line,
+                           interaction_state_.text_drag_source_start_column},
+      editor::TextPosition{interaction_state_.text_drag_source_end_line,
+                           interaction_state_.text_drag_source_end_column}};
+
+  if (state == InteractionState::TextDragState::Pending) {
+    // Never passed the threshold: this was a click inside the selection, so do
+    // what a click does — collapse the caret where it landed. Deferring it to
+    // here is the whole point of the Pending state; doing it at press would have
+    // destroyed the selection the drag was about to move.
+    viewport->JumpCursorTo(interaction_state_.text_drag_press_line,
+                           interaction_state_.text_drag_press_column);
+    operations_.reset_caret_blink();
+    operations_.request_focused_editor_redraw();
+    return true;
+  }
+
+  if (!has_drop) {
+    return true;
+  }
+  const editor::TextPosition drop{interaction_state_.text_drag_drop_line,
+                                  interaction_state_.text_drag_drop_column};
+  const bool was_dirty = viewport->dirty();
+  const std::size_t cursor_before_line = viewport->cursor_line();
+  const auto moved = editor::text_drag_drop::Apply(*viewport, source, drop, copy);
+  if (!moved.has_value()) {
+    // Dropped onto itself: leave the selection exactly as it was, as VS Code does.
+    operations_.request_focused_editor_redraw();
+    return true;
+  }
+  // The moved text stays selected, so the gesture can be repeated or undone
+  // against something visible.
+  viewport->JumpCursorTo(moved->start.line, moved->start.column);
+  viewport->MoveCursorTo(moved->end.line, moved->end.column, /*extend_selection=*/true);
+
+  operations_.reset_caret_blink();
+  operations_.request_active_editable_last_change_redraw();
+  if (viewport->dirty() != was_dirty) {
+    operations_.request_active_editable_blame_neighborhood_redraw(cursor_before_line,
+                                                                  viewport->cursor_line());
+    operations_.request_tab_strip_redraw();
+  }
+  operations_.request_focused_editor_redraw();
   return true;
 }
 

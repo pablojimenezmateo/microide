@@ -654,6 +654,98 @@ void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
          "a released drag must not keep autoscrolling");
 }
 
+// TD-2026-08-13-204: pressing INSIDE a selection and dragging moves the selected
+// text (VS Code's editor.dragAndDrop). The gesture is three-state on purpose —
+// the press commits to neither reading until the pointer travels, so a plain
+// click inside a selection still collapses the caret as it always has.
+void TestWorkspaceShellEditorDragSelectionMovesText() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "drag.txt";
+  WriteFile(source, "alpha bravo charlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float row_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float char_width = std::max(1.0f, WorkspaceShellTestAccess::TextCharWidth(shell));
+  const auto column_x = [&](std::size_t column) {
+    return metrics.text_x + static_cast<float>(column) * char_width + 1.0f;
+  };
+
+  // Select "alpha " (columns 0..6), then press inside it and drag to the end.
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+  Expect(SendMouseDown(shell, column_x(3), row_y, SDL_BUTTON_LEFT),
+         "pressing inside the selection should be handled");
+  Expect(viewport.selection_range().has_value(),
+         "the press must NOT destroy the selection it may be about to move");
+
+  Expect(SendMouseMotion(shell, column_x(19), row_y, SDL_BUTTON_LMASK),
+         "dragging past the threshold should be handled");
+  Expect(viewport.selection_range().has_value() &&
+             viewport.selection_range()->end.column == 6,
+         "a drag in flight leaves the source selection alone until release");
+  Expect(SendMouseUp(shell, column_x(19), row_y, SDL_BUTTON_LEFT), "release should be handled");
+
+  Expect(viewport.lines().LineView(0) == "bravo charliealpha ",
+         "the dragged selection moves to the drop point");
+  const auto moved_selection = viewport.selection_range();
+  Expect(moved_selection.has_value() && moved_selection->start.column == 13,
+         "the moved text stays selected where it landed");
+
+  // One undo entry, not two: the delete and the insert are one edit.
+  Expect(viewport.Undo(), "the move is undoable");
+  Expect(viewport.lines().LineView(0) == "alpha bravo charlie",
+         "a single undo puts the text back where it was");
+}
+
+// The other half of the three-state gesture: a press inside a selection that does
+// NOT travel is still a click, and collapses the caret where it landed.
+void TestWorkspaceShellClickInsideSelectionStillCollapsesCaret() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "click.txt";
+  WriteFile(source, "alpha bravo charlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float row_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float char_width = std::max(1.0f, WorkspaceShellTestAccess::TextCharWidth(shell));
+  const float press_x = metrics.text_x + 3.0f * char_width + 1.0f;
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+  Expect(SendMouseDown(shell, press_x, row_y, SDL_BUTTON_LEFT), "the press is handled");
+  // A pixel of jitter is still a click, not a drag.
+  Expect(SendMouseMotion(shell, press_x + 1.0f, row_y, SDL_BUTTON_LMASK),
+         "sub-threshold motion is handled");
+  Expect(viewport.selection_range().has_value(),
+         "sub-threshold motion leaves the selection alone rather than moving text");
+  Expect(SendMouseUp(shell, press_x + 1.0f, row_y, SDL_BUTTON_LEFT), "release is handled");
+
+  Expect(viewport.lines().LineView(0) == "alpha bravo charlie",
+         "a click inside a selection edits nothing");
+  Expect(!viewport.selection_range().has_value(),
+         "a click inside a selection collapses it, as it always has");
+  Expect(viewport.cursor_column() == 3, "the caret lands where the click was");
+}
+
 // The other way a drag can end without a button-up: the window loses focus while
 // the button is down (released over another window, or the compositor takes the
 // grab). The autoscroll is the one loop here that runs with no input behind it,
@@ -750,6 +842,17 @@ void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
 
   // A plain single-click drag stays character-granular -- the granularity must
   // not leak from the previous gesture.
+  //
+  // Collapse the line selection first. Since TD-2026-08-13-204 a press INSIDE a
+  // selection starts a drag-and-drop of it rather than a new selection, and the
+  // triple-click drag above left the whole document selected — so without this
+  // the "single-click drag" below would be a text move, and this test would be
+  // asserting granularity about a gesture that no longer happens here.
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "a click inside the selection should be handled");
+  Expect(SendMouseUp(shell, column_x(2), row0, SDL_BUTTON_LEFT),
+         "releasing without moving collapses the selection to a caret");
+
   Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/1),
          "a single click should be handled");
   Expect(SendMouseMotion(shell, column_x(4), row0, SDL_BUTTON_LMASK),
@@ -1006,6 +1109,10 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCursorChangeRequestsPresent);
   AddTest(tests, "WorkspaceShell/EditorDragSelectionSurvivesLeavingTheEditorArea",
           TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea);
+  AddTest(tests, "WorkspaceShell/EditorDragSelectionMovesText",
+          TestWorkspaceShellEditorDragSelectionMovesText);
+  AddTest(tests, "WorkspaceShell/ClickInsideSelectionStillCollapsesCaret",
+          TestWorkspaceShellClickInsideSelectionStillCollapsesCaret);
   AddTest(tests, "WorkspaceShell/EditorDragAutoscrollsPastTheEdge",
           TestWorkspaceShellEditorDragAutoscrollsPastTheEdge);
   AddTest(tests, "WorkspaceShell/EditorDragAutoscrollStopsOnFocusLoss",

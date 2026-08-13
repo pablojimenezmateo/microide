@@ -255,6 +255,7 @@ set(MICROIDE_CORE_SOURCES
   src/editor/SnippetEngine.cpp
   src/editor/SyntaxDefinitionLoader.cpp
   src/editor/SyntaxHighlighter.cpp
+  src/editor/TextDragDrop.cpp
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
   src/editor/TextBuffer.cpp
@@ -1070,6 +1071,7 @@ add_executable(microide_tests
   tests/PersistedStateRecordTests.cpp
   tests/DebugPaneTests.cpp
   tests/TabStripServiceTests.cpp
+  tests/TextDragDropTests.cpp
   tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp
@@ -1505,6 +1507,7 @@ add_executable(microide_diff_bench
   src/editor/WelcomeView.cpp
   src/editor/RuntimeSyntaxRegistry.cpp
   src/editor/SyntaxHighlighter.cpp
+  src/editor/TextDragDrop.cpp
   src/editor/TextLayout.cpp
   src/editor/SaveNormalization.cpp
   src/editor/TextBuffer.cpp

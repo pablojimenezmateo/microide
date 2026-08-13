@@ -601,6 +601,17 @@ std::span<const SettingSpec> BuiltinSettingSpecs() {
           .group = "Editor → View",
       },
       SettingSpec{
+          .id = "editor.drag_and_drop",
+          .label = "Drag And Drop Selected Text",
+          .description = "Drag a selection to move it; hold Ctrl while dropping to copy.",
+          .type = SettingType::Bool,
+          .scope = SettingScope::User,
+          .default_bool = true,
+          .default_string = {},
+          .enum_values = {},
+          .group = "Editor → Essentials → Selection",
+      },
+      SettingSpec{
           .id = "editor.view.render_whitespace",
           .label = "Render Whitespace",
           .description = "Render whitespace characters as low-contrast glyphs.",

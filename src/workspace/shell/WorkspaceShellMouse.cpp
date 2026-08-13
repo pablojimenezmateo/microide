@@ -209,6 +209,8 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   context_.interaction_state.mouse_selecting = false;
+  context_.interaction_state.text_drag = InteractionState::TextDragState::None;
+  context_.interaction_state.text_drag_has_drop = false;
   selection_autoscroll::Disarm(context_.interaction_state);
 
   if (HandleSettingsOverlayButtonDown(event, layout)) {
@@ -708,12 +710,20 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (context_.interaction_state.drag_target != DragTarget::None) {
     ClearDragState();
     context_.interaction_state.mouse_selecting = false;
+    context_.interaction_state.text_drag = InteractionState::TextDragState::None;
+    context_.interaction_state.text_drag_has_drop = false;
     selection_autoscroll::Disarm(context_.interaction_state);
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
     EnsureRedraw([this]() { RequestWindowRedraw(); });
     return true;
   }
   const bool was_selecting = context_.interaction_state.mouse_selecting;
+  // A selection drag-and-drop resolves here, BEFORE mouse_selecting is cleared:
+  // the release is where a press inside a selection finally becomes either a
+  // move or the click it deferred (TD-2026-08-13-204). Ctrl at release copies
+  // instead of moving, as in VS Code.
+  const bool finished_text_drag = MakeEditorMouseCoordinator().FinishTextDrag(
+      (SDL_GetModState() & SDL_KMOD_CTRL) != 0);
   context_.interaction_state.mouse_selecting = false;
   context_.interaction_state.editor_box_selecting = false;
   selection_autoscroll::Disarm(context_.interaction_state);
@@ -721,7 +731,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
     SyncPrimarySelectionWithActiveEditor();
     EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });
   }
-  return was_selecting;
+  return was_selecting || finished_text_drag;
 }
 
 std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(float x,
