@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "platform/Filesystem.h"
+#include "util/Fnv1a.h"
 #include "util/TextFileIO.h"
 
 #if MICROIDE_HAS_LUA_PLUGINS
@@ -462,16 +463,7 @@ std::vector<std::filesystem::path> DiscoverDefinitionFiles(
 }
 
 std::uint64_t Fnv1aAppend(std::uint64_t hash, std::string_view text) {
-  constexpr std::uint64_t kOffsetBasis = 1469598103934665603ULL;
-  constexpr std::uint64_t kPrime = 1099511628211ULL;
-  if (hash == 0) {
-    hash = kOffsetBasis;
-  }
-  for (const unsigned char byte : text) {
-    hash ^= static_cast<std::uint64_t>(byte);
-    hash *= kPrime;
-  }
-  return hash;
+  return util::Fnv1aBytes(hash == 0 ? util::kFnv1aOffsetBasis : hash, text);
 }
 
 #endif

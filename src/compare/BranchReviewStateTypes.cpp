@@ -3,6 +3,8 @@
 #include <cassert>
 #include <chrono>
 
+#include "util/Fnv1a.h"
+
 namespace microide::compare {
 
 namespace {
@@ -11,21 +13,14 @@ namespace {
 // std::ostringstream and hash the resulting string — several allocations plus a
 // full copy of the hunk's text, per hunk, on a path that resolves every hunk of a
 // file on the compare tab's derived-state refresh.
-constexpr std::uint64_t kFnvOffsetBasis = 1469598103934665603ULL;
-constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+constexpr std::uint64_t kFnvOffsetBasis = util::kFnv1aOffsetBasis;
 
 void HashBytes(std::uint64_t* hash, std::string_view bytes) {
-  for (const char byte : bytes) {
-    *hash ^= static_cast<std::uint64_t>(static_cast<unsigned char>(byte));
-    *hash *= kFnvPrime;
-  }
+  *hash = util::Fnv1aBytes(*hash, bytes);
 }
 
 void HashInteger(std::uint64_t* hash, std::uint64_t value) {
-  for (int shift = 0; shift < 64; shift += 8) {
-    *hash ^= (value >> shift) & 0xFFULL;
-    *hash *= kFnvPrime;
-  }
+  *hash = util::Fnv1aValue(*hash, value);
 }
 
 void AccumulateHunkLineRanges(const CompareModel& model,

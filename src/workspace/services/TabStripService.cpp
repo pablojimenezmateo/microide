@@ -8,6 +8,7 @@
 
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "util/Fnv1a.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -31,24 +32,14 @@ float OverflowStripReserveForHiddenCount(std::size_t hidden_count) {
 // hashing (not a monotonic revision) keeps the cache correct without threading a
 // bump through every terminal/output/plugin mutation site; a same-state repaint
 // hits, any label/id/count/order change misses.
-constexpr std::uint64_t kFnvOffset = 1469598103934665603ULL;
-constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+constexpr std::uint64_t kFnvOffset = util::kFnv1aOffsetBasis;
 
 std::uint64_t HashMix(std::uint64_t hash, std::uint64_t value) {
-  for (int shift = 0; shift < 64; shift += 8) {
-    hash ^= (value >> shift) & 0xFFULL;
-    hash *= kFnvPrime;
-  }
-  return hash;
+  return util::Fnv1aValue(hash, value);
 }
 
 std::uint64_t HashMix(std::uint64_t hash, std::string_view text) {
-  hash = HashMix(hash, text.size());
-  for (const char ch : text) {
-    hash ^= static_cast<unsigned char>(ch);
-    hash *= kFnvPrime;
-  }
-  return hash;
+  return util::Fnv1aBytes(util::Fnv1aValue(hash, text.size()), text);
 }
 
 }  // namespace

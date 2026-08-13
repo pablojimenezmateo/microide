@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/FlatDedupSet.h"
+#include "util/Fnv1a.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/SaturatingMath.h"
@@ -930,13 +931,12 @@ bool LinesEqualIgnoringWhitespace(std::string_view left, std::string_view right)
 // which is what makes it agree with LinesEqualIgnoringWhitespace.
 struct IgnoreWhitespaceLineHash {
   std::size_t operator()(std::string_view line) const {
-    std::uint64_t hash = 1469598103934665603ULL;  // FNV-1a
+    std::uint64_t hash = util::kFnv1aOffsetBasis;
     for (const char c : line) {
       if (util::IsAsciiSpace(static_cast<unsigned char>(c)) != 0) {
         continue;
       }
-      hash ^= static_cast<unsigned char>(c);
-      hash *= 1099511628211ULL;
+      hash = util::Fnv1aByte(hash, static_cast<unsigned char>(c));
     }
     return static_cast<std::size_t>(hash);
   }
