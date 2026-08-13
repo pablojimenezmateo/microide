@@ -888,12 +888,7 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
   if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
     editor_tab->folding_model->MarkDirty();
   }
-  if (auto* compare_tab = operations_.active_compare_tab();
-      compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-    util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::RefreshCompare");
-    operations_.refresh_compare_tab_derived_state(*compare_tab);
-    operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-  }
+  RefreshActiveCompareAfterViewportEdit();
   if (viewport_is_merge_result) {
     util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::UpdateMergeTracking");
     operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
@@ -1002,11 +997,7 @@ void WorkspaceActionContext::CutSelection() {
       } else {
         viewport->DeleteCurrentLine();
       }
-      if (auto* compare_tab = operations_.active_compare_tab();
-          compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-        operations_.refresh_compare_tab_derived_state(*compare_tab);
-        operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-      }
+      RefreshActiveCompareAfterViewportEdit();
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
         operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
@@ -1069,11 +1060,7 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     } else {
       viewport->InsertText(text);
     }
-    if (auto* compare_tab = operations_.active_compare_tab();
-        compare_tab != nullptr && viewport == &compare_tab->right_viewport) {
-      operations_.refresh_compare_tab_derived_state(*compare_tab);
-      operations_.sync_compare_selection_from_viewport(*compare_tab, true);
-    }
+    RefreshActiveCompareAfterViewportEdit();
     if (auto* merge_tab = operations_.active_merge_tab();
         merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
       operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
@@ -1206,11 +1193,35 @@ editor::FoldingModel* WorkspaceActionContext::EnsureActiveFoldingModelFresh() {
              : nullptr;
 }
 
+void WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit() {
+  auto* compare_tab = operations_.active_compare_tab();
+  if (compare_tab == nullptr || !operations_.refresh_compare_tab_derived_state ||
+      !operations_.sync_compare_selection_from_viewport) {
+    return;
+  }
+  util::PerformanceTrace::Scope scope("WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit");
+  operations_.refresh_compare_tab_derived_state(*compare_tab);
+  operations_.sync_compare_selection_from_viewport(*compare_tab, /*reveal_selection=*/true);
+}
+
 void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
   if (last_change) {
     if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
       editor_tab->folding_model->MarkDirty();
     }
+    // The active editable viewport is the compare tab's right pane when a compare
+    // tab is focused, and the compare surface paints its RIGHT TEXT from the diff
+    // model -- not from the viewport. Without this refresh every edit action that
+    // is not cut / paste / undo (move-line, copy-line, insert-line, comment
+    // toggle, join, sort, format, snippet insert...) mutated the buffer and left
+    // the surface showing the pre-edit text until some unrelated event happened to
+    // refresh it. Three action sites had grown their own copy of this; they now
+    // route here, so a new edit action cannot forget it.
+    //
+    // The merge result pane's equivalent (UpdateMergeTrackingAfterViewportEdit)
+    // needs the selection and caret from BEFORE the edit, which this hook does not
+    // have, so it stays at the sites that can capture them.
+    RefreshActiveCompareAfterViewportEdit();
   }
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);

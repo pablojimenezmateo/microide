@@ -195,6 +195,10 @@ struct CompareTabState {
   std::size_t max_visual_columns = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
+  // On-screen row count the cached markers were scaled against. Soft wrap makes
+  // that a different number from the presentation-row count and moves it on every
+  // re-wrap (a divider drag, a window resize), so it is part of the key.
+  std::size_t scrollbar_marker_cache_rows = 0;
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
@@ -248,6 +252,12 @@ struct MergeTabState {
   DiffWrapLayout wrap_layout;
   std::optional<std::string> persisted_output_baseline;
   std::vector<MergeTrackedConflict> conflicts;
+  // `conflicts` with every line field projected into on-screen row space (see
+  // workspace/MergeWrapRows.h). Derived cache, warmed from const geometry paths;
+  // unused (and empty) while wrap is off, where the conflicts already ARE rows.
+  mutable std::vector<MergeTrackedConflict> visual_conflicts;
+  mutable std::uint64_t visual_conflicts_key = 0;
+  mutable bool visual_conflicts_valid = false;
   std::optional<MergeHoverState> hover_state;
   std::size_t selected_hunk = 0;
   int scroll_row = 0;
@@ -256,6 +266,8 @@ struct MergeTabState {
   std::uint64_t model_revision = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
+  // See the compare tab's field of the same name.
+  std::size_t scrollbar_marker_cache_rows = 0;
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;

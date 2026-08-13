@@ -1977,6 +1977,171 @@ void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
   Expect(SendMouseUp(shell, x, y, SDL_BUTTON_LEFT), "release handled");
 }
 
+
+// TD-2026-08-13-200: `editor.wrap` used to be a dead control on the compare and
+// merge surfaces -- the flag never reached their viewports, and everything on
+// them assumed one document line occupies exactly one screen row. These pin the
+// row model that replaced that assumption.
+void TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::string long_left = "int alpha() { return " + std::string(600, 'a') + "; }";
+  const std::string long_right = "int beta() { return " + std::string(900, 'b') + "; }";
+  WriteFile(source, long_left + "\nshort\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare wrap fixture", "compare wrap fixture");
+  WriteFile(source, long_right + "\nshort\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare wrap fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const std::size_t presentation_rows =
+      WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
+  Expect(!WorkspaceShellTestAccess::ActiveCompareWrapActive(shell),
+         "wrap is off by default on a compare tab");
+  Expect(WorkspaceShellTestAccess::ActiveCompareVisualRowCount(shell) == presentation_rows,
+         "with wrap off an on-screen row IS a presentation row");
+  Expect(!compare.right_viewport.soft_wrap(),
+         "the compare right pane starts unwrapped");
+
+  // The setting has to reach the compare tab's own viewport: the all-tabs walk
+  // used to skip every tab that was not a plain editor tab.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word"),
+         "editor.wrap should be settable");
+  Expect(compare.right_viewport.soft_wrap(),
+         "turning Word Wrap on must reach the compare tab's editable pane");
+
+  const std::size_t wrapped_rows = WorkspaceShellTestAccess::ActiveCompareVisualRowCount(shell);
+  Expect(WorkspaceShellTestAccess::ActiveCompareWrapActive(shell),
+         "the compare wrap table should be live once the setting is on");
+  Expect(wrapped_rows > presentation_rows,
+         "wrapping a 900-column line must add on-screen rows");
+
+  // Alignment: the presentation row holding the two long lines occupies the SAME
+  // rows on both sides, and every on-screen row maps back to exactly one
+  // presentation row in order.
+  std::size_t previous = 0;
+  for (std::size_t visual = 0; visual < wrapped_rows; ++visual) {
+    const std::size_t presentation =
+        WorkspaceShellTestAccess::ActiveComparePresentationRowForVisualRow(shell, visual);
+    Expect(presentation >= previous, "on-screen rows must map to presentation rows in order");
+    Expect(presentation < presentation_rows, "a mapped presentation row must be in range");
+    previous = presentation;
+  }
+  for (std::size_t presentation = 0; presentation < presentation_rows; ++presentation) {
+    const std::size_t first =
+        WorkspaceShellTestAccess::ActiveCompareVisualRowForPresentationRow(shell, presentation);
+    Expect(WorkspaceShellTestAccess::ActiveComparePresentationRowForVisualRow(shell, first) ==
+               presentation,
+           "a presentation row's first on-screen row must map back to it");
+  }
+
+  // Horizontal scrolling is gone while wrapped, exactly as in the editor.
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(!surface.show_horizontal,
+         "a wrapped compare surface must not offer a horizontal scrollbar");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "off"),
+         "editor.wrap should be settable back off");
+  Expect(!compare.right_viewport.soft_wrap(), "turning Word Wrap off must reach the compare pane");
+  Expect(WorkspaceShellTestAccess::ActiveCompareVisualRowCount(shell) == presentation_rows,
+         "turning wrap off must collapse the row table back to the identity");
+}
+
+void TestWorkspaceShellMergeWordWrapExpandsRows() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  const std::string long_line(900, 'x');
+  WriteFile(base, "top\nbase\nbottom\n");
+  WriteFile(incoming, "top\n" + long_line + "\nbottom\n");
+  WriteFile(current, "top\ncurrent\nbottom\n");
+  WriteFile(output, "top\ncurrent\nbottom\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for the wrap fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  const std::size_t unwrapped_rows = WorkspaceShellTestAccess::ActiveMergeVisualRowCount(shell);
+  Expect(!WorkspaceShellTestAccess::ActiveMergeWrapActive(shell),
+         "wrap is off by default on a merge tab");
+  Expect(!merge.result_viewport.soft_wrap(), "the merge result pane starts unwrapped");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word"),
+         "editor.wrap should be settable");
+  Expect(merge.result_viewport.soft_wrap(),
+         "turning Word Wrap on must reach the merge tab's result pane");
+  Expect(WorkspaceShellTestAccess::ActiveMergeWrapActive(shell),
+         "the merge source-pane wrap table should be live once the setting is on");
+  Expect(WorkspaceShellTestAccess::ActiveMergeVisualRowCount(shell) > unwrapped_rows,
+         "wrapping a 900-column incoming line must add on-screen rows");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  Expect(!surface.show_horizontal,
+         "a wrapped merge surface must not offer a horizontal scrollbar");
+}
+
+// An edit action (not typing, not paste, not undo) on a compare tab's right pane
+// must rebuild the diff model: the surface paints its right text FROM that model,
+// so an action that only mutated the buffer left the pre-edit text on screen.
+void TestWorkspaceShellCompareEditActionRefreshesDiffModel() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbravo\ncharlie\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare action fixture", "compare action fixture");
+  WriteFile(source, "alpha\nbravo\ncharlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare action fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable, "the working-tree compare pane should be editable");
+  compare.right_viewport.MoveCursorTo(0, 0);
+
+  // What the surface would paint down the right pane, in order: the diff model's
+  // right side, NOT the viewport. The two must agree, or the edit is invisible.
+  const auto painted_right_side = [&compare]() {
+    std::string joined;
+    for (const auto& row : compare.model.rows) {
+      if (row.right_line > 0) {
+        joined += row.right_text;
+        joined += '\n';
+      }
+    }
+    return joined;
+  };
+  const std::string initial_right_side = painted_right_side();
+  Expect(initial_right_side.rfind("alpha\nbravo\ncharlie", 0) == 0,
+         "the diff model should start out agreeing with the working-tree buffer");
+
+  // MoveLineDown goes through the shared action layer (ActiveEditableViewport),
+  // which reaches this pane -- the same layer that serves the editor surface.
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::MoveLineDown, {}),
+         "MoveLineDown should be dispatched to the compare tab's editable pane");
+  Expect(compare.right_viewport.lines().LineView(0) == "bravo",
+         "MoveLineDown should have edited the compare pane's buffer");
+  Expect(painted_right_side().rfind("bravo\nalpha\ncharlie", 0) == 0,
+         "the diff model must be rebuilt after an action-driven edit, not left stale");
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
           TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
@@ -1986,6 +2151,12 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
+  AddTest(tests, "WorkspaceShell/CompareWordWrapExpandsRowsAndKeepsPanesAligned",
+          TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned);
+  AddTest(tests, "WorkspaceShell/MergeWordWrapExpandsRows",
+          TestWorkspaceShellMergeWordWrapExpandsRows);
+  AddTest(tests, "WorkspaceShell/CompareEditActionRefreshesDiffModel",
+          TestWorkspaceShellCompareEditActionRefreshesDiffModel);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",
           TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",

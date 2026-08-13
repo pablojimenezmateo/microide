@@ -239,6 +239,34 @@
   static std::size_t ActiveComparePresentationRowCount(WorkspaceShell& shell) {
     return CompareTabPresentationRowCount(ActiveCompare(shell));
   }
+  // Wrap accessors: the surface layout is what warms the wrap table, so ask for it
+  // first -- otherwise these report the pre-layout (identity) answer.
+  static std::size_t ActiveCompareVisualRowCount(WorkspaceShell& shell) {
+    (void)ActiveCompareSurfaceLayout(shell);
+    return CompareTabVisualRowCount(ActiveCompare(shell));
+  }
+  static bool ActiveCompareWrapActive(WorkspaceShell& shell) {
+    (void)ActiveCompareSurfaceLayout(shell);
+    return ActiveCompare(shell).wrap_layout.active();
+  }
+  static std::size_t ActiveCompareVisualRowForPresentationRow(WorkspaceShell& shell,
+                                                              std::size_t presentation_row) {
+    (void)ActiveCompareSurfaceLayout(shell);
+    return ComparePresentationRowToVisualRow(ActiveCompare(shell), presentation_row);
+  }
+  static std::size_t ActiveComparePresentationRowForVisualRow(WorkspaceShell& shell,
+                                                              std::size_t visual_row) {
+    (void)ActiveCompareSurfaceLayout(shell);
+    return CompareVisualRowToPresentationRow(ActiveCompare(shell), visual_row);
+  }
+  static std::size_t ActiveMergeVisualRowCount(WorkspaceShell& shell) {
+    (void)ActiveMergeSurfaceLayout(shell);
+    return MergeTotalVisualRowCount(ActiveMerge(shell));
+  }
+  static bool ActiveMergeWrapActive(WorkspaceShell& shell) {
+    (void)ActiveMergeSurfaceLayout(shell);
+    return ActiveMerge(shell).wrap_layout.active();
+  }
   static compare::ComparePresentationRowKind ActiveComparePresentationRowKind(
       WorkspaceShell& shell,
       std::size_t presentation_row) {
@@ -284,7 +312,9 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     auto& compare = ActiveCompare(shell);
     const auto surface = shell.ComputeCompareSurfaceLayout(layout.editor_surface, compare);
-    const int visible_row = static_cast<int>(presentation_row) - compare.scroll_row;
+    const int visible_row =
+        static_cast<int>(ComparePresentationRowToVisualRow(compare, presentation_row)) -
+        compare.scroll_row;
     if (visible_row < 0 || visible_row >= surface.visible_rows) {
       return {};
     }

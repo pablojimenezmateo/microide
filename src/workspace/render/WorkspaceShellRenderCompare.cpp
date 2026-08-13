@@ -60,11 +60,10 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
                                   CompareTabState& compare_tab) {
   // The wrapped row count is part of what the markers are scaled against, so it is
   // part of the key: a divider drag that re-wraps must not keep stale marker rows.
-  const std::uint64_t marker_revision =
-      compare_tab.presentation_revision ^
-      (static_cast<std::uint64_t>(CompareTabVisualRowCount(compare_tab)) << 32);
+  const std::size_t marker_rows = CompareTabVisualRowCount(compare_tab);
   if (compare_tab.scrollbar_marker_cache_valid &&
-      compare_tab.scrollbar_marker_cache_revision == marker_revision &&
+      compare_tab.scrollbar_marker_cache_revision == compare_tab.presentation_revision &&
+      compare_tab.scrollbar_marker_cache_rows == marker_rows &&
       compare_tab.scrollbar_marker_cache_theme_token == theme_token &&
       RectsEqual(compare_tab.scrollbar_marker_cache_track, inner_lane)) {
     return;
@@ -87,9 +86,10 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
         .priority = 0});
   }
   compare_tab.scrollbar_marker_cache =
-      overview::BuildMarkers(inner_lane, CompareTabVisualRowCount(compare_tab), inputs);
+      overview::BuildMarkers(inner_lane, marker_rows, inputs);
   compare_tab.scrollbar_marker_cache_track = inner_lane;
-  compare_tab.scrollbar_marker_cache_revision = marker_revision;
+  compare_tab.scrollbar_marker_cache_revision = compare_tab.presentation_revision;
+  compare_tab.scrollbar_marker_cache_rows = marker_rows;
   compare_tab.scrollbar_marker_cache_theme_token = theme_token;
   compare_tab.scrollbar_marker_cache_valid = true;
 }

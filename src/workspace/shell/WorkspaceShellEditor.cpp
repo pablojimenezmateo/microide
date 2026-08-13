@@ -123,10 +123,34 @@ void WorkspaceShell::ApplyEditorPreferencesToAllTabs(bool refresh_language_contr
   for (auto& group : context_.current_project_state.editor_groups) {
     ApplyEditorPreferences(group.welcome_surface.viewport, refresh_language_contracts, settings);
     for (auto& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-        continue;
+      // Every EDITABLE viewport in the workspace, not just the plain editor tabs.
+      // A compare tab's right pane and a merge tab's result pane are the same
+      // `editor::TextViewport` reached by the same actions and the same key
+      // handling, so a walk that skipped them left them on whatever preferences
+      // happened to be current when the tab opened: tab size, indent width, soft
+      // tabs, the two save-normalization flags, the save line ending and the
+      // language contract all silently stopped following the settings there, and
+      // Word Wrap looked like it did nothing at all (TD-2026-08-13-200).
+      switch (tab.kind) {
+        case TabEntry::Kind::Editor:
+          if (tab.editor_state.has_value()) {
+            ApplyEditorPreferences(tab.editor_state->viewport, refresh_language_contracts,
+                                   settings);
+          }
+          break;
+        case TabEntry::Kind::Compare:
+          if (tab.compare.has_value()) {
+            ApplyEditorPreferences(tab.compare->right_viewport, refresh_language_contracts,
+                                   settings);
+          }
+          break;
+        case TabEntry::Kind::Merge:
+          if (tab.merge.has_value()) {
+            ApplyEditorPreferences(tab.merge->result_viewport, refresh_language_contracts,
+                                   settings);
+          }
+          break;
       }
-      ApplyEditorPreferences(tab.editor_state->viewport, refresh_language_contracts, settings);
     }
   }
 }
