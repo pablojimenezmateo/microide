@@ -934,6 +934,47 @@ void TestWorkspaceShellEditorLineOpenChordsReachTheEditor() {
   Expect(copy_viewport.line_count() == before + 1, "shift+alt+up should copy the line up");
 }
 
+// A multi-caret set needs a keyboard way out, and a document-wide jump must not
+// leave carets a screenful behind the one that moved. Both are VS Code
+// behaviours this editor did not have: Esc fell through to "unhandled", and
+// Ctrl+Home moved only the primary.
+void TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "value one\nvalue two\nvalue three\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+  viewport.AddSecondaryCaret(1, 0);
+  viewport.AddSecondaryCaret(2, 0);
+  Expect(viewport.has_multiple_carets(), "the fixture should start with three carets");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Esc with secondary carets should be handled, not fall through");
+  Expect(!viewport.has_multiple_carets(), "Esc should collapse back to the primary caret");
+  // Esc removes cursors; it is not a deselect, and a second Esc has nothing to
+  // do here so it goes back to whatever else wants it.
+  Expect(!SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "a second Esc with one caret should not be claimed by the caret collapse");
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.AddSecondaryCaret(1, 0);
+  Expect(viewport.has_multiple_carets(), "two carets for the document-jump case");
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_CTRL), "ctrl+end should be handled");
+  Expect(!viewport.has_multiple_carets(),
+         "a jump to the end of the document should collapse to one caret");
+  Expect(viewport.cursor_line() == viewport.line_count() - 1,
+         "ctrl+end should still land on the last line");
+}
+
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/NotificationToastIsClickable",
           TestWorkspaceShellNotificationToastIsClickable);
@@ -975,6 +1016,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorCtrlArrowsAreWordGranular);
   AddTest(tests, "WorkspaceShell/EditorLineOpenChordsReachTheEditor",
           TestWorkspaceShellEditorLineOpenChordsReachTheEditor);
+  AddTest(tests, "WorkspaceShell/EditorMultiCaretCollapsesOnEscapeAndDocumentJump",
+          TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump);
 }
 
 }  // namespace microide::tests

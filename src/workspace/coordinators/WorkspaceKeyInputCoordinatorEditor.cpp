@@ -574,6 +574,18 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     }
     operations_.dismiss_inline_completion();
+    // Esc collapses a multi-caret set back to the primary caret (VS Code's
+    // `removeSecondaryCursors`). Without it the only way out of a Ctrl+D run was
+    // to click somewhere, and a stray caret left behind edits at a place the user
+    // has stopped looking at. Deliberately after the widget/snippet/completion
+    // arms, which are what Esc means while any of them is up, and deliberately
+    // NOT clearing the selection: Esc removes cursors, it does not deselect.
+    if (editable_viewport != nullptr && editable_viewport->has_multiple_carets()) {
+      editable_viewport->ClearSecondaryCarets();
+      operations_.reset_caret_blink();
+      operations_.request_focused_editor_redraw();
+      return true;
+    }
     return false;
   }
   if (event.key == SDLK_TAB && operations_.accept_inline_completion()) {
@@ -714,6 +726,10 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
+        // A jump to the other end of the DOCUMENT collapses to one caret, as in
+        // VS Code: MoveCursorTo leaves the secondary set where it was, which
+        // would strand carets a screenful away from the one that just moved.
+        viewport->ClearSecondaryCarets();
         viewport->MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
         viewport->MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
@@ -722,6 +738,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     case SDLK_END:
       if (modifiers & SDL_KMOD_CTRL) {
+        viewport->ClearSecondaryCarets();
         const std::size_t last_line = viewport->line_count() == 0 ? 0 : viewport->line_count() - 1;
         viewport->MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
                                (modifiers & SDL_KMOD_SHIFT) != 0);
