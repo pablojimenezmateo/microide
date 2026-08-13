@@ -337,6 +337,62 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-13-201 — the selection-drag fixes stop at the editor surface: compare and merge get the clamp but not the autoscroll or the granularity.
+
+`7e99a209` fixed the reported "selection stops when the pointer leaves the editor"
+on all three text surfaces, because the refusal was the same shape on each. The
+two follow-ups did not follow it across:
+
+- **autoscroll** (`fc7d99b9`) is editor-only. `selection_autoscroll::Arm` is
+  called from `EditorMouseCoordinator::HandleSelectionMotion`, and the step in
+  `HandleScheduledWake` resolves `ActiveEditorViewport()` behind an
+  `ActiveTabIsEditor()` gate. Drag past the bottom of a diff or a merge result
+  pane and the selection still pins to the last visible row.
+- **word/line drag granularity** (`dd8bd883`) is editor-only for the same reason:
+  the seed is recorded in `EditorMouseCoordinator::HandleButtonDown`, and compare
+  and merge run their own button-down paths.
+
+Neither is hard, but neither is a copy-paste either, which is why they are filed
+rather than rushed:
+
+- compare and merge scroll through `compare_tab->scroll_row` /
+  `merge_tab->result_viewport` + the sync helpers
+  (`sync_compare_viewport_scroll`, `compute_merge_scroll_layout`), not through a
+  bare `TextViewport::SetScrollLine`, so `selection_autoscroll::Step` needs a
+  scroll port rather than a viewport reference. That port is the useful shape
+  anyway — it is what would let the bottom panel's terminal selection autoscroll
+  too, which is a third surface with the same gap.
+- the granularity seed wants `WordRangeAt`/`LineRangeAt` against the pane's own
+  viewport, which compare has (`right_viewport`) and merge has
+  (`result_viewport`), so that half is close to mechanical once the seed lives
+  somewhere both button-down paths can write it.
+
+Do them together, behind one seam, rather than three times.
+
+### TD-2026-08-13-202 — nothing captures the pointer during a drag, so leaving the WINDOW is a platform accident rather than a decision.
+
+Considered while fixing the drag clamp and deliberately not done.
+
+Once the pointer leaves the window, SDL delivers motion to whoever is under it
+rather than to us — unless the platform's implicit pointer grab (X11 grabs on
+button press; Wayland's implicit grab behaves similarly) keeps them coming. So
+"drag off the window and keep selecting" currently works or does not by accident
+of the backend, and nothing in the tree records which.
+
+`SDL_CaptureMouse(true)` on selection start / `(false)` on release is the
+explicit answer, and it is what makes the behaviour a decision rather than a
+platform detail. It was left out because the failure mode is bad out of
+proportion to the benefit: a capture that is never released eats mouse input
+process-wide until the window closes, and the release path would have to be
+airtight across every early return in button-up, focus loss, and a lost button-up
+— the exact set of holes this session already found one of (the focus-loss
+gesture leak fixed in `fc7d99b9`).
+
+Prerequisites before taking it: confirm on the supported host whether the
+implicit grab already delivers the motion (if it does, the benefit is zero and
+this becomes a WON'T DO with a recorded reason), and only then add the capture
+behind the same single disarm seam the autoscroll now uses.
+
 ### TD-2026-08-13-200 — `editor.wrap` is silently a no-op in the diff and merge panels, and making it work is a row-model change, not a plumbing fix.
 
 Reported from use: turning Word Wrap on does nothing to a compare or merge
