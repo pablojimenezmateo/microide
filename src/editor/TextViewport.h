@@ -565,6 +565,13 @@ class TextViewport {
   void ClearSelection();
   void SelectAll();
   void SelectWordAtCursor();
+  // The identifier run under `position`, or nullopt when it is not on one. Shared
+  // with the double-click-drag path, which needs the range for a position that is
+  // not the caret; SelectWordAtCursor is this plus "put the caret on it".
+  std::optional<SelectionRange> WordRangeAt(TextPosition position) const;
+  // The whole of `line_index`, end-exclusive at the next line's start so a
+  // multi-line line-granular selection joins up across the newlines.
+  SelectionRange LineRangeAt(std::size_t line_index) const;
   void SelectLineAtCursor();
   // Non-mutating seed span for occurrences highlight / match actions (single logical line).
   std::optional<SelectionRange> OccurrenceSeedSpanForHighlight() const;

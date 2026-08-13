@@ -698,6 +698,66 @@ void TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss() {
          "losing focus mid-drag must end the selection gesture");
 }
 
+// A double-click that then drags selects whole WORDS, and a triple-click drag
+// whole LINES. The click's own expansion used to be collapsed straight back to
+// character granularity by the first motion event, because the drag extended
+// from the caret with no memory of how the gesture started.
+void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "words.txt";
+  WriteFile(source, "alpha bravo charlie delta\nsecond line here\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float row0 = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float char_width =
+      std::max(1.0f, WorkspaceShellTestAccess::TextCharWidth(shell));
+  const auto column_x = [&](int column) {
+    return metrics.text_x + static_cast<float>(column) * char_width + 1.0f;
+  };
+
+  // Double-click "alpha" (columns 0-4), then drag into "charlie" (column 14).
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/2),
+         "a double click should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditorSelectedText(shell) == "alpha",
+         "a double click should select the word under it");
+  Expect(SendMouseMotion(shell, column_x(14), row0, SDL_BUTTON_LMASK),
+         "dragging after a double click should be handled");
+  const std::string word_drag = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(word_drag == "alpha bravo charlie",
+         std::string("a double-click drag must extend by whole words, got '") + word_drag + "'");
+  Expect(SendMouseUp(shell, column_x(14), row0, SDL_BUTTON_LEFT), "release should be handled");
+
+  // Triple-click line 0, then drag onto line 1: both lines, whole.
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/3),
+         "a triple click should be handled");
+  Expect(SendMouseMotion(shell, column_x(3), row0 + metrics.line_height, SDL_BUTTON_LMASK),
+         "dragging after a triple click should be handled");
+  const std::string line_drag = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(line_drag.find("alpha bravo charlie delta") != std::string::npos &&
+             line_drag.find("second line here") != std::string::npos,
+         std::string("a triple-click drag must extend by whole lines, got '") + line_drag + "'");
+  Expect(SendMouseUp(shell, column_x(3), row0 + metrics.line_height, SDL_BUTTON_LEFT),
+         "release should be handled");
+
+  // A plain single-click drag stays character-granular -- the granularity must
+  // not leak from the previous gesture.
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "a single click should be handled");
+  Expect(SendMouseMotion(shell, column_x(4), row0, SDL_BUTTON_LMASK),
+         "dragging after a single click should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditorSelectedText(shell) == "ph",
+         "a single-click drag must stay character-granular after a word/line drag");
+}
+
 void TestWorkspaceShellCursorChangeRequestsPresent() {
   EnsureDummySdlVideoInitialized();
 
@@ -825,6 +885,8 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorDragAutoscrollsPastTheEdge);
   AddTest(tests, "WorkspaceShell/EditorDragAutoscrollStopsOnFocusLoss",
           TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss);
+  AddTest(tests, "WorkspaceShell/EditorMultiClickDragKeepsItsGranularity",
+          TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity);
 }
 
 }  // namespace microide::tests

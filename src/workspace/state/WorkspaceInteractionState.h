@@ -116,6 +116,22 @@ struct InteractionState {
   int selection_autoscroll_columns = 0;
   float selection_pointer_x = 0.0f;
   float selection_pointer_y = 0.0f;
+  // Granularity of the in-flight selection drag. A double-click that then drags
+  // selects whole WORDS and a triple-click drag whole LINES, in every editor --
+  // the click's own expansion used to be collapsed back to character granularity
+  // by the first motion event, because the drag extended from the caret with no
+  // memory of how the gesture started.
+  //
+  // `selection_seed` is the range the initiating click expanded to. The drag
+  // never shrinks below it: the selection is always the union of the seed and the
+  // word/line under the pointer, which is what makes dragging back across the
+  // seed feel right instead of inverting inside it.
+  enum class SelectionGranularity : std::uint8_t { Character, Word, Line };
+  SelectionGranularity selection_granularity = SelectionGranularity::Character;
+  std::size_t selection_seed_start_line = 0;
+  std::size_t selection_seed_start_column = 0;
+  std::size_t selection_seed_end_line = 0;
+  std::size_t selection_seed_end_column = 0;
   bool selection_autoscroll_active() const {
     return mouse_selecting && (selection_autoscroll_rows != 0 || selection_autoscroll_columns != 0);
   }

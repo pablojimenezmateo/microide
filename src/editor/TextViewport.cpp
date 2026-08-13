@@ -1005,27 +1005,47 @@ void TextViewport::SelectAll() {
   EnsureCursorVisible();
 }
 
-void TextViewport::SelectWordAtCursor() {
-  if (document_->lines.empty()) {
-    return;
+std::optional<SelectionRange> TextViewport::WordRangeAt(TextPosition position) const {
+  if (document_->lines.empty() || position.line >= document_->lines.size()) {
+    return std::nullopt;
   }
-  const std::string_view line = document_->lines.LineView(cursor_line_);
-  const std::size_t col = std::min(cursor_column_, line.size());
+  const std::string_view line = document_->lines.LineView(position.line);
+  const std::size_t col = std::min(position.column, line.size());
+  if (col >= line.size() || !IsIdentifierByte(line[col])) {
+    return std::nullopt;
+  }
   std::size_t start = col;
   std::size_t end = col;
-  if (col < line.size() && IsIdentifierByte(line[col])) {
-    while (start > 0 && IsIdentifierByte(line[start - 1])) {
-      --start;
-    }
-    while (end < line.size() && IsIdentifierByte(line[end])) {
-      ++end;
-    }
+  while (start > 0 && IsIdentifierByte(line[start - 1])) {
+    --start;
   }
-  if (start == end) {
+  while (end < line.size() && IsIdentifierByte(line[end])) {
+    ++end;
+  }
+  return SelectionRange{TextPosition{position.line, start}, TextPosition{position.line, end}};
+}
+
+SelectionRange TextViewport::LineRangeAt(std::size_t line_index) const {
+  if (document_->lines.empty()) {
+    return SelectionRange{TextPosition{0, 0}, TextPosition{0, 0}};
+  }
+  const std::size_t line = std::min(line_index, document_->lines.size() - 1);
+  // End-exclusive at the start of the next line, so a multi-line line-granular
+  // selection joins up rather than leaving the newlines out.
+  if (line + 1 < document_->lines.size()) {
+    return SelectionRange{TextPosition{line, 0}, TextPosition{line + 1, 0}};
+  }
+  return SelectionRange{TextPosition{line, 0},
+                        TextPosition{line, document_->lines.LineLength(line)}};
+}
+
+void TextViewport::SelectWordAtCursor() {
+  const auto word = WordRangeAt(TextPosition{cursor_line_, cursor_column_});
+  if (!word.has_value()) {
     return;
   }
-  selection_anchor_ = TextPosition{cursor_line_, start};
-  cursor_column_ = end;
+  selection_anchor_ = word->start;
+  cursor_column_ = word->end.column;
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }
