@@ -65,6 +65,11 @@ struct CliOptions {
   // drift that the all-or-nothing form caused.
   bool update_deterministic_only = false;
   bool smoke = false;
+  // `--build-config`: print the baked-in build configuration and exit. The
+  // allocation tracer refuses to run against a binary whose symbol names it
+  // cannot stand behind (see -fno-ipa-icf, TD-2026-08-13-197), and this is how
+  // it asks.
+  bool print_build_config = false;
   bool require_fixtures = false;
   bool keep_artifacts = false;
   std::size_t iterations = kDefaultIterations;
@@ -253,6 +258,10 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
       }
       options.update_baseline = true;
       options.update_deterministic_only = value == "deterministic";
+      continue;
+    }
+    if (arg == "--build-config") {
+      options.print_build_config = true;
       continue;
     }
     if (arg == "--smoke") {
@@ -1927,6 +1936,7 @@ int main(int argc, char** argv) {
     std::cerr << "usage: microide_perf [--scenarios=a,b] "
                  "[--update-baseline[=all|deterministic]] [--smoke] "
                  "[--require-fixtures] [--keep-artifacts] [--iterations=N] "
+                 "[--build-config] "
                  "[--report-json=path] [--report-text=path] "
                  "[--reference-runner=name] "
                  "[--layout-mode=auto|regular|compact] "
@@ -1934,6 +1944,12 @@ int main(int argc, char** argv) {
                  "[--video=dummy|auto|<sdl-driver>] "
                  "[--pin-cores=auto|off|<cpu-list>] [--no-isolate]\n";
     return 1;
+  }
+
+  if (options->print_build_config) {
+    // Stdout, one line, nothing else: this is a machine-read probe.
+    std::cout << PerfBuildConfig() << '\n';
+    return 0;
   }
 
   g_require_fixtures = options->require_fixtures;

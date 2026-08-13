@@ -20,6 +20,20 @@
       }
     },
     {
+      "name": "microide-perf-trace",
+      "displayName": "microide perf harness (trace-safe symbols)",
+      "description": "The perf lane with identical-code folding off, so allocation-trace symbol names are trustworthy (TD-2026-08-13-197). Not for recording baselines: ICF is real codegen and the committed numbers were taken under it.",
+      "generator": "Unix Makefiles",
+      "binaryDir": "${sourceDir}/build/microide-perf-trace",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "RelWithDebInfo",
+        "MICROIDE_WARNINGS_AS_ERRORS": "OFF",
+        "MICROIDE_PERF_HARNESS_BUILD": "ON",
+        "MICROIDE_PERF_TRACE_SYMBOLS": "ON",
+        "CMAKE_INTERPROCEDURAL_OPTIMIZATION": "ON"
+      }
+    },
+    {
       "name": "microide-asan",
       "displayName": "microide address sanitizer",
       "description": "Debug build with AddressSanitizer enabled.",

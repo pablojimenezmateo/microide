@@ -14,6 +14,14 @@ option(MICROIDE_WARNINGS_AS_ERRORS "Treat compiler warnings as errors" OFF)
 option(MICROIDE_ENABLE_SDL3_TTF "Enable SDL3_ttf text backend when available" ON)
 option(MICROIDE_ENABLE_LUA_PLUGINS "Enable Lua-based manual plugins" ON)
 option(MICROIDE_PERF_HARNESS_BUILD "Enable perf harness instrumentation and targets" OFF)
+# Build the perf binary with GCC's identical-code folding OFF, so a symbol name in
+# an allocation trace is the function that actually allocated. At -O2 (and, with
+# LTO, whole-program) -fipa-icf folds functionally identical bodies and keeps ONE
+# of their symbols, so addr2line resolves every folded body to whichever name
+# survived — which is how a cross-phase report came to rank a function that none
+# of the phases call (TD-2026-08-13-197). Deliberately NOT the perf lane default:
+# ICF is real codegen, and the timing baselines were recorded under it.
+option(MICROIDE_PERF_TRACE_SYMBOLS "Disable identical-code folding so allocation-trace symbols are trustworthy" OFF)
 option(MICROIDE_FUZZ "Enable libFuzzer targets" OFF)
 
 # When CMAKE_INTERPROCEDURAL_OPTIMIZATION is requested (e.g. via the
@@ -1410,8 +1418,19 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     MICROIDE_HAS_LUA_PLUGINS=$<BOOL:${MICROIDE_ENABLE_LUA_PLUGINS}>
     MICROIDE_TESTING=1
     MICROIDE_PERF_HARNESS_BUILD=1
-    MICROIDE_PERF_BUILD_CONFIG="${CMAKE_BUILD_TYPE}$<$<BOOL:${CMAKE_INTERPROCEDURAL_OPTIMIZATION}>:+lto>"
+    MICROIDE_PERF_BUILD_CONFIG="${CMAKE_BUILD_TYPE}$<$<BOOL:${CMAKE_INTERPROCEDURAL_OPTIMIZATION}>:+lto>$<$<BOOL:${MICROIDE_PERF_TRACE_SYMBOLS}>:+no-icf>"
   )
+
+  # The folding switch has to reach the compile of every TU the trace resolves
+  # into (microide_core holds nearly all of them) and the LTO link, where the
+  # folding is whole-program. `+no-icf` in the build config above is what the
+  # tracer checks for; a baseline recorded here is deliberately NOT comparable to
+  # one recorded without it, and build_config already declines that comparison.
+  if(MICROIDE_PERF_TRACE_SYMBOLS AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    target_compile_options(microide_core PRIVATE -fno-ipa-icf)
+    target_compile_options(microide_perf PRIVATE -fno-ipa-icf)
+    target_link_options(microide_perf PRIVATE -fno-ipa-icf)
+  endif()
 
   if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     target_compile_options(microide_perf PRIVATE -Wall -Wextra -Wpedantic -Wno-missing-field-initializers)
