@@ -174,7 +174,7 @@ Shaping helpers live in `src/editor/ShapingActions.{h,cpp}`. Capability toggles
 | Toggle setting | Actions gated |
 | --- | --- |
 | `editor.shaping.toggle_comment.enabled` | Toggle line/block comment |
-| `editor.shaping.line_ops.enabled` | Move line up/down, duplicate line, delete line, Tab / Shift+Tab block indent |
+| `editor.shaping.line_ops.enabled` | Move line up/down, copy line up/down, insert line above/below, delete line, Tab / Shift+Tab block indent |
 | `editor.shaping.sort_lines.enabled` | Sort lines ascending/descending |
 | `editor.multicursor.add_at_match.enabled` | Add cursor at next/all matches |
 
@@ -183,7 +183,12 @@ Default **Edit** menu shortcuts (editor context):
 - Toggle line comment — `Ctrl+/`
 - Toggle block comment — `Shift+Alt+A`
 - Move line up/down — `Alt+Up` / `Alt+Down`
-- Duplicate line — `Shift+Alt+Down`
+- Copy line down/up — `Shift+Alt+Down` / `Shift+Alt+Up`. Whole LINES in both
+  directions (a partial selection copies the lines it touches, not the selected
+  text); the direction decides only which of the two copies the carets land on.
+- Insert line below/above — `Ctrl+Enter` / `Ctrl+Shift+Enter`. Opens a line
+  regardless of where in the line the caret sits. `Below` runs the language's
+  smart indent, `Above` takes the pushed-down line's own indent.
 - Delete line — `Ctrl+Shift+K`
 - Indent / outdent lines — `Tab` / `Shift+Tab` (multi-line selections route to
   shaping; single-line `Tab` still inserts a tab / soft-tab per existing rules)
@@ -191,6 +196,37 @@ Default **Edit** menu shortcuts (editor context):
 - Add cursor next match — `Ctrl+D`
 - Add cursor all matches — **`Ctrl+Shift+L`** by default (matches VS Code's
   "Select all occurrences")
+
+### Word-granular motion and deletion
+
+`Ctrl+Left` / `Ctrl+Right` step a word (Shift extends), `Ctrl+Backspace` /
+`Ctrl+Delete` delete one. All four work in the editor, the compare right pane,
+the merge result pane, the git commit body, and every single-line field, from one
+rule in `editor/WordBoundary.h`.
+
+The rule is VS Code's (`wordOperations.ts`): three character classes —
+whitespace, identifier content, everything else — and a *run* of either
+non-whitespace class is a word. `foo === bar` therefore has three stops in each
+direction, not two. Multi-byte letters classify as identifier content, so `café`
+is one stop rather than one per byte.
+
+Deletion adds VS Code's whitespace heuristic: a run of **two or more** whitespace
+code points next to the caret is removed on its own, so backspacing out of an
+indent lands on column 0 instead of taking the previous word with it. A single
+space goes with its word.
+
+Motion crosses the line boundary in both directions the way the character forms
+do; a word delete at a line edge is the line join. All of it applies to every
+caret, and a word delete is one undo entry.
+
+### Collapsing a multi-caret set
+
+`Esc` removes the secondary carets and keeps the selection (VS Code's
+`removeSecondaryCursors`), after the find widget, an active snippet, and an
+inline completion have each had their turn at it. `Ctrl+Home` / `Ctrl+End`
+collapse too, because a jump to the other end of the document would otherwise
+leave live carets a screenful behind. Other document-wide jumps (goto-line,
+find-next, jump-to-bracket) still do not — see TD-2026-08-13-203.
 
 ### Multi-cursor mouse gestures
 

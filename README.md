@@ -585,6 +585,11 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Shift+arrows`, `Home`, `End`, `Ctrl+Home`, `Ctrl+End` | Extend selection |
 | `Home` / `End` | Start / end of the view line (the wrapped row under word wrap); `Home` toggles between the first non-whitespace character and column 0 |
 | `Ctrl+Shift+Alt+arrows` | Column (box) selection |
+| `Ctrl+Left` / `Ctrl+Right` | Move by word (`Shift` extends) |
+| `Ctrl+Backspace` / `Ctrl+Delete` | Delete the word before / after the caret |
+| `Ctrl+Enter` / `Ctrl+Shift+Enter` | Insert line below / above |
+| `Shift+Alt+Down` / `Shift+Alt+Up` | Copy line down / up |
+| `Esc` | Collapse a multi-caret set back to one caret |
 | `PageUp` / `PageDown` | Scroll viewport |
 | `d` on sidebar file | Open compare commit picker |
 | `[` / `]` in compare/merge | Previous / next hunk |

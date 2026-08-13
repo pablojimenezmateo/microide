@@ -1,5 +1,41 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-08-13. An **editor UI/UX pass**, taken by walking VS Code's editor
+verbs against this one rather than by reading for defects. Most of what it found
+was not a bug in something that exists — it was something that does not exist at
+all, and therefore has no test to fail and no code to read:
+
+- **word-granular motion and deletion.** Ctrl+Left/Right and Ctrl+Backspace/Delete
+  moved and deleted ONE CHARACTER in the main editor, the compare pane, the merge
+  pane and the git commit body. Every single-line field in the same window had had
+  the word verbs since it shipped — the rule was three file-local statics inside
+  `SingleLineEditor.cpp`, so the surface where word motion matters most was the one
+  that could not reach it. It is `editor/WordBoundary.h` now, on VS Code's
+  three-class rule (a run of separators is its own word, so `foo === bar` has three
+  stops), with the whitespace heuristic on the delete verbs.
+- **`Ctrl+Enter` / `Ctrl+Shift+Enter` / `Shift+Alt+Up`** were unbound, and the
+  Shift+Alt+Down that existed was copy-*up* wearing copy-down's name and copied
+  selected TEXT rather than whole lines.
+- **Esc did not collapse a multi-caret set**, so the only way out of a Ctrl+D run
+  was to click; and Ctrl+Home/End stranded the secondaries where they were.
+- **double-clicking `café` selected `caf`** — `WordRangeAt` and the occurrence
+  highlight both scanned with an ASCII-only byte predicate.
+
+The one that was a defect in existing code is the one worth carrying forward.
+`ClampTextGridLineAtY` clamped a compare/merge hit against the DOCUMENT end
+instead of the visible band, so a drag held below a diff pane teleported the
+selection fifteen screens down and, with enough overshoot, to EOF
+([201](#td-2026-08-13-201)). **Its unit test asserted the broken value under the
+correct description** — `== 9` for "the last visible line", where 9 is one past
+the last visible row, and the assertion two lines above it rejects that same row
+as outside the window. A test can pin the bug and read as if it pins the fix; the
+description is not evidence that the number was ever checked against it.
+
+Opened by this pass: [203](#td-2026-08-13-203) (every other document-wide jump
+strands the secondary carets too), [204](#td-2026-08-13-204) (no drag-and-drop of
+selected text), [205](#td-2026-08-13-205) (the terminal is the third surface with
+no selection autoscroll).
+
 Reviewed 2026-08-12. A deep dive on **soft wrap**, prompted by a report that
 moving up out of a wrapped line did nothing. It did nothing: wrapped rows are
 contiguous in visual columns, so the wrap point is one text position two rows
@@ -402,6 +438,67 @@ rather than rushed:
   somewhere both button-down paths can write it.
 
 Do them together, behind one seam, rather than three times.
+
+### TD-2026-08-13-203 — Esc and Ctrl+Home/End collapse a multi-caret set; goto-line, find-next and jump-to-bracket still strand it.
+
+Fixed in this pass: `Esc` (VS Code's `removeSecondaryCursors`) and the two
+document-end jumps, which now `ClearSecondaryCarets()` before moving.
+
+They were fixed at the KEY HANDLER, because the shared thing underneath is not
+safe to change blind. `TextViewport::MoveCursorTo` deliberately leaves the
+secondary set alone — it only refreshes each caret's `preferred_column` — and its
+callers are a mixed bag:
+
+- **user jumps that should collapse**, and still do not: `Goto` (Ctrl+G),
+  find-next / find-previous navigation, `JumpToMatchingBracket`, and the LSP
+  go-to-definition family. In VS Code every one of these lands a single cursor.
+- **internal callers that must NOT collapse**: `ShapingActions`'
+  `RestoreCaretsAfterLineTransform` and `RestoreSelectionAcrossLines` both call
+  `MoveCursorTo` while rebuilding a caret set, and `selection_granularity::
+  ExtendToPointer` uses the collapse-then-extend idiom on every drag motion
+  event.
+
+So "make `MoveCursorTo` clear the secondaries" is wrong, and the fix is either a
+second entry point (`JumpCursorTo`, which collapses) with the user-facing jumps
+moved onto it, or an explicit `ClearSecondaryCarets()` at each of those call
+sites. Prefer the first: the second is the shape that let these four diverge.
+
+Nothing currently pins the behaviour of any of them with more than one caret.
+
+### TD-2026-08-13-204 — a selection cannot be dragged; the gesture places a caret inside it instead.
+
+VS Code's `editor.dragAndDrop` (on by default): press inside an existing
+selection, drag, and the selected text MOVES to the drop point — with Ctrl held,
+it copies. Here, pressing inside a selection starts a brand-new selection from
+that point, so the gesture silently destroys the selection it looked like it was
+about to move.
+
+Not started rather than half-done, because the interesting part is not the edit:
+
+- a press inside a selection must not commit to either reading until the pointer
+  moves past a threshold, so a plain click inside a selection still collapses the
+  caret there as it does today. That is a third state for
+  `InteractionState::mouse_selecting`, which is currently a bool.
+- the drop needs a live insertion-point indicator, which is a render-side
+  affordance no other gesture here has.
+- the edit is one undo entry covering a delete and an insert at two places, and
+  the delete shifts the insert point when the drop is after the source.
+
+The move edit itself is `ReplaceRange` twice inside a `BeginUndoGroup`, which the
+shaping ops already do; everything above it is the work.
+
+### TD-2026-08-13-205 — the terminal panel is the third text surface with no selection autoscroll.
+
+[201](#td-2026-08-13-201) predicted this and it is still true: the editor,
+compare and merge surfaces now arm `selection_autoscroll` from a shared `Band`,
+and the bottom panel's terminal selection does not. Drag past the bottom of the
+terminal and the selection pins to the last visible row.
+
+The seam it needs already exists — `BeginStep`/`FinishStep` were split exactly so
+a surface that does not scroll a `TextViewport` can drive them, and the terminal
+scrolls its own scrollback offset. What is missing is the terminal's equivalent
+of a `Band` (it has a grid geometry, not a `TextGridInteractionLayout`) and the
+fourth arm in the wake's dispatch.
 
 ### TD-2026-08-13-202 — nothing captures the pointer during a drag, so leaving the WINDOW is a platform accident rather than a decision.
 
