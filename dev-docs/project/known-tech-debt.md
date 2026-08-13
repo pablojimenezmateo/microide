@@ -337,6 +337,65 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-13-200 — `editor.wrap` is silently a no-op in the diff and merge panels, and making it work is a row-model change, not a plumbing fix.
+
+Reported from use: turning Word Wrap on does nothing to a compare or merge
+surface. It is two defects stacked, and only the first one looks like a bug.
+
+**The flag never arrives.** `ApplyEditorPreferencesToAllTabs` walks
+`group.open_tabs` and skips every entry whose `tab.kind != TabEntry::Kind::Editor`
+before calling `ApplyEditorPreferences`, which is what calls `SetSoftWrap`. A
+compare tab owns its own `right_viewport`, a merge tab its own `result_viewport`,
+and neither is reachable from that walk — so `viewport.soft_wrap()` is false on
+those surfaces no matter what the setting says. The same walk is why they also
+miss `SetTabSize`, `SetIndentWidth`, `SetSoftTabs` and the save-normalization
+setters; wrap is just the one a user notices.
+
+The setting does not admit any of this. `editor.wrap` is registered with label
+"Word Wrap" and description "Wrap long lines to the viewport width", Project
+scope, no qualifier — so the Settings overlay presents a control that does
+nothing on two of the product's headline surfaces.
+
+**And the fix is NOT to call `SetSoftWrap` there.** That would make it worse than
+broken. Everything about the compare/merge surface assumes one document line
+occupies exactly one screen row:
+
+- `TextGridInteractionLayout` + `ClampTextGridLineAtY` resolve a row as
+  `scroll_line + row`, and `compare_right_line_for_row(tab, row)` maps back the
+  same way. Hit-testing, selection and the caret all go through that.
+- the two panes are aligned row-for-row. The diff gutter markers, the hunk
+  bands, the divider connectors between the panes, and the two-way scroll sync
+  are all row-indexed against that alignment.
+- the render TUs emit one `editor::DecoratedTextRow` per visible row through the
+  reused `compare_left/right_scratch_row_` members, which is the shape
+  `CheckCompareMergeRenderUsesScratchRows` enforces.
+- `left_tokens_by_row` / `right_tokens_by_row` / `incoming_tokens` /
+  `current_tokens` are all indexed by row, as is
+  `scrollbar_marker_cache_revision`'s marker list.
+
+Wrapping makes one line occupy N rows on one side and M on the other, so a
+`SetSoftWrap(true)` with nothing else changed desynchronizes the two panes: the
+gutter would label the wrong rows and the sides would drift apart as you scroll.
+The user's own read on this ("I guess this is a big refactor") is correct.
+
+**What the work actually is.** VS Code's diff editor does support wrap
+(`diffEditor.wordWrap`, default `inherit`), and it keeps alignment by padding the
+opposite side with matching blank rows. Ported here that means introducing a
+presentation-row model for compare/merge — a row is `(document line, wrap
+segment)` rather than a line index — and moving the gutter, hunk, connector,
+token-cache and scroll-sync indexing onto it. The editor surface already has this
+concept (`TextLayoutCache`'s wrapped-row table, `VisibleWrappedRowLayoutRef`,
+`wrapped_line_row_offsets_`); the compare/merge path predates it and never
+adopted it, so the work is largely making these two surfaces reuse what the
+editor already has rather than inventing a mechanism.
+
+Until then, the honest interim is to say so rather than ship a dead control:
+either scope the setting's description to the editor surface, or disable the
+control while a compare/merge tab is active. Doing neither is the current state.
+
+Not to be confused with the perf-harness `soft_wrap_*` scenarios — those measure
+the EDITOR surface's wrap path, which works and is gated.
+
 ### TD-2026-08-13-197 — the perf phase trace's headline table ranks a symbol GCC invented, because `-fipa-icf` folds unrelated functions onto one name.
 
 `dev-docs/performance/perf-phase-allocation-trace.md`'s cross-phase summary opens
