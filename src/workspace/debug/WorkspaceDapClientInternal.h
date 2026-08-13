@@ -601,7 +601,8 @@ struct DapClient::Impl {
                                  std::move(on_send_failure));
     }
     const int seq = RegisterPendingRequest(std::move(response_handler), RequestTimeoutFor(command));
-    if (!SendMessageAfterInitialize(dap_protocol::MakeRequest(seq, command, arguments))) {
+    if (!SendMessageAfterInitialize(
+            dap_protocol::MakeRequest(seq, command, std::move(arguments)))) {
       // Only report the failure if the entry was still ours to fail. If the EOF
       // sweep already claimed it, it also already invoked the handler — running
       // on_send_failure() again would double-fire the callback.
