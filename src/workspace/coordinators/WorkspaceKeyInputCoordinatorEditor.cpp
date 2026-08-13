@@ -580,8 +580,10 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     // has stopped looking at. Deliberately after the widget/snippet/completion
     // arms, which are what Esc means while any of them is up, and deliberately
     // NOT clearing the selection: Esc removes cursors, it does not deselect.
-    if (editable_viewport != nullptr && editable_viewport->has_multiple_carets()) {
-      editable_viewport->ClearSecondaryCarets();
+    // `viewport`, not `editable_viewport`: removing carets is not an edit, and a
+    // read-only buffer holds a Ctrl+D caret set just as well as a writable one.
+    if (viewport->has_multiple_carets()) {
+      viewport->ClearSecondaryCarets();
       operations_.reset_caret_blink();
       operations_.request_focused_editor_redraw();
       return true;
