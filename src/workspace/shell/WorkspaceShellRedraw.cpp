@@ -15,6 +15,8 @@
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/SdlWake.h"
+#include "workspace/coordinators/SelectionAutoscroll.h"
+#include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
@@ -820,6 +822,13 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = *slide_delay;
     }
   }
+  if (const auto autoscroll_delay =
+          selection_autoscroll::NextDelayMs(context_.interaction_state);
+      autoscroll_delay.has_value()) {
+    if (!next_delay.has_value() || *autoscroll_delay < *next_delay) {
+      next_delay = *autoscroll_delay;
+    }
+  }
   if (const auto plugin_delay = plugin_runtime_.NextPollDelay(); plugin_delay.has_value()) {
     const Uint32 plugin_delay_ms =
         static_cast<Uint32>(std::max<std::int64_t>(0, plugin_delay->count()));
@@ -1134,6 +1143,35 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
                         ? RenderInvalidation{.full = false, .rects = {*slide_rect}}
                         : RenderInvalidation{.full = true, .rects = {}},
       };
+    }
+  }
+  // Step a selection drag whose pointer is held past an edge of the text band.
+  // Scrolls content, so the repaint is the editor surface rather than a strip.
+  // Only the re-extend below needs the shell; the step itself is in
+  // workspace/coordinators/SelectionAutoscroll.
+  if (context_.interaction_state.selection_autoscroll_active() && ActiveTabIsEditor()) {
+    if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
+      if (selection_autoscroll::Step(context_.interaction_state, *viewport)) {
+        // Re-extend the selection to the held pointer against the scrolled
+        // viewport. Replaying the pointer through the ordinary handler is what
+        // keeps the scrolled-into rows selected; without it the view would move
+        // under a stationary selection.
+        const auto layout = CurrentWorkspaceLayout();
+        if (layout.has_value()) {
+          SDL_Event synthetic{};
+          synthetic.type = SDL_EVENT_MOUSE_MOTION;
+          synthetic.motion.x = context_.interaction_state.selection_pointer_x;
+          synthetic.motion.y = context_.interaction_state.selection_pointer_y;
+          synthetic.motion.state = SDL_BUTTON_LMASK;
+          (void)MakeEditorMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+        }
+        return EventResult{
+            .handled = true,
+            .redraw = layout.has_value()
+                          ? RenderInvalidation{.full = false, .rects = {layout->editor_surface}}
+                          : RenderInvalidation{.full = true, .rects = {}},
+        };
+      }
     }
   }
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();

@@ -592,6 +592,112 @@ void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
          "releasing after the out-of-area drag should be handled");
 }
 
+// Clamping alone pins the selection at the last visible row, so a drag can never
+// select more than a screenful. Holding the pointer past the bottom edge has to
+// keep scrolling and keep extending -- driven by the idle wake, because a
+// stationary pointer produces no further motion events.
+void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "line " + std::to_string(i) + " of the document\n";
+  }
+  WriteFile(source, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+
+  Expect(SendMouseDown(shell, metrics.text_x + 0.1f,
+                       metrics.first_line_y + metrics.line_height * 0.5f, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start a selection");
+  // Hold well below the last visible row. This is one event; everything after
+  // it has to come from the wake.
+  Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the editor should be handled");
+
+  const std::size_t scroll_after_motion =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  // Drive the idle wake a few times with the pointer held still.
+  for (int tick = 0; tick < 5; ++tick) {
+    const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    Expect(result.handled, "an armed selection autoscroll should keep the wake busy");
+  }
+  const std::size_t scroll_after_ticks =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  Expect(scroll_after_ticks > scroll_after_motion,
+         "holding the pointer past the bottom edge must keep scrolling on the wake, "
+         "not stop once the motion events stop");
+  const std::string selected = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(selected.find("line 20") != std::string::npos,
+         "the scrolled-into rows must be selected, not merely scrolled past");
+
+  // Releasing disarms it: no further wakes, no further scrolling.
+  Expect(SendMouseUp(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f, SDL_BUTTON_LEFT),
+         "releasing should be handled");
+  const std::size_t scroll_at_release =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  for (int tick = 0; tick < 3; ++tick) {
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  }
+  Expect(WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell) == scroll_at_release,
+         "a released drag must not keep autoscrolling");
+}
+
+// The other way a drag can end without a button-up: the window loses focus while
+// the button is down (released over another window, or the compositor takes the
+// grab). The autoscroll is the one loop here that runs with no input behind it,
+// so a velocity left armed would scroll forever.
+void TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "line " + std::to_string(i) + " of the document\n";
+  }
+  WriteFile(source, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  Expect(SendMouseDown(shell, metrics.text_x + 0.1f,
+                       metrics.first_line_y + metrics.line_height * 0.5f, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start a selection");
+  Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the editor should be handled");
+  (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+
+  SendWindowFocus(shell, false);
+  const std::size_t scroll_at_focus_loss =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  for (int tick = 0; tick < 4; ++tick) {
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  }
+  Expect(WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell) == scroll_at_focus_loss,
+         "losing focus mid-drag must stop the autoscroll, not leave it running");
+  Expect(!WorkspaceShellTestAccess::TransientMouseSelecting(shell),
+         "losing focus mid-drag must end the selection gesture");
+}
+
 void TestWorkspaceShellCursorChangeRequestsPresent() {
   EnsureDummySdlVideoInitialized();
 
@@ -715,6 +821,10 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCursorChangeRequestsPresent);
   AddTest(tests, "WorkspaceShell/EditorDragSelectionSurvivesLeavingTheEditorArea",
           TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea);
+  AddTest(tests, "WorkspaceShell/EditorDragAutoscrollsPastTheEdge",
+          TestWorkspaceShellEditorDragAutoscrollsPastTheEdge);
+  AddTest(tests, "WorkspaceShell/EditorDragAutoscrollStopsOnFocusLoss",
+          TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss);
 }
 
 }  // namespace microide::tests

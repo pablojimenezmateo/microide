@@ -12,6 +12,7 @@
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+#include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
@@ -208,6 +209,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
   }
 
   context_.interaction_state.mouse_selecting = false;
+  selection_autoscroll::Disarm(context_.interaction_state);
 
   if (HandleSettingsOverlayButtonDown(event, layout)) {
     EnsureRedraw([this]() { RequestOverlayRedraw(); });
@@ -706,6 +708,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   if (context_.interaction_state.drag_target != DragTarget::None) {
     ClearDragState();
     context_.interaction_state.mouse_selecting = false;
+    selection_autoscroll::Disarm(context_.interaction_state);
     UpdateMouseCursor(static_cast<float>(event.button.x), static_cast<float>(event.button.y));
     EnsureRedraw([this]() { RequestWindowRedraw(); });
     return true;
@@ -713,6 +716,7 @@ bool WorkspaceShell::HandleMouseButtonUp(const SDL_Event& event) {
   const bool was_selecting = context_.interaction_state.mouse_selecting;
   context_.interaction_state.mouse_selecting = false;
   context_.interaction_state.editor_box_selecting = false;
+  selection_autoscroll::Disarm(context_.interaction_state);
   if (was_selecting) {
     SyncPrimarySelectionWithActiveEditor();
     EnsureRedraw([this]() { RequestEditorSurfaceRedraw(); });

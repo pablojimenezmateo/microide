@@ -167,6 +167,10 @@
   static std::string ActiveEditorSelectedText(WorkspaceShell& shell) {
     return shell.ActiveEditorViewport()->SelectedText();
   }
+  static std::size_t ActiveEditorViewportScrollLine(WorkspaceShell& shell) {
+    const editor::TextViewport* viewport = shell.ActiveEditorViewport();
+    return viewport != nullptr ? viewport->scroll_line() : 0;
+  }
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].compare.value();
   }

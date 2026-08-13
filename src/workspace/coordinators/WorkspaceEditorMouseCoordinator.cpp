@@ -13,6 +13,7 @@
 #include "editor/PluginSurfaceStore.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/ListSelection.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
@@ -623,6 +624,13 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
   const SDL_FPoint pointer = ClampPointerToVisibleTextBand(editor_rect, metrics,
                                                            static_cast<float>(event.motion.x),
                                                            static_cast<float>(event.motion.y));
+  // Arm (or disarm) the autoscroll from how far past the band the real pointer
+  // is. Stored rather than applied here because the wake, not this handler, is
+  // what repeats it: a pointer held still outside the band produces no further
+  // motion events, and that is precisely the case that has to keep scrolling.
+  selection_autoscroll::Arm(interaction_state_, editor_rect, metrics,
+                            static_cast<float>(event.motion.x),
+                            static_cast<float>(event.motion.y));
 
   const std::size_t row =
       ResolveGapAwareRow(state_, *viewport, metrics, pointer.y, operations_.get_setting_value).row;

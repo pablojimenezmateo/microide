@@ -102,6 +102,23 @@ struct InteractionState {
   bool editor_box_selecting = false;
   std::size_t editor_box_anchor_line = 0;
   std::size_t editor_box_anchor_column = 0;
+  // Selection-drag autoscroll. A drag whose pointer is held past an edge of the
+  // visible text band clamps onto the edge cell, so without this the selection
+  // stops growing at the first/last visible row -- you cannot select more than a
+  // screenful by dragging, which is what every other editor does.
+  //
+  // The pointer position is stored because the scroll is driven by the idle
+  // wake, not by motion events: the pointer is by definition NOT moving while it
+  // is held outside, so there is no event to carry it. Signed rows/columns per
+  // tick, zero when the pointer is inside the band (which is what disarms the
+  // wake). Cleared on button-up alongside `mouse_selecting`.
+  int selection_autoscroll_rows = 0;
+  int selection_autoscroll_columns = 0;
+  float selection_pointer_x = 0.0f;
+  float selection_pointer_y = 0.0f;
+  bool selection_autoscroll_active() const {
+    return mouse_selecting && (selection_autoscroll_rows != 0 || selection_autoscroll_columns != 0);
+  }
 };
 
 struct WheelTicks {

@@ -427,6 +427,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/registries/WorkspaceCommandRegistry.cpp
   src/workspace/coordinators/WorkspaceCommandLineCoordinator.cpp
   src/workspace/actions/WorkspaceEditActionExecutor.cpp
+  src/workspace/coordinators/SelectionAutoscroll.cpp
   src/workspace/coordinators/WorkspaceEditorMouseCoordinator.cpp
   src/workspace/WorkspaceEventOrchestrator.cpp
   src/workspace/actions/WorkspaceGlobalActionExecutor.cpp
