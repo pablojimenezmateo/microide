@@ -125,6 +125,49 @@ void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
          "saving the compare tab should persist the edited current-state text");
 }
 
+// TD-2026-08-13-207: the compare pane's key handling was a hand-maintained subset
+// of the editor's, so it silently lacked whatever nobody remembered to copy —
+// here, Shift+Tab outdent and Tab-indents-a-multi-line-selection. Both surfaces
+// now run one shared switch, so a key added to it reaches both.
+void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare indent fixture", "compare indent fixture");
+  WriteFile(source, "alpha\nbravo\ncharlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable && compare.right_view_active,
+         "the compare fixture should start on the editable pane");
+
+  // Select the first two lines, then Tab. A multi-line selection indents as a
+  // block; the old compare switch replaced the selection with a tab character.
+  compare.right_viewport.MoveCursorTo(0, 0);
+  compare.right_viewport.MoveCursorTo(1, 5, /*extend_selection=*/true);
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should be handled on the compare editable pane");
+  Expect(compare.right_viewport.lines().LineView(0).rfind("  alpha", 0) == 0 ||
+             compare.right_viewport.lines().LineView(0).rfind("\talpha", 0) == 0,
+         "Tab with a multi-line selection indents the block instead of replacing it");
+  Expect(compare.right_viewport.lines().LineView(1).find("bravo") != std::string::npos,
+         "the second selected line survives the block indent");
+
+  // Shift+Tab outdents it again.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
+         "Shift+Tab should be handled on the compare editable pane");
+  Expect(compare.right_viewport.lines().LineView(0) == "alpha",
+         "Shift+Tab outdents the block back rather than inserting a tab");
+}
+
 void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2159,6 +2202,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareEditActionRefreshesDiffModel);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",
           TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable);
+  AddTest(tests, "WorkspaceShell/CompareEditablePaneIndentsAndOutdents",
+          TestWorkspaceShellCompareEditablePaneIndentsAndOutdents);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
   AddTest(tests, "WorkspaceShell/CompareClickAboveFirstRowIsNotHandled",
