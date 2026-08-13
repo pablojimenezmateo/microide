@@ -414,7 +414,32 @@ the wrap splice first buys nothing measurable.
 Prerequisite before starting: a perf scenario that types into a large wrapped
 compare tab. There is none — `soft_wrap_*` measures the editor surface only.
 
-### TD-2026-08-13-207 — `HandleCompareKeyDown` is a hand-maintained subset of the editor's key handler, so the compare pane silently lacks whatever nobody remembered to copy.
+### TD-2026-08-13-207 — `HandleCompareKeyDown` is a hand-maintained subset of the editor's key handler, so the compare pane silently lacks whatever nobody remembered to copy. [PARTIAL 2026-08-14 — the compare/merge duplication is gone; convergence with the editor handler is not.]
+
+**Done 2026-08-14: one switch for the two non-editor panes.** The differences were
+enumerated first, as the entry asked. Against the editor pane, both the compare
+right pane and the merge result pane were missing:
+
+- Shift+Tab outdents a selection (both inserted a tab instead)
+- Tab with a multi-line selection indents the block (both REPLACED the selection
+  with a tab character, destroying it)
+
+Both now live in `HandleEditablePaneKey`, gated by the same
+`editor.shaping.line_ops.enabled` setting the editor pane checks, and both panes
+call it. Deliberately NOT shared, and still per-surface: Esc (closes the tab here,
+collapses carets in the editor — the divergence the entry flagged as deliberate),
+the Alt hunk / merge-choice chords, and each surface's post-edit refresh and
+selection re-sync, which are what the two hooks carry.
+
+Pinned by `WorkspaceShell/CompareEditablePaneIndentsAndOutdents`.
+
+**Still open: convergence with `HandleDefaultEditorKeyDown` itself.** It owns
+snippet (tab / backspace / delete / escape), inline-completion accept, and the
+column-selection clear, all of which assume an editor tab. Routing the diff panes
+through it is the rest of this entry.
+
+#### Original entry
+
 
 The compare surface's editable right pane runs the same `editor::TextViewport`
 and reaches the same *action* layer as an editor tab (`ActiveEditableViewport`),
@@ -441,7 +466,38 @@ Do not take this without first enumerating the behavioural differences between
 the two switches — Esc means "close the tab" on compare and "collapse carets" in
 the editor, and that divergence is deliberate.
 
-### TD-2026-08-13-206 — the compare surface paints through its own row loop, so its editable pane is missing the editor's view features.
+### TD-2026-08-13-206 — the compare surface paints through its own row loop, so its editable pane is missing the editor's view features. [PARTIAL 2026-08-14 — render-whitespace shipped; guides, bracket match, folding and plugin decorations did not.]
+
+**Done 2026-08-14: render-whitespace, from one implementation.** The marker
+geometry and the per-row walk moved into `editor/RowDecorationBuilder`
+(`PushWhitespaceMarker`, `AppendWhitespaceMarkers`) and both compare panes emit
+them as pre-positioned fills through the `RowDecorationInput` the row already
+builds. The editor pane keeps its own walk — its markers also carry the inlay-hint
+displacement — but shares the marker geometry, so the two cannot drift. The walk
+keeps the editor's properties: one visual cell per codepoint (a multi-byte glyph
+does not shift every later marker right), tabs measured across the cells they
+expand to, and the resume-at-the-row prefix probe from
+[187](#td-2026-08-12-187). Covered by two
+`RowDecorationBuilder/WhitespaceMarkers*` tests.
+
+**The current-line highlight was never missing.** The compare row band already
+keys on `selected_row`, which syncs from the caret — one of the four features the
+entry listed is a non-issue.
+
+**Still open, with the reason each was left:**
+
+- **indent guides** — `ComputeIndentGuides` wants the buffer line index drawn at
+  each visible row, and a diff's visible rows are not contiguous line indices (the
+  blank padding rows of an added/deleted hunk have no line at all). That mapping
+  is the work, not the painting.
+- **bracket match** — `EditorViewRenderer` caches its scan per frame precisely
+  because `FindBracketMatch` is O(file); the compare loop has no such cache, and
+  adding an uncached scan to a per-frame path is a speed regression traded for a
+  highlight.
+- **folding and plugin decorations** — unchanged from the entry.
+
+#### Original entry
+
 
 The merge result pane renders through `EditorViewRenderer` and gets indent
 guides, bracket-match highlight, render-whitespace, the current-line highlight,
@@ -531,7 +587,26 @@ rather than rushed:
 
 Do them together, behind one seam, rather than three times.
 
-### TD-2026-08-13-203 — Esc and Ctrl+Home/End collapse a multi-caret set; goto-line, find-next and jump-to-bracket still strand it.
+### TD-2026-08-13-203 — Esc and Ctrl+Home/End collapse a multi-caret set; goto-line, find-next and jump-to-bracket still strand it. [RESOLVED 2026-08-14 — the first of the entry's two options, across sixteen call sites.]
+
+**Fixed 2026-08-14 with `TextViewport::JumpCursorTo`**, the second entry point the
+entry preferred (the per-call-site `ClearSecondaryCarets()` is the shape that let
+these diverge, so it was not the one to standardize on).
+
+Moved onto it: goto-line, find-next / find-previous, jump-to-matching-bracket, the
+go-to-definition / assist location jumps, problems- and search-result reveals from
+the sidebar, a `file:line` click in the terminal or output panel, a debug
+stack-frame or breakpoint row click, a compare hunk jump, a merge marker jump,
+`RevealLocationInTab`, and the plugin open-at-line / set-cursor requests. The two
+sites that already collapsed (Esc, Ctrl+Home/End) lost their open-coded pair.
+
+`MoveCursorTo` is unchanged and stays the primitive — the internal callers the
+entry listed still depend on the secondaries surviving — and both halves of that
+contract are now pinned: `EditorMultiCaret/JumpCursorToCollapsesTheCaretSet` and
+`EditorMultiCaret/MoveCursorToKeepsTheCaretSet`.
+
+#### Original entry
+
 
 Fixed in this pass: `Esc` (VS Code's `removeSecondaryCursors`) and the two
 document-end jumps, which now `ClearSecondaryCarets()` before moving.
@@ -579,7 +654,38 @@ Not started rather than half-done, because the interesting part is not the edit:
 The move edit itself is `ReplaceRange` twice inside a `BeginUndoGroup`, which the
 shaping ops already do; everything above it is the work.
 
-### TD-2026-08-13-205 — the terminal panel is the third text surface with no selection autoscroll.
+### TD-2026-08-13-205 — the terminal panel is the third text surface with no selection autoscroll. [RESOLVED 2026-08-14 — and it was missing the clamp too, not just the autoscroll.]
+
+**Fixed 2026-08-14.** The panel's motion handler arms from the raw pointer and
+resolves the hit from a clamped one (as the editor pane does), and the wake grew a
+fourth arm that scrolls the transcript through `SetBottomPanelScrollRow` — the
+`BeginStep`/`FinishStep` split existed for exactly this. The re-extend replay
+reaches the panel handler too, or the view scrolls under a stationary selection.
+
+**Worse than filed:** the terminal was also the only surface that still REFUSED a
+pointer outside its own rect (`Contains(bottom_panel)` → return false), which is
+the refusal `7e99a209` removed from the other three. A drag stopped at the panel
+edge whether or not anything scrolled.
+
+Two things the entry could not have predicted:
+
+- `ClampPointerToBand` was private to the editor coordinator. It moved onto the
+  shared `Band`, because clamping against the painted band rather than the pane
+  rect or the document is the whole subject of [201](#td-2026-08-13-201) — a
+  fourth private copy is how that bug got made.
+- `selection_autoscroll_active()` keyed on the shell-level `mouse_selecting`,
+  which the terminal deliberately does not set (it tracks its drag on its own tab
+  state; setting the shell flag would make every motion event extend the active
+  editor's selection as well). So the autoscroll could never have reached it
+  whatever the arming looked like. `Arm`/`Disarm` now own an explicit
+  `selection_autoscroll_armed`, and the two clears that bypassed `Disarm`
+  (project switch, `ClearTerminalSelection`) call it.
+
+Pinned by `WorkspaceShell/TerminalDragAutoscrollsPastTheEdge`, which also asserts
+the release disarms rather than leaving the wake scrolling.
+
+#### Original entry
+
 
 [201](#td-2026-08-13-201) predicted this and it is still true: the editor,
 compare and merge surfaces now arm `selection_autoscroll` from a shared `Band`,
@@ -742,7 +848,24 @@ control while a compare/merge tab is active. Doing neither is the current state.
 Not to be confused with the perf-harness `soft_wrap_*` scenarios — those measure
 the EDITOR surface's wrap path, which works and is gated.
 
-### TD-2026-08-13-197 — the perf phase trace's headline table ranks a symbol GCC invented, because `-fipa-icf` folds unrelated functions onto one name.
+### TD-2026-08-13-197 — the perf phase trace's headline table ranks a symbol GCC invented, because `-fipa-icf` folds unrelated functions onto one name. [RESOLVED 2026-08-14 — fix shape taken as written.]
+
+**Fixed 2026-08-14.** `microide-perf-trace` is a third preset — the perf lane plus
+`-fno-ipa-icf` on the core compile, the perf compile and the LTO link — and is
+deliberately NOT the perf default, for the reason the entry gives.
+
+The flag is observable rather than assumed: it appends `+no-icf` to
+`MICROIDE_PERF_BUILD_CONFIG`, and `microide_perf --build-config` prints it. A
+binary too old to know the flag exits non-zero, which the tool reads as "cannot
+say" rather than as "fine". `tools/trace-perf-phases.py` defaults to the trace
+lane and refuses anything else with the exact commands to build it;
+`--allow-folded-symbols` overrides and prints the warning into the run.
+
+The committed report now carries a header saying its names cannot be trusted and
+how to regenerate, instead of sitting there looking authoritative.
+
+#### Original entry
+
 
 `dev-docs/performance/perf-phase-allocation-trace.md`'s cross-phase summary opens
 with "the same function is the #1 allocator in many unrelated phases", and its
@@ -778,7 +901,43 @@ Until then, treat a top-site NAME in that report as a hypothesis, and confirm it
 by reading the code before acting on it. The `[clone .part.0]`/`[clone .isra.0]`
 suffixes and a suspiciously uniform allocation size are the tell.
 
-### TD-2026-08-13-198 — the project tab strip is rebuilt from scratch by every caller that asks what is on it, several times a frame.
+### TD-2026-08-13-198 — the project tab strip is rebuilt from scratch by every caller that asks what is on it, several times a frame. [RESOLVED 2026-08-14 — and the entry's own fix sketch was one call short.]
+
+**Fixed 2026-08-14, with the pair the entry prescribed.** `WorkspaceTabStripChrome`
+holds a source cache (widths / display titles / tooltip labels / badge styles)
+keyed on a content fingerprint, and a visible-list cache keyed on that source
+version plus the strip rect, active index and scroll index. The fingerprint hashes
+what the sources are DERIVED from — the catalog roots' `native()` bytes, each
+project's dirty bit and base-color override, the layout mode, and a geometry epoch
+the service bumps on a font change — never the produced titles.
+
+Three things the sketch did not name:
+
+- **the dirty bit could not be asked for cheaply.** `HasDirtyEditorTabForProject`
+  goes through `MakeEditorTabService()` → `MakeTabCoordinator()`, which builds ~40
+  `std::function`s. Asking it once per project per frame to compute a cache key
+  would have cost more than the cache saved. `TabCoordinator::ProjectHasDirtyTab`
+  is now a static over (catalog, current project), so the key is answered off the
+  state directly.
+- **`DefaultProjectBaseColor` called `lexically_normal()`** on an already-normalized
+  root — ~12 allocations per project per frame for every project with no explicit
+  base color, inside the very function the badge path calls. Same guard as the
+  tooltip path (TD-2026-08-10-174).
+- **the sibling defect the entry did name is fixed too**:
+  `ComputeVisibleEditorTabs` returns the memoized vector by `const&`, and its
+  callers take a reference. `InvalidateEditorTabGeometry` is now
+  `InvalidateTabStripGeometry` (it bumps the epoch both strips key on).
+
+Adding the static pushed `WorkspaceTabCoordinator.cpp` over the lint's 900-line
+coordinator budget; the dirty-query family moved to
+`WorkspaceTabCoordinatorDirty.cpp`.
+
+Covered by three `TabStripService/ProjectStrip*` tests: repeat calls produce no
+titles at all and return the same vector by reference, and a dirty flip, a
+geometry-epoch bump and a layout-mode change each still rebuild.
+
+#### Original entry
+
 
 `WorkspaceTabStripChrome::ComputeVisibleProjectTabs` builds four vectors sized to
 the catalog and, per entry, a display-title `std::string`, a tooltip-label
@@ -807,7 +966,21 @@ cache HIT it returns `visible_cache.tabs` **by value**, so the memoized path
 still copies two `std::string`s per visible tab per call. It should return a
 `const&`.
 
-### TD-2026-08-13-199 — decoding user config allocates every setting id and every disabled id twice, to dedupe them.
+### TD-2026-08-13-199 — decoding user config allocates every setting id and every disabled id twice, to dedupe them. [RESOLVED 2026-08-14.]
+
+**Fixed 2026-08-14, as the entry specified.** `util::FlatKeyIndex` is open
+addressing over slots that store only an index into the caller's own vector,
+reading the key back through an accessor at probe time — no key copied, no node
+allocated, dedupe still O(1). All four indexes (user-config settings, disabled
+keybindings, disabled plugins, project-config settings) use it.
+
+The entry's warning about `string_view` was the load-bearing part and is now a
+test: `FlatKeyIndex/SurvivesOwnerReallocation` drives 500 SHORT ids (the ones that
+live inside their `std::string`'s inline buffer, so they move with it) through
+several vector and slot-table growths and re-resolves every one.
+
+#### Original entry
+
 
 `DecodeUserConfigRecord` keeps three side indexes — an
 `unordered_map<std::string, size_t>` over setting ids and two
