@@ -25,26 +25,27 @@ namespace microide::editor {
 
 namespace {
 
+// `first_line_prefix_size` is the byte length of the selection's first line up to
+// the range start, which is exactly the start column -- the callers used to pass
+// a `substr` of it and read only `.size()`, so the prefix of a minified line was
+// copied per surround. The inner text is measured rather than split for the same
+// reason: only its line count and last line's length are used.
 void PostSurroundInnerSelection(const LanguagePair& pair,
-                                const std::string& inner,
+                                std::string_view inner,
                                 std::size_t start_line,
-                                const std::string& first_line_prefix,
+                                std::size_t first_line_prefix_size,
                                 TextPosition* anchor,
                                 TextPosition* cursor) {
-  const std::vector<std::string> inner_lines =
-      util::SplitLines(util::NormalizeLineEndings(inner));
-  if (inner_lines.empty()) {
-    return;
-  }
-  *anchor = TextPosition{start_line, first_line_prefix.size() + pair.open.size()};
-  const std::size_t last_line = start_line + inner_lines.size() - 1;
+  const util::LineShape inner_shape = util::MeasureLines(inner);
+  *anchor = TextPosition{start_line, first_line_prefix_size + pair.open.size()};
+  const std::size_t last_line = start_line + inner_shape.count - 1;
   // For single-line surround the inner text shares the line with the open
   // delimiter and any leading prefix, so the cursor column must be offset by
   // both. Multi-line surround pushes the closer onto the original last line
   // with no extra offset.
   const std::size_t single_line_offset =
-      (last_line == start_line) ? first_line_prefix.size() + pair.open.size() : 0;
-  *cursor = TextPosition{last_line, single_line_offset + inner_lines.back().size()};
+      (last_line == start_line) ? first_line_prefix_size + pair.open.size() : 0;
+  *cursor = TextPosition{last_line, single_line_offset + inner_shape.last_line_size};
 }
 
 bool IsIndentCharacter(char c) {
@@ -262,8 +263,7 @@ bool TextViewport::TrySurroundInsert(char ch) {
   } else {
     const std::string inner = detail::TextBetweenLines(document_->lines, norm);
     const std::string replacement = pair->open + inner + pair->close;
-    const std::string first_prefix = document_->lines[norm.start.line].substr(0, norm.start.column);
-    PostSurroundInnerSelection(*pair, inner, norm.start.line, first_prefix, &inner_anchor,
+    PostSurroundInnerSelection(*pair, inner, norm.start.line, norm.start.column, &inner_anchor,
                                &inner_cursor);
     if (!ApplyRangeEdit(norm, replacement, true)) {
       return false;
@@ -581,11 +581,9 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
           !InInsertionSuppressedScope(norm.start.line, norm.start.column)) {
         const std::string inner = detail::TextBetweenLines(document_->lines, norm);
         const std::string replacement = sur_pair->open + inner + sur_pair->close;
-        const std::string first_prefix =
-            document_->lines[norm.start.line].substr(0, norm.start.column);
         TextPosition inner_anchor{};
         TextPosition inner_cursor{};
-        PostSurroundInnerSelection(*sur_pair, inner, norm.start.line, first_prefix,
+        PostSurroundInnerSelection(*sur_pair, inner, norm.start.line, norm.start.column,
                                    &inner_anchor, &inner_cursor);
         const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(norm, replacement);
         if (!entry.has_value()) {
