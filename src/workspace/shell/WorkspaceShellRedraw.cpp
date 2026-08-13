@@ -19,6 +19,7 @@
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
@@ -1164,6 +1165,34 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   // A lambda rather than a member: the shell's declaration budget is a hard
   // invariant, and nothing outside this wake needs to step an autoscroll.
   const auto step_selection_autoscroll = [this]() -> bool {
+    // The bottom panel's terminal is checked first: its selection drag is
+    // independent of which editor tab is active, so keying off the tab kind
+    // (as the other three arms do) would never reach it (TD-2026-08-13-205).
+    if (TerminalTabState* terminal_tab = ActiveTerminalTab();
+        terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
+        BottomPanelShowsTerminal()) {
+      const std::optional<selection_autoscroll::StepDelta> delta =
+          selection_autoscroll::BeginStep(context_.interaction_state);
+      if (!delta.has_value()) {
+        return false;
+      }
+      if (delta->rows == 0) {
+        return selection_autoscroll::FinishStep(context_.interaction_state, false);
+      }
+      const auto layout = CurrentWorkspaceLayout();
+      if (!layout.has_value()) {
+        return selection_autoscroll::FinishStep(context_.interaction_state, false);
+      }
+      // The terminal scrolls its own scrollback offset rather than a viewport,
+      // which is what BeginStep/FinishStep were split apart for.
+      const std::size_t line_count = terminal_tab->session.LineCount();
+      const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(*layout, line_count);
+      const int before_row = terminal_tab->scroll_row;
+      SetBottomPanelScrollRow(terminal_tab->scroll_row + delta->rows, line_count,
+                              panel_layout.scroll.visible_rows);
+      return selection_autoscroll::FinishStep(context_.interaction_state,
+                                              terminal_tab->scroll_row != before_row);
+    }
     if (ActiveTabIsCompare()) {
       CompareTabState* compare_tab = ActiveCompareTab();
       if (compare_tab == nullptr) {
@@ -1222,7 +1251,11 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
       synthetic.motion.x = context_.interaction_state.selection_pointer_x;
       synthetic.motion.y = context_.interaction_state.selection_pointer_y;
       synthetic.motion.state = SDL_BUTTON_LMASK;
-      if (ActiveTabIsCompare()) {
+      const TerminalTabState* terminal_tab = ActiveTerminalTab();
+      if (terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
+          BottomPanelShowsTerminal()) {
+        (void)MakePanelMouseCoordinator().HandleMotion(synthetic);
+      } else if (ActiveTabIsCompare()) {
         (void)MakeCompareMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
       } else if (ActiveTabIsMerge()) {
         (void)MakeMergeMouseCoordinator().HandleSelectionMotion(synthetic, *layout);

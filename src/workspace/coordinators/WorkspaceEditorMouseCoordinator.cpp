@@ -115,27 +115,13 @@ editor::EditorViewMetrics ResolveEditorPointerMetrics(
 
 // Project a pointer onto the nearest cell of the pane's visible text band.
 //
-// The band is the rows the renderer actually painted -- `first_line_y` through
-// `visible_rows` -- not the pane rect, which also covers the sticky-scroll band
-// and any bottom slack. Clamping to the rect instead would map a pointer dragged
-// above the text onto a sticky header row rather than onto the first document
-// row.
-//
-// The half-cell inset on each edge keeps the clamped point strictly inside the
-// band, so the row/column arithmetic that follows lands on the edge cell rather
-// than one past it.
+// The band is the rows the renderer actually painted, not the pane rect -- see
+// selection_autoscroll::ClampPointerToBand, which every dragging surface shares.
 SDL_FPoint ClampPointerToVisibleTextBand(const SDL_FRect& editor_rect,
                                          const editor::EditorViewMetrics& metrics,
                                          float x, float y) {
-  const float line_height = std::max(1.0f, metrics.line_height);
-  const float band_top = metrics.first_line_y;
-  const float band_bottom =
-      metrics.first_line_y +
-      static_cast<float>(std::max<std::size_t>(1, metrics.visible_rows)) * line_height;
-  return SDL_FPoint{
-      .x = std::clamp(x, editor_rect.x, editor_rect.x + std::max(0.0f, editor_rect.w - 1.0f)),
-      .y = std::clamp(y, band_top, std::max(band_top, band_bottom - line_height * 0.5f)),
-  };
+  return selection_autoscroll::ClampPointerToBand(
+      selection_autoscroll::BandFor(editor_rect, metrics), x, y);
 }
 
 bool SettingOn(const std::function<std::optional<std::string>(std::string_view)>& get_setting_value,

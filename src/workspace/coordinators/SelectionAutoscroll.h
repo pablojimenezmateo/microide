@@ -57,6 +57,17 @@ void Arm(InteractionState& interaction_state,
          float pointer_x,
          float pointer_y);
 
+// The pointer, pulled inside `band`. A drag held past an edge must resolve to
+// the EDGE cell, and the clamp has to happen against the painted band rather
+// than the pane rect (which also covers the sticky-scroll strip and any bottom
+// slack) or the document (which is what made a compare/merge drag teleport
+// fifteen screens down -- see TD-2026-08-13-201).
+//
+// Every surface that arms an autoscroll needs this, so it lives with `Band`
+// rather than as a fourth private copy: the surfaces that lacked it are exactly
+// the ones whose drag behaviour diverged.
+SDL_FPoint ClampPointerToBand(const Band& band, float x, float y);
+
 void Disarm(InteractionState& interaction_state);
 
 // Idle-wake interval while armed, else nullopt. Slower than the 60 fps

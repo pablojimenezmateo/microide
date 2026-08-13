@@ -1,3 +1,4 @@
+#include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <chrono>
@@ -216,6 +217,7 @@ void WorkspaceShell::ClearDragState() {
 void WorkspaceShell::ResetTransientInteractionState() {
   ClearDragState();
   context_.interaction_state.mouse_selecting = false;
+  selection_autoscroll::Disarm(context_.interaction_state);
 }
 
 void WorkspaceShell::ResetCurrentProjectStateStorage() {

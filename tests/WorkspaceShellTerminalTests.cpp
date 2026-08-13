@@ -973,6 +973,49 @@ void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
          "terminal drag selection should capture the selected transcript text");
 }
 
+// TD-2026-08-13-205: the terminal was the fourth text surface to drag a selection
+// and the only one that both refused to track a pointer held outside its panel and
+// never autoscrolled. Holding past the bottom edge must keep scrolling the
+// transcript on the idle wake, exactly as the editor / compare / merge panes do.
+void TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  for (int i = 0; i < 300; ++i) {
+    TerminalSessionTestAccess::AppendOutput(session, "line " + std::to_string(i) + "\r\n");
+  }
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
+
+  const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  const SDL_FRect panel_rect = WorkspaceShellTestAccess::BottomPanelContentRect(shell);
+  Expect(SendMouseDown(shell, start.x, start.y, SDL_BUTTON_LEFT),
+         "pressing inside the terminal panel should start transcript selection");
+
+  // Well below the panel: the old handler refused this outright.
+  const float below_y = panel_rect.y + panel_rect.h + 200.0f;
+  Expect(SendMouseMotion(shell, start.x, below_y, SDL_BUTTON_LMASK),
+         "dragging below the terminal panel should still be handled");
+
+  const int scroll_after_motion = WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell);
+  for (int tick = 0; tick < 5; ++tick) {
+    const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    Expect(result.handled, "an armed terminal autoscroll should keep the wake busy");
+  }
+  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) > scroll_after_motion,
+         "holding the pointer past the bottom of the terminal must keep scrolling");
+
+  Expect(SendMouseUp(shell, start.x, below_y, SDL_BUTTON_LEFT), "release should be handled");
+  const int scroll_after_release = WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell);
+  for (int tick = 0; tick < 3; ++tick) {
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  }
+  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == scroll_after_release,
+         "releasing the button disarms the autoscroll");
+}
+
 // Double-click selects the word under the pointer and triple-click the whole row, the
 // same gestures the editor surface answers. The terminal used to offer drag-select
 // only, so the two text surfaces in one window disagreed about what a click means.
@@ -1665,6 +1708,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel);
   AddTest(tests, "WorkspaceShell/BottomPanelWheelScrollsTranscript",
           TestWorkspaceShellBottomPanelWheelScrollsTranscript);
+  AddTest(tests, "WorkspaceShell/TerminalDragAutoscrollsPastTheEdge",
+          TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
   AddTest(tests, "WorkspaceShell/TerminalDoubleClickSelectsWordTripleClickSelectsLine",

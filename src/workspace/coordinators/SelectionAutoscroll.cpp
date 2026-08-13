@@ -42,6 +42,19 @@ Band BandFor(const TextGridInteractionLayout& interaction) {
   };
 }
 
+SDL_FPoint ClampPointerToBand(const Band& band, float x, float y) {
+  const float line_height = std::max(1.0f, band.line_height);
+  const float band_top = band.first_line_y;
+  const float band_bottom =
+      band_top + static_cast<float>(std::max<std::size_t>(1, band.visible_rows)) * line_height;
+  // The half-cell inset keeps the clamped point strictly inside the band, so the
+  // row arithmetic that follows lands on the edge cell rather than one past it.
+  return SDL_FPoint{
+      .x = std::clamp(x, band.rect.x, band.rect.x + std::max(0.0f, band.rect.w - 1.0f)),
+      .y = std::clamp(y, band_top, std::max(band_top, band_bottom - line_height * 0.5f)),
+  };
+}
+
 void Arm(InteractionState& interaction_state,
          const Band& band,
          float pointer_x,
@@ -63,11 +76,15 @@ void Arm(InteractionState& interaction_state,
       StepFor(pointer_x - (band.rect.x + band.rect.w), line_height, kMaxColumnsPerTick);
   interaction_state.selection_pointer_x = pointer_x;
   interaction_state.selection_pointer_y = pointer_y;
+  interaction_state.selection_autoscroll_armed =
+      interaction_state.selection_autoscroll_rows != 0 ||
+      interaction_state.selection_autoscroll_columns != 0;
 }
 
 void Disarm(InteractionState& interaction_state) {
   interaction_state.selection_autoscroll_rows = 0;
   interaction_state.selection_autoscroll_columns = 0;
+  interaction_state.selection_autoscroll_armed = false;
 }
 
 std::optional<Uint32> NextDelayMs(const InteractionState& interaction_state) {

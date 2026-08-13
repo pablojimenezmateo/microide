@@ -1,5 +1,7 @@
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
 
+#include "workspace/coordinators/SelectionAutoscroll.h"
+
 #include <algorithm>
 #include <cmath>
 #include <filesystem>
@@ -277,6 +279,7 @@ bool PanelMouseCoordinator::HandleButtonUp(const SDL_Event& event) {
   if (auto* terminal_tab = ActivePanelTerminalTab()) {
     if (terminal_tab->mouse_selecting) {
       terminal_tab->mouse_selecting = false;
+      selection_autoscroll::Disarm(interaction_state_);
       operations_.sync_primary_selection_with_terminal_selection();
       return true;
     }
@@ -376,12 +379,26 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
         return false;
       }
       const WorkspaceLayout layout = *layout_state;
-      if (!Contains(layout.bottom_panel, event.motion.x, event.motion.y)) {
-        return false;
-      }
-
       const std::size_t line_count = terminal_tab->session.LineCount();
       const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, line_count);
+
+      // The terminal is the fourth text surface to drag a selection, and until
+      // now the only one that refused the moment the pointer left its panel:
+      // both the clamp and the autoscroll stopped at the editor/compare/merge
+      // surfaces (TD-2026-08-13-205). Arm from the RAW pointer, then resolve the
+      // hit from the clamped one, exactly as the editor pane does.
+      const selection_autoscroll::Band band{
+          .rect = panel_layout.content_rect,
+          .first_line_y = panel_layout.text_y,
+          .line_height = panel_layout.line_height,
+          .visible_rows = static_cast<std::size_t>(std::max(0, panel_layout.scroll.visible_rows)),
+      };
+      selection_autoscroll::Arm(interaction_state_, band, event.motion.x, event.motion.y);
+      interaction_state_.selection_pointer_x = event.motion.x;
+      interaction_state_.selection_pointer_y = event.motion.y;
+      const SDL_FPoint pointer =
+          selection_autoscroll::ClampPointerToBand(band, event.motion.x, event.motion.y);
+
       const std::size_t first_row =
           static_cast<std::size_t>(std::max(0, panel_layout.scroll.vertical_scroll));
       // Mouse motion over the terminal fires this per event during a selection
@@ -393,7 +410,8 @@ bool PanelMouseCoordinator::HandleMotion(const SDL_Event& event) {
           motion_lines);
       const std::vector<terminal::TerminalLine>& terminal_lines = motion_lines;
       if (const auto position = operations_.terminal_selection_position_for_point(
-              event.motion.x, event.motion.y, terminal_lines, first_row);
+              static_cast<int>(std::lround(pointer.x)),
+              static_cast<int>(std::lround(pointer.y)), terminal_lines, first_row);
           position.has_value()) {
         terminal_tab->selection_head = *position;
         state_.surface.focus = FocusTarget::Panel;
