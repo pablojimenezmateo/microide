@@ -435,6 +435,11 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
   EnsureCursorVisible();
 }
 
+void TextViewport::JumpCursorTo(std::size_t line, std::size_t column, bool extend_selection) {
+  ClearSecondaryCarets();
+  MoveCursorTo(line, column, extend_selection);
+}
+
 void TextViewport::MoveCursorToVisualColumn(std::size_t line,
                                             std::size_t visual_column,
                                             bool extend_selection) {

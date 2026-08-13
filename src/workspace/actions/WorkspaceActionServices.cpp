@@ -813,7 +813,7 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
     line = from_end >= line_count ? 0 : line_count - from_end;
   }
 
-  viewport->MoveCursorTo(line, request.column > 0 ? request.column - 1 : 0);
+  viewport->JumpCursorTo(line, request.column > 0 ? request.column - 1 : 0);
   state_.surface.focus = FocusTarget::Editor;
   operations_.request_focused_editor_redraw();
   return true;

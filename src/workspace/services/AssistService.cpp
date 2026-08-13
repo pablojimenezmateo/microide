@@ -937,7 +937,7 @@ void AssistService::NavigateToLspLocation(const LspClient::Location& location,
   if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
     const std::size_t target_line =
         static_cast<std::size_t>(std::max(location.range.start.line, 0));
-    active->MoveCursorTo(
+    active->JumpCursorTo(
         target_line,
         LspPositionToByteColumn(*active, target_line, location.range.start.character, encoding));
     operations_.reset_caret_blink();
@@ -1761,7 +1761,7 @@ void AssistService::NavigateToPluginLocation(const plugin::PluginHost::LocationR
   }
   if (editor::TextViewport* active = operations_.active_editor_viewport(); active != nullptr) {
     // Provider line/column are 1-based; the viewport caret is 0-based.
-    active->MoveCursorTo(location.line > 0 ? location.line - 1 : 0,
+    active->JumpCursorTo(location.line > 0 ? location.line - 1 : 0,
                          location.column > 0 ? location.column - 1 : 0);
     operations_.reset_caret_blink();
     operations_.request_focused_editor_redraw();

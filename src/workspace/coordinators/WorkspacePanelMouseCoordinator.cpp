@@ -223,7 +223,7 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             operations_.open_file(path.lexically_normal());
             if (editor::TextViewport* viewport = operations_.active_editor_viewport();
                 viewport != nullptr) {
-              viewport->MoveCursorTo(parsed->line > 0 ? parsed->line - 1 : 0,
+              viewport->JumpCursorTo(parsed->line > 0 ? parsed->line - 1 : 0,
                                      parsed->column > 0 ? parsed->column - 1 : 0);
             }
             state_.surface.focus = FocusTarget::Editor;

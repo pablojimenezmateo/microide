@@ -233,7 +233,20 @@ class TextViewport {
   void DeleteWord(int direction);
   void MoveCursorLineStart(bool extend_selection = false);
   void MoveCursorLineEnd(bool extend_selection = false);
+  // Reposition the caret, LEAVING any secondary carets in place. This is the
+  // primitive: its internal callers (ShapingActions rebuilding a caret set,
+  // SnippetEngine placing a tabstop, the drag collapse-then-extend idiom) depend
+  // on the secondaries surviving. User-facing jumps want JumpCursorTo below.
   void MoveCursorTo(std::size_t line, std::size_t column, bool extend_selection = false);
+  // A user-facing JUMP to a location — goto-line, find-next, jump-to-bracket,
+  // go-to-definition, a problems/search-result reveal, a stack-frame click, a
+  // plugin's open-at-line. Collapses to a single caret first, then moves, which
+  // is what VS Code does for every one of these: a multi-caret set is anchored
+  // to where the user was working, and a jump elsewhere strands it off-screen
+  // where its next edit is invisible (TD-2026-08-13-203). Prefer this over
+  // ClearSecondaryCarets() + MoveCursorTo(): the open-coded pair is how these
+  // call sites diverged in the first place.
+  void JumpCursorTo(std::size_t line, std::size_t column, bool extend_selection = false);
   void MoveCursorToVisualColumn(std::size_t line,
                                 std::size_t visual_column,
                                 bool extend_selection = false);

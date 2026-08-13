@@ -328,7 +328,7 @@ void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {
   operations_.open_file(compare_tab->path);
   if (target_line > 0) {
     if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
-      viewport->MoveCursorTo(static_cast<std::size_t>(target_line - 1), 0);
+      viewport->JumpCursorTo(static_cast<std::size_t>(target_line - 1), 0);
     }
   }
 }
@@ -807,7 +807,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
       merge_tab->status_message =
           validation.message + " Choose Mark Resolved again to override.";
       if (validation.marker_line.has_value()) {
-        merge_tab->result_viewport.MoveCursorTo(*validation.marker_line, 0);
+        merge_tab->result_viewport.JumpCursorTo(*validation.marker_line, 0);
       }
       operations_.request_editor_surface_redraw();
       return;

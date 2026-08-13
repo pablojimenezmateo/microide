@@ -288,7 +288,7 @@ WorkspaceShell::WorkspaceShell() {
                 OpenFile(path);
                 if (editor::TextViewport* viewport = ActiveEditorViewport();
                     viewport != nullptr) {
-                  viewport->MoveCursorTo(line, 0);
+                  viewport->JumpCursorTo(line, 0);
                 }
                 context_.current_project_state.surface.focus = FocusTarget::Editor;
                 RequestEditorSurfaceRedraw();
@@ -431,7 +431,7 @@ WorkspaceShell::WorkspaceShell() {
               const std::size_t target_line = request.line - 1;
               const std::size_t target_column = request.column > 0 ? request.column - 1 : 0;
               if (editor::TextViewport* viewport = ActiveEditorViewport(); viewport != nullptr) {
-                viewport->MoveCursorTo(target_line, target_column);
+                viewport->JumpCursorTo(target_line, target_column);
               }
             }
             return true;
@@ -1240,12 +1240,12 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
         clamp_position(request.selection_start_line, request.selection_start_column);
     const editor::TextPosition end =
         clamp_position(request.selection_end_line, request.selection_end_column);
-    viewport->MoveCursorTo(start.line, start.column, /*extend_selection=*/false);
+    viewport->JumpCursorTo(start.line, start.column, /*extend_selection=*/false);
     viewport->MoveCursorTo(end.line, end.column, /*extend_selection=*/true);
   } else if (request.has_cursor) {
     const editor::TextPosition cursor =
         clamp_position(request.cursor_line, request.cursor_column);
-    viewport->MoveCursorTo(cursor.line, cursor.column, /*extend_selection=*/false);
+    viewport->JumpCursorTo(cursor.line, cursor.column, /*extend_selection=*/false);
   }
 
   ResetCaretBlink();

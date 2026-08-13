@@ -110,7 +110,7 @@ void DebugPaneMouseCoordinator::ActivateCallStackRow(std::size_t line_index,
   operations_.open_file(frame.source_path);
   if (editor::TextViewport* viewport = operations_.active_editor_viewport();
       viewport != nullptr) {
-    viewport->MoveCursorTo(frame.line, 0);
+    viewport->JumpCursorTo(frame.line, 0);
   }
   // Opening the frame's file focuses the editor on its own, so the keyboard path
   // has to claim focus back rather than merely decline to hand it over.
@@ -158,7 +158,7 @@ void DebugPaneMouseCoordinator::ActivateBreakpointRow(std::size_t line_index, bo
   operations_.open_file(row.path);
   if (editor::TextViewport* viewport = operations_.active_editor_viewport();
       viewport != nullptr) {
-    viewport->MoveCursorTo(row.line, 0);
+    viewport->JumpCursorTo(row.line, 0);
   }
   // Opening the file focuses the editor by itself; see ActivateCallStackRow.
   state_.surface.focus = move_focus_to_editor ? FocusTarget::Editor : FocusTarget::DebugPane;

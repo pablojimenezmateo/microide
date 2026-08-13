@@ -184,7 +184,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_HOME: {
         const std::size_t previous_selected_row = compare_tab->selected_row;
         if (modifiers & SDL_KMOD_CTRL) {
-          viewport.MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
+          viewport.JumpCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
         } else {
           viewport.MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
         }
@@ -194,7 +194,7 @@ bool KeyInputCoordinator::HandleCompareKeyDown(const SDL_KeyboardEvent& event,
         const std::size_t previous_selected_row = compare_tab->selected_row;
         if (modifiers & SDL_KMOD_CTRL) {
           const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
-          viewport.MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
+          viewport.JumpCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
                                 (modifiers & SDL_KMOD_SHIFT) != 0);
         } else {
           viewport.MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
@@ -422,7 +422,7 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
       return sync_merge_navigation();
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
-        viewport.MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
+        viewport.JumpCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
         viewport.MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
       }
@@ -430,7 +430,7 @@ bool KeyInputCoordinator::HandleMergeKeyDown(const SDL_KeyboardEvent& event,
     case SDLK_END:
       if (modifiers & SDL_KMOD_CTRL) {
         const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
-        viewport.MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
+        viewport.JumpCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
                               (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
         viewport.MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);
@@ -532,7 +532,7 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
       return after_edit();
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
-        viewport.MoveCursorTo(0, 0, extend_selection);
+        viewport.JumpCursorTo(0, 0, extend_selection);
       } else {
         viewport.MoveCursorLineStart(extend_selection);
       }
@@ -540,7 +540,7 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
     case SDLK_END:
       if (modifiers & SDL_KMOD_CTRL) {
         const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
-        viewport.MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(), extend_selection);
+        viewport.JumpCursorTo(last_line, std::numeric_limits<std::size_t>::max(), extend_selection);
       } else {
         viewport.MoveCursorLineEnd(extend_selection);
       }
@@ -729,10 +729,9 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     case SDLK_HOME:
       if (modifiers & SDL_KMOD_CTRL) {
         // A jump to the other end of the DOCUMENT collapses to one caret, as in
-        // VS Code: MoveCursorTo leaves the secondary set where it was, which
-        // would strand carets a screenful away from the one that just moved.
-        viewport->ClearSecondaryCarets();
-        viewport->MoveCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
+        // VS Code: it would otherwise strand carets a screenful away from the one
+        // that just moved.
+        viewport->JumpCursorTo(0, 0, (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
         viewport->MoveCursorLineStart((modifiers & SDL_KMOD_SHIFT) != 0);
       }
@@ -740,9 +739,8 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     case SDLK_END:
       if (modifiers & SDL_KMOD_CTRL) {
-        viewport->ClearSecondaryCarets();
         const std::size_t last_line = viewport->line_count() == 0 ? 0 : viewport->line_count() - 1;
-        viewport->MoveCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
+        viewport->JumpCursorTo(last_line, std::numeric_limits<std::size_t>::max(),
                                (modifiers & SDL_KMOD_SHIFT) != 0);
       } else {
         viewport->MoveCursorLineEnd((modifiers & SDL_KMOD_SHIFT) != 0);

@@ -562,7 +562,7 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
   // finds no matching tab and `viewport` still points at the previously-active tab —
   // relocating its caret would scroll/jump the wrong buffer.
   if (viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
-    viewport->MoveCursorTo(line, column);
+    viewport->JumpCursorTo(line, column);
   }
 }
 

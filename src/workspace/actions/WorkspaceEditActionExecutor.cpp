@@ -337,9 +337,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
                             (viewport->cursor_column() == match->open_column ||
                              viewport->cursor_column() == match->open_column + 1));
       if (at_open) {
-        viewport->MoveCursorTo(match->close_line, match->close_column, false);
+        viewport->JumpCursorTo(match->close_line, match->close_column, false);
       } else {
-        viewport->MoveCursorTo(match->open_line, match->open_column, false);
+        viewport->JumpCursorTo(match->open_line, match->open_column, false);
       }
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;

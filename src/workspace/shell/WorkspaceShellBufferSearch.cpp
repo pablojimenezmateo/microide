@@ -339,7 +339,7 @@ void WorkspaceShell::RevealBufferSearchMatch(const editor::SelectionRange& match
   if (viewport == nullptr) {
     return;
   }
-  viewport->MoveCursorTo(match.start.line, match.start.column);
+  viewport->JumpCursorTo(match.start.line, match.start.column);
 
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   editor::FoldingModel* model = EnsureActiveFoldingModelFresh();
