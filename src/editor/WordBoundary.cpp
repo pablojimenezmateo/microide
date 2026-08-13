@@ -12,6 +12,23 @@ std::size_t ScalarLengthAt(std::string_view text, std::size_t index) {
   return len == 0 ? 1 : len;
 }
 
+// Round `caret` down to the start of the code point containing it.
+//
+// Every caret this tree produces is already on a boundary (`ClampTextColumn`
+// snaps, and so does `SingleLineEditor::Normalize`), so this is defensive rather
+// than load-bearing -- but these are public entry points now, and a right-scan
+// starting mid-scalar would classify a continuation byte as a separator and hand
+// back a boundary INSIDE a character. As the end of a delete range that splits
+// the character.
+std::size_t SnapToScalarStart(std::string_view text, std::size_t caret) {
+  std::size_t index = std::min(caret, text.size());
+  while (index > 0 && index < text.size() &&
+         util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[index]))) {
+    --index;
+  }
+  return index;
+}
+
 }  // namespace
 
 WordClass ClassifyWordCodepointAt(std::string_view text, std::size_t index) {
@@ -35,7 +52,7 @@ WordClass ClassifyWordCodepointAt(std::string_view text, std::size_t index) {
 }
 
 std::size_t WordBoundaryLeft(std::string_view text, std::size_t caret) {
-  std::size_t index = std::min(caret, text.size());
+  std::size_t index = SnapToScalarStart(text, caret);
   while (index > 0) {
     const std::size_t start = util::PreviousUtf8Boundary(text, index);
     if (ClassifyWordCodepointAt(text, start) != WordClass::kWhitespace) {
@@ -59,7 +76,7 @@ std::size_t WordBoundaryLeft(std::string_view text, std::size_t caret) {
 }
 
 std::size_t WordBoundaryRight(std::string_view text, std::size_t caret) {
-  std::size_t index = std::min(caret, text.size());
+  std::size_t index = SnapToScalarStart(text, caret);
   while (index < text.size() &&
          ClassifyWordCodepointAt(text, index) == WordClass::kWhitespace) {
     index += ScalarLengthAt(text, index);
@@ -75,8 +92,7 @@ std::size_t WordBoundaryRight(std::string_view text, std::size_t caret) {
 }
 
 std::size_t DeleteWordBoundaryLeft(std::string_view text, std::size_t caret) {
-  std::size_t index = std::min(caret, text.size());
-  std::size_t whitespace_start = index;
+  std::size_t whitespace_start = SnapToScalarStart(text, caret);
   std::size_t whitespace_count = 0;
   while (whitespace_start > 0) {
     const std::size_t start = util::PreviousUtf8Boundary(text, whitespace_start);
@@ -96,11 +112,7 @@ WordSpan IdentifierRunAt(std::string_view text, std::size_t index) {
   if (index >= text.size()) {
     return WordSpan{};
   }
-  // A caret can land mid-scalar (mouse hit-test, a plugin-supplied column, a
-  // restored session); walk back off any continuation byte first.
-  while (index > 0 && util::IsUtf8ContinuationByte(static_cast<unsigned char>(text[index]))) {
-    --index;
-  }
+  index = SnapToScalarStart(text, index);
   if (ClassifyWordCodepointAt(text, index) != WordClass::kWord) {
     return WordSpan{};
   }
@@ -120,8 +132,7 @@ WordSpan IdentifierRunAt(std::string_view text, std::size_t index) {
 }
 
 std::size_t DeleteWordBoundaryRight(std::string_view text, std::size_t caret) {
-  std::size_t index = std::min(caret, text.size());
-  std::size_t whitespace_end = index;
+  std::size_t whitespace_end = SnapToScalarStart(text, caret);
   std::size_t whitespace_count = 0;
   while (whitespace_end < text.size() &&
          ClassifyWordCodepointAt(text, whitespace_end) == WordClass::kWhitespace) {

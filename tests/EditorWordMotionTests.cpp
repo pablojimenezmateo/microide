@@ -89,6 +89,22 @@ void TestDeleteWordBoundaryTakesAWhitespaceRunOnItsOwn() {
 // Double-click-to-select and the occurrence highlight both stand on the same
 // identifier run. Both used to scan with a byte-wise ASCII predicate, so a word
 // with any non-ASCII letter in it was selected only up to that letter.
+// The public boundary entries snap a mid-scalar index down to its character
+// start. No caret this tree produces is ever mid-scalar, but a right-scan that
+// started on a continuation byte would return a boundary INSIDE a character --
+// and as the end of a delete range that splits it.
+void TestWordBoundarySnapsAMidScalarIndex() {
+  constexpr std::string_view kText = "café bar";  // é occupies bytes 3..4
+  Expect(editor::WordBoundaryRight(kText, 4) == 5,
+         "a right scan from inside é finishes the word it is inside");
+  Expect(editor::WordBoundaryLeft(kText, 4) == 0,
+         "a left scan from inside é lands on the word start");
+  Expect(editor::DeleteWordBoundaryRight(kText, 4) == 5,
+         "a delete-right span from inside é ends on a character boundary");
+  Expect(editor::DeleteWordBoundaryLeft(kText, 4) == 0,
+         "a delete-left span from inside é starts on a character boundary");
+}
+
 void TestViewportSelectsMultibyteWordsWhole() {
   TextViewport viewport;
   viewport.SetViewportSize(10, 80);
@@ -238,6 +254,8 @@ void RegisterEditorWordMotionTests(std::vector<TestCase>& tests) {
           TestWordBoundaryKeepsMultibyteWordsWhole);
   AddTest(tests, "EditorWordMotion/DeleteBoundaryTakesWhitespaceRunAlone",
           TestDeleteWordBoundaryTakesAWhitespaceRunOnItsOwn);
+  AddTest(tests, "EditorWordMotion/BoundarySnapsAMidScalarIndex",
+          TestWordBoundarySnapsAMidScalarIndex);
   AddTest(tests, "EditorWordMotion/ViewportSelectsMultibyteWordsWhole",
           TestViewportSelectsMultibyteWordsWhole);
   AddTest(tests, "EditorWordMotion/ViewportMotionCrossesLines",
