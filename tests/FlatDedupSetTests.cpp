@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <string>
+#include <string_view>
 #include <unordered_set>
 #include <vector>
 
@@ -141,9 +142,64 @@ void TestFlatDedupSetInternAgreesWithInsert() {
   Expect(interned.keys() == inserted.keys(), "both paths store the same keys in the same order");
 }
 
+// TD-2026-08-13-199: FlatKeyIndex dedupes against strings the CALLER owns, so
+// the index stores no keys at all. The load-bearing property is that it stays
+// correct while the owning vector reallocates under it — which is exactly what
+// rules out a string_view index (a short string lives inside its std::string).
+void TestFlatKeyIndexDedupesWithoutStoringKeys() {
+  std::vector<std::string> ids;
+  auto index = util::FlatKeyIndex(
+      4, [&ids](std::size_t i) -> std::string_view { return ids[i]; });
+
+  const auto add = [&](std::string id) {
+    if (index.Find(id) != util::kFlatKeyNotFound) {
+      return false;
+    }
+    ids.push_back(std::move(id));
+    index.Insert(ids.size() - 1);
+    return true;
+  };
+
+  Expect(add("editor.wrap"), "a new id is appended");
+  Expect(!add("editor.wrap"), "a repeat id is deduped");
+  Expect(add("editor.tab_size"), "a second distinct id is appended");
+  Expect(ids.size() == 2, "only distinct ids reach the owner");
+  Expect(index.Find("editor.wrap") == 0, "the first id keeps its index");
+  Expect(index.Find("editor.tab_size") == 1, "the second id keeps its index");
+  Expect(index.Find("editor.absent") == util::kFlatKeyNotFound, "an unknown id is not found");
+}
+
+void TestFlatKeyIndexSurvivesOwnerReallocation() {
+  std::vector<std::string> ids;
+  // Seeded deliberately small so both the vector and the slot table grow several
+  // times during the run: every short id moves with its std::string, and every
+  // recorded index is rehashed through the accessor.
+  auto index = util::FlatKeyIndex(
+      2, [&ids](std::size_t i) -> std::string_view { return ids[i]; });
+
+  constexpr std::size_t kCount = 500;
+  for (std::size_t i = 0; i < kCount; ++i) {
+    std::string id = "id." + std::to_string(i);  // short: lives in the string's inline buffer
+    Expect(index.Find(id) == util::kFlatKeyNotFound, "each generated id is distinct");
+    ids.push_back(std::move(id));
+    index.Insert(ids.size() - 1);
+  }
+  Expect(ids.size() == kCount, "every distinct id was appended");
+  for (std::size_t i = 0; i < kCount; ++i) {
+    Expect(index.Find("id." + std::to_string(i)) == i,
+           "every id still resolves to its index after growth");
+  }
+  Expect(index.Find("id." + std::to_string(kCount)) == util::kFlatKeyNotFound,
+         "an id that was never inserted is still not found");
+}
+
 }  // namespace
 
 void RegisterFlatDedupSetTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FlatKeyIndex/DedupesWithoutStoringKeys",
+          TestFlatKeyIndexDedupesWithoutStoringKeys);
+  AddTest(tests, "FlatKeyIndex/SurvivesOwnerReallocation",
+          TestFlatKeyIndexSurvivesOwnerReallocation);
   AddTest(tests, "FlatDedupSet/InternAssignsDenseFirstOccurrenceIds",
           TestFlatDedupSetInternAssignsDenseFirstOccurrenceIds);
   AddTest(tests, "FlatDedupSet/InternIdsSurviveGrowth", TestFlatDedupSetInternIdsSurviveGrowth);
