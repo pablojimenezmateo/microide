@@ -385,6 +385,9 @@ class TextLayoutCache {
     VisibleLineCacheEntry* lru_next = nullptr;
   };
 
+  // Move every live entry's layout into the pool, up to its cap. The caller is
+  // about to drop the entries themselves.
+  void RetireVisibleLineLayouts();
   void VisibleLineLruUnlink(VisibleLineCacheEntry& entry) const;
   void VisibleLineLruPushBack(VisibleLineCacheEntry& entry) const;
   void VisibleLineLruTouch(VisibleLineCacheEntry& entry) const {
@@ -397,6 +400,24 @@ class TextLayoutCache {
 
   mutable std::unordered_map<VisibleLineCacheKey, VisibleLineCacheEntry, VisibleLineCacheKeyHash>
       visible_line_cache_;
+  // Layout buffers retired by invalidation, held for the next miss to build into.
+  //
+  // The eviction path already recycles an entry rather than erasing and
+  // re-emplacing, because a scroll through fresh content misses on every row and
+  // each miss costs the map node plus the LayoutLine's three vectors. An EDIT
+  // took the other path: InvalidateVisibleLineCacheFrom erased every entry at or
+  // after it, and the same repaint rebuilt those rows from nothing -- so typing
+  // paid, on every visible row below the caret, three of the four allocations the
+  // eviction path exists to avoid.
+  //
+  // The pool holds LayoutLines rather than extracted map nodes because a node
+  // handle is move-only and TextLayoutCache has to stay copyable (a split pane
+  // copies its sibling's caches). That leaves the map node itself to allocate;
+  // the three per-row buffers, which are the ones sized to the row, are reused.
+  //
+  // Bounded by the cache limit, so this never holds more than the live cache
+  // could have.
+  mutable std::vector<LayoutLine> visible_line_layout_pool_;
   // Least / most recently used ends of the intrusive list above.
   mutable VisibleLineCacheEntry* visible_line_lru_head_ = nullptr;
   mutable VisibleLineCacheEntry* visible_line_lru_tail_ = nullptr;

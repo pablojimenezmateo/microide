@@ -188,6 +188,14 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   }
   const auto [it, _] = visible_line_cache_.emplace(cache_key, VisibleLineCacheEntry{});
   it->second.key = cache_key;
+  // A layout retired by the last invalidation carries the same three buffers this
+  // row would otherwise allocate from scratch; build_into overwrites the contents
+  // and keeps the capacity.
+  if (!visible_line_layout_pool_.empty()) {
+    it->second.layout = std::move(visible_line_layout_pool_.back());
+    visible_line_layout_pool_.pop_back();
+    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
+  }
   build_into(it->second.layout);
   VisibleLineLruPushBack(it->second);
   return it->second.layout;
@@ -858,19 +866,41 @@ void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
   cached_visual_line_columns_.clear();
   cached_max_visual_columns_tab_size_ = 0;
   cached_max_visual_columns_content_revision_ = 0;
+  // Retire, don't destroy. This runs from UpdateVisualColumnCacheAfterEdit
+  // whenever the per-line width table cannot be spliced, which is an ordinary
+  // edit -- and it runs AFTER InvalidateVisibleLineCacheFrom has already retired
+  // that edit's rows, so clearing the pool here handed the buffers back to the
+  // allocator one call before the repaint asked for them again. `InvalidateAll`
+  // is the wipe that actually releases them.
+  RetireVisibleLineLayouts();
   visible_line_cache_.clear();
   visible_line_lru_head_ = nullptr;
   visible_line_lru_tail_ = nullptr;
+}
+
+void TextLayoutCache::RetireVisibleLineLayouts() {
+  for (auto& [key, entry] : visible_line_cache_) {
+    if (visible_line_layout_pool_.size() >= kVisibleLineCacheLimit) {
+      break;
+    }
+    visible_line_layout_pool_.push_back(std::move(entry.layout));
+  }
 }
 
 void TextLayoutCache::InvalidateVisibleLineCacheFrom(std::size_t start_line) {
   for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {
     if (it->first.line_index >= start_line) {
       VisibleLineLruUnlink(it->second);
+      // Retire the layout instead of destroying it; see
+      // visible_line_layout_pool_. Over the cap it is dropped, which is the plain
+      // erase this used to be.
+      if (visible_line_layout_pool_.size() < kVisibleLineCacheLimit) {
+        visible_line_layout_pool_.push_back(std::move(it->second.layout));
+      }
       it = visible_line_cache_.erase(it);
-    } else {
-      ++it;
+      continue;
     }
+    ++it;
   }
 }
 
@@ -921,6 +951,14 @@ std::size_t TextLayoutCache::ApproximateResidentBytes() const {
     bytes += entry.layout.source_columns.capacity() * sizeof(std::size_t);
     bytes += entry.layout.text_offsets.capacity() * sizeof(std::size_t);
   }
+  // Retired layouts hold their buffers until a miss claims them, so they are
+  // resident and belong in the number this reports.
+  for (const LayoutLine& layout : visible_line_layout_pool_) {
+    bytes += sizeof(LayoutLine);
+    bytes += layout.text.capacity();
+    bytes += layout.source_columns.capacity() * sizeof(std::size_t);
+    bytes += layout.text_offsets.capacity() * sizeof(std::size_t);
+  }
   return bytes;
 }
 
@@ -931,6 +969,10 @@ void TextLayoutCache::InvalidateAll() {
   // actually means every cache.
   ClearVisibleLineAndMaxColumns();
   DropWrappedRowLayouts();
+  // The one caller that means "release it all". Everything else drops the cache
+  // but keeps the buffers for the repaint that follows.
+  visible_line_layout_pool_.clear();
+  visible_line_layout_pool_.shrink_to_fit();
 }
 
 }  // namespace microide::editor

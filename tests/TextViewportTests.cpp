@@ -68,6 +68,108 @@ void TestTextViewportSplitSiblingEditRefreshesHighlightTokens() {
          "the split sibling pane must recompute tokens after the shared buffer changed");
 }
 
+// The per-line token cache stopped ERASING invalidated entries -- it stamps them
+// with a generation and retokenizes into the buffer they already hold, so typing
+// no longer frees and reallocates a screenful of token vectors per keystroke.
+// The whole risk of that is a stale entry read as current, so these assert the
+// three staleness rules rather than the allocation win: an edit stales its own
+// line and everything after it, leaves the lines before it valid, and the stale
+// entries must not surface through the cached-only accessors either.
+void TestTextViewportEditStalesTokenCacheSuffixOnly() {
+  TextViewport viewport;
+  viewport.LoadContent(
+      "int a = 1;\nint b = 2;\nint c = 3;\nint d = 4;\nint e = 5;\n",
+      "/tmp/token-suffix.cpp");
+
+  for (std::size_t line = 0; line < 5; ++line) {
+    Expect(!viewport.HighlightedLineTokens(line).empty(), "every line should tokenize");
+  }
+  for (std::size_t line = 0; line < 5; ++line) {
+    Expect(!viewport.HighlightedLineTokensIfCached(line).empty(),
+           "every line should now be cached");
+  }
+  const std::vector<SyntaxTokenKind> line0_before = viewport.HighlightedLineTokens(0);
+
+  // Open an unterminated block comment on line 2. Lines 0-1 are unaffected;
+  // lines 2-4 are all inside the comment from here on.
+  viewport.MoveCursorTo(2, 0);
+  viewport.InsertText("/*");
+
+  Expect(!viewport.HighlightedLineTokensIfCached(0).empty(),
+         "an edit at line 2 must leave line 0's cached tokens valid");
+  Expect(!viewport.HighlightedLineTokensIfCached(1).empty(),
+         "an edit at line 2 must leave line 1's cached tokens valid");
+  for (std::size_t line = 2; line < 5; ++line) {
+    Expect(viewport.HighlightedLineTokensIfCached(line).empty(),
+           "an edit at line 2 must stale line 2 and everything after it");
+  }
+
+  // The surviving entry must be RIGHT, not merely present: line 0's bytes did not
+  // change, so its tokens must be exactly what they were before the edit.
+  Expect(viewport.HighlightedLineTokens(0) == line0_before,
+         "the retained entry above the edit must still hold line 0's real tokens");
+  for (std::size_t line = 3; line < 5; ++line) {
+    const auto& tokens = viewport.HighlightedLineTokens(line);
+    Expect(!tokens.empty() && std::all_of(tokens.begin(), tokens.end(),
+                                          [](SyntaxTokenKind kind) {
+                                            return kind == SyntaxTokenKind::Comment;
+                                          }),
+           "lines after the opened block comment must retokenize as comment");
+  }
+}
+
+// A retained-but-stale entry must not survive a whole-document invalidation
+// either: a syntax-definition reload changes what every line means, and the
+// generation bump is what has to cover it.
+void TestTextViewportSyntaxReloadStalesEveryTokenCacheEntry() {
+  TextViewport viewport;
+  viewport.LoadContent("int a = 1;\nint b = 2;\n", "/tmp/token-reload.cpp");
+  Expect(!viewport.HighlightedLineTokens(0).empty(), "line 0 should tokenize");
+  Expect(!viewport.HighlightedLineTokens(1).empty(), "line 1 should tokenize");
+  Expect(!viewport.HighlightedLineTokensIfCached(1).empty(), "line 1 should be cached");
+
+  viewport.InvalidateSyntaxHighlighting();
+
+  Expect(viewport.HighlightedLineTokensIfCached(0).empty(),
+         "a syntax invalidation must stale line 0");
+  Expect(viewport.HighlightedLineTokensIfCached(1).empty(),
+         "a syntax invalidation must stale line 1");
+  Expect(!viewport.HighlightedLineTokens(0).empty(),
+         "the next query must recompute rather than return the retained buffer");
+}
+
+// The visible-line layout cache retires an invalidated row's LayoutLine into a
+// pool instead of destroying it, so the repaint that follows an edit builds the
+// rows below the caret into buffers it already owns. Asserted through the
+// recycle counter the eviction path already published: without the pool, an edit
+// plus repaint recycles nothing at all.
+void TestTextViewportEditRecyclesVisibleLineLayouts() {
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 40; ++i) {
+    content += "int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  viewport.LoadContent(content, "/tmp/layout-recycle.cpp");
+  viewport.SetViewportSize(30, 80);
+  const auto paint = [&]() {
+    for (std::size_t line = 0; line < 30; ++line) {
+      (void)viewport.VisibleLineLayout(line);
+    }
+  };
+  paint();
+
+  const std::uint64_t before =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
+  viewport.MoveCursorTo(0, 0);
+  viewport.InsertText("x");
+  paint();
+  const std::uint64_t after =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
+
+  Expect(after > before,
+         "the repaint after an edit must build into the layouts the invalidation retired");
+}
+
 void TestTextViewportSmallFileKeepsSyntaxHighlighting() {
   TextViewport viewport;
   viewport.LoadContent("int value = 42;\n", "/tmp/sample.cpp");
@@ -5291,6 +5393,12 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/SplitSiblingEditRefreshesHighlightTokens",
           TestTextViewportSplitSiblingEditRefreshesHighlightTokens);
+  AddTest(tests, "TextViewport/EditStalesTokenCacheSuffixOnly",
+          TestTextViewportEditStalesTokenCacheSuffixOnly);
+  AddTest(tests, "TextViewport/SyntaxReloadStalesEveryTokenCacheEntry",
+          TestTextViewportSyntaxReloadStalesEveryTokenCacheEntry);
+  AddTest(tests, "TextViewport/EditRecyclesVisibleLineLayouts",
+          TestTextViewportEditRecyclesVisibleLineLayouts);
   AddTest(tests, "TextViewport/LargeCodeFixtureKeepsSyntaxHighlighting",
           TestTextViewportLargeCodeFixtureKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/LargePlainFixtureKeepsSyntaxHighlighting",
