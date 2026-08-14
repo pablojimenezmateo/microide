@@ -188,7 +188,8 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float presentation_scale_x_ = 1.0f;
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
-  std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual> cache_;
+  using CacheMap = std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual>;
+  CacheMap cache_;
   // Least / most recently used ends of the intrusive list threaded through
   // CacheEntry. Same shape as TextLayoutCache's visible-line LRU.
   CacheEntry* lru_head_ = nullptr;

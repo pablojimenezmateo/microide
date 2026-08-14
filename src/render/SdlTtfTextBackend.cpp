@@ -1186,22 +1186,71 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   entry.height = surface->h;
   SDL_DestroySurface(surface);
 
-  CacheKey key{
-      .text = std::string(text),
-      .color = color,
-  };
   const std::size_t entry_bytes = EntryByteCost(entry.width, entry.height);
-  auto [map_it, inserted] = cache_.emplace(std::move(key), std::move(entry));
-  if (!inserted) {
-    // Unreachable in practice — we are here because `find` missed — but the
-    // assignment below overwrites the LRU links, so the existing entry has to
-    // leave the list before it stops describing where it sits in it.
-    LruUnlink(map_it->second);
-    cache_bytes_ -= EntryByteCost(map_it->second.width, map_it->second.height);
-    if (map_it->second.texture != nullptr) {
-      SDL_DestroyTexture(map_it->second.texture);
+
+  // Evict FIRST when this insert would put the cache over either budget, and
+  // build into the victim's node instead of erasing it and emplacing a fresh one.
+  //
+  // The pair is the steady state, not a corner: a scroll through fresh content
+  // misses on every row, and once the VRAM budget binds every miss IS an eviction
+  // — measured at 685 misses and 685 evictions across one scroll scenario. So the
+  // erase-then-emplace cost a map node plus a fresh copy of the row's own text,
+  // per row, per frame, and freed the identical pair one row later. `extract`
+  // hands the node back with the key string's capacity intact; assigning over it
+  // reuses that too (TD-2026-08-15-236).
+  //
+  // The `!cache_.empty()` guard is the counterpart of the trailing loop's `> 1`:
+  // a single composite that alone exceeds kMaxCacheBytes must not evict itself
+  // and dangle the pointer this returns. Here it cannot — the victim is chosen
+  // before the new entry is in the map.
+  CacheMap::node_type recycled;
+  if (!cache_.empty() &&
+      (cache_.size() + 1 > kMaxCacheEntries || cache_bytes_ + entry_bytes > kMaxCacheBytes)) {
+    CacheEntry* victim = lru_head_;
+    if (victim != nullptr && victim->key != nullptr) {
+      // `find` before `extract`: the key lives inside the node, so looking it up
+      // by reference after the node has moved would hash freed memory.
+      const auto victim_it = cache_.find(*victim->key);
+      LruUnlink(*victim);
+      if (victim_it != cache_.end()) {
+        util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheEvictions);
+        cache_bytes_ -= EntryByteCost(victim_it->second.width, victim_it->second.height);
+        if (victim_it->second.texture != nullptr) {
+          SDL_DestroyTexture(victim_it->second.texture);
+        }
+        recycled = cache_.extract(victim_it);
+      }
     }
-    map_it->second = entry;
+  }
+
+  CacheMap::iterator map_it;
+  if (!recycled.empty()) {
+    // `text` is a view of the caller's row text, never of a key in this map (we
+    // are here because `find` missed), so overwriting the node's key cannot
+    // invalidate it.
+    recycled.key().text.assign(text);
+    recycled.key().color = color;
+    recycled.mapped() = entry;
+    util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheRecycled);
+    map_it = cache_.insert(std::move(recycled)).position;
+  } else {
+    CacheKey key{
+        .text = std::string(text),
+        .color = color,
+    };
+    const auto [it, inserted] = cache_.emplace(std::move(key), entry);
+    map_it = it;
+    if (!inserted) {
+      // Unreachable in practice — we are here because `find` missed — but the
+      // assignment below overwrites the LRU links, so the existing entry has to
+      // leave the list before it stops describing where it sits in it.
+      LruUnlink(map_it->second);
+      cache_bytes_ -= EntryByteCost(map_it->second.width, map_it->second.height);
+      if (map_it->second.texture != nullptr) {
+        SDL_DestroyTexture(map_it->second.texture);
+      }
+      map_it->second = entry;
+    }
   }
   cache_bytes_ += entry_bytes;
   map_it->second.key = &map_it->first;

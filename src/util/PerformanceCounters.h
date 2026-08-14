@@ -194,6 +194,11 @@ namespace microide::util {
   X(RenderTextTextureCacheHits, "render.text_texture_cache_hits")                               \
   X(RenderTextTextureCacheMisses, "render.text_texture_cache_misses")                           \
   X(RenderTextTextureCacheEvictions, "render.text_texture_cache_evictions")                     \
+  /* Misses served by reusing the eviction victim's map node -- the node itself */             \
+  /* plus its key string -- instead of erasing one and emplacing another. Once  */             \
+  /* the VRAM budget binds, every miss IS an eviction, so this should track the */             \
+  /* eviction count; a gap means the pair went back to allocating.             */              \
+  X(RenderTextTextureCacheRecycled, "render.text_texture_cache_recycled")                       \
   X(RenderViewModelBuildFrameSurfaceCalls, "render.view_model_build_frame_surface_calls")       \
   X(RenderViewModelBuildOverlaySurfaceCalls, "render.view_model_build_overlay_surface_calls")   \
   X(EditorHighlightCacheForcedMisses, "editor.highlight_cache_forced_misses")                   \
