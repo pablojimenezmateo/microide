@@ -222,15 +222,37 @@ void RunRepoOpenRssIdle(ScenarioContext& context) {
     context.PumpFrames(5);
     rss_after_open = ReadProcessSample();
   });
+  // CPU across the idle window, asserted here rather than gated at the iteration
+  // level. See `gate_cpu_metrics = false` on the registration below for why the
+  // iteration number cannot do this job; this is the same replacement
+  // `idle_soak_30s` makes, and it measures the thing the scenario is named for:
+  // an editor holding a repo open and doing nothing must cost nothing.
+  double idle_cpu_ms = 0.0;
   context.Measure("repo_open.idle_500ms", [&] {
     // perf-measure-waits-on-clock: the fixed idle IS what this phase measures --
     // what an idle editor does with 500 ms and how much resident set it keeps.
     // The shell reports Idle, so Wait sleeps in 20 ms slices without allocating.
     // Three runs of one unchanged binary read p50_allocations 331 / 331 / 331
     // (TD-2026-08-10-179).
+    const double cpu_before_idle = ProcessCpuMilliseconds();
     (void)context.Wait(std::chrono::milliseconds(500));
+    idle_cpu_ms = ProcessCpuMilliseconds() - cpu_before_idle;
     rss_after_idle = ReadProcessSample();
   });
+  // 15 ms across a 500 ms idle is 3% of one core -- a spin, not a rounding error.
+  // Measured range on the reference runner is 0.55-4.48 ms over ten iterations,
+  // an 8x spread that is entirely the governor: the process sleeps in 20 ms
+  // slices, so the core walks toward the 605 MHz floor and what each sample
+  // costs depends on where it had got to. The budget therefore sits above the
+  // SLOW mode, deliberately, and must not be tightened toward the fast one --
+  // the fast mode is a property of the machine, not of the code. A regression
+  // that so much as wakes a thread at 20 Hz through the idle lands far above it.
+  constexpr double kRepoOpenIdleCpuBudgetMs = 15.0;
+  std::cerr << "repo_open_rss_idle idle_cpu_ms=" << idle_cpu_ms
+            << " budget_ms=" << kRepoOpenIdleCpuBudgetMs << "\n";
+  if (idle_cpu_ms > kRepoOpenIdleCpuBudgetMs) {
+    throw std::runtime_error("repo_open_rss_idle: CPU budget exceeded while idle");
+  }
   constexpr double kMib = 1024.0 * 1024.0;
   const auto mib = [](std::uint64_t bytes) { return static_cast<double>(bytes) / kMib; };
   const std::uint64_t open_growth_bytes =
@@ -613,6 +635,18 @@ const ScenarioRegistration g_perf_repo_open_rss_idle({Scenario{
     // governs p95, so the gate answered differently depending on the iteration
     // count -- FAIL at 8 (+55% p95 allocations), PASS at 20, same binary.
     .warmup_iterations = 1,
+    // Replaced by the idle-window CPU budget asserted in the body -- see
+    // gate_cpu_metrics in PerfHarness.h, and idle_soak_30s, which is the same
+    // shape. 500 of this scenario's ~510 ms are a deliberate sleep, so the core
+    // walks toward the 605 MHz floor and the handful of frames on either side of
+    // the idle are rendered at whatever clock it had got back to. The iteration
+    // number moved 4.95 -> 10.6-13.2 ms with allocations flat at ~160 and wall
+    // flat at 510, on the SESSION BASE COMMIT as well as after it: nothing in the
+    // code changed, the machine did. The in-run calibration spread is 1.4-1.45x,
+    // which a p50-based normalisation cannot cancel. The application's own idle
+    // cost -- the point of the scenario -- is the 0.5-4.5 ms underneath, and it
+    // is directly assertable.
+    .gate_cpu_metrics = false,
     .run = RunRepoOpenRssIdle,
 }});
 const ScenarioRegistration g_perf_large_file_open_first_paint({Scenario{

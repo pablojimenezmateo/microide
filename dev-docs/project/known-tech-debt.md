@@ -389,6 +389,47 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-217 — `repo_open_rss_idle` gated a CPU number that is 99 % sleep, and had been red since before this session. [RESOLVED 2026-08-14 — same day it was found.]
+
+**Found by running the full perf gate, not by a test.** `repo_open_rss_idle`
+failed `p50_cpu_ms` at +101 % to +139 % against a +100 % envelope, with
+`p50_allocations` flat at ~160 and `p50_wall_ms` flat at 510 — and a worktree
+build of the session's base commit (`28e887a5`) failed the same gate the same
+way, so it was **pre-existing**, not introduced here.
+
+The cause is the one `gate_cpu_metrics` exists for. 500 of the scenario's ~510 ms
+are a deliberate `Wait`, so the core walks toward the 605 MHz floor and the
+handful of frames on either side of the idle are rendered at whatever clock it
+had got back to. The in-run calibration spread was 1.40-1.45x, which the
+p50-based normalisation cannot cancel — it divides by one ratio, and the ratio
+moved inside the run.
+
+Fixed the way `idle_soak_30s` already was: `gate_cpu_metrics = false`, plus a
+replacement that is directly assertable. The scenario now measures process CPU
+across the idle window itself and throws above 15 ms. Measured range on this
+runner is **0.55-4.48 ms** over ten iterations — an 8x spread that is entirely the
+governor — so the budget sits above the SLOW mode on purpose and must not be
+tightened toward the fast one. Probed by lowering it until it fired.
+
+The general lesson, worth more than the fix: **a scenario that sleeps cannot gate
+a duration.** `cpu_ms` and `wall_ms` both scale with the effective clock, and a
+scenario that spends its iteration asleep guarantees the clock will be somewhere
+different each time. Scope the assertion to the window you care about and assert
+it in the body, where it is a number and not a percentage of a number recorded on
+a different day. `repo_open_rss_idle`'s wall gate passes only because 500 ms of it
+is a constant, which is not the same thing as being a measurement.
+
+Found alongside a second lane artifact, filed here rather than separately because
+it is the same class: `editor_tab_drag_burst`'s `max_wall_ms` rode its envelope at
+82-93 % standalone and exceeded it in a full-suite run with `p50_allocations`
+byte-identical every time. Its wall envelope is **derived from the recording run's
+own spread** and floored at 25 %, and `EffectiveWallTolerance` takes the MIN with
+the declared value — so a scenario cannot widen its way out of an unlucky
+recording. Its timing half is now explicitly advisory
+([186](#td-2026-08-12-186)'s precedent); the two phase allocation gates and the
+three repaint-scope invariants are what it actually gates, and all four are
+deterministic.
+
 ### TD-2026-08-14-214 — `optional<EditorTabState>::emplace()` does not compile under clang, anywhere, and only one lane would ever say so. [RESOLVED 2026-08-14 — the third option, plus a guard that does not need a clang lane to fire.]
 
 **Fixed.** `EditorTabState` and `DeferredTabHandle` moved out to namespace scope
