@@ -1307,6 +1307,20 @@ bool LinesEqualForDiff(std::string_view left,
 
 }  // namespace
 
+const CompareTextBuffer& EmptyCompareText() {
+  // One object process-wide, so "no text" costs a refcount bump rather than an
+  // allocation — a default-constructed CompareModel or compare tab hits this.
+  static const CompareTextBuffer empty = std::make_shared<const std::string>();
+  return empty;
+}
+
+CompareTextBuffer MakeCompareText(std::string text) {
+  if (text.empty()) {
+    return EmptyCompareText();
+  }
+  return std::make_shared<const std::string>(std::move(text));
+}
+
 std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_lines,
                                      std::span<const std::string_view> right_lines,
                                      LineDiffBuildStats* stats) {
@@ -1378,15 +1392,17 @@ namespace {
 // Row storage recycler.
 //
 // A compare rebuild used to construct every row from scratch, and `CompareRow`
-// owns TWO std::strings — so a 12,000-row diff cost 24,000 string allocations per
-// rebuild, and the rebuild runs on every keystroke in the editable pane. That was
-// 98 % of the allocations in `compare_type_in_wrapped_diff` (TD-2026-08-13-208).
+// then owned TWO std::strings — so a 12,000-row diff cost 24,000 string
+// allocations per rebuild, and the rebuild runs on every keystroke in the editable
+// pane. That was 98 % of the allocations in `compare_type_in_wrapped_diff`
+// (TD-2026-08-13-208).
 //
 // The rows of consecutive rebuilds are nearly identical, so this hands back the
-// PREVIOUS build's row objects and `assign()`s into their existing buffers:
-// std::string::assign reuses the buffer whenever capacity suffices, which for a
-// typing burst is essentially always. Rows past the new end are dropped at the
-// end of the build; `resize` down never reallocates.
+// PREVIOUS build's row objects. Since TD-2026-08-14-232 a row's text is a view
+// into the model's own source buffers rather than an owned string, so what is
+// recycled is the row vector's storage and the two changed-span vectors' capacity.
+// Rows past the new end are dropped at the end of the build; `resize` down never
+// reallocates.
 //
 // It does NOT change what is built: every field is reset here, so a recycled row
 // is indistinguishable from a fresh one.
@@ -1399,8 +1415,8 @@ class RowSink {
       model_.rows.emplace_back();
     }
     CompareRow& row = model_.rows[next_++];
-    row.left_text.clear();
-    row.right_text.clear();
+    row.left_text = {};
+    row.right_text = {};
     row.left_line = 0;
     row.right_line = 0;
     row.kind = CompareRowKind::Unchanged;
@@ -1426,11 +1442,23 @@ class RowSink {
 // thing worth having here -- this is the whole diff build, so whether it can be
 // inlined into `BuildCompareModel` is not a rounding error.
 static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
-                                                         const std::string& left,
-                                                         const std::string& right,
+                                                         CompareTextBuffer left_buffer,
+                                                         CompareTextBuffer right_buffer,
                                                          const CompareBuildOptions& options) {
   CompareBuildProfile profile;
+  // Drop the row views BEFORE the source buffers are replaced: every row views
+  // into them, so a row surviving this would read bytes that no longer belong to
+  // it. (The row STORAGE is still recycled by RowSink below, which is what keeps a
+  // rebuild allocation-free — only the views are cleared here.)
+  for (CompareRow& row : model.rows) {
+    row.left_text = {};
+    row.right_text = {};
+  }
   model.hunks.clear();
+  model.left_source = left_buffer != nullptr ? std::move(left_buffer) : EmptyCompareText();
+  model.right_source = right_buffer != nullptr ? std::move(right_buffer) : EmptyCompareText();
+  const std::string& left = *model.left_source;
+  const std::string& right = *model.right_source;
 
   // A non-empty buffer that does not end in '\n' lacks a trailing newline; the
   // patch generator uses this to emit `\ No newline at end of file`.
@@ -1495,8 +1523,8 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   int right_line = 1;
   for (std::size_t index = 0; index < prefix; ++index) {
     CompareRow& row = sink.Next();
-    row.left_text.assign(left_lines[index]);
-    row.right_text.assign(right_lines[index]);
+    row.left_text = left_lines[index];
+    row.right_text = right_lines[index];
     row.left_line = left_line++;
     row.right_line = right_line++;
   }
@@ -1505,10 +1533,10 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
     const auto& op = ops[op_index];
     if (op.kind == DiffOpKind::Equal) {
       CompareRow& row = sink.Next();
-      row.left_text.assign(op.text);
+      row.left_text = op.text;
       // Under ignore_whitespace an Equal op can pair two whitespace-different
       // lines, so the right column must show the right file's own text.
-      row.right_text.assign(op.right_text);
+      row.right_text = op.right_text;
       row.left_line = left_line++;
       row.right_line = right_line++;
       continue;
@@ -1543,11 +1571,11 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
       CompareRow& compare_row = sink.Next();
       compare_row.hunk = hunk_index;
       if (alignment_kind != HunkAlignmentKind::Insert) {
-        compare_row.left_text.assign(deleted_lines[deleted_index++]);
+        compare_row.left_text = deleted_lines[deleted_index++];
         compare_row.left_line = left_line++;
       }
       if (alignment_kind != HunkAlignmentKind::Delete) {
-        compare_row.right_text.assign(inserted_lines[inserted_index++]);
+        compare_row.right_text = inserted_lines[inserted_index++];
         compare_row.right_line = right_line++;
       }
 
@@ -1572,8 +1600,8 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
 
   for (std::size_t index = left_suffix; index < left_lines.size(); ++index) {
     CompareRow& row = sink.Next();
-    row.left_text.assign(left_lines[index]);
-    row.right_text.assign(right_lines[index - left_suffix + right_suffix]);
+    row.left_text = left_lines[index];
+    row.right_text = right_lines[index - left_suffix + right_suffix];
     row.left_line = left_line++;
     row.right_line = right_line++;
   }
@@ -1614,7 +1642,8 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
                                              const std::string& right,
                                              const CompareBuildOptions& options) {
   CompareBuildResult result;
-  result.profile = BuildCompareModelProfiledInto(result.model, left, right, options);
+  result.profile = BuildCompareModelProfiledInto(result.model, MakeCompareText(left),
+                                                 MakeCompareText(right), options);
   return result;
 }
 
@@ -1623,10 +1652,18 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
 }
 
 void BuildCompareModelInto(CompareModel& model,
+                           CompareTextBuffer left,
+                           CompareTextBuffer right,
+                           const CompareBuildOptions& options) {
+  (void)BuildCompareModelProfiledInto(model, std::move(left), std::move(right), options);
+}
+
+void BuildCompareModelInto(CompareModel& model,
                            const std::string& left,
                            const std::string& right,
                            const CompareBuildOptions& options) {
-  (void)BuildCompareModelProfiledInto(model, left, right, options);
+  (void)BuildCompareModelProfiledInto(model, MakeCompareText(left), MakeCompareText(right),
+                                      options);
 }
 
 CompareModel BuildCompareModel(const std::string& left,

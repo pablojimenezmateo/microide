@@ -70,7 +70,7 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 compare_tab.right_ref = "PLAIN";
                 compare_tab.left_label = std::move(left.label);
                 compare_tab.right_label = std::move(right.label);
-                compare_tab.left_content = std::move(left.content);
+                compare_tab.left_content = compare::MakeCompareText(std::move(left.content));
                 compare_tab.persistable = false;
                 // Right pane saves back only when it is a real on-disk file.
                 compare_tab.right_editable = right.editable && !right_path.empty();

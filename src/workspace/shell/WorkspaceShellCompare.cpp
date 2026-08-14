@@ -162,7 +162,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
   compare_tab.commit_hash = left_label;
   compare_tab.left_label = std::move(left_label);
   compare_tab.right_label = std::move(right_label);
-  compare_tab.left_content = std::move(left_content);
+  compare_tab.left_content = compare::MakeCompareText(std::move(left_content));
   compare_tab.persistable = persistable;
   compare_tab.right_viewport.LoadContent(right_content, normalized_path);
   ApplyEditorPreferences(compare_tab.right_viewport);
@@ -515,7 +515,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   // state and always refresh.
   const std::uint64_t right_content_revision = compare_tab.right_viewport.content_revision();
   const util::LineEnding right_line_ending = compare_tab.right_viewport.line_ending();
-  const std::size_t left_content_hash = std::hash<std::string_view>{}(compare_tab.left_content);
+  const std::size_t left_content_hash = std::hash<std::string_view>{}(*compare_tab.left_content);
   const bool ignore_whitespace = compare_tab.build_options.ignore_whitespace;
   const bool content_changed =
       !compare_tab.derived_fingerprint_valid ||
@@ -531,7 +531,10 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     // In place, recycling the previous build's row storage: a fresh model is two
     // string allocations per row, and this runs on every keystroke in the
     // editable pane (TD-2026-08-13-208).
-    compare::BuildCompareModelInto(compare_tab.model, compare_tab.left_content, right_content,
+    // Both buffers are ADOPTED, not copied: the left side is the tab's own
+    // shared buffer and the right side is the serialize above, moved in.
+    compare::BuildCompareModelInto(compare_tab.model, compare_tab.left_content,
+                                   compare::MakeCompareText(std::move(right_content)),
                                    compare_tab.build_options);
     ++compare_tab.model_revision;
     compare_tab.visible_layout_cache_model_revision = compare_tab.model_revision;
@@ -541,10 +544,10 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     compare_tab.derived_right_line_ending = right_line_ending;
     compare_tab.derived_left_content_hash = left_content_hash;
     compare_tab.derived_left_line_count =
-        compare_tab.left_content.empty()
+        compare_tab.left_content->empty()
             ? 0
-            : static_cast<std::size_t>(std::count(compare_tab.left_content.begin(),
-                                                  compare_tab.left_content.end(), '\n')) +
+            : static_cast<std::size_t>(std::count(compare_tab.left_content->begin(),
+                                                  compare_tab.left_content->end(), '\n')) +
                   1;
     compare_tab.derived_ignore_whitespace = ignore_whitespace;
     compare_tab.derived_fingerprint_valid = true;
@@ -582,7 +585,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     // whole left side into owned lines to hand it over was one allocation per line
     // of the file — 14 % of a large compare's open (TD-2026-08-06-159).
     compare_tab.left_initial_syntax_state =
-        editor::SyntaxHighlighter::InitialState(compare_tab.path, compare_tab.left_content);
+        editor::SyntaxHighlighter::InitialState(compare_tab.path, *compare_tab.left_content);
     // The buffer itself, not `Snapshot()`. Detection reads a bounded head through
     // `LineWindow`, whereas asking for the snapshot materialized the WHOLE document
     // into a second owned copy — 20 % of a large compare's open, and retained until

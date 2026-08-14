@@ -104,7 +104,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                       compare_tab.right_viewport.line_ending());
     compare::CompareSemanticMetadataInput plain_semantic_input{
         .path = compare_tab.path,
-        .left_content = compare_tab.left_content,
+        .left_content = *compare_tab.left_content,
         .right_content = plain_right_content,
         .git_entry = std::nullopt,
         .old_path = {},
@@ -131,7 +131,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
                                     compare_tab.right_viewport.line_ending());
   compare::CompareSemanticMetadataInput semantic_input{
       .path = compare_tab.path,
-      .left_content = compare_tab.left_content,
+      .left_content = *compare_tab.left_content,
       .right_content = right_content,
       .git_entry = input.git_entry,
       .old_path = {},

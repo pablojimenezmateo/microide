@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <cstdint>
+#include <memory>
 #include <span>
 #include <string>
 #include <string_view>
@@ -10,6 +11,22 @@
 #include "compare/CompareReviewTypes.h"
 
 namespace microide::compare {
+
+// Shared, immutable document text that compare rows view into.
+//
+// Immutable and shared rather than owned outright so the same bytes can back a
+// tab's read-only left buffer, its model, and any copy of that model, without a
+// copy at any of those boundaries — and so the string OBJECT's address is fixed
+// for the buffer's whole life, which is what makes a `std::string_view` row safe
+// across a model copy or move.
+using CompareTextBuffer = std::shared_ptr<const std::string>;
+
+// A shared empty buffer, so "no text" needs neither a null check nor its own
+// allocation. One object process-wide.
+const CompareTextBuffer& EmptyCompareText();
+
+// `text` as a shared buffer, taking ownership of the bytes.
+CompareTextBuffer MakeCompareText(std::string text);
 
 enum class CompareRowKind {
   Unchanged,
@@ -24,8 +41,15 @@ struct CompareTextSpan {
 };
 
 struct CompareRow {
-  std::string left_text;
-  std::string right_text;
+  // Views into the owning CompareModel's `left_source`/`right_source` (see there).
+  // Valid for as long as that model holds those buffers unchanged — i.e. until the
+  // next build into the same model, which is the same invalidation point the row
+  // vector itself has always had.
+  //
+  // A row built by hand (tests, fixtures) may instead view any storage that
+  // outlives it; the model does not assume its rows point into its own buffers.
+  std::string_view left_text;
+  std::string_view right_text;
   int left_line = 0;
   int right_line = 0;
   CompareRowKind kind = CompareRowKind::Unchanged;
@@ -41,6 +65,32 @@ struct CompareHunk {
 };
 
 struct CompareModel {
+  // The bytes every row's `left_text`/`right_text` view points into.
+  //
+  // A CompareRow used to own two std::strings, so the cold open of a ~24,000-row
+  // diff cost 48,000 allocations of ~31 bytes — the top three allocation sites of
+  // `diff.open_large_compare` (TD-2026-08-14-232). Every row's text is an exact
+  // slice of one of the two inputs, so the model keeps one copy of each input and
+  // the rows view into it: two allocations for a whole build instead of two per
+  // row, and none at all on a rebuild that can reuse the buffers.
+  //
+  // Owned rather than borrowed, because the builder's inputs are routinely
+  // temporaries — the editable right pane is serialized fresh on every rebuild —
+  // so there is nothing stable to borrow from.
+  //
+  // Held as a shared buffer specifically so the model stays copyable and movable
+  // with no rebasing: the string OBJECT's address is what the views depend on, and
+  // a shared_ptr keeps it fixed through any number of copies. A plain
+  // `std::string` member would relocate its bytes on a move whenever they were
+  // small enough for SSO, silently dangling every row view — and
+  // `BuildCompareModel` returns by value, so that move is on the ordinary path,
+  // not a corner case.
+  //
+  // Sharing also means the read-only left side is never copied at all: the tab
+  // holds the same buffer it hands the builder, so a rebuild (one per keystroke in
+  // an editable pane) does not memcpy the left file.
+  CompareTextBuffer left_source = EmptyCompareText();
+  CompareTextBuffer right_source = EmptyCompareText();
   std::vector<CompareRow> rows;
   std::vector<CompareHunk> hunks;
   // True when the corresponding source buffer was non-empty and did NOT end with
@@ -113,17 +163,23 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
 CompareModel BuildCompareModel(const std::string& left,
                                const std::string& right,
                                const CompareBuildOptions& options);
-// Rebuild `model` in place, RECYCLING its existing row storage.
+// Rebuild `model` in place, ADOPTING the two buffers and RECYCLING the existing
+// row storage. This is the primary form: nothing is copied on either side.
 //
-// A CompareRow owns two std::strings, so building a fresh model costs two string
-// allocations per row — 24,000 of them for a 12,000-row diff, on every keystroke
-// in an editable compare pane (TD-2026-08-13-208). Consecutive rebuilds produce
-// nearly identical rows, so reusing the previous build's buffers makes that cost
-// approximately zero without changing what is produced: every field of a recycled
-// row is reset, and rows past the new end are dropped.
+// The rows of consecutive rebuilds are nearly identical, so reusing the previous
+// build's row objects keeps a rebuild's cost near zero without changing what is
+// produced: every field of a recycled row is reset, and rows past the new end are
+// dropped (TD-2026-08-13-208). Since TD-2026-08-14-232 a row's text is a view into
+// `model.left_source`/`right_source` rather than two owned strings, so a build no
+// longer allocates per row at all.
 //
-// The by-value builders below are thin wrappers that start from an empty model,
-// so a caller with nothing to recycle pays exactly what it did before.
+// A null buffer is read as an empty document.
+void BuildCompareModelInto(CompareModel& model,
+                           CompareTextBuffer left,
+                           CompareTextBuffer right,
+                           const CompareBuildOptions& options);
+// Copying form, for callers holding plain strings (tests, one-shot builds). Each
+// input is copied into a fresh shared buffer the model then owns.
 void BuildCompareModelInto(CompareModel& model,
                            const std::string& left,
                            const std::string& right,

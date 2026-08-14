@@ -95,7 +95,12 @@ struct CompareTabState {
   std::string right_ref;
   std::string left_label;
   std::string right_label;
-  std::string left_content;
+  // The read-only left side, shared with `model.left_source` rather than copied
+  // into it. The left buffer never changes for the tab's life, and a rebuild runs
+  // on every keystroke in the editable right pane, so an owned std::string here
+  // meant memcpy'ing the whole left file per keystroke — and holding two resident
+  // copies of it (TD-2026-08-14-232). Never null; empty text is a shared singleton.
+  compare::CompareTextBuffer left_content = compare::EmptyCompareText();
   compare::CompareReviewMode review_mode = compare::CompareReviewMode::WorkingTree;
   compare::WorkingTreeStagingView staging_view = compare::WorkingTreeStagingView::Combined;
   compare::BranchReviewTargetIdentity branch_target;

@@ -496,7 +496,53 @@ Two related notes from the same run:
   follow-up — deliberately, and not as the tail of a session that just moved every
   one of those numbers.
 
-### TD-2026-08-14-232 — a compare row owns its text, so opening a large diff allocates two strings per row. OPEN.
+### TD-2026-08-14-232 — a compare row owns its text, so opening a large diff allocates two strings per row. [RESOLVED 2026-08-14 — the view option, with the lifetime the entry asked to be costed made structural rather than argued.]
+
+**Shipped: the model owns the two source texts; a row is two `std::string_view`s
+into them.** The entry costed "views" against "one arena the rows index into" —
+the answer turned out to be both at once, because the source buffers *are* the
+arena and they already exist.
+
+The lifetime problem the entry flagged is real and is why this could not be a
+local edit: the builder's right-hand input is a *temporary* (the editable pane is
+serialized fresh on every rebuild), so there is nothing stable to borrow. So the
+model holds each side as a `CompareTextBuffer` = `shared_ptr<const std::string>`:
+
+- **The buffer object's address is fixed for its life**, which is what makes a
+  view survive the model's own value semantics. `BuildCompareModel` returns by
+  value, so a move is on the ordinary path — and a plain `std::string` member
+  would have relocated its bytes on that move whenever they fit in SSO, silently
+  rebasing every row. Pinned by
+  `CompareModel/RowsSurviveCopyMoveAndTemporaryInputs`, which builds from
+  temporaries, asserts every row points *inside* the model's own buffers, then
+  copies and moves the model and re-reads through the ORIGINAL pointers.
+- **Sharing removes the copies too, not just the allocations.** The tab's
+  `left_content` is now the same buffer it hands the builder, so a rebuild no
+  longer memcpys the whole left file — which it was doing once per keystroke — and
+  the tab no longer holds a second resident copy of it. The right side is the
+  serialize, moved in.
+
+`BuildCompareModelInto` gained an adopting overload (two `CompareTextBuffer`s,
+nothing copied) alongside the copying one that tests and one-shot callers use.
+
+Measured, `diff_next_hunk_large_file`, clean A/B against the commit before:
+
+| | before | after |
+| --- | ---: | ---: |
+| `diff.open_large_compare` allocations | 25,709 | **1,571** (−93.9 %) |
+| scenario p50 allocations | 38,332 | **12,593** (−67.1 %) |
+| p50 wall (clock-normalised) | 53.44 ms | **49.11 ms** (−8.1 %) |
+| p50 cpu | 49.91 ms | **45.72 ms** (−8.4 %) |
+| `p50_net_heap_bytes` | 16,829 | **9,761** (−42.0 %) |
+| `mean_rss_growth_bytes` | 65,536 | **1,820** |
+
+The ~90 use sites the entry warned about were almost entirely free: everything
+downstream (`DiffWrapLayout::UnitText`, `PatchBodyLine`, the hover targets, the
+indent-guide scratch) already took `string_view`, so the change was mostly
+deleting the conversions that had been re-materializing views out of the owned
+strings.
+
+#### Original entry
 
 `diff.open_large_compare`'s #1, #2 and #3 sites are all
 `BuildCompareModelProfiledInto`: **47,988 allocations** at ~31 bytes, which is

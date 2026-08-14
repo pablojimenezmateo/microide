@@ -1049,7 +1049,7 @@ void TestWorkspaceShellCompareRenderReusesVisibleLayoutCache() {
   Expect(compare.visible_layout_cache.size() == warmed_cache_size,
          "stable compare frames should reuse cached visible layouts instead of appending more");
 
-  compare.left_content = "same\tline\nolder\tline\n";
+  compare.left_content = compare::MakeCompareText("same\tline\nolder\tline\n");
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.visible_layout_cache.empty(),
          "compare visible-layout cache should clear when the compare model changes");
@@ -1576,7 +1576,7 @@ void TestWorkspaceShellCompareRecomputeGate() {
          "no-op refreshes must not rebuild the compare model");
 
   // A left-content change must rebuild exactly once.
-  compare.left_content = "int gamma() {\n  return 3;\n}\n";
+  compare.left_content = compare::MakeCompareText("int gamma() {\n  return 3;\n}\n");
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
   Expect(compare.model_revision == baseline_revision + 1,
          "changed content must rebuild the compare model once");

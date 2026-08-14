@@ -601,7 +601,7 @@ std::vector<std::string> ReconstructSide(const CompareModel& model, bool left) {
   std::vector<std::string> lines;
   for (const auto& row : model.rows) {
     if (left ? (row.left_line != 0) : (row.right_line != 0)) {
-      lines.push_back(left ? row.left_text : row.right_text);
+      lines.emplace_back(left ? row.left_text : row.right_text);
     }
   }
   return lines;
@@ -1218,24 +1218,62 @@ void TestBuildCompareModelIntoReusesRowStorage() {
     right += "line " + std::to_string(i) + " right\n";
   }
 
+  const compare::CompareTextBuffer left_buffer = compare::MakeCompareText(left);
+  const compare::CompareTextBuffer right_buffer = compare::MakeCompareText(right);
+
   CompareModel model;
-  BuildCompareModelInto(model, left, right, CompareBuildOptions{});
+  BuildCompareModelInto(model, left_buffer, right_buffer, CompareBuildOptions{});
   Expect(model.rows.size() >= 200, "the fixture produces a large row set");
+  const CompareRow* const first_rows_data = model.rows.data();
+  const std::size_t first_rows_capacity = model.rows.capacity();
 
-  std::vector<const char*> first_row_buffers;
-  first_row_buffers.reserve(model.rows.size());
+  // Same inputs, adopted rather than copied: nothing about the row storage or the
+  // source buffers needs to move.
+  BuildCompareModelInto(model, left_buffer, right_buffer, CompareBuildOptions{});
+  Expect(model.rows.data() == first_rows_data && model.rows.capacity() == first_rows_capacity,
+         "the row vector's storage is reused on a rebuild, not reallocated");
+  Expect(model.left_source == left_buffer && model.right_source == right_buffer,
+         "an adopted buffer is shared, not copied");
+}
+
+// TD-2026-08-14-232: a row's text is a VIEW into the model's own source buffers.
+// The two things that has to survive are the model's own value semantics —
+// `BuildCompareModel` returns by value, so a move is on the ordinary path — and
+// inputs that are temporaries, which every real caller passes for the right side.
+void TestCompareModelRowsSurviveCopyMoveAndTemporaryInputs() {
+  // Inputs that die immediately. A row viewing them instead of the model's own
+  // buffer would read freed memory from here on.
+  CompareModel model = BuildCompareModel(std::string("alpha\nbeta\n"),
+                                         std::string("alpha\nbeta2\n"));
+  Expect(model.rows.size() >= 2, "at least the two content rows");
+  Expect(model.rows[0].left_text == "alpha" && model.rows[1].right_text == "beta2",
+         "rows read correctly after the inputs are gone");
+
+  // Every row must point INSIDE the model's own buffers — that is the invariant
+  // the lifetime argument rests on, and equality of content alone would not catch
+  // a row that still owned or borrowed something else.
+  const auto inside = [](std::string_view view, const std::string& buffer) {
+    if (view.empty()) {
+      return true;
+    }
+    return view.data() >= buffer.data() && view.data() + view.size() <= buffer.data() + buffer.size();
+  };
   for (const CompareRow& row : model.rows) {
-    first_row_buffers.push_back(row.right_text.data());
+    Expect(inside(row.left_text, *model.left_source), "left_text views the model's left source");
+    Expect(inside(row.right_text, *model.right_source), "right_text views the model's right source");
   }
 
-  // Same inputs, so every row's text is the same length and fits its buffer.
-  BuildCompareModelInto(model, left, right, CompareBuildOptions{});
-  std::size_t reused = 0;
-  for (std::size_t i = 0; i < model.rows.size() && i < first_row_buffers.size(); ++i) {
-    reused += static_cast<std::size_t>(model.rows[i].right_text.data() == first_row_buffers[i]);
-  }
-  Expect(reused == model.rows.size(),
-         "every row's string buffer is reused on a rebuild, not reallocated");
+  // A copy shares the buffers, so its rows are valid even once the original dies.
+  CompareModel copied = model;
+  const CompareModel moved = std::move(model);
+  Expect(copied.rows[1].right_text == "beta2", "a copied model's rows still read");
+  Expect(moved.rows[1].right_text == "beta2", "a moved model's rows still read");
+  Expect(copied.left_source == moved.left_source,
+         "a copy shares the source buffer rather than duplicating it");
+  // Short strings are the dangerous case: an owned std::string member would have
+  // relocated these bytes on the move above, silently rebasing every view.
+  Expect(moved.rows[0].left_text.data() == copied.rows[0].left_text.data(),
+         "a move leaves the row views pointing at the same bytes");
 }
 
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
@@ -1243,6 +1281,8 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
           TestBuildCompareModelIntoMatchesAFreshBuild);
   AddTest(tests, "CompareModel/BuildCompareModelIntoReusesRowStorage",
           TestBuildCompareModelIntoReusesRowStorage);
+  AddTest(tests, "CompareModel/RowsSurviveCopyMoveAndTemporaryInputs",
+          TestCompareModelRowsSurviveCopyMoveAndTemporaryInputs);
   AddTest(tests, "CompareModel/LineEqualityInterningMatchesPredicate",
           TestCompareLineEqualityInterningMatchesPredicate);
   AddTest(tests, "Compare/IntralineBudgetBoundsLargeModifiedHunk",
