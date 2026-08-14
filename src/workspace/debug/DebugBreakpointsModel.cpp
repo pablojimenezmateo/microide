@@ -1,7 +1,10 @@
 #include "workspace/debug/DebugBreakpointsModel.h"
 
 #include <algorithm>
+#include <string_view>
 #include <utility>
+
+#include "workspace/WorkspaceUiText.h"
 
 namespace microide::workspace {
 
@@ -139,7 +142,23 @@ void DebugBreakpointsModel::Rebuild(
   // most rebuilds. `kEmptyRow` is COPY-assigned (never moved from a temporary):
   // copy-assigning an empty string or path clears the target and keeps its
   // capacity, which is the whole point (TD-2026-08-06-159).
+  //
+  // Every string below is built by APPENDING into the row's own buffer for the
+  // same reason. `row.field = a + b` reads as an overwrite but is not one: the
+  // concatenation allocates a temporary, and the assignment then MOVES it in,
+  // freeing the capacity the reset above went to the trouble of keeping. That was
+  // one allocation per row per rebuild, on the exact path the reset exists to make
+  // free (TD-2026-08-15-238).
   static const DebugBreakpointRowView kEmptyRow{};
+  // Appends `text` to `out`, prefixed by " — " when `out` already has something in
+  // it. The unverified-reason trailer is appended to whatever the condition
+  // trailer already wrote.
+  const auto append_trailer = [](std::string& out, std::string_view text) {
+    if (!out.empty()) {
+      out += " — ";
+    }
+    out.append(text);
+  };
   std::size_t out = 0;
   const auto next_row = [&]() -> DebugBreakpointRowView& {
     if (out == rows_.size()) {
@@ -163,7 +182,8 @@ void DebugBreakpointsModel::Rebuild(
       row.enabled = Contains(enabled_filter_ids_, filter.filter);
       if (const auto it = filter_conditions_.find(filter.filter);
           it != filter_conditions_.end() && !it->second.empty()) {
-        row.secondary = "when " + it->second;
+        row.secondary = "when ";
+        row.secondary += it->second;
       }
     }
   }
@@ -182,20 +202,22 @@ void DebugBreakpointsModel::Rebuild(
       row.function_index = i;
       row.enabled = fn.enabled;
       if (fn.condition && !fn.condition->empty()) {
-        row.secondary = "when " + *fn.condition;
+        row.secondary = "when ";
+        row.secondary += *fn.condition;
       } else if (fn.hit_condition && !fn.hit_condition->empty()) {
-        row.secondary = "hits " + *fn.hit_condition;
+        row.secondary = "hits ";
+        row.secondary += *fn.hit_condition;
       }
       const bool adapter_responded =
           fn.verified || fn.adapter_id != 0 || !fn.verify_message.empty();
       if (adapter_responded && !fn.verified) {
-        const std::string reason =
-            !fn.verify_message.empty() ? fn.verify_message : "unverified";
+        const std::string_view reason =
+            !fn.verify_message.empty() ? std::string_view{fn.verify_message} : "unverified";
         // Still surface the reason in the muted trailer either way — the user
         // should see "pending" — but only tint the row as a failure when the
         // adapter says it genuinely could not bind it.
         row.failed = UnverifiedReasonIsFailure(reason);
-        row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
+        append_trailer(row.secondary, reason);
       }
     }
   }
@@ -214,13 +236,17 @@ void DebugBreakpointsModel::Rebuild(
         DebugBreakpointRowView& row = next_row();
         row.kind = DebugBreakpointRowView::Kind::Breakpoint;
         // 1-based line for display; the buffer index stays 0-based for nav.
-        row.display = filename + ':' + std::to_string(breakpoint.line + 1);
+        row.display = filename;
+        row.display += ':';
+        AppendUnsigned(row.display, breakpoint.line + 1);
         if (breakpoint.condition && !breakpoint.condition->empty()) {
-          row.secondary = "when " + *breakpoint.condition;
+          row.secondary = "when ";
+          row.secondary += *breakpoint.condition;
         } else if (breakpoint.log_message && !breakpoint.log_message->empty()) {
           row.secondary = "log";
         } else if (breakpoint.hit_condition && !breakpoint.hit_condition->empty()) {
-          row.secondary = "hits " + *breakpoint.hit_condition;
+          row.secondary = "hits ";
+          row.secondary += *breakpoint.hit_condition;
         }
         // Enabled state is shown by the row's checkbox (set below), not the trailer.
         row.enabled = breakpoint.enabled;
@@ -231,10 +257,11 @@ void DebugBreakpointsModel::Rebuild(
         const bool adapter_responded = breakpoint.verified || breakpoint.adapter_id != 0 ||
                                        !breakpoint.verify_message.empty();
         if (adapter_responded && !breakpoint.verified) {
-          const std::string reason =
-              !breakpoint.verify_message.empty() ? breakpoint.verify_message : "unverified";
+          const std::string_view reason = !breakpoint.verify_message.empty()
+                                              ? std::string_view{breakpoint.verify_message}
+                                              : "unverified";
           row.failed = UnverifiedReasonIsFailure(reason);
-          row.secondary = row.secondary.empty() ? reason : (row.secondary + " — " + reason);
+          append_trailer(row.secondary, reason);
         }
         row.path = *file.path;
         row.line = breakpoint.line;

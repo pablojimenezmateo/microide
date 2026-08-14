@@ -127,15 +127,22 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
         compare_tab.left_current_syntax_state == compare_tab.right_current_syntax_state;
     const bool has_alias_flags =
         index < compare_tab.right_tokens_alias_left_by_row.size();
+    // Tokenize straight INTO the row's own cache vector. The by-value
+    // `HighlightLine` builds a fresh, empty vector and the move-assignment then
+    // frees the buffer this row already owned -- one allocation per row per pass,
+    // and a scroll re-tokenizes its whole window. That was the #1 site of the
+    // diff and merge scroll phases (28,005 and 24,196 allocations,
+    // TD-2026-08-15-237). `HighlightLineInto` assigns in place and keeps the
+    // capacity, which is the entire reason the Into form exists.
     if (reuse_tokens && has_alias_flags) {
-      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
-          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state);
-      compare_tab.left_current_syntax_state = highlighted.end_state;
-      compare_tab.right_current_syntax_state = highlighted.end_state;
+      const editor::SyntaxState end_state = editor::SyntaxHighlighter::HighlightLineInto(
+          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state,
+          &left_tokens);
+      compare_tab.left_current_syntax_state = end_state;
+      compare_tab.right_current_syntax_state = end_state;
       // One vector, two panes. This used to copy it into the left cache and move
       // it into the right, so an identical unchanged row cost two owned token
       // vectors to paint the same run twice (TD-2026-08-06-159).
-      left_tokens = std::move(highlighted.tokens);
       right_tokens.clear();
       compare_tab.right_tokens_alias_left_by_row[index] = 1;
       ++compare_tab.syntax_rows_tokenized;
@@ -146,19 +153,17 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
     }
 
     if (compare_row.left_line > 0) {
-      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
-          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state);
-      compare_tab.left_current_syntax_state = highlighted.end_state;
-      left_tokens = std::move(highlighted.tokens);
+      compare_tab.left_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
+          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state,
+          &left_tokens);
     } else {
       left_tokens.clear();
     }
 
     if (compare_row.right_line > 0) {
-      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
-          compare_row.right_text, compare_tab.path, compare_tab.right_current_syntax_state);
-      compare_tab.right_current_syntax_state = highlighted.end_state;
-      right_tokens = std::move(highlighted.tokens);
+      compare_tab.right_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
+          compare_row.right_text, compare_tab.path, compare_tab.right_current_syntax_state,
+          &right_tokens);
     } else {
       right_tokens.clear();
     }

@@ -520,11 +520,13 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
         std::min(clamped_incoming_end, merge_tab.incoming_syntax_rows_tokenized + kMergeSyntaxRowsPerFrame);
     while (merge_tab.incoming_syntax_rows_tokenized < target_row) {
       const std::size_t index = merge_tab.incoming_syntax_rows_tokenized;
-      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+      // Into, not the by-value form: that one builds a fresh empty vector and the
+      // move-assignment then frees the buffer this row already owned, so a scroll
+      // paid one allocation per row of its window per pass. It was the #1 site of
+      // merge_large.scroll_burst at 24,196 allocations (TD-2026-08-15-237).
+      merge_tab.incoming_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
           merge_tab.model.incoming_lines[index], merge_tab.output_path,
-          merge_tab.incoming_current_syntax_state);
-      merge_tab.incoming_current_syntax_state = highlighted.end_state;
-      merge_tab.incoming_tokens[index] = std::move(highlighted.tokens);
+          merge_tab.incoming_current_syntax_state, &merge_tab.incoming_tokens[index]);
       ++merge_tab.incoming_syntax_rows_tokenized;
     }
   }
@@ -537,11 +539,9 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
         std::min(clamped_current_end, merge_tab.current_syntax_rows_tokenized + kMergeSyntaxRowsPerFrame);
     while (merge_tab.current_syntax_rows_tokenized < target_row) {
       const std::size_t index = merge_tab.current_syntax_rows_tokenized;
-      editor::HighlightedLine highlighted = editor::SyntaxHighlighter::HighlightLine(
+      merge_tab.current_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
           merge_tab.model.current_lines[index], merge_tab.output_path,
-          merge_tab.current_current_syntax_state);
-      merge_tab.current_current_syntax_state = highlighted.end_state;
-      merge_tab.current_tokens[index] = std::move(highlighted.tokens);
+          merge_tab.current_current_syntax_state, &merge_tab.current_tokens[index]);
       ++merge_tab.current_syntax_rows_tokenized;
     }
   }
