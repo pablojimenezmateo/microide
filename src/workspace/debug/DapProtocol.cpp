@@ -168,13 +168,17 @@ JsonValue MakeEvaluateArguments(const std::string& expression, int frame_id,
   return JsonValue(std::move(args));
 }
 
-JsonValue MakeRequest(int seq, const std::string& command, const JsonValue& arguments) {
+JsonValue MakeRequest(int seq, const std::string& command, JsonValue arguments) {
   JsonObject req;
+  // Exact reserve: `operator[]` inserts one member at a time, so an envelope with
+  // a known member count otherwise grows its storage at 1, 2 and 4 -- three
+  // allocations and two moves of every member built so far, per request sent.
+  req.reserve(4);
   req["seq"] = JsonValue(static_cast<std::int64_t>(seq));
   req["type"] = JsonValue("request");
   req["command"] = JsonValue(command);
   if (!arguments.IsNull()) {
-    req["arguments"] = arguments;
+    req["arguments"] = std::move(arguments);
   }
   return JsonValue(std::move(req));
 }
@@ -182,6 +186,7 @@ JsonValue MakeRequest(int seq, const std::string& command, const JsonValue& argu
 JsonValue MakeResponse(int seq, int request_seq, const std::string& command, bool success,
                        const std::string& message, JsonValue body) {
   JsonObject resp;
+  resp.reserve(7);  // see MakeRequest
   resp["seq"] = JsonValue(static_cast<std::int64_t>(seq));
   resp["type"] = JsonValue("response");
   resp["request_seq"] = JsonValue(static_cast<std::int64_t>(request_seq));

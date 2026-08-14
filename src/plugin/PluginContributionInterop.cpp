@@ -91,6 +91,34 @@ bool RegisterFormatter(lua_State* state,
   return true;
 }
 
+bool RegisterVirtualDocument(lua_State* state,
+                             std::string_view plugin_id,
+                             std::vector<PluginHost::ContributedVirtualDocument>* documents,
+                             std::string* error_message) {
+  if (documents == nullptr) {
+    return false;
+  }
+  if (ContributionLimitReached(documents, error_message)) {
+    return false;
+  }
+  registration_parsers::VirtualDocumentRegistration registration;
+  if (!registration_parsers::ParseVirtualDocumentRegistration(state, std::string(plugin_id),
+                                                              &registration, error_message)) {
+    return false;
+  }
+  // Last registration of a URI wins, so a plugin can republish a document's
+  // content by re-registering it rather than accumulating duplicates the
+  // registry would then have to disambiguate.
+  for (PluginHost::ContributedVirtualDocument& existing : *documents) {
+    if (existing.uri == registration.contributed.uri) {
+      existing = std::move(registration.contributed);
+      return true;
+    }
+  }
+  documents->push_back(std::move(registration.contributed));
+  return true;
+}
+
 bool RegisterSaveParticipant(lua_State* state,
                              std::string_view plugin_id,
                              std::vector<PluginHost::ContributedSaveParticipant>* participants,

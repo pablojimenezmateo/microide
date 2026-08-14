@@ -51,8 +51,48 @@ than counted, because they now declare a different `measurement_revision`.
   large diff: 23,493 → 12,516 allocations per burst (−46.7%), and the scenario
   total −23.8%.
 
+- **Dragging a tab repainted the whole window on every mouse-motion event.** The
+  drag was handled at the very bottom of the motion path, so each event first ran
+  the entire hover pipeline — two tooltip resolutions, two interactive-rect hit
+  tests, the sidebar/status/floating-widget probes — computing hover state a drag
+  cannot change, and then asked for a full-window redraw. It now sits with the
+  other pointer-owning drags near the top and damages only the strip it moves.
+  The strip's memoized tab list also stopped being deep-copied (three strings per
+  visible tab) on every motion event, press and wheel tick, and the editor layout
+  is no longer computed twice per event. Measured headless over a 12-tab strip:
+  ~14 µs per motion event to a steady 4.7–5.2 µs, with the repaint saving on top
+  of that.
+
+### Added
+
+- **Reordering an editor tab from the keyboard.** Ctrl+Shift+PageUp / PageDown,
+  VS Code's Move Editor Left / Right, clamping at the ends rather than wrapping.
+  The `tabmove` command has always accepted a relative offset; nothing reached it
+  from the keyboard.
+- **A tab drag auto-scrolls an overflowing strip** held at its edge, so the
+  off-screen end of the strip is reachable by drag. Escape abandons a drag in
+  flight, and so does the window losing focus.
+
 ### Fixed
 
+- **A tab drag landed where the cursor was, not where the tab was drawn.** The
+  drop slot was resolved from the raw pointer, so where inside a tab you grabbed
+  it decided where it landed — grab a wide tab near its left edge, push right,
+  and the tab visually covered its neighbour a long way before anything moved. It
+  now probes with the dragged tab's own centre, the way Chrome and VS Code do. On
+  a scrolled strip a drop past either visible edge used to teleport the tab to a
+  slot nobody could see; both ends now pin to what is on screen. Dropping a tab
+  mid-glide snapped its neighbours to their new slots instead of letting them
+  finish easing, and a tooltip opened before the drag stayed up for the whole
+  gesture, naming a tab that was no longer under it.
+- **A tab drag survived the window losing focus** — the strip kept a lifted tab
+  and a floating ghost pinned to a pointer that had stopped talking to us — and
+  survived a project switch, leaving slide offsets indexed by the old project's
+  tabs. The focus-lost handler already ended every other drag for exactly this
+  reason.
+- **Help/About documented two-directional actions in one direction.** The chord
+  lookup kept only the first binding per action, so Switch Tab advertised
+  Ctrl+PageDown and never Ctrl+PageUp.
 - **Moving the caret up out of a soft-wrapped line did nothing.** Wrapped rows
   are contiguous in visual columns, so the wrap point is one text position that
   two rows can both claim, and it always resolved to the later one. A preferred

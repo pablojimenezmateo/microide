@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "editor/RowDecorationBuilder.h"
+
 #include <set>
 
 #include "editor/BracketScanner.h"
@@ -607,11 +609,72 @@ void TestShapingDuplicateLine() {
   TextViewport viewport;
   viewport.LoadContent("hello\n", "/tmp/sample.txt");
   viewport.MoveCursorTo(0, 0);
-  Expect(microide::editor::DuplicateSelection(viewport),
-         "DuplicateSelection should produce a change");
+  Expect(microide::editor::CopyLines(viewport, true),
+         "CopyLines should produce a change");
   Expect(viewport.lines().size() >= 2, "duplicate should add a line");
   Expect(viewport.lines()[0] == "hello" && viewport.lines()[1] == "hello",
          "first two lines should both be 'hello'");
+}
+
+// Copy-lines is line-granular in both directions (VS Code copyLinesUp/Down): a
+// PARTIAL selection duplicates the lines it touches, not the selected text. The
+// two directions produce identical text and differ only in which copy the caret
+// lands on.
+void TestShapingCopyLinesDirections() {
+  TextViewport viewport;
+  viewport.LoadContent("one\ntwo\nthree\n", "/tmp/sample.txt");
+
+  viewport.MoveCursorTo(1, 1);
+  Expect(microide::editor::CopyLines(viewport, /*downward=*/true), "copy down should change");
+  Expect(viewport.lines()[1] == "two" && viewport.lines()[2] == "two",
+         "copy down should leave two adjacent copies");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 1,
+         "copy down should put the caret on the LOWER copy");
+
+  TextViewport up;
+  up.LoadContent("one\ntwo\nthree\n", "/tmp/sample.txt");
+  up.MoveCursorTo(1, 1);
+  Expect(microide::editor::CopyLines(up, /*downward=*/false), "copy up should change");
+  Expect(up.lines()[1] == "two" && up.lines()[2] == "two",
+         "copy up should produce the same two copies");
+  Expect(up.cursor_line() == 1 && up.cursor_column() == 1,
+         "copy up should leave the caret on the UPPER copy");
+
+  // A selection of three characters inside one line still copies the WHOLE line.
+  TextViewport partial;
+  partial.LoadContent("hello world\n", "/tmp/sample.txt");
+  partial.MoveCursorTo(0, 1);
+  partial.MoveCursorTo(0, 4, /*extend_selection=*/true);
+  Expect(microide::editor::CopyLines(partial, /*downward=*/true), "partial copy should change");
+  Expect(partial.lines().size() >= 2 && partial.lines()[0] == "hello world" &&
+             partial.lines()[1] == "hello world",
+         "a partial selection copies its whole line, not the selected fragment");
+}
+
+// Ctrl+Enter / Ctrl+Shift+Enter open a line regardless of where in the line the
+// caret sits -- that is the whole point of them over pressing Enter.
+void TestShapingInsertLineBelowAndAbove() {
+  TextViewport viewport;
+  viewport.LoadContent("    body;\nnext;\n", "/tmp/sample.cpp");
+  viewport.SetIndentWidth(2);
+  viewport.SetSoftTabs(true);
+
+  // Caret in the MIDDLE of the line: the line must not be split.
+  viewport.MoveCursorTo(0, 6);
+  Expect(microide::editor::InsertLineBelow(viewport), "insert-below should change");
+  Expect(viewport.lines()[0] == "    body;", "the source line stays intact");
+  Expect(viewport.cursor_line() == 1, "the caret moves to the new line");
+  Expect(viewport.lines()[1] == "    ", "the new line carries the source line's indent");
+  Expect(viewport.cursor_column() == 4, "the caret sits after that indent");
+
+  TextViewport above;
+  above.LoadContent("    body;\nnext;\n", "/tmp/sample.cpp");
+  above.MoveCursorTo(0, 6);
+  Expect(microide::editor::InsertLineAbove(above), "insert-above should change");
+  Expect(above.lines()[1] == "    body;", "the source line is pushed down intact");
+  Expect(above.cursor_line() == 0 && above.cursor_column() == 4,
+         "the caret sits on the new line above, at the same indent");
+  Expect(above.lines()[0] == "    ", "the new line takes the pushed-down line's indent");
 }
 
 void TestShapingIndentSelection() {
@@ -1007,6 +1070,46 @@ void TestIndentGuidesEmitsRunsAtNestedDepths() {
 // must be covered by exactly one run, and no run may cover anything else. Uses
 // tabs, mixed depths, blank lines, dedents and an out-of-range row, since those
 // are where a sweep and a sort can disagree.
+// TD-2026-08-13-206 filed compare indent guides as blocked on the row->line
+// mapping: a diff's visible rows are not contiguous line indices, because the
+// blank padding rows of an added/deleted hunk have no line at all. They do not
+// have to be — the compare renderer hands the visible window over as its OWN
+// document, one view per visible row, empty for a padding row. This pins the
+// property that makes that legal: an empty row measures no indent, so it breaks
+// the run rather than continuing it through the filler.
+void TestIndentGuidesBreakAcrossABlankDiffFillerRow() {
+  using microide::editor::ComputeIndentGuides;
+  using microide::editor::IndentGuideRun;
+
+  // Visible window of a diff pane: two indented rows, a blank filler row where
+  // the other side had an inserted line, then two more indented rows.
+  const std::vector<std::string_view> window = {
+      "        deep one", "        deep two", "", "        deep three", "        deep four",
+  };
+  std::vector<std::size_t> rows(window.size());
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    rows[i] = i;
+  }
+
+  std::vector<IndentGuideRun> runs;
+  ComputeIndentGuides(microide::editor::LineSpan(window), rows, /*tab_size=*/4,
+                      /*indent_width=*/4, /*caret_line=*/SIZE_MAX, 0, &runs);
+
+  Expect(!runs.empty(), "an indented window emits guides");
+  for (const IndentGuideRun& run : runs) {
+    Expect(!(run.start_row <= 2 && run.end_row >= 2),
+           "no guide run spans the blank filler row");
+  }
+  bool covers_before = false;
+  bool covers_after = false;
+  for (const IndentGuideRun& run : runs) {
+    covers_before = covers_before || (run.start_row <= 1 && run.end_row >= 1);
+    covers_after = covers_after || (run.start_row <= 3 && run.end_row >= 3);
+  }
+  Expect(covers_before && covers_after,
+         "the indented rows on either side of the filler still get their guides");
+}
+
 void TestIndentGuidesRunsMatchNaiveCoverage() {
   using microide::editor::ComputeIndentGuides;
   using microide::editor::IndentGuideRun;
@@ -1170,6 +1273,58 @@ void TestRenderViewModelBuilderWhitespaceGlyphRunsToggle() {
     }
   }
   Expect(saw_dot && saw_tab, "visible whitespace should surface both dots and tab rules");
+}
+
+// TD-2026-08-14-210: after the walk was shared, TWO implementations of
+// render-whitespace remain — the walk (editor fallback + both compare panes) and
+// the view model's precomputed glyph-run table, which is the editor's fast path.
+// `dev-docs/project/validation-traps.md` names the trap they form: a parity test
+// only holds on fixtures small enough to hide the difference. So this compares
+// them on the cases where they could actually diverge — a tab that expands across
+// cells, a multi-byte glyph before whitespace, and a window that starts mid-line.
+void TestWhitespaceGlyphRunsAgreeWithTheSharedWalk() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::editor::TextViewport viewport;
+  // "é" before a space (byte offset != visual column), a tab at a column that
+  // expands across several cells, and trailing spaces.
+  const std::string line = "a\xc3\xa9 b\tc  d";
+  viewport.LoadContent(line + "\n", "/tmp/ws-parity.txt");
+  viewport.SetTabSize(4);
+  viewport.SetScrollLine(0);
+  viewport.SetViewportSize(5, 80);
+
+  const auto vm = builder.BuildEditorViewModel(viewport, 5, nullptr, false, false, false, 3, true);
+
+  constexpr float kCharWidth = 10.0f;
+  constexpr float kTextX = 100.0f;
+  constexpr float kY = 50.0f;
+  constexpr float kLineHeight = 16.0f;
+  const SDL_Color color{1, 2, 3, 255};
+
+  // What the run table would paint, in the same order the row loop emits it.
+  std::vector<microide::editor::DecoratedTextFill> from_runs;
+  for (const auto& glyph : vm.whitespace_glyph_runs) {
+    microide::editor::PushWhitespaceMarker(
+        from_runs, glyph.is_tab_rule,
+        kTextX + static_cast<float>(glyph.cell_visual_start) * kCharWidth, kCharWidth,
+        static_cast<float>(glyph.cell_visual_extent) * kCharWidth, kY, kLineHeight, color);
+  }
+
+  std::vector<microide::editor::DecoratedTextFill> from_walk;
+  microide::editor::AppendWhitespaceMarkers(from_walk, line, /*tab_size=*/4,
+                                            /*row_visual_start=*/0, /*row_visual_end=*/80, kTextX,
+                                            kCharWidth, kY, kLineHeight, color);
+
+  Expect(!from_walk.empty(), "the fixture actually contains whitespace to mark");
+  Expect(from_runs.size() == from_walk.size(),
+         "the run table and the walk mark the same number of cells");
+  for (std::size_t i = 0; i < from_runs.size() && i < from_walk.size(); ++i) {
+    Expect(from_runs[i].rect.x == from_walk[i].rect.x &&
+               from_runs[i].rect.w == from_walk[i].rect.w &&
+               from_runs[i].rect.h == from_walk[i].rect.h,
+           "the run table and the walk place the same marker rect");
+  }
 }
 
 void TestLanguageContractAppliesUserOverrides() {
@@ -1813,6 +1968,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingMoveLineUpKeepsSecondaryCaretAndSelection);
   AddTest(tests, "EditorEssentials/Shaping/DuplicateLine",
           TestShapingDuplicateLine);
+  AddTest(tests, "EditorEssentials/Shaping/CopyLinesDirections",
+          TestShapingCopyLinesDirections);
+  AddTest(tests, "EditorEssentials/Shaping/InsertLineBelowAndAbove",
+          TestShapingInsertLineBelowAndAbove);
   AddTest(tests, "EditorEssentials/Shaping/IndentSelection",
           TestShapingIndentSelection);
   AddTest(tests, "EditorEssentials/Shaping/ToggleLineComment",
@@ -1869,6 +2028,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentGuidesFoldModelEmphasisOnInnerCloser);
   AddTest(tests, "EditorEssentials/RenderViewModel/WhitespaceGlyphRunsToggle",
           TestRenderViewModelBuilderWhitespaceGlyphRunsToggle);
+  AddTest(tests, "EditorEssentials/IndentGuidesBreakAcrossABlankDiffFillerRow",
+          TestIndentGuidesBreakAcrossABlankDiffFillerRow);
+  AddTest(tests, "EditorEssentials/WhitespaceGlyphRunsAgreeWithTheSharedWalk",
+          TestWhitespaceGlyphRunsAgreeWithTheSharedWalk);
   AddTest(tests, "EditorEssentials/AutoClose/InsertsClose",
           TestAutoClosePairInsertsClose);
   AddTest(tests, "EditorEssentials/AutoClose/SkipOverClose",

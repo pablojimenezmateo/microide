@@ -837,6 +837,7 @@
                                      std::size_t visible_columns) const;
   void ClampCompareHorizontalScroll(CompareTabState& compare_tab,
                                     std::size_t visible_columns) const;
+  void RevealCompareSelectedRow(CompareTabState& compare_tab, int visible_rows) const;
   void RevealActiveCompareSelection();
   bool ActiveTabIsMerge() const;
   MergeTabState* ActiveMergeTab();
@@ -914,8 +915,6 @@
   void RefreshCompareTabDerivedState(CompareTabState& compare_tab) const;
   std::size_t CompareRowIndexForRightLine(const CompareTabState& compare_tab,
                                           std::size_t line_index) const;
-  std::size_t CompareRightLineForRow(const CompareTabState& compare_tab,
-                                     std::size_t row_index) const;
   void SyncCompareViewportScroll(CompareTabState& compare_tab) const;
   void SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
                                         bool reveal_selection) const;
@@ -1935,10 +1934,12 @@
   // Chrome-like tab-slide animation (WorkspaceShellRedraw.cpp). NextTabSlideDelayMs
   // schedules ~60fps wakes while a strip is easing; AdvanceTabSlide steps the
   // offsets on a scheduled wake and clears the state when the post-release settle
-  // finishes; CurrentTabSlideDirtyRect scopes the repaint to the animating strip.
+  // finishes; TabStripRectForKind scopes the repaint to the animating strip. It
+  // is also what the live drag and the drag auto-scroll pump damage, so all three
+  // resolve the same rect from the same place.
   std::optional<Uint32> NextTabSlideDelayMs() const;
   bool AdvanceTabSlide();
-  std::optional<SDL_FRect> CurrentTabSlideDirtyRect() const;
+  std::optional<SDL_FRect> TabStripRectForKind(TabDragKind kind, std::size_t group_index) const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   // Caret-blink settings: whether the caret blinks at all (else it stays solid)
@@ -2313,5 +2314,9 @@
   // filling, so reuse keeps the per-visible-row path allocation-free.
   editor::DecoratedTextRow compare_left_scratch_row_;
   editor::DecoratedTextRow compare_right_scratch_row_;
+  // Render-whitespace markers for the compare panes, reused per row like the
+  // scratch rows above: the markers are pre-positioned fills, so they are built
+  // per painted row and must not allocate on a scroll (TD-2026-08-13-206).
+  std::vector<editor::DecoratedTextFill> compare_whitespace_scratch_;
   editor::DecoratedTextRow merge_incoming_scratch_row_;
   editor::DecoratedTextRow merge_current_scratch_row_;

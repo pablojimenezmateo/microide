@@ -41,11 +41,19 @@ namespace {
 // many of these waits are on a real subprocess (a mock DAP adapter, git, a
 // language server) with the sharded suite running several of them at once. A
 // deadline chosen for an uninstrumented run then measures the sanitizer rather
-// than the product: `DebugService/SessionResolvesStackOnStopAndStepsResume` timed
-// out on its fifth adapter round trip under TSAN on a loaded runner and passed on
-// every rerun. Stretch every deadline here instead of tuning them one at a time —
-// a wait returns the moment its predicate holds, so a higher ceiling costs a
-// passing run nothing, and only a genuinely stuck test pays the extra seconds.
+// than the product. Stretch every deadline here instead of tuning them one at a
+// time — a wait returns the moment its predicate holds, so a higher ceiling costs
+// a passing run nothing, and only a genuinely stuck test pays the extra seconds.
+//
+// This multiplier is NOT a fix for a subprocess wait, and the comment here used
+// to claim it was: it named
+// `DebugService/SessionResolvesStackOnStopAndStepsResume` as the case it
+// resolved, and that test then timed out again behind the 4x on a loaded runner.
+// Scaling a guessed budget by a constant produces a bigger guess. A wait whose
+// duration is a property of the MACHINE rather than of the product needs no
+// budget at all — see `PollUntil` in DebugServiceTests.cpp, which is bounded by a
+// hang ceiling and the per-test watchdog instead. Reach for that shape rather
+// than raising this number again.
 #if defined(MICROIDE_TEST_SANITIZER_BUILD)
 constexpr int kWaitTimeoutScale = 4;
 #else

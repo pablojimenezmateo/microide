@@ -1,5 +1,8 @@
 #include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
 
+#include "workspace/coordinators/SelectionAutoscroll.h"
+#include "workspace/coordinators/SelectionGranularity.h"
+
 #include "workspace/render/DiffDividerGeometry.h"
 
 #include <algorithm>
@@ -16,6 +19,26 @@
 namespace microide::workspace {
 
 namespace {
+
+}  // namespace
+
+namespace {
+
+// Place the result pane's caret from an ON-SCREEN (row, column) hit.
+//
+// `ClampTextGridLineAtY` hands back a row of the surface, and with `editor.wrap`
+// on that is a wrapped visual row, not a document line -- so the plain
+// MoveCursorToVisualColumn form would treat row 7 of a wrapped buffer as line 7.
+// MoveCursorToVisualHit is the viewport's own wrap-aware resolver and is what the
+// editor surface already uses; it is exactly right when wrap is off too, so this
+// is one call either way.
+void MoveMergeResultCursorToHit(editor::TextViewport& viewport,
+                                std::size_t visual_row,
+                                std::size_t visual_column,
+                                bool extend_selection) {
+  viewport.MoveCursorToVisualHit(static_cast<int>(visual_row), static_cast<int>(visual_column),
+                                 extend_selection);
+}
 
 }  // namespace
 
@@ -212,12 +235,12 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
 
   if (Contains(interaction.result.rect, event.button.x, event.button.y)) {
     const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
-    const std::size_t line = ClampTextGridLineAtY(interaction.result.text, event.button.y);
+    const std::size_t row = ClampTextGridLineAtY(interaction.result.text, event.button.y);
     const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, event.button.x);
-    merge_tab->result_viewport.MoveCursorToVisualColumn(
-        line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+    MoveMergeResultCursorToHit(merge_tab->result_viewport, row, visual_column,
+                               (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
     if (const auto conflict_index =
-            operations_.find_merge_tracked_conflict_at_result_line(*merge_tab, line);
+            operations_.find_merge_tracked_conflict_at_result_line(*merge_tab, row);
         conflict_index.has_value()) {
       merge_tab->selected_hunk = *conflict_index;
     }
@@ -246,6 +269,10 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       }
       return true;
     }
+    // Double-click selects the word, triple-click the line, and the drag that
+    // follows keeps that granularity -- as on the editor and compare surfaces.
+    selection_granularity::ApplyClick(interaction_state_, merge_tab->result_viewport,
+                                      event.button.clicks);
     if (merge_tab->selected_hunk != previous_selected_hunk) {
       operations_.request_merge_conflict_redraw(previous_selected_hunk);
       operations_.request_merge_conflict_redraw(merge_tab->selected_hunk);
@@ -445,15 +472,34 @@ bool MergeMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       operations_.compute_merge_surface_layout(layout.editor_surface, *merge_tab);
   const auto interaction =
       operations_.build_merge_interaction_layout(layout.editor_surface, surface_layout, *merge_tab);
-  if (!Contains(interaction.result.rect, event.motion.x, event.motion.y)) {
-    return false;
-  }
+  // Same as the editor and compare surfaces: a drag that leaves the result pane
+  // keeps extending toward the pointer rather than freezing where it crossed the
+  // edge. The row was already clamped through ClampTextGridLineAtY; only the
+  // Contains gate in front of it made that clamp unreachable from outside.
+  const SDL_FRect& result_rect = interaction.result.rect;
+  const float pointer_x = std::clamp(static_cast<float>(event.motion.x), result_rect.x,
+                                     result_rect.x + std::max(0.0f, result_rect.w - 1.0f));
 
-  const std::size_t line = ClampTextGridLineAtY(interaction.result.text, event.motion.y);
+  // See the compare surface: the clamp keeps the selection pointed at the edge
+  // cell, the autoscroll is what walks that edge through the document while the
+  // pointer sits still outside the pane.
+  selection_autoscroll::Arm(interaction_state_,
+                            selection_autoscroll::BandFor(interaction.result.text),
+                            static_cast<float>(event.motion.x),
+                            static_cast<float>(event.motion.y));
+  const std::size_t row = ClampTextGridLineAtY(interaction.result.text, event.motion.y);
   const std::size_t previous_selected_hunk = merge_tab->selected_hunk;
-  const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, event.motion.x);
-  merge_tab->result_viewport.MoveCursorToVisualColumn(line, visual_column, true);
-  if (const auto conflict_index = operations_.find_merge_tracked_conflict_at_result_line(*merge_tab, line);
+  const std::size_t visual_column = TextGridVisualColumnAtX(interaction.result.text, pointer_x);
+  if (selection_granularity::DragIsGranular(interaction_state_)) {
+    MoveMergeResultCursorToHit(merge_tab->result_viewport, row, visual_column, false);
+    selection_granularity::ExtendToPointer(
+        interaction_state_, merge_tab->result_viewport,
+        editor::TextPosition{merge_tab->result_viewport.cursor_line(),
+                             merge_tab->result_viewport.cursor_column()});
+  } else {
+    MoveMergeResultCursorToHit(merge_tab->result_viewport, row, visual_column, true);
+  }
+  if (const auto conflict_index = operations_.find_merge_tracked_conflict_at_result_line(*merge_tab, row);
       conflict_index.has_value()) {
     merge_tab->selected_hunk = *conflict_index;
   }

@@ -8,6 +8,7 @@
 #include <optional>
 #include <string_view>
 
+#include "workspace/MergeWrapRows.h"
 #include "workspace/WorkspaceLayout.h"
 
 namespace microide::workspace {
@@ -164,6 +165,18 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
     return layout;
   };
 
+  // Same convergence problem as the compare surface: with wrap on the row count
+  // depends on the pane width, which depends on the scrollbar, which depends on
+  // the row count. Reserve the vertical strip unconditionally, drop horizontal
+  // scroll, and answer in one measure().
+  if (merge_tab.result_viewport.soft_wrap()) {
+    const MergeSurfaceLayout layout =
+        measure(/*reserve_vertical=*/true, /*reserve_horizontal=*/false);
+    EnsureMergeWrapLayout(merge_tab, /*soft_wrap=*/true, layout.visible_columns);
+    return layout;
+  }
+  EnsureMergeWrapLayout(merge_tab, /*soft_wrap=*/false, 0);
+
   bool show_vertical = false;
   bool show_horizontal = false;
   for (int iteration = 0; iteration < 4; ++iteration) {
@@ -187,12 +200,13 @@ ScrollSurfaceLayout WorkspaceShell::ComputeMergeScrollLayout(
     const SDL_FRect& rect,
     const MergeSurfaceLayout& surface,
     const MergeTabState& merge_tab) const {
-  const std::size_t line_count =
-      std::max({merge_tab.model.incoming_lines.size(), merge_tab.result_viewport.line_count(),
-                merge_tab.model.current_lines.size(), std::size_t{1}});
-  return ComputeScrollSurfaceLayout(rect, line_count, surface.visible_rows, merge_tab.scroll_row,
-                                    merge_tab.max_visual_columns, surface.visible_columns,
-                                    merge_tab.horizontal_scroll);
+  // Wrap removes horizontal scroll: report a content width that fits so no
+  // horizontal scrollbar is produced.
+  const std::size_t content_columns =
+      merge_tab.result_viewport.soft_wrap() ? 0 : merge_tab.max_visual_columns;
+  return ComputeScrollSurfaceLayout(rect, MergeTotalVisualRowCount(merge_tab),
+                                    surface.visible_rows, merge_tab.scroll_row, content_columns,
+                                    surface.visible_columns, merge_tab.horizontal_scroll);
 }
 
 TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
@@ -201,8 +215,15 @@ TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
     bool incoming) const {
   const float pane_x = incoming ? surface.left_x : surface.right_x;
   const float pane_width = incoming ? surface.left_width : surface.right_width;
+  // On-screen rows, not document lines: `scroll_line` below is one, and the hit
+  // tests built on this layout resolve into the projected (row-space) conflicts.
+  // Under wrap the two source panes share a padded row budget, so they share this
+  // count; without it each pane still bounds hit-testing by its own length.
   const std::size_t line_count =
-      incoming ? merge_tab.model.incoming_lines.size() : merge_tab.model.current_lines.size();
+      merge_tab.wrap_layout.active()
+          ? MergeSourceVisualRowCount(merge_tab)
+          : (incoming ? merge_tab.model.incoming_lines.size()
+                      : merge_tab.model.current_lines.size());
   return ComputeTextGridInteractionLayout(
       MakeRect(pane_x, surface.rows_y, surface.gutter_width + pane_width,
                static_cast<float>(surface.visible_rows) * surface.line_height),
@@ -235,8 +256,9 @@ WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInt
       .text = ComputeTextGridInteractionLayout(
           result_rect, metrics.text_x, metrics.first_line_y, metrics.line_height,
           text_renderer_.CharWidth(), merge_tab.result_viewport.scroll_line(),
-          merge_tab.result_viewport.line_count(), merge_tab.result_viewport.horizontal_scroll(),
-          metrics.visible_rows, metrics.visible_columns),
+          static_cast<std::size_t>(std::max(0, merge_tab.result_viewport.VisualRowCount())),
+          merge_tab.result_viewport.horizontal_scroll(), metrics.visible_rows,
+          metrics.visible_columns),
   };
 }
 
@@ -308,7 +330,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentMergeConflictRect(std::size_t co
       ComputeMergeSurfaceLayout(layout->editor_surface, *merge_tab);
   const MergeInteractionLayout interaction =
       BuildMergeInteractionLayout(layout->editor_surface, surface_layout, *merge_tab);
-  const MergeTrackedConflict& conflict = merge_tab->conflicts[conflict_index];
+  const MergeTrackedConflict& conflict = MergeVisualConflicts(*merge_tab)[conflict_index];
   const VisibleLineRangeLayout source_lines = {
       .first_line_y = surface_layout.rows_y,
       .line_height = surface_layout.line_height,
@@ -352,13 +374,17 @@ std::optional<std::size_t> WorkspaceShell::FindMergeTrackedConflictAtSourceLine(
     const MergeTabState& merge_tab,
     std::size_t line,
     bool incoming) const {
-  return microide::workspace::FindMergeTrackedConflictAtSourceLine(merge_tab.conflicts, line, incoming);
+  // `line` is an on-screen row from a hit test, so it resolves against the
+  // row-space projection of the conflicts.
+  return microide::workspace::FindMergeTrackedConflictAtSourceLine(MergeVisualConflicts(merge_tab),
+                                                                   line, incoming);
 }
 
 std::optional<std::size_t> WorkspaceShell::FindMergeTrackedConflictAtResultLine(
     const MergeTabState& merge_tab,
     std::size_t line) const {
-  return microide::workspace::FindMergeTrackedConflictAtResultLine(merge_tab.conflicts, line);
+  return microide::workspace::FindMergeTrackedConflictAtResultLine(MergeVisualConflicts(merge_tab),
+                                                                    line);
 }
 
 SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
@@ -378,6 +404,8 @@ SDL_FRect WorkspaceShell::BuildMergeSourceActionButtonRect(
   return ComputeMergeSourceActionButtonRect(
       incoming ? surface.left_x : surface.right_x, surface.gutter_width, surface.rows_y,
       surface.line_height, source_scroll_row,
+      // `conflict` is already in on-screen row space at every caller (the render
+      // TU and the hover classifier both project it), so this end is a row.
       incoming ? conflict.incoming_end_line : conflict.current_end_line, interaction.content_bottom,
       incoming ? interaction.incoming_accept_button_width : interaction.current_accept_button_width,
       kMergeToolbarButtonHeight);
@@ -425,14 +453,12 @@ std::optional<WorkspaceShell::MergeHoverState> WorkspaceShell::ClassifyMergeHove
           .button_height = kMergeToolbarButtonHeight,
           .button_gap = kMergeToolbarButtonGap,
       },
-      merge_tab.conflicts, x, y);
+      MergeVisualConflicts(merge_tab), x, y);
 }
 
 int WorkspaceShell::MergeMaxScrollRow(const MergeTabState& merge_tab, int visible_rows) const {
-  const std::size_t line_count =
-      std::max({merge_tab.model.incoming_lines.size(), merge_tab.result_viewport.line_count(),
-                merge_tab.model.current_lines.size(), std::size_t{1}});
-  return std::max(0, static_cast<int>(line_count) - std::max(1, visible_rows));
+  return std::max(0,
+                  static_cast<int>(MergeTotalVisualRowCount(merge_tab)) - std::max(1, visible_rows));
 }
 
 void WorkspaceShell::ClampMergeScrollRow(MergeTabState& merge_tab, int visible_rows) const {

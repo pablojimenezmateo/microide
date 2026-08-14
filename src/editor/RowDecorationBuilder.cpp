@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "editor/DiagnosticsRender.h"
+#include "util/StringUtil.h"
 
 namespace microide::editor {
 
@@ -259,6 +260,88 @@ void AppendTextStyleUnderlinesGrid(DecoratedTextRow& row, const RowDecorationInp
 }
 
 }  // namespace
+
+void PushWhitespaceMarker(std::vector<DecoratedTextFill>& fills,
+                          bool is_tab,
+                          float cell_x,
+                          float char_width,
+                          float cell_span_width,
+                          float y,
+                          float line_height,
+                          SDL_Color color) {
+  if (is_tab) {
+    fills.push_back(DecoratedTextFill{
+        .rect = SDL_FRect{cell_x + 2.0f, y + line_height * 0.5f, cell_span_width - 4.0f, 1.0f},
+        .color = color,
+    });
+  } else {
+    fills.push_back(DecoratedTextFill{
+        .rect = SDL_FRect{cell_x + char_width * 0.5f - 1.0f, y + line_height * 0.5f - 1.0f, 2.0f,
+                          2.0f},
+        .color = color,
+    });
+  }
+}
+
+std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
+                                    std::string_view text,
+                                    std::size_t tab_size,
+                                    std::size_t row_visual_start,
+                                    std::size_t row_visual_end,
+                                    float text_x,
+                                    float char_width,
+                                    float y,
+                                    float line_height,
+                                    SDL_Color color,
+                                    CellShiftRef shift_px) {
+  std::size_t visual_col = 0;
+  std::size_t i = 0;
+  // Resume at the row rather than at byte 0 when everything before it is plain
+  // single-cell ASCII: there byte offset IS visual column (TD-2026-08-12-187).
+  const std::size_t prefix_probe = std::min(row_visual_start, text.size());
+  if (util::FirstNonAsciiOrByte(text.substr(0, prefix_probe), '\t') >= prefix_probe) {
+    i = prefix_probe;
+    visual_col = prefix_probe;
+  }
+  const std::size_t start_byte = i;
+  for (; i < text.size();) {
+    const char c = text[i];
+    i += util::Utf8SequenceLength(text, i);
+    const std::size_t cell_start = visual_col;
+    visual_col = TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
+    const std::size_t cell_width = visual_col - cell_start;
+    if (cell_start >= row_visual_end) {
+      break;
+    }
+    if (cell_start < row_visual_start || visual_col > row_visual_end) {
+      continue;
+    }
+    if (c != ' ' && c != '\t') {
+      continue;
+    }
+    PushWhitespaceMarker(fills, c == '\t',
+                         text_x + static_cast<float>(cell_start - row_visual_start) * char_width +
+                             shift_px(cell_start),
+                         char_width, static_cast<float>(cell_width) * char_width, y, line_height,
+                         color);
+  }
+  return i - start_byte;
+}
+
+std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
+                                    std::string_view text,
+                                    std::size_t tab_size,
+                                    std::size_t row_visual_start,
+                                    std::size_t row_visual_end,
+                                    float text_x,
+                                    float char_width,
+                                    float y,
+                                    float line_height,
+                                    SDL_Color color) {
+  const auto no_shift = [](std::size_t) { return 0.0f; };
+  return AppendWhitespaceMarkers(fills, text, tab_size, row_visual_start, row_visual_end, text_x,
+                                 char_width, y, line_height, color, no_shift);
+}
 
 void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
   row.fills.clear();

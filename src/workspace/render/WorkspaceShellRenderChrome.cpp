@@ -19,7 +19,9 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   const auto draw_tab_close_button = [&](const SDL_FRect& rect, SDL_Color color,
                                          SDL_Color hover_color) {
     DrawHoverableCloseGlyph(renderer, rect,
-                            last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_),
+                            !context_.interaction_state.tab_drag.dragging &&
+                                last_mouse_position_valid_ &&
+                                Contains(rect, last_mouse_x_, last_mouse_y_),
                             color, hover_color);
   };
   const StripTabPalette chrome_tab_palette{
@@ -31,8 +33,13 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
       .active_glyph = theme_.chrome_text_secondary,
       .inactive_glyph = theme_.text_disabled,
   };
+  // A live drag owns the pointer, so the motion path stops resolving hover for it
+  // and `last_mouse_*` stays where the press landed. Nothing on a strip may claim
+  // hover from that stale point — an auto-scrolled strip would otherwise light up
+  // whichever tab drifted under it. VS Code drops tab hover during a drag too.
   const auto tab_hovered = [&](const SDL_FRect& rect) {
-    return last_mouse_position_valid_ && Contains(rect, last_mouse_x_, last_mouse_y_);
+    return !context_.interaction_state.tab_drag.dragging && last_mouse_position_valid_ &&
+           Contains(rect, last_mouse_x_, last_mouse_y_);
   };
   // Chrome-like reorder: neighbor tabs render offset by the live slide animation,
   // and the dragged tab is lifted out of the flow (drawn as the floating ghost by
@@ -132,7 +139,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // Skip all project-tab work when the strip is hidden (zero height): no tab measuring,
   // overflow controls, or drag ghost.
   if (layout.project_tab_strip.h > 0.0f) {
-    const auto visible_project_tabs =
+    const auto& visible_project_tabs =
         tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     for (const VisibleStripTab& tab : visible_project_tabs) {
       if (tab_lifted(TabDragKind::Project, 0, tab.index)) {
@@ -204,10 +211,10 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                               group_tab_strip.w, kWorkspaceDividerThickness),
                      theme_.border);
     }
-    std::vector<VisibleStripTab> visible_tabs;
-    if (HasActiveProjectCatalogEntry()) {
-      visible_tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip);
-    }
+    const std::vector<VisibleStripTab>& visible_tabs =
+        HasActiveProjectCatalogEntry()
+            ? tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip)
+            : TabStripService::EmptyVisibleTabs();
     if (HasActiveProjectCatalogEntry() && visible_tabs.empty()) {
       const SDL_FRect placeholder_tab = EmptyTabStripPlaceholderRect(group_tab_strip);
       DrawStripTab(text_renderer_, renderer, theme_, placeholder_tab, "Welcome", {}, {}, false, true,

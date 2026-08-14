@@ -328,7 +328,7 @@ void CompareInteractionCoordinator::OpenWorkingFileFromCompare() {
   operations_.open_file(compare_tab->path);
   if (target_line > 0) {
     if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
-      viewport->MoveCursorTo(static_cast<std::size_t>(target_line - 1), 0);
+      viewport->JumpCursorTo(static_cast<std::size_t>(target_line - 1), 0);
     }
   }
 }
@@ -383,8 +383,12 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
       presentation_row.has_value()) {
     compare_tab->selected_row = *presentation_row;
   } else {
-    compare_tab->selected_row = static_cast<std::size_t>(
-        compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].start_row);
+    // `selected_row` is a PRESENTATION row; a hunk's `start_row` is a model row,
+    // and the two diverge the moment the diff collapses a run.
+    compare_tab->selected_row = compare::ComparePresentationRowForModelRow(
+        compare_tab->presentation,
+        static_cast<std::size_t>(
+            compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].start_row));
   }
   operations_.reveal_active_compare_selection();
   operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
@@ -803,7 +807,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
       merge_tab->status_message =
           validation.message + " Choose Mark Resolved again to override.";
       if (validation.marker_line.has_value()) {
-        merge_tab->result_viewport.MoveCursorTo(*validation.marker_line, 0);
+        merge_tab->result_viewport.JumpCursorTo(*validation.marker_line, 0);
       }
       operations_.request_editor_surface_redraw();
       return;

@@ -269,6 +269,21 @@ WorkspaceShell::CompareSurfaceLayout WorkspaceShell::ComputeCompareSurfaceLayout
     return layout;
   };
 
+  // Soft wrap: the panes never scroll horizontally, and the wrapped row count
+  // depends on the pane width — which would depend on whether a vertical scrollbar
+  // is reserved, which depends on the row count. That loop does not converge, and
+  // re-wrapping the whole diff up to four times per layout call would be the most
+  // expensive thing on the surface. Reserve the vertical scrollbar strip
+  // unconditionally instead: the wrap columns are then a pure function of the rect,
+  // one measure() answers, and the strip is where the overview lane lives anyway.
+  if (compare_tab.right_viewport.soft_wrap()) {
+    CompareSurfaceLayout layout = measure(/*reserve_vertical=*/true, /*reserve_horizontal=*/false);
+    EnsureCompareWrapLayout(compare_tab, /*soft_wrap=*/true, layout.left_visible_columns,
+                            layout.right_visible_columns);
+    return layout;
+  }
+  EnsureCompareWrapLayout(compare_tab, /*soft_wrap=*/false, 0, 0);
+
   bool show_vertical = false;
   bool show_horizontal = false;
   for (int iteration = 0; iteration < 4; ++iteration) {
@@ -290,9 +305,14 @@ ScrollSurfaceLayout WorkspaceShell::ComputeCompareScrollLayout(
     const SDL_FRect& rect,
     const CompareSurfaceLayout& surface,
     const CompareTabState& compare_tab) const {
-  return ComputeScrollSurfaceLayout(rect, CompareTabPresentationRowCount(compare_tab),
+  // Row space is the on-screen (wrapped) one in both modes -- identical to the
+  // presentation row count while wrap is off. Wrap also removes horizontal scroll:
+  // report a content width that fits, so no horizontal scrollbar is produced.
+  const std::size_t content_columns =
+      compare_tab.right_viewport.soft_wrap() ? 0 : compare_tab.max_visual_columns;
+  return ComputeScrollSurfaceLayout(rect, CompareTabVisualRowCount(compare_tab),
                                   surface.visible_rows,
-                                    compare_tab.scroll_row, compare_tab.max_visual_columns,
+                                    compare_tab.scroll_row, content_columns,
                                     surface.visible_columns, compare_tab.horizontal_scroll);
 }
 
@@ -307,7 +327,10 @@ TextGridInteractionLayout WorkspaceShell::BuildCompareRightInteractionLayout(
                static_cast<float>(surface.visible_rows) * surface.line_height),
       surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height,
       text_renderer_.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
-      compare_tab.model.rows.size(), compare_tab.horizontal_scroll,
+      // On-screen rows, not model rows: `scroll_line` above is one, so a mismatched
+      // `line_count` clamped hit-tests into a different row space (the pointer-drag
+      // path resolved a presentation row as if it were a model row).
+      CompareTabVisualRowCount(compare_tab), compare_tab.horizontal_scroll,
       static_cast<std::size_t>(surface.visible_rows), surface.right_visible_columns);
 }
 
@@ -321,10 +344,19 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowRangeRect(std::size_t 
 
   const CompareSurfaceLayout surface_layout =
       ComputeCompareSurfaceLayout(layout->editor_surface, *compare_tab);
+  // Callers name PRESENTATION rows (a selection, a hover); the surface scrolls in
+  // on-screen rows, which soft wrap makes a different space. Project the range,
+  // covering every wrapped row of the last presentation row in it.
+  const std::size_t visual_start = ComparePresentationRowToVisualRow(*compare_tab, start_row);
+  const std::size_t visual_end =
+      end_row == std::numeric_limits<std::size_t>::max() || end_row <= start_row
+          ? end_row
+          : ComparePresentationRowToVisualRow(*compare_tab, end_row - 1) +
+                compare_tab->wrap_layout.RowSpanForUnit(end_row - 1);
   const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab->scroll_row));
   const std::size_t visible_end_row = scroll_row + static_cast<std::size_t>(surface_layout.visible_rows);
-  const std::size_t rect_start = std::max(start_row, scroll_row);
-  const std::size_t rect_end = std::min(end_row, visible_end_row);
+  const std::size_t rect_start = std::max(visual_start, scroll_row);
+  const std::size_t rect_end = std::min(visual_end, visible_end_row);
   if (rect_end <= rect_start) {
     return std::nullopt;
   }
@@ -362,7 +394,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentCompareRowToBottomRect(std::size
 }
 
 int WorkspaceShell::CompareMaxScrollRow(const CompareTabState& compare_tab, int visible_rows) const {
-  return std::max(0, static_cast<int>(CompareTabPresentationRowCount(compare_tab)) -
+  return std::max(0, static_cast<int>(CompareTabVisualRowCount(compare_tab)) -
                             std::max(1, visible_rows));
 }
 
@@ -373,10 +405,33 @@ void WorkspaceShell::ClampCompareScrollRow(CompareTabState& compare_tab, int vis
 
 std::size_t WorkspaceShell::CompareMaxScrollColumn(const CompareTabState& compare_tab,
                                                    std::size_t visible_columns) const {
-  if (compare_tab.max_visual_columns <= visible_columns) {
+  // Wrapped panes have no horizontal extent past the viewport by construction.
+  if (compare_tab.right_viewport.soft_wrap() ||
+      compare_tab.max_visual_columns <= visible_columns) {
     return 0;
   }
   return compare_tab.max_visual_columns - visible_columns;
+}
+
+// Scroll the smallest amount that brings the selected presentation row's rows on
+// screen. Under soft wrap a presentation row spans several on-screen rows, so
+// revealing it means bringing its FIRST row above the fold and its LAST row below
+// it; with wrap off both collapse to the row itself and this is the old two-branch
+// nudge. Kept in one place because the reveal ran from three call sites, each with
+// its own copy of the arithmetic.
+void WorkspaceShell::RevealCompareSelectedRow(CompareTabState& compare_tab,
+                                              int visible_rows) const {
+  const int rows = std::max(1, visible_rows);
+  const int first =
+      static_cast<int>(ComparePresentationRowToVisualRow(compare_tab, compare_tab.selected_row));
+  const int span = static_cast<int>(compare_tab.wrap_layout.RowSpanForUnit(compare_tab.selected_row));
+  const int last = first + std::max(1, span) - 1;
+  if (first < compare_tab.scroll_row) {
+    compare_tab.scroll_row = first;
+  } else if (last >= compare_tab.scroll_row + rows) {
+    compare_tab.scroll_row = last - rows + 1;
+  }
+  ClampCompareScrollRow(compare_tab, visible_rows);
 }
 
 void WorkspaceShell::ClampCompareHorizontalScroll(CompareTabState& compare_tab,
@@ -400,14 +455,7 @@ void WorkspaceShell::RevealActiveCompareSelection() {
       ComputeCompareSurfaceLayout(layout.editor_surface, *compare_tab);
   ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
   ClampCompareHorizontalScroll(*compare_tab, surface_layout.visible_columns);
-  if (compare_tab->selected_row < static_cast<std::size_t>(compare_tab->scroll_row)) {
-    compare_tab->scroll_row = static_cast<int>(compare_tab->selected_row);
-  } else if (compare_tab->selected_row >=
-             static_cast<std::size_t>(compare_tab->scroll_row + surface_layout.visible_rows)) {
-    compare_tab->scroll_row =
-        static_cast<int>(compare_tab->selected_row) - surface_layout.visible_rows + 1;
-  }
-  ClampCompareScrollRow(*compare_tab, surface_layout.visible_rows);
+  RevealCompareSelectedRow(*compare_tab, surface_layout.visible_rows);
   if (compare_tab->right_view_active) {
     SyncCompareViewportScroll(*compare_tab);
   }
@@ -429,13 +477,16 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildCompareTextI
       surface_layout.right_x + surface_layout.gutter_width, surface_layout.rows_y,
       surface_layout.line_height, text_renderer_.CharWidth(),
       static_cast<std::size_t>(std::max(0, compare_tab->scroll_row)),
-      compare_tab->model.rows.size(), compare_tab->horizontal_scroll,
+      CompareTabVisualRowCount(*compare_tab), compare_tab->horizontal_scroll,
       static_cast<std::size_t>(surface_layout.visible_rows), surface_layout.right_visible_columns);
-  const std::size_t model_row =
-      CompareRowIndexForRightLine(*compare_tab, compare_tab->right_viewport.cursor_line());
-  const float cursor_x =
-      TextGridCursorX(interaction, compare_tab->right_viewport.cursor_visual_column());
-  const float cursor_y = TextGridLineY(interaction, model_row);
+  // The IME box follows the caret's ON-SCREEN cell. It used to be placed at the
+  // caret's MODEL row against a scroll offset in presentation rows, which drifts
+  // apart as soon as the diff collapses a run -- and wraps a line.
+  const CompareRightCaretPlacement placement = CompareRightCaretPlacementFor(
+      *compare_tab, compare_tab->right_viewport.cursor_line(),
+      compare_tab->right_viewport.cursor_visual_column());
+  const float cursor_x = TextGridCursorX(interaction, placement.column);
+  const float cursor_y = TextGridLineY(interaction, placement.visual_row);
   return TextInputVisual{
       .surface = TextInputSurface::Editor,
       .area = MakeRect(cursor_x, cursor_y - 1.0f, interaction.char_width, interaction.line_height),
@@ -477,8 +528,11 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
         "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
     const std::string right_content =
         util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()), right_line_ending);
-    compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content,
-                                                   compare_tab.build_options);
+    // In place, recycling the previous build's row storage: a fresh model is two
+    // string allocations per row, and this runs on every keystroke in the
+    // editable pane (TD-2026-08-13-208).
+    compare::BuildCompareModelInto(compare_tab.model, compare_tab.left_content, right_content,
+                                   compare_tab.build_options);
     ++compare_tab.model_revision;
     compare_tab.visible_layout_cache_model_revision = compare_tab.model_revision;
     compare_tab.visible_layout_cache.clear();
@@ -565,27 +619,6 @@ std::size_t WorkspaceShell::CompareRowIndexForRightLine(const CompareTabState& c
   return CompareTabModelRowForRightLine(compare_tab, line_index);
 }
 
-std::size_t WorkspaceShell::CompareRightLineForRow(const CompareTabState& compare_tab,
-                                                   std::size_t row_index) const {
-  if (compare_tab.right_viewport.line_count() == 0) {
-    return 0;
-  }
-  if (row_index >= compare_tab.model.rows.size()) {
-    return compare_tab.right_viewport.line_count() - 1;
-  }
-
-  const auto& row = compare_tab.model.rows[row_index];
-  if (row.right_line > 0) {
-    return static_cast<std::size_t>(row.right_line - 1);
-  }
-  for (std::size_t i = row_index + 1; i < compare_tab.model.rows.size(); ++i) {
-    if (compare_tab.model.rows[i].right_line > 0) {
-      return static_cast<std::size_t>(compare_tab.model.rows[i].right_line - 1);
-    }
-  }
-  return compare_tab.right_viewport.line_count() - 1;
-}
-
 void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) const {
   if (!compare_tab.right_view_active) {
     return;
@@ -608,11 +641,15 @@ void WorkspaceShell::SyncCompareViewportScroll(CompareTabState& compare_tab) con
   // horizontal reveal flows the other way through SyncCompareSelectionFromViewport.
   compare_tab.right_viewport.SetHorizontalScroll(compare_tab.horizontal_scroll);
   const std::size_t scroll_row = static_cast<std::size_t>(std::max(0, compare_tab.scroll_row));
+  const std::size_t presentation_scroll_row =
+      CompareVisualRowToPresentationRow(compare_tab, scroll_row);
   const std::size_t model_scroll_row =
       compare_tab.presentation.rows.empty()
-          ? scroll_row
-          : compare::ComparePresentationToModelRow(compare_tab.presentation, scroll_row);
-  compare_tab.right_viewport.SetScrollLine(CompareRightLineForRow(compare_tab, model_scroll_row));
+          ? presentation_scroll_row
+          : compare::ComparePresentationToModelRow(compare_tab.presentation,
+                                                   presentation_scroll_row);
+  compare_tab.right_viewport.SetScrollLine(
+      CompareTabRightLineForModelRow(compare_tab, model_scroll_row));
 }
 
 void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_tab,
@@ -633,21 +670,15 @@ void WorkspaceShell::SyncCompareSelectionFromViewport(CompareTabState& compare_t
           ComputeCompareSurfaceLayout(layout.editor_surface, compare_tab);
       ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
       ClampCompareHorizontalScroll(compare_tab, surface_layout.visible_columns);
-      if (compare_tab.selected_row < static_cast<std::size_t>(compare_tab.scroll_row)) {
-        compare_tab.scroll_row = static_cast<int>(compare_tab.selected_row);
-      } else if (compare_tab.selected_row >=
-                 static_cast<std::size_t>(compare_tab.scroll_row + surface_layout.visible_rows)) {
-        compare_tab.scroll_row =
-            static_cast<int>(compare_tab.selected_row) - surface_layout.visible_rows + 1;
-      }
-      ClampCompareScrollRow(compare_tab, surface_layout.visible_rows);
+      RevealCompareSelectedRow(compare_tab, surface_layout.visible_rows);
     }
     SyncCompareViewportScroll(compare_tab);
   } else {
     const std::size_t scroll_model_row =
         CompareRowIndexForRightLine(compare_tab, compare_tab.right_viewport.scroll_line());
-    compare_tab.scroll_row = static_cast<int>(
-        compare::ComparePresentationRowForModelRow(compare_tab.presentation, scroll_model_row));
+    compare_tab.scroll_row = static_cast<int>(ComparePresentationRowToVisualRow(
+        compare_tab,
+        compare::ComparePresentationRowForModelRow(compare_tab.presentation, scroll_model_row)));
     SyncCompareViewportScroll(compare_tab);
   }
 }

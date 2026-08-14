@@ -236,6 +236,18 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         }
         return std::nullopt;
       }
+      case MultiCaretEditKind::DeleteWordBackward:
+      case MultiCaretEditKind::DeleteWordForward: {
+        const int direction = kind == MultiCaretEditKind::DeleteWordBackward ? -1 : 1;
+        const TextPosition caret{line, column};
+        const TextPosition target = WordTargetForCaret(caret, direction, /*for_deletion=*/true);
+        if (target.line == caret.line && target.column == caret.column) {
+          return std::nullopt;
+        }
+        return PlannedCaretEdit{direction < 0 ? SelectionRange{target, caret}
+                                              : SelectionRange{caret, target},
+                                "", std::nullopt};
+      }
     }
     return std::nullopt;
   };

@@ -42,7 +42,7 @@ bool SidebarCoordinator::OpenEditorFileFromSidebar(
     if (editor::TextViewport* viewport =
             operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
         viewport != nullptr) {
-      viewport->MoveCursorTo(caret->first, caret->second);
+      viewport->JumpCursorTo(caret->first, caret->second);
     }
   }
   if (state_.sidebar.temporary) {
@@ -319,7 +319,7 @@ bool SidebarCoordinator::OpenPluginItem() {
     if (editor::TextViewport* viewport =
             operations_.active_editor_viewport ? operations_.active_editor_viewport() : nullptr;
         viewport != nullptr) {
-      viewport->MoveCursorTo(item.line > 0 ? item.line - 1 : 0,
+      viewport->JumpCursorTo(item.line > 0 ? item.line - 1 : 0,
                              item.column > 0 ? item.column - 1 : 0);
     }
     return true;

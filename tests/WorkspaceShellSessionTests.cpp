@@ -2036,6 +2036,44 @@ void TestWorkspaceShellMergeResultDragSelectionTracksPointer() {
          "merge result drag selection should capture the dragged text");
 }
 
+// A selection drag that leaves the result pane must keep extending toward the
+// pointer, not freeze where it crossed the edge. Both handlers refused any
+// pointer outside the pane, so the selection stopped growing while the button
+// was still held.
+void TestWorkspaceShellMergeResultDragSelectionSurvivesLeavingThePane() {
+  TemporaryDirectory temp_dir;
+  WorkspaceShell shell;
+  OpenMergeHoverFixture(shell, temp_dir, nullptr, nullptr, nullptr, nullptr);
+
+  const auto interaction = WorkspaceShellTestAccess::ActiveMergeInteractionLayout(shell);
+  const float y = interaction.result.text.first_line_y +
+                  interaction.result.text.line_height * 0.5f;
+  const float start_x = interaction.result.text.text_x +
+                        interaction.result.text.char_width * 0.1f;
+
+  Expect(SendMouseDown(shell, start_x, y, SDL_BUTTON_LEFT),
+         "pressing inside the merge result pane should start selection");
+  // Far left of the pane -- over the incoming/current panes, where the old
+  // Contains gate refused.
+  Expect(SendMouseMotion(shell, interaction.result.rect.x - 400.0f, y, SDL_BUTTON_LMASK),
+         "dragging left out of the result pane should still be handled");
+  const std::string after_left = WorkspaceShellTestAccess::ActiveMergeSelectedText(shell);
+
+  // And far right, past the pane's right edge.
+  const float far_right = interaction.result.rect.x + interaction.result.rect.w + 400.0f;
+  Expect(SendMouseMotion(shell, far_right, y, SDL_BUTTON_LMASK),
+         "dragging right out of the result pane should still be handled");
+  const std::string after_right = WorkspaceShellTestAccess::ActiveMergeSelectedText(shell);
+
+  Expect(SendMouseUp(shell, far_right, y, SDL_BUTTON_LEFT),
+         "releasing after the out-of-pane drag should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveMergeHasSelection(shell),
+         "a drag that left the pane should still have produced a selection");
+  Expect(after_right != after_left,
+         "the two out-of-pane pointer positions must select different text, or the "
+         "pointer is not being tracked outside the pane at all");
+}
+
 void TestWorkspaceShellMergeDividerDragUpdatesPaneFractions() {
   TemporaryDirectory temp_dir;
   WorkspaceShell shell;
@@ -2723,6 +2761,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeHoverPrefersResultActionButton);
   AddTest(tests, "WorkspaceShell/MergeResultDragSelectionTracksPointer",
           TestWorkspaceShellMergeResultDragSelectionTracksPointer);
+  AddTest(tests, "WorkspaceShell/MergeResultDragSelectionSurvivesLeavingThePane",
+          TestWorkspaceShellMergeResultDragSelectionSurvivesLeavingThePane);
   AddTest(tests, "WorkspaceShell/MergeDividerDragUpdatesPaneFractions",
           TestWorkspaceShellMergeDividerDragUpdatesPaneFractions);
   AddTest(tests, "WorkspaceShell/MergeWheelScrollsRows",

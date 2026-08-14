@@ -337,9 +337,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
                             (viewport->cursor_column() == match->open_column ||
                              viewport->cursor_column() == match->open_column + 1));
       if (at_open) {
-        viewport->MoveCursorTo(match->close_line, match->close_column, false);
+        viewport->JumpCursorTo(match->close_line, match->close_column, false);
       } else {
-        viewport->MoveCursorTo(match->open_line, match->open_column, false);
+        viewport->JumpCursorTo(match->open_line, match->open_column, false);
       }
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;
@@ -378,6 +378,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     case ActionId::MoveLineUp:
     case ActionId::MoveLineDown:
     case ActionId::DuplicateLine:
+    case ActionId::CopyLineUp:
+    case ActionId::InsertLineBelow:
+    case ActionId::InsertLineAbove:
     case ActionId::DeleteLine:
     case ActionId::IndentLines:
     case ActionId::OutdentLines:
@@ -389,7 +392,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           id == ActionId::ToggleLineComment || id == ActionId::ToggleBlockComment;
       const bool is_line_op_action =
           id == ActionId::MoveLineUp || id == ActionId::MoveLineDown ||
-          id == ActionId::DuplicateLine || id == ActionId::DeleteLine ||
+          id == ActionId::DuplicateLine || id == ActionId::CopyLineUp ||
+          id == ActionId::InsertLineBelow || id == ActionId::InsertLineAbove ||
+          id == ActionId::DeleteLine ||
           id == ActionId::IndentLines || id == ActionId::OutdentLines;
       const bool is_sort_action =
           id == ActionId::SortLinesAscending || id == ActionId::SortLinesDescending;
@@ -435,7 +440,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           changed = editor::MoveLineDown(*viewport);
           break;
         case ActionId::DuplicateLine:
-          changed = editor::DuplicateSelection(*viewport);
+          changed = editor::CopyLines(*viewport, /*downward=*/true);
+          break;
+        case ActionId::CopyLineUp:
+          changed = editor::CopyLines(*viewport, /*downward=*/false);
+          break;
+        case ActionId::InsertLineBelow:
+          changed = editor::InsertLineBelow(*viewport);
+          break;
+        case ActionId::InsertLineAbove:
+          changed = editor::InsertLineAbove(*viewport);
           break;
         case ActionId::DeleteLine:
           changed = editor::DeleteLine(*viewport);

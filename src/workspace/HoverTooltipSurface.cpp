@@ -59,6 +59,13 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse()) {
     return std::nullopt;
   }
+  // A live tab drag hides every tooltip. The one that was up when the gesture
+  // started used to stay up for the whole drag — floating over the strip the tab
+  // is being dragged across, naming whatever the pointer happened to rest on
+  // first — because the drag path owns the pointer and stops re-resolving hover.
+  if (context_.interaction_state.tab_drag.dragging) {
+    return std::nullopt;
+  }
   const float x = last_mouse_x_;
   const float y = last_mouse_y_;
 
@@ -85,12 +92,14 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
     return {};
   };
 
-  TooltipHit found = strip_hit(layout.project_tab_strip, [&] {
-    return tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
-  });
+  TooltipHit found =
+      strip_hit(layout.project_tab_strip, [&]() -> const std::vector<VisibleStripTab>& {
+        return tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+      });
   if (!found && !context_.current_project_state.root.empty()) {
-    found = strip_hit(layout.tab_strip,
-                      [&] { return tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip); });
+    found = strip_hit(layout.tab_strip, [&]() -> const std::vector<VisibleStripTab>& {
+      return tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
+    });
   }
 
   // 3) Breadcrumb status items (plugin-contributed and built-in).

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "util/FlatDedupSet.h"
+#include "util/Fnv1a.h"
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/SaturatingMath.h"
@@ -930,13 +931,12 @@ bool LinesEqualIgnoringWhitespace(std::string_view left, std::string_view right)
 // which is what makes it agree with LinesEqualIgnoringWhitespace.
 struct IgnoreWhitespaceLineHash {
   std::size_t operator()(std::string_view line) const {
-    std::uint64_t hash = 1469598103934665603ULL;  // FNV-1a
+    std::uint64_t hash = util::kFnv1aOffsetBasis;
     for (const char c : line) {
       if (util::IsAsciiSpace(static_cast<unsigned char>(c)) != 0) {
         continue;
       }
-      hash ^= static_cast<unsigned char>(c);
-      hash *= 1099511628211ULL;
+      hash = util::Fnv1aByte(hash, static_cast<unsigned char>(c));
     }
     return static_cast<std::size_t>(hash);
   }
@@ -1373,12 +1373,59 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std:
   return BuildCompareModelProfiled(left, right, CompareBuildOptions{});
 }
 
-CompareBuildResult BuildCompareModelProfiled(const std::string& left,
-                                             const std::string& right,
-                                             const CompareBuildOptions& options) {
-  CompareBuildResult result;
-  CompareModel& model = result.model;
-  CompareBuildProfile& profile = result.profile;
+namespace {
+
+// Row storage recycler.
+//
+// A compare rebuild used to construct every row from scratch, and `CompareRow`
+// owns TWO std::strings — so a 12,000-row diff cost 24,000 string allocations per
+// rebuild, and the rebuild runs on every keystroke in the editable pane. That was
+// 98 % of the allocations in `compare_type_in_wrapped_diff` (TD-2026-08-13-208).
+//
+// The rows of consecutive rebuilds are nearly identical, so this hands back the
+// PREVIOUS build's row objects and `assign()`s into their existing buffers:
+// std::string::assign reuses the buffer whenever capacity suffices, which for a
+// typing burst is essentially always. Rows past the new end are dropped at the
+// end of the build; `resize` down never reallocates.
+//
+// It does NOT change what is built: every field is reset here, so a recycled row
+// is indistinguishable from a fresh one.
+class RowSink {
+ public:
+  explicit RowSink(CompareModel& model) : model_(model) {}
+
+  CompareRow& Next() {
+    if (next_ == model_.rows.size()) {
+      model_.rows.emplace_back();
+    }
+    CompareRow& row = model_.rows[next_++];
+    row.left_text.clear();
+    row.right_text.clear();
+    row.left_line = 0;
+    row.right_line = 0;
+    row.kind = CompareRowKind::Unchanged;
+    row.hunk = -1;
+    row.left_changed_spans.clear();
+    row.right_changed_spans.clear();
+    return row;
+  }
+
+  std::size_t size() const { return next_; }
+  void Finish() { model_.rows.resize(next_); }
+
+ private:
+  CompareModel& model_;
+  std::size_t next_ = 0;
+};
+
+}  // namespace
+
+CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
+                                                  const std::string& left,
+                                                  const std::string& right,
+                                                  const CompareBuildOptions& options) {
+  CompareBuildProfile profile;
+  model.hunks.clear();
 
   // A non-empty buffer that does not end in '\n' lacks a trailing newline; the
   // patch generator uses this to emit `\ No newline at end of file`.
@@ -1438,40 +1485,31 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   profile.line_alignment_ns = DurationNs(line_alignment_start, Clock::now());
 
   model.rows.reserve(left_lines.size() + right_lines.size());
+  RowSink sink(model);
   int left_line = 1;
   int right_line = 1;
   for (std::size_t index = 0; index < prefix; ++index) {
-    model.rows.push_back(CompareRow{
-        .left_text = std::string(left_lines[index]),
-        .right_text = std::string(right_lines[index]),
-        .left_line = left_line++,
-        .right_line = right_line++,
-        .kind = CompareRowKind::Unchanged,
-        .hunk = -1,
-        .left_changed_spans = {},
-        .right_changed_spans = {},
-    });
+    CompareRow& row = sink.Next();
+    row.left_text.assign(left_lines[index]);
+    row.right_text.assign(right_lines[index]);
+    row.left_line = left_line++;
+    row.right_line = right_line++;
   }
 
   for (std::size_t op_index = 0; op_index < ops.size(); ++op_index) {
     const auto& op = ops[op_index];
     if (op.kind == DiffOpKind::Equal) {
-      model.rows.push_back(CompareRow{
-          .left_text = std::string(op.text),
-          // Under ignore_whitespace an Equal op can pair two whitespace-different
-          // lines, so the right column must show the right file's own text.
-          .right_text = std::string(op.right_text),
-          .left_line = left_line++,
-          .right_line = right_line++,
-          .kind = CompareRowKind::Unchanged,
-          .hunk = -1,
-          .left_changed_spans = {},
-          .right_changed_spans = {},
-      });
+      CompareRow& row = sink.Next();
+      row.left_text.assign(op.text);
+      // Under ignore_whitespace an Equal op can pair two whitespace-different
+      // lines, so the right column must show the right file's own text.
+      row.right_text.assign(op.right_text);
+      row.left_line = left_line++;
+      row.right_line = right_line++;
       continue;
     }
 
-    const int hunk_start = static_cast<int>(model.rows.size());
+    const int hunk_start = static_cast<int>(sink.size());
     HunkAlignScratch& hunk_scratch = HunkScratch();
     std::vector<std::string_view>& deleted_lines = hunk_scratch.deleted_lines;
     std::vector<std::string_view>& inserted_lines = hunk_scratch.inserted_lines;
@@ -1497,14 +1535,14 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
     std::size_t inserted_index = 0;
     std::size_t intraline_cells_remaining = kMaxHunkIntralineTotalCells;
     for (const HunkAlignmentKind alignment_kind : alignment) {
-      CompareRow compare_row;
+      CompareRow& compare_row = sink.Next();
       compare_row.hunk = hunk_index;
       if (alignment_kind != HunkAlignmentKind::Insert) {
-        compare_row.left_text = deleted_lines[deleted_index++];
+        compare_row.left_text.assign(deleted_lines[deleted_index++]);
         compare_row.left_line = left_line++;
       }
       if (alignment_kind != HunkAlignmentKind::Delete) {
-        compare_row.right_text = inserted_lines[inserted_index++];
+        compare_row.right_text.assign(inserted_lines[inserted_index++]);
         compare_row.right_line = right_line++;
       }
 
@@ -1518,28 +1556,23 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
       const Clock::time_point intraline_start = Clock::now();
       PopulateChangedSpans(compare_row, &profile, &intraline_cells_remaining);
       profile.intraline_ns += DurationNs(intraline_start, Clock::now());
-      model.rows.push_back(std::move(compare_row));
     }
 
     model.hunks.push_back(CompareHunk{
         .index = hunk_index,
         .start_row = hunk_start,
-        .end_row = static_cast<int>(model.rows.size()) - 1,
+        .end_row = static_cast<int>(sink.size()) - 1,
     });
   }
 
   for (std::size_t index = left_suffix; index < left_lines.size(); ++index) {
-    model.rows.push_back(CompareRow{
-        .left_text = std::string(left_lines[index]),
-        .right_text = std::string(right_lines[index - left_suffix + right_suffix]),
-        .left_line = left_line++,
-        .right_line = right_line++,
-        .kind = CompareRowKind::Unchanged,
-        .hunk = -1,
-        .left_changed_spans = {},
-        .right_changed_spans = {},
-    });
+    CompareRow& row = sink.Next();
+    row.left_text.assign(left_lines[index]);
+    row.right_text.assign(right_lines[index - left_suffix + right_suffix]);
+    row.left_line = left_line++;
+    row.right_line = right_line++;
   }
+  sink.Finish();
 
   profile.total_ns = DurationNs(total_start, Clock::now());
   // Saturating subtract: the residual row-assembly time is total minus the
@@ -1569,11 +1602,26 @@ CompareBuildResult BuildCompareModelProfiled(const std::string& left,
   util::AddPerformanceCounter(util::PerfCounterId::CompareModelRowsProduced, model.rows.size());
   util::AddPerformanceCounter(util::PerfCounterId::CompareIntralineDiffLines,
                               profile.token_intraline_calls + profile.codepoint_intraline_calls);
+  return profile;
+}
+
+CompareBuildResult BuildCompareModelProfiled(const std::string& left,
+                                             const std::string& right,
+                                             const CompareBuildOptions& options) {
+  CompareBuildResult result;
+  result.profile = BuildCompareModelProfiledInto(result.model, left, right, options);
   return result;
 }
 
 CompareModel BuildCompareModel(const std::string& left, const std::string& right) {
   return BuildCompareModelProfiled(left, right).model;
+}
+
+void BuildCompareModelInto(CompareModel& model,
+                           const std::string& left,
+                           const std::string& right,
+                           const CompareBuildOptions& options) {
+  (void)BuildCompareModelProfiledInto(model, left, right, options);
 }
 
 CompareModel BuildCompareModel(const std::string& left,

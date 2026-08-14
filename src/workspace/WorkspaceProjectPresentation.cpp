@@ -10,6 +10,8 @@
 #include <sstream>
 
 #include "platform/AppDirectories.h"
+#include "util/Fnv1a.h"
+#include "util/PathMatch.h"
 #include "util/Hex.h"
 #include "util/StringUtil.h"
 #include "workspace/persistence/PersistenceService.h"
@@ -19,14 +21,7 @@ namespace microide::workspace {
 
 namespace {
 
-std::uint64_t StablePathHash(std::string_view text) {
-  std::uint64_t hash = 1469598103934665603ull;
-  for (unsigned char c : text) {
-    hash ^= static_cast<std::uint64_t>(c);
-    hash *= 1099511628211ull;
-  }
-  return hash;
-}
+std::uint64_t StablePathHash(std::string_view text) { return util::Fnv1aHash(text); }
 
 std::string HashToHex(std::uint64_t value) {
   static constexpr std::string_view kDigits = "0123456789abcdef";
@@ -190,7 +185,13 @@ SDL_Color DefaultProjectBaseColor(const std::filesystem::path& project_root) {
       SDL_Color{0x5a, 0x90, 0xca, 0xff},
       SDL_Color{0xd8, 0x4d, 0xa0, 0xff},
   };
-  const std::uint64_t hash = StablePathHash(project_root.lexically_normal().string());
+  // Catalog roots are normalized on the way in, so `lexically_normal()` here was
+  // ~12 allocations producing the string it was handed — once per project tab per
+  // painted frame for any project with no explicit base color (TD-2026-08-10-174,
+  // same shape as the tooltip path). Only pay it when the text actually needs it.
+  const std::uint64_t hash = util::PathTextNeedsNormalizing(project_root.native())
+                                 ? StablePathHash(project_root.lexically_normal().string())
+                                 : StablePathHash(project_root.native());
   return kPalette[static_cast<std::size_t>(hash % kPalette.size())];
 }
 

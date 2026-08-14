@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <vector>
 
 #include "workspace/state/WorkspaceTextInputState.h"
@@ -54,9 +55,19 @@ struct TabDragState {
   std::size_t source_index = 0;     // active index captured at press
   float pointer_x = 0.0f;           // live cursor x (drives ghost + slot)
   float pointer_y = 0.0f;
-  std::size_t target_slot = 0;      // StripInsertionSlot() for pointer_x
+  std::size_t target_slot = 0;      // insertion slot under the dragged tab's box
   float ghost_width = 0.0f;         // dragged tab rect width
   float grab_offset_x = 0.0f;       // press_x - dragged_tab.rect.x
+  // True once the slide targets have been seeded at least once for this drag, so
+  // a motion event that does not change the insertion slot can advance the ease
+  // instead of rebuilding the whole target layout.
+  bool slide_seeded = false;
+  // Drag auto-scroll of an overflowing strip (VS Code holds the pointer at the
+  // edge and the strip walks under it). Direction is latched so the repeat can be
+  // pumped from the animation tick while the pointer sits perfectly still, and
+  // rate-limited so it steps at a readable pace rather than per motion event.
+  int autoscroll_direction = 0;
+  Uint64 last_autoscroll_ms = 0;
 };
 
 // Chrome-like sliding reorder animation. While a tab drag is live, neighbor tabs
@@ -102,6 +113,78 @@ struct InteractionState {
   bool editor_box_selecting = false;
   std::size_t editor_box_anchor_line = 0;
   std::size_t editor_box_anchor_column = 0;
+  // Dragging a selection to move it (VS Code's `editor.dragAndDrop`). A press
+  // INSIDE an existing selection is ambiguous: it is either a click that
+  // collapses the caret there — which is what it has always done, and must keep
+  // doing — or the start of a move. So the press commits to neither until the
+  // pointer travels past a threshold, which is why this is a third state rather
+  // than another bool next to `mouse_selecting` (TD-2026-08-13-204).
+  //
+  // Pending: pressed inside a selection, undecided.
+  // Dragging: past the threshold; the drop indicator is live and release moves
+  // the text (copies it, with Ctrl held).
+  enum class TextDragState : std::uint8_t { None, Pending, Dragging };
+  TextDragState text_drag = TextDragState::None;
+  float text_drag_press_x = 0.0f;
+  float text_drag_press_y = 0.0f;
+  // Where the press landed in the document, resolved at press time. The release
+  // path needs it to perform the click the press deferred, and re-hit-testing
+  // there would need a layout it does not have.
+  std::size_t text_drag_press_line = 0;
+  std::size_t text_drag_press_column = 0;
+  // The selection captured at press. The edit reads its text from THIS range at
+  // release rather than from the live selection, so a drop cannot move whatever
+  // happens to be selected at the time.
+  std::size_t text_drag_source_start_line = 0;
+  std::size_t text_drag_source_start_column = 0;
+  std::size_t text_drag_source_end_line = 0;
+  std::size_t text_drag_source_end_column = 0;
+  // Live drop point while Dragging; drives the insertion-point indicator.
+  std::size_t text_drag_drop_line = 0;
+  std::size_t text_drag_drop_column = 0;
+  bool text_drag_has_drop = false;
+  bool text_dragging() const { return text_drag == TextDragState::Dragging; }
+  // Selection-drag autoscroll. A drag whose pointer is held past an edge of the
+  // visible text band clamps onto the edge cell, so without this the selection
+  // stops growing at the first/last visible row -- you cannot select more than a
+  // screenful by dragging, which is what every other editor does.
+  //
+  // The pointer position is stored because the scroll is driven by the idle
+  // wake, not by motion events: the pointer is by definition NOT moving while it
+  // is held outside, so there is no event to carry it. Signed rows/columns per
+  // tick, zero when the pointer is inside the band (which is what disarms the
+  // wake). Cleared on button-up alongside `mouse_selecting`.
+  int selection_autoscroll_rows = 0;
+  int selection_autoscroll_columns = 0;
+  // Which gesture armed the deltas above. `mouse_selecting` cannot answer this:
+  // the terminal panel tracks its drag on its own tab state (a shell-level
+  // mouse_selecting there would also extend the active editor's selection on
+  // every motion event), so an autoscroll keyed on it could never reach the
+  // terminal (TD-2026-08-13-205). selection_autoscroll::Arm/Disarm own this
+  // flag, and every button-up, focus loss and project switch disarms.
+  bool selection_autoscroll_armed = false;
+  float selection_pointer_x = 0.0f;
+  float selection_pointer_y = 0.0f;
+  // Granularity of the in-flight selection drag. A double-click that then drags
+  // selects whole WORDS and a triple-click drag whole LINES, in every editor --
+  // the click's own expansion used to be collapsed back to character granularity
+  // by the first motion event, because the drag extended from the caret with no
+  // memory of how the gesture started.
+  //
+  // `selection_seed` is the range the initiating click expanded to. The drag
+  // never shrinks below it: the selection is always the union of the seed and the
+  // word/line under the pointer, which is what makes dragging back across the
+  // seed feel right instead of inverting inside it.
+  enum class SelectionGranularity : std::uint8_t { Character, Word, Line };
+  SelectionGranularity selection_granularity = SelectionGranularity::Character;
+  std::size_t selection_seed_start_line = 0;
+  std::size_t selection_seed_start_column = 0;
+  std::size_t selection_seed_end_line = 0;
+  std::size_t selection_seed_end_column = 0;
+  bool selection_autoscroll_active() const {
+    return selection_autoscroll_armed &&
+           (selection_autoscroll_rows != 0 || selection_autoscroll_columns != 0);
+  }
 };
 
 struct WheelTicks {

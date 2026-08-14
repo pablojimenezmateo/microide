@@ -12,6 +12,7 @@
 #include "editor/DiagnosticsRender.h"
 #include "editor/ExecutionLineRender.h"
 #include "editor/GutterMetrics.h"
+#include "editor/RowDecorationBuilder.h"
 #include "editor/WelcomeView.h"
 #include "render/SurfacePrimitives.h"
 #include "util/PerformanceCounters.h"
@@ -45,28 +46,6 @@ SDL_FRect MakeRowBackgroundRect(const SDL_FRect& rect, float y, float line_heigh
 // marks). With soft-wrap off every row is a head; with it on only visual_start==0.
 bool IsLogicalLineHead(bool soft_wrap, std::size_t visual_start) {
   return !soft_wrap || visual_start == 0;
-}
-
-// Append the render-whitespace marker for one cell: a 2x2 dot centered in the
-// cell for a space, or a thin horizontal bar spanning the tab's cells. Both the
-// view-model glyph-run path and the text-iteration fallback build byte-identical
-// rects, so they share this one constructor. `cell_span_width` is the tab's full
-// pixel width (cell count * char_width); it is unused for spaces.
-void PushWhitespaceMarker(std::vector<DecoratedTextFill>& scratch, bool is_tab, float cell_x,
-                          float char_width, float cell_span_width, float y, float line_height,
-                          SDL_Color color) {
-  if (is_tab) {
-    scratch.push_back(DecoratedTextFill{
-        .rect = SDL_FRect{cell_x + 2.0f, y + line_height * 0.5f, cell_span_width - 4.0f, 1.0f},
-        .color = color,
-    });
-  } else {
-    scratch.push_back(DecoratedTextFill{
-        .rect = SDL_FRect{cell_x + char_width * 0.5f - 1.0f, y + line_height * 0.5f - 1.0f, 2.0f,
-                          2.0f},
-        .color = color,
-    });
-  }
 }
 
 float ComputeGutterWidth(const render::TextRenderer& text_renderer, std::size_t line_count,
@@ -987,53 +966,17 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
                                cell_w, y, metrics.line_height, theme.text_disabled);
         }
       } else {
-        const std::string_view line_text = lines.LineView(line_index);
-        const std::size_t tab_size = viewport.tab_size();
-        std::size_t visual_col = 0;
-        std::size_t start_byte = 0;
-        // Start at the row instead of at the line, when the bytes before it are
-        // all plain single-cell ASCII -- there byte offset IS visual column, so
-        // the walk resumes mid-line exactly. Without it every visible row
-        // re-walks its logical line from byte 0, which under soft wrap is the
-        // same long line once per row on screen: quadratic in the rows of one
-        // wrapped line (TD-2026-08-12-187). The view-model path this mirrors
-        // (RenderViewModelBuilder's CollectWhitespaceGlyphRuns) does the same,
-        // and a parity test between two implementations of different asymptotic
-        // shape only holds on fixtures small enough to hide the difference.
-        const std::size_t prefix_probe = std::min(row_start_visual, line_text.size());
-        if (util::FirstNonAsciiOrByte(line_text.substr(0, prefix_probe), '\t') >= prefix_probe) {
-          start_byte = prefix_probe;
-          visual_col = prefix_probe;
-        }
-        // Advance one visual cell per codepoint (tabs expand): stepping per byte
-        // over-counted columns after any multibyte glyph, shifting every later
-        // whitespace marker right of the real grid.
-        std::size_t i = start_byte;
-        for (; i < line_text.size();) {
-          const char c = line_text[i];
-          i += util::Utf8SequenceLength(line_text, i);
-          // One authoritative tab-stop/width step (tabs expand to the next stop,
-          // every other codepoint is one cell) — same walk text layout uses.
-          const std::size_t cell_start = visual_col;
-          visual_col = TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
-          const std::size_t cell_width = visual_col - cell_start;
-          if (cell_start >= row_end_visual) break;
-          if (cell_start < row_start_visual) continue;
-          if (visual_col > row_end_visual) continue;
-          const float cell_x =
-              row_text_x +
-              static_cast<float>(cell_start - row_start_visual) * char_width +
-              inlay_shift_px(cell_start);
-          if (c == ' ' || c == '\t') {
-            const float cell_w = static_cast<float>(cell_width) * char_width;
-            PushWhitespaceMarker(prepositioned_fill_scratch_, c == '\t', cell_x, char_width,
-                                 cell_w, y, metrics.line_height, theme.text_disabled);
-          }
-        }
-        // Bytes this row's walk actually visited, so "resumed at the row" is a
-        // measurement rather than a comment. Once per row, not per glyph.
+        // The one whitespace walk, shared with the compare panes; the editor's
+        // only difference is that its markers ride the inlay-hint displacement
+        // (TD-2026-08-14-210). It reports the bytes it visited so "the walk
+        // resumes at the row rather than restarting at byte 0" stays a
+        // measurement rather than a comment (TD-2026-08-12-187).
+        const std::size_t walked_bytes = AppendWhitespaceMarkers(
+            prepositioned_fill_scratch_, lines.LineView(line_index), viewport.tab_size(),
+            row_start_visual, row_end_visual, row_text_x, char_width, y, metrics.line_height,
+            theme.text_disabled, inlay_shift_px);
         util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerWalkBytes,
-                                    i - start_byte);
+                                    walked_bytes);
       }
     }
 

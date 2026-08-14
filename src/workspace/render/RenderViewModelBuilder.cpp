@@ -1588,7 +1588,7 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
               .pointer_x = drag.pointer_x,
               .grab_offset_x = drag.grab_offset_x,
               .sliding = sliding,
-              .offsets = sliding ? slide.current : std::vector<float>{},
+              .offsets = sliding ? std::span<const float>(slide.current) : std::span<const float>{},
           },
       // `tabs` / `tab_overflow` stay empty here; PrepareFrameOnce fills them once
       // the frame layout (bottom-panel header rect) is known.

@@ -17,6 +17,11 @@ namespace microide::workspace {
 
 class EditorBlameOverlayService {
  public:
+  struct CompareBlameAnchor {
+    std::size_t visual_row = 0;
+    std::size_t end_column = 0;
+  };
+
   struct CompareOverlayLayout {
     SDL_FRect pane_rect{};
     float right_x = 0.0f;
@@ -50,7 +55,15 @@ class EditorBlameOverlayService {
       project::GitBlameService& git_blame_service,
       CompareTabState& compare_tab,
       const CompareOverlayLayout& layout,
-      const std::function<std::size_t(std::size_t)>& compare_row_index_for_right_line) const;
+      // Where a right-pane document line's inline annotation goes, given the line's
+      // full visual width: its on-screen row and the on-screen column just past its
+      // text, or nullopt when the line is not represented in the diff. Resolved by
+      // the caller because only it knows the presentation and soft-wrap row model —
+      // the service used to place the annotation at the MODEL row index, which is a
+      // different row space from the surface's scroll offset the moment the diff
+      // collapses a run or wraps a line.
+      const std::function<std::optional<CompareBlameAnchor>(std::size_t, std::size_t)>&
+          compare_blame_anchor) const;
 
   void SetVisibleOverlay(std::optional<editor::EditorBlameOverlay> overlay);
   void ClearVisibleOverlay();

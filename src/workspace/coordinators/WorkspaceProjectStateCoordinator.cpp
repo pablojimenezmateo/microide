@@ -1,3 +1,4 @@
+#include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <chrono>
@@ -216,6 +217,23 @@ void WorkspaceShell::ClearDragState() {
 void WorkspaceShell::ResetTransientInteractionState() {
   ClearDragState();
   context_.interaction_state.mouse_selecting = false;
+  // A text drag and a box selection are gestures too, and neither is tracked by
+  // `mouse_selecting`. Both carry line/column coordinates captured at press
+  // against a document this reset is throwing away, so a survivor would let the
+  // next button-up apply the old document's offsets to the new one — for the text
+  // drag, that is an edit: it would move text it never selected. Focus loss
+  // already ends all three of these together; a project reset has to as well
+  // (TD-2026-08-14-216).
+  context_.interaction_state.text_drag = InteractionState::TextDragState::None;
+  context_.interaction_state.text_drag_has_drop = false;
+  context_.interaction_state.editor_box_selecting = false;
+  // The tab drag and its slide animation are transient interaction state too. The
+  // slide was surviving a project reset with offsets indexed by the old project's
+  // tabs, and kept the animation tick awake asking to finish an animation whose
+  // strip no longer existed.
+  context_.interaction_state.tab_drag = TabDragState{};
+  context_.interaction_state.tab_slide = TabSlideState{};
+  selection_autoscroll::Disarm(context_.interaction_state);
 }
 
 void WorkspaceShell::ResetCurrentProjectStateStorage() {
@@ -280,7 +298,6 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
 
   context_.current_project_state.sidebar.visible = !show_welcome;
   context_.current_project_state.surface.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
-  context_.interaction_state.tab_drag = TabDragState{};
   persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
   ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
   if (show_welcome) {

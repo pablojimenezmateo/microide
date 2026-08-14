@@ -49,6 +49,65 @@ Shaping And Save), with per-row reset where the overlay supports it.
 Boolean settings use the usual string truthy/falsey parsing (`true` / `false`, etc.).
 Project-scoped keys override user-scoped keys for the same id.
 
+### Which viewports the preferences reach
+
+`ApplyEditorPreferencesToAllTabs` walks **every editable viewport in the
+workspace**, not just plain editor tabs: an editor tab's viewport, a compare
+tab's `right_viewport`, and a merge tab's `result_viewport`. Those three are the
+same `editor::TextViewport` type, are reached by the same action layer
+(`WorkspaceActionContext::ActiveEditableViewport`), and therefore must follow the
+same settings.
+
+That walk used to skip the two diff panes, which is how tab size, indent width,
+soft tabs, both save-normalization flags, the save line ending and the language
+contract all quietly stopped following the settings there — and how Word Wrap
+came to look like a control that did nothing (TD-2026-08-13-200). If you add a
+tab kind that owns an editable viewport, add it to that switch.
+
+## Word wrap on the diff surfaces
+
+Soft wrap on a compare or merge surface is a **row-model** feature, not a flag:
+those surfaces align their panes row-for-row, and wrapping makes one document
+line occupy N rows on one side and M on the other.
+
+`workspace/DiffWrapLayout.h` is the shared table. An aligned unit occupies
+`max(left segments, right segments)` on-screen rows and the shorter side is
+padded with blank rows — the same alignment strategy as VS Code's
+`diffEditor.wordWrap`. With wrap off the table is empty and every accessor is the
+identity behind one branch.
+
+Three row spaces exist on the compare surface and must not be confused:
+
+| space | what indexes it |
+| --- | --- |
+| model row | `compare.model.rows` — one per diff row |
+| presentation row | `compare.presentation.rows` — collapses runs, adds summary rows; `selected_row`, hover, hunk navigation |
+| on-screen row | the wrap table; `scroll_row`, hit tests, scrollbar and overview geometry, redraw rects |
+
+Convert with `ComparePresentationRowToVisualRow` / `CompareVisualRowToPresentationRow`
+and `compare::ComparePresentationRowForModelRow` / `ComparePresentationToModelRow`.
+Four call sites were mixing these before wrap existed, each already wrong under a
+collapsed diff; if a new one compares a row index against `scroll_row`, it is in
+on-screen space.
+
+On merge, `MergeVisualConflicts` (`workspace/MergeWrapRows.h`) hands back the
+conflict list with every line field projected into on-screen rows, so conflict
+geometry (bands, accept buttons, hover classification, the overview lane) is
+written once and is correct in both modes. Conflict indices are preserved, so a
+hit test against the projection still names the real conflict; the model-facing
+`merge.conflicts` beside it still owns the choices and hunk indices.
+
+Two rules the surfaces enforce:
+
+- **One wrap implementation.** `editor::TextLayout::WrapLineSegments` makes the
+  break decision for the editor's wrapped-row table and for both diff surfaces,
+  so a line cannot break differently in an editor tab and a diff pane.
+- **With wrap on, reserve the vertical scrollbar strip unconditionally and drop
+  horizontal scroll.** Otherwise the wrap column depends on the scrollbar, which
+  depends on the row count, which depends on the wrap column — a layout loop that
+  does not converge, and one that would re-wrap the whole diff up to four times
+  per layout call.
+
 ## Block structure
 
 ### Code folding
@@ -174,7 +233,7 @@ Shaping helpers live in `src/editor/ShapingActions.{h,cpp}`. Capability toggles
 | Toggle setting | Actions gated |
 | --- | --- |
 | `editor.shaping.toggle_comment.enabled` | Toggle line/block comment |
-| `editor.shaping.line_ops.enabled` | Move line up/down, duplicate line, delete line, Tab / Shift+Tab block indent |
+| `editor.shaping.line_ops.enabled` | Move line up/down, copy line up/down, insert line above/below, delete line, Tab / Shift+Tab block indent |
 | `editor.shaping.sort_lines.enabled` | Sort lines ascending/descending |
 | `editor.multicursor.add_at_match.enabled` | Add cursor at next/all matches |
 
@@ -183,7 +242,12 @@ Default **Edit** menu shortcuts (editor context):
 - Toggle line comment — `Ctrl+/`
 - Toggle block comment — `Shift+Alt+A`
 - Move line up/down — `Alt+Up` / `Alt+Down`
-- Duplicate line — `Shift+Alt+Down`
+- Copy line down/up — `Shift+Alt+Down` / `Shift+Alt+Up`. Whole LINES in both
+  directions (a partial selection copies the lines it touches, not the selected
+  text); the direction decides only which of the two copies the carets land on.
+- Insert line below/above — `Ctrl+Enter` / `Ctrl+Shift+Enter`. Opens a line
+  regardless of where in the line the caret sits. `Below` runs the language's
+  smart indent, `Above` takes the pushed-down line's own indent.
 - Delete line — `Ctrl+Shift+K`
 - Indent / outdent lines — `Tab` / `Shift+Tab` (multi-line selections route to
   shaping; single-line `Tab` still inserts a tab / soft-tab per existing rules)
@@ -191,6 +255,37 @@ Default **Edit** menu shortcuts (editor context):
 - Add cursor next match — `Ctrl+D`
 - Add cursor all matches — **`Ctrl+Shift+L`** by default (matches VS Code's
   "Select all occurrences")
+
+### Word-granular motion and deletion
+
+`Ctrl+Left` / `Ctrl+Right` step a word (Shift extends), `Ctrl+Backspace` /
+`Ctrl+Delete` delete one. All four work in the editor, the compare right pane,
+the merge result pane, the git commit body, and every single-line field, from one
+rule in `editor/WordBoundary.h`.
+
+The rule is VS Code's (`wordOperations.ts`): three character classes —
+whitespace, identifier content, everything else — and a *run* of either
+non-whitespace class is a word. `foo === bar` therefore has three stops in each
+direction, not two. Multi-byte letters classify as identifier content, so `café`
+is one stop rather than one per byte.
+
+Deletion adds VS Code's whitespace heuristic: a run of **two or more** whitespace
+code points next to the caret is removed on its own, so backspacing out of an
+indent lands on column 0 instead of taking the previous word with it. A single
+space goes with its word.
+
+Motion crosses the line boundary in both directions the way the character forms
+do; a word delete at a line edge is the line join. All of it applies to every
+caret, and a word delete is one undo entry.
+
+### Collapsing a multi-caret set
+
+`Esc` removes the secondary carets and keeps the selection (VS Code's
+`removeSecondaryCursors`), after the find widget, an active snippet, and an
+inline completion have each had their turn at it. `Ctrl+Home` / `Ctrl+End`
+collapse too, because a jump to the other end of the document would otherwise
+leave live carets a screenful behind. Other document-wide jumps (goto-line,
+find-next, jump-to-bracket) still do not — see TD-2026-08-13-203.
 
 ### Multi-cursor mouse gestures
 

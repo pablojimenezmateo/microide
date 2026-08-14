@@ -24,8 +24,22 @@ Usage:
   tools/trace-perf-phases.py --scenario merge     # substring filter on scenario name
   tools/trace-perf-phases.py --out report.md
 
-The binary must be the perf lane's:
-  cmake --preset microide-perf && cmake --build build/microide-perf-make --target microide_perf
+The binary must be built with identical-code folding OFF, or the symbol names in
+this report are not trustworthy: at -O2 (whole-program under LTO) GCC's -fipa-icf
+folds functionally identical bodies and keeps ONE of their symbols, so addr2line
+resolves every folded body to whichever name survived. That is how an earlier
+sweep came to rank `TextViewport::operator=() [clone .part.0]` as the #1 allocator
+of eight phases whose parent frames never copy-assign a viewport
+(TD-2026-08-13-197). Counts, sizes and phases were always measured; only the
+NAMES were unreliable.
+
+  cmake --preset microide-perf-trace
+  cmake --build build/microide-perf-trace --target microide_perf -j8
+  tools/trace-perf-phases.py --binary build/microide-perf-trace/microide/microide_perf
+
+This tool refuses to run against a binary without it rather than print a table it
+cannot stand behind; pass --allow-folded-symbols to override, and read every
+symbol name in the output as a hypothesis to confirm in the source.
 """
 
 from __future__ import annotations
@@ -40,7 +54,25 @@ import sys
 
 REPO = pathlib.Path(__file__).resolve().parent.parent
 BASELINES = REPO / "tests" / "perf" / "baselines"
-DEFAULT_BINARY = REPO / "build" / "microide-perf-make" / "microide" / "microide_perf"
+DEFAULT_BINARY = REPO / "build" / "microide-perf-trace" / "microide" / "microide_perf"
+TRACE_SYMBOLS_MARKER = "+no-icf"
+
+
+def build_config(binary: pathlib.Path) -> str | None:
+    """The build configuration baked into `binary`, or None when it cannot say.
+
+    A binary too old to know the flag is exactly the case this guard exists for,
+    so an unparseable answer is treated as "not trustworthy", not as "fine".
+    """
+    try:
+        proc = subprocess.run([str(binary), "--build-config"], capture_output=True,
+                              text=True, timeout=60, check=False)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if proc.returncode != 0:
+        return None
+    config = proc.stdout.strip()
+    return config or None
 
 # The tracer's own bucket table drops each new site whole once full, so a run that
 # overflows prints a correctly-sorted and WRONG table (TD-2026-08-10-178). The
@@ -177,13 +209,36 @@ def main() -> int:
                         help="lower bound of the traced size band")
     parser.add_argument("--timeout", type=int, default=600)
     parser.add_argument("--out", type=pathlib.Path, default=None)
+    parser.add_argument("--allow-folded-symbols", action="store_true",
+                        help="run against a binary built WITH identical-code folding; "
+                             "every symbol name in the report is then a hypothesis")
     args = parser.parse_args()
 
     if not args.binary.exists():
         print(f"perf binary not found: {args.binary}\n"
-              f"build it with: cmake --preset microide-perf && "
-              f"cmake --build build/microide-perf-make --target microide_perf", file=sys.stderr)
+              f"build it with: cmake --preset microide-perf-trace && "
+              f"cmake --build build/microide-perf-trace --target microide_perf", file=sys.stderr)
         return 1
+
+    # Refuse rather than print a table this tool cannot stand behind. The failure
+    # it guards is silent and convincing: the counts stay correct while the NAMES
+    # attribute them to whichever folded twin GCC kept (TD-2026-08-13-197).
+    config = build_config(args.binary)
+    if config is None or TRACE_SYMBOLS_MARKER not in config:
+        described = config if config is not None else "unknown (binary too old to say)"
+        message = (f"refusing to trace: {args.binary} was built as {described}, without "
+                   f"identical-code folding disabled.\n"
+                   f"-fipa-icf folds functionally identical bodies onto ONE symbol, so every "
+                   f"resolved name in the report may belong to a different function than the "
+                   f"one that allocated.\n"
+                   f"build the trace lane instead:\n"
+                   f"  cmake --preset microide-perf-trace\n"
+                   f"  cmake --build build/microide-perf-trace --target microide_perf -j8\n"
+                   f"or pass --allow-folded-symbols and treat every name as a hypothesis.")
+        if not args.allow_folded_symbols:
+            print(message, file=sys.stderr)
+            return 1
+        print(f"WARNING: {message}\n", file=sys.stderr)
 
     phases = phases_from_baselines(args.scenario)
     if args.top:

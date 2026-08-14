@@ -56,6 +56,11 @@ class EditorMouseCoordinator {
   bool HandleGutterContextMenu(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleDrag(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleSelectionMotion(const SDL_Event& event, const WorkspaceLayout& layout);
+  // Resolve an in-flight selection drag-and-drop at button-up. Moves the captured
+  // source to the drop point (copies it when `copy`), or — when the pointer never
+  // passed the threshold — performs the plain click the press deferred. Returns
+  // true when it owned the release (TD-2026-08-13-204).
+  bool FinishTextDrag(bool copy);
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,
                    int vertical_ticks,

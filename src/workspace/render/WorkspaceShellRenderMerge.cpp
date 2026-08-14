@@ -17,6 +17,7 @@
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/git/MergeResolverContext.h"
 #include "workspace/render/OverviewRuler.h"
+#include "workspace/MergeWrapRows.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
@@ -59,16 +60,20 @@ void EnsureMergeOverviewMarkers(const render::Theme& theme,
                                 std::size_t total_rows,
                                 std::uint64_t theme_token,
                                 MergeTabState& merge_tab) {
+  // The lane is scaled against on-screen rows, so the row count is part of the
+  // key: a divider drag that re-wraps must not keep stale marker positions.
   if (merge_tab.scrollbar_marker_cache_valid &&
       merge_tab.scrollbar_marker_cache_revision == merge_tab.model_revision &&
+      merge_tab.scrollbar_marker_cache_rows == total_rows &&
       merge_tab.scrollbar_marker_cache_theme_token == theme_token &&
       RectsEqual(merge_tab.scrollbar_marker_cache_track, inner_lane)) {
     return;
   }
 
+  const std::span<const MergeTrackedConflict> conflicts = MergeVisualConflicts(merge_tab);
   std::vector<overview::MarkerInput> inputs;
-  inputs.reserve(merge_tab.conflicts.size());
-  for (const auto& conflict : merge_tab.conflicts) {
+  inputs.reserve(conflicts.size());
+  for (const auto& conflict : conflicts) {
     const int start_row = static_cast<int>(std::min(
         {conflict.incoming_start_line, conflict.start_line, conflict.current_start_line}));
     const int end_row = static_cast<int>(std::max(
@@ -84,6 +89,7 @@ void EnsureMergeOverviewMarkers(const render::Theme& theme,
   merge_tab.scrollbar_marker_cache = overview::BuildMarkers(inner_lane, total_rows, inputs);
   merge_tab.scrollbar_marker_cache_track = inner_lane;
   merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;
+  merge_tab.scrollbar_marker_cache_rows = total_rows;
   merge_tab.scrollbar_marker_cache_theme_token = theme_token;
   merge_tab.scrollbar_marker_cache_valid = true;
 }
@@ -152,9 +158,7 @@ void WorkspaceShell::RenderMergeScrollbars(SDL_Renderer* renderer, const SDL_FRe
   merge_tab->horizontal_scroll = scroll_layout.horizontal_scroll;
 
   if (scroll_layout.vertical_scrollbar.has_value()) {
-    const std::size_t line_count =
-        std::max({merge_tab->model.incoming_lines.size(), merge_tab->result_viewport.line_count(),
-                  merge_tab->model.current_lines.size(), std::size_t{1}});
+    const std::size_t line_count = MergeTotalVisualRowCount(*merge_tab);
     const SDL_FRect track = scroll_layout.vertical_scrollbar->track;
     const SDL_FRect lane = overview::LaneRect(track, editor_surface.x);
     const SDL_FRect inner_lane = overview::LaneInnerRect(lane);
@@ -230,13 +234,16 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
                                    .active = selected,
                                });
   };
-  const auto conflict_at_source_line =
-      [&](std::size_t line, bool incoming) -> const MergeTrackedConflict* {
-    if (const auto conflict_index = FindMergeTrackedConflictAtSourceLine(*merge_tab, line, incoming);
-        conflict_index.has_value() && *conflict_index < merge_tab->conflicts.size()) {
-      return &merge_tab->conflicts[*conflict_index];
-    }
-    return nullptr;
+  // Geometry and hit testing run on the conflicts projected into on-screen row
+  // space; the model-facing list beside it keeps the choices and hunk indices.
+  const std::span<const MergeTrackedConflict> visual_conflicts = MergeVisualConflicts(*merge_tab);
+  const auto conflict_at_source_row =
+      [&](std::size_t visual_row, bool incoming) -> std::optional<std::size_t> {
+    const auto conflict_index =
+        FindMergeTrackedConflictAtSourceLine(*merge_tab, visual_row, incoming);
+    return conflict_index.has_value() && *conflict_index < visual_conflicts.size()
+               ? conflict_index
+               : std::nullopt;
   };
   const auto source_button_rect = [&](const MergeTrackedConflict& conflict, bool incoming) {
     return BuildMergeSourceActionButtonRect(surface, interaction, conflict, incoming);
@@ -358,20 +365,40 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   // unattributed per-frame cost in the suite.
   {
   util::PerformanceTrace::Scope side_rows_scope("WorkspaceShell::RenderMergeSurface::SideRows");
+  const bool wrapped = merge_tab->wrap_layout.active();
+  const float char_width_px = text_renderer_.CharWidth();
   for (int row = 0; row < surface.visible_rows; ++row) {
-    const std::size_t line_index =
+    const std::size_t visual_row =
         static_cast<std::size_t>(std::max(0, merge_tab->scroll_row + row));
+    if (visual_row >= MergeSourceVisualRowCount(*merge_tab)) {
+      break;
+    }
+    const DiffWrapRow wrap_row = merge_tab->wrap_layout.RowAt(visual_row);
+    const std::size_t line_index = wrap_row.unit;
     const float y = surface.rows_y + static_cast<float>(row) * surface.line_height;
-    const MergeTrackedConflict* incoming_conflict = conflict_at_source_line(line_index, true);
-    const MergeTrackedConflict* current_conflict = conflict_at_source_line(line_index, false);
+    const std::optional<std::size_t> incoming_conflict_index =
+        conflict_at_source_row(visual_row, true);
+    const std::optional<std::size_t> current_conflict_index =
+        conflict_at_source_row(visual_row, false);
+    const MergeTrackedConflict* incoming_conflict =
+        incoming_conflict_index.has_value() ? &merge_tab->conflicts[*incoming_conflict_index]
+                                            : nullptr;
+    const MergeTrackedConflict* current_conflict =
+        current_conflict_index.has_value() ? &merge_tab->conflicts[*current_conflict_index]
+                                           : nullptr;
     const bool selected_incoming =
-        incoming_conflict != nullptr &&
-        static_cast<std::size_t>(incoming_conflict - merge_tab->conflicts.data()) == selected_hunk;
+        incoming_conflict_index.has_value() && *incoming_conflict_index == selected_hunk;
     const bool selected_current =
-        current_conflict != nullptr &&
-        static_cast<std::size_t>(current_conflict - merge_tab->conflicts.data()) == selected_hunk;
+        current_conflict_index.has_value() && *current_conflict_index == selected_hunk;
+    const std::size_t left_row_start = wrapped ? wrap_row.left_start : merge_tab->horizontal_scroll;
+    const std::size_t left_row_end =
+        wrapped ? wrap_row.left_end : merge_tab->horizontal_scroll + surface.visible_columns;
+    const std::size_t right_row_start =
+        wrapped ? wrap_row.right_start : merge_tab->horizontal_scroll;
+    const std::size_t right_row_end =
+        wrapped ? wrap_row.right_end : merge_tab->horizontal_scroll + surface.visible_columns;
 
-    if (line_index < merge_tab->model.incoming_lines.size()) {
+    if (line_index < merge_tab->model.incoming_lines.size() && wrap_row.left_present) {
       std::array<char, 20> line_number_buf;
       const SDL_Color background =
           incoming_conflict != nullptr
@@ -385,12 +412,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           line_index < merge_tab->incoming_tokens.size() ? merge_tab->incoming_tokens[line_index]
                                                          : kEmptyTokens;
       editor::RowDecorationInput incoming_input;
-      incoming_input.text_x = surface.left_x + surface.gutter_width;
+      incoming_input.text_x = surface.left_x + surface.gutter_width +
+                              static_cast<float>(wrap_row.left_indent) * char_width_px;
       incoming_input.y = y;
-      incoming_input.char_width = text_renderer_.CharWidth();
+      incoming_input.char_width = char_width_px;
       incoming_input.line_height = surface.line_height;
-      incoming_input.row_visual_start = merge_tab->horizontal_scroll;
-      incoming_input.row_visual_end = merge_tab->horizontal_scroll + surface.visible_columns;
+      incoming_input.row_visual_start = left_row_start;
+      incoming_input.row_visual_end = left_row_end;
       incoming_input.text = merge_tab->model.incoming_lines[line_index];
       incoming_input.line_length = incoming_input.text.size();
       incoming_input.tokens = &tokens;
@@ -407,11 +435,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       editor::DecoratedTextRow& incoming_row = merge_incoming_scratch_row_;
       editor::BuildDecoratedRow(incoming_row, incoming_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, incoming_row);
-      text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
-                                FormatLineNumber(line_index + 1, line_number_buf));
+      if (wrap_row.first) {
+        text_renderer_.DrawString(renderer, surface.left_x, y, number_color,
+                                  FormatLineNumber(line_index + 1, line_number_buf));
+      }
     }
 
-    if (line_index < merge_tab->model.current_lines.size()) {
+    if (line_index < merge_tab->model.current_lines.size() && wrap_row.right_present) {
       std::array<char, 20> line_number_buf;
       const SDL_Color background =
           current_conflict != nullptr
@@ -425,12 +455,13 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           line_index < merge_tab->current_tokens.size() ? merge_tab->current_tokens[line_index]
                                                         : kEmptyTokens;
       editor::RowDecorationInput current_input;
-      current_input.text_x = surface.right_x + surface.gutter_width;
+      current_input.text_x = surface.right_x + surface.gutter_width +
+                             static_cast<float>(wrap_row.right_indent) * char_width_px;
       current_input.y = y;
-      current_input.char_width = text_renderer_.CharWidth();
+      current_input.char_width = char_width_px;
       current_input.line_height = surface.line_height;
-      current_input.row_visual_start = merge_tab->horizontal_scroll;
-      current_input.row_visual_end = merge_tab->horizontal_scroll + surface.visible_columns;
+      current_input.row_visual_start = right_row_start;
+      current_input.row_visual_end = right_row_end;
       current_input.text = merge_tab->model.current_lines[line_index];
       current_input.line_length = current_input.text.size();
       current_input.tokens = &tokens;
@@ -447,8 +478,10 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       editor::DecoratedTextRow& current_row = merge_current_scratch_row_;
       editor::BuildDecoratedRow(current_row, current_input);
       kDecoratedRowRenderer.RenderRow(renderer, text_renderer_, current_row);
-      text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
-                                FormatLineNumber(line_index + 1, line_number_buf));
+      if (wrap_row.first) {
+        text_renderer_.DrawString(renderer, surface.right_x, y, number_color,
+                                  FormatLineNumber(line_index + 1, line_number_buf));
+      }
     }
   }
   }
@@ -491,8 +524,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
   merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
 
-  for (std::size_t i = 0; i < merge_tab->conflicts.size(); ++i) {
-    const auto& conflict = merge_tab->conflicts[i];
+  for (std::size_t i = 0; i < visual_conflicts.size(); ++i) {
+    const auto& conflict = visual_conflicts[i];
     const std::optional<SDL_FRect> conflict_rect = ComputeVisibleLineRangeRect(
         interaction.result.rect, interaction.result.lines, conflict.start_line,
         std::max(conflict.end_line, conflict.start_line + std::size_t{1}));
@@ -506,8 +539,12 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
     DrawRect(renderer, *conflict_rect, border);
   }
 
-  if (preview_choice.has_value() && preview_choice->first < merge_tab->conflicts.size()) {
-    const auto& conflict = merge_tab->conflicts[preview_choice->first];
+  if (preview_choice.has_value() && preview_choice->first < visual_conflicts.size()) {
+    const auto& conflict = visual_conflicts[preview_choice->first];
+    // The band is placed in on-screen rows; the gutter still labels DOCUMENT
+    // lines, so it counts from the conflict's real start line.
+    const std::size_t preview_first_line =
+        merge_tab->conflicts[preview_choice->first].start_line;
     // Choice lines are cached on the tab (keyed by conflict/choice/revision) so
     // hovering no longer reallocates them every frame; the copy lives outside this
     // lint-constrained render TU.
@@ -548,7 +585,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
           }
           text_renderer_.DrawStringOn(renderer, interaction.result.rect.x, y, theme_.line_number,
                                       theme_.editor_background,
-                                      FormatLineNumber(conflict.start_line + line + 1,
+                                      FormatLineNumber(preview_first_line + line + 1,
                                                        line_number_buf));
           // Render through the canonical tab-aware decorated-row path (the same one
           // the result viewport underneath uses) instead of a codepoint slice, so
@@ -586,8 +623,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   if (merge_tab->hover_state.has_value() &&
       (merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingConflict ||
        merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingAccept) &&
-      merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
-    const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
+      merge_tab->hover_state->conflict_index < visual_conflicts.size()) {
+    const auto& conflict = visual_conflicts[merge_tab->hover_state->conflict_index];
     if (conflict.valid) {
       draw_button(source_button_rect(conflict, true), "Accept Theirs",
                   merge_tab->hover_state->kind == MergeHoverState::Kind::IncomingAccept, true);
@@ -597,8 +634,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   if (merge_tab->hover_state.has_value() &&
       (merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentConflict ||
        merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentAccept) &&
-      merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
-    const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
+      merge_tab->hover_state->conflict_index < visual_conflicts.size()) {
+    const auto& conflict = visual_conflicts[merge_tab->hover_state->conflict_index];
     if (conflict.valid) {
       draw_button(source_button_rect(conflict, false), "Accept Ours",
                   merge_tab->hover_state->kind == MergeHoverState::Kind::CurrentAccept, true);
@@ -608,8 +645,8 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   if (merge_tab->hover_state.has_value() &&
       (merge_tab->hover_state->kind == MergeHoverState::Kind::ResultConflict ||
        merge_tab->hover_state->kind == MergeHoverState::Kind::ResultAction) &&
-      merge_tab->hover_state->conflict_index < merge_tab->conflicts.size()) {
-    const auto& conflict = merge_tab->conflicts[merge_tab->hover_state->conflict_index];
+      merge_tab->hover_state->conflict_index < visual_conflicts.size()) {
+    const auto& conflict = visual_conflicts[merge_tab->hover_state->conflict_index];
     if (conflict.valid) {
       const auto action_rects = result_action_rects(conflict);
       draw_button(action_rects[0], "Base",

@@ -344,6 +344,34 @@ void TestStringUtilDecodeLinesSinglePassRegression() {
          "empty input should default to LF");
 }
 
+// MeasureLines exists so a caller that wants only "how many lines" and "how long
+// is the last one" does not split the text to find out. It is only correct while
+// it agrees with SplitLines/SplitLineViews on every input, so assert the
+// agreement rather than the two numbers, and pin the mixed/degenerate cases the
+// surround path can actually hand it.
+void TestMeasureLinesAgreesWithSplitLines() {
+  const std::string_view cases[] = {
+      "", "a", "a\nb", "a\n", "\n", "a\r\nb", "a\rb", "a\r\n", "a\r",
+      "\r\n\r\n", "line1\nline2\r\nline3\rline4", "no breaks at all", "\n\n\n",
+  };
+  for (const std::string_view text : cases) {
+    const auto shape = microide::util::MeasureLines(text);
+    const auto split = microide::util::SplitLines(text);
+    Expect(shape.count == split.size(),
+           std::string("MeasureLines line count must match SplitLines for ") + std::string(text));
+    Expect(shape.last_line_size == split.back().size(),
+           std::string("MeasureLines last-line size must match SplitLines for ") +
+               std::string(text));
+    // The normalized round trip the surround path used to take must agree too:
+    // that is the exact expression MeasureLines replaced.
+    const auto normalized = microide::util::SplitLines(microide::util::NormalizeLineEndings(text));
+    Expect(shape.count == normalized.size() && shape.last_line_size == normalized.back().size(),
+           "MeasureLines must match SplitLines(NormalizeLineEndings(x)) as well");
+  }
+  Expect(microide::util::MeasureLines("").count == 1,
+         "empty input measures as one (empty) line, matching SplitLines");
+}
+
 void TestHexDigitAndByteParsing() {
   Expect(microide::util::HexDigitValue('0') == 0 && microide::util::HexDigitValue('9') == 9,
          "decimal hex digits map to their value");
@@ -848,6 +876,8 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
   AddTest(tests, "StringUtil/BoundedSplitStopsAtCap", TestStringUtilBoundedSplitStopsAtCap);
   AddTest(tests, "StringUtil/DecodeLinesSinglePassRegression",
           TestStringUtilDecodeLinesSinglePassRegression);
+  AddTest(tests, "StringUtil/MeasureLinesAgreesWithSplitLines",
+          TestMeasureLinesAgreesWithSplitLines);
   AddTest(tests, "Hex/DigitAndByteParsing", TestHexDigitAndByteParsing);
   AddTest(tests, "Hex/DecodeHexColor", TestDecodeHexColor);
   AddTest(tests, "Hex/PercentDecode", TestPercentDecode);

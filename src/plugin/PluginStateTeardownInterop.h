@@ -34,6 +34,7 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedStatusItem>* status_item_order,
     std::vector<PluginHost::ContributedFormatter>* formatters,
     std::vector<PluginHost::ContributedSaveParticipant>* save_participants,
+    std::vector<PluginHost::ContributedVirtualDocument>* virtual_documents,
     std::vector<runtime_types::SaveParticipantRuntime>* save_participant_runtimes,
     std::vector<PluginHost::ContributedCompletion>* completions,
     std::vector<runtime_types::CompletionRuntime>* completion_runtimes,

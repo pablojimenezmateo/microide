@@ -2,6 +2,7 @@
 #include "editor/PathKey.h"
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/TextViewportInternal.h"
+#include "editor/WordBoundary.h"
 
 #include <algorithm>
 
@@ -67,6 +68,7 @@ TextViewport::TextViewport(const TextViewport& other)
       secondary_caret_candidates_scratch_(),
       layout_cache_(other.layout_cache_),
       highlight_cache_(other.highlight_cache_),
+      highlight_cache_generation_(other.highlight_cache_generation_),
       highlight_cache_order_(other.highlight_cache_order_),
       initial_highlight_state_(other.initial_highlight_state_),
       line_highlight_states_(other.line_highlight_states_),
@@ -147,6 +149,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       secondary_caret_candidates_scratch_(std::move(other.secondary_caret_candidates_scratch_)),
       layout_cache_(std::move(other.layout_cache_)),
       highlight_cache_(std::move(other.highlight_cache_)),
+      highlight_cache_generation_(other.highlight_cache_generation_),
       highlight_cache_order_(std::move(other.highlight_cache_order_)),
       initial_highlight_state_(std::move(other.initial_highlight_state_)),
       line_highlight_states_(std::move(other.line_highlight_states_)),
@@ -211,6 +214,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   secondary_caret_candidates_scratch_ = std::move(other.secondary_caret_candidates_scratch_);
   layout_cache_ = std::move(other.layout_cache_);
   highlight_cache_ = std::move(other.highlight_cache_);
+  highlight_cache_generation_ = other.highlight_cache_generation_;
   highlight_cache_order_ = std::move(other.highlight_cache_order_);
   initial_highlight_state_ = std::move(other.initial_highlight_state_);
   line_highlight_states_ = std::move(other.line_highlight_states_);
@@ -1002,27 +1006,40 @@ void TextViewport::SelectAll() {
   EnsureCursorVisible();
 }
 
-void TextViewport::SelectWordAtCursor() {
+std::optional<SelectionRange> TextViewport::WordRangeAt(TextPosition position) const {
+  if (document_->lines.empty() || position.line >= document_->lines.size()) {
+    return std::nullopt;
+  }
+  const std::string_view line = document_->lines.LineView(position.line);
+  const std::size_t col = std::min(position.column, line.size());
+  const WordSpan span = IdentifierRunAt(line, col);
+  if (span.empty()) {
+    return std::nullopt;
+  }
+  return SelectionRange{TextPosition{position.line, span.start}, TextPosition{position.line, span.end}};
+}
+
+SelectionRange TextViewport::LineRangeAt(std::size_t line_index) const {
   if (document_->lines.empty()) {
+    return SelectionRange{TextPosition{0, 0}, TextPosition{0, 0}};
+  }
+  const std::size_t line = std::min(line_index, document_->lines.size() - 1);
+  // End-exclusive at the start of the next line, so a multi-line line-granular
+  // selection joins up rather than leaving the newlines out.
+  if (line + 1 < document_->lines.size()) {
+    return SelectionRange{TextPosition{line, 0}, TextPosition{line + 1, 0}};
+  }
+  return SelectionRange{TextPosition{line, 0},
+                        TextPosition{line, document_->lines.LineLength(line)}};
+}
+
+void TextViewport::SelectWordAtCursor() {
+  const auto word = WordRangeAt(TextPosition{cursor_line_, cursor_column_});
+  if (!word.has_value()) {
     return;
   }
-  const std::string_view line = document_->lines.LineView(cursor_line_);
-  const std::size_t col = std::min(cursor_column_, line.size());
-  std::size_t start = col;
-  std::size_t end = col;
-  if (col < line.size() && IsIdentifierByte(line[col])) {
-    while (start > 0 && IsIdentifierByte(line[start - 1])) {
-      --start;
-    }
-    while (end < line.size() && IsIdentifierByte(line[end])) {
-      ++end;
-    }
-  }
-  if (start == end) {
-    return;
-  }
-  selection_anchor_ = TextPosition{cursor_line_, start};
-  cursor_column_ = end;
+  selection_anchor_ = word->start;
+  cursor_column_ = word->end.column;
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }
@@ -1051,27 +1068,16 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
   const std::size_t line_index = cursor_line_;
   const std::string_view line = document_->lines.LineView(line_index);
   const std::size_t col = std::min(cursor_column_, line.size());
-  std::size_t anchor_col = col;
-  if (col < line.size() && IsIdentifierByte(line[col])) {
-    // Primary caret indexes a word character.
-  } else if (col > 0 && IsIdentifierByte(line[col - 1])) {
-    anchor_col = col - 1;
-  } else {
+  // A caret sitting just PAST a word still seeds on that word, which is what
+  // makes the highlight follow a caret typed to the end of an identifier.
+  WordSpan span = IdentifierRunAt(line, col);
+  if (span.empty() && col > 0) {
+    span = IdentifierRunAt(line, util::PreviousUtf8Boundary(line, col));
+  }
+  if (span.empty()) {
     return std::nullopt;
   }
-
-  std::size_t start = anchor_col;
-  std::size_t end = anchor_col;
-  while (start > 0 && IsIdentifierByte(line[start - 1])) {
-    --start;
-  }
-  while (end < line.size() && IsIdentifierByte(line[end])) {
-    ++end;
-  }
-  if (start >= end) {
-    return std::nullopt;
-  }
-  return SelectionRange{{line_index, start}, {line_index, end}};
+  return SelectionRange{{line_index, span.start}, {line_index, span.end}};
 }
 
 void TextViewport::SelectLineAtCursor() {
@@ -1180,8 +1186,7 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     if (reason == InvalidationReason::SyntaxConfig) {
       // Highlight cache depends on syntax_revision. Drop it fully — the
       // start_line argument is meaningless for a theme/contract change.
-      highlight_cache_.clear();
-      highlight_cache_order_.clear();
+      DropHighlightTokenCache();
       initial_highlight_state_.reset();
       line_highlight_states_.clear();
       line_highlight_states_valid_through_ = 0;
@@ -1224,8 +1229,7 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
     // against 1 (3.1 ms) at line 25000. Typing at the top of a large file was the
     // slowest place to type.
     layout_cache_.InvalidateVisibleLineCacheFrom(0);
-    highlight_cache_.clear();
-    highlight_cache_order_.clear();
+    DropHighlightTokenCache();
     initial_highlight_state_.reset();
     // Drop the validity cursors, NOT the storage. Every read of these two is
     // gated on its cursor (`line < line_highlight_states_valid_through_`,
@@ -1243,17 +1247,12 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
 
   layout_cache_.InvalidateVisibleLineCacheFrom(safe_start);
 
-  for (auto it = highlight_cache_.begin(); it != highlight_cache_.end();) {
-    if (it->first >= safe_start) {
-      it = highlight_cache_.erase(it);
-    } else {
-      ++it;
-    }
-  }
-  highlight_cache_order_.erase(
-      std::remove_if(highlight_cache_order_.begin(), highlight_cache_order_.end(),
-                     [&](std::size_t line_index) { return line_index >= safe_start; }),
-      highlight_cache_order_.end());
+  // Stale the suffix rather than erase it: the entries at or after the edit are
+  // no longer valid, but their token buffers are exactly the ones this frame's
+  // repaint is about to refill. Erasing them freed a hash node and a token vector
+  // per visible line below the caret, per keystroke, and allocated both back on
+  // the same frame.
+  StaleHighlightTokensFrom(safe_start);
 
   if (line_highlight_states_.size() != document_->lines.size()) {
     line_highlight_states_.resize(document_->lines.size());

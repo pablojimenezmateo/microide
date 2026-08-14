@@ -420,7 +420,8 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   }
 
   if (Contains(layout.project_tab_strip, x, y)) {
-    const auto project_tabs = tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+    const auto& project_tabs =
+        tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     const auto project_overflow =
         tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, project_tabs);
     if ((project_overflow.hidden_left > 0 &&
@@ -460,7 +461,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                    ? CursorKind::Pointer
                    : CursorKind::Default;
       }
-      const auto tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip);
+      const auto& tabs = tab_strip_chrome_.ComputeVisibleTabsForGroup(gi, group_tab_strip);
       const auto tab_overflow =
           tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, group_tab_strip, tabs);
       if ((tab_overflow.hidden_left > 0 && Contains(tab_overflow.left_button, x, y)) ||
@@ -672,7 +673,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                    x, y)) {
         return CursorKind::Pointer;
       }
-      const std::vector<VisibleStripTab> visible_panel_tabs =
+      const std::vector<VisibleStripTab>& visible_panel_tabs =
           tab_strip_service_.ComputeVisibleBottomPanelTabs(
               context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
               [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },

@@ -52,6 +52,25 @@ announces itself.
 - The same applies to `/tmp/microide-perf-*.log`, `--report-json` output paths, and
   any other fixed-path artifact reused across sessions.
 
+### Piping `run-checks.sh` into `tail` throws away the exit code that says whether it ran
+
+`tools/run-checks.sh <lane> 2>&1 | tail -8` is the natural way to read a long lane's
+result, and it is wrong: in a pipeline the shell reports **`tail`'s** status, which
+is always 0. The wrapper's own exit code — the one that distinguishes "the lane ran
+and passed" from "the lane never got past its build" — is discarded.
+
+Hit on 2026-08-13. A TSAN run reported success while its *build* had failed on a
+missing include: the last eight lines of a 323-step ninja build are eight
+`Building CXX object` lines, so the tail looked exactly like a healthy run in
+progress, and the harness that reported the command's status saw `tail`'s zero.
+The failure was two lines further down (`ninja: build stopped`), and the wrapper had
+written `run-checks: tsan finished (exit 1)` to the log.
+
+- Redirect, then read: `tools/run-checks.sh tsan > /tmp/out 2>&1; echo $?`.
+- Or grep the log for the wrapper's own last line, `run-checks: <lane> finished
+  (exit N)`, and believe the N — never the tail's shape.
+- `set -o pipefail` fixes it in a script; it is not on in an interactive shell.
+
 ### The documented inner-loop build is Release, so `#ifndef NDEBUG` tests never run in it
 
 `cmake -S . -B build` produces `CMAKE_BUILD_TYPE=Release`, and a family of tests
@@ -72,6 +91,35 @@ on the first try, at 2,825 tests.
   sanitizer lane, or `./build/microide-asan/microide/microide_tests <filter>`.
 - The test-count difference between the two builds is the tell. If it is not the
   number you expect, some assertions are compiled out.
+
+### A type trait can answer differently in the two compilers, so one lane rejects code five lanes take
+
+`clang-build` is not just a warnings lane. It is the only place in the repo that
+compiles the tree with a second front end, and front ends disagree about more than
+diagnostics — they disagree about **type traits**, which are load-bearing for
+overload resolution in the standard library.
+
+Hit on 2026-08-14 merging the tab-drag branch. `TabEntry` declares
+`std::optional<EditorTabState> editor_state;` as a member of the class
+`EditorTabState` is nested in. Clang evaluates `__is_constructible(EditorTabState)`
+at that declaration, while `TabEntry` is still incomplete, and caches **false**
+for the rest of the TU; GCC re-evaluates later and answers true. So
+`optional<EditorTabState>::emplace()` — which is constrained on exactly that trait
+— has no viable overload under clang and compiles fine under GCC. A test using it
+passed `tests`, `perf-tests` and every sanitizer lane, and `clang-build` was the
+single thing that failed. See [TD-2026-08-14-214](known-tech-debt.md).
+
+- The failure does not look like a portability problem from the GCC side; it looks
+  like working code. There is no warning to escalate and no runtime symptom,
+  because the translation unit never builds at all under the other compiler.
+- Reducing it is worth the five minutes: a `static_assert` on the trait, plus the
+  same struct copied out to namespace scope, separates "my type is broken" from
+  "my type is fine and the trait is context-dependent". Here the copy was
+  constructible and the nested original was not, which is the whole answer.
+- `T a;` compiling is not evidence that `is_constructible_v<T>` is true. They are
+  different questions to a compiler that has cached one of them.
+- Run `clang-build` before a merge, not only after adding a source to a curated
+  target list. It is the cheapest lane that can reject code nothing else rejects.
 
 ### Editing source while a build or sanitizer run is in flight
 

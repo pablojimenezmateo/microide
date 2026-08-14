@@ -83,8 +83,8 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .request_active_tab_redraw =
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
           .request_tab_strip_redraw = [this]() { RequestTabStripRedraw(); },
-          .invalidate_editor_tab_geometry =
-              [this]() { tab_strip_service_.InvalidateEditorTabGeometry(); },
+          .invalidate_tab_strip_geometry =
+              [this]() { tab_strip_service_.InvalidateTabStripGeometry(); },
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },
@@ -524,7 +524,7 @@ bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
   // pre-reorder positions even though the underlying tabs have moved — so
   // the tab strip shows the wrong labels while the active editor content
   // already reflects the new order.
-  tab_strip_service_.InvalidateEditorTabGeometry();
+  tab_strip_service_.InvalidateTabStripGeometry();
   return MakeEditorTabService().MoveActiveTo(index);
 }
 
@@ -562,7 +562,7 @@ void WorkspaceShell::OpenFileAtLocation(const std::filesystem::path& path,
   // finds no matching tab and `viewport` still points at the previously-active tab —
   // relocating its caret would scroll/jump the wrong buffer.
   if (viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
-    viewport->MoveCursorTo(line, column);
+    viewport->JumpCursorTo(line, column);
   }
 }
 

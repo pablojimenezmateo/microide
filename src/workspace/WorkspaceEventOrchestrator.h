@@ -58,6 +58,13 @@ class WorkspaceEventDispatcher {
     std::function<void()> force_cursor_reassert;
     // Autosave hook fired when the window loses focus (honors editor.autosave).
     std::function<void()> autosave_on_focus_lost;
+    // End any in-flight mouse selection gesture. Fired on focus loss: the
+    // button-up will be delivered to whoever took the focus, not to us, so a
+    // gesture left open here is still open on the next click -- and selection
+    // autoscroll, which asks for idle wakes, would keep scrolling with no
+    // button down. A callback rather than more `State` fields because this
+    // dispatcher deliberately borrows one flag, not the interaction state.
+    std::function<void()> end_selection_gesture;
     std::function<void()> request_window_redraw;
     std::function<bool(const SDL_KeyboardEvent&)> handle_key_down;
     // Files dropped onto the window. Takes the raw SDL path; the decision of what

@@ -1,11 +1,14 @@
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
+#include "workspace/coordinators/SelectionAutoscroll.h"
+
 #include <utility>
 
 #include "workspace/services/TerminalPanelService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
+#include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
 #include "workspace/shell/WorkspaceShell.h"
 #include "workspace/WorkspaceFileDrop.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
@@ -238,9 +241,32 @@ WorkspaceEventDispatcher WorkspaceShell::Bootstrapper::BuildEventDispatcher() co
           .handle_window_mouse_leave = [shell]() { shell->ClearMouseHoverState(); },
           .force_cursor_reassert = [shell]() { shell->ForceCursorReassert(); },
           .autosave_on_focus_lost = [shell]() { shell->MaybeAutosaveDirtyTabs(true); },
+          .end_selection_gesture =
+              [shell]() {
+                shell->context_.interaction_state.mouse_selecting = false;
+                shell->context_.interaction_state.text_drag =
+                    InteractionState::TextDragState::None;
+                shell->context_.interaction_state.text_drag_has_drop = false;
+                shell->context_.interaction_state.editor_box_selecting = false;
+                selection_autoscroll::Disarm(shell->context_.interaction_state);
+                // A tab drag is a drag too, and it used to survive the focus loss:
+                // the strip stayed with a lifted tab and a floating ghost pinned to
+                // a pointer that was no longer sending us anything, and its
+                // auto-scroll kept the animation tick awake.
+                shell->MakeTabMouseCoordinator().CancelDrag();
+              },
           .request_window_redraw = [shell]() { shell->RequestWindowRedraw(); },
           .handle_key_down =
               [shell](const SDL_KeyboardEvent& event) {
+                // Escape abandons a live tab drag, ahead of every surface that also
+                // answers to Escape — a drag owns the pointer, so while one is in
+                // flight it owns the cancel key too.
+                if (event.key == SDLK_ESCAPE &&
+                    shell->context_.interaction_state.tab_drag.kind != TabDragKind::None &&
+                    shell->MakeTabMouseCoordinator().CancelDrag()) {
+                  shell->RequestWindowRedraw();
+                  return true;
+                }
                 return shell->MakeKeyInputCoordinator().HandleKeyDown(event);
               },
           .handle_file_drop =

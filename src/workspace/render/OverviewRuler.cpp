@@ -5,6 +5,7 @@
 #include <cmath>
 
 #include "render/Theme.h"
+#include "util/Fnv1a.h"
 
 namespace microide::workspace::overview {
 
@@ -192,11 +193,10 @@ std::uint64_t ThemeMarkerToken(const render::Theme& theme) {
       theme.diagnostic_hint,   theme.search_match,       theme.search_match_active,
       theme.cursor,
   };
-  std::uint64_t hash = 1469598103934665603ull;
+  std::uint64_t hash = util::kFnv1aOffsetBasis;
   for (const SDL_Color& color : colors) {
     for (const std::uint8_t byte : {color.r, color.g, color.b, color.a}) {
-      hash ^= byte;
-      hash *= 1099511628211ull;
+      hash = util::Fnv1aByte(hash, byte);
     }
   }
   return hash;

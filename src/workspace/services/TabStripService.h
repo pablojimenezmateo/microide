@@ -88,7 +88,10 @@ class TabStripService {
                                     const TitleProvider& display_title,
                                     const TitleProvider& tooltip_label,
                                     std::uint64_t dirty_fingerprint) const;
-  std::vector<VisibleStripTab> ComputeVisibleEditorTabs(
+  // Returns the memoized vector by reference: on a cache hit a by-value return
+  // still copied two std::strings per visible tab per call, and this is called
+  // from paint, hit-test, cursor and tooltip paths several times a frame.
+  const std::vector<VisibleStripTab>& ComputeVisibleEditorTabs(
       const EditorGroup& group,
       std::size_t group_index,
       const SDL_FRect& tab_strip,
@@ -96,7 +99,12 @@ class TabStripService {
       const TitleProvider& display_title,
       const TitleProvider& tooltip_label,
       std::uint64_t dirty_fingerprint) const;
-  void InvalidateEditorTabGeometry();
+  static const std::vector<VisibleStripTab>& EmptyVisibleTabs();
+  // Drops every strip's memoized geometry. The project strip's cache lives in
+  // WorkspaceTabStripChrome (that is where its titles/badges are produced), so
+  // it folds this epoch into its own key rather than needing a second hook.
+  void InvalidateTabStripGeometry();
+  std::uint64_t GeometryEpoch() const { return geometry_epoch_; }
 
   TabStripOverflowControls ComputeProjectTabOverflowControls(
       const SDL_FRect& project_tab_strip,
@@ -109,10 +117,15 @@ class TabStripService {
   bool ScrollProjectTabStrip(ProjectCatalogState& catalog, int direction) const;
   bool ScrollEditorTabStrip(EditorGroup& group, std::size_t group_index, int direction);
 
-  std::vector<BottomPanelTabModel> BuildBottomPanelTabs(
+  // Both memoized, both returned BY REFERENCE. The model list has been cached on
+  // a content fingerprint since TD-2026-07-17A-084, but it was handed back by
+  // value — five std::strings per tab, copied on every cache HIT — and the
+  // laid-out list above it had no cache at all while four call sites asked for it
+  // per frame or per motion event (TD-2026-08-14-209).
+  const std::vector<BottomPanelTabModel>& BuildBottomPanelTabs(
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
-  std::vector<VisibleStripTab> ComputeVisibleBottomPanelTabs(
+  const std::vector<VisibleStripTab>& ComputeVisibleBottomPanelTabs(
       const ProjectWorkspaceState& state,
       const SDL_FRect& panel_header,
       LayoutMode layout_mode,
@@ -204,6 +217,27 @@ class TabStripService {
     std::vector<BottomPanelTabModel> tabs;
     bool valid = false;
   };
+  // Memoizes the LAID-OUT bottom-panel strip. The model cache above answers "what
+  // tabs are there"; this answers "where are they", which additionally depends on
+  // the header rect, the layout mode (the new-tab button's reserve), which tab is
+  // active and how far the strip is scrolled — none of which shape the model, so
+  // none of which are in its fingerprint. Plus the geometry epoch: the widths here
+  // come out of `measure_width`, and a font change moves every one of them without
+  // moving any other key (the header is a constant height over a user-resized
+  // panel), so without the epoch this strip alone kept the old font's rects
+  // (TD-2026-08-14-215).
+  struct VisibleBottomPanelTabsCache {
+    std::uint64_t model_fingerprint = 0;
+    std::uint64_t geometry_epoch = 0;
+    SDL_FRect header{};
+    LayoutMode layout_mode = LayoutMode::Regular;
+    std::size_t active_terminal_tab_index = 0;
+    int tab_scroll_index = 0;
+    std::vector<VisibleStripTab> tabs;
+    bool valid = false;
+  };
+  mutable VisibleBottomPanelTabsCache visible_bottom_panel_tabs_cache_;
+
   std::uint64_t ComputeBottomPanelTabsFingerprint(
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
@@ -215,6 +249,7 @@ class TabStripService {
   mutable std::array<TabStripGeometryCache, kMaxEditorGroups> editor_tab_geometry_cache_;
   mutable std::array<VisibleEditorTabsCache, kMaxEditorGroups> visible_editor_tabs_cache_;
   mutable BottomPanelTabsCache bottom_panel_tabs_cache_;
+  std::uint64_t geometry_epoch_ = 0;
 };
 
 }  // namespace microide::workspace

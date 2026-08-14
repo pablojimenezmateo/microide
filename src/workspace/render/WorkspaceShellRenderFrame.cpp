@@ -409,13 +409,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     const auto measure = [this](std::string_view text) {
       return text_renderer_.MeasureWidth(text);
     };
-    prepare_cached_bottom_panel_vm_->tabs = tab_strip_service_.ComputeVisibleBottomPanelTabs(
+    prepare_cached_bottom_panel_vm_->tabs = &tab_strip_service_.ComputeVisibleBottomPanelTabs(
         project_state, panel_header, layout_mode_service_.CurrentMode(), measure,
         output_channels_.Channels());
     prepare_cached_bottom_panel_vm_->tab_overflow =
         tab_strip_service_.ComputeBottomPanelTabOverflowControls(
             project_state, panel_header, layout_mode_service_.CurrentMode(),
-            prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
+            *prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
   }
   // 1a) Terminal find bar: rescan and lay the bar out here, where the panel rect
   //     is known, so the render TU paints a fully prepared widget. The rescan is
@@ -886,6 +886,31 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
       DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
                        tls_editor_surface_vm);
 
+      // Insertion-point indicator for a selection drag-and-drop in flight. No
+      // other gesture here has one, and without it the drop is a guess: the real
+      // caret stays inside the selection being dragged (TD-2026-08-13-204).
+      // Drawn after the pane so it is never painted over, and only on the pane
+      // that owns the gesture.
+      if (pane.active && context_.interaction_state.text_dragging() &&
+          context_.interaction_state.text_drag_has_drop) {
+        const std::size_t drop_line = context_.interaction_state.text_drag_drop_line;
+        const std::size_t drop_column = context_.interaction_state.text_drag_drop_column;
+        const std::size_t visual_row = viewport->VisualRowForLine(drop_line);
+        if (visual_row >= viewport->scroll_line() &&
+            visual_row < viewport->scroll_line() + metrics.visible_rows) {
+          const std::size_t visual_column = viewport->VisualColumnAt(drop_line, drop_column);
+          const float x = metrics.text_x +
+                          static_cast<float>(visual_column - std::min(visual_column,
+                                                                      viewport->horizontal_scroll())) *
+                              text_renderer_.CharWidth();
+          const float y = metrics.first_line_y +
+                          static_cast<float>(visual_row - viewport->scroll_line()) *
+                              metrics.line_height;
+          if (x >= metrics.text_x && x < pane.rect.x + pane.rect.w) {
+            DrawFilledRect(renderer, MakeRect(x, y, 2.0f, metrics.line_height), theme_.accent);
+          }
+        }
+      }
     }
     // Overview-ruler marker caches, one per pane, keyed by a cheap signature so the
     // search+diagnostic marker set only rebuilds when a source or the lane geometry

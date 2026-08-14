@@ -544,6 +544,10 @@ class WorkspaceActionContext {
   editor::TextViewport* ActiveNavigableViewport();
   TabEntry::EditorTabState* ActiveEditorTab();
   editor::FoldingModel* EnsureActiveFoldingModelFresh();
+  // Rebuild the active compare tab's diff model after its right pane was edited,
+  // and re-anchor the surface's selection on the caret. Idempotent (the rebuild is
+  // fingerprint-guarded) and a no-op when the active tab is not a compare tab.
+  void RefreshActiveCompareAfterViewportEdit();
   void NotifyEditorViewportChanged(bool last_change);
   void NotifyEditorCaretMoved();
   void ToggleEditorEssentialsCapability(ActionId id);

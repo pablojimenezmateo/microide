@@ -2935,6 +2935,71 @@ void TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords() {
          "tabswitch 2 should activate the second tab");
 }
 
+// Reordering a tab was mouse-only. `tabmove` has always taken a relative offset,
+// but nothing reached it from the keyboard; Ctrl+Shift+PageDown/PageUp are VS
+// Code's Move Editor Right / Left, and like it they clamp rather than wrap.
+void TestEditorTabMoveKeyChordsReorderAndClamp() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "tab move\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  for (int i = 0; i < 3; ++i) {
+    const std::filesystem::path file = root / ("move_" + std::to_string(i) + ".txt");
+    WriteFile(file, "alpha\n");
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+  }
+  Expect(WorkspaceShellTestAccess::FocusedGroupOpenTabCount(shell) >= 3,
+         "fixture should open at least three tabs");
+
+  WorkspaceShellTestAccess::ActivateTab(shell, 0);
+  const std::filesystem::path first_path = WorkspaceShellTestAccess::OpenTabs(shell)[0].path;
+  Expect(SendKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+PageDown should be consumed by the editor");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 1,
+         "the moved tab stays active in its new slot");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell)[1].path == first_path,
+         "Ctrl+Shift+PageDown moves the active tab one slot right");
+
+  Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+PageUp should be consumed by the editor");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0 &&
+             WorkspaceShellTestAccess::OpenTabs(shell)[0].path == first_path,
+         "Ctrl+Shift+PageUp moves it back");
+
+  // Clamp, not wrap: moving left from the first slot is a no-op, and the tab
+  // must not reappear at the far end.
+  Expect(SendKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+PageUp at the first slot is still handled");
+  Expect(WorkspaceShellTestAccess::ActiveTabIndex(shell) == 0 &&
+             WorkspaceShellTestAccess::OpenTabs(shell)[0].path == first_path,
+         "moving left from the first slot clamps instead of wrapping to the end");
+
+  // A two-directional action is half-documented if Help lists one of its chords.
+  // The lookup used to keep only the first binding per action, so Switch Tab
+  // advertised Ctrl+PageDown and never Ctrl+PageUp.
+  WorkspaceShellTestAccess::OpenHelpAboutOverlay(shell);
+  const auto help_rows = WorkspaceShellTestAccess::HelpAboutRows(shell);
+  const auto detail_for = [&](std::string_view label) -> std::string {
+    for (const microide::workspace::HelpAboutRow& row : help_rows) {
+      if (row.label == label) {
+        return row.detail;
+      }
+    }
+    return {};
+  };
+  const std::string move_detail = detail_for("Move Tab");
+  Expect(move_detail.find("Ctrl+Shift+PageDown") != std::string::npos &&
+             move_detail.find("Ctrl+Shift+PageUp") != std::string::npos,
+         "Help/About should list both Move Tab chords");
+  const std::string switch_detail = detail_for("Switch Tab");
+  Expect(switch_detail.find("Ctrl+PageDown") != std::string::npos &&
+             switch_detail.find("Ctrl+PageUp") != std::string::npos,
+         "Help/About should list both Switch Tab chords");
+}
+
 // The wheel and the ⟨ ⟩ overflow buttons scroll the same strip, so they must stop
 // at the same place. The buttons stop correctly — they disappear once nothing is
 // hidden on that side — but the wheel clamped on the raw scroll index instead, so
@@ -3365,6 +3430,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestEditorWheelScrollsHorizontally);
   AddTest(tests, "WorkspaceShell/EditorTabSwitchAcceptsRelativeOffsetsAndKeyChords",
           TestEditorTabSwitchAcceptsRelativeOffsetsAndKeyChords);
+  AddTest(tests, "WorkspaceShell/EditorTabMoveKeyChordsReorderAndClamp",
+          TestEditorTabMoveKeyChordsReorderAndClamp);
   AddTest(tests, "WorkspaceShell/EditorTabStripWheelStopsWhereTheOverflowButtonDoes",
           TestEditorTabStripWheelStopsWhereTheOverflowButtonDoes);
   AddTest(tests, "WorkspaceShell/EditorTabOverflowButtonExpandsForDoubleDigitHiddenCount",

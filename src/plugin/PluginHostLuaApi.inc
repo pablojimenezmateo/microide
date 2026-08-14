@@ -443,6 +443,16 @@
         });
   }
 
+  static int LuaVirtualDocumentsAdd(lua_State* state) {
+    return RegisterTableContribution(
+        state, "virtual document registration requires an active plugin state",
+        "failed to parse virtual document registration",
+        [state](Impl* host, const PluginInstance* plugin, std::string* error_message) {
+          return contribution_interop::RegisterVirtualDocument(
+              state, plugin->id, &host->virtual_documents, error_message);
+        });
+  }
+
   static int LuaCompletionAdd(lua_State* state) {
     return RegisterTableContribution(
         state, "completion registration requires an active plugin state",
@@ -1019,6 +1029,7 @@
             .file_icons_register = &LuaFileIconThemeRegister,
             .formatters_add = &LuaFormattersAdd,
             .save_participants_add = &LuaSaveParticipantsAdd,
+            .virtual_documents_add = &LuaVirtualDocumentsAdd,
             .completion_add = &LuaCompletionAdd,
             .code_action_add = &LuaCodeActionAdd,
             .definition_add = &LuaDefinitionAdd,
@@ -1171,7 +1182,8 @@
     state_teardown_interop::UnregisterContributionsForState(
         state, plugin, &commands, &command_names, &sidebars, &sidebar_providers,
         &hovers, &hover_provider_order, &menu_entries, &keybindings, &settings, &status_items,
-        &status_item_order, &formatters, &save_participants, &save_participant_runtimes,
+        &status_item_order, &formatters, &save_participants, &virtual_documents,
+        &save_participant_runtimes,
         &completions, &completion_runtimes, &code_actions, &code_action_runtimes,
         &language_query_runtimes,
         &language_servers, &debug_adapters, &launch_configs, &tasks, &tools, &test_providers,

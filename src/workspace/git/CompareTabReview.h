@@ -55,6 +55,76 @@ int CompareTabSelectedHunkIndex(const CompareTabState& compare_tab);
 const compare::ComparePresentationRow* CompareTabPresentationRowAt(const CompareTabState& compare_tab,
                                                                  std::size_t presentation_row);
 
+// ---- soft-wrap row table (TD-2026-08-13-200) --------------------------------
+//
+// With `editor.wrap` off every one of these is the identity and costs a branch:
+// a presentation row IS an on-screen row. With it on, a presentation row occupies
+// max(left segments, right segments) on-screen rows, the shorter pane padded with
+// blank rows so the two sides stay aligned.
+//
+// `compare_tab.scroll_row` indexes on-screen (visual) rows in BOTH modes;
+// `compare_tab.selected_row` stays a presentation-row index in both, so selecting
+// a wrapped line highlights all of its rows.
+
+// Rebuild the table if the panes, the tab size, the wrap flag or the presentation
+// moved. Called from the layout pass, which is the one place that knows the pane
+// widths.
+void EnsureCompareWrapLayout(const CompareTabState& compare_tab,
+                             bool soft_wrap,
+                             std::size_t left_columns,
+                             std::size_t right_columns);
+// Re-wrap against the geometry the table was last built with, after the content or
+// the presentation changed away from a layout pass (collapsed-context expand).
+// No-op while wrap is off.
+void RefreshCompareWrapLayoutForContent(const CompareTabState& compare_tab);
+
+std::size_t CompareTabVisualRowCount(const CompareTabState& compare_tab);
+std::size_t CompareVisualRowToPresentationRow(const CompareTabState& compare_tab,
+                                              std::size_t visual_row);
+std::size_t ComparePresentationRowToVisualRow(const CompareTabState& compare_tab,
+                                              std::size_t presentation_row);
+
+// Right-pane document line for a model row (the row's own line, else the next row
+// below that has one). The canonical implementation; WorkspaceShell forwards.
+std::size_t CompareTabRightLineForModelRow(const CompareTabState& compare_tab,
+                                           std::size_t model_row);
+
+// Where the right pane's caret sits on screen. `column` is measured in the pane's
+// own on-screen cells — with wrap on that is the hanging indent plus the offset
+// into the segment, with wrap off it is the line's visual column — so both feed
+// TextGridCursorX unchanged.
+struct CompareRightCaretPlacement {
+  std::size_t visual_row = 0;
+  std::size_t column = 0;
+};
+CompareRightCaretPlacement CompareRightCaretPlacementFor(const CompareTabState& compare_tab,
+                                                         std::size_t right_line,
+                                                         std::size_t visual_column);
+
+// Inverse: the right-pane document position under an on-screen (row, column).
+struct CompareRightPaneHit {
+  std::size_t presentation_row = 0;
+  std::size_t model_row = 0;
+  std::size_t line = 0;
+  std::size_t visual_column = 0;
+};
+CompareRightPaneHit CompareRightPaneHitAt(const CompareTabState& compare_tab,
+                                          std::size_t visual_row,
+                                          std::size_t screen_column);
+
+// Anchor for the right pane's inline blame annotation, given the line's full
+// visual width: the on-screen row of its LAST wrapped segment and the on-screen
+// column just past its text. `valid` is false when the diff does not represent
+// that document line (a deleted-only row, a stale line index).
+struct CompareRightLineAnchor {
+  std::size_t visual_row = 0;
+  std::size_t end_column = 0;
+  bool valid = false;
+};
+CompareRightLineAnchor CompareRightLineBlameAnchor(const CompareTabState& compare_tab,
+                                                   std::size_t right_line,
+                                                   std::size_t line_visual_columns);
+
 // The collapsed-context summary row under a y coordinate in the compare surface,
 // with the exact block rect its action buttons are laid out in.
 //

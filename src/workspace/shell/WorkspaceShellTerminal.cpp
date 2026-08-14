@@ -1,3 +1,4 @@
+#include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "platform/HostIntegration.h"
@@ -441,6 +442,7 @@ void WorkspaceShell::RebaseActiveTerminalForScrollbackTrim() {
 void WorkspaceShell::ClearTerminalSelection() {
   if (auto* terminal_tab = ActiveTerminalTab(); terminal_tab != nullptr) {
     terminal_tab->mouse_selecting = false;
+    selection_autoscroll::Disarm(context_.interaction_state);
     terminal_tab->selection_anchor.reset();
     terminal_tab->selection_head.reset();
   }

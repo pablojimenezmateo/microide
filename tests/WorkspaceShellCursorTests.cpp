@@ -529,6 +529,338 @@ void TestWorkspaceShellRenderDoesNotPollLivePointer() {
 // stale shape until some unrelated repaint. While the caret blinks its periodic
 // frames hide this; when it stops, the staleness becomes visible. See
 // dev-docs/platform/wayland-stale-cursor.md.
+// The reported bug: a selection drag stopped extending the moment the pointer
+// left the editor area, and stayed stopped while the button was still down.
+// There were two independent refusals -- the shell required the pointer inside
+// `layout.editor_surface`, and the editor coordinator required it inside the
+// active pane rect -- so the selection froze at whatever cell it last crossed.
+//
+// The assertion is about the pointer being TRACKED outside, not about a specific
+// column: two different out-of-bounds positions on the same row must select
+// different text, and dragging down past the last visible row must reach a later
+// line than dragging along the first one.
+void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source,
+            "alpha bravo charlie delta echo\n"
+            "foxtrot golf hotel india juliet\n"
+            "kilo lima mike november oscar\n"
+            "papa quebec romeo sierra tango\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float first_row_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float start_x = metrics.text_x + 0.1f;
+
+  Expect(SendMouseDown(shell, start_x, first_row_y, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start a selection");
+
+  // Left of the editor surface entirely -- over the sidebar.
+  Expect(SendMouseMotion(shell, pane.x - 300.0f, first_row_y, SDL_BUTTON_LMASK),
+         "dragging left out of the editor area should still be handled");
+  const std::string after_left = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+
+  // Right of it, past the window edge.
+  Expect(SendMouseMotion(shell, pane.x + pane.w + 500.0f, first_row_y, SDL_BUTTON_LMASK),
+         "dragging right out of the editor area should still be handled");
+  const std::string after_right = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(after_right != after_left,
+         "two different out-of-area pointer positions must select different text");
+  Expect(after_right.find("alpha") != std::string::npos,
+         "dragging right along the first row should select that row's text");
+
+  // Below the last visible row -- over the status bar / off the window.
+  Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 400.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the editor area should still be handled");
+  const std::string after_down = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(after_down.find('\n') != std::string::npos,
+         "dragging below the first row must extend the selection past it, not pin it "
+         "to the row where the pointer left the pane");
+
+  Expect(SendMouseUp(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 400.0f, SDL_BUTTON_LEFT),
+         "releasing after the out-of-area drag should be handled");
+}
+
+// Clamping alone pins the selection at the last visible row, so a drag can never
+// select more than a screenful. Holding the pointer past the bottom edge has to
+// keep scrolling and keep extending -- driven by the idle wake, because a
+// stationary pointer produces no further motion events.
+void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "line " + std::to_string(i) + " of the document\n";
+  }
+  WriteFile(source, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+
+  Expect(SendMouseDown(shell, metrics.text_x + 0.1f,
+                       metrics.first_line_y + metrics.line_height * 0.5f, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start a selection");
+  // Hold well below the last visible row. This is one event; everything after
+  // it has to come from the wake.
+  Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the editor should be handled");
+
+  const std::size_t scroll_after_motion =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  // Drive the idle wake a few times with the pointer held still.
+  for (int tick = 0; tick < 5; ++tick) {
+    const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    Expect(result.handled, "an armed selection autoscroll should keep the wake busy");
+  }
+  const std::size_t scroll_after_ticks =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  Expect(scroll_after_ticks > scroll_after_motion,
+         "holding the pointer past the bottom edge must keep scrolling on the wake, "
+         "not stop once the motion events stop");
+  const std::string selected = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(selected.find("line 20") != std::string::npos,
+         "the scrolled-into rows must be selected, not merely scrolled past");
+
+  // Releasing disarms it: no further wakes, no further scrolling.
+  Expect(SendMouseUp(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f, SDL_BUTTON_LEFT),
+         "releasing should be handled");
+  const std::size_t scroll_at_release =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  for (int tick = 0; tick < 3; ++tick) {
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  }
+  Expect(WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell) == scroll_at_release,
+         "a released drag must not keep autoscrolling");
+}
+
+// TD-2026-08-13-204: pressing INSIDE a selection and dragging moves the selected
+// text (VS Code's editor.dragAndDrop). The gesture is three-state on purpose —
+// the press commits to neither reading until the pointer travels, so a plain
+// click inside a selection still collapses the caret as it always has.
+void TestWorkspaceShellEditorDragSelectionMovesText() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "drag.txt";
+  WriteFile(source, "alpha bravo charlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float row_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float char_width = std::max(1.0f, WorkspaceShellTestAccess::TextCharWidth(shell));
+  const auto column_x = [&](std::size_t column) {
+    return metrics.text_x + static_cast<float>(column) * char_width + 1.0f;
+  };
+
+  // Select "alpha " (columns 0..6), then press inside it and drag to the end.
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+  Expect(SendMouseDown(shell, column_x(3), row_y, SDL_BUTTON_LEFT),
+         "pressing inside the selection should be handled");
+  Expect(viewport.selection_range().has_value(),
+         "the press must NOT destroy the selection it may be about to move");
+
+  Expect(SendMouseMotion(shell, column_x(19), row_y, SDL_BUTTON_LMASK),
+         "dragging past the threshold should be handled");
+  Expect(viewport.selection_range().has_value() &&
+             viewport.selection_range()->end.column == 6,
+         "a drag in flight leaves the source selection alone until release");
+  Expect(SendMouseUp(shell, column_x(19), row_y, SDL_BUTTON_LEFT), "release should be handled");
+
+  Expect(viewport.lines().LineView(0) == "bravo charliealpha ",
+         "the dragged selection moves to the drop point");
+  const auto moved_selection = viewport.selection_range();
+  Expect(moved_selection.has_value() && moved_selection->start.column == 13,
+         "the moved text stays selected where it landed");
+
+  // One undo entry, not two: the delete and the insert are one edit.
+  Expect(viewport.Undo(), "the move is undoable");
+  Expect(viewport.lines().LineView(0) == "alpha bravo charlie",
+         "a single undo puts the text back where it was");
+}
+
+// The other half of the three-state gesture: a press inside a selection that does
+// NOT travel is still a click, and collapses the caret where it landed.
+void TestWorkspaceShellClickInsideSelectionStillCollapsesCaret() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "click.txt";
+  WriteFile(source, "alpha bravo charlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float row_y = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float char_width = std::max(1.0f, WorkspaceShellTestAccess::TextCharWidth(shell));
+  const float press_x = metrics.text_x + 3.0f * char_width + 1.0f;
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 6, /*extend_selection=*/true);
+  Expect(SendMouseDown(shell, press_x, row_y, SDL_BUTTON_LEFT), "the press is handled");
+  // A pixel of jitter is still a click, not a drag.
+  Expect(SendMouseMotion(shell, press_x + 1.0f, row_y, SDL_BUTTON_LMASK),
+         "sub-threshold motion is handled");
+  Expect(viewport.selection_range().has_value(),
+         "sub-threshold motion leaves the selection alone rather than moving text");
+  Expect(SendMouseUp(shell, press_x + 1.0f, row_y, SDL_BUTTON_LEFT), "release is handled");
+
+  Expect(viewport.lines().LineView(0) == "alpha bravo charlie",
+         "a click inside a selection edits nothing");
+  Expect(!viewport.selection_range().has_value(),
+         "a click inside a selection collapses it, as it always has");
+  Expect(viewport.cursor_column() == 3, "the caret lands where the click was");
+}
+
+// The other way a drag can end without a button-up: the window loses focus while
+// the button is down (released over another window, or the compositor takes the
+// grab). The autoscroll is the one loop here that runs with no input behind it,
+// so a velocity left armed would scroll forever.
+void TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  std::string content;
+  for (int i = 0; i < 400; ++i) {
+    content += "line " + std::to_string(i) + " of the document\n";
+  }
+  WriteFile(source, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  Expect(SendMouseDown(shell, metrics.text_x + 0.1f,
+                       metrics.first_line_y + metrics.line_height * 0.5f, SDL_BUTTON_LEFT),
+         "pressing inside the editor should start a selection");
+  Expect(SendMouseMotion(shell, pane.x + pane.w * 0.5f, pane.y + pane.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the editor should be handled");
+  (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+
+  SendWindowFocus(shell, false);
+  const std::size_t scroll_at_focus_loss =
+      WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell);
+  for (int tick = 0; tick < 4; ++tick) {
+    (void)WorkspaceShellTestAccess::HandleScheduledWake(shell);
+  }
+  Expect(WorkspaceShellTestAccess::ActiveEditorViewportScrollLine(shell) == scroll_at_focus_loss,
+         "losing focus mid-drag must stop the autoscroll, not leave it running");
+  Expect(!WorkspaceShellTestAccess::TransientMouseSelecting(shell),
+         "losing focus mid-drag must end the selection gesture");
+}
+
+// A double-click that then drags selects whole WORDS, and a triple-click drag
+// whole LINES. The click's own expansion used to be collapsed straight back to
+// character granularity by the first motion event, because the drag extended
+// from the caret with no memory of how the gesture started.
+void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "words.txt";
+  WriteFile(source, "alpha bravo charlie delta\nsecond line here\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float row0 = metrics.first_line_y + metrics.line_height * 0.5f;
+  const float char_width =
+      std::max(1.0f, WorkspaceShellTestAccess::TextCharWidth(shell));
+  const auto column_x = [&](int column) {
+    return metrics.text_x + static_cast<float>(column) * char_width + 1.0f;
+  };
+
+  // Double-click "alpha" (columns 0-4), then drag into "charlie" (column 14).
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/2),
+         "a double click should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditorSelectedText(shell) == "alpha",
+         "a double click should select the word under it");
+  Expect(SendMouseMotion(shell, column_x(14), row0, SDL_BUTTON_LMASK),
+         "dragging after a double click should be handled");
+  const std::string word_drag = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(word_drag == "alpha bravo charlie",
+         std::string("a double-click drag must extend by whole words, got '") + word_drag + "'");
+  Expect(SendMouseUp(shell, column_x(14), row0, SDL_BUTTON_LEFT), "release should be handled");
+
+  // Triple-click line 0, then drag onto line 1: both lines, whole.
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/3),
+         "a triple click should be handled");
+  Expect(SendMouseMotion(shell, column_x(3), row0 + metrics.line_height, SDL_BUTTON_LMASK),
+         "dragging after a triple click should be handled");
+  const std::string line_drag = WorkspaceShellTestAccess::ActiveEditorSelectedText(shell);
+  Expect(line_drag.find("alpha bravo charlie delta") != std::string::npos &&
+             line_drag.find("second line here") != std::string::npos,
+         std::string("a triple-click drag must extend by whole lines, got '") + line_drag + "'");
+  Expect(SendMouseUp(shell, column_x(3), row0 + metrics.line_height, SDL_BUTTON_LEFT),
+         "release should be handled");
+
+  // A plain single-click drag stays character-granular -- the granularity must
+  // not leak from the previous gesture.
+  //
+  // Collapse the line selection first. Since TD-2026-08-13-204 a press INSIDE a
+  // selection starts a drag-and-drop of it rather than a new selection, and the
+  // triple-click drag above left the whole document selected — so without this
+  // the "single-click drag" below would be a text move, and this test would be
+  // asserting granularity about a gesture that no longer happens here.
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "a click inside the selection should be handled");
+  Expect(SendMouseUp(shell, column_x(2), row0, SDL_BUTTON_LEFT),
+         "releasing without moving collapses the selection to a caret");
+
+  Expect(SendMouseDown(shell, column_x(2), row0, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "a single click should be handled");
+  Expect(SendMouseMotion(shell, column_x(4), row0, SDL_BUTTON_LMASK),
+         "dragging after a single click should be handled");
+  Expect(WorkspaceShellTestAccess::ActiveEditorSelectedText(shell) == "ph",
+         "a single-click drag must stay character-granular after a word/line drag");
+}
+
 void TestWorkspaceShellCursorChangeRequestsPresent() {
   EnsureDummySdlVideoInitialized();
 
@@ -621,6 +953,131 @@ void TestWorkspaceShellNotificationToastIsClickable() {
 
 }  // namespace
 
+// Ctrl+Left/Right and Ctrl+Backspace/Delete must reach the editor as WORD verbs.
+// They used to fall through the key coordinator's plain arrow/backspace arms with
+// the modifier ignored, so the main editor -- unlike every single-line field in
+// the same window -- moved and deleted one character at a time.
+void TestWorkspaceShellEditorCtrlArrowsAreWordGranular() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "alpha beta gamma\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+
+  Expect(SendKeyDown(shell, SDLK_RIGHT, SDL_KMOD_CTRL), "ctrl+right should be handled");
+  Expect(viewport.cursor_column() == 5,
+         "ctrl+right should land past the first word, not one character in");
+
+  Expect(SendKeyDown(shell, SDLK_RIGHT, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "ctrl+shift+right should be handled");
+  const auto selection = viewport.selection_range();
+  Expect(selection.has_value() && selection->start.column == 5 && selection->end.column == 10,
+         "ctrl+shift+right should extend the selection by a whole word");
+
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(0, 10);
+  Expect(SendKeyDown(shell, SDLK_BACKSPACE, SDL_KMOD_CTRL), "ctrl+backspace should be handled");
+  Expect(viewport.lines().LineView(0) == "alpha  gamma",
+         "ctrl+backspace should remove the whole word, not one character");
+
+  viewport.MoveCursorTo(0, 0);
+  Expect(SendKeyDown(shell, SDLK_DELETE, SDL_KMOD_CTRL), "ctrl+delete should be handled");
+  Expect(viewport.lines().LineView(0) == "  gamma",
+         "ctrl+delete should remove the whole word forward");
+
+  // And plain Left is still a character step -- the modifier is what changes it.
+  viewport.MoveCursorTo(0, 3);
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_NONE), "plain left should be handled");
+  Expect(viewport.cursor_column() == 2, "plain left must remain character-granular");
+}
+
+// The line-op chords have to survive the editor key path, which has its own
+// SDLK_RETURN arm: the keybinding registry must win, or Ctrl+Enter just splits
+// the line like a plain Enter.
+void TestWorkspaceShellEditorLineOpenChordsReachTheEditor() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "    body;\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 6);
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_CTRL), "ctrl+enter should be handled");
+  Expect(viewport.lines()[0] == "    body;",
+         "ctrl+enter must open a line below, not split the current one");
+  Expect(viewport.cursor_line() == 1, "the caret should be on the opened line");
+
+  viewport.MoveCursorTo(0, 6);
+  Expect(SendKeyDown(shell, SDLK_RETURN, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
+         "ctrl+shift+enter should be handled");
+  Expect(viewport.lines()[1] == "    body;", "ctrl+shift+enter should push the line down");
+  Expect(viewport.cursor_line() == 0, "the caret should be on the line opened above");
+
+  // And Shift+Alt+Up is bound now, not just Shift+Alt+Down.
+  editor::TextViewport& copy_viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const std::size_t before = copy_viewport.line_count();
+  Expect(SendKeyDown(shell, SDLK_UP, static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT)),
+         "shift+alt+up should be handled");
+  Expect(copy_viewport.line_count() == before + 1, "shift+alt+up should copy the line up");
+}
+
+// A multi-caret set needs a keyboard way out, and a document-wide jump must not
+// leave carets a screenful behind the one that moved. Both are VS Code
+// behaviours this editor did not have: Esc fell through to "unhandled", and
+// Ctrl+Home moved only the primary.
+void TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump() {
+  EnsureDummySdlVideoInitialized();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "value one\nvalue two\nvalue three\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  editor::TextViewport& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+  viewport.AddSecondaryCaret(1, 0);
+  viewport.AddSecondaryCaret(2, 0);
+  Expect(viewport.has_multiple_carets(), "the fixture should start with three carets");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Esc with secondary carets should be handled, not fall through");
+  Expect(!viewport.has_multiple_carets(), "Esc should collapse back to the primary caret");
+  // Esc removes cursors; it is not a deselect, and a second Esc has nothing to
+  // do here so it goes back to whatever else wants it.
+  Expect(!SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "a second Esc with one caret should not be claimed by the caret collapse");
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.AddSecondaryCaret(1, 0);
+  Expect(viewport.has_multiple_carets(), "two carets for the document-jump case");
+  Expect(SendKeyDown(shell, SDLK_END, SDL_KMOD_CTRL), "ctrl+end should be handled");
+  Expect(!viewport.has_multiple_carets(),
+         "a jump to the end of the document should collapse to one caret");
+  Expect(viewport.cursor_line() == viewport.line_count() - 1,
+         "ctrl+end should still land on the last line");
+}
+
 void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/NotificationToastIsClickable",
           TestWorkspaceShellNotificationToastIsClickable);
@@ -650,6 +1107,24 @@ void RegisterWorkspaceShellCursorTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenderDoesNotPollLivePointer);
   AddTest(tests, "WorkspaceShell/CursorChangeRequestsPresent",
           TestWorkspaceShellCursorChangeRequestsPresent);
+  AddTest(tests, "WorkspaceShell/EditorDragSelectionSurvivesLeavingTheEditorArea",
+          TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea);
+  AddTest(tests, "WorkspaceShell/EditorDragSelectionMovesText",
+          TestWorkspaceShellEditorDragSelectionMovesText);
+  AddTest(tests, "WorkspaceShell/ClickInsideSelectionStillCollapsesCaret",
+          TestWorkspaceShellClickInsideSelectionStillCollapsesCaret);
+  AddTest(tests, "WorkspaceShell/EditorDragAutoscrollsPastTheEdge",
+          TestWorkspaceShellEditorDragAutoscrollsPastTheEdge);
+  AddTest(tests, "WorkspaceShell/EditorDragAutoscrollStopsOnFocusLoss",
+          TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss);
+  AddTest(tests, "WorkspaceShell/EditorMultiClickDragKeepsItsGranularity",
+          TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity);
+  AddTest(tests, "WorkspaceShell/EditorCtrlArrowsAreWordGranular",
+          TestWorkspaceShellEditorCtrlArrowsAreWordGranular);
+  AddTest(tests, "WorkspaceShell/EditorLineOpenChordsReachTheEditor",
+          TestWorkspaceShellEditorLineOpenChordsReachTheEditor);
+  AddTest(tests, "WorkspaceShell/EditorMultiCaretCollapsesOnEscapeAndDocumentJump",
+          TestWorkspaceShellEditorMultiCaretCollapsesOnEscapeAndDocumentJump);
 }
 
 }  // namespace microide::tests

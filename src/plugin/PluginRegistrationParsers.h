@@ -58,6 +58,10 @@ struct FormatterRegistration {
   PluginHost::ContributedFormatter contributed;
 };
 
+struct VirtualDocumentRegistration {
+  PluginHost::ContributedVirtualDocument contributed;
+};
+
 struct SaveParticipantRegistration {
   PluginHost::ContributedSaveParticipant contributed;
   runtime_types::SaveParticipantRuntime runtime;
@@ -164,6 +168,11 @@ bool ParseFormatterRegistration(lua_State* state,
                                 const std::string& plugin_id,
                                 FormatterRegistration* out,
                                 std::string* error_message);
+
+bool ParseVirtualDocumentRegistration(lua_State* state,
+                                      const std::string& plugin_id,
+                                      VirtualDocumentRegistration* out,
+                                      std::string* error_message);
 
 bool ParseSaveParticipantRegistration(lua_State* state,
                                       const std::string& plugin_id,

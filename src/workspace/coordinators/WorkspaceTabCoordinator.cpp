@@ -39,18 +39,6 @@ TabCoordinator::TabCoordinator(ProjectCatalogState& project_catalog,
       state_(current_project_state),
       operations_(std::move(operations)) {}
 
-bool TabCoordinator::TabStateIsDirty(const TabEntry& tab) {
-  if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value()) {
-    return tab.compare->right_editable && tab.compare->right_viewport.dirty();
-  }
-  if (tab.kind == TabEntry::Kind::Merge && tab.merge.has_value()) {
-    return tab.merge->result_viewport.dirty();
-  }
-  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-    return false;
-  }
-  return tab.editor_state->viewport.dirty();
-}
 
 std::string TabCoordinator::ActiveTitle() const {
   if (state_.focused_group().active_tab_index >= state_.focused_group().open_tabs.size()) {
@@ -181,104 +169,6 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
   operations_.notify_plugin_buffer_save(normalized_path);
   refresh_directory_tree();
   return true;
-}
-
-bool TabCoordinator::IsDirty(std::size_t index) const {
-  return index < state_.focused_group().open_tabs.size() && TabStateIsDirty(state_.focused_group().open_tabs[index]);
-}
-
-std::vector<std::size_t> TabCoordinator::DirtyIndices() const {
-  std::vector<std::size_t> dirty_tabs;
-  dirty_tabs.reserve(state_.focused_group().open_tabs.size());
-  for (std::size_t i = 0; i < state_.focused_group().open_tabs.size(); ++i) {
-    if (IsDirty(i)) {
-      dirty_tabs.push_back(i);
-    }
-  }
-  return dirty_tabs;
-}
-
-bool TabCoordinator::HasDirtyTabForProject(std::size_t project_index) const {
-  // The predicate the tab strip actually asks, answered without the list. Callers
-  // that only need "is anything dirty" were paying a reserve()d vector sized to
-  // the project's tab count, once per project tab per painted frame, and then
-  // asking it .empty().
-  const ProjectWorkspaceState* project = nullptr;
-  if (project_index >= project_catalog_.entries.size()) {
-    return false;
-  }
-  if (!state_.root.empty() && project_index == project_catalog_.active_index) {
-    project = &state_;
-  } else {
-    project = project_catalog_.entries[project_index].get();
-  }
-  if (project == nullptr) {
-    return false;
-  }
-  for (const TabEntry& tab : project->focused_group().open_tabs) {
-    if (TabStateIsDirty(tab)) {
-      return true;
-    }
-  }
-  return false;
-}
-
-std::vector<std::size_t> TabCoordinator::DirtyIndicesForProject(std::size_t project_index) const {
-  if (project_index >= project_catalog_.entries.size()) {
-    return {};
-  }
-  if (!state_.root.empty() && project_index == project_catalog_.active_index) {
-    return DirtyIndices();
-  }
-  const auto* project_state = project_catalog_.entries[project_index].get();
-  if (project_state == nullptr) {
-    return {};
-  }
-  std::vector<std::size_t> dirty_tabs;
-  dirty_tabs.reserve(project_state->focused_group().open_tabs.size());
-  for (std::size_t i = 0; i < project_state->focused_group().open_tabs.size(); ++i) {
-    if (TabStateIsDirty(project_state->focused_group().open_tabs[i])) {
-      dirty_tabs.push_back(i);
-    }
-  }
-  return dirty_tabs;
-}
-
-namespace {
-
-// Shared all-groups dirty walk: emit a (group, tab) ref for every dirty tab in
-// every editor group of `project`, in group-then-tab order.
-std::vector<GroupTabRef> CollectDirtyGroupTabs(const ProjectWorkspaceState& project) {
-  std::vector<GroupTabRef> dirty;
-  for (std::size_t g = 0; g < project.editor_groups.size(); ++g) {
-    const EditorGroup& group = project.editor_groups[g];
-    for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
-      if (TabCoordinator::TabStateIsDirty(group.open_tabs[i])) {
-        dirty.push_back(GroupTabRef{g, i});
-      }
-    }
-  }
-  return dirty;
-}
-
-}  // namespace
-
-std::vector<GroupTabRef> TabCoordinator::DirtyGroupTabs() const {
-  return CollectDirtyGroupTabs(state_);
-}
-
-std::vector<GroupTabRef> TabCoordinator::DirtyGroupTabsForProject(std::size_t project_index) const {
-  if (project_index >= project_catalog_.entries.size()) {
-    return {};
-  }
-  if (!state_.root.empty() && project_index == project_catalog_.active_index) {
-    return DirtyGroupTabs();
-  }
-  const auto* project_state = project_catalog_.entries[project_index].get();
-  if (project_state == nullptr) {
-    return {};
-  }
-  return CollectDirtyGroupTabs(*project_state);
 }
 
 bool TabCoordinator::ActiveTabIsEditor() const {
@@ -1034,7 +924,7 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
         (void)LoadEditorTabForActivation(tab);
       }
     }
-    operations_.invalidate_editor_tab_geometry();
+    operations_.invalidate_tab_strip_geometry();
   }
 }
 
@@ -1058,7 +948,7 @@ void TabCoordinator::CollapseGroupAt(std::size_t gi) {
     state_.group_split_orientation = EditorSplitOrientation::None;
     state_.group_split_fraction = 0.5f;
   }
-  operations_.invalidate_editor_tab_geometry();
+  operations_.invalidate_tab_strip_geometry();
 }
 
 void TabCoordinator::CollapseFocusedGroup() {
@@ -1077,7 +967,7 @@ void TabCoordinator::CollapseFocusedGroup() {
   // cache keys only on (tab_count, window_width) and is indexed by group slot, so
   // without this drop the survivor could render the destroyed group's cached tab
   // titles/widths whenever their tab_count and the window width happen to match.
-  operations_.invalidate_editor_tab_geometry();
+  operations_.invalidate_tab_strip_geometry();
 }
 
 bool TabCoordinator::CloseEditorGroup() {

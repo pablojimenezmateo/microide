@@ -1,7 +1,8 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
-#include <utility>
+#include <iterator>
 #include <vector>
 
 namespace microide::workspace {
@@ -19,9 +20,16 @@ bool ReorderActive(std::vector<T>& vec, std::size_t& active, std::size_t target)
   if (active == target) {
     return true;
   }
-  T moved = std::move(vec[active]);
-  vec.erase(vec.begin() + static_cast<std::ptrdiff_t>(active));
-  vec.insert(vec.begin() + static_cast<std::ptrdiff_t>(target), std::move(moved));
+  // One rotate rather than erase-then-insert: that pair moved every element
+  // between the two positions twice, plus a temporary hoisted out and back in,
+  // for tab types that carry viewports and document state.
+  const auto begin = vec.begin();
+  const auto at = [&](std::size_t i) { return begin + static_cast<std::ptrdiff_t>(i); };
+  if (active < target) {
+    std::rotate(at(active), at(active + 1), at(target + 1));
+  } else {
+    std::rotate(at(target), at(active), at(active + 1));
+  }
   active = target;
   return true;
 }

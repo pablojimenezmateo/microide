@@ -172,6 +172,44 @@ void TestViewportStoresAndClearsColumnSelection() {
 // documented the shortcut, and the app's own keyboard-shortcuts overlay did not know
 // it existed and it could not be rebound. Unit-testing the state machine cannot
 // catch that; only driving a real key event can.
+// TD-2026-08-13-207: the ColumnSelect* actions resolve through
+// ActiveEditableViewport(), which is the compare right pane on a compare tab — so
+// the box gesture was reachable there while nothing ended it, and the next chord
+// extended a stale box instead of re-anchoring. Same contract as the editor's,
+// asserted on the surface that lacked it.
+void TestColumnSelectGestureEndsOnACompareTabToo() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "repo";
+  const std::filesystem::path file = root / "ragged.txt";
+  WriteFile(file, "alpha bravo charlie\nde\nfoxtrot golf\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "column selection fixture", "column selection fixture");
+  WriteFile(file, "alpha BRAVO charlie\nde\nfoxtrot GOLF\n");
+
+  microide::workspace::WorkspaceShell shell;
+  ShellTestAccess::SetProjectRoot(shell, root);
+  ShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(ShellTestAccess::OpenWorkingTreeComparison(shell, file, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = ShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable && compare.right_view_active,
+         "the editable pane must be active, or the chord has nowhere to land");
+  auto& viewport = compare.right_viewport;
+  viewport.MoveCursorTo(0, 6, false);
+
+  const SDL_Keymod chord =
+      static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT);
+  Expect(SendKeyDown(shell, SDLK_DOWN, chord),
+         "Ctrl+Shift+Alt+Down must be handled on a compare tab");
+  Expect(viewport.column_selection().active,
+         "the chord starts a column-selection gesture on the compare pane");
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE), "a plain Down should be handled");
+  Expect(!viewport.column_selection().active,
+         "ordinary caret movement must end the gesture on the compare pane too");
+}
+
 void TestColumnSelectChordDispatchesThroughTheRegistry() {
   TemporaryDirectory temp;
   const std::filesystem::path root = temp.path() / "project";
@@ -232,6 +270,8 @@ void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
           TestViewportStoresAndClearsColumnSelection);
   AddTest(tests, "ColumnSelection/ChordDispatchesThroughTheRegistry",
           TestColumnSelectChordDispatchesThroughTheRegistry);
+  AddTest(tests, "ColumnSelection/GestureEndsOnACompareTabToo",
+          TestColumnSelectGestureEndsOnACompareTabToo);
 }
 
 }  // namespace microide::tests

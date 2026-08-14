@@ -1,7 +1,8 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <functional>
-#include <utility>
 #include <vector>
 
 #include "workspace/shell/WorkspaceShell.h"
@@ -11,11 +12,17 @@ namespace microide::workspace {
 class TabMouseCoordinator {
  public:
   struct Operations {
-    std::function<std::vector<WorkspaceShell::VisibleStripTab>(const SDL_FRect&)>
+    // The three strip lists are memoized by their owning service and handed back
+    // BY REFERENCE. Returning them by value copied three std::strings per visible
+    // tab on every mouse-motion event of a drag, every press on a strip, and
+    // twice per wheel tick (TD-2026-08-14-211). Callers must not hold the
+    // reference across an operation that can rebuild the strip (activate, close,
+    // switch, scroll) — copy the POD fields they need first.
+    std::function<const std::vector<WorkspaceShell::VisibleStripTab>&(const SDL_FRect&)>
         compute_visible_project_tabs;
     std::function<void(std::size_t)> request_close_project;
     std::function<bool(std::size_t, bool)> switch_project;
-    std::function<std::vector<WorkspaceShell::VisibleStripTab>(const SDL_FRect&)>
+    std::function<const std::vector<WorkspaceShell::VisibleStripTab>&(const SDL_FRect&)>
         compute_visible_tabs;
     std::function<void(std::size_t)> request_close_tab;
     std::function<void(std::size_t)> activate_tab;
@@ -23,7 +30,7 @@ class TabMouseCoordinator {
     std::function<bool()> bottom_panel_visible;
     std::function<SDL_FRect(const SDL_FRect&)> bottom_panel_terminal_new_tab_rect;
     std::function<void(std::string)> open_terminal;
-    std::function<std::vector<WorkspaceShell::VisibleStripTab>(const SDL_FRect&)>
+    std::function<const std::vector<WorkspaceShell::VisibleStripTab>&(const SDL_FRect&)>
         compute_visible_bottom_panel_tabs;
     std::function<bool(std::size_t)> activate_bottom_panel_tab;
     std::function<bool(std::size_t)> close_bottom_panel_tab;
@@ -48,10 +55,13 @@ class TabMouseCoordinator {
     std::function<bool(int)> scroll_project_tab_strip;
     std::function<bool(int)> scroll_editor_tab_strip;
     std::function<bool(int)> scroll_bottom_panel_tab_strip;
-    // Per-group editor tab strips: maps each group index to its on-screen tab
-    // strip rect (one entry for a single group, two in a split). Lets the tab
-    // mouse path resolve which group's strip the pointer hit and focus it.
-    std::function<std::vector<std::pair<std::size_t, SDL_FRect>>()> compute_editor_group_tab_strips;
+    // Per-group editor rects (one entry for a single group, two in a split), so
+    // the tab mouse path can resolve which group's strip the pointer hit and
+    // focus it. Takes the caller's layout and hands back the heap-free
+    // InlineVector-backed struct: flattening it into a vector of pairs was a heap
+    // allocation AND a second full layout computation, on every motion event of a
+    // drag and every wheel tick over a strip.
+    std::function<EditorGroupRectsLayout(const WorkspaceLayout&)> compute_editor_group_rects;
     std::function<void(std::size_t)> focus_editor_group;
   };
 
@@ -67,30 +77,66 @@ class TabMouseCoordinator {
   bool HandleWheel(const SDL_Event& event,
                    const WorkspaceLayout& layout,
                    int vertical_ticks);
+  // Re-runs the drag update against the stored pointer position, with no new
+  // event. The shell's animation tick calls this so a pointer parked at the edge
+  // of an overflowing strip keeps auto-scrolling. Returns true if anything moved.
+  bool TickDragAutoScroll();
+  // Abandons a live drag: the lifted tab glides home and nothing is reordered.
+  // Escape does this, and so does the window losing focus — the button-up would
+  // be delivered to whoever took the focus, so the gesture cannot be finished.
+  // Returns true if there was a drag to abandon.
+  bool CancelDrag();
 
  private:
+  // The on-screen tab strip of each editor group, heap-free. Falls back to a
+  // single entry for the focused group over `layout.tab_strip` when the per-group
+  // operation is unavailable.
+  struct EditorGroupTabStrips {
+    struct Entry {
+      std::size_t group_index = 0;
+      SDL_FRect strip{};
+    };
+    std::array<Entry, kMaxEditorGroups> entries{};
+    std::size_t count = 0;
+  };
+  EditorGroupTabStrips ResolveEditorGroupTabStrips(const WorkspaceLayout& layout) const;
+
   // Resolved geometry/state for the strip that owns the in-flight drag. Shared
   // by motion (compute target slot) and commit (single reorder on release).
   struct DragStrip {
     SDL_FRect strip{};
-    std::vector<WorkspaceShell::VisibleStripTab> tabs;  // model-space, as rendered
+    // Borrowed: points into the owning service's memoized visible-tab list. Valid
+    // only until something rebuilds that strip, which is why every mutation
+    // re-resolves rather than reusing an older DragStrip.
+    const std::vector<WorkspaceShell::VisibleStripTab>* tabs = nullptr;
     std::size_t count = 0;          // reorderable items in the dragged tab's kind
     std::size_t active = 0;         // active index within that kind list
     std::size_t model_offset = 0;   // model index where this kind's range begins
     std::function<bool(std::size_t)> move;  // commit a reorder within the kind list
+    std::function<bool(int)> scroll;        // step the strip's overflow window
+    std::function<WorkspaceShell::TabStripOverflowControls(
+        const SDL_FRect&, const std::vector<WorkspaceShell::VisibleStripTab>&)>
+        overflow;
     bool valid = false;
   };
   DragStrip ResolveDragStrip(const WorkspaceLayout& layout, TabDragKind kind);
   DragStrip ResolveBottomPanelDragStrip(const WorkspaceLayout& layout);
-  void CommitDrag();
+  // Recomputes slot + slide targets for the current `pointer_x`, auto-scrolling
+  // first if the pointer is parked at an edge with something hidden behind it.
+  bool UpdateDragForPointer();
+  bool AutoScrollDragStrip(const DragStrip& d);
+  // Commits the pending reorder (if any) and hands off to the post-release
+  // settle glide in one pass, so the strip is resolved once before the model
+  // moves and once after instead of twice on each side.
+  void FinishDrag();
   void PersistReorderedTabs(TabDragKind kind);
   // Recomputes the Chrome-like slide targets for the live pointer: neighbor tabs
   // ease toward `d`'s displaced layout with a gap opened at `insertion_slot`.
   void SeedSlideTargets(const DragStrip& d, std::size_t insertion_slot);
-  // Kicks off the post-release settle so the dropped tab glides from the ghost
-  // position into its committed slot. Call after CommitDrag(), before the drag
-  // state is cleared. Clears the slide animation when there was no live drag.
-  void SeedSettle();
+  // Steps the ease on the input thread. Motion events arrive faster than the
+  // ~16ms scheduled wake, so without this the neighbors would only move once the
+  // pointer paused.
+  void AdvanceSlideOnInputThread();
 
   ProjectCatalogState& project_catalog_;
   ProjectWorkspaceState& state_;

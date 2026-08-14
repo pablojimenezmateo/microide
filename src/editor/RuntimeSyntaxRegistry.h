@@ -83,6 +83,15 @@ HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
                               std::string_view first_line);
+// HighlightLine writing its tokens into a caller-owned vector, so a per-line
+// token cache can retokenize into the buffer it already holds instead of
+// allocating one per line per repaint. `*tokens` is overwritten (and left empty
+// for a line that is not tokenized at all); its capacity is retained.
+SyntaxState HighlightLineInto(std::string_view line,
+                              const std::filesystem::path& path,
+                              const SyntaxState& state,
+                              std::vector<SyntaxTokenKind>* tokens,
+                              std::string_view first_line = {});
 SyntaxState AdvanceState(std::string_view line,
                          const std::filesystem::path& path,
                          const SyntaxState& state,

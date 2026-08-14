@@ -21,7 +21,6 @@ class CompareMouseCoordinator {
     std::function<TextGridInteractionLayout(const WorkspaceShell::CompareSurfaceLayout&,
                                             CompareTabState&)>
         build_compare_right_interaction_layout;
-    std::function<std::size_t(const CompareTabState&, std::size_t)> compare_right_line_for_row;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<void()> reset_caret_blink;
     std::function<std::optional<std::string>()> read_primary_selection_text;

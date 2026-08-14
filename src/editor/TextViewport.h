@@ -220,9 +220,33 @@ class TextViewport {
   bool soft_wrap() const { return soft_wrap_; }
   void MoveCursorVertical(int delta, bool extend_selection = false);
   void MoveCursorHorizontal(int delta, bool extend_selection = false);
+  // Word-granular horizontal motion: Ctrl+Left (`delta < 0`, VS Code
+  // `cursorWordStartLeft`) and Ctrl+Right (`delta > 0`, `cursorWordEndRight`),
+  // with Shift extending. Crosses the line boundary in both directions the way
+  // the character form does. Applies to every caret; the boundary rule is
+  // `editor/WordBoundary.h`, shared with the single-line surfaces.
+  void MoveCursorWord(int delta, bool extend_selection = false);
+  // Word-granular deletion: Ctrl+Backspace (`direction < 0`) and Ctrl+Delete
+  // (`direction > 0`). Deletes the selection instead when there is one, joins
+  // with the neighbouring line at a line edge, and takes an indent run on its
+  // own (see `DeleteWordBoundaryLeft`). Applies to every caret.
+  void DeleteWord(int direction);
   void MoveCursorLineStart(bool extend_selection = false);
   void MoveCursorLineEnd(bool extend_selection = false);
+  // Reposition the caret, LEAVING any secondary carets in place. This is the
+  // primitive: its internal callers (ShapingActions rebuilding a caret set,
+  // SnippetEngine placing a tabstop, the drag collapse-then-extend idiom) depend
+  // on the secondaries surviving. User-facing jumps want JumpCursorTo below.
   void MoveCursorTo(std::size_t line, std::size_t column, bool extend_selection = false);
+  // A user-facing JUMP to a location — goto-line, find-next, jump-to-bracket,
+  // go-to-definition, a problems/search-result reveal, a stack-frame click, a
+  // plugin's open-at-line. Collapses to a single caret first, then moves, which
+  // is what VS Code does for every one of these: a multi-caret set is anchored
+  // to where the user was working, and a jump elsewhere strands it off-screen
+  // where its next edit is invisible (TD-2026-08-13-203). Prefer this over
+  // ClearSecondaryCarets() + MoveCursorTo(): the open-coded pair is how these
+  // call sites diverged in the first place.
+  void JumpCursorTo(std::size_t line, std::size_t column, bool extend_selection = false);
   void MoveCursorToVisualColumn(std::size_t line,
                                 std::size_t visual_column,
                                 bool extend_selection = false);
@@ -550,6 +574,10 @@ class TextViewport {
     return last_applied_edit_line_span_;
   }
   std::string SelectedText() const;
+  // The text of an arbitrary range. Public because a drag-and-drop move captures
+  // its source at press time and applies the edit at release, so it cannot read
+  // "whatever is selected now" (editor/TextDragDrop.h).
+  std::string TextInRange(const SelectionRange& range) const;
   // VSCode-style multi-caret copy: each caret's selection text joined by '\n' in
   // caret position order. Returns nullopt unless there are multiple carets and
   // every caret has a non-empty selection (the Ctrl-D case) — callers then fall
@@ -565,6 +593,13 @@ class TextViewport {
   void ClearSelection();
   void SelectAll();
   void SelectWordAtCursor();
+  // The identifier run under `position`, or nullopt when it is not on one. Shared
+  // with the double-click-drag path, which needs the range for a position that is
+  // not the caret; SelectWordAtCursor is this plus "put the caret on it".
+  std::optional<SelectionRange> WordRangeAt(TextPosition position) const;
+  // The whole of `line_index`, end-exclusive at the next line's start so a
+  // multi-line line-granular selection joins up across the newlines.
+  SelectionRange LineRangeAt(std::size_t line_index) const;
   void SelectLineAtCursor();
   // Non-mutating seed span for occurrences highlight / match actions (single logical line).
   std::optional<SelectionRange> OccurrenceSeedSpanForHighlight() const;
@@ -672,6 +707,22 @@ class TextViewport {
   void UpgradeEncodingForInsertedText(std::string_view text);
   void EnsureInitialHighlightState() const;
   void EnsureHighlightCaches() const;
+  // One line's cached tokens plus the generation they were computed in. See
+  // highlight_cache_ for why staleness is stamped rather than erased.
+  struct HighlightCacheEntry {
+    std::vector<SyntaxTokenKind> tokens;
+    std::uint64_t generation = 0;
+  };
+  // Invalidate every per-line token cache entry without freeing it. See
+  // highlight_cache_generation_.
+  void DropHighlightTokenCache() const;
+  // Invalidate the entries at or after `start_line`, keeping the ones below it —
+  // the shape a content edit needs, since the syntax state chains forward and
+  // only lines from the edit on can have changed. Also without freeing.
+  void StaleHighlightTokensFrom(std::size_t start_line) const;
+  // The entry for `line_index` if it was computed in the current generation,
+  // else nullptr. The single place staleness is decided.
+  const HighlightCacheEntry* CurrentHighlightCacheEntry(std::size_t line_index) const;
   void EnsureHighlightCheckpoints() const;
   SyntaxState HighlightStateBeforeLine(std::size_t line_index) const;
   std::size_t CurrentLineLength() const;
@@ -743,7 +794,13 @@ class TextViewport {
   // carets, capture the affected slice, reverse-walk applying one history entry
   // per caret with position remap, then commit one aggregate undo entry). Only
   // the per-caret edit differs, so they route through ApplyMultiCaretEdit.
-  enum class MultiCaretEditKind { Insert, Backspace, DeleteForward };
+  enum class MultiCaretEditKind {
+    Insert,
+    Backspace,
+    DeleteForward,
+    DeleteWordBackward,
+    DeleteWordForward,
+  };
   // `per_caret_insert`, when non-null and sized to the deduped caret set on an
   // Insert, supplies a distinct string per caret in sorted order (distribute-
   // paste); otherwise every caret gets `insert_text`.
@@ -761,7 +818,6 @@ class TextViewport {
   bool ApplyMultiCaretBackspace(bool record_undo);
   bool ApplyMultiCaretDeleteForward(bool record_undo);
   // Extract the document text spanned by a normalized (start <= end) range.
-  std::string TextInRange(const SelectionRange& range) const;
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
                       CoalesceHint hint = CoalesceHint{});
   // Wrap `norm` (normalized, validated) by prepending `open` to its first line at
@@ -840,6 +896,13 @@ class TextViewport {
   void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column,
                             WrapRowAffinity& affinity, int delta) const;
   void AdvanceCaretHorizontal(TextPosition& caret, int delta) const;
+  // Where a word-granular step from `caret` lands. `for_deletion` picks the
+  // whitespace-heuristic boundary (Ctrl+Backspace eats an indent run whole)
+  // rather than the motion boundary; the two differ only in front of a run of
+  // two or more spaces.
+  TextPosition WordTargetForCaret(const TextPosition& caret,
+                                  int delta,
+                                  bool for_deletion) const;
   void DedupeSecondaryCaretsAgainstPrimary();
   std::size_t PreferredColumnForCaret(const TextPosition& caret,
                                       WrapRowAffinity affinity = WrapRowAffinity::kNextRow) const;
@@ -945,7 +1008,22 @@ class TextViewport {
   std::vector<SelectionRange> box_ranges_scratch_;
   std::vector<SecondaryCaret> secondary_caret_candidates_scratch_;
   mutable TextLayoutCache layout_cache_;
-  mutable std::unordered_map<std::size_t, std::vector<SyntaxTokenKind>> highlight_cache_;
+  // Per-line token cache. Entries carry the generation they were computed in
+  // rather than being erased when the document changes: an edit bumps
+  // `highlight_cache_generation_`, every entry becomes a miss, and the next paint
+  // re-tokenizes each visible line straight back INTO the vector already sitting
+  // in the map. Clearing instead freed one hash node plus one token vector per
+  // cached line on every keystroke and re-allocated both on the same frame — a
+  // screenful of churn per character typed, for a cache whose keys and sizes are
+  // almost always identical either side of the edit.
+  //
+  // A stale entry keeps its token buffer resident until it is evicted, so the
+  // retained bytes are the entry cap (kHighlightCacheLimit lines) times the
+  // per-line token cap, which is the same ceiling the live cache already had.
+  mutable std::unordered_map<std::size_t, HighlightCacheEntry> highlight_cache_;
+  // Starts at 1 so a default-constructed entry (generation 0) can never read as
+  // current. Bumped by DropHighlightTokenCache; never reset.
+  mutable std::uint64_t highlight_cache_generation_ = 1;
   mutable std::deque<std::size_t> highlight_cache_order_;
   mutable std::optional<SyntaxState> initial_highlight_state_;
   mutable std::vector<SyntaxState> line_highlight_states_;

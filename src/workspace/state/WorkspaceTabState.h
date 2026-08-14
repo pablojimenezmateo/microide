@@ -19,9 +19,11 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SnippetEngine.h"
 #include "editor/TextLayout.h"
+#include "editor/BracketScanner.h"
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
 #include "util/PathMatch.h"
+#include "workspace/DiffWrapLayout.h"
 #include "workspace/render/OverviewRuler.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
@@ -121,6 +123,13 @@ struct CompareTabState {
   editor::SyntaxState right_current_syntax_state;
   compare::CompareModel model;
   editor::TextViewport right_viewport;
+  // Soft-wrap row table for the two panes. Inactive (and empty) unless
+  // `editor.wrap` is on, in which case a presentation row occupies
+  // max(left segments, right segments) on-screen rows and the shorter side is
+  // padded with blank rows so the panes stay aligned (TD-2026-08-13-200).
+  // `scroll_row` is an index into THIS table; `selected_row` stays a
+  // presentation-row index, so a selected wrapped line highlights whole.
+  DiffWrapLayout wrap_layout;
   std::vector<std::vector<editor::SyntaxTokenKind>> left_tokens_by_row;
   std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
   // Non-zero where this row's right-pane tokens ARE its left-pane tokens, so the
@@ -136,6 +145,19 @@ struct CompareTabState {
   // states — where it is already computed, rather than re-deriving it per visible
   // row per frame inside a render TU.
   std::vector<std::uint8_t> right_tokens_alias_left_by_row;
+  // Bracket-match memo for the editable pane, keyed exactly as the editor
+  // renderer's is: (content revision, caret line, caret column). FindBracketMatch
+  // is O(file), and the compare surface paints through its own row loop with no
+  // access to the editor renderer's cache — so without this, turning the
+  // highlight on would have traded a per-frame O(file) scan for it
+  // (TD-2026-08-13-206). One entry, which is the natural cardinality: a tab has
+  // one caret.
+  std::uint64_t bracket_match_content_revision = 0;
+  std::size_t bracket_match_caret_line = 0;
+  std::size_t bracket_match_caret_column = 0;
+  std::optional<editor::BracketMatchPair> bracket_match_pair;
+  bool bracket_match_valid = false;
+
   std::uint64_t visible_layout_cache_model_revision = 0;
   std::vector<CompareVisibleLayoutCacheEntry> visible_layout_cache;
   std::unordered_map<CompareVisibleLayoutCacheKey, std::size_t,
@@ -187,6 +209,10 @@ struct CompareTabState {
   std::size_t max_visual_columns = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
+  // On-screen row count the cached markers were scaled against. Soft wrap makes
+  // that a different number from the presentation-row count and moves it on every
+  // re-wrap (a divider drag, a window resize), so it is part of the key.
+  std::size_t scrollbar_marker_cache_rows = 0;
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
@@ -233,8 +259,19 @@ struct MergeTabState {
   std::size_t incoming_syntax_rows_tokenized = 0;
   std::size_t current_syntax_rows_tokenized = 0;
   editor::TextViewport result_viewport;
+  // Soft-wrap row table for the two read-only source panes (incoming = left,
+  // current = right). Inactive unless `editor.wrap` is on. The result pane wraps
+  // through its own viewport; the three panes share `scroll_row`, which is a
+  // visual-row index in every mode.
+  DiffWrapLayout wrap_layout;
   std::optional<std::string> persisted_output_baseline;
   std::vector<MergeTrackedConflict> conflicts;
+  // `conflicts` with every line field projected into on-screen row space (see
+  // workspace/MergeWrapRows.h). Derived cache, warmed from const geometry paths;
+  // unused (and empty) while wrap is off, where the conflicts already ARE rows.
+  mutable std::vector<MergeTrackedConflict> visual_conflicts;
+  mutable std::uint64_t visual_conflicts_key = 0;
+  mutable bool visual_conflicts_valid = false;
   std::optional<MergeHoverState> hover_state;
   std::size_t selected_hunk = 0;
   int scroll_row = 0;
@@ -243,6 +280,8 @@ struct MergeTabState {
   std::uint64_t model_revision = 0;
   bool scrollbar_marker_cache_valid = false;
   std::uint64_t scrollbar_marker_cache_revision = 0;
+  // See the compare tab's field of the same name.
+  std::size_t scrollbar_marker_cache_rows = 0;
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;

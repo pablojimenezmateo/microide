@@ -1,5 +1,8 @@
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 
+#include "workspace/coordinators/SelectionAutoscroll.h"
+#include "workspace/coordinators/SelectionGranularity.h"
+
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/render/DiffDividerGeometry.h"
@@ -116,16 +119,17 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     return false;
   }
   const int clicked_row = static_cast<int>(row_offset_px / surface_layout.line_height);
-  const int presentation_row = compare_tab->scroll_row + clicked_row;
-  if (clicked_row < 0 || presentation_row < 0 ||
-      static_cast<std::size_t>(presentation_row) >= CompareTabPresentationRowCount(*compare_tab)) {
+  const int visual_row = compare_tab->scroll_row + clicked_row;
+  if (clicked_row < 0 || visual_row < 0 ||
+      static_cast<std::size_t>(visual_row) >= CompareTabVisualRowCount(*compare_tab)) {
     compare_tab->right_view_active = false;
     return false;
   }
 
   const std::size_t previous_selected_row = compare_tab->selected_row;
   const bool previous_right_view_active = compare_tab->right_view_active;
-  compare_tab->selected_row = static_cast<std::size_t>(presentation_row);
+  compare_tab->selected_row =
+      CompareVisualRowToPresentationRow(*compare_tab, static_cast<std::size_t>(visual_row));
   if (const compare::ComparePresentationRow* row =
           CompareTabPresentationRowAt(*compare_tab, compare_tab->selected_row);
       row != nullptr && row->kind == compare::ComparePresentationRowKind::CollapsedContext) {
@@ -165,11 +169,14 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     compare_tab->right_view_active = true;
     const TextGridInteractionLayout right_interaction =
         operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
-    const std::size_t line = operations_.compare_right_line_for_row(
-        *compare_tab, CompareTabSelectedModelRow(*compare_tab));
-    const std::size_t visual_column = TextGridVisualColumnAtX(right_interaction, event.button.x);
+    // The pointer's on-screen cell resolves to a document position through the wrap
+    // table: with wrap off that is the identity, with it on it subtracts the row's
+    // hanging indent and adds its segment's first visual column.
+    const CompareRightPaneHit hit = CompareRightPaneHitAt(
+        *compare_tab, static_cast<std::size_t>(visual_row),
+        TextGridVisualColumnAtX(right_interaction, event.button.x));
     compare_tab->right_viewport.MoveCursorToVisualColumn(
-        line, visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
+        hit.line, hit.visual_column, (SDL_GetModState() & SDL_KMOD_SHIFT) != 0);
     operations_.sync_compare_selection_from_viewport(*compare_tab, false);
     operations_.reset_caret_blink();
     if (event.button.button == SDL_BUTTON_MIDDLE && compare_tab->right_editable) {
@@ -190,6 +197,12 @@ bool CompareMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       state_.surface.focus = FocusTarget::Editor;
       return true;
     }
+    // A double-click selects the word and a triple-click the line, and the drag
+    // that follows keeps that granularity -- the same gesture the editor pane
+    // has. This surface used to place a bare caret for any click count.
+    selection_granularity::ApplyClick(interaction_state_, compare_tab->right_viewport,
+                                      event.button.clicks);
+    operations_.sync_compare_selection_from_viewport(*compare_tab, false);
     interaction_state_.mouse_selecting = true;
   } else {
     compare_tab->right_view_active = false;
@@ -288,20 +301,45 @@ bool CompareMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
 
   const auto surface_layout =
       operations_.compute_compare_surface_layout(layout.editor_surface, *compare_tab);
-  if (event.motion.x < surface_layout.right_x) {
-    return false;
-  }
   const TextGridInteractionLayout right_interaction =
       operations_.build_compare_right_interaction_layout(surface_layout, *compare_tab);
-  const auto hovered_row = VisibleTextGridLineAtY(right_interaction, event.motion.y);
-  if (!hovered_row.has_value()) {
-    return false;
-  }
+  // A drag that leaves the right pane -- sideways into the left pane, or above /
+  // below the rows -- keeps extending the selection toward the pointer. The two
+  // refusals that used to sit here (`x < right_x`, and an unhittable row) froze
+  // it instead, which on this surface is easy to trip: the left pane is right
+  // there, half a drag away. Clamp the pointer onto the right pane's own grid
+  // and carry on; `ClampTextGridLineAtY` is the same projection the merge result
+  // pane already used.
+  const float pointer_x = std::max(static_cast<float>(event.motion.x), surface_layout.right_x);
+  // A clamp alone still stops the selection at the last visible row when the
+  // pointer is held past the edge: no further motion arrives, so nothing extends
+  // it. Arming from the REAL pointer lets the idle wake keep walking the clamped
+  // edge through the document, exactly as on the editor surface.
+  selection_autoscroll::Arm(interaction_state_,
+                            selection_autoscroll::BandFor(right_interaction),
+                            static_cast<float>(event.motion.x),
+                            static_cast<float>(event.motion.y));
+  const std::size_t row = ClampTextGridLineAtY(right_interaction, static_cast<float>(event.motion.y));
 
-  const std::size_t line = operations_.compare_right_line_for_row(*compare_tab, *hovered_row);
+  // `row` is an ON-SCREEN row. It used to be handed straight to the model-row
+  // lookup, which is a different index space the moment the diff collapses a run
+  // or wraps a line -- so a drag resolved to the wrong document line.
+  const CompareRightPaneHit hit =
+      CompareRightPaneHitAt(*compare_tab, row, TextGridVisualColumnAtX(right_interaction, pointer_x));
+  const std::size_t line = hit.line;
   const std::size_t previous_selected_row = compare_tab->selected_row;
-  const std::size_t visual_column = TextGridVisualColumnAtX(right_interaction, event.motion.x);
-  compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, true);
+  const std::size_t visual_column = hit.visual_column;
+  if (selection_granularity::DragIsGranular(interaction_state_)) {
+    // Resolve the pointer to a logical position first: ExtendToPointer works in
+    // text columns, and the grid hands out visual ones.
+    compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, false);
+    selection_granularity::ExtendToPointer(
+        interaction_state_, compare_tab->right_viewport,
+        editor::TextPosition{compare_tab->right_viewport.cursor_line(),
+                             compare_tab->right_viewport.cursor_column()});
+  } else {
+    compare_tab->right_viewport.MoveCursorToVisualColumn(line, visual_column, true);
+  }
   operations_.sync_compare_selection_from_viewport(*compare_tab, false);
   operations_.reset_caret_blink();
   if (compare_tab->selected_row != previous_selected_row) {
@@ -419,10 +457,6 @@ CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
           .build_compare_right_interaction_layout =
               [this](const CompareSurfaceLayout& surface, CompareTabState& compare_tab) {
                 return BuildCompareRightInteractionLayout(surface, compare_tab);
-              },
-          .compare_right_line_for_row =
-              [this](const CompareTabState& compare_tab, std::size_t row_index) {
-                return CompareRightLineForRow(compare_tab, row_index);
               },
           .sync_compare_selection_from_viewport =
               [this](CompareTabState& compare_tab, bool reveal_selection) {

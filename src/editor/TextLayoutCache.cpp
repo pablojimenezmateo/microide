@@ -188,6 +188,14 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   }
   const auto [it, _] = visible_line_cache_.emplace(cache_key, VisibleLineCacheEntry{});
   it->second.key = cache_key;
+  // A layout retired by the last invalidation carries the same three buffers this
+  // row would otherwise allocate from scratch; build_into overwrites the contents
+  // and keeps the capacity.
+  if (!visible_line_layout_pool_.empty()) {
+    it->second.layout = std::move(visible_line_layout_pool_.back());
+    visible_line_layout_pool_.pop_back();
+    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
+  }
   build_into(it->second.layout);
   VisibleLineLruPushBack(it->second);
   return it->second.layout;
@@ -225,78 +233,14 @@ void TextLayoutCache::WrapSingleLine(std::string_view line_text,
                                      std::size_t tab_size,
                                      std::size_t wrap_columns,
                                      std::vector<WrappedRow>& out) {
-  if (line_text.empty()) {
-    out.push_back(WrappedRow{line_index, 0, 0, 0});
-    return;
-  }
-
-  // Hanging indent: continuation rows of this line render aligned under the
-  // line's leading whitespace. Compute that indent once, clamped so a deep
-  // indent never collapses continuation rows to a degenerate width.
-  std::size_t hanging_indent = 0;
-  {
-    std::size_t indent_visual = 0;
-    for (std::size_t k = 0; k < line_text.size(); ++k) {
-      const char ch = line_text[k];
-      if (ch != ' ' && ch != '\t') {
-        break;
-      }
-      indent_visual = TextLayout::AdvanceVisualColumn(indent_visual, ch, tab_size);
-    }
-    hanging_indent = std::min(indent_visual, wrap_columns / 2);
-  }
-
-  // Single pass: walk the line tracking the visual column, the last whitespace
-  // break opportunity, and the current row's text start. Break before any
-  // character that would push the row past the row's available width; prefer
-  // breaking after the most recent whitespace if one is available inside the
-  // current row. Hard-break inside a long word only when no whitespace fits.
-  // Continuation rows (row_start_visual > 0) lose `hanging_indent` columns of
-  // width to the rendered indent.
-  std::size_t row_start_visual = 0;
-  std::size_t row_start_text = 0;
-  std::size_t last_break_visual = 0;
-  std::size_t last_break_text = 0;
-  std::size_t visual = 0;
-  std::size_t i = 0;
-  const std::size_t line_size = line_text.size();
-  while (i < line_size) {
-    const char ch = line_text[i];
-    const std::size_t seq_len = util::Utf8SequenceLength(line_text, i);
-    const std::size_t next_visual = TextLayout::AdvanceVisualColumn(visual, ch, tab_size);
-    const std::size_t effective_wrap =
-        wrap_columns - (row_start_visual == 0 ? 0 : hanging_indent);
-
-    if (next_visual - row_start_visual > effective_wrap && i > row_start_text) {
-      std::size_t break_visual;
-      std::size_t break_text;
-      if (last_break_text > row_start_text) {
-        break_visual = last_break_visual;
-        break_text = last_break_text;
-      } else {
-        break_visual = visual;
-        break_text = i;
-      }
-      out.push_back(WrappedRow{line_index, row_start_visual, break_visual,
-                               row_start_visual == 0 ? 0 : hanging_indent});
-      row_start_visual = break_visual;
-      row_start_text = break_text;
-      last_break_visual = row_start_visual;
-      last_break_text = row_start_text;
-      visual = break_visual;
-      i = break_text;
-      continue;
-    }
-
-    visual = next_visual;
-    i += seq_len;
-    if (ch == ' ' || ch == '\t') {
-      last_break_visual = visual;
-      last_break_text = i;
-    }
-  }
-  out.push_back(WrappedRow{line_index, row_start_visual, visual,
-                           row_start_visual == 0 ? 0 : hanging_indent});
+  // Thin adapter over the one wrap implementation (TextLayout::WrapLineSegments),
+  // which the compare/merge diff surfaces share -- so a break decision cannot
+  // differ between a file in the editor and the same file in a diff pane.
+  TextLayout::WrapLineSegments(
+      line_text, tab_size, wrap_columns,
+      [&out, line_index](std::size_t visual_start, std::size_t visual_end, std::size_t indent) {
+        out.push_back(WrappedRow{line_index, visual_start, visual_end, indent});
+      });
 }
 
 void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
@@ -858,19 +802,41 @@ void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
   cached_visual_line_columns_.clear();
   cached_max_visual_columns_tab_size_ = 0;
   cached_max_visual_columns_content_revision_ = 0;
+  // Retire, don't destroy. This runs from UpdateVisualColumnCacheAfterEdit
+  // whenever the per-line width table cannot be spliced, which is an ordinary
+  // edit -- and it runs AFTER InvalidateVisibleLineCacheFrom has already retired
+  // that edit's rows, so clearing the pool here handed the buffers back to the
+  // allocator one call before the repaint asked for them again. `InvalidateAll`
+  // is the wipe that actually releases them.
+  RetireVisibleLineLayouts();
   visible_line_cache_.clear();
   visible_line_lru_head_ = nullptr;
   visible_line_lru_tail_ = nullptr;
+}
+
+void TextLayoutCache::RetireVisibleLineLayouts() {
+  for (auto& [key, entry] : visible_line_cache_) {
+    if (visible_line_layout_pool_.size() >= kVisibleLineCacheLimit) {
+      break;
+    }
+    visible_line_layout_pool_.push_back(std::move(entry.layout));
+  }
 }
 
 void TextLayoutCache::InvalidateVisibleLineCacheFrom(std::size_t start_line) {
   for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {
     if (it->first.line_index >= start_line) {
       VisibleLineLruUnlink(it->second);
+      // Retire the layout instead of destroying it; see
+      // visible_line_layout_pool_. Over the cap it is dropped, which is the plain
+      // erase this used to be.
+      if (visible_line_layout_pool_.size() < kVisibleLineCacheLimit) {
+        visible_line_layout_pool_.push_back(std::move(it->second.layout));
+      }
       it = visible_line_cache_.erase(it);
-    } else {
-      ++it;
+      continue;
     }
+    ++it;
   }
 }
 
@@ -921,6 +887,14 @@ std::size_t TextLayoutCache::ApproximateResidentBytes() const {
     bytes += entry.layout.source_columns.capacity() * sizeof(std::size_t);
     bytes += entry.layout.text_offsets.capacity() * sizeof(std::size_t);
   }
+  // Retired layouts hold their buffers until a miss claims them, so they are
+  // resident and belong in the number this reports.
+  for (const LayoutLine& layout : visible_line_layout_pool_) {
+    bytes += sizeof(LayoutLine);
+    bytes += layout.text.capacity();
+    bytes += layout.source_columns.capacity() * sizeof(std::size_t);
+    bytes += layout.text_offsets.capacity() * sizeof(std::size_t);
+  }
   return bytes;
 }
 
@@ -931,6 +905,10 @@ void TextLayoutCache::InvalidateAll() {
   // actually means every cache.
   ClearVisibleLineAndMaxColumns();
   DropWrappedRowLayouts();
+  // The one caller that means "release it all". Everything else drops the cache
+  // but keeps the buffers for the repaint that follows.
+  visible_line_layout_pool_.clear();
+  visible_line_layout_pool_.shrink_to_fit();
 }
 
 }  // namespace microide::editor

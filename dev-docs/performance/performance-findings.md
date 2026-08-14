@@ -25,6 +25,85 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-13 (seventh pass) the two per-line caches free what the next frame rebuilds
+
+Found by running the allocation tracer against the real binary rather than
+reading the committed sweep — which is also how TD-2026-08-13-197 (the sweep's
+top-site NAMES are `-fipa-icf` folds) was found. In
+`editor_typing_minified_line.type_burst`, four of the five biggest sites were the
+same two shapes, resolved through `addr2line -i`:
+
+| allocations / iteration | site | what it is |
+| ---: | --- | --- |
+| 32 (40 B each) | `highlight_cache_.emplace` ← `HighlightedLineTokens` ← `EditorViewRenderer::Render` | a hash node per cached line |
+| 32 (192 B each) | `visible_line_cache_.emplace` ← `VisibleLineLayoutRefCached` ← `Render` | a hash node per rendered row |
+| 16 (1,536 B each) | `vector<size_t>::reserve` under the same | a `LayoutLine` buffer |
+
+Both caches were **erasing** on invalidation and re-emplacing on the repaint that
+immediately followed, so a keystroke freed a screenful of buffers and allocated
+the same screenful back on the same frame. The two fixes are the same idea:
+
+- **the per-line token cache stamps a generation instead of erasing.** An edit
+  bumps a counter (whole-document invalidation) or stales the suffix at/after the
+  edited line by zeroing those entries' stamps; the entry, its hash node and its
+  token vector all stay, and the retokenize writes straight into the vector via
+  the new `runtime_syntax::HighlightLineInto`. Lines *below* the edit keep their
+  stamp and are not recomputed, which is what the old suffix erase already did.
+  Retained bytes are bounded by the entry cap the live cache already had.
+- **the visible-line layout cache retires a `LayoutLine` into a pool.** The
+  eviction path already recycled a node (scrolling misses on every row); the edit
+  path did not. `InvalidateVisibleLineCacheFrom` and the width-table resync in
+  `ClearVisibleLineAndMaxColumns` now both move the layout into
+  `visible_line_layout_pool_`, and the next miss builds into it —
+  `BuildVisibleLineWindowInto` already `clear()`s rather than reassigns, so the
+  capacity survives. `InvalidateAll` stays the one call that releases the pool.
+
+The pool is a `vector<LayoutLine>` rather than extracted map nodes because a
+`node_type` is move-only and `TextLayoutCache` must stay copyable — a split pane
+copies its sibling's caches. That leaves the map node to allocate and reuses the
+three per-row buffers, which are the ones sized to the row.
+
+The trap worth remembering: the first version of the layout pool measured as
+doing nothing, because `UpdateVisualColumnCacheAfterEdit` calls
+`ClearVisibleLineAndMaxColumns` on any edit the per-line width table cannot
+splice — one call *after* the invalidation had filled the pool, and it cleared
+it. A regression test asserting the `editor.visible_line_layout_recycled` counter
+moves is what caught it; the code review had not.
+
+### Measured (perf lane, `p50_allocations` vs the committed baselines)
+
+Allocation counts are deterministic within one build configuration, so these
+hold despite the run being taken at load ~10; every wall/cpu/rss number from the
+same run is lane noise and is excluded. All eight scenarios PASS.
+
+| scenario | baseline | after | |
+| --- | ---: | ---: | ---: |
+| `lsp_document_symbols_parse` | 324,474 | 120,473 | −62.9 % |
+| `editor_soft_wrap_long_line_typing` | 7,959.5 | 3,713.5 | −53.3 % |
+| `editor_surround_multi_caret` | 808.5 | 645 | −20.2 % |
+| `editor_typing_minified_line` | 1,843.5 | 1,583.5 | −14.1 % |
+| `editor_smart_indent_typing` | 6,515 | 6,035 | −7.4 % |
+| `scroll_large_file` | 259 | 258 | −0.4 % |
+| `dap_protocol_encode_decode` | 330,309 | 329,508 | −0.2 % |
+| `merge_scroll_interleaved_hunks` | 14,296 | 14,295 | −0.0 % |
+
+Two of those numbers say something the headline does not:
+
+- **`dap_protocol_encode_decode` barely moves, and that is expected.** The −801
+  is the two envelope reserves; the deep-copy fix cannot show here because the
+  scenario passes `vars_body` as a const lvalue that it reuses across 200
+  iterations, so `MakeRequest` still has to copy it. The product path hands it a
+  temporary and now moves. A scenario measuring the *shape* of a call is not
+  automatically a scenario that can see the shape change.
+- **`merge_scroll_interleaved_hunks` does not move at all.** Its scroll burst is
+  compare-surface highlighting through `PopulateCompareSyntaxTokensForWindow`,
+  which does not go through the viewport token cache these two fixes touch.
+
+Nothing here can fail an allocation gate by getting cheaper — the gates are
+one-sided — so the evidence that the work still happens is the correctness
+tests, not the PASS: the two staleness tests, the recycle counter test, and the
+full suite at 29/29.
+
 ## 2026-08-06 (sixth pass) opening a file you already have open (perf-runner-v1)
 
 TD-2026-08-06-138 filed a counter reading: `editor.line_width_full_measures` was

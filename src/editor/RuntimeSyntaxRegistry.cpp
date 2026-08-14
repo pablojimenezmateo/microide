@@ -1433,6 +1433,16 @@ HighlightedLine HighlightLine(std::string_view line,
                               const std::filesystem::path& path,
                               const SyntaxState& state,
                               std::string_view first_line) {
+  HighlightedLine result;
+  result.end_state = HighlightLineInto(line, path, state, &result.tokens, first_line);
+  return result;
+}
+
+SyntaxState HighlightLineInto(std::string_view line,
+                              const std::filesystem::path& path,
+                              const SyntaxState& state,
+                              std::vector<SyntaxTokenKind>* tokens,
+                              std::string_view first_line) {
   util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::HighlightLine");
   const Registry& registry = GetRegistry();
 
@@ -1440,10 +1450,10 @@ HighlightedLine HighlightLine(std::string_view line,
       state.definition_id != 0 ? state.definition_id
                                : DetectDefinitionId(registry, path, nullptr, first_line);
 
-  HighlightedLine result;
-  result.end_state = SyntaxState{};
-  result.end_state.definition_id = definition_id;
+  SyntaxState end_state{};
+  end_state.definition_id = definition_id;
   if (line.empty() || line.size() > kMaxHighlightLineBytes) {
+    tokens->clear();
     // Leave `tokens` EMPTY rather than filling `line.size()` Plain entries. Every
     // consumer already treats a short/absent token vector as Plain at that column
     // (DecoratedTextGridRenderer, BracketScanner, FoldingModel, the auto-pair
@@ -1459,22 +1469,24 @@ HighlightedLine HighlightLine(std::string_view line,
     // level here would resume the rest of the file as code, so e.g. a blank line
     // inside a block comment / multi-line string mis-highlights everything after.
     if (state.definition_id == definition_id && state.region_depth > 0) {
-      result.end_state = state;  // definition_id already matches
+      end_state = state;  // definition_id already matches
     }
-    return result;  // empty, or too long to tokenize affordably: leave Plain
+    return end_state;  // empty, or too long to tokenize affordably: leave Plain
   }
 
   // Past the guard: the scoped highlighter writes through MarkRange, which only
   // overwrites existing entries, so the vector must be pre-sized to the line here.
-  result.tokens.assign(line.size(), SyntaxTokenKind::Plain);
+  // `assign` on a vector the caller already owns reuses its buffer whenever the
+  // capacity fits, which is the point of the Into form.
+  tokens->assign(line.size(), SyntaxTokenKind::Plain);
 
   // Resume the previous line's open-region stack only when the definition still
   // matches; otherwise start fresh at the top level.
   const bool resume = state.definition_id == definition_id && state.region_depth > 0;
   HighlightLineScoped(registry, definition_id, resume ? state.region_stack : nullptr,
-                      resume ? state.region_depth : 0, line, result.tokens, &result.end_state,
+                      resume ? state.region_depth : 0, line, *tokens, &end_state,
                       /*want_tokens=*/true);
-  return result;
+  return end_state;
 }
 
 SyntaxState AdvanceState(std::string_view line,

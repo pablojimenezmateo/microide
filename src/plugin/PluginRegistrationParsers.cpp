@@ -490,6 +490,48 @@ bool ParseFormatterRegistration(lua_State* state,
   return true;
 }
 
+bool ParseVirtualDocumentRegistration(lua_State* state,
+                                      const std::string& plugin_id,
+                                      VirtualDocumentRegistration* out,
+                                      std::string* error_message) {
+  if (out == nullptr) {
+    if (error_message != nullptr) {
+      *error_message = "virtual document registration output is required";
+    }
+    return false;
+  }
+  const int table_index = 1;
+  auto id_opt = ReadStringField(state, table_index, "id");
+  if (!id_opt || id_opt->empty()) {
+    if (error_message != nullptr) {
+      *error_message = "virtual document registration requires a non-empty id";
+    }
+    return false;
+  }
+  // NUL-reject the id, as every other contribution does (TD-2026-07-17A-080): a
+  // truncated id collides with another document's URI at the C-string boundary.
+  if (id_opt->find('\0') != std::string::npos) {
+    if (error_message != nullptr) {
+      *error_message = "virtual document id must not contain a NUL byte";
+    }
+    return false;
+  }
+  // The URI is DERIVED, never taken from the plugin: `virtual://<plugin>/<id>`.
+  // A plugin-supplied URI could name another plugin's document (or a non-virtual
+  // scheme), and the consumer side treats a URI as an identity.
+  out->contributed = PluginHost::ContributedVirtualDocument{
+      .uri = "virtual://" + plugin_id + "/" + *id_opt,
+      .language_id = ReadStringField(state, table_index, "language_id").value_or(std::string{}),
+      .content = ReadStringField(state, table_index, "content").value_or(std::string{}),
+      .editable = lua_interop::ReadBoolField(state, table_index, "editable"),
+      .plugin_id = plugin_id,
+  };
+  if (error_message != nullptr) {
+    error_message->clear();
+  }
+  return true;
+}
+
 bool ParseSaveParticipantRegistration(lua_State* state,
                                       const std::string& plugin_id,
                                       SaveParticipantRegistration* out,

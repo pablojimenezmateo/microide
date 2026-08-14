@@ -13,6 +13,7 @@
 #include "editor/TextLayout.h"
 #include "util/DebugTrace.h"
 #include "util/PerformanceTrace.h"
+#include "workspace/git/CompareTabReview.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/WorkspaceLayout.h"
 
@@ -73,16 +74,26 @@ TextGridInteractionLayout BuildEditorInteractionLayout(
 // lens exactly. Returns nullopt when nothing actionable is hit.
 // Result of hit-testing a point against the compare view's RIGHT text grid.
 struct CompareRightGridHit {
+  // Adjusted for the hit row: `text_x` carries the row's hanging indent and
+  // `horizontal_scroll` its first painted visual column, so everything that
+  // resolves an x into a column off this layout is wrap-correct without knowing
+  // about wrapping.
   TextGridInteractionLayout interaction;
-  std::size_t model_row = 0;  // index into compare_tab.model.rows
+  std::size_t visual_row = 0;  // ON-SCREEN row -- the interaction layout's space
+  std::size_t model_row = 0;   // index into compare_tab.model.rows
+  std::size_t visible_columns = 0;
 };
 
-// Resolve (x, y) to the diff-model row of the compare view's right pane, or
-// nullopt when the point is outside the grid, past the model, or on a row that
-// has no right-file line (a pure deletion). Both compare hover paths — the
-// diagnostic underline hit-test and the plugin hover query — resolved this with
-// byte-identical code, so a fix to the surface math in one silently missed the
-// other.
+// Resolve (x, y) to the compare view's right pane, or nullopt when the point is
+// outside the grid, past the model, or on a row that has no right-file line (a
+// pure deletion). Both compare hover paths — the diagnostic underline hit-test
+// and the plugin hover query — resolved this with byte-identical code, so a fix
+// to the surface math in one silently missed the other.
+//
+// The grid's row space is ON-SCREEN rows, which is what `compare_tab.scroll_row`
+// counts. It used to be built with a model-row `line_count` against that scroll,
+// so the two disagreed as soon as the diff collapsed a run — and, now, as soon as
+// a line wrapped.
 std::optional<CompareRightGridHit> HitTestCompareRightGrid(
     const render::TextRenderer& text_renderer,
     const WorkspaceShell::CompareSurfaceLayout& surface, const CompareTabState& compare_tab,
@@ -93,21 +104,45 @@ std::optional<CompareRightGridHit> HitTestCompareRightGrid(
                static_cast<float>(surface.visible_rows) * surface.line_height),
       surface.right_x + surface.gutter_width, surface.rows_y, surface.line_height,
       text_renderer.CharWidth(), static_cast<std::size_t>(std::max(0, compare_tab.scroll_row)),
-      compare_tab.model.rows.size(), compare_tab.horizontal_scroll,
+      CompareTabVisualRowCount(compare_tab), compare_tab.horizontal_scroll,
       static_cast<std::size_t>(surface.visible_rows), surface.right_visible_columns);
+  hit.visible_columns = surface.right_visible_columns;
   if (!Contains(hit.interaction.rect, x, y)) {
     return std::nullopt;
   }
-  const std::optional<std::size_t> model_row = VisibleTextGridLineAtY(hit.interaction, y);
-  if (!model_row.has_value() || *model_row >= compare_tab.model.rows.size()) {
+  const std::optional<std::size_t> visual_row = VisibleTextGridLineAtY(hit.interaction, y);
+  if (!visual_row.has_value()) {
     return std::nullopt;
   }
-  const compare::CompareRow& row = compare_tab.model.rows[*model_row];
+  const DiffWrapRow wrap_row = compare_tab.wrap_layout.RowAt(*visual_row);
+  if (!wrap_row.right_present) {
+    return std::nullopt;
+  }
+  const compare::ComparePresentationRow* presentation_row =
+      CompareTabPresentationRowAt(compare_tab, wrap_row.unit);
+  const std::size_t model_row =
+      presentation_row != nullptr &&
+              presentation_row->kind == compare::ComparePresentationRowKind::Model
+          ? presentation_row->model_row_index
+          : (compare_tab.presentation.rows.empty() ? wrap_row.unit
+                                                   : compare_tab.model.rows.size());
+  if (model_row >= compare_tab.model.rows.size()) {
+    return std::nullopt;
+  }
+  const compare::CompareRow& row = compare_tab.model.rows[model_row];
   if (row.right_line <= 0 ||
       static_cast<std::size_t>(row.right_line) > compare_tab.right_viewport.lines().size()) {
     return std::nullopt;
   }
-  hit.model_row = *model_row;
+  if (compare_tab.wrap_layout.active()) {
+    hit.interaction.text_x += static_cast<float>(wrap_row.right_indent) * text_renderer.CharWidth();
+    hit.interaction.horizontal_scroll = wrap_row.right_start;
+    hit.visible_columns = wrap_row.right_end > wrap_row.right_start
+                              ? wrap_row.right_end - wrap_row.right_start
+                              : 0;
+  }
+  hit.visual_row = *visual_row;
+  hit.model_row = model_row;
   return hit;
 }
 
@@ -376,11 +411,11 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     // hand-rolled `*model_row - scroll_row` used the unclamped compare scroll_row,
     // which size_t-underflows to a huge Y if scroll_row transiently exceeds the
     // clamp (scrolled to bottom, then the window is enlarged before re-clamp).
-    const float line_y = TextGridLineY(interaction, model_row_index);
+    const float line_y = TextGridLineY(interaction, hit->visual_row);
     for (const editor::PublishedDiagnostic& diagnostic : diagnostics) {
       const auto rect = editor::DiagnosticUnderlineRect(
           text_renderer_, interaction.text_x, line_y, surface.line_height, row.right_text,
-          line_index, compare_tab->horizontal_scroll, surface.right_visible_columns,
+          line_index, interaction.horizontal_scroll, hit->visible_columns,
           compare_tab->right_viewport.tab_size(), diagnostic);
       if (!rect.has_value()) {
         continue;
@@ -491,13 +526,13 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     const std::size_t model_row_index = hit->model_row;
     const compare::CompareRow& row = compare_tab->model.rows[model_row_index];
 
-    // Compare view: the visible grid row is the diff-model row (interaction space),
+    // Compare view: the visible grid row is the ON-SCREEN row (interaction space),
     // while the plugin query line is the right-file line it maps to. Passing the
     // file line for both (the old bug) made the row-identity check and anchor Y
     // wrong whenever any diff hunk sat above the cursor, so hover never appeared.
     const std::size_t document_line = static_cast<std::size_t>(row.right_line - 1);
     return PluginHoverTargetForLine(compare_tab->right_viewport.path(), row.right_text,
-                                    model_row_index, document_line,
+                                    hit->visual_row, document_line,
                                     compare_tab->right_viewport.tab_size(), interaction, x, y);
   }
 

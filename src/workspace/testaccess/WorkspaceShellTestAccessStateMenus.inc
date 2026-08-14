@@ -891,6 +891,23 @@
   static bool TransientMouseSelecting(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.mouse_selecting;
   }
+  // The two gestures that are ALSO a live drag but are not `mouse_selecting`: a
+  // selection being dragged to a new home, and a rectangular selection. Both carry
+  // document coordinates captured at press, so both have to die with the document.
+  static void SetTransientTextDragging(WorkspaceShell& shell) {
+    shell.context_.interaction_state.text_drag = InteractionState::TextDragState::Dragging;
+    shell.context_.interaction_state.text_drag_has_drop = true;
+  }
+  static bool TransientTextDragIsIdle(const WorkspaceShell& shell) {
+    return shell.context_.interaction_state.text_drag == InteractionState::TextDragState::None &&
+           !shell.context_.interaction_state.text_drag_has_drop;
+  }
+  static void SetTransientBoxSelecting(WorkspaceShell& shell) {
+    shell.context_.interaction_state.editor_box_selecting = true;
+  }
+  static bool TransientBoxSelecting(const WorkspaceShell& shell) {
+    return shell.context_.interaction_state.editor_box_selecting;
+  }
   static bool FocusIsEditor(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.surface.focus == WorkspaceShell::FocusTarget::Editor;
   }

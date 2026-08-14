@@ -213,8 +213,11 @@ struct BottomPanelTabDragViewModel {
   std::size_t source_index = 0;
   float pointer_x = 0.0f;
   float grab_offset_x = 0.0f;
-  bool sliding = false;        // slide animation targets this strip (drag or settle)
-  std::vector<float> offsets;  // per model-index x offset (empty when not sliding)
+  bool sliding = false;  // slide animation targets this strip (drag or settle)
+  // Per model-index x offset, borrowed from the live slide state (empty when not
+  // sliding). Frame-stable: the offsets are stepped by event handling, never by
+  // paint. Owning it copied a vector per painted frame for the whole drag.
+  std::span<const float> offsets;
 };
 
 struct BottomPanelSurfaceViewModel {
@@ -227,7 +230,10 @@ struct BottomPanelSurfaceViewModel {
   // Prepared tab strip: PrepareFrameOnce fills these once the frame layout is
   // known (the strip geometry needs the bottom-panel header rect), so the render
   // TU draws prebuilt tabs instead of re-deriving them from project state.
-  std::vector<VisibleStripTab> tabs;
+  // Borrowed from TabStripService's memoized strip, which is why that returns by
+  // reference; owning it here copied three std::strings per visible tab per
+  // painted frame and undid the memo it was reading from.
+  const std::vector<VisibleStripTab>* tabs = nullptr;
   TabStripOverflowControls tab_overflow{};
   // Resolved plugin content surface (PanelContentKind::PluginSurface only): the
   // render TU paints this directly instead of resolving owner/id through state.

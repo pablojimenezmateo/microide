@@ -1334,6 +1334,11 @@ const std::vector<PluginHost::ContributedSaveParticipant>& PluginHost::Contribut
   return impl_->published_.save_participants;
 }
 
+const std::vector<PluginHost::ContributedVirtualDocument>&
+PluginHost::ContributedVirtualDocuments() const {
+  return impl_->published_.virtual_documents;
+}
+
 const std::vector<PluginHost::ContributedCompletion>& PluginHost::ContributedCompletions() const {
   return impl_->published_.completions;
 }

@@ -233,8 +233,10 @@ util::JsonValue MakeEvaluateArguments(const std::string& expression, int frame_i
                                       const std::string& context);
 
 // ---- Encode (structs -> wire JSON) ----------------------------------------
-util::JsonValue MakeRequest(int seq, const std::string& command,
-                            const util::JsonValue& arguments);
+// `arguments` is taken by value so a caller that just built its argument object
+// -- which is every in-tree caller -- moves the tree in instead of deep-copying
+// it. A `variables` request's arguments are the whole body.
+util::JsonValue MakeRequest(int seq, const std::string& command, util::JsonValue arguments);
 util::JsonValue MakeResponse(int seq, int request_seq, const std::string& command, bool success,
                              const std::string& message, util::JsonValue body);
 

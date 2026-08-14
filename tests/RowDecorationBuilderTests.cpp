@@ -630,7 +630,57 @@ void TestDiagnosticUnderlineCacheMatchesUncachedPath() {
 
 }  // namespace
 
+// TD-2026-08-13-206: "Render Whitespace" did nothing on the compare panes, which
+// painted through their own row loop. The marker walk is shared now, so this pins
+// the contract both surfaces depend on: one marker per space/tab inside the
+// visible window, tabs measured across the cells they expand to, and a multi-byte
+// glyph not shifting every later marker right.
+void TestWhitespaceMarkersCoverVisibleCellsOnly() {
+  std::vector<DecoratedTextFill> fills;
+  const SDL_Color color{1, 2, 3, 255};
+  // "a b	c" -> space at visual column 1, tab at column 3 expanding to column 4.
+  editor::AppendWhitespaceMarkers(fills, "a b\tc", /*tab_size=*/4, /*row_visual_start=*/0,
+                                  /*row_visual_end=*/10, /*text_x=*/100.0f, /*char_width=*/10.0f,
+                                  /*y=*/50.0f, /*line_height=*/16.0f, color);
+  Expect(fills.size() == 2, "one marker for the space and one for the tab");
+  // Space dot: centered in its cell, 2x2.
+  Expect(fills[0].rect.w == 2.0f && fills[0].rect.h == 2.0f, "a space renders as a dot");
+  Expect(fills[0].rect.x > 110.0f && fills[0].rect.x < 120.0f,
+         "the space dot sits in the second cell");
+  // Tab bar: 1px tall, spanning the cells the tab expands to. This one sits at
+  // visual column 3 with tab_size 4, so it advances exactly one cell.
+  Expect(fills[1].rect.h == 1.0f, "a tab renders as a bar");
+  Expect(fills[1].rect.w == 6.0f, "a one-cell tab bar spans that cell, inset 2px each side");
+
+  // A tab at column 0 expands across all four cells, and the bar grows with it.
+  fills.clear();
+  editor::AppendWhitespaceMarkers(fills, "\tx", 4, 0, 10, 0.0f, 10.0f, 0.0f, 16.0f, color);
+  Expect(fills.size() == 1 && fills[0].rect.w == 36.0f,
+         "a four-cell tab bar spans four cells, inset 2px each side");
+
+  // A window that starts past both whitespace cells emits nothing.
+  fills.clear();
+  editor::AppendWhitespaceMarkers(fills, "a b\tc", 4, /*row_visual_start=*/5,
+                                  /*row_visual_end=*/10, 100.0f, 10.0f, 50.0f, 16.0f, color);
+  Expect(fills.empty(), "whitespace outside the visible window emits no markers");
+}
+
+void TestWhitespaceMarkersTrackMultiByteGlyphs() {
+  std::vector<DecoratedTextFill> fills;
+  const SDL_Color color{1, 2, 3, 255};
+  // Two-byte glyph then a space: the space is at VISUAL column 1, not byte 2.
+  editor::AppendWhitespaceMarkers(fills, "\xc3\xa9 x", /*tab_size=*/4, 0, 10, /*text_x=*/0.0f,
+                                  /*char_width=*/10.0f, 0.0f, 16.0f, color);
+  Expect(fills.size() == 1, "one marker for the single space");
+  Expect(fills[0].rect.x > 10.0f && fills[0].rect.x < 20.0f,
+         "the marker sits one cell in, not two bytes in");
+}
+
 void RegisterRowDecorationBuilderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RowDecorationBuilder/WhitespaceMarkersCoverVisibleCellsOnly",
+          TestWhitespaceMarkersCoverVisibleCellsOnly);
+  AddTest(tests, "RowDecorationBuilder/WhitespaceMarkersTrackMultiByteGlyphs",
+          TestWhitespaceMarkersTrackMultiByteGlyphs);
   AddTest(tests, "RowDecorationBuilder diagnostic underline cache matches uncached path",
           TestDiagnosticUnderlineCacheMatchesUncachedPath);
   AddTest(tests, "RowDecorationBuilder whole-line decorations span the line without its bytes",

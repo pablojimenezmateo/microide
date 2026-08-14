@@ -8,6 +8,7 @@
 
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "util/Fnv1a.h"
 #include "util/StringUtil.h"
 
 namespace microide::workspace {
@@ -31,24 +32,14 @@ float OverflowStripReserveForHiddenCount(std::size_t hidden_count) {
 // hashing (not a monotonic revision) keeps the cache correct without threading a
 // bump through every terminal/output/plugin mutation site; a same-state repaint
 // hits, any label/id/count/order change misses.
-constexpr std::uint64_t kFnvOffset = 1469598103934665603ULL;
-constexpr std::uint64_t kFnvPrime = 1099511628211ULL;
+constexpr std::uint64_t kFnvOffset = util::kFnv1aOffsetBasis;
 
 std::uint64_t HashMix(std::uint64_t hash, std::uint64_t value) {
-  for (int shift = 0; shift < 64; shift += 8) {
-    hash ^= (value >> shift) & 0xFFULL;
-    hash *= kFnvPrime;
-  }
-  return hash;
+  return util::Fnv1aValue(hash, value);
 }
 
 std::uint64_t HashMix(std::uint64_t hash, std::string_view text) {
-  hash = HashMix(hash, text.size());
-  for (const char ch : text) {
-    hash ^= static_cast<unsigned char>(ch);
-    hash *= kFnvPrime;
-  }
-  return hash;
+  return util::Fnv1aBytes(util::Fnv1aValue(hash, text.size()), text);
 }
 
 }  // namespace
@@ -255,7 +246,12 @@ void TabStripService::EnsureActiveEditorTabVisible(EditorGroup& group,
   group.tab_scroll_index = static_cast<int>(first_visible);
 }
 
-std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
+const std::vector<VisibleStripTab>& TabStripService::EmptyVisibleTabs() {
+  static const std::vector<VisibleStripTab> kEmpty;
+  return kEmpty;
+}
+
+const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
     const EditorGroup& group,
     std::size_t group_index,
     const SDL_FRect& tab_strip,
@@ -268,7 +264,7 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
   if (group.open_tabs.empty()) {
     geometry.valid = false;
     visible_cache.valid = false;
-    return {};
+    return EmptyVisibleTabs();
   }
 
   RefreshEditorGeometryCache(group, group_index, tab_strip.w, measure_width, display_title,
@@ -332,18 +328,19 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleEditorTabs(
   visible_cache.strip = tab_strip;
   visible_cache.active_tab_index = group.active_tab_index;
   visible_cache.tab_scroll_index = group.tab_scroll_index;
-  visible_cache.tabs = tabs;
+  visible_cache.tabs = std::move(tabs);
   visible_cache.valid = true;
-  return tabs;
+  return visible_cache.tabs;
 }
 
-void TabStripService::InvalidateEditorTabGeometry() {
+void TabStripService::InvalidateTabStripGeometry() {
   for (TabStripGeometryCache& geometry : editor_tab_geometry_cache_) {
     geometry.valid = false;
   }
   for (VisibleEditorTabsCache& visible_cache : visible_editor_tabs_cache_) {
     visible_cache.valid = false;
   }
+  ++geometry_epoch_;
 }
 
 TabStripOverflowControls TabStripService::BuildOverflowControls(
@@ -458,7 +455,7 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
   return hash;
 }
 
-std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
+const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
     const ProjectWorkspaceState& state,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
   const std::uint64_t fingerprint = ComputeBottomPanelTabsFingerprint(state, channels);
@@ -537,20 +534,35 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
   }
 
   bottom_panel_tabs_cache_.fingerprint = fingerprint;
-  bottom_panel_tabs_cache_.tabs = tabs;
+  bottom_panel_tabs_cache_.tabs = std::move(tabs);
   bottom_panel_tabs_cache_.valid = true;
-  return tabs;
+  // A model rebuild invalidates the laid-out list built from it.
+  visible_bottom_panel_tabs_cache_.valid = false;
+  return bottom_panel_tabs_cache_.tabs;
 }
 
-std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
+const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTabs(
     const ProjectWorkspaceState& state,
     const SDL_FRect& panel_header,
     LayoutMode layout_mode,
     const MeasureWidthFn& measure_width,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
-  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs(state, channels);
+  const std::vector<BottomPanelTabModel>& tabs = BuildBottomPanelTabs(state, channels);
+  VisibleBottomPanelTabsCache& cache = visible_bottom_panel_tabs_cache_;
   if (tabs.empty()) {
-    return {};
+    cache.valid = false;
+    cache.tabs.clear();
+    return cache.tabs;
+  }
+
+  const bool header_matches = cache.header.x == panel_header.x && cache.header.y == panel_header.y &&
+                              cache.header.w == panel_header.w && cache.header.h == panel_header.h;
+  if (cache.valid && cache.model_fingerprint == bottom_panel_tabs_cache_.fingerprint &&
+      cache.geometry_epoch == geometry_epoch_ && header_matches &&
+      cache.layout_mode == layout_mode &&
+      cache.active_terminal_tab_index == state.active_terminal_tab_index &&
+      cache.tab_scroll_index == state.panel.tab_scroll_index) {
+    return cache.tabs;
   }
 
   std::vector<float> widths;
@@ -607,7 +619,15 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
   if (all_tabs_visible) {
     visible = build_tabs(panel_header.x, 0.0f);
   }
-  return visible;
+  cache.model_fingerprint = bottom_panel_tabs_cache_.fingerprint;
+  cache.geometry_epoch = geometry_epoch_;
+  cache.header = panel_header;
+  cache.layout_mode = layout_mode;
+  cache.active_terminal_tab_index = state.active_terminal_tab_index;
+  cache.tab_scroll_index = state.panel.tab_scroll_index;
+  cache.tabs = std::move(visible);
+  cache.valid = true;
+  return cache.tabs;
 }
 
 std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(

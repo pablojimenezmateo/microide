@@ -24,7 +24,19 @@ bool ToggleBlockComment(TextViewport& viewport,
 
 bool MoveLineUp(TextViewport& viewport);
 bool MoveLineDown(TextViewport& viewport);
-bool DuplicateSelection(TextViewport& viewport);
+// VS Code's copyLinesDownAction / copyLinesUpAction. Whole LINES are copied --
+// a partial selection duplicates the lines it touches, not the selected text --
+// and `downward` decides only which of the two copies the caret and selection
+// end up on. Applies to every caret region.
+bool CopyLines(TextViewport& viewport, bool downward);
+
+// VS Code's insertLineAfter (Ctrl+Enter) / insertLineBefore (Ctrl+Shift+Enter):
+// open a new line below/above the caret's line and put the caret on it,
+// regardless of where in the line the caret sat. `Below` runs the language's
+// smart indent (so it opens a body after a `{`); `Above` takes the pushed-down
+// line's own indent.
+bool InsertLineBelow(TextViewport& viewport);
+bool InsertLineAbove(TextViewport& viewport);
 bool DeleteLine(TextViewport& viewport);
 bool IndentSelection(TextViewport& viewport);
 bool OutdentSelection(TextViewport& viewport);

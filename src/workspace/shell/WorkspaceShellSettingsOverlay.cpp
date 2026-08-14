@@ -7,6 +7,7 @@
 #include <unordered_map>
 
 #include "workspace/WorkspaceStartupOptions.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/render/RenderViewModelBuilder.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
@@ -101,10 +102,9 @@ void AppendStartupHelpRows(std::vector<HelpAboutRow>& rows,
   }
 }
 
-// Maps each action to its currently bound key chord, honoring user remaps and
-// plugin bindings (the registry is already override-resolved). A Global binding
-// wins over a context-specific one so the help list shows the chord that works
-// everywhere; key-less command bindings are skipped.
+// Maps each action to its currently bound key chords, honoring user remaps and
+// plugin bindings (the registry is already override-resolved). Key-less command
+// bindings are skipped.
 std::unordered_map<ActionId, std::string> BuildActionChordLookup(
     const std::vector<ResolvedKeybinding>& keybindings) {
   std::unordered_map<ActionId, std::string> chord_by_action;
@@ -112,13 +112,17 @@ std::unordered_map<ActionId, std::string> BuildActionChordLookup(
     if (binding.key == SDLK_UNKNOWN) {
       continue;
     }
-    std::string chord = FormatKeyChord(binding.key, binding.modifiers);
+    const std::string chord = FormatKeyChord(binding.key, binding.modifiers);
     if (chord.empty()) {
       continue;
     }
-    const auto [it, inserted] = chord_by_action.try_emplace(binding.action, std::move(chord));
-    if (!inserted && binding.context == KeybindingContext::Global) {
-      it->second = FormatKeyChord(binding.key, binding.modifiers);
+    // Every chord bound to the action, joined on the shared hint separator. This
+    // used to keep only the first (a later Global-context binding could displace
+    // it), so a two-directional action showed one direction: Switch Tab listed
+    // Ctrl+PageDown and never Ctrl+PageUp, and Move Tab would have done the same.
+    std::string& line = chord_by_action[binding.action];
+    if (line.find(chord) == std::string::npos) {
+      AppendHintSegment(line, chord);
     }
   }
   return chord_by_action;

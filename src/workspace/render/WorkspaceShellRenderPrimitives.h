@@ -2,6 +2,7 @@
 
 #include "render/SurfacePrimitives.h"
 #include "workspace/WorkspaceUiText.h"
+#include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -1077,7 +1078,7 @@ inline void DrawTabDragFeedback(const render::TextRenderer& text_renderer,
     return;
   }
   const float ghost_x =
-      std::clamp(pointer_x - grab_offset_x, strip.x, strip.x + strip.w - ghost->rect.w);
+      ClampedGhostX(strip.x, strip.w, ghost->rect.w, pointer_x, grab_offset_x);
   const SDL_FRect ghost_rect = MakeRect(ghost_x, ghost->rect.y, ghost->rect.w, ghost->rect.h);
   FillRect(renderer, MakeRect(ghost_rect.x + 1.0f, ghost_rect.y + 2.0f, ghost_rect.w, ghost_rect.h),
            render::BlendColors(theme.surface_background, SDL_Color{0, 0, 0, 255}, 0.5f));

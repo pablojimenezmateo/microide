@@ -217,6 +217,14 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
       {
         util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::WindowFocusLost");
       state_.window_has_input_focus = false;
+      // A drag does not survive the window losing focus: the button-up will be
+      // delivered to whoever took the focus, not to us, so a selection left
+      // "in progress" here would still be in progress on the next click. This
+      // also disarms selection autoscroll, which is the one loop that keeps
+      // running with no input behind it.
+      if (operations_.end_selection_gesture) {
+        operations_.end_selection_gesture();
+      }
       // Autosave dirty buffers when configured for "on focus change".
       if (operations_.autosave_on_focus_lost) {
         operations_.autosave_on_focus_lost();

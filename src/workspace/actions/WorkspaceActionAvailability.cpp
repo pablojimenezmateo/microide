@@ -430,6 +430,9 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::MoveLineUp:
     case ActionId::MoveLineDown:
     case ActionId::DuplicateLine:
+    case ActionId::CopyLineUp:
+    case ActionId::InsertLineBelow:
+    case ActionId::InsertLineAbove:
     case ActionId::DeleteLine:
     case ActionId::IndentLines:
     case ActionId::OutdentLines:

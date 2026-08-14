@@ -102,6 +102,50 @@ Enforced by `CheckHintSegmentsUseTheSharedSeparator`, which targets the redefini
 rather than the `"  |  "` literal — that separator is legitimate between unrelated
 fields (the breadcrumb's `path | left -> right`, the merge status line).
 
+## Drags
+
+### A live drag owns the pointer: no hover, no tooltip, no full-window repaint
+Every pointer-owning gesture — the dividers, the scrollbars, a selection, a tab
+reorder — is handled near the TOP of `HandleMouseMotion`, before the hover
+pipeline, and damages only the surface it moves. A drag handled after the hover
+pipeline pays two tooltip resolutions, two interactive-rect hit tests and the
+sidebar/status/floating probes per motion event, for hover state the drag cannot
+change; the tab drag did exactly that, and then asked for a full-window repaint,
+until 2026-08-14.
+
+Three consequences follow from the drag not re-resolving hover, and all three are
+the drag path's job to honour:
+
+- `last_mouse_*` freezes at the press, so nothing may claim hover from it
+  (`tab_hovered` and the bottom-panel `PointerOver` both refuse while dragging);
+- `HoveredTooltip` refuses outright while a tab drag is live, and the frame that
+  STARTS the drag damages where the card was, because the drag's own damage is
+  scoped to the strip and the card hangs below it;
+- the cursor shape stays whatever the press resolved — a drag is logically still
+  on its own surface wherever the pointer physically is.
+
+### A drag does not survive losing the window, and Escape abandons it
+The focus-lost handler ends every in-flight gesture: the button-up goes to
+whoever took the focus, so a gesture left "in progress" is still in progress on
+the next click. Escape does the same thing deliberately, ahead of every surface
+that also answers Escape. Abandoning is not committing: an abandoned tab drag
+glides the lifted tab home and reorders nothing.
+
+### The drop lands where the dragged thing is drawn
+A reorder resolves its slot from the DRAGGED item's own box — its centre — not
+from the cursor. Keying it off the cursor makes the landing spot depend on where
+inside the item it was grabbed, so grabbing a wide tab near an edge reads as the
+strip lagging half a tab behind the drag. The probe is unclamped even though the
+ghost's paint position is pinned inside the strip, so pulling further than the
+ghost can render still reads as "put it first / last".
+
+On an overflowing strip both ends of the drop pin to what is VISIBLE — answering
+"index 0" / "the end" would teleport the item to a slot nobody can see — and the
+strip auto-scrolls under a pointer parked at its edge, pumped from the animation
+tick so a perfectly still pointer keeps stepping. Those two go together: the pin
+is what makes the drop honest, and the auto-scroll is what keeps the far end
+reachable.
+
 ## Workflow
 
 ### Commit pre-check Warning is advisory; Blocking is not

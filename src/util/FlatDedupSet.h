@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <functional>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -138,6 +139,116 @@ class FlatDedupSet {
   std::vector<Slot> slots_;
   std::vector<Key> keys_;
   std::size_t mask_ = 0;
+};
+
+// Sentinel for FlatKeyIndex::Find. Namespace-scope so a caller holding the
+// index through `auto` (its type names a lambda) can still spell it.
+inline constexpr std::size_t kFlatKeyNotFound = static_cast<std::size_t>(-1);
+
+// Dedupe by a key that already lives somewhere else.
+//
+// FlatDedupSet above OWNS its keys, which is right when the keys are produced
+// only to be deduped. It is the wrong shape when the caller is already building
+// a vector of the very strings it is deduping: a persisted config's setting ids
+// and disabled keybinding/plugin ids each cost one heap string for the decoded
+// record plus a second for the index (TD-2026-08-13-199).
+//
+// This stores nothing but slot indices into the caller's own sequence and reads
+// the key back through `key_of(index)` at probe time, so no key is copied and no
+// node is allocated. A `string_view` index would NOT work here: a short id lives
+// inside its std::string's inline buffer and moves with it when the owning
+// vector reallocates.
+//
+// Usage is Find-then-Insert, in that order, because Insert reads the key through
+// `key_of`: append to the owner first, then record the appended index.
+//
+//   FlatKeyIndex index(8, [&](std::size_t i) -> std::string_view { return ids[i]; });
+//   if (index.Find(id) == kFlatKeyNotFound) {
+//     ids.push_back(std::move(id));
+//     index.Insert(ids.size() - 1);
+//   }
+template <typename KeyOf>
+class FlatKeyIndex {
+ public:
+  static constexpr std::size_t kNotFound = kFlatKeyNotFound;
+
+  // `expected_elements` sizes the initial slot table; growth keeps the load
+  // factor at or below 1/2, so an under-estimate stays correct rather than
+  // degrading. Seed it small when the realistic input is small and the cap is
+  // only a hostile-input ceiling.
+  FlatKeyIndex(std::size_t expected_elements, KeyOf key_of) : key_of_(std::move(key_of)) {
+    Resize(TableSizeFor(expected_elements));
+  }
+
+  // Index recorded for `key`, or kNotFound.
+  std::size_t Find(std::string_view key) const {
+    const std::size_t hash = std::hash<std::string_view>{}(key);
+    const std::size_t slot = Probe(key, hash);
+    return slots_[slot].index_plus_one == 0 ? kNotFound : slots_[slot].index_plus_one - 1;
+  }
+
+  // Records `index`, whose key must be readable through `key_of` NOW — growth
+  // rehashes every recorded index through it.
+  void Insert(std::size_t index) {
+    const std::string_view key = key_of_(index);
+    const std::size_t hash = std::hash<std::string_view>{}(key);
+    const std::size_t slot = Probe(key, hash);
+    slots_[slot] = Slot{.hash = hash, .index_plus_one = index + 1};
+    ++size_;
+    if (size_ * 2 > slots_.size()) {
+      Resize(slots_.size() * 2);
+    }
+  }
+
+  std::size_t size() const { return size_; }
+
+ private:
+  struct Slot {
+    std::size_t hash = 0;
+    std::size_t index_plus_one = 0;  // 0 = empty; otherwise owner index + 1
+  };
+
+  std::size_t Probe(std::string_view key, std::size_t hash) const {
+    std::size_t index = hash & mask_;
+    while (slots_[index].index_plus_one != 0) {
+      const Slot& slot = slots_[index];
+      if (slot.hash == hash && key_of_(slot.index_plus_one - 1) == key) {
+        break;
+      }
+      index = (index + 1) & mask_;
+    }
+    return index;
+  }
+
+  static std::size_t TableSizeFor(std::size_t expected_elements) {
+    std::size_t size = 8;
+    while (size < expected_elements * 2) {
+      size *= 2;
+    }
+    return size;
+  }
+
+  void Resize(std::size_t table_size) {
+    std::vector<Slot> previous;
+    previous.swap(slots_);
+    slots_.assign(table_size, Slot{});
+    mask_ = table_size - 1;
+    for (const Slot& slot : previous) {
+      if (slot.index_plus_one == 0) {
+        continue;
+      }
+      std::size_t index = slot.hash & mask_;
+      while (slots_[index].index_plus_one != 0) {
+        index = (index + 1) & mask_;
+      }
+      slots_[index] = slot;
+    }
+  }
+
+  KeyOf key_of_;
+  std::vector<Slot> slots_;
+  std::size_t mask_ = 0;
+  std::size_t size_ = 0;
 };
 
 }  // namespace microide::util

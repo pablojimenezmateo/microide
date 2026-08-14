@@ -125,6 +125,100 @@ void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
          "saving the compare tab should persist the edited current-state text");
 }
 
+// TD-2026-08-13-207: the compare pane's key handling was a hand-maintained subset
+// of the editor's, so it silently lacked whatever nobody remembered to copy —
+// here, Shift+Tab outdent and Tab-indents-a-multi-line-selection. Both surfaces
+// now run one shared switch, so a key added to it reaches both.
+void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare indent fixture", "compare indent fixture");
+  WriteFile(source, "alpha\nbravo\ncharlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable && compare.right_view_active,
+         "the compare fixture should start on the editable pane");
+
+  // Select the first two lines, then Tab. A multi-line selection indents as a
+  // block; the old compare switch replaced the selection with a tab character.
+  compare.right_viewport.MoveCursorTo(0, 0);
+  compare.right_viewport.MoveCursorTo(1, 5, /*extend_selection=*/true);
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE),
+         "Tab should be handled on the compare editable pane");
+  Expect(compare.right_viewport.lines().LineView(0).rfind("  alpha", 0) == 0 ||
+             compare.right_viewport.lines().LineView(0).rfind("\talpha", 0) == 0,
+         "Tab with a multi-line selection indents the block instead of replacing it");
+  Expect(compare.right_viewport.lines().LineView(1).find("bravo") != std::string::npos,
+         "the second selected line survives the block indent");
+
+  // Shift+Tab outdents it again.
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
+         "Shift+Tab should be handled on the compare editable pane");
+  Expect(compare.right_viewport.lines().LineView(0) == "alpha",
+         "Shift+Tab outdents the block back rather than inserting a tab");
+}
+
+// TD-2026-08-13-206's last render feature: bracket-match highlight on the
+// editable pane. FindBracketMatch is O(file), so the entry left it out rather
+// than put an uncached scan on a per-frame path. The memo is what makes it
+// affordable, so the memo is what this pins: a repaint with an unchanged caret
+// and unchanged content must not rescan, and moving the caret must.
+void TestWorkspaceShellCompareBracketMatchIsMemoized() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add bracket fixture", "bracket fixture");
+  WriteFile(source, "int beta(int x) {\n  return (x + 1);\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_view_active, "the editable pane is active");
+  Expect(!compare.bracket_match_valid, "the memo starts cold");
+
+  // A REAL renderer: RenderFrame's null one stops at the `renderer == nullptr`
+  // guard every surface opens with, so it would prove nothing about paint state.
+  SoftwareCanvas canvas(1280, 720);
+
+  // Put the caret next to the '(' on the return line.
+  compare.right_viewport.MoveCursorTo(1, 9);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(compare.bracket_match_valid, "painting resolves and memoizes the bracket match");
+  const auto first_pair = compare.bracket_match_pair;
+  const std::uint64_t revision_after_first = compare.bracket_match_content_revision;
+
+  // A repaint with nothing changed must reuse the memo: same key, same answer.
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(compare.bracket_match_content_revision == revision_after_first &&
+             compare.bracket_match_caret_line == 1 && compare.bracket_match_caret_column == 9,
+         "an unchanged repaint keeps the memo key");
+  Expect(compare.bracket_match_pair.has_value() == first_pair.has_value(),
+         "an unchanged repaint keeps the memoized answer");
+
+  // Moving the caret changes the key, so the next paint re-resolves.
+  compare.right_viewport.MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(compare.bracket_match_caret_line == 0 && compare.bracket_match_caret_column == 0,
+         "moving the caret re-keys the memo rather than serving the old match");
+}
+
 void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1851,13 +1945,318 @@ void TestWorkspaceShellCompareWithClipboardOpensPlainCompare() {
          "the right pane should be editable when its side is a real file");
 }
 
+// TD-2026-08-13-201: the drag CLAMP reached compare and merge, the two behaviours
+// built on top of it did not. A drag held past the bottom of a diff pane froze
+// the selection at the last visible row, and a double-click there placed a bare
+// caret instead of selecting the word.
+void TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  std::string base;
+  std::string head;
+  for (int i = 0; i < 300; ++i) {
+    base += "alpha bravo " + std::to_string(i) + "\n";
+    head += "alpha charlie " + std::to_string(i) + "\n";
+  }
+  WriteFile(source, base);
+  InitializeGitRepo(root);
+  CommitAll(root, "base fixture", "base fixture");
+  WriteFile(source, head);
+  CommitAll(root, "head fixture", "head fixture");
+
+  const auto history = microide::project::CollectGitFileHistory(root, source).commits;
+  Expect(history.size() == 2, "compare autoscroll fixture should have two commits");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenBranchHeadComparison(shell, source, history[1].hash, "base",
+                                                            history[0].hash, "head"),
+         "branch comparison should open");
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  const float row_y = surface.rows_y + surface.line_height * 0.5f;
+  const float right_x = surface.right_x + 24.0f;
+
+  // --- granularity: a double-click in the right pane selects the word ---
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "the first click should be handled");
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/2),
+         "the double-click should be handled");
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto word_selection = compare.right_viewport.selection_range();
+  Expect(word_selection.has_value() && word_selection->start.column != word_selection->end.column,
+         "a double-click in the compare right pane should select a word, not place a caret");
+  Expect(SendMouseUp(shell, right_x, row_y, SDL_BUTTON_LEFT), "release should be handled");
+
+  // --- autoscroll: hold the pointer past the bottom of the pane ---
+  Expect(SendMouseDown(shell, right_x, row_y, SDL_BUTTON_LEFT, /*clicks=*/1),
+         "pressing in the right pane should start a selection");
+  Expect(SendMouseMotion(shell, right_x, layout.editor_surface.y + layout.editor_surface.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the compare surface should be handled");
+
+  const int scroll_after_motion = WorkspaceShellTestAccess::ActiveCompare(shell).scroll_row;
+  for (int tick = 0; tick < 5; ++tick) {
+    const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    Expect(result.handled, "an armed compare autoscroll should keep the wake busy");
+  }
+  Expect(WorkspaceShellTestAccess::ActiveCompare(shell).scroll_row > scroll_after_motion,
+         "holding the pointer past the bottom of a diff must keep scrolling on the wake");
+  Expect(SendMouseUp(shell, right_x, row_y, SDL_BUTTON_LEFT), "release should be handled");
+}
+
+// The merge half of TD-2026-08-13-201, on the result pane.
+void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
+  EnsureDummySdlVideo();
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "conflict.txt";
+  std::string body;
+  for (int i = 0; i < 300; ++i) {
+    body += "alpha bravo " + std::to_string(i) + "\n";
+  }
+  WriteFile(base, body);
+  WriteFile(incoming, body + "incoming tail\n");
+  WriteFile(current, body + "current tail\n");
+  WriteFile(output, body);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge autoscroll fixture should open");
+  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+
+  const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  const auto interaction = WorkspaceShellTestAccess::ActiveMergeInteractionLayout(shell);
+  const SDL_FRect& result_rect = interaction.result.rect;
+  const float x = result_rect.x + std::min(24.0f, result_rect.w * 0.25f);
+  const float y = interaction.result.text.first_line_y + interaction.result.text.line_height * 0.5f;
+
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/1), "first click handled");
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/2), "double-click handled");
+  const auto word_selection =
+      WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.selection_range();
+  Expect(word_selection.has_value() && word_selection->start.column != word_selection->end.column,
+         "a double-click in the merge result pane should select a word, not place a caret");
+  Expect(SendMouseUp(shell, x, y, SDL_BUTTON_LEFT), "release handled");
+
+  Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT, /*clicks=*/1), "press handled");
+  Expect(SendMouseMotion(shell, x, layout.editor_surface.y + layout.editor_surface.h + 200.0f,
+                         SDL_BUTTON_LMASK),
+         "dragging below the merge surface should be handled");
+
+  const int scroll_after_motion = WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row;
+  for (int tick = 0; tick < 5; ++tick) {
+    const auto result = WorkspaceShellTestAccess::HandleScheduledWake(shell);
+    Expect(result.handled, "an armed merge autoscroll should keep the wake busy");
+  }
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row > scroll_after_motion,
+         "holding the pointer past the bottom of a merge must keep scrolling on the wake");
+  // The mirror the layout reads must not be left behind by the wake's scrolling.
+  Expect(WorkspaceShellTestAccess::ActiveMerge(shell).scroll_row ==
+             static_cast<int>(
+                 WorkspaceShellTestAccess::ActiveMerge(shell).result_viewport.scroll_line()),
+         "the merge tab's scroll mirror must track the result viewport");
+  Expect(SendMouseUp(shell, x, y, SDL_BUTTON_LEFT), "release handled");
+}
+
+
+// TD-2026-08-13-200: `editor.wrap` used to be a dead control on the compare and
+// merge surfaces -- the flag never reached their viewports, and everything on
+// them assumed one document line occupies exactly one screen row. These pin the
+// row model that replaced that assumption.
+void TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  const std::string long_left = "int alpha() { return " + std::string(600, 'a') + "; }";
+  const std::string long_right = "int beta() { return " + std::string(900, 'b') + "; }";
+  WriteFile(source, long_left + "\nshort\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare wrap fixture", "compare wrap fixture");
+  WriteFile(source, long_right + "\nshort\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare wrap fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const std::size_t presentation_rows =
+      WorkspaceShellTestAccess::ActiveComparePresentationRowCount(shell);
+  Expect(!WorkspaceShellTestAccess::ActiveCompareWrapActive(shell),
+         "wrap is off by default on a compare tab");
+  Expect(WorkspaceShellTestAccess::ActiveCompareVisualRowCount(shell) == presentation_rows,
+         "with wrap off an on-screen row IS a presentation row");
+  Expect(!compare.right_viewport.soft_wrap(),
+         "the compare right pane starts unwrapped");
+
+  // The setting has to reach the compare tab's own viewport: the all-tabs walk
+  // used to skip every tab that was not a plain editor tab.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word"),
+         "editor.wrap should be settable");
+  Expect(compare.right_viewport.soft_wrap(),
+         "turning Word Wrap on must reach the compare tab's editable pane");
+
+  const std::size_t wrapped_rows = WorkspaceShellTestAccess::ActiveCompareVisualRowCount(shell);
+  Expect(WorkspaceShellTestAccess::ActiveCompareWrapActive(shell),
+         "the compare wrap table should be live once the setting is on");
+  Expect(wrapped_rows > presentation_rows,
+         "wrapping a 900-column line must add on-screen rows");
+
+  // Alignment: the presentation row holding the two long lines occupies the SAME
+  // rows on both sides, and every on-screen row maps back to exactly one
+  // presentation row in order.
+  std::size_t previous = 0;
+  for (std::size_t visual = 0; visual < wrapped_rows; ++visual) {
+    const std::size_t presentation =
+        WorkspaceShellTestAccess::ActiveComparePresentationRowForVisualRow(shell, visual);
+    Expect(presentation >= previous, "on-screen rows must map to presentation rows in order");
+    Expect(presentation < presentation_rows, "a mapped presentation row must be in range");
+    previous = presentation;
+  }
+  for (std::size_t presentation = 0; presentation < presentation_rows; ++presentation) {
+    const std::size_t first =
+        WorkspaceShellTestAccess::ActiveCompareVisualRowForPresentationRow(shell, presentation);
+    Expect(WorkspaceShellTestAccess::ActiveComparePresentationRowForVisualRow(shell, first) ==
+               presentation,
+           "a presentation row's first on-screen row must map back to it");
+  }
+
+  // Horizontal scrolling is gone while wrapped, exactly as in the editor.
+  const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+  Expect(!surface.show_horizontal,
+         "a wrapped compare surface must not offer a horizontal scrollbar");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "off"),
+         "editor.wrap should be settable back off");
+  Expect(!compare.right_viewport.soft_wrap(), "turning Word Wrap off must reach the compare pane");
+  Expect(WorkspaceShellTestAccess::ActiveCompareVisualRowCount(shell) == presentation_rows,
+         "turning wrap off must collapse the row table back to the identity");
+}
+
+void TestWorkspaceShellMergeWordWrapExpandsRows() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  const std::string long_line(900, 'x');
+  WriteFile(base, "top\nbase\nbottom\n");
+  WriteFile(incoming, "top\n" + long_line + "\nbottom\n");
+  WriteFile(current, "top\ncurrent\nbottom\n");
+  WriteFile(output, "top\ncurrent\nbottom\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
+         "merge editor should open for the wrap fixture");
+
+  auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+  const std::size_t unwrapped_rows = WorkspaceShellTestAccess::ActiveMergeVisualRowCount(shell);
+  Expect(!WorkspaceShellTestAccess::ActiveMergeWrapActive(shell),
+         "wrap is off by default on a merge tab");
+  Expect(!merge.result_viewport.soft_wrap(), "the merge result pane starts unwrapped");
+
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.wrap", "word"),
+         "editor.wrap should be settable");
+  Expect(merge.result_viewport.soft_wrap(),
+         "turning Word Wrap on must reach the merge tab's result pane");
+  Expect(WorkspaceShellTestAccess::ActiveMergeWrapActive(shell),
+         "the merge source-pane wrap table should be live once the setting is on");
+  Expect(WorkspaceShellTestAccess::ActiveMergeVisualRowCount(shell) > unwrapped_rows,
+         "wrapping a 900-column incoming line must add on-screen rows");
+
+  const auto surface = WorkspaceShellTestAccess::ActiveMergeSurfaceLayout(shell);
+  Expect(!surface.show_horizontal,
+         "a wrapped merge surface must not offer a horizontal scrollbar");
+}
+
+// An edit action (not typing, not paste, not undo) on a compare tab's right pane
+// must rebuild the diff model: the surface paints its right text FROM that model,
+// so an action that only mutated the buffer left the pre-edit text on screen.
+void TestWorkspaceShellCompareEditActionRefreshesDiffModel() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbravo\ncharlie\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare action fixture", "compare action fixture");
+  WriteFile(source, "alpha\nbravo\ncharlie\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare action fixture should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable, "the working-tree compare pane should be editable");
+  compare.right_viewport.MoveCursorTo(0, 0);
+
+  // What the surface would paint down the right pane, in order: the diff model's
+  // right side, NOT the viewport. The two must agree, or the edit is invisible.
+  const auto painted_right_side = [&compare]() {
+    std::string joined;
+    for (const auto& row : compare.model.rows) {
+      if (row.right_line > 0) {
+        joined += row.right_text;
+        joined += '\n';
+      }
+    }
+    return joined;
+  };
+  const std::string initial_right_side = painted_right_side();
+  Expect(initial_right_side.rfind("alpha\nbravo\ncharlie", 0) == 0,
+         "the diff model should start out agreeing with the working-tree buffer");
+
+  // MoveLineDown goes through the shared action layer (ActiveEditableViewport),
+  // which reaches this pane -- the same layer that serves the editor surface.
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::MoveLineDown, {}),
+         "MoveLineDown should be dispatched to the compare tab's editable pane");
+  Expect(compare.right_viewport.lines().LineView(0) == "bravo",
+         "MoveLineDown should have edited the compare pane's buffer");
+  Expect(painted_right_side().rfind("bravo\nalpha\ncharlie", 0) == 0,
+         "the diff model must be rebuilt after an action-driven edit, not left stale");
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
           TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
+  AddTest(tests, "WorkspaceShell/CompareDragAutoscrollsAndKeepsGranularity",
+          TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity);
+  AddTest(tests, "WorkspaceShell/MergeDragAutoscrollsAndKeepsGranularity",
+          TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
+  AddTest(tests, "WorkspaceShell/CompareWordWrapExpandsRowsAndKeepsPanesAligned",
+          TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned);
+  AddTest(tests, "WorkspaceShell/MergeWordWrapExpandsRows",
+          TestWorkspaceShellMergeWordWrapExpandsRows);
+  AddTest(tests, "WorkspaceShell/CompareEditActionRefreshesDiffModel",
+          TestWorkspaceShellCompareEditActionRefreshesDiffModel);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",
           TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable);
+  AddTest(tests, "WorkspaceShell/CompareBracketMatchIsMemoized",
+          TestWorkspaceShellCompareBracketMatchIsMemoized);
+  AddTest(tests, "WorkspaceShell/CompareEditablePaneIndentsAndOutdents",
+          TestWorkspaceShellCompareEditablePaneIndentsAndOutdents);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",
           TestWorkspaceShellCompareClickTogglesEditablePaneFocus);
   AddTest(tests, "WorkspaceShell/CompareClickAboveFirstRowIsNotHandled",

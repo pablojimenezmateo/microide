@@ -20,6 +20,13 @@ bool RegisterFormatter(lua_State* state,
                        std::vector<PluginHost::ContributedFormatter>* formatters,
                        std::string* error_message);
 
+// Virtual documents carry no runtime callback, so this takes no runtimes vector —
+// the only contribution kind that does not (TD-2026-07-27-001).
+bool RegisterVirtualDocument(lua_State* state,
+                             std::string_view plugin_id,
+                             std::vector<PluginHost::ContributedVirtualDocument>* documents,
+                             std::string* error_message);
+
 bool RegisterSaveParticipant(lua_State* state,
                              std::string_view plugin_id,
                              std::vector<PluginHost::ContributedSaveParticipant>* participants,

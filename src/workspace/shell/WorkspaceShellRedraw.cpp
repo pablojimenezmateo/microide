@@ -15,6 +15,12 @@
 #include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/SdlWake.h"
+#include "workspace/coordinators/SelectionAutoscroll.h"
+#include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
@@ -88,7 +94,7 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
     if (window_presentation_.logical_width != previous_width) {
       tab_strip_chrome_.EnsureActiveProjectVisible();
       tab_strip_chrome_.EnsureActiveTabVisible();
-      tab_strip_service_.InvalidateEditorTabGeometry();
+      tab_strip_service_.InvalidateTabStripGeometry();
     }
   }
 }
@@ -460,7 +466,12 @@ void WorkspaceShell::RequestCompareRightLineToBottomRedraw(std::size_t start_lin
     RequestFocusedEditorRedraw();
     return;
   }
-  RequestCompareRowToBottomRedraw(CompareRowIndexForRightLine(*compare_tab, start_line));
+  // A MODEL row is not a presentation row (a collapsed run or a metadata line
+  // shifts them apart), and RequestCompareRowToBottomRedraw names presentation
+  // rows -- so project it rather than passing the model index through.
+  const std::size_t model_row = CompareRowIndexForRightLine(*compare_tab, start_line);
+  RequestCompareRowToBottomRedraw(
+      compare::ComparePresentationRowForModelRow(compare_tab->presentation, model_row));
 }
 
 void WorkspaceShell::RequestMergeResultLineRangeRedraw(std::size_t start_line,
@@ -740,6 +751,11 @@ std::optional<WorkspaceShell::ChangedLineSpan> WorkspaceShell::ComputeChangedLin
 }
 
 std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
+  // A drag parked at the edge of an overflowing strip auto-scrolls on a timer, and
+  // a still pointer emits no motion events, so the wake has to come from here.
+  if (context_.interaction_state.tab_drag.autoscroll_direction != 0) {
+    return static_cast<Uint32>(16);
+  }
   const TabSlideState& slide = context_.interaction_state.tab_slide;
   if (slide.kind == TabDragKind::None) {
     return std::nullopt;
@@ -761,9 +777,15 @@ std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
 }
 
 bool WorkspaceShell::AdvanceTabSlide() {
+  // Pump the drag auto-scroll first: it can move every tab, which reseeds the
+  // slide targets the ease below then steps.
+  bool scrolled = false;
+  if (context_.interaction_state.tab_drag.autoscroll_direction != 0) {
+    scrolled = MakeTabMouseCoordinator().TickDragAutoScroll();
+  }
   TabSlideState& slide = context_.interaction_state.tab_slide;
   if (slide.kind == TabDragKind::None) {
-    return false;
+    return scrolled;
   }
   const Uint64 now = SDL_GetTicks();
   const Uint64 raw_dt = now >= slide.last_advance_ms ? now - slide.last_advance_ms : 0;
@@ -779,28 +801,29 @@ bool WorkspaceShell::AdvanceTabSlide() {
       slide = TabSlideState{};
       return true;
     }
-    // Converged mid-drag with the pointer still: no repaint, no further wakes.
-    return false;
+    // Converged mid-drag with the pointer still: no repaint unless auto-scroll
+    // moved the strip under it.
+    return scrolled;
   }
   return true;
 }
 
-std::optional<SDL_FRect> WorkspaceShell::CurrentTabSlideDirtyRect() const {
-  const TabSlideState& slide = context_.interaction_state.tab_slide;
-  if (slide.kind == TabDragKind::None) {
+std::optional<SDL_FRect> WorkspaceShell::TabStripRectForKind(TabDragKind kind,
+                                                             std::size_t group_index) const {
+  if (kind == TabDragKind::None) {
     return std::nullopt;
   }
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value()) {
     return std::nullopt;
   }
-  switch (slide.kind) {
+  switch (kind) {
     case TabDragKind::Project:
       return layout->project_tab_strip;
     case TabDragKind::Editor: {
       const EditorGroupRectsLayout groups = ComputeEditorGroupRectsForState(*layout);
-      if (slide.group_index < groups.groups.size()) {
-        return groups.groups[slide.group_index].tab_strip;
+      if (group_index < groups.groups.size()) {
+        return groups.groups[group_index].tab_strip;
       }
       return layout->tab_strip;
     }
@@ -813,11 +836,19 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentTabSlideDirtyRect() const {
   return std::nullopt;
 }
 
+
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();
   if (const auto slide_delay = NextTabSlideDelayMs(); slide_delay.has_value()) {
     if (!next_delay.has_value() || *slide_delay < *next_delay) {
       next_delay = *slide_delay;
+    }
+  }
+  if (const auto autoscroll_delay =
+          selection_autoscroll::NextDelayMs(context_.interaction_state);
+      autoscroll_delay.has_value()) {
+    if (!next_delay.has_value() || *autoscroll_delay < *next_delay) {
+      next_delay = *autoscroll_delay;
     }
   }
   if (const auto plugin_delay = plugin_runtime_.NextPollDelay(); plugin_delay.has_value()) {
@@ -1125,8 +1156,14 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   // Step the Chrome-like tab-slide animation. Capture the dirty strip before
   // advancing so the settle-end frame (which clears the state) still repaints
   // the right region instead of falling back to a full redraw.
-  if (context_.interaction_state.tab_slide.kind != TabDragKind::None) {
-    const std::optional<SDL_FRect> slide_rect = CurrentTabSlideDirtyRect();
+  if (context_.interaction_state.tab_slide.kind != TabDragKind::None ||
+      context_.interaction_state.tab_drag.autoscroll_direction != 0) {
+    const TabSlideState& slide = context_.interaction_state.tab_slide;
+    const std::optional<SDL_FRect> slide_rect =
+        slide.kind != TabDragKind::None
+            ? TabStripRectForKind(slide.kind, slide.group_index)
+            : TabStripRectForKind(context_.interaction_state.tab_drag.kind,
+                                  FocusedEditorGroupIndex());
     if (AdvanceTabSlide()) {
       return EventResult{
           .handled = true,
@@ -1135,6 +1172,123 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
                         : RenderInvalidation{.full = true, .rects = {}},
       };
     }
+  }
+  // Step a selection drag whose pointer is held past an edge of the text band.
+  // Scrolls content, so the repaint is the editor surface rather than a strip.
+  // Only the re-extend below needs the shell; the step itself is in
+  // workspace/coordinators/SelectionAutoscroll.
+  // One autoscroll tick against whichever text surface is active. The editor and
+  // the merge result pane scroll a TextViewport; the compare surface scrolls its
+  // own `scroll_row` through the clamping helper that owns it, which is why the
+  // autoscroll hands out deltas rather than reaching for a viewport (TD-201).
+  //
+  // A lambda rather than a member: the shell's declaration budget is a hard
+  // invariant, and nothing outside this wake needs to step an autoscroll.
+  const auto step_selection_autoscroll = [this]() -> bool {
+    // The bottom panel's terminal is checked first: its selection drag is
+    // independent of which editor tab is active, so keying off the tab kind
+    // (as the other three arms do) would never reach it (TD-2026-08-13-205).
+    if (TerminalTabState* terminal_tab = ActiveTerminalTab();
+        terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
+        BottomPanelShowsTerminal()) {
+      const std::optional<selection_autoscroll::StepDelta> delta =
+          selection_autoscroll::BeginStep(context_.interaction_state);
+      if (!delta.has_value()) {
+        return false;
+      }
+      if (delta->rows == 0) {
+        return selection_autoscroll::FinishStep(context_.interaction_state, false);
+      }
+      const auto layout = CurrentWorkspaceLayout();
+      if (!layout.has_value()) {
+        return selection_autoscroll::FinishStep(context_.interaction_state, false);
+      }
+      // The terminal scrolls its own scrollback offset rather than a viewport,
+      // which is what BeginStep/FinishStep were split apart for.
+      const std::size_t line_count = terminal_tab->session.LineCount();
+      const LogSurfaceLayout panel_layout = ComputeBottomPanelLogLayout(*layout, line_count);
+      const int before_row = terminal_tab->scroll_row;
+      SetBottomPanelScrollRow(terminal_tab->scroll_row + delta->rows, line_count,
+                              panel_layout.scroll.visible_rows);
+      return selection_autoscroll::FinishStep(context_.interaction_state,
+                                              terminal_tab->scroll_row != before_row);
+    }
+    if (ActiveTabIsCompare()) {
+      CompareTabState* compare_tab = ActiveCompareTab();
+      if (compare_tab == nullptr) {
+        return false;
+      }
+      const std::optional<selection_autoscroll::StepDelta> delta =
+          selection_autoscroll::BeginStep(context_.interaction_state);
+      if (!delta.has_value()) {
+        return false;
+      }
+      const int before_row = compare_tab->scroll_row;
+      const std::size_t before_columns = compare_tab->horizontal_scroll;
+      if (delta->rows != 0) {
+        ScrollCompareRows(delta->rows);
+      }
+      if (delta->columns != 0) {
+        ScrollCompareColumns(delta->columns);
+      }
+      SyncCompareViewportScroll(*compare_tab);
+      return selection_autoscroll::FinishStep(
+          context_.interaction_state,
+          compare_tab->scroll_row != before_row ||
+              compare_tab->horizontal_scroll != before_columns);
+    }
+    if (ActiveTabIsMerge()) {
+      MergeTabState* merge_tab = ActiveMergeTab();
+      if (merge_tab == nullptr) {
+        return false;
+      }
+      const bool stepped =
+          selection_autoscroll::Step(context_.interaction_state, merge_tab->result_viewport);
+      // The merge surface keeps its own mirror of the result pane's scroll;
+      // leaving it stale would make the next layout snap the view back.
+      merge_tab->scroll_row = static_cast<int>(merge_tab->result_viewport.scroll_line());
+      merge_tab->horizontal_scroll = merge_tab->result_viewport.horizontal_scroll();
+      return stepped;
+    }
+    if (!ActiveTabIsEditor()) {
+      selection_autoscroll::Disarm(context_.interaction_state);
+      return false;
+    }
+    editor::TextViewport* viewport = ActiveEditorViewport();
+    return viewport != nullptr && selection_autoscroll::Step(context_.interaction_state, *viewport);
+  };
+  if (context_.interaction_state.selection_autoscroll_active() && step_selection_autoscroll()) {
+    const auto layout = CurrentWorkspaceLayout();
+    // Re-extend the selection to the held pointer against the scrolled surface.
+    // Replaying the pointer through the ordinary handler is what keeps the
+    // scrolled-into rows selected; without it the view would move under a
+    // stationary selection. Each surface's own motion handler does that, and
+    // each refuses when its tab is not the active one, so the dispatch is just
+    // offering the event to all three.
+    if (layout.has_value()) {
+      SDL_Event synthetic{};
+      synthetic.type = SDL_EVENT_MOUSE_MOTION;
+      synthetic.motion.x = context_.interaction_state.selection_pointer_x;
+      synthetic.motion.y = context_.interaction_state.selection_pointer_y;
+      synthetic.motion.state = SDL_BUTTON_LMASK;
+      const TerminalTabState* terminal_tab = ActiveTerminalTab();
+      if (terminal_tab != nullptr && terminal_tab->mouse_selecting && BottomPanelVisible() &&
+          BottomPanelShowsTerminal()) {
+        (void)MakePanelMouseCoordinator().HandleMotion(synthetic);
+      } else if (ActiveTabIsCompare()) {
+        (void)MakeCompareMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+      } else if (ActiveTabIsMerge()) {
+        (void)MakeMergeMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+      } else {
+        (void)MakeEditorMouseCoordinator().HandleSelectionMotion(synthetic, *layout);
+      }
+    }
+    return EventResult{
+        .handled = true,
+        .redraw = layout.has_value()
+                      ? RenderInvalidation{.full = false, .rects = {layout->editor_surface}}
+                      : RenderInvalidation{.full = true, .rects = {}},
+    };
   }
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
 }

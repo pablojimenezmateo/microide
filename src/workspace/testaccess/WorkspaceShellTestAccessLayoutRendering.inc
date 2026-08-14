@@ -68,13 +68,14 @@
   static WorkspaceShell::TabStripOverflowControls EditorTabOverflowControls(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto visible = shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
+    const auto& visible = shell.tab_strip_chrome_.ComputeVisibleTabs(layout.tab_strip);
     return shell.tab_strip_chrome_.ComputeTabOverflowControls(layout.tab_strip, visible);
   }
   static WorkspaceShell::TabStripOverflowControls ProjectTabOverflowControls(
       WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto visible = shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
+    const auto& visible =
+        shell.tab_strip_chrome_.ComputeVisibleProjectTabs(layout.project_tab_strip);
     return shell.tab_strip_chrome_.ComputeProjectTabOverflowControls(layout.project_tab_strip, visible);
   }
   static bool ScrollEditorTabStrip(WorkspaceShell& shell, int direction) {
@@ -329,8 +330,17 @@
             .visible_rows = surface.visible_rows,
             .visible_columns = surface.visible_columns,
         },
-        [&shell, &compare](std::size_t line_index) {
-          return shell.CompareRowIndexForRightLine(compare, line_index);
+        [&compare](std::size_t line_index, std::size_t line_visual_columns)
+            -> std::optional<EditorBlameOverlayService::CompareBlameAnchor> {
+          const CompareRightLineAnchor anchor =
+              CompareRightLineBlameAnchor(compare, line_index, line_visual_columns);
+          if (!anchor.valid) {
+            return std::nullopt;
+          }
+          return EditorBlameOverlayService::CompareBlameAnchor{
+              .visual_row = anchor.visual_row,
+              .end_column = anchor.end_column,
+          };
         });
   }
   static std::optional<microide::editor::EditorBlameOverlay> ActiveMergeBlameOverlay(

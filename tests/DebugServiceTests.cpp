@@ -383,9 +383,45 @@ std::vector<std::string> GdbFlavoredAdapterCommand(const std::filesystem::path& 
   return {"python3", server_path.string(), mode, "gdb"};
 }
 
-bool PollUntil(DapManager& manager, const std::function<bool()>& predicate, int timeout_ms = 4000) {
-  return WaitUntil(predicate, std::chrono::milliseconds(timeout_ms),
-                   std::chrono::milliseconds(5),
+// Wait for something to HAPPEN, driving the callback drain while we wait.
+//
+// There is deliberately no per-call millisecond budget. Every predicate here is
+// waiting on a real mock-adapter SUBPROCESS, and how long a round trip takes is a
+// property of the machine -- TSAN instrumentation, the sharded suite running six
+// of these at once, whatever else the box is doing -- not of the product. A
+// deadline tuned on one machine measures that machine, and this suite has paid
+// for that twice already: `SessionResolvesStackOnStopAndStepsResume` timed out on
+// its fifth adapter round trip at the original 4 s, a global 4x sanitizer scale
+// was added to TestSupport to fix it, it timed out again behind that, and two
+// other call sites had meanwhile been hand-bumped to 20 s one at a time.
+//
+// The ceiling below is a HANG detector, not a budget. A wait returns the instant
+// its predicate holds, so a passing run pays nothing for the headroom, and only a
+// genuinely stuck test waits it out -- with the suite's own per-test watchdog
+// (MICROIDE_TEST_TIMEOUT_MS, 300 s, see TestMain.cpp) as the backstop behind it.
+// The point is that the OUTCOME stops depending on load anywhere in the range a
+// real machine can produce.
+//
+// This is the positive form only. Asserting something does NOT happen needs a
+// bounded settling window and is `PollStaysFalse` below -- the two read alike and
+// fail in opposite directions, which is why they are now separate names.
+constexpr std::chrono::milliseconds kAdapterHangCeiling{60000};
+
+bool PollUntil(DapManager& manager, const std::function<bool()>& predicate) {
+  return WaitUntil(predicate, kAdapterHangCeiling, std::chrono::milliseconds(5),
+                   [&manager]() { manager.DrainCallbacks(); });
+}
+
+// Assert something does NOT happen: give the (suppressed) work a real chance to
+// round-trip, then confirm it did not. This one genuinely wants a bounded window,
+// and its failure mode is the opposite of PollUntil's -- a slower machine yields a
+// longer effective window, which can only make the assertion stronger, never
+// flakier. Still scaled by TestSupport's sanitizer multiplier so the "chance to
+// round-trip" stays real under instrumentation.
+bool PollStaysFalse(DapManager& manager,
+                    const std::function<bool()>& predicate,
+                    std::chrono::milliseconds settle_window = std::chrono::milliseconds(2000)) {
+  return WaitUntil(predicate, settle_window, std::chrono::milliseconds(5),
                    [&manager]() { manager.DrainCallbacks(); });
 }
 
@@ -867,7 +903,7 @@ void TestDebugSessionReverseGatedOnCapability() {
   session->StepBack();
   session->ReverseContinue();
   // Give the (suppressed) requests a chance to round-trip, then assert nothing did.
-  Expect(!PollUntil(manager,
+  Expect(!PollStaysFalse(manager,
                     [&]() {
                       return captured.output.find("cmd:stepBack") != std::string::npos ||
                              captured.output.find("cmd:reverseContinue") != std::string::npos ||
@@ -907,7 +943,7 @@ void TestDebugSessionReverseEnabledByLateCapabilitiesEvent() {
          "adapter should not advertise supportsStepBack at init");
   const int resumes_before = captured.resume_count;
   session->StepBack();
-  Expect(!PollUntil(manager,
+  Expect(!PollStaysFalse(manager,
                     [&]() {
                       return captured.output.find("cmd:stepBack") != std::string::npos ||
                              captured.resume_count > resumes_before;
@@ -2042,8 +2078,9 @@ void TestDebugSessionRestartNoOpWithoutCapability() {
          "stop-mode adapter does not advertise supportsRestartRequest");
   session->Restart();
   // Give any erroneous restart a chance to surface, then confirm none was sent.
-  PollUntil(manager, [&]() { return captured.output.find("cmd:restart") != std::string::npos; },
-            200);
+  (void)PollStaysFalse(
+      manager, [&]() { return captured.output.find("cmd:restart") != std::string::npos; },
+      std::chrono::milliseconds(200));
   Expect(captured.output.find("cmd:restart") == std::string::npos,
          "Restart must not send a `restart` request without the capability");
   manager.ShutdownAll();
@@ -3256,14 +3293,13 @@ void TestGdbRealFunctionBreakpointsE2E() {
   // First stop: the beginning of main. gdb has loaded the program, so the pending
   // `add` function breakpoint resolves here. Wait for it to be verified before
   // resuming so nothing about the hit depends on timing.
-  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }, 20000),
+  Expect(PollUntil(manager, [&]() { return captured.stop_count >= 1; }),
          "gdb should stop at the beginning of main");
   const bool stopped_at_add_directly =
       !captured.last_frames.empty() &&
       captured.last_frames[0].name.find("add") != std::string::npos;
   Expect(PollUntil(manager,
-                   [&]() { return !fn_store.All().empty() && fn_store.All()[0].verified; },
-                   10000),
+                   [&]() { return !fn_store.All().empty() && fn_store.All()[0].verified; }),
          "the function breakpoint verifies against real gdb while stopped at main");
 
   bool stopped_in_add = stopped_at_add_directly;
@@ -3273,7 +3309,7 @@ void TestGdbRealFunctionBreakpointsE2E() {
     DebugSession* session = manager.ActiveSession();
     Expect(session != nullptr, "the session should be active while stopped at main");
     session->Continue();
-    Expect(PollUntil(manager, [&]() { return captured.stop_count > stops_before; }, 20000),
+    Expect(PollUntil(manager, [&]() { return captured.stop_count > stops_before; }),
            "gdb should stop again once add() is called");
     stopped_in_add = !captured.last_frames.empty() &&
                      captured.last_frames[0].name.find("add") != std::string::npos;

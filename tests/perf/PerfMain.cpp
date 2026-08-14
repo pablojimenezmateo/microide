@@ -65,6 +65,11 @@ struct CliOptions {
   // drift that the all-or-nothing form caused.
   bool update_deterministic_only = false;
   bool smoke = false;
+  // `--build-config`: print the baked-in build configuration and exit. The
+  // allocation tracer refuses to run against a binary whose symbol names it
+  // cannot stand behind (see -fno-ipa-icf, TD-2026-08-13-197), and this is how
+  // it asks.
+  bool print_build_config = false;
   bool require_fixtures = false;
   bool keep_artifacts = false;
   std::size_t iterations = kDefaultIterations;
@@ -253,6 +258,10 @@ std::optional<CliOptions> ParseCli(int argc, char** argv) {
       }
       options.update_baseline = true;
       options.update_deterministic_only = value == "deterministic";
+      continue;
+    }
+    if (arg == "--build-config") {
+      options.print_build_config = true;
       continue;
     }
     if (arg == "--smoke") {
@@ -600,12 +609,19 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
             context.OpenTab("tests/perf/fixtures/large_project/pkg0/file_1.txt");
-            for (int i = 0; i < 40; ++i) {
-              context.Scroll(-1);
-            }
-            for (int i = 0; i < 20; ++i) {
-              context.KeyDown(SDLK_PAGEDOWN);
-            }
+            // The SCROLLING, declared as a phase. Without one, this scenario's
+            // metrics cover the project open and the tab open as well, and those
+            // dominate — so a drift row against the scenario total says nothing
+            // about scrolling (TD-2026-08-12-193, and the shape
+            // TD-2026-08-06-151 swept for).
+            context.Measure("scroll_large_file.scroll_burst", [&] {
+              for (int i = 0; i < 40; ++i) {
+                context.Scroll(-1);
+              }
+              for (int i = 0; i < 20; ++i) {
+                context.KeyDown(SDLK_PAGEDOWN);
+              }
+            });
             context.PumpFrames(2);
           },
   });
@@ -1634,16 +1650,24 @@ void RegisterBuiltInScenarios() {
             vp.MoveCursorTo(header_line, vp.lines()[header_line].size(), false);
             std::vector<double> samples_us;
             samples_us.reserve(128);
-            for (int i = 0; i < 120; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              vp.InsertNewline();
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
-              if (!vp.Undo()) {
-                throw std::runtime_error("editor_smart_indent_typing: undo failed");
+            // Declared as a phase so the numbers describe SMART INDENT. Without
+            // one, the scenario's allocation metric covered
+            // OpenEditorEssentials50kCppOrThrow — opening a 50,000-line C++ file
+            // — which dwarfs 120 newline+undo cycles, so a drift row against it
+            // was reporting movement in the file-open path under this scenario's
+            // name (TD-2026-08-12-193).
+            context.Measure("smart_indent.newline_undo_burst", [&] {
+              for (int i = 0; i < 120; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                vp.InsertNewline();
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+                if (!vp.Undo()) {
+                  throw std::runtime_error("editor_smart_indent_typing: undo failed");
+                }
               }
-            }
+            });
             EnforceP95Microseconds("editor_smart_indent_typing", samples_us, 200'000.0);
             context.PumpFrames(2);
           },
@@ -1927,6 +1951,7 @@ int main(int argc, char** argv) {
     std::cerr << "usage: microide_perf [--scenarios=a,b] "
                  "[--update-baseline[=all|deterministic]] [--smoke] "
                  "[--require-fixtures] [--keep-artifacts] [--iterations=N] "
+                 "[--build-config] "
                  "[--report-json=path] [--report-text=path] "
                  "[--reference-runner=name] "
                  "[--layout-mode=auto|regular|compact] "
@@ -1934,6 +1959,12 @@ int main(int argc, char** argv) {
                  "[--video=dummy|auto|<sdl-driver>] "
                  "[--pin-cores=auto|off|<cpu-list>] [--no-isolate]\n";
     return 1;
+  }
+
+  if (options->print_build_config) {
+    // Stdout, one line, nothing else: this is a machine-read probe.
+    std::cout << PerfBuildConfig() << '\n';
+    return 0;
   }
 
   g_require_fixtures = options->require_fixtures;

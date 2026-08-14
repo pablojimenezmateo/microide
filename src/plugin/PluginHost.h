@@ -130,6 +130,23 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  // A document that exists only in memory, addressed by a `virtual://` URI:
+  // generated docs, previews, scratch output. The consumer side (open-in-tab,
+  // reload-on-change, read-only enforcement, the `open_file` virtual:// branch)
+  // shipped complete and tested, and nothing could ever create one — the
+  // registry's only writer was the test backdoor (TD-2026-07-27-001). This is
+  // that missing producer.
+  //
+  // Pure DATA, unlike its neighbours: a virtual document has no runtime callback
+  // to invoke, so there is no *Runtime sibling and no re-entrancy to reason about.
+  struct ContributedVirtualDocument {
+    std::string uri;
+    std::string language_id;
+    std::string content;
+    bool editable = false;
+    std::string plugin_id;
+  };
+
   struct ContributedCompletion {
     std::string id;
     std::string language_id;
@@ -774,6 +791,7 @@ class PluginHost {
                          std::string* error_message = nullptr) const;
   const std::vector<ContributedFormatter>& ContributedFormatters() const;
   const std::vector<ContributedSaveParticipant>& ContributedSaveParticipants() const;
+  const std::vector<ContributedVirtualDocument>& ContributedVirtualDocuments() const;
   const std::vector<ContributedCompletion>& ContributedCompletions() const;
   const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
   const std::vector<ContributedLanguageServer>& ContributedLanguageServers() const;

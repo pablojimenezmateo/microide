@@ -118,7 +118,7 @@ bool KeyInputCoordinator::HandleSidebarKeyDown(const SDL_KeyboardEvent& event,
           operations_.open_file(state_.root / result.relative_path);
           if (editor::TextViewport* viewport = operations_.active_editor_viewport();
               viewport != nullptr) {
-            viewport->MoveCursorTo(result.line, result.column);
+            viewport->JumpCursorTo(result.line, result.column);
           }
           if (state_.sidebar.temporary) {
             operations_.restore_previous_sidebar();

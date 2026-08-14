@@ -341,12 +341,56 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
 
-  if (context_.interaction_state.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0) {
-    if (!Contains(layout.editor_surface, event.motion.x, event.motion.y)) {
-      UpdateMouseCursor(static_cast<float>(event.motion.x), static_cast<float>(event.motion.y));
-      return false;
+  // A live tab drag owns the pointer, exactly like the divider/scrollbar drags
+  // above it. It used to be handled at the very bottom of this function, which
+  // meant every motion event first ran the whole hover pipeline — two tooltip
+  // resolutions, two interactive-rect hit tests, the sidebar/status/floating
+  // probes — for hover state that a drag cannot change, and then asked for a
+  // FULL-WINDOW repaint. Nothing outside the dragged strip moves, so the damage
+  // is that strip (padded for the ghost's drop shadow).
+  if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
+    // The tab tooltip that was up when the gesture started is hidden for the whole
+    // drag (HoveredTooltip refuses while dragging), so the frame that starts the
+    // drag has to damage where it was or its card is left painted on the strip.
+    const bool was_dragging = context_.interaction_state.tab_drag.dragging;
+    const std::optional<HoverTooltip> tooltip_before =
+        was_dragging ? std::nullopt : HoveredTooltip(layout);
+    const bool handled = HandleTabMouseMotion(event, layout);
+    if (handled) {
+      EnsureRedraw([this]() {
+        const auto strip = TabStripRectForKind(context_.interaction_state.tab_drag.kind,
+                                               FocusedEditorGroupIndex());
+        if (!strip.has_value()) {
+          RequestWindowRedraw();
+          return;
+        }
+        // The ghost paints a 1px-right / 2px-down drop shadow, so its damage runs
+        // a couple of pixels past the strip it belongs to.
+        constexpr float kGhostShadowPaddingPx = 3.0f;
+        RequestRedrawRect(MakeRect(strip->x, strip->y, strip->w + kGhostShadowPaddingPx,
+                                   strip->h + kGhostShadowPaddingPx));
+      });
+      if (!was_dragging && context_.interaction_state.tab_drag.dragging &&
+          tooltip_before.has_value()) {
+        const SDL_FRect& card = tooltip_before->rect;
+        RequestRedrawRect(MakeRect(card.x - 1.0f, card.y - 1.0f, card.w + 2.0f, card.h + 2.0f));
+      }
     }
+    return handled;
+  }
 
+  if (context_.interaction_state.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0) {
+    // Deliberately NOT gated on the pointer being inside `layout.editor_surface`.
+    // It used to be, which is why a selection drag stopped extending the moment
+    // the pointer crossed into the tab strip, the sidebar, the bottom panel or
+    // off the window -- and stayed stopped while the button was still down. The
+    // surface handlers below clamp the pointer onto their own visible text band,
+    // so "outside" is a position to project, not a reason to refuse.
+    //
+    // The cursor is not updated here either: during a drag the pointer is
+    // logically still on text wherever it physically is, so re-resolving the
+    // cursor kind per motion event would both flicker it over other surfaces and
+    // do a hit-test this path has no use for.
     if (ActiveTabIsCompare()) {
       const bool handled = MakeCompareMouseCoordinator().HandleSelectionMotion(event, layout);
       if (handled) {
@@ -615,14 +659,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
     EnsureRedraw([this]() { RequestChromeRedraw(); });
     return true;
-  }
-
-  if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
-    const bool handled = HandleTabMouseMotion(event, layout);
-    if (handled) {
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
-    }
-    return handled;
   }
 
   if (MakePanelMouseCoordinator().HandleMotion(event)) {
