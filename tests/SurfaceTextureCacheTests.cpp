@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "support/SoftwareCanvas.h"
+
 #include "project/ProjectBackgroundExecutor.h"
 #include "render/SurfaceTextureCache.h"
 
@@ -209,9 +211,109 @@ void TestTextureCreateFailureFoldsIntoBoundedFifo() {
   executor.Shutdown();
 }
 
+// The 2026-07-10 sweep deferred these two as untestable: "Upload needs a live SDL
+// renderer (SDL_CreateTexture), unavailable headless". That premise has expired
+// twice over — the cache grew a texture-factory seam (TD-2026-07-17A-118), and
+// the test suite has SoftwareCanvas, a REAL SDL_Renderer with no GPU. Which is
+// the note that same section already makes: "untestable" claims should be
+// re-checked after a refactor moves the code, not inherited.
+//
+// Uploads `count` distinct 8x8 RGBA rasters and drains them, returning once the
+// cache has stopped taking new ones (or the deadline passes).
+void UploadRasters(SurfaceTextureCache& cache, SDL_Renderer* renderer, std::uint64_t first_hash,
+                   int count) {
+  constexpr int kW = 8;
+  constexpr int kH = 8;
+  const std::size_t image_bytes = static_cast<std::size_t>(kW) * kH * 4;
+  for (int i = 0; i < count; ++i) {
+    std::vector<std::byte> rgba(image_bytes, std::byte{0x7f});
+    cache.Request(first_hash + static_cast<std::uint64_t>(i),
+                  SurfaceTextureCache::RasterFormat::Rgba8, std::move(rgba), kW, kH);
+  }
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    cache.Upload(renderer);
+    if (cache.cached_count() > 0) {
+      // Give the remaining decodes a moment, then drain again.
+      std::this_thread::sleep_for(std::chrono::milliseconds(2));
+      cache.Upload(renderer);
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+}
+
+// Entries are evicted LRU once total texture VRAM passes the budget. With a
+// budget of two 8x8 textures, uploading four must not leave four resident.
+void TestVramBudgetEvictsLeastRecentlyUsed() {
+  SoftwareCanvas canvas(64, 64);
+  ProjectBackgroundExecutor executor;
+  constexpr std::size_t kTextureBytes = 8u * 8u * 4u;
+  SurfaceTextureCache cache(executor, /*vram_budget_bytes=*/kTextureBytes * 2);
+
+  UploadRasters(cache, canvas.renderer(), /*first_hash=*/1000, /*count=*/4);
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (cache.cached_count() == 0 && std::chrono::steady_clock::now() < deadline) {
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    cache.Upload(canvas.renderer());
+  }
+
+  Expect(cache.cached_count() > 0,
+         "a real software renderer must actually create textures, or this proves nothing");
+  Expect(cache.cached_count() <= 2,
+         "the VRAM budget must evict down to two 8x8 textures rather than keeping all four");
+
+  executor.Shutdown();
+}
+
+// Upload(nullptr) happens on any frame painted before the renderer exists (or
+// across a renderer re-create). The contract is NOT that the decoded bytes
+// survive — Upload deliberately drops them — it is that a valid image is not
+// recorded as a permanent FAILURE, because a failure marker suppresses that
+// content hash until Clear() and the image would never appear again. So the
+// guard is: no failure marker, and a later Request with a live renderer works.
+void TestUploadWithNoRendererDoesNotPermanentlySuppressTheImage() {
+  SoftwareCanvas canvas(64, 64);
+  ProjectBackgroundExecutor executor;
+  SurfaceTextureCache cache(executor);
+
+  constexpr int kW = 8;
+  constexpr int kH = 8;
+  std::vector<std::byte> rgba(static_cast<std::size_t>(kW) * kH * 4, std::byte{0x33});
+  cache.Request(4242, SurfaceTextureCache::RasterFormat::Rgba8, std::move(rgba), kW, kH);
+
+  // Drain with no renderer several times: must be a no-op, not a drop.
+  for (int i = 0; i < 5; ++i) {
+    cache.Upload(nullptr);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+  }
+  Expect(cache.cached_count() == 0, "no renderer means no texture was created");
+  Expect(cache.failed_hash_count() == 0,
+         "a missing renderer is not a decode failure and must not be recorded as one");
+
+  // Re-requested with a live renderer, the SAME hash still decodes and uploads —
+  // it was not suppressed by the renderer-less frames.
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (cache.cached_count() == 0 && std::chrono::steady_clock::now() < deadline) {
+    std::vector<std::byte> retry(static_cast<std::size_t>(kW) * kH * 4, std::byte{0x33});
+    cache.Request(4242, SurfaceTextureCache::RasterFormat::Rgba8, std::move(retry), kW, kH);
+    std::this_thread::sleep_for(std::chrono::milliseconds(2));
+    cache.Upload(canvas.renderer());
+  }
+  Expect(cache.cached_count() == 1,
+         "the same hash re-decodes once a renderer exists rather than staying suppressed");
+  Expect(cache.failed_hash_count() == 0, "and it was never recorded as a failure");
+
+  executor.Shutdown();
+}
+
 }  // namespace
 
 void RegisterSurfaceTextureCacheTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SurfaceTextureCache/VramBudgetEvictsLeastRecentlyUsed",
+          TestVramBudgetEvictsLeastRecentlyUsed);
+  AddTest(tests, "SurfaceTextureCache/UploadWithNoRendererDoesNotPermanentlySuppressTheImage",
+          TestUploadWithNoRendererDoesNotPermanentlySuppressTheImage);
   AddTest(tests, "SurfaceTextureCache/FailedHashSetIsBounded", TestFailedHashSetIsBounded);
   AddTest(tests, "SurfaceTextureCache/PendingDecodedBytesAreBounded",
           TestPendingDecodedBytesAreBounded);

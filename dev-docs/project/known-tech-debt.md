@@ -1266,7 +1266,7 @@ dereferences the vector at call time, which stores no strings at all.
 Deferred because the realistic config is small and this is a startup path, not a
 frame path: the 2,000-setting perf fixture is what makes the doubling visible.
 
-### TD-2026-08-12-193 — nine phases allocate more than they did at `origin/main`, every one of them under its gate, and one is the blob work's own conversion boundary.
+### TD-2026-08-12-193 — nine phases allocate more than they did at `origin/main`, every one of them under its gate, and one is the blob work's own conversion boundary. [OPEN as a METHOD reminder 2026-08-14 — every actionable row is closed; see the status section below.]
 
 Found by A/B-ing the 36-commit push against `origin/main` with
 `tools/perf-compare.py` rather than against the baselines — which is the point:
@@ -6531,9 +6531,27 @@ with per-item detail in the `Deferred backlog sweep — Batch A…I` commits.
 Relocated here from `active-work.md` on 2026-08-03: these are open debt items, which
 is what this ledger is for. Not fixed in that pass — low value or hard to reach/test.
 
-- `SurfaceTextureCache` eviction/null-renderer fixes lack direct unit coverage:
-  `Upload` needs a live SDL renderer (`SDL_CreateTexture`), unavailable headless.
-  They mirror the already-tested sibling text-texture cache guard.
+- **[RESOLVED 2026-08-14]** `SurfaceTextureCache` eviction/null-renderer fixes
+  lacked direct unit coverage, deferred because "`Upload` needs a live SDL
+  renderer (`SDL_CreateTexture`), unavailable headless". **That premise had
+  expired twice over** — the cache grew a texture-factory test seam
+  (TD-2026-07-17A-118), and the suite has `SoftwareCanvas`, a real `SDL_Renderer`
+  with no GPU. Which is exactly the lesson the resolved item two bullets down
+  already records: "untestable" claims should be re-checked after a refactor
+  moves the code, not inherited. Both are covered now:
+  `SurfaceTextureCache/VramBudgetEvictsLeastRecentlyUsed` (four 8x8 textures into
+  a two-texture budget, asserting textures were really created first, or the test
+  would prove nothing) and
+  `SurfaceTextureCache/UploadWithNoRendererDoesNotPermanentlySuppressTheImage`.
+
+  Writing the second one corrected a wrong assumption about the contract, which
+  is worth recording: `Upload(nullptr)` does NOT preserve the decoded backlog. It
+  deliberately drops the bytes AND the in-flight marker, so a later *Request*
+  re-decodes. The property that matters is therefore not "the bytes survive" but
+  "a valid image is never recorded as a permanent FAILURE" — a failure marker
+  suppresses that content hash until `Clear()`, and the image would never appear
+  again. The test asserts that, and that a re-request with a live renderer
+  succeeds.
 - **[RESOLVED 2026-08-05]** The single-line-input view-metrics OOB fix
   (`view_start_idx == size()` when no glyph left of the caret fits a
   sub-glyph-width field) lacked a direct regression test, because the logic was a
