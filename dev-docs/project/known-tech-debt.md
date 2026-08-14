@@ -389,6 +389,47 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-227 — every `LineBlob` producer sized its offset table and let the byte buffer double its way there. [RESOLVED 2026-08-14, same session it was filed.]
+
+`LineBlob` exists so a line-shaped edit is two allocations per direction instead
+of one per line (TD-2026-08-11-182). Both allocations then grew geometrically,
+and only ONE producer in the tree ever reserved the byte half
+(`SortSelectedLines`). Everywhere else `reserve_lines(n)` sized the `uint32`
+offset table and the `std::string` holding the bytes took its doubling curve —
+about twelve reallocations for a 300 KB region, each copying everything appended
+so far, so the producer allocated roughly **twice the bytes it produced**.
+
+Three producers know their exact extent and now say so:
+
+- `PieceTree::ExtractLineRangeInto` — the extent is `LineStartByte(end_line) -
+  LineStartByte(begin_line)`, two lookups, over-estimating by at most one byte per
+  line (the newlines are not stored). Guarded by
+  `if constexpr (requires { sink.reserve_bytes(…); })` so the
+  `std::vector<std::string>` sink is unaffected. This is the undo path for every
+  line-shaped edit, and it feeds `AppendLines`, so the move/copy-lines builders
+  inherit the fix.
+- `BuildToggledCommentRegion` — its first pass already walks every line to decide
+  add-vs-remove, so summing the lengths there is free. Commenting adds
+  `marker + ' '` per line and uncommenting only removes, so one bound serves both.
+- `BuildRangeHistoryEntry`'s composed `after_lines` — `prefix + replacement +
+  suffix`, all three known. This is the minified-line path, where prefix and
+  suffix are each megabytes on every keystroke.
+
+Whole-phase allocations under the site tracer:
+
+| phase | before | after |
+| --- | ---: | ---: |
+| `toggle_line_comment.1000_lines` | 9,602 | **4,400** (−54 %) |
+| `move_line_down.multi_caret_burst` | 46,105 | **37,825** (−18 %) |
+
+The first phase's #1 site was 1,920 allocations totalling **102 MB** — one
+extract's doubling chain, repeated. It is gone from the table entirely.
+
+Method note for the next sweep: `tools/trace-perf-phases.py` runs the binary it
+was pointed at ~127 times over several minutes. Rebuilding that binary mid-sweep
+kills the run with `PermissionError` on the relink and leaves a partial report
+that looks complete. Do not build while a sweep is in flight.
+
 ### TD-2026-08-14-226 — the inline-blame query descriptor was rebuilt, with its two owned paths, on every painted frame. [RESOLVED 2026-08-14, same session it was filed.]
 
 TD-2026-08-14-223 removed the blame path's *resolution* cost. What it left is the

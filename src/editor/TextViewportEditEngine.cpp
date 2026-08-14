@@ -761,6 +761,11 @@ std::optional<TextViewport::HistoryEntry> TextViewport::BuildRangeHistoryEntry(
     // between here and the appends.
     const std::string_view prefix = document_->lines.LineView(start.line).substr(0, start.column);
     const std::string_view suffix = document_->lines.LineView(end.line).substr(end.column);
+    // Size the byte buffer, not just the offset table. The appends below are onto
+    // std::string's doubling curve otherwise, and on the minified-line case this
+    // path exists to serve, prefix and suffix are each megabytes — so the growth
+    // recopied them several times per keystroke.
+    after_lines.reserve_bytes(prefix.size() + replacement.size() + suffix.size());
     if (replacement_lines.size() == 1) {
       after_lines.push_joined(prefix, std::string_view(replacement_lines.front()), suffix);
     } else {

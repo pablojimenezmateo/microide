@@ -540,6 +540,21 @@ void PieceTree::ExtractLineRangeInto(std::size_t begin_line, std::size_t end_lin
   out.reserve(target);
   const std::uint32_t start = LineStartByte(begin_line);
 
+  // A blob sink stores its lines in ONE byte buffer, and `reserve` above only
+  // sized the offset table. Without this the buffer takes std::string's doubling
+  // curve — ~12 reallocations for a 300 KB region, each copying everything
+  // appended so far, so the extract allocated twice the bytes it produced. The
+  // extent is known exactly here (two line-start lookups) and is an over-estimate
+  // by at most one byte per line, since the newlines are not stored.
+  if constexpr (requires(Sink& sink) { sink.reserve_bytes(std::size_t{}); }) {
+    const std::uint32_t end_byte = end_line >= line_count_
+                                       ? static_cast<std::uint32_t>(ByteSize())
+                                       : LineStartByte(end_line);
+    if (end_byte > start) {
+      out.reserve_bytes(out.content_bytes() + (end_byte - start));
+    }
+  }
+
   // In-order pruned walk over [start, ByteSize()). Each visited piece contributes
   // a contiguous byte span; we split those bytes on '\n' straight into `out`
   // (newline excluded), stopping the instant `count` lines have been emitted. The

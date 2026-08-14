@@ -169,11 +169,13 @@ bool BuildToggledCommentRegion(const TextBuffer& lines,
   bool all_commented = true;
   bool any_non_blank = false;
   std::size_t min_indent = std::string::npos;
+  std::size_t content_bytes = 0;
   for (std::size_t i = range.first; i <= range.last; ++i) {
     // LineView, not lines[i]: LineRef copies the line and interns it in the
     // buffer's line cache, so the two passes below cost two allocations per line
     // before any of the work the toggle actually needs (TD-2026-08-06-159).
     const std::string_view line = lines.LineView(i);
+    content_bytes += line.size();
     if (LineIsEmptyOrWhitespace(line)) continue;
     any_non_blank = true;
     std::size_t lead = LeadingWhitespaceCount(line);
@@ -187,6 +189,12 @@ bool BuildToggledCommentRegion(const TextBuffer& lines,
 
   updated->clear();
   updated->reserve_lines(range.line_count());
+  // Size the blob's byte buffer too. Without it the region's bytes are appended
+  // onto std::string's doubling curve -- ~12 reallocations for a 300 KB region,
+  // each copying everything appended so far -- and the pass above has already
+  // measured the exact input. Commenting adds `marker + ' '` per line and
+  // uncommenting only removes, so this bound holds either way.
+  updated->reserve_bytes(content_bytes + range.line_count() * (marker.size() + 1));
   for (std::size_t i = range.first; i <= range.last; ++i) {
     const std::string_view line = lines.LineView(i);
     if (LineIsEmptyOrWhitespace(line)) {

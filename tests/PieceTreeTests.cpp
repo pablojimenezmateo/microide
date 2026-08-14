@@ -5,8 +5,10 @@
 #include <vector>
 
 #include "editor/CaretNeighborhood.h"
+#include "editor/LineBlob.h"
 #include "editor/PieceTree.h"
 #include "editor/TextBuffer.h"
+#include "perf/AllocationCounter.h"
 #include "util/PerformanceCounters.h"
 
 namespace microide::tests {
@@ -206,6 +208,40 @@ void TestPieceTreeRandomAccessOrderMatchesModel() {
       }
     }
   }
+}
+
+// A blob sink holds its lines in one byte buffer, and `reserve(count)` only sizes
+// the offset table. Left to itself the buffer takes std::string's doubling curve,
+// so a 120 KB extract was ~13 allocations and copied the accumulated bytes at each
+// one -- twice the bytes produced, on the undo path of every line-shaped edit
+// (TD-2026-08-14-227). The extent is known from two line-start lookups.
+void TestPieceTreeExtractIntoBlobSizesItsByteBuffer() {
+  std::vector<std::string> lines;
+  lines.reserve(2000);
+  for (int i = 0; i < 2000; ++i) {
+    lines.push_back(std::string(60, static_cast<char>('a' + (i % 26))));
+  }
+  PieceTree tree(lines);
+  // Warm the tree's own walk stack and line-start caches with an identical
+  // extract, so the measured window is the second blob's buffers and nothing else.
+  editor::LineBlob warmup;
+  tree.AppendLines(0, lines.size(), warmup);
+  editor::LineBlob blob;
+#if MICROIDE_PERF_HARNESS_BUILD
+  const perf::AllocationSnapshot before = perf::Allocations::Snapshot();
+#endif
+  tree.AppendLines(0, lines.size(), blob);
+#if MICROIDE_PERF_HARNESS_BUILD
+  const perf::AllocationDelta delta = perf::Allocations::DeltaSince(before);
+  // Two buffers, each reserved once. The bound is deliberately just above that
+  // rather than at the doubling count it replaces: at 4 this fails on the old
+  // code (~13 for the byte buffer alone) and passes on the new.
+  Expect(delta.allocations <= 4,
+         "extracting into a blob should reserve its byte buffer, not grow into it");
+#endif
+  Expect(blob.size() == lines.size(), "blob extract should produce every line");
+  Expect(blob[0] == lines[0] && blob[lines.size() - 1] == lines[lines.size() - 1],
+         "blob extract should reproduce the buffer's lines");
 }
 
 void TestPieceTreeSliceLines() {
@@ -937,6 +973,8 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
           TestPieceTreeReplaceTextRangeRandomizedEquivalence);
   AddTest(tests, "PieceTree/ReplaceTextRangeHonorsByteCeiling",
           TestPieceTreeReplaceTextRangeHonorsByteCeiling);
+  AddTest(tests, "PieceTree/ExtractIntoBlobSizesItsByteBuffer",
+          TestPieceTreeExtractIntoBlobSizesItsByteBuffer);
 }
 
 }  // namespace microide::tests
