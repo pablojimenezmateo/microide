@@ -48,19 +48,18 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   const TabSlideState& tab_slide = context_.interaction_state.tab_slide;
   const TabDragState& tab_drag = context_.interaction_state.tab_drag;
   const auto slide_dx = [&](TabDragKind kind, std::size_t group_index, std::size_t index) -> float {
-    if (tab_slide.kind != kind) {
-      return 0.0f;
-    }
-    if (kind == TabDragKind::Editor && tab_slide.group_index != group_index) {
-      return 0.0f;
-    }
-    return index < tab_slide.current.size() ? tab_slide.current[index] : 0.0f;
+    const std::span<const float> offsets = tab_slide.OffsetsFor(kind, group_index);
+    return index < offsets.size() ? offsets[index] : 0.0f;
   };
   const auto tab_lifted = [&](TabDragKind kind, std::size_t group_index, std::size_t index) -> bool {
     if (!tab_drag.dragging || tab_drag.kind != kind) {
       return false;
     }
-    if (kind == TabDragKind::Editor && FocusedEditorGroupIndex() != group_index) {
+    // The dragged tab is lifted out of its SOURCE group's strip for the whole
+    // gesture, including while the pointer is over the other group's — the ghost
+    // follows the pointer across, and the hole stays open where it came from until
+    // the drop commits (TD-2026-08-14-213).
+    if (kind == TabDragKind::Editor && tab_drag.source_group_index != group_index) {
       return false;
     }
     return index == tab_drag.source_index;
@@ -200,7 +199,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // global tab-strip band (filled in the frame pass); a stacked second group
   // synthesizes its strip inside the editor surface, filled here.
   const EditorGroupRectsLayout editor_group_rects = ComputeEditorGroupRectsForState(layout);
-  const std::size_t focused_group_index = FocusedEditorGroupIndex();
   for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
     const SDL_FRect group_tab_strip = editor_group_rects.groups[gi].tab_strip;
     if (editor_group_rects.groups.size() > 1) {
@@ -261,8 +259,22 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                                      Contains(tab_overflow.right_button, last_mouse_x_,
                                               last_mouse_y_));
       if (const TabDragState& drag = context_.interaction_state.tab_drag;
-          drag.dragging && drag.kind == TabDragKind::Editor && gi == focused_group_index) {
-        DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, visible_tabs,
+          drag.dragging && drag.kind == TabDragKind::Editor && gi == drag.target_group_index) {
+        // The ghost tracks the pointer, so it paints over the strip the pointer is
+        // over — which in a cross-group drag is not the strip the tab came from.
+        // Its label still comes from the SOURCE group's list, the only place the
+        // dragged tab exists until the drop commits (TD-2026-08-14-213). Asking for
+        // another group's visible list is safe here: the memo is per group index,
+        // so it cannot invalidate the `visible_tabs` reference above it.
+        const bool cross_group = drag.source_group_index != gi;
+        const std::vector<VisibleStripTab>& ghost_tabs =
+            !cross_group ? visible_tabs
+            : drag.source_group_index < editor_group_rects.groups.size()
+                ? tab_strip_chrome_.ComputeVisibleTabsForGroup(
+                      drag.source_group_index,
+                      editor_group_rects.groups[drag.source_group_index].tab_strip)
+                : TabStripService::EmptyVisibleTabs();
+        DrawTabDragFeedback(text_renderer_, renderer, theme_, group_tab_strip, ghost_tabs,
                             drag.source_index, drag.pointer_x, drag.grab_offset_x,
                             StripTabStyle{
                                 .text_left_padding = 10.0f,

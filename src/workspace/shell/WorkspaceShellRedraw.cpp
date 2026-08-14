@@ -757,7 +757,7 @@ std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
     return static_cast<Uint32>(16);
   }
   const TabSlideState& slide = context_.interaction_state.tab_slide;
-  if (slide.kind == TabDragKind::None) {
+  if (!slide.active()) {
     return std::nullopt;
   }
   // During the post-release settle, keep waking until the animation clears itself
@@ -769,11 +769,14 @@ std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
   }
   // Mid-drag: only keep waking while something is actually in motion. A drag whose
   // neighbors have settled (pointer held still) needs no wakes until the next
-  // motion event moves the target again.
-  if (!SlideOffsetsMoving(slide.current, slide.target)) {
-    return std::nullopt;
+  // motion event moves the target again. A cross-group drag animates two strips,
+  // and either one still moving is a reason to wake.
+  for (const TabStripSlide& strip : slide.strips) {
+    if (!strip.idle() && SlideOffsetsMoving(strip.current, strip.target)) {
+      return static_cast<Uint32>(16);  // ~60 fps
+    }
   }
-  return static_cast<Uint32>(16);  // ~60 fps
+  return std::nullopt;
 }
 
 bool WorkspaceShell::AdvanceTabSlide() {
@@ -784,7 +787,7 @@ bool WorkspaceShell::AdvanceTabSlide() {
     scrolled = MakeTabMouseCoordinator().TickDragAutoScroll();
   }
   TabSlideState& slide = context_.interaction_state.tab_slide;
-  if (slide.kind == TabDragKind::None) {
+  if (!slide.active()) {
     return scrolled;
   }
   const Uint64 now = SDL_GetTicks();
@@ -793,7 +796,12 @@ bool WorkspaceShell::AdvanceTabSlide() {
   // can't teleport tabs; it settles in one brisk step instead.
   const float dt_ms = static_cast<float>(std::min<Uint64>(raw_dt, 100));
   slide.last_advance_ms = now;
-  const bool moving = AdvanceSlideOffsets(slide.current, slide.target, dt_ms);
+  bool moving = false;
+  for (TabStripSlide& strip : slide.strips) {
+    if (!strip.idle() && AdvanceSlideOffsets(strip.current, strip.target, dt_ms)) {
+      moving = true;
+    }
+  }
   if (!moving) {
     if (slide.settling) {
       // Post-release glide finished: drop the animation so every tab renders at
@@ -1156,19 +1164,38 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   // Step the Chrome-like tab-slide animation. Capture the dirty strip before
   // advancing so the settle-end frame (which clears the state) still repaints
   // the right region instead of falling back to a full redraw.
-  if (context_.interaction_state.tab_slide.kind != TabDragKind::None ||
+  if (context_.interaction_state.tab_slide.active() ||
       context_.interaction_state.tab_drag.autoscroll_direction != 0) {
     const TabSlideState& slide = context_.interaction_state.tab_slide;
-    const std::optional<SDL_FRect> slide_rect =
-        slide.kind != TabDragKind::None
-            ? TabStripRectForKind(slide.kind, slide.group_index)
-            : TabStripRectForKind(context_.interaction_state.tab_drag.kind,
-                                  FocusedEditorGroupIndex());
+    // A cross-group drag animates two strips, so this is a list rather than one
+    // rect; falling back to a full-window repaint because the second strip had
+    // nowhere to go would undo the whole point of the damage-scoped drag.
+    util::SmallVector<SDL_FRect, kInlineRedrawRects> slide_rects;
+    bool resolved_every_strip = true;
+    for (const TabStripSlide& strip : slide.strips) {
+      if (strip.idle()) {
+        continue;
+      }
+      if (const auto rect = TabStripRectForKind(strip.kind, strip.group_index); rect.has_value()) {
+        slide_rects.push_back(*rect);
+      } else {
+        resolved_every_strip = false;
+      }
+    }
+    if (slide_rects.empty()) {
+      if (const auto rect = TabStripRectForKind(context_.interaction_state.tab_drag.kind,
+                                                FocusedEditorGroupIndex());
+          rect.has_value()) {
+        slide_rects.push_back(*rect);
+      } else {
+        resolved_every_strip = false;
+      }
+    }
     if (AdvanceTabSlide()) {
       return EventResult{
           .handled = true,
-          .redraw = slide_rect.has_value()
-                        ? RenderInvalidation{.full = false, .rects = {*slide_rect}}
+          .redraw = resolved_every_strip && !slide_rects.empty()
+                        ? RenderInvalidation{.full = false, .rects = std::move(slide_rects)}
                         : RenderInvalidation{.full = true, .rects = {}},
       };
     }

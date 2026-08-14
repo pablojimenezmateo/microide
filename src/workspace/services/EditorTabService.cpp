@@ -143,6 +143,13 @@ bool EditorTabService::MoveActiveTo(std::size_t index) {
   return coordinator_.MoveActiveTo(index);
 }
 
+bool EditorTabService::MoveTabToGroup(std::size_t from_group,
+                                      std::size_t from_index,
+                                      std::size_t to_group,
+                                      std::size_t to_slot) {
+  return coordinator_.MoveTabToGroup(from_group, from_index, to_group, to_slot);
+}
+
 std::optional<std::size_t> EditorTabService::FindIndexBySpecifier(
     std::string_view specifier,
     std::string* error_message) const {

@@ -156,6 +156,21 @@ class TabCoordinator {
   bool CloseEditorGroup();
   std::size_t EditorGroupCount() const { return state_.editor_groups.size(); }
   bool MoveActiveTo(std::size_t index);
+  // Move one tab out of `from_group` and into `to_group` at insertion slot
+  // `to_slot`, focusing the destination and activating the moved tab there. This
+  // is what a tab dragged across a split commits (TD-2026-08-14-213), and what
+  // "move editor into other group" would bind to.
+  //
+  // Not a reorder with a group argument: the tab keeps its identity and its
+  // buffer (so no LSP didClose — the view count is unchanged), the source group
+  // collapses if this emptied it, and `to_slot` is a raw insertion point in the
+  // destination list rather than a post-removal target index. Returns false when
+  // either index is out of range, the groups are the same, or the destination is
+  // at its per-group tab cap.
+  bool MoveTabToGroup(std::size_t from_group,
+                      std::size_t from_index,
+                      std::size_t to_group,
+                      std::size_t to_slot);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,
                                                   std::string* error_message) const;
   bool ReopenActive();

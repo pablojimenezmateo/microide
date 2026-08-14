@@ -810,6 +810,74 @@ bool TabCoordinator::MoveActiveTo(std::size_t index) {
   return true;
 }
 
+bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
+                                    std::size_t from_index,
+                                    std::size_t to_group,
+                                    std::size_t to_slot) {
+  if (from_group == to_group || from_group >= state_.editor_groups.size() ||
+      to_group >= state_.editor_groups.size()) {
+    return false;
+  }
+  if (from_index >= state_.editor_groups[from_group].open_tabs.size()) {
+    return false;
+  }
+  if (state_.editor_groups[to_group].open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;
+  }
+
+  // Flush live caret/scroll into the tab before it leaves: the metadata sync is
+  // scoped to the focused group's active tab, and after the move this tab is
+  // neither of those in the group it came from.
+  if (from_group == state_.focused_group_index &&
+      from_index == state_.editor_groups[from_group].active_tab_index) {
+    SyncActiveEditorTabMetadata();
+  }
+
+  TabEntry moved;
+  {
+    EditorGroup& from = state_.editor_groups[from_group];
+    moved = std::move(from.open_tabs[from_index]);
+    from.open_tabs.erase(from.open_tabs.begin() + static_cast<std::ptrdiff_t>(from_index));
+    if (from.active_tab_index > from_index) {
+      --from.active_tab_index;
+    } else if (!from.open_tabs.empty() && from.active_tab_index >= from.open_tabs.size()) {
+      from.active_tab_index = from.open_tabs.size() - 1;
+    }
+  }
+
+  std::size_t landed_index = 0;
+  {
+    EditorGroup& to = state_.editor_groups[to_group];
+    landed_index = std::min(to_slot, to.open_tabs.size());
+    to.open_tabs.insert(to.open_tabs.begin() + static_cast<std::ptrdiff_t>(landed_index),
+                        std::move(moved));
+    to.active_tab_index = landed_index;
+  }
+
+  // Set focus BEFORE the collapse: CollapseGroupAt re-homes `focused_group_index`
+  // across the erase, so writing the destination first is what keeps focus on the
+  // moved tab when the source group was to its left and disappears.
+  state_.focused_group_index = to_group;
+  state_.surface.focus = FocusTarget::Editor;
+  if (state_.editor_groups[from_group].open_tabs.empty()) {
+    // VS Code drops a split whose last editor is dragged out.
+    CollapseGroupAt(from_group);
+  }
+
+  // A tab that was never activated in its old group can still be deferred; it is
+  // the destination's active tab now, so it has to hydrate like any activation.
+  if (EditorGroup& landed = state_.editor_groups[state_.clamped_focused_group_index()];
+      landed_index < landed.open_tabs.size()) {
+    (void)LoadEditorTabForActivation(landed.open_tabs[landed_index]);
+  }
+  // Both strips changed length, and the per-group geometry cache keys only on
+  // (tab_count, window_width) — without this drop the destination can render the
+  // source's cached widths whenever the two happen to agree.
+  operations_.invalidate_tab_strip_geometry();
+  RefreshFocusedGroupActiveTab(true);
+  return true;
+}
+
 TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
   TabEntry clone;
   clone.kind = TabEntry::Kind::Editor;

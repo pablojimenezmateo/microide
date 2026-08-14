@@ -2,9 +2,11 @@
 
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <vector>
 
 #include "workspace/state/WorkspaceTextInputState.h"
@@ -58,6 +60,17 @@ struct TabDragState {
   std::size_t target_slot = 0;      // insertion slot under the dragged tab's box
   float ghost_width = 0.0f;         // dragged tab rect width
   float grab_offset_x = 0.0f;       // press_x - dragged_tab.rect.x
+  // Editor drags only. The group the press landed in (`source_index` indexes ITS
+  // tab list) and the group whose strip the pointer is over right now. They differ
+  // while the pointer is over the other half of a split, and a release in that
+  // state moves the tab BETWEEN groups instead of reordering within one
+  // (TD-2026-08-14-213). The source group keeps keyboard focus for the whole
+  // gesture, so `source_group_index` stays the focused group and the commit guard
+  // can still read the dragged tab as its group's active tab.
+  std::size_t source_group_index = 0;
+  std::size_t target_group_index = 0;
+  bool cross_group() const { return kind == TabDragKind::Editor &&
+                                    target_group_index != source_group_index; }
   // True once the slide targets have been seeded at least once for this drag, so
   // a motion event that does not change the insertion slot can advance the ease
   // instead of rebuilding the whole target layout.
@@ -70,20 +83,62 @@ struct TabDragState {
   Uint64 last_autoscroll_ms = 0;
 };
 
-// Chrome-like sliding reorder animation. While a tab drag is live, neighbor tabs
-// ease from their base x toward a "displaced" layout (dragged tab lifted out, a
-// gap opened at the insertion slot); on release the dropped tab glides from the
-// ghost position into its committed slot. Offsets are indexed by model tab index
-// and only the visible subset is filled. This outlives `tab_drag` so the
-// post-release settle can finish (the drag state clears on button-up but the
-// glide keeps running until every offset reaches 0).
-struct TabSlideState {
+// One animating tab strip's offsets. Indexed by model tab index; only the
+// visible subset is ever filled, and an idle slot holds no vector capacity at
+// all, so a same-group drag pays nothing for the second slot.
+struct TabStripSlide {
   TabDragKind kind = TabDragKind::None;  // which strip animates; None = idle
   std::size_t group_index = 0;           // editor group when kind == Editor
   std::vector<float> current;            // per model-index x offset (rendered)
   std::vector<float> target;             // per model-index x offset (goal)
+
+  bool idle() const { return kind == TabDragKind::None; }
+  bool Is(TabDragKind for_kind, std::size_t for_group) const {
+    return kind == for_kind && (kind != TabDragKind::Editor || group_index == for_group);
+  }
+};
+
+// Two, because an editor tab dragged across a split animates BOTH strips at once
+// — the source closes the hole the lifted tab left while the destination opens a
+// gap at the insertion slot — and `kMaxEditorGroups` (WorkspaceLayout.h) caps a
+// split at two groups. Spelled here rather than included so this header keeps no
+// layout dependency.
+inline constexpr std::size_t kMaxAnimatingTabStrips = 2;
+
+// Chrome-like sliding reorder animation. While a tab drag is live, neighbor tabs
+// ease from their base x toward a "displaced" layout (dragged tab lifted out, a
+// gap opened at the insertion slot); on release the dropped tab glides from the
+// ghost position into its committed slot. This outlives `tab_drag` so the
+// post-release settle can finish (the drag state clears on button-up but the
+// glide keeps running until every offset reaches 0).
+//
+// `strips[0]` is the strip the gesture started on and the only one a same-group
+// drag or a project/terminal drag ever uses; `strips[1]` is armed only while an
+// editor drag hovers the other group's strip (TD-2026-08-14-213).
+struct TabSlideState {
+  std::array<TabStripSlide, kMaxAnimatingTabStrips> strips;
   Uint64 last_advance_ms = 0;            // SDL_GetTicks() of last ease step
   bool settling = false;                 // post-release glide in progress
+
+  bool active() const {
+    for (const TabStripSlide& strip : strips) {
+      if (!strip.idle()) {
+        return true;
+      }
+    }
+    return false;
+  }
+  // The rendered offsets for one strip, or an empty span when it is not
+  // animating. Render paths index into this rather than reaching for a field, so
+  // the two-strip case needs no branch of their own.
+  std::span<const float> OffsetsFor(TabDragKind kind, std::size_t group_index) const {
+    for (const TabStripSlide& strip : strips) {
+      if (!strip.idle() && strip.Is(kind, group_index)) {
+        return strip.current;
+      }
+    }
+    return {};
+  }
 };
 
 struct InteractionState {

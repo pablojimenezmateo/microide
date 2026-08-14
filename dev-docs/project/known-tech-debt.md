@@ -438,9 +438,60 @@ type. Until then the working rule is: **assign an aggregate, do not `emplace`**,
 for any optional whose element type is nested in the class holding the optional.
 See also [validation-traps.md](validation-traps.md) § Second Compiler.
 
-### TD-2026-08-14-213 — a tab cannot be dragged into the other editor group, so a split is populated only by keyboard. [OPEN 2026-08-14.]
+### TD-2026-08-14-213 — a tab cannot be dragged into the other editor group, so a split is populated only by keyboard. [RESOLVED 2026-08-14 — all four bullets, including the state-shape change that was the reason it was filed.]
 
-`TabMouseCoordinator::ResolveDragStrip` resolves ONE strip — the focused group's —
+**Shipped.** Dragging an editor tab over the other group's strip now moves it
+between groups on release, with both strips animating. Point by point against
+the fix sketch below:
+
+- **Pointer-resolved strip.** `ResolvePointerEditorGroup` hit-tests the live
+  pointer against the strips `ResolveEditorGroupTabStrips` already enumerates
+  heap-free, and `ResolveEditorDragStrip(layout, group_index)` resolves any
+  group's strip — the source strip is now just that helper called with the source
+  group. Off both strips the target is **sticky** rather than snapping home,
+  which is what VS Code does when the pointer is dragged down into the body.
+- **`MoveTabToGroup(from, index, to, slot)`** landed on `TabCoordinator`
+  (+`EditorTabService`), not on the shell: it is bound inline in
+  `MakeTabMouseCoordinator`'s hook, because `WorkspaceShellMembers.inc` is at its
+  hard line cap and nothing else needs the entry point. It moves the `TabEntry`
+  whole (so the buffer view count is unchanged and no LSP `didClose` fires),
+  collapses the source group when the move empties it (VS Code drops a split whose
+  last editor is dragged out), and sets focus BEFORE the collapse so
+  `CollapseGroupAt`'s re-homing carries it correctly.
+- **The `TabSlideState` shape change**, which is why this was filed rather than
+  done: it is now `std::array<TabStripSlide, 2>` — slot 0 is the strip the gesture
+  started on, slot 1 is armed only while a drag hovers the other group's. The
+  source seeds with `kNoInsertionSlot` (its tabs close ranks over the lifted tab,
+  no gap opens) and the destination with `kNoLiftedTab` (a gap opens, nothing is
+  lifted, because the dragged tab is not in its list yet). An idle slot holds no
+  vector capacity, so a same-group drag pays nothing for the second. Retiring the
+  second slot on re-entry clears its `kind` but keeps the capacity, so crossing
+  back and forth does not reallocate.
+- **The commit guard** is re-expressed against the source group
+  (`source.active != source_index` on `ResolveEditorDragStrip(source_group)`)
+  instead of against the focused group. It can stay that simple because the source
+  group keeps focus for the whole gesture — hovering the other strip deliberately
+  does NOT focus it, only a press does.
+
+Two things the entry did not anticipate, both found by building it: the **ghost**
+has to paint over the strip the pointer is over (its label still read out of the
+source group's visible list, which is the only place the dragged tab exists until
+the drop), and the **damage rect** is now a list rather than one rect — a
+cross-group drag dirties both strips, and falling back to a full-window repaint
+for the second would have undone the 212-era damage scoping.
+
+The TU split that came with it: `WorkspaceTabMouseCoordinator.cpp` crossed the
+900-code-line coordinator cap, so the drag half (strip resolution, deferred
+commit, auto-scroll, slide) moved to `WorkspaceTabMouseCoordinatorDrag.cpp` along
+the seam the two halves already had. Covered by
+`WorkspaceShell/EditorTabDragMovesTabToTheOtherGroup`,
+`.../EditorTabDragOutOfLastTabCollapsesTheGroup` and
+`.../CrossGroupDragAnimatesBothStrips`, the last of which asserts on both slots'
+target vectors and on the second slot going idle when the drag comes back.
+
+The original report follows.
+
+`TabMouseCoordinator::ResolveDragStrip` resolved ONE strip — the focused group's —
 and `HandleMotion` never asks whether the pointer left it. Dragging an editor tab
 over the other group's strip in a split therefore does nothing at all: the ghost
 follows the pointer across the divider, the target strip does not react, and the

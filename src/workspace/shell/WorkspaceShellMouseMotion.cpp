@@ -358,17 +358,27 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const bool handled = HandleTabMouseMotion(event, layout);
     if (handled) {
       EnsureRedraw([this]() {
-        const auto strip = TabStripRectForKind(context_.interaction_state.tab_drag.kind,
-                                               FocusedEditorGroupIndex());
-        if (!strip.has_value()) {
-          RequestWindowRedraw();
-          return;
-        }
         // The ghost paints a 1px-right / 2px-down drop shadow, so its damage runs
         // a couple of pixels past the strip it belongs to.
         constexpr float kGhostShadowPaddingPx = 3.0f;
-        RequestRedrawRect(MakeRect(strip->x, strip->y, strip->w + kGhostShadowPaddingPx,
-                                   strip->h + kGhostShadowPaddingPx));
+        const TabDragState& drag = context_.interaction_state.tab_drag;
+        const auto damage_strip = [this](std::size_t group_index) {
+          const auto strip =
+              TabStripRectForKind(context_.interaction_state.tab_drag.kind, group_index);
+          if (!strip.has_value()) {
+            RequestWindowRedraw();
+            return;
+          }
+          RequestRedrawRect(MakeRect(strip->x, strip->y, strip->w + kGhostShadowPaddingPx,
+                                     strip->h + kGhostShadowPaddingPx));
+        };
+        damage_strip(drag.source_group_index);
+        // A drag across a split moves tabs in BOTH strips — the source closes its
+        // gap while the destination opens one — so damaging only the source leaves
+        // the destination's slide painted from the previous frame.
+        if (drag.cross_group()) {
+          damage_strip(drag.target_group_index);
+        }
       });
       if (!was_dragging && context_.interaction_state.tab_drag.dragging &&
           tooltip_before.has_value()) {

@@ -1552,7 +1552,10 @@ editor::EditorViewModel RenderViewModelBuilder::BuildEditorViewModel(
 BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() const {
   const TabDragState& drag = context_.interaction_state.tab_drag;
   const TabSlideState& slide = context_.interaction_state.tab_slide;
-  const bool sliding = slide.kind == TabDragKind::Terminal;
+  // The bottom-panel strip is never a cross-group animation, so it is always the
+  // first slot; `OffsetsFor` finds it wherever it sits regardless.
+  const std::span<const float> panel_offsets = slide.OffsetsFor(TabDragKind::Terminal, 0);
+  const bool sliding = !panel_offsets.empty();
   const PanelState& panel = context_.current_project_state.panel;
   // Resolve the plugin content surface (Phase E0) here so the render TU paints a
   // prebuilt pointer instead of walking owner/id through project state.
@@ -1588,7 +1591,7 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
               .pointer_x = drag.pointer_x,
               .grab_offset_x = drag.grab_offset_x,
               .sliding = sliding,
-              .offsets = sliding ? std::span<const float>(slide.current) : std::span<const float>{},
+              .offsets = panel_offsets,
           },
       // `tabs` / `tab_overflow` stay empty here; PrepareFrameOnce fills them once
       // the frame layout (bottom-panel header rect) is known.

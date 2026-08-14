@@ -558,6 +558,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspaceSidebarMouseCoordinator.cpp
   src/workspace/coordinators/WorkspaceSidebarMouseCoordinatorScroll.cpp
   src/workspace/coordinators/WorkspaceTabMouseCoordinator.cpp
+  src/workspace/coordinators/WorkspaceTabMouseCoordinatorDrag.cpp
   src/workspace/services/EditorTabService.cpp
   src/workspace/coordinators/WorkspaceTabCoordinator.cpp
   src/workspace/coordinators/WorkspaceTabCoordinatorDirty.cpp

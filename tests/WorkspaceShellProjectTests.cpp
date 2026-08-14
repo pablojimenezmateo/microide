@@ -3987,10 +3987,11 @@ void TestWorkspaceShellEditorTabDragSeedsSlideAnimation() {
                          SDL_BUTTON_LMASK),
          "dragging across the strip is handled");
 
-  const auto& slide = WorkspaceShellTestAccess::TabSlide(shell);
+  const auto& slide = WorkspaceShellTestAccess::TabSlide(shell).strips[0];
   Expect(slide.kind == microide::workspace::TabDragKind::Editor,
          "an in-flight editor drag arms the editor tab-slide animation");
-  Expect(!slide.settling, "the slide is in its drag phase, not settling");
+  Expect(!WorkspaceShellTestAccess::TabSlide(shell).settling,
+         "the slide is in its drag phase, not settling");
   Expect(slide.target.size() == 3, "one slide target per model tab");
   Expect(slide.target[1] < -1.0f,
          "tab 1 targets a leftward offset to fill the dragged tab's vacated slot");
@@ -4000,7 +4001,7 @@ void TestWorkspaceShellEditorTabDragSeedsSlideAnimation() {
          "release commits the reorder");
 
   const auto& settle = WorkspaceShellTestAccess::TabSlide(shell);
-  Expect(settle.kind == microide::workspace::TabDragKind::Editor && settle.settling,
+  Expect(settle.strips[0].kind == microide::workspace::TabDragKind::Editor && settle.settling,
          "release hands off to a settle glide that outlives the drag state");
   Expect(WorkspaceShellTestAccess::TabDrag(shell).kind == microide::workspace::TabDragKind::None,
          "the drag state itself clears on release");
@@ -4031,7 +4032,7 @@ void TestWorkspaceShellEditorTabDragHomeStillGlides() {
 
   Expect(SendMouseUp(shell, cx + 10.0f, cy, SDL_BUTTON_LEFT), "release handled");
   const auto& settle = WorkspaceShellTestAccess::TabSlide(shell);
-  Expect(settle.settling && settle.kind == microide::workspace::TabDragKind::Editor,
+  Expect(settle.settling && settle.strips[0].kind == microide::workspace::TabDragKind::Editor,
          "even a no-reorder drop glides the lifted tab back home instead of snapping");
 }
 
@@ -4113,15 +4114,18 @@ void TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit() {
   // Snapshot the in-flight ease. Each neighbour is drawn at `base + current` and
   // the commit makes `base + target` its new base, so its carried offset is
   // exactly `current - target` — whatever the elapsed time happened to be.
-  const microide::workspace::TabSlideState during = WorkspaceShellTestAccess::TabSlide(shell);
+  const microide::workspace::TabStripSlide during =
+      WorkspaceShellTestAccess::TabSlide(shell).strips[0];
   Expect(during.current.size() == 3 && during.target.size() == 3,
          "the drag arms one slide offset per tab");
   const float residual_for_tab_1 = during.current[1] - during.target[1];
   const float residual_for_tab_2 = during.current[2] - during.target[2];
 
   Expect(SendMouseUp(shell, drop_x, cy, SDL_BUTTON_LEFT), "release commits the reorder");
-  const auto& settle = WorkspaceShellTestAccess::TabSlide(shell);
-  Expect(settle.settling && settle.current.size() == 3, "release hands off to a settle glide");
+  const auto& settle_state = WorkspaceShellTestAccess::TabSlide(shell);
+  const auto& settle = settle_state.strips[0];
+  Expect(settle_state.settling && settle.current.size() == 3,
+         "release hands off to a settle glide");
   // Tab 0 moved to the end, so pre-reorder tabs 1 and 2 are now 0 and 1.
   Expect(std::fabs(settle.current[0] - residual_for_tab_1) < 1e-3f,
          "the first neighbour keeps its unfinished ease instead of teleporting");
@@ -4226,6 +4230,154 @@ void TestWorkspaceShellEditorTabDragIsAbandonedByEscapeAndFocusLoss() {
     Expect(shell.HandleEvent(focus_lost).handled, "focus loss is handled");
     expect_unmoved(shell, "losing focus clears the drag state");
   }
+}
+
+// A tab dragged onto the OTHER group's strip in a split moves BETWEEN groups; it
+// used to do nothing at all, because the drag resolved only the focused group's
+// strip and never asked whether the pointer had left it (TD-2026-08-14-213).
+void TestWorkspaceShellEditorTabDragMovesTabToTheOtherGroup() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  // Splitting clones the ACTIVE tab into the new group and focuses it; focusing
+  // back makes group 0 the drag source with two tabs to give away.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the fixture needs a second editor group");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus returns to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 owns the drag");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 0) == 2, "group 0 starts with two tabs");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 1) == 1, "group 1 starts with the clone");
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 0, 0);
+  const SDL_FRect other_strip = WorkspaceShellTestAccess::GroupTabStripRect(shell, 1);
+  Expect(source_rect.w > 0.0f && other_strip.w > 0.0f, "both strips have geometry");
+  const float grab_x = source_rect.x + source_rect.w * 0.5f;
+  const float grab_y = source_rect.y + source_rect.h * 0.5f;
+  Expect(SendMouseDown(shell, grab_x, grab_y, SDL_BUTTON_LEFT), "press starts a drag");
+
+  // Land past the other group's single tab, so the drop slot is its end.
+  const float drop_x = other_strip.x + other_strip.w - 8.0f;
+  const float drop_y = other_strip.y + other_strip.h * 0.5f;
+  Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK), "the drag crosses the divider");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).cross_group(),
+         "the pointer over the other group's strip retargets the drop");
+
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT), "release commits the move");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "both groups survive the move");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 0) == 1, "the tab left group 0");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 1) == 2, "the tab landed in group 1");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "focus follows the tab into its new group, as it does in VS Code");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).path() == file_a.lexically_normal(),
+         "the moved tab is the destination group's active tab");
+}
+
+// Dragging the LAST tab out of a split group collapses the split, which is what
+// VS Code does — a group with no editors in it is not a state to leave on screen.
+void TestWorkspaceShellEditorTabDragOutOfLastTabCollapsesTheGroup() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  WriteFile(file_a, "a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the fixture needs a second editor group");
+  // Focus stays on the NEW group (group 1), which holds exactly the clone. Drag
+  // that single tab back into group 0.
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the split focuses the new group");
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 1, 0);
+  const SDL_FRect other_strip = WorkspaceShellTestAccess::GroupTabStripRect(shell, 0);
+  Expect(source_rect.w > 0.0f && other_strip.w > 0.0f, "both strips have geometry");
+  Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f,
+                       source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "press starts a drag");
+  const float drop_x = other_strip.x + other_strip.w - 8.0f;
+  const float drop_y = other_strip.y + other_strip.h * 0.5f;
+  Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK), "the drag crosses the divider");
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT), "release commits the move");
+
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
+         "the emptied group collapses instead of staying open with no editors");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::None,
+         "collapsing the last split group drops the split orientation");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 0) == 2, "both tabs are in the survivor");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "focus re-homes onto the surviving group across the erase");
+}
+
+// A cross-group drag animates two strips: the source closes the hole its lifted
+// tab left, the destination opens a gap. One TabSlideState could only express one
+// of those, which is why the state grew a second slot.
+void TestWorkspaceShellCrossGroupDragAnimatesBothStrips() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the fixture needs a second editor group");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus returns to group 0");
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::GroupEditorTabRect(shell, 0, 0);
+  const SDL_FRect other_strip = WorkspaceShellTestAccess::GroupTabStripRect(shell, 1);
+  Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f,
+                       source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "press starts a drag on group 0's first tab");
+  // Drop at the FRONT of group 1's strip, so its existing tab has to make room.
+  const float drop_x = other_strip.x + 4.0f;
+  const float drop_y = other_strip.y + other_strip.h * 0.5f;
+  Expect(SendMouseMotion(shell, drop_x, drop_y, SDL_BUTTON_LMASK), "the drag crosses the divider");
+
+  const auto& slide = WorkspaceShellTestAccess::TabSlide(shell);
+  Expect(slide.strips[0].kind == microide::workspace::TabDragKind::Editor &&
+             slide.strips[0].group_index == 0,
+         "slot 0 animates the source group's strip");
+  Expect(slide.strips[1].kind == microide::workspace::TabDragKind::Editor &&
+             slide.strips[1].group_index == 1,
+         "slot 1 animates the destination group's strip");
+  Expect(slide.strips[0].target.size() == 3 && slide.strips[1].target.size() == 1,
+         "each strip's targets are sized to its OWN tab list");
+  Expect(slide.strips[0].target[1] < -1.0f,
+         "the source strip closes ranks over the lifted tab (no gap opens there)");
+  Expect(slide.strips[1].target[0] > 1.0f,
+         "the destination strip opens a gap ahead of the tab being dropped in front of it");
+
+  // Coming back over its own group must retire the second strip, or its stale
+  // offsets keep painting a gap in a group nothing is landing in.
+  Expect(SendMouseMotion(shell, source_rect.x + source_rect.w * 0.5f,
+                         source_rect.y + source_rect.h * 0.5f, SDL_BUTTON_LMASK),
+         "the drag comes back to its own strip");
+  Expect(!WorkspaceShellTestAccess::TabDrag(shell).cross_group(),
+         "the drop targets the source group again");
+  Expect(WorkspaceShellTestAccess::TabSlide(shell).strips[1].idle(),
+         "the destination strip's animation is retired when the drag leaves it");
 }
 
 // An overflowing strip has to walk under a drag held at its edge; without that the
@@ -5508,6 +5660,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDragSlotFollowsTheTabNotTheGrabPoint);
   AddTest(tests, "WorkspaceShell/EditorTabDropCarriesNeighborEaseAcrossTheCommit",
           TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit);
+  AddTest(tests, "WorkspaceShell/EditorTabDragMovesTabToTheOtherGroup",
+          TestWorkspaceShellEditorTabDragMovesTabToTheOtherGroup);
+  AddTest(tests, "WorkspaceShell/EditorTabDragOutOfLastTabCollapsesTheGroup",
+          TestWorkspaceShellEditorTabDragOutOfLastTabCollapsesTheGroup);
+  AddTest(tests, "WorkspaceShell/CrossGroupDragAnimatesBothStrips",
+          TestWorkspaceShellCrossGroupDragAnimatesBothStrips);
   AddTest(tests, "WorkspaceShell/EditorTabDragAutoScrollsOverflowingStrip",
           TestWorkspaceShellEditorTabDragAutoScrollsOverflowingStrip);
   AddTest(tests, "WorkspaceShell/EditorTabDragIsAbandonedByEscapeAndFocusLoss",
