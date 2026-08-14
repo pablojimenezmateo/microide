@@ -139,20 +139,23 @@ GitFileStatus GitPorcelainParser::CombineGitStatus(GitFileStatus current, GitFil
 void GitPorcelainParser::RecordGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                                          std::filesystem::path relative_path,
                                          GitFileStatus status) {
-  RecordNormalizedGitStatus(statuses, relative_path.lexically_normal().generic_string(), status);
+  std::string scratch;
+  RecordNormalizedGitStatus(statuses, relative_path.lexically_normal().generic_string(), status,
+                            scratch);
 }
 
 void GitPorcelainParser::RecordNormalizedGitStatus(
     std::unordered_map<std::string, GitFileStatus>& statuses,
     std::string_view normalized_generic_path,
-    GitFileStatus status) {
+    GitFileStatus status,
+    std::string& scratch) {
   // The ancestor walk used to run on std::filesystem::path: parent_path() built a
   // fresh path per level and generic_string() a fresh std::string per level, so a
   // 4-deep path cost 8 allocations on top of the leaf's. A normalized generic path
   // is just '/'-separated text, so the same walk is a scratch string shortened in
   // place — the only remaining allocations are the map keys actually inserted, and
   // those are unavoidable (the map owns its keys).
-  std::string scratch(normalized_generic_path);
+  scratch.assign(normalized_generic_path);
   if (!scratch.empty() && scratch != ".") {
     // Hoist the slot reference so operator[] runs once, not twice (read + assign).
     GitFileStatus& slot = statuses[scratch];
@@ -185,6 +188,7 @@ std::unordered_map<std::string, GitFileStatus> GitPorcelainParser::ParseStatusV1
   for (const ParsedStatusV1Entry& entry : ParseStatusV1Entries(output)) {
     RecordGitStatus(statuses, entry.relative_path, entry.status);
   }
+
 
   return statuses;
 }

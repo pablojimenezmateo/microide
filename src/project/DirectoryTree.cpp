@@ -107,7 +107,7 @@ void DirectoryTree::Refresh() {
 }
 
 
-void DirectoryTree::ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses) {
+void DirectoryTree::ApplyGitStatuses(SharedGitTreeStatusMap statuses) {
   git_statuses_ = std::move(statuses);
   // One scratch buffer for the whole sweep — after the first few entries it is
   // already large enough, so the sweep stops allocating entirely.
@@ -338,7 +338,7 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
 
   entries_.clear();
   if (root_.empty()) {
-    git_statuses_.clear();
+    git_statuses_.reset();
     selected_index_ = 0;
     return;
   }
@@ -351,7 +351,7 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
   matcher->AddDefaultRules();
   matcher->AddExcludeGlobs(exclude_globs_);
   if (refresh_git_statuses) {
-    git_statuses_ = CollectGitStatuses(root_);
+    git_statuses_ = std::make_shared<const GitTreeStatusMap>(CollectGitStatuses(root_));
   }
   entries_.push_back(TreeEntry{
       .path = root_,
@@ -575,7 +575,10 @@ void DirectoryTree::RestoreExpansionState(const std::vector<std::string>& expand
 }
 
 bool DirectoryTree::has_dirty_files() const {
-  for (const auto& [_, status] : git_statuses_) {
+  if (git_statuses_ == nullptr) {
+    return false;
+  }
+  for (const auto& [_, status] : *git_statuses_) {
     if (status != GitFileStatus::Clean) {
       return true;
     }
@@ -585,7 +588,7 @@ bool DirectoryTree::has_dirty_files() const {
 
 GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
                                             std::string& scratch) const {
-  if (git_statuses_.empty() || root_generic_.empty()) {
+  if (git_statuses_ == nullptr || git_statuses_->empty() || root_generic_.empty()) {
     return GitFileStatus::Clean;
   }
 
@@ -615,8 +618,8 @@ GitFileStatus DirectoryTree::EntryGitStatus(const std::filesystem::path& path,
   }
   scratch.erase(0, tail);
 
-  const auto it = git_statuses_.find(scratch);
-  return it == git_statuses_.end() ? GitFileStatus::Clean : it->second;
+  const auto it = git_statuses_->find(scratch);
+  return it == git_statuses_->end() ? GitFileStatus::Clean : it->second;
 }
 
 bool DirectoryTree::ContainsPathKey(const PathKeySet& keys, const std::filesystem::path& path) {

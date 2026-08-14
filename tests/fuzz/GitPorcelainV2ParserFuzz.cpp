@@ -36,7 +36,8 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
   // Touch the parsed result so the optimizer cannot discard the work, and assert
   // the one invariant every consumer relies on: the tree-status map never names a
   // path that is not also an entry, since the sidebar indexes one by the other.
-  std::size_t sink = state.entries.size() + state.tree_git_statuses.size() +
+  std::size_t sink = state.entries.size() +
+                     (state.tree_git_statuses ? state.tree_git_statuses->size() : 0) +
                      state.branch.branch_name.size();
   for (const microide::project::GitRepositoryEntry& entry : state.entries) {
     // `relative_path` is generic '/'-separated TEXT, not a std::filesystem::path,

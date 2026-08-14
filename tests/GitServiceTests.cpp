@@ -865,9 +865,10 @@ void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
     // And the normalized entry point (what the v2 refresh path calls, passing the
     // identity's already-generic string) must agree with it.
     std::unordered_map<std::string, GitFileStatus> via_normalized;
+    std::string scratch;
     GitPorcelainParser::RecordNormalizedGitStatus(
         via_normalized, std::filesystem::path(raw).lexically_normal().generic_string(),
-        GitFileStatus::Modified);
+        GitFileStatus::Modified, scratch);
     Expect(via_normalized == expected,
            "RecordNormalizedGitStatus must match the path walk for: " + raw);
   }
@@ -875,8 +876,11 @@ void TestGitPorcelainParserNormalizedRecordMatchesPathWalk() {
   // The badge really does reach every ancestor (a walk that silently recorded
   // nothing would satisfy an equality check against an equally broken reference).
   std::unordered_map<std::string, GitFileStatus> statuses;
+  // A pre-loaded scratch: the buffer is the caller's now, and the walk must
+  // overwrite whatever is in it rather than append to it.
+  std::string walk_scratch = "stale contents from a previous entry";
   GitPorcelainParser::RecordNormalizedGitStatus(statuses, "a/b/c/d.txt",
-                                                GitFileStatus::Modified);
+                                                GitFileStatus::Modified, walk_scratch);
   Expect(statuses.size() == 4, "leaf plus three ancestors should be badged");
   Expect(statuses.count("a") == 1 && statuses.count("a/b") == 1 &&
              statuses.count("a/b/c") == 1 && statuses.count("a/b/c/d.txt") == 1,

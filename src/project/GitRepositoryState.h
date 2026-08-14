@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <string_view>
@@ -128,7 +129,7 @@ struct GitRepositoryState {
   bool repo_available = false;
   GitRepositoryBranchInfo branch{};
   std::vector<GitRepositoryEntry> entries{};
-  std::unordered_map<std::string, GitFileStatus> tree_git_statuses{};
+  SharedGitTreeStatusMap tree_git_statuses{};
   GitRepositoryRefreshError refresh_error{};
   GitOperationStateKind operation_state = GitOperationStateKind::None;
   std::uint64_t generation = 0;

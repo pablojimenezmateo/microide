@@ -48,9 +48,16 @@ class GitPorcelainParser {
   // Same, for a path that is ALREADY lexically normal and in generic ('/') form —
   // which is what GitRepositoryPathIdentity stores. Skips a redundant
   // lexically_normal() + generic_string() per entry on the git-refresh hot path.
+  //
+  // `scratch` is the caller's buffer for the ancestor walk, which shortens one
+  // string in place rather than building a path per level. It was a local, i.e.
+  // one allocation per changed file on a path a 1,000-file refresh runs 1,000
+  // times; hoisting it to the caller's loop makes the walk allocation-free after
+  // the first entry. Contents on return are unspecified.
   static void RecordNormalizedGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
                                         std::string_view normalized_generic_path,
-                                        GitFileStatus status);
+                                        GitFileStatus status,
+                                        std::string& scratch);
 
  private:
   static bool StatusUsesTargetPath(std::string_view code);

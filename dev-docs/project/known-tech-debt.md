@@ -389,6 +389,49 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-228 — a git refresh deep-copied the tree-badge map to build a snapshot, then threw the original away. [RESOLVED 2026-08-14, same session it was filed.]
+
+`GitRepositoryService::BuildSidebarSnapshot` did
+`snapshot.tree_git_statuses = repository_state.tree_git_statuses;` — a full
+`unordered_map<std::string, GitFileStatus>` copy, so a node **and** a key string
+per changed path, ~2,018 allocations on the 1,000-file fixture. The state was
+then published by move, and **nothing else in the tree ever read that member off
+the published state**: the map's whole life is parser → snapshot → the file
+tree's own copy, which takes it by move.
+
+It is now `std::shared_ptr<const GitTreeStatusMap>` end to end
+(`project::SharedGitTreeStatusMap`, declared next to `GitFileStatus` in
+`DirectoryTree.h` so `GitRepositoryState.h` — which includes it — can use it).
+Null means "no statuses", which is what every `= {}` initializer already meant.
+No copy anywhere on the path.
+
+Second finding on the same sweep: `RecordNormalizedGitStatus` opened with
+`std::string scratch(normalized_generic_path)` for its ancestor walk. The walk
+itself is careful — it shortens one buffer in place instead of building a path
+per level — but the buffer was a local, so a 1,000-file refresh allocated it
+1,000 times. It is now the caller's, hoisted out of the parser's loop the same
+way `DirectoryTree::ApplyGitStatuses` already hoists its own.
+
+Whole-phase allocations under the site tracer:
+
+| phase | before | after |
+| --- | ---: | ---: |
+| `git_sidebar_refresh_large_repo.git.refresh_dispatch` | 19,688 | **13,650** (−31 %) |
+| `git_sidebar_refresh_many_untracked.git.refresh_dispatch` | 35,562 | **26,446** (−26 %) |
+| `commit_open_with_large_staged_set.git.refresh_dispatch` | 19,206 | 15,974 (−17 %, sharing only) |
+
+`GitRepositoryState/PorcelainV2TreeStatusesAreSharedNotCopied` gates the sharing
+by copying a parsed state and requiring both maps to be the same allocation — it
+fails the moment the member goes back to a by-value container, which is the only
+way that copy can return. The scratch half is gated by pre-loading the caller's
+buffer with junk in `GitServiceTests`, so a walk that appended instead of
+assigning would produce wrong keys.
+
+What is left on this path, and deliberately not done here: the same relative path
+is still materialized about five times across parse → repository state → sidebar
+snapshot → view model. Collapsing that needs an interned path table shared by all
+four stages, which is a design change rather than a fix.
+
 ### TD-2026-08-14-227 — every `LineBlob` producer sized its offset table and let the byte buffer double its way there. [RESOLVED 2026-08-14, same session it was filed.]
 
 `LineBlob` exists so a line-shaped edit is two allocations per direction instead

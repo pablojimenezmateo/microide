@@ -25,6 +25,19 @@ enum class GitFileStatus {
   Conflicted,
 };
 
+// Per-path (and per-ancestor-directory) badge status for the file tree, keyed by
+// repository-relative generic ('/'-separated) text.
+using GitTreeStatusMap = std::unordered_map<std::string, GitFileStatus>;
+// …and the shared, immutable form the git refresh pipeline passes around.
+//
+// The map's whole life is: built once by the porcelain parser, read into the
+// sidebar refresh snapshot, adopted here. Nothing mutates it after the parse, and
+// nothing but the snapshot ever read it off the published repository state — yet
+// building the snapshot deep-copied it, a node and a key string per changed path
+// (2,018 allocations on a 1,000-file refresh) for a map that was about to be moved
+// on anyway. A null pointer means "no statuses".
+using SharedGitTreeStatusMap = std::shared_ptr<const GitTreeStatusMap>;
+
 struct TreeEntry {
   std::filesystem::path path;
   std::string label;
@@ -59,7 +72,7 @@ class DirectoryTree {
   // the built-in defaults; consulted on the next rebuild. Matched entries render
   // grayed (ignored), not hidden.
   void SetExcludeGlobs(std::vector<std::string> globs) { exclude_globs_ = std::move(globs); }
-  void ApplyGitStatuses(std::unordered_map<std::string, GitFileStatus> statuses);
+  void ApplyGitStatuses(SharedGitTreeStatusMap statuses);
   void MoveSelection(int delta);
   void SetSelectedIndex(std::size_t index);
   bool SelectPath(const std::filesystem::path& path);
@@ -134,7 +147,7 @@ class DirectoryTree {
   std::vector<std::string> exclude_globs_;
   std::vector<TreeEntry> entries_;
   std::uint64_t entries_revision_ = 0;
-  std::unordered_map<std::string, GitFileStatus> git_statuses_;
+  SharedGitTreeStatusMap git_statuses_;
   PathKeySet expanded_paths_;
   PathKeySet manually_collapsed_paths_;
   // Refreshes elapsed since the last full stale-key sweep (see MaybePruneDeletedDirectoryKeys).

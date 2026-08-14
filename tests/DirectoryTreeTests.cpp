@@ -348,12 +348,13 @@ void TestDirectoryTreeResolvesGitBadgesFromRelativeKeys() {
 
   // Exactly the key shape the porcelain parser writes: repository-relative,
   // '/'-separated, with the folder badge aggregated onto each ancestor.
-  tree.ApplyGitStatuses({
-      {"top.txt", GitFileStatus::Untracked},
-      {"src/deep/file.cpp", GitFileStatus::Modified},
-      {"src/deep", GitFileStatus::Modified},
-      {"src", GitFileStatus::Modified},
-  });
+  tree.ApplyGitStatuses(std::make_shared<const microide::project::GitTreeStatusMap>(
+      microide::project::GitTreeStatusMap{
+          {"top.txt", GitFileStatus::Untracked},
+          {"src/deep/file.cpp", GitFileStatus::Modified},
+          {"src/deep", GitFileStatus::Modified},
+          {"src", GitFileStatus::Modified},
+      }));
 
   const auto badge = [&](const std::filesystem::path& path) {
     const TreeEntry* entry = FindEntry(tree, path);

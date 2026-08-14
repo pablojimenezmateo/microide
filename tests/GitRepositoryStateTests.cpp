@@ -52,8 +52,25 @@ void TestPorcelainV2WorkingTreeFixture() {
   Expect(saw_modified, "fixture should include modified README.md");
   Expect(saw_deleted, "fixture should include deleted src/session.cpp");
   Expect(saw_untracked && saw_spaced_path, "fixture should include spaced untracked path");
-  Expect(state.tree_git_statuses.at("README.md") == GitFileStatus::Modified,
+  Expect(state.tree_git_statuses->at("README.md") == GitFileStatus::Modified,
          "tree status map should include modified file");
+}
+
+// The tree-status map is SHARED, not owned by value. Building the sidebar refresh
+// snapshot used to deep-copy it -- a node and a key string per changed path, ~2,018
+// allocations on a 1,000-file refresh -- for a map nothing else on the published
+// state ever read (TD-2026-08-14-228). This fails the moment the member goes back
+// to a by-value container, which is the only way that copy can return.
+void TestPorcelainV2TreeStatusesAreSharedNotCopied() {
+  const std::string output = ReadBinaryFixture("git/porcelain-v2/working-tree.bin");
+  const auto state = GitPorcelainV2Parser::Parse(output, "/repo", 1, 0);
+  Expect(state.tree_git_statuses != nullptr && !state.tree_git_statuses->empty(),
+         "the parser should publish a non-empty tree-status map");
+  // The refresh publishes the state by value and hands the same map to the sidebar
+  // snapshot; both must land on the same allocation.
+  const microide::project::GitRepositoryState published = state;
+  Expect(published.tree_git_statuses.get() == state.tree_git_statuses.get(),
+         "copying a repository state must share the tree-status map, not duplicate it");
 }
 
 // A tracked file whose name begins with a space must keep that space: the parser
@@ -119,8 +136,8 @@ void TestPorcelainV2RenamePair() {
          "rename fixture old path mismatch");
   // Regression: the rename SOURCE no longer exists at its old path, so the tree
   // status map badges it Deleted rather than inheriting the destination's status.
-  Expect(state.tree_git_statuses.count("old.txt") == 1 &&
-             state.tree_git_statuses.at("old.txt") == GitFileStatus::Deleted,
+  Expect(state.tree_git_statuses->count("old.txt") == 1 &&
+             state.tree_git_statuses->at("old.txt") == GitFileStatus::Deleted,
          "rename source should be badged Deleted in the tree status map");
 }
 
@@ -176,9 +193,9 @@ void TestPorcelainV2RenameSourceStartingWithStatusSigil() {
   Expect(saw_a, "rename source '2data.txt' should be preserved as old_path");
   Expect(saw_b, "rename source 'user.txt' should be preserved as old_path");
   // The old paths must also carry a tree git status badge.
-  Expect(state.tree_git_statuses.count("2data.txt") == 1,
+  Expect(state.tree_git_statuses->count("2data.txt") == 1,
          "rename source should receive a tree git status");
-  Expect(state.tree_git_statuses.count("user.txt") == 1,
+  Expect(state.tree_git_statuses->count("user.txt") == 1,
          "rename source should receive a tree git status");
 }
 
@@ -411,6 +428,8 @@ void TestDetectGitOperationState() {
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GitRepositoryState/PorcelainV2WorkingTreeFixture",
           TestPorcelainV2WorkingTreeFixture);
+  AddTest(tests, "GitRepositoryState/PorcelainV2TreeStatusesAreSharedNotCopied",
+          TestPorcelainV2TreeStatusesAreSharedNotCopied);
   AddTest(tests, "GitRepositoryState/PorcelainV2PathWithLeadingSpace",
           TestPorcelainV2PathWithLeadingSpace);
   AddTest(tests, "GitRepositoryState/PorcelainV2UntrackedPathWithLeadingSpace",

@@ -107,18 +107,20 @@ bool ParseAheadBehind(std::string_view token, int* ahead, int* behind) {
 }
 
 void RecordTreeGitStatus(std::unordered_map<std::string, GitFileStatus>& statuses,
-                         const GitRepositoryEntry& entry) {
+                         const GitRepositoryEntry& entry,
+                         std::string& scratch) {
   const GitFileStatus status = entry.conflicted ? GitFileStatus::Conflicted : entry.status;
   // MakeGitRepositoryPathIdentity already normalized these paths and stores exactly
   // the generic text this map keys by, so re-deriving it per entry was pure
   // duplicated work on the refresh path that every project pays on every git change.
-  GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(entry.path), status);
+  GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(entry.path), status,
+                                               scratch);
   if (entry.old_path.has_value()) {
     // The rename/copy source no longer exists at its old path in the working tree,
     // so badge it Deleted rather than inheriting the destination's status (which
     // painted the now-gone source as Modified/Added).
     GitPorcelainParser::RecordNormalizedGitStatus(statuses, GenericPathView(*entry.old_path),
-                                                  GitFileStatus::Deleted);
+                                                  GitFileStatus::Deleted, scratch);
   }
 }
 
@@ -296,12 +298,18 @@ GitRepositoryState GitPorcelainV2Parser::Parse(std::string_view output,
     state.branch.branch_name = state.branch.head_oid.substr(0, std::min<std::size_t>(7, state.branch.head_oid.size()));
   }
 
+  // Built locally and published once: the state holds it as a shared, immutable
+  // map so the sidebar snapshot can take a pointer instead of a deep copy.
+  auto tree_statuses = std::make_shared<GitTreeStatusMap>();
+  // One scratch buffer for the whole sweep, like DirectoryTree::ApplyGitStatuses'.
+  std::string scratch;
   for (const GitRepositoryEntry& entry : state.entries) {
     if (entry.kind == GitRepositoryEntryKind::Ignored) {
       continue;
     }
-    RecordTreeGitStatus(state.tree_git_statuses, entry);
+    RecordTreeGitStatus(*tree_statuses, entry, scratch);
   }
+  state.tree_git_statuses = std::move(tree_statuses);
 
   return state;
 }
