@@ -930,7 +930,43 @@ scrolls its own scrollback offset. What is missing is the terminal's equivalent
 of a `Band` (it has a grid geometry, not a `TextGridInteractionLayout`) and the
 fourth arm in the wake's dispatch.
 
-### TD-2026-08-13-202 — nothing captures the pointer during a drag, so leaving the WINDOW is a platform accident rather than a decision.
+### TD-2026-08-13-202 — nothing captures the pointer during a drag, so leaving the WINDOW is a platform accident rather than a decision. [WON'T DO 2026-08-14 on X11 — measured; the implicit grab already delivers the motion.]
+
+**The prerequisite this entry named was a measurement, so it was measured.** A
+40-line SDL3 probe (a 400x300 window at 100,100) counted motion events by whether
+a button was held, driven by XTEST through `xdotool` against a real X server
+(`Xvfb`), with the CONTROL and the treatment in one run — the same pointer path
+walked twice, once with no button and once with the button held:
+
+| arm | motion events at positions OUTSIDE the window |
+| --- | ---: |
+| control (no button held) | **0** |
+| treatment (button held) | **3** |
+
+`down=1 up=1` in the same run confirms the gesture was really delivered, and the
+control is what makes the 3 mean something: without a button, SDL sees nothing at
+those positions at all. So on X11 the implicit passive grab already delivers
+motion outside the window for exactly as long as a button is down, which is
+precisely the window a selection drag cares about. `SDL_CaptureMouse` would buy
+nothing here.
+
+That is the condition the entry set for a WON'T DO, and the risk half of the
+entry still stands as the reason not to add it speculatively: a capture that is
+never released eats mouse input process-wide until the window closes, and the
+release path would have to be airtight across every early return in button-up,
+focus loss and a lost button-up.
+
+**Scope of the claim, stated honestly.** Measured on the X11 backend (SDL
+reported `driver=x11`). Xvfb is a real X server implementing the real core
+protocol, so this is protocol behaviour rather than an emulation artifact — the
+implicit passive grab on button press is core X11, not a WM feature (there was no
+WM running). **Wayland is NOT measured**: SDL's Wayland backend depends on the
+compositor's implicit grab, which the entry expects to behave the same way but
+which nothing here has checked. If microide is ever reported to lose a drag on a
+Wayland session, this entry reopens for that backend alone, and the probe is
+`grabprobe.c` — rebuild it against SDL3 and rerun the two arms.
+
+#### Original entry
 
 Considered while fixing the drag clamp and deliberately not done.
 
