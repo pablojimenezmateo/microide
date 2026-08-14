@@ -558,7 +558,8 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   const bool header_matches = cache.header.x == panel_header.x && cache.header.y == panel_header.y &&
                               cache.header.w == panel_header.w && cache.header.h == panel_header.h;
   if (cache.valid && cache.model_fingerprint == bottom_panel_tabs_cache_.fingerprint &&
-      header_matches && cache.layout_mode == layout_mode &&
+      cache.geometry_epoch == geometry_epoch_ && header_matches &&
+      cache.layout_mode == layout_mode &&
       cache.active_terminal_tab_index == state.active_terminal_tab_index &&
       cache.tab_scroll_index == state.panel.tab_scroll_index) {
     return cache.tabs;
@@ -619,6 +620,7 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
     visible = build_tabs(panel_header.x, 0.0f);
   }
   cache.model_fingerprint = bottom_panel_tabs_cache_.fingerprint;
+  cache.geometry_epoch = geometry_epoch_;
   cache.header = panel_header;
   cache.layout_mode = layout_mode;
   cache.active_terminal_tab_index = state.active_terminal_tab_index;

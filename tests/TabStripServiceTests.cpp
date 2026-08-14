@@ -148,6 +148,42 @@ void TestBottomPanelVisibleTabsAreMemoized() {
   Expect(found_relabelled, "a relabelled channel is not served stale from the layout cache");
 }
 
+// A font-size / font-family change moves every measured width without touching a
+// single thing the layout key above can see: the header rect is a constant height
+// over a user-resized panel, the model fingerprint hashes labels rather than their
+// widths, and the mode/active/scroll fields are all unchanged. The editor strip and
+// the project strip both take the geometry epoch for exactly this; the bottom panel
+// was the one strip that did not, so its tabs kept the old font's widths — wrong
+// rects to paint AND wrong rects to hit-test (TD-2026-08-14-215).
+void TestBottomPanelVisibleTabsMissOnGeometryEpoch() {
+  TabStripService service;
+  ProjectWorkspaceState state;
+  state.panel.content = PanelContentKind::Output;
+  state.panel.output.channel_id = "build";
+  state.panel.output.open_channel_ids = {"build", "test"};
+  std::vector<ChannelInfo> channels = {{"build", "Build"}, {"test", "Test Results"}};
+  const SDL_FRect header{0.0f, 700.0f, 1200.0f, 26.0f};
+
+  float glyph_width = 8.0f;
+  const auto measure = [&](std::string_view text) {
+    return static_cast<float>(text.size()) * glyph_width;
+  };
+
+  const auto& before = service.ComputeVisibleBottomPanelTabs(
+      state, header, microide::workspace::LayoutMode::Regular, measure, channels);
+  Expect(before.size() == 2, "two output tabs are laid out");
+  const float width_before = before[0].rect.w;
+
+  // Exactly what a font change does: same state, wider glyphs, epoch bumped.
+  glyph_width = 16.0f;
+  service.InvalidateTabStripGeometry();
+  const auto& after = service.ComputeVisibleBottomPanelTabs(
+      state, header, microide::workspace::LayoutMode::Regular, measure, channels);
+  Expect(!after.empty(), "the strip still lays out after the font change");
+  Expect(after[0].rect.w > width_before,
+         "a geometry-epoch bump re-measures instead of serving the old font's widths");
+}
+
 // TD-2026-08-13-198: the project strip used to be rebuilt from scratch by every
 // caller that asked what was on it — five per frame, each producing a title, a
 // tooltip, a badge label and a text measurement per project. The chrome adapter
@@ -267,6 +303,8 @@ void TestProjectStripCacheMissesOnGeometryEpochAndLayoutMode() {
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TabStripService/BottomPanelVisibleTabsAreMemoized",
           TestBottomPanelVisibleTabsAreMemoized);
+  AddTest(tests, "TabStripService/BottomPanelVisibleTabsMissOnGeometryEpoch",
+          TestBottomPanelVisibleTabsMissOnGeometryEpoch);
   AddTest(tests, "TabStripService/ProjectStripSourcesAreMemoized",
           TestProjectStripSourcesAreMemoized);
   AddTest(tests, "TabStripService/ProjectStripCacheMissesOnDirtyFlip",

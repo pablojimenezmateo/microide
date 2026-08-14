@@ -221,9 +221,14 @@ class TabStripService {
   // tabs are there"; this answers "where are they", which additionally depends on
   // the header rect, the layout mode (the new-tab button's reserve), which tab is
   // active and how far the strip is scrolled — none of which shape the model, so
-  // none of which are in its fingerprint.
+  // none of which are in its fingerprint. Plus the geometry epoch: the widths here
+  // come out of `measure_width`, and a font change moves every one of them without
+  // moving any other key (the header is a constant height over a user-resized
+  // panel), so without the epoch this strip alone kept the old font's rects
+  // (TD-2026-08-14-215).
   struct VisibleBottomPanelTabsCache {
     std::uint64_t model_fingerprint = 0;
+    std::uint64_t geometry_epoch = 0;
     SDL_FRect header{};
     LayoutMode layout_mode = LayoutMode::Regular;
     std::size_t active_terminal_tab_index = 0;
