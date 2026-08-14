@@ -89,6 +89,21 @@ static std::size_t MoveTargetIndexForInsertion(std::size_t insertion_slot,
   return std::min(target_index, item_count - 1);
 }
 
+TabMouseCoordinator::EditorGroupTabStrips TabMouseCoordinator::ResolveEditorGroupTabStrips(
+    const WorkspaceLayout& layout) const {
+  EditorGroupTabStrips strips;
+  if (operations_.compute_editor_group_rects) {
+    const EditorGroupRectsLayout rects = operations_.compute_editor_group_rects(layout);
+    for (std::size_t i = 0; i < rects.groups.size() && strips.count < kMaxEditorGroups; ++i) {
+      strips.entries[strips.count++] = {i, rects.groups[i].tab_strip};
+    }
+  }
+  if (strips.count == 0) {
+    strips.entries[strips.count++] = {state_.focused_group_index, layout.tab_strip};
+  }
+  return strips;
+}
+
 TabMouseCoordinator::TabMouseCoordinator(ProjectCatalogState& project_catalog,
                                          ProjectWorkspaceState& current_project_state,
                                          TabDragState& tab_drag_state,
@@ -158,14 +173,11 @@ bool TabMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   // Editor tab strips, one per group. Resolve which group's strip the pointer hit
   // (falls back to the global tab strip when the per-group op is unavailable) and
   // focus that group before activating/closing/scrolling within it.
-  std::vector<std::pair<std::size_t, SDL_FRect>> editor_group_strips;
-  if (operations_.compute_editor_group_tab_strips) {
-    editor_group_strips = operations_.compute_editor_group_tab_strips();
-  }
-  if (editor_group_strips.empty()) {
-    editor_group_strips.emplace_back(state_.focused_group_index, layout.tab_strip);
-  }
-  for (const auto& [hit_group_index, group_strip] : editor_group_strips) {
+  const EditorGroupTabStrips editor_group_strips =
+      ResolveEditorGroupTabStrips(layout);
+  for (std::size_t s = 0; s < editor_group_strips.count; ++s) {
+    const std::size_t hit_group_index = editor_group_strips.entries[s].group_index;
+    const SDL_FRect group_strip = editor_group_strips.entries[s].strip;
     if (!Contains(group_strip, event.button.x, event.button.y)) {
       continue;
     }
@@ -339,11 +351,11 @@ TabMouseCoordinator::DragStrip TabMouseCoordinator::ResolveDragStrip(const Works
         return d;
       }
       d.strip = layout.tab_strip;
-      if (operations_.compute_editor_group_tab_strips) {
-        for (const auto& [group_index, group_strip] :
-             operations_.compute_editor_group_tab_strips()) {
-          if (group_index == state_.focused_group_index) {
-            d.strip = group_strip;
+      {
+        const EditorGroupTabStrips strips = ResolveEditorGroupTabStrips(layout);
+        for (std::size_t s = 0; s < strips.count; ++s) {
+          if (strips.entries[s].group_index == state_.focused_group_index) {
+            d.strip = strips.entries[s].strip;
             break;
           }
         }
@@ -720,14 +732,10 @@ bool TabMouseCoordinator::HandleWheel(const SDL_Event& event,
   }
 
   {
-    std::vector<std::pair<std::size_t, SDL_FRect>> editor_group_strips;
-    if (operations_.compute_editor_group_tab_strips) {
-      editor_group_strips = operations_.compute_editor_group_tab_strips();
-    }
-    if (editor_group_strips.empty()) {
-      editor_group_strips.emplace_back(state_.focused_group_index, layout.tab_strip);
-    }
-    for (const auto& [group_index, group_strip] : editor_group_strips) {
+    const EditorGroupTabStrips editor_group_strips = ResolveEditorGroupTabStrips(layout);
+    for (std::size_t s = 0; s < editor_group_strips.count; ++s) {
+      const std::size_t group_index = editor_group_strips.entries[s].group_index;
+      const SDL_FRect group_strip = editor_group_strips.entries[s].strip;
       if (!Contains(group_strip, event.wheel.mouse_x, event.wheel.mouse_y) ||
           group_index >= state_.editor_groups.size() ||
           state_.editor_groups[group_index].open_tabs.empty()) {
@@ -866,18 +874,9 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
               [this](int direction) { return tab_strip_chrome_.ScrollEditorTabStrip(direction); },
           .scroll_bottom_panel_tab_strip =
               [this](int direction) { return tab_strip_chrome_.ScrollBottomPanelTabStrip(direction); },
-          .compute_editor_group_tab_strips =
-              [this]() {
-                std::vector<std::pair<std::size_t, SDL_FRect>> strips;
-                const auto layout_state = CurrentWorkspaceLayout();
-                if (!layout_state.has_value()) {
-                  return strips;
-                }
-                const auto group_rects = ComputeEditorGroupRectsForState(*layout_state);
-                for (std::size_t i = 0; i < group_rects.groups.size(); ++i) {
-                  strips.emplace_back(i, group_rects.groups[i].tab_strip);
-                }
-                return strips;
+          .compute_editor_group_rects =
+              [this](const WorkspaceLayout& layout) {
+                return ComputeEditorGroupRectsForState(layout);
               },
           .focus_editor_group =
               [this](std::size_t group_index) { FocusEditorGroup(group_index); },

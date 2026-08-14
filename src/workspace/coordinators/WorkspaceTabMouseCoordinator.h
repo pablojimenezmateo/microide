@@ -1,7 +1,8 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <functional>
-#include <utility>
 #include <vector>
 
 #include "workspace/shell/WorkspaceShell.h"
@@ -54,10 +55,13 @@ class TabMouseCoordinator {
     std::function<bool(int)> scroll_project_tab_strip;
     std::function<bool(int)> scroll_editor_tab_strip;
     std::function<bool(int)> scroll_bottom_panel_tab_strip;
-    // Per-group editor tab strips: maps each group index to its on-screen tab
-    // strip rect (one entry for a single group, two in a split). Lets the tab
-    // mouse path resolve which group's strip the pointer hit and focus it.
-    std::function<std::vector<std::pair<std::size_t, SDL_FRect>>()> compute_editor_group_tab_strips;
+    // Per-group editor rects (one entry for a single group, two in a split), so
+    // the tab mouse path can resolve which group's strip the pointer hit and
+    // focus it. Takes the caller's layout and hands back the heap-free
+    // InlineVector-backed struct: flattening it into a vector of pairs was a heap
+    // allocation AND a second full layout computation, on every motion event of a
+    // drag and every wheel tick over a strip.
+    std::function<EditorGroupRectsLayout(const WorkspaceLayout&)> compute_editor_group_rects;
     std::function<void(std::size_t)> focus_editor_group;
   };
 
@@ -84,6 +88,19 @@ class TabMouseCoordinator {
   bool CancelDrag();
 
  private:
+  // The on-screen tab strip of each editor group, heap-free. Falls back to a
+  // single entry for the focused group over `layout.tab_strip` when the per-group
+  // operation is unavailable.
+  struct EditorGroupTabStrips {
+    struct Entry {
+      std::size_t group_index = 0;
+      SDL_FRect strip{};
+    };
+    std::array<Entry, kMaxEditorGroups> entries{};
+    std::size_t count = 0;
+  };
+  EditorGroupTabStrips ResolveEditorGroupTabStrips(const WorkspaceLayout& layout) const;
+
   // Resolved geometry/state for the strip that owns the in-flight drag. Shared
   // by motion (compute target slot) and commit (single reorder on release).
   struct DragStrip {
