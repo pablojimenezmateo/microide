@@ -1529,7 +1529,43 @@ dereferences the vector at call time, which stores no strings at all.
 Deferred because the realistic config is small and this is a startup path, not a
 frame path: the 2,000-setting perf fixture is what makes the doubling visible.
 
-### TD-2026-08-12-193 — nine phases allocate more than they did at `origin/main`, every one of them under its gate, and one is the blob work's own conversion boundary. [OPEN as a METHOD reminder 2026-08-14 — every actionable row is closed; see the status section below.]
+### TD-2026-08-12-193 — nine phases allocate more than they did at `origin/main`, every one of them under its gate, and one is the blob work's own conversion boundary. [RESOLVED 2026-08-14 — the last actionable item shipped; the METHOD point moved to the perf handbook, which is where a standing rule belongs.]
+
+**Closed.** The entry's last open item was "both phases are measured and reported
+now… arming them needs an idle runner". Both are armed, on this runner:
+
+- `smart_indent.newline_undo_burst` gates at **1,559 allocations** for 120
+  newline+undo cycles. `--update-baseline=deterministic` was the right form —
+  it writes the allocation/phase/net-heap half and carries the timing half over
+  untouched, so arming a phase gate did not require minting wall numbers on a box
+  whose clock was reading 1.43x the committed baselines'.
+- `scroll_large_file.scroll_burst` **could not be armed as written**, and finding
+  out why is the last real defect this entry produced: it measured **zero
+  allocations for sixty scroll events**. The phase drove 40 wheel ticks and 20
+  PageDowns and then let the two `PumpFrames` fall *outside* its window, so
+  everything a scroll actually costs — re-layout, the visible-line cache, glyph
+  work, the view-model rebuild — was attributed to the scenario and not to the
+  phase named for it. It pumps a frame per step now (as
+  `compare_selection.scroll_burst` already did), which is a change to what is
+  measured, so `measurement_revision` went to 2 and the baseline was re-recorded
+  in full. The phase is now **1,885 of the scenario's 1,991 allocations — 94.7 %**,
+  against the 16.8 % the table below records for the old shape.
+
+That is the same defect this entry is about, one level down: the first pass moved
+the number from "the scenario total, which is mostly a project open" to "a phase
+that names the scroll", and the phase still did not contain the scroll's cost.
+**A declared phase is not evidence that the work is inside it** — check that the
+phase's own allocation count is a plausible share of the scenario's before
+trusting it, which is exactly what a 0 makes obvious and a merely-small number
+does not.
+
+The METHOD point — a baseline envelope answers "is this within contract", only an
+A/B answers "did this change cost anything" — is now a standing rule in
+`dev-docs/performance/perf-harness.md` rather than an open TD, because it applies
+to every push and is not a thing to be finished. The table below stays as the
+historical record of the push it describes.
+
+The original report follows, unchanged.
 
 Found by A/B-ing the 36-commit push against `origin/main` with
 `tools/perf-compare.py` rather than against the baselines — which is the point:

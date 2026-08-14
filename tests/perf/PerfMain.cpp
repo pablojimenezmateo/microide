@@ -605,6 +605,10 @@ void RegisterBuiltInScenarios() {
       .warmup_iterations = 1,
       .tolerance_p95_percent = tolerance::kJitterWallP95,
       .tolerance_max_percent = tolerance::kJitterWallMax,
+      // Bumped with the per-step frame pump inside the phase (see below): the
+      // scenario total now includes sixty rendered frames it did not before, so
+      // the old numbers describe a different measurement (TD-2026-08-07-167).
+      .measurement_revision = 2,
       .run =
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
@@ -614,15 +618,27 @@ void RegisterBuiltInScenarios() {
             // dominate — so a drift row against the scenario total says nothing
             // about scrolling (TD-2026-08-12-193, and the shape
             // TD-2026-08-06-151 swept for).
+            //
+            // A frame per step, not a batch of input followed by two frames at
+            // the end. Without it the phase measured the SCROLL EVENTS only and
+            // recorded **zero allocations** for sixty of them: everything a
+            // scroll actually costs — re-layout, the visible-line cache, glyph
+            // work, the view-model rebuild — happens on the frame the scroll
+            // schedules, and every one of those frames was landing outside the
+            // window. A phase named `scroll_burst` that cannot see a regression
+            // in the scroll RENDER path is the shape TD-2026-08-12-193 is about,
+            // one level down. `compare_selection.scroll_burst` already pumps per
+            // step for the same reason.
             context.Measure("scroll_large_file.scroll_burst", [&] {
               for (int i = 0; i < 40; ++i) {
                 context.Scroll(-1);
+                context.PumpFrames(1);
               }
               for (int i = 0; i < 20; ++i) {
                 context.KeyDown(SDLK_PAGEDOWN);
+                context.PumpFrames(1);
               }
             });
-            context.PumpFrames(2);
           },
   });
   // Sustained scroll through *fresh* content across the whole 50k-line file.

@@ -803,6 +803,31 @@ scenario. So each phase carries its own allocation gate (TD-2026-08-06-153):
 each phase's share under its scenario. Read that share before trusting a
 scenario's total as evidence about the thing the scenario is named after.
 
+### A declared phase is not evidence the work is inside it
+
+Read the phase's **share** before you trust its number, and be suspicious of a
+small one. `scroll_large_file.scroll_burst` was declared to take the project open
+out of the scenario's numbers, and then measured **zero allocations for sixty
+scroll events**: it drove 40 wheel ticks and 20 PageDowns and let the frames fall
+outside its own window, so everything a scroll actually costs — re-layout, the
+visible-line cache, glyph work, the view-model rebuild — happened on frames the
+phase could not see (TD-2026-08-12-193). Pumping a frame per step moved it from
+0 to 1,885 allocations, 94.7 % of the scenario.
+
+The general shape: **an input event usually schedules the work rather than doing
+it.** A phase around input alone measures dispatch. If the thing you are gating is
+what the input causes, the frame has to be inside the phase.
+
+### An envelope answers "within contract"; only an A/B answers "did this cost anything"
+
+A baseline is an absolute ceiling, so a phase can give back a real, deterministic
+amount and stay green as long as the ceiling is above where it lands. A 36-commit
+push once moved nine phases up by 0.5–9.2 % with **no gate firing on any of them**
+(TD-2026-08-12-193). Before landing a push, A/B it against its merge base with
+`tools/perf-compare.py` rather than reading the gate verdicts — and read the
+`measurement_revision` bumps in the range first, because an A/B runs both binaries
+and cannot know a scenario changed meaning.
+
 ## Scenario Authoring
 
 Scenarios are registered in `tests/perf/PerfMain.cpp` and use `ScenarioContext` helpers from
