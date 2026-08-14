@@ -2,9 +2,9 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <ctime>
-#include <iomanip>
-#include <sstream>
+#include <string>
 
 #include "project/GitCommandUtil.h"
 
@@ -19,6 +19,15 @@ constexpr std::size_t kCaretBlameRadius = 0;
 constexpr std::size_t kInlineBlameGapColumns = 8;
 constexpr std::size_t kMinimumCodeColumnsWithBlame = 24;
 
+// A `std::filesystem::path` assignment reallocates unconditionally, and both
+// paths in a blame request are the same values frame after frame, so compare
+// first. The comparison is a string compare on the native pathname.
+void AssignPathIfChanged(std::filesystem::path& target, const std::filesystem::path& source) {
+  if (target != source) {
+    target = source;
+  }
+}
+
 std::string FormatBlameDate(std::int64_t author_time) {
   if (author_time <= 0) {
     return "Unknown date";
@@ -32,9 +41,16 @@ std::string FormatBlameDate(std::int64_t author_time) {
   gmtime_r(&timestamp, &utc_time);
 #endif
 
-  std::ostringstream output;
-  output << std::put_time(&utc_time, "%Y-%m-%d %H:%M UTC");
-  return output.str();
+  // strftime into a stack buffer rather than an ostringstream: the stream is
+  // several allocations plus a locale imbue for a fixed 21-byte result, and this
+  // runs once per annotated line per painted frame while inline blame is on.
+  char formatted[32] = {};
+  const std::size_t written =
+      std::strftime(formatted, sizeof(formatted), "%Y-%m-%d %H:%M UTC", &utc_time);
+  if (written == 0) {
+    return "Unknown date";
+  }
+  return std::string(formatted, written);
 }
 
 }  // namespace
@@ -82,16 +98,16 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
   const std::size_t caret_end =
       viewport.line_count() == 0 ? 0
                                  : std::min(viewport.line_count() - 1, viewport.cursor_line() + kCaretBlameRadius);
-  const project::GitBlameRequest request{
-      .root = project_root,
-      .absolute_path = viewport.path(),
-      .visible_start_line = visible_start_line,
-      .visible_line_count = metrics.visible_rows,
-      .total_line_count = viewport.line_count(),
-      .dirty = viewport.dirty(),
-      .result_start_line = caret_start,
-      .result_line_count = caret_end - caret_start + 1,
-  };
+  // Reuse the descriptor rather than build one: see editor_request_'s comment.
+  project::GitBlameRequest& request = editor_request_;
+  AssignPathIfChanged(request.root, project_root);
+  AssignPathIfChanged(request.absolute_path, viewport.path());
+  request.visible_start_line = visible_start_line;
+  request.visible_line_count = metrics.visible_rows;
+  request.total_line_count = viewport.line_count();
+  request.dirty = viewport.dirty();
+  request.result_start_line = caret_start;
+  request.result_line_count = caret_end - caret_start + 1;
 
   git_blame_service.Request(request);
   const project::GitBlameSnapshot snapshot = git_blame_service.Snapshot(request);
@@ -168,7 +184,12 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
     return std::nullopt;
   }
 
-  if (!project::internal::AbsoluteToRelativePath(project_root, compare_tab.right_viewport.path()).has_value()) {
+  // …Ref, not the copying form: this only asks has_value(), and the copy is an
+  // owned path per painted frame (the editor overlay above was converted by
+  // TD-2026-08-14-223; the compare one was missed).
+  if (!project::internal::AbsoluteToRelativePathRef(project_root,
+                                                    compare_tab.right_viewport.path())
+           .has_value()) {
     return std::nullopt;
   }
 
@@ -182,16 +203,15 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildCompar
                                     ? 0
                                     : std::min(compare_tab.right_viewport.line_count() - 1,
                                                compare_tab.right_viewport.cursor_line() + kCaretBlameRadius);
-  const project::GitBlameRequest request{
-      .root = project_root,
-      .absolute_path = compare_tab.right_viewport.path(),
-      .visible_start_line = compare_tab.right_viewport.scroll_line(),
-      .visible_line_count = static_cast<std::size_t>(layout.visible_rows),
-      .total_line_count = compare_tab.right_viewport.line_count(),
-      .dirty = compare_tab.right_viewport.dirty(),
-      .result_start_line = caret_start,
-      .result_line_count = caret_end - caret_start + 1,
-  };
+  project::GitBlameRequest& request = compare_request_;
+  AssignPathIfChanged(request.root, project_root);
+  AssignPathIfChanged(request.absolute_path, compare_tab.right_viewport.path());
+  request.visible_start_line = compare_tab.right_viewport.scroll_line();
+  request.visible_line_count = static_cast<std::size_t>(layout.visible_rows);
+  request.total_line_count = compare_tab.right_viewport.line_count();
+  request.dirty = compare_tab.right_viewport.dirty();
+  request.result_start_line = caret_start;
+  request.result_line_count = caret_end - caret_start + 1;
 
   git_blame_service.Request(request);
   const project::GitBlameSnapshot snapshot = git_blame_service.Snapshot(request);

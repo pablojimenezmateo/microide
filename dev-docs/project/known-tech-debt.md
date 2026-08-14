@@ -389,6 +389,34 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-226 — the inline-blame query descriptor was rebuilt, with its two owned paths, on every painted frame. [RESOLVED 2026-08-14, same session it was filed.]
+
+TD-2026-08-14-223 removed the blame path's *resolution* cost. What it left is the
+descriptor itself: `project::GitBlameRequest` owns a `root` and an
+`absolute_path`, and both `BuildEditorOverlay` and `BuildCompareOverlay`
+constructed one as a local — so a painted frame paid ~7 allocations and ~1.3 KB
+to restate two values that change only when the file or the project does.
+
+Both services now keep the descriptor as a member and assign into it through
+`AssignPathIfChanged`; a steady frame allocates nothing for it. One descriptor
+per surface, which is safe because inline blame renders only the ACTIVE pane, so
+a split cannot make two viewports alternate one descriptor's path.
+
+Two more on the same path:
+
+- `BuildCompareOverlay` still called the **copying** `AbsoluteToRelativePath` to
+  ask `has_value()`. 223 converted the editor overlay to `…Ref` and missed this
+  one.
+- `FormatBlameDate` built a `std::ostringstream` and `std::put_time` for a fixed
+  21-byte result, once per annotated line per frame. `strftime` into a stack
+  buffer now.
+
+Whole-phase allocations under the site tracer, against the commit before:
+`compare_selection.scroll_burst` **2,902 → 904 (−69 %)** — that phase's #1 and #2
+sites were both this function. `editor_fold_viewport_refresh.scroll_frame`
+4,123 → 3,451 (−16 %), and 4,782 → 3,451 (−28 %) counting TD-2026-08-14-225 in
+the same session.
+
 ### TD-2026-08-14-225 — an async hover completion proved "still my cell" by carrying a copy of the cell's path, once per painted frame. [RESOLVED 2026-08-14, same session it was filed.]
 
 `WorkspaceShell::KickOffPluginHover` dispatched its query with

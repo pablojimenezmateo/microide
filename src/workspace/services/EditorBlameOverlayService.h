@@ -73,6 +73,19 @@ class EditorBlameOverlayService {
 
  private:
   std::optional<editor::EditorBlameOverlay> visible_overlay_;
+  // The query descriptors, kept alive between frames rather than rebuilt inside
+  // each Build* call. `GitBlameRequest` owns two `std::filesystem::path`s, and a
+  // libstdc++ path copy is ~3.5 allocations (the pathname string, the component
+  // list, a string per component); inline blame builds a request on EVERY painted
+  // frame, so constructing the aggregate cost ~7 allocations and ~1.3 KB per frame
+  // for two values that change only when the file or the project does. Assigned
+  // through AssignPathIfChanged, so a steady frame allocates nothing here.
+  //
+  // One each because the two surfaces can be on screen in the same session; each
+  // is written by a single caller, and inline blame renders only the ACTIVE pane,
+  // so a split does not make two viewports fight over one descriptor.
+  mutable project::GitBlameRequest editor_request_;
+  mutable project::GitBlameRequest compare_request_;
 };
 
 }  // namespace microide::workspace
