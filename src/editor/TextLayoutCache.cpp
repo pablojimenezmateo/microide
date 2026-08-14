@@ -56,8 +56,13 @@ std::size_t TextLayoutCache::PlainAsciiPrefixEnd(LineSpan lines,
   if (probe == 0) {
     return 0;
   }
+  // The line's own length joins the key. Revision alone identifies a line within
+  // one document, and a viewport handed a different document can see a revision
+  // repeat; a line of a different length is then a miss rather than a wrong
+  // answer. Costs one O(1) lookup and does not read the line's bytes.
+  const std::size_t line_length = lines.LineLength(line_index);
   for (PlainPrefixMemo& memo : plain_prefix_memo_) {
-    if (!memo.valid || memo.line_index != line_index ||
+    if (!memo.valid || memo.line_index != line_index || memo.line_length != line_length ||
         memo.content_revision != content_revision) {
       continue;
     }
@@ -85,7 +90,7 @@ std::size_t TextLayoutCache::PlainAsciiPrefixEnd(LineSpan lines,
                               std::min(hit, probe));
   PlainPrefixMemo& slot = plain_prefix_memo_[plain_prefix_memo_next_];
   plain_prefix_memo_next_ = (plain_prefix_memo_next_ + 1) % kPlainPrefixMemoSlots;
-  slot = PlainPrefixMemo{line_index, content_revision, probe, hit, true};
+  slot = PlainPrefixMemo{line_index, line_length, content_revision, probe, hit, true};
   return hit;
 }
 
@@ -836,6 +841,10 @@ void TextLayoutCache::UpdateVisualColumnCacheAfterEdit(
 }
 
 void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
+  // The plain-ASCII prefix memo is keyed by (line, content revision), which
+  // covers every edit -- but a viewport that is handed a DIFFERENT document can
+  // see a revision number repeat, and this is the wipe that runs on that path.
+  plain_prefix_memo_ = {};
   cached_max_visual_columns_.reset();
   cached_max_visual_columns_line_index_.reset();
   cached_visual_line_columns_.clear();

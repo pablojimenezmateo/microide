@@ -536,10 +536,10 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
           // Resolved+normalized path is memoized per entry in the output channel layer
           // (keyed by project root), so this is a cache hit per paint (TD-2026-07-17A-017).
           current_reference_path = output_channels_.ResolvedReferencePath(
-              panel_vm.output_channel_id, output_index, panel_vm.project_root);
+              panel_vm.output_channel_id, output_index, *panel_vm.project_root);
         } else if (parsed->kind == WorkspaceOutputChannels::ParsedEntry::Kind::ContextSnippet) {
           current_reference_path = output_channels_.ResolvedReferencePath(
-              panel_vm.output_channel_id, output_index, panel_vm.project_root);
+              panel_vm.output_channel_id, output_index, *panel_vm.project_root);
 
           const std::string_view visible_prefix =
               text_renderer_.TruncateToWidthEphemeralView(parsed->prefix, panel_layout.text_width);

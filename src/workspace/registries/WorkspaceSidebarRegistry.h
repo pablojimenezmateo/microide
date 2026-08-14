@@ -7,6 +7,7 @@
 #include <string_view>
 #include <vector>
 
+#include "util/SmallVector.h"
 #include "workspace/registries/WorkspaceMenuRegistry.h"
 #include "workspace/state/WorkspaceSidebarState.h"
 
@@ -47,11 +48,16 @@ struct SidebarViewPolicy {
   int order = 0;  // lower = earlier in the list
 };
 
+// Inline capacity covers the built-ins plus a handful of plugin views, which is
+// every real case; past that it spills like any vector. `SidebarModeRow` calls
+// the function below on the frame path, and it was two heap vectors per painted
+// frame for a list of string_views (TD-2026-08-14-221).
+using OrderedSidebarViewList = util::SmallVector<SidebarViewInfo, 16>;
+
 // Returns all views merged, ordered by policy, with hidden views removed.
 // Views with no explicit policy entry keep their default order after policy-ordered views.
-std::vector<SidebarViewInfo> OrderedSidebarViews(
-    const plugin::PluginHost& plugin_host,
-    const std::vector<SidebarViewPolicy>& policies);
+OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host,
+                                           const std::vector<SidebarViewPolicy>& policies);
 
 // Returns the effective policy for a given view id (or a default policy with hidden=false).
 SidebarViewPolicy EffectiveSidebarViewPolicy(

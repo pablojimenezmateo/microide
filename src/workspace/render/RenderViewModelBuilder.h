@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 
+#include "util/SmallVector.h"
 #include "editor/EditorInsetLayout.h"
 #include "editor/EditorViewModel.h"
 #include "editor/PluginDecorationStore.h"
@@ -223,8 +224,14 @@ struct BottomPanelTabDragViewModel {
 struct BottomPanelSurfaceViewModel {
   PanelContentKind content = PanelContentKind::None;
   float height = 0.0f;
-  std::string output_channel_id;
-  std::filesystem::path project_root;
+  // Views into live project state, on the same contract as the sidebar model's
+  // fallback text: rendering is single-threaded and the state outlives the frame.
+  // Owning them cost a `std::string` plus a `std::filesystem::path` — which
+  // libstdc++ splits into components, so it is not one allocation — on every
+  // prepared frame, whether or not the panel was even visible
+  // (TD-2026-08-14-221). Every consumer takes `string_view` / `const path&`.
+  std::string_view output_channel_id;
+  const std::filesystem::path* project_root = nullptr;
   FocusTarget focus = FocusTarget::Sidebar;
   BottomPanelTabDragViewModel tab_drag;
   // Prepared tab strip: PrepareFrameOnce fills these once the frame layout is
@@ -308,12 +315,18 @@ struct StatusBarSegmentViewModel {
   StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
 };
 
+// The spec fixes the segment list at five left and three right, so a heap vector
+// per painted frame bought nothing but two allocations (TD-2026-08-14-221). The
+// inline capacity is the structural cap, not a guess — but SmallVector spills
+// rather than truncating, so adding a segment cannot silently drop one.
+using StatusBarSegmentList = util::SmallVector<StatusBarSegmentViewModel, 8>;
+
 struct StatusBarViewModel {
   bool visible = false;
   SDL_FRect rect{};
   LayoutMode layout_mode = LayoutMode::Regular;
-  std::vector<StatusBarSegmentViewModel> left_segments;
-  std::vector<StatusBarSegmentViewModel> right_segments;
+  StatusBarSegmentList left_segments;
+  StatusBarSegmentList right_segments;
 };
 
 // Status-bar segment geometry, in one place. Left segments pack from the left
@@ -333,10 +346,14 @@ void ForEachStatusBarSegmentRect(const StatusBarViewModel& vm,
     left_x += width + kStatusGap;
   }
   float right_x = vm.rect.x + vm.rect.w - kStatusPadding;
-  for (auto it = vm.right_segments.rbegin(); it != vm.right_segments.rend(); ++it) {
-    const float width = text_renderer.MeasureWidth(it->text);
+  // Right segments pack from the right edge, so they are visited last-first.
+  // Indexed rather than reverse-iterated: `StatusBarSegmentList` is a
+  // `util::SmallVector`, which deliberately carries no reverse iterators.
+  for (std::size_t i = vm.right_segments.size(); i > 0; --i) {
+    const StatusBarSegmentViewModel& segment = vm.right_segments[i - 1];
+    const float width = text_renderer.MeasureWidth(segment.text);
     right_x -= width;
-    visit(*it, SDL_FRect{right_x, vm.rect.y, width, vm.rect.h});
+    visit(segment, SDL_FRect{right_x, vm.rect.y, width, vm.rect.h});
     right_x -= kStatusGap;
   }
 }

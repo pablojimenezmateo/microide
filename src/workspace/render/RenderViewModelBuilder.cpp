@@ -1596,7 +1596,7 @@ BottomPanelSurfaceViewModel RenderViewModelBuilder::BuildBottomPanelSurface() co
       .content = panel.content,
       .height = panel.height,
       .output_channel_id = panel.output.channel_id,
-      .project_root = context_.current_project_state.root,
+      .project_root = &context_.current_project_state.root,
       .focus = context_.current_project_state.surface.focus,
       .tab_drag =
           BottomPanelTabDragViewModel{
@@ -1771,10 +1771,7 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
     return vm;
   }
   const auto& snapshot = service.Snapshot();
-  vm.left_segments.reserve(5);
-  vm.right_segments.reserve(4);
-  const auto add_segment = [&](StatusBarSegmentId id,
-                                std::vector<StatusBarSegmentViewModel>& target) {
+  const auto add_segment = [&](StatusBarSegmentId id, StatusBarSegmentList& target) {
     const auto& seg = snapshot[static_cast<std::size_t>(id)];
     if (!seg.visible || seg.text.empty()) {
       return;
@@ -1794,31 +1791,20 @@ StatusBarViewModel RenderViewModelBuilder::BuildStatusBar(const WorkspaceLayout&
   //   right: line/column, problems, lsp
   add_segment(StatusBarSegmentId::Project, vm.left_segments);
   add_segment(StatusBarSegmentId::Branch, vm.left_segments);
-  add_segment(StatusBarSegmentId::Language, vm.left_segments);
-  add_segment(StatusBarSegmentId::Indent, vm.left_segments);
-  add_segment(StatusBarSegmentId::Encoding, vm.left_segments);
+  // Compact-mode drop order (workspace-status-bar §"Compact-mode segment drop order"):
+  //   encoding, language, indent display
+  // Keep: project+branch+cleanliness, line/column, problems count, LSP state.
+  // Not added rather than added-then-erased: the drop set is exactly the three
+  // segments that come after Branch, so skipping them preserves the same order
+  // and costs no find-and-erase per painted frame.
+  if (vm.layout_mode != LayoutMode::Compact) {
+    add_segment(StatusBarSegmentId::Language, vm.left_segments);
+    add_segment(StatusBarSegmentId::Indent, vm.left_segments);
+    add_segment(StatusBarSegmentId::Encoding, vm.left_segments);
+  }
   add_segment(StatusBarSegmentId::LineColumn, vm.right_segments);
   add_segment(StatusBarSegmentId::Problems, vm.right_segments);
   add_segment(StatusBarSegmentId::Lsp, vm.right_segments);
-
-  if (vm.layout_mode == LayoutMode::Compact) {
-    // Compact-mode drop order (workspace-status-bar §"Compact-mode segment drop order"):
-    //   encoding, language, indent display
-    // Keep: project+branch+cleanliness, line/column, problems count, LSP state
-    const auto drop_segment = [&](StatusBarSegmentId id,
-                                    std::vector<StatusBarSegmentViewModel>& segments) {
-      const auto it = std::find_if(segments.begin(), segments.end(),
-                                    [&](const StatusBarSegmentViewModel& seg) {
-                                      return seg.id == id;
-                                    });
-      if (it != segments.end()) {
-        segments.erase(it);
-      }
-    };
-    drop_segment(StatusBarSegmentId::Encoding, vm.left_segments);
-    drop_segment(StatusBarSegmentId::Language, vm.left_segments);
-    drop_segment(StatusBarSegmentId::Indent, vm.left_segments);
-  }
   return vm;
 }
 

@@ -170,6 +170,58 @@ void TestTextViewportEditRecyclesVisibleLineLayouts() {
          "the repaint after an edit must build into the layouts the invalidation retired");
 }
 
+// TD-2026-08-14-220: the plain-ASCII prefix scan is memoized per (line, length,
+// content revision), and every visible-row build depends on its answer being
+// exact -- an overstated prefix starts the row's walk at a byte whose visual
+// column is not its byte offset, which mislays every glyph on the row. Compared
+// against the definition rather than against itself, at probes that grow, shrink
+// and cross the offending byte, before and after an edit.
+void TestTextViewportPlainAsciiPrefixMemoMatchesTheDefinition() {
+  const auto first_non_plain = [](std::string_view line, std::size_t probe) {
+    const std::size_t limit = std::min(probe, line.size());
+    for (std::size_t i = 0; i < limit; ++i) {
+      const auto byte = static_cast<unsigned char>(line[i]);
+      if (byte == '\t' || byte >= 0x80) {
+        return i;
+      }
+    }
+    return limit;
+  };
+
+  // Three shapes: all plain, a tab in the middle, a multi-byte glyph early.
+  const std::string plain(600, 'x');
+  const std::string tabbed = std::string(300, 'a') + "\t" + std::string(300, 'b');
+  const std::string wide = std::string(40, 'c') + "\xc3\xa9" + std::string(500, 'd');
+  const std::string content = plain + "\n" + tabbed + "\n" + wide + "\n";
+  const std::array<std::string_view, 3> lines{plain, tabbed, wide};
+
+  TextViewport viewport;
+  viewport.LoadContent(content, "/tmp/prefix-memo.txt");
+
+  // Probes out of order on purpose: the memo extends a scan forwards and answers
+  // a shorter probe from what it already knows, and those are different branches.
+  const std::array<std::size_t, 8> probes{0, 700, 10, 301, 300, 299, 650, 41};
+  for (int round = 0; round < 3; ++round) {  // repeat so every query is a memo hit
+    for (std::size_t line = 0; line < lines.size(); ++line) {
+      for (const std::size_t probe : probes) {
+        const std::size_t expected = first_non_plain(lines[line], probe);
+        Expect(viewport.PlainAsciiPrefixEnd(line, probe) == expected,
+               "the memoized plain-ASCII prefix must equal the definition");
+      }
+    }
+  }
+
+  // An edit bumps the content revision, and the memo must not answer for the old
+  // bytes: insert a tab before the first line's first byte.
+  viewport.MoveCursorTo(0, 0);
+  viewport.InsertText("\t");
+  for (const std::size_t probe : probes) {
+    const std::size_t expected = first_non_plain(viewport.lines()[0], probe);
+    Expect(viewport.PlainAsciiPrefixEnd(0, probe) == expected,
+           "an edit must not leave the prefix memo answering for the old line");
+  }
+}
+
 // TD-2026-08-14-219: the per-line token cache is capped, so scrolling through a
 // file misses on every newly visible line and evicts the LRU one to make room.
 // Erasing and re-inserting freed the map node AND the token vector it owned, then
@@ -5480,6 +5532,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSyntaxReloadStalesEveryTokenCacheEntry);
   AddTest(tests, "TextViewport/EditRecyclesVisibleLineLayouts",
           TestTextViewportEditRecyclesVisibleLineLayouts);
+  AddTest(tests, "TextViewport/PlainAsciiPrefixMemoMatchesTheDefinition",
+          TestTextViewportPlainAsciiPrefixMemoMatchesTheDefinition);
   AddTest(tests, "TextViewport/ScrollRecyclesHighlightCacheNodes",
           TestTextViewportScrollRecyclesHighlightCacheNodes);
   AddTest(tests, "TextViewport/ScrollHighlightCacheStopsAllocatingAtTheCap",

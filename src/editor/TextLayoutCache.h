@@ -457,6 +457,7 @@ class TextLayoutCache {
   // access pattern, an LRU would cost more than it saves.
   struct PlainPrefixMemo {
     std::size_t line_index = 0;
+    std::size_t line_length = 0;
     std::uint64_t content_revision = 0;
     // How far [0, ...) has been examined, and the first offending byte found.
     // `first_non_plain == scanned_through` means "none found so far".

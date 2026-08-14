@@ -105,8 +105,7 @@ void TestStatusBarCompactDropOrder() {
   Expect(vm.left_segments[0].text == "microide" && vm.left_segments[1].text == "main",
          "compact status bar should preserve project and branch order");
   const auto find_segment = [&](StatusBarSegmentId id,
-                                  const std::vector<microide::workspace::StatusBarSegmentViewModel>&
-                                      segments) {
+                                  const microide::workspace::StatusBarSegmentList& segments) {
     return std::any_of(segments.begin(), segments.end(),
                        [&](const auto& seg) { return seg.id == id; });
   };

@@ -126,9 +126,8 @@ SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
   return request;
 }
 
-std::vector<SidebarViewInfo> OrderedSidebarViews(
-    const plugin::PluginHost& plugin_host,
-    const std::vector<SidebarViewPolicy>& policies) {
+OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host,
+                                           const std::vector<SidebarViewPolicy>& policies) {
   // First entry wins, matching EffectiveSidebarViewPolicy. This used to pre-index
   // `policies` into an `unordered_map` to avoid re-scanning it inside every
   // filter/sort comparison — but the sort no longer resolves anything (the order
@@ -168,7 +167,9 @@ std::vector<SidebarViewInfo> OrderedSidebarViews(
   };
   const auto builtins = BuiltinSidebarViewSpecs();
   const auto& plugin_providers = plugin_host.SidebarProviders();
-  std::vector<Ordered> ordered;
+  // Both lists are the same bounded shape and both used to be heap vectors, on a
+  // path that runs once per painted frame (TD-2026-08-14-221).
+  util::SmallVector<Ordered, 16> ordered;
   ordered.reserve(builtins.size() + plugin_providers.size());
   const auto consider = [&](SidebarViewInfo info) {
     const ResolvedPolicy policy = resolve(info.id);
@@ -187,10 +188,10 @@ std::vector<SidebarViewInfo> OrderedSidebarViews(
   std::stable_sort(ordered.begin(), ordered.end(),
                    [](const Ordered& a, const Ordered& b) { return a.order < b.order; });
 
-  std::vector<SidebarViewInfo> result;
+  OrderedSidebarViewList result;
   result.reserve(ordered.size());
-  for (Ordered& entry : ordered) {
-    result.push_back(std::move(entry.info));
+  for (const Ordered& entry : ordered) {
+    result.push_back(entry.info);
   }
   return result;
 }

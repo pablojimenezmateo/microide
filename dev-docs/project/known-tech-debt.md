@@ -389,6 +389,55 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-221 — three view models rebuild themselves on every painted frame, and one of them copies a `std::filesystem::path`. [RESOLVED 2026-08-14, same session it was filed.]
+
+The allocation tracer's cross-phase table ranks a site by how many unrelated
+phases it tops. `WorkspaceShell::PrepareFrameOnce` tops **19**,
+`OrderedSidebarViews` **9**, `RenderViewModelBuilder::BuildStatusBar` **8** —
+which is what a per-painted-frame cost looks like from that angle, since every
+interactive scenario paints.
+
+- **`BuildBottomPanelSurface` owned a `std::string` and a `std::filesystem::path`.**
+  Both are copies of live project state, made on every *prepared* frame whether
+  or not the panel is visible, and libstdc++'s `path` splits into components so
+  it is not one allocation. Every consumer already takes `string_view` /
+  `const path&`; the model now holds a view and a pointer, on the contract the
+  sidebar model's fallback text already documents (rendering is single-threaded
+  and the state outlives the frame).
+- **`OrderedSidebarViews` returned two heap vectors** — one to sort, one to
+  return — for a list of `string_view` pairs bounded by the built-ins plus the
+  capped plugin contributions. `SidebarModeRow` calls it once per painted frame.
+  Both are `util::SmallVector` now. (An earlier pass had already removed an
+  `unordered_map` from the same function for the same reason; the vectors were
+  what it left.)
+- **`BuildStatusBar` reserved two heap vectors for a segment list the spec caps
+  at five and three**, then, in compact mode, `find_if`-and-`erase`d three of
+  them back out. `util::SmallVector<…, 8>`, and the three compact-mode drops are
+  simply not added — they are exactly the segments after Branch, so the order is
+  unchanged and the erase is gone.
+
+Measured as a clean A/B against the commit before it, `p50_allocations` for the
+phase:
+
+| phase | | |
+| --- | ---: | ---: |
+| `compare_large.scroll_burst` | 1,360 → 800 | −41 % |
+| `editor_scroll_only_no_content_bump.scroll_frame` | 4,050 → 3,350 | −17 % |
+
+Both are ~3.5 allocations per painted frame, which is the shape: a per-frame cost
+shows up as a constant per frame, not as a share of the scenario.
+
+`ForEachStatusBarSegmentRect` visits the right-hand segments last-first and used
+`rbegin`/`rend`; `util::SmallVector` deliberately carries no reverse iterators,
+so it is indexed now.
+
+**Still open from the same table:** `TabStripService::BuildVisibleStripTabs` tops
+5 phases. It is memoized, so it is not per-frame — but a rebuild runs the build
+up to four times (an overflow-reserve fixpoint), and each pass materialises three
+vectors and copies each tab's title twice, through `ComputeVisibleStripLayouts` →
+`BuildChromeTabRenderItems` → `VisibleStripTab`. That is the
+model-rebuilt-not-overwritten shape and wants the same `…Into` treatment.
+
 ### TD-2026-08-14-220 — a soft-wrapped row asks where its text starts, and the answer is re-derived from the line's start on every row of every frame. [RESOLVED 2026-08-14, same session it was filed.]
 
 **29,411,505 bytes per iteration of `editor_soft_wrap_long_line_scroll`, on the
