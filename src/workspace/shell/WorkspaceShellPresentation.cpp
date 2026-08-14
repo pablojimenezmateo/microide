@@ -11,10 +11,16 @@
 
 namespace microide::workspace {
 
-std::string WorkspaceShell::BreadcrumbLabel() const {
+// By reference, not by value: the memo below already avoids REBUILDING the label,
+// but returning it by value copied it on every hit — and the one caller is the
+// window-chrome paint, so that was an allocation per painted frame for a string
+// that had not changed (and one more on a miss, since the builder's local was
+// copied into the cache and then returned).
+const std::string& WorkspaceShell::BreadcrumbLabel() const {
   // Resolve the label inputs (mode, path, secondary labels) by reference so a cache
   // hit compares without allocating; only a genuine input change rebuilds the string.
   static const std::filesystem::path kEmptyPath;
+  BreadcrumbLabelCache& cache = breadcrumb_label_cache_;
   int mode = 0;
   bool placeholder = false;
   const std::filesystem::path* path = &kEmptyPath;
@@ -23,7 +29,10 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
   if (ActiveTabIsCompare()) {
     const CompareTabState* compare_tab = ActiveCompareTab();
     if (compare_tab == nullptr) {
-      return "compare";
+      // No inputs to memo against, so mark the memo stale and lend the fallback.
+      cache.valid = false;
+      cache.label = "compare";
+      return cache.label;
     }
     mode = 1;
     path = &compare_tab->path;
@@ -32,7 +41,9 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
   } else if (ActiveTabIsMerge()) {
     const MergeTabState* merge_tab = ActiveMergeTab();
     if (merge_tab == nullptr) {
-      return "merge";
+      cache.valid = false;
+      cache.label = "merge";
+      return cache.label;
     }
     mode = 2;
     path = &merge_tab->output_path;
@@ -48,23 +59,21 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
   }
 
   const std::filesystem::path& root = context_.current_project_state.root;
-  BreadcrumbLabelCache& cache = breadcrumb_label_cache_;
   if (cache.valid && cache.mode == mode && cache.placeholder == placeholder &&
       cache.root == root && cache.path == *path && cache.left_label == left &&
       cache.right_label == right) {
     return cache.label;
   }
 
-  std::string label;
   switch (mode) {
     case 1:
-      label = BuildCompareBreadcrumbLabel(root, *path, left, right);
+      cache.label = BuildCompareBreadcrumbLabel(root, *path, left, right);
       break;
     case 2:
-      label = BuildMergeBreadcrumbLabel(root, *path, left, right);
+      cache.label = BuildMergeBreadcrumbLabel(root, *path, left, right);
       break;
     default:
-      label = BuildEditorBreadcrumbLabel(root, *path, placeholder);
+      cache.label = BuildEditorBreadcrumbLabel(root, *path, placeholder);
       break;
   }
   cache.valid = true;
@@ -74,8 +83,7 @@ std::string WorkspaceShell::BreadcrumbLabel() const {
   cache.path = *path;
   cache.left_label = left;
   cache.right_label = right;
-  cache.label = label;
-  return label;
+  return cache.label;
 }
 
 std::string WorkspaceShell::ProjectLabel() const {

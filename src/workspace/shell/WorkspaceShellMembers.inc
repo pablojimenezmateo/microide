@@ -1828,7 +1828,7 @@
   // pinned to a fixed vertical fraction so a short action list stays compact
   // instead of filling a finder-sized modal.
   SDL_FRect ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const;
-  std::string BreadcrumbLabel() const;
+  const std::string& BreadcrumbLabel() const;
   // Cross-paint memo for BreadcrumbLabel (BreadcrumbLabelCache is namespace-scoped in
   // WorkspaceShell.h to keep this file within its size budget); TD-2026-07-17A-023.
   mutable BreadcrumbLabelCache breadcrumb_label_cache_;

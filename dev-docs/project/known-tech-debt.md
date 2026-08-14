@@ -389,6 +389,59 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-229 — a scroll frame that changed nothing still allocated ten times, all of it shell chrome restating itself. [RESOLVED 2026-08-14, same session it was filed.]
+
+`editor_scroll_only_no_content_bump` exists to assert that scrolling bumps no
+content/syntax/layout revision. It does not — and the frame still did **ten heap
+allocations**, none of them from the editor. Every one was a chrome surface
+rebuilding a value identical to last frame's:
+
+| per frame | site |
+| ---: | --- |
+| 4 | `StatusBarModelService::Refresh` — see below |
+| 2 | `ComputeStickyScrollLinesUncached`'s `ancestors` / `openers` locals |
+| 1 | `OrderedSidebarViews`' `std::stable_sort` temporary buffer |
+| 1 | `BreadcrumbLabel()` returning by value |
+| 2 | the project segment's text and tooltip, copied out of their own memo |
+
+Four fixes:
+
+- **The status bar published by value.** Each segment was a fresh
+  `StatusBarSegmentValue` — one allocation per non-SSO field — move-assigned into
+  the slot, which also freed the slot's identically sized buffers. There is now a
+  `StatusBarSegmentUpdate` of `string_view`s and a `SetSegment` that assigns INTO
+  the slot, so the stored strings' capacity is reused. The two composed strings
+  that had no memo (`"Language: " + filetype`, `encoding + " · " + line_ending`)
+  got one, and the LSP readout callback now fills reused buffers instead of two
+  fresh locals per frame.
+- **`BreadcrumbLabel()` returned `std::string` by value.** The memo already
+  avoided rebuilding the label; returning it copied it anyway, on a cache HIT,
+  once per painted frame — and on a miss the builder's local was copied into the
+  cache and then returned. It returns `const std::string&` now, and its one caller
+  is a `TruncateLabelView`, which wanted a view all along.
+- **The sticky-scroll recompute allocated two vectors.** A scroll changes the
+  viewport's top line every frame, so every frame is a sticky-scroll cache MISS
+  *by design* and lands in that function — which then built a fresh `ancestors`
+  (`reserve(8)`) and `openers`. Both are `thread_local` now, matching the memo
+  they serve.
+- **`OrderedSidebarViews` used `std::stable_sort`**, which takes a
+  `_Temporary_buffer` above libstdc++'s 15-element threshold. It is a `std::sort`
+  keyed on `(order, insertion index)` now — same result, no allocation.
+
+`editor_scroll_only_no_content_bump.scroll_frame`, 100 frames, site tracer:
+**1,002 → 53 allocations** (10/frame → 0.5/frame; it was 17/frame at the start of
+this session). The 53 that remain are the visible-line layout and highlight caches
+taking entries for lines that just scrolled into view, which is the cost of new
+content and not of chrome.
+
+`WorkspaceStatusBar/SteadyRefreshDoesNotAllocate` gates the status-bar half at
+zero allocations in the perf-harness lane — warmed twice, measured once, with a
+label deliberately longer than the small-string buffer so an SSO-sized fixture
+cannot pass it vacuously. **Probed**: inverting it to `> 0` fails the lane, so it
+is armed and the measured value really is zero.
+`SidebarRegistry/UnpolicedViewsKeepRegistrationOrder` gates the sort's stability,
+which is the property `std::stable_sort` was there for.
+
 ### TD-2026-08-14-228 — a git refresh deep-copied the tree-badge map to build a snapshot, then threw the original away. [RESOLVED 2026-08-14, same session it was filed.]
 
 `GitRepositoryService::BuildSidebarSnapshot` did

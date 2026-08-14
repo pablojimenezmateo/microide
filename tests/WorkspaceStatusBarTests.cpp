@@ -5,6 +5,7 @@
 #include "workspace/services/StatusBarModelService.h"
 #include "workspace/services/StatusBarService.h"
 #include "workspace/WorkspaceContext.h"
+#include "perf/AllocationCounter.h"
 #include "workspace/WorkspaceLayout.h"
 
 #include <algorithm>
@@ -177,6 +178,52 @@ void TestStatusBarLspToneFromTypedSeverityNotLabelText() {
          "tone must follow the typed severity (Error), not a 'Ready' substring match");
 }
 
+// The status-bar model is refreshed once per PAINTED FRAME, and on a steady frame
+// every segment says exactly what it said last frame. It used to rebuild each one
+// anyway: a fresh `StatusBarSegmentValue` (one allocation per non-SSO field), then
+// a move-assign into the slot that also freed the slot's identically sized
+// buffers. Six allocations a frame, forever, for text that had not changed
+// (TD-2026-08-14-229). Publishing through views and assigning INTO the slot makes
+// a settled frame allocation-free, and this is the assertion that says so.
+void TestStatusBarSteadyRefreshDoesNotAllocate() {
+  WorkspaceContext context;
+  StatusBarService service;
+  editor::TextViewport viewport;
+
+  microide::workspace::StatusBarModelService model;
+  microide::workspace::StatusBarModelService::Operations ops;
+  ops.is_git_repo_valid = [](const std::filesystem::path&) { return false; };
+  // Long enough to be past std::string's small-string buffer, which is the whole
+  // point: an SSO-sized label would pass this test on the old code too.
+  ops.active_lsp_status_strings = [](bool, std::string& text, std::string& tooltip,
+                                     StatusBarSegmentTone& tone) {
+    text = "LSP: clangd indexing the workspace";
+    tooltip = "language server is indexing the workspace, some results may be partial";
+    tone = StatusBarSegmentTone::Info;
+  };
+
+  // Two warm-up refreshes: the first fills every memo and every slot buffer, the
+  // second proves the memos hold. Only the third is measured.
+  model.Refresh(service, ops, context.current_project_state, &viewport);
+  model.Refresh(service, ops, context.current_project_state, &viewport);
+#if MICROIDE_PERF_HARNESS_BUILD
+  const perf::AllocationSnapshot before = perf::Allocations::Snapshot();
+#endif
+  model.Refresh(service, ops, context.current_project_state, &viewport);
+#if MICROIDE_PERF_HARNESS_BUILD
+  const perf::AllocationDelta delta = perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0,
+         "a status-bar refresh that changes nothing should not allocate");
+#endif
+  Expect(service.Segment(StatusBarSegmentId::Lsp).text == "LSP: clangd indexing the workspace",
+         "the settled refresh should still publish the segment text");
+  Expect(service.Segment(StatusBarSegmentId::Lsp).tooltip ==
+             "language server is indexing the workspace, some results may be partial",
+         "the settled refresh should still publish the segment tooltip");
+  Expect(service.Segment(StatusBarSegmentId::Lsp).tone == StatusBarSegmentTone::Info,
+         "the settled refresh should still publish the segment tone");
+}
+
 void TestStatusBarRepoAvailabilityReflectsInSessionGitInit() {
   // The repo-availability probe must not be cached by project_root alone: an
   // in-session `git init` (or `.git` removal) must be reflected, not stay stale
@@ -284,6 +331,8 @@ void RegisterWorkspaceStatusBarTests(std::vector<TestCase>& tests) {
           TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot);
   AddTest(tests, "WorkspaceStatusBar/RepoAvailabilityReflectsInSessionGitInit",
           TestStatusBarRepoAvailabilityReflectsInSessionGitInit);
+  AddTest(tests, "WorkspaceStatusBar/SteadyRefreshDoesNotAllocate",
+          TestStatusBarSteadyRefreshDoesNotAllocate);
   AddTest(tests, "WorkspaceStatusBar/LspToneFromTypedSeverityNotLabelText",
           TestStatusBarLspToneFromTypedSeverityNotLabelText);
   AddTest(tests, "WorkspaceStatusBar/BuildsVisibleSegments",

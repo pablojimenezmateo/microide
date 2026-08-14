@@ -16,8 +16,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
                                     const editor::TextViewport* active_viewport) {
   util::AddPerformanceCounter(util::PerfCounterId::FrameRefreshStatusBarCalls);
 
-  StatusBarSegmentValue project_segment;
-  StatusBarSegmentValue branch_segment;
+  // Views into memoized strings, published through the assigning SetSegment: a
+  // steady frame must not materialize a segment's text again just to hand it over.
+  StatusBarService::StatusBarSegmentUpdate project_segment;
+  StatusBarService::StatusBarSegmentUpdate branch_segment;
   if (!project_state.root.empty()) {
     // See GitSnapshotDerivedCache: both of these are per-frame costs keyed on
     // state that moves on a project switch / git snapshot, not on a frame.
@@ -131,16 +133,16 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     project_segment_cache_ = {};
     git_derived_cache_ = {};
   }
-  status_bar_service.SetSegment(StatusBarSegmentId::Project, std::move(project_segment));
+  status_bar_service.SetSegment(StatusBarSegmentId::Project, project_segment);
   if (!operations.startup_mode_text.empty()) {
-    branch_segment.text = std::string(operations.startup_mode_text);
+    branch_segment.text = operations.startup_mode_text;
     branch_segment.tooltip = operations.startup_mode_tooltip.empty()
-                                 ? std::string(operations.startup_mode_text)
-                                 : std::string(operations.startup_mode_tooltip);
+                                 ? operations.startup_mode_text
+                                 : operations.startup_mode_tooltip;
     branch_segment.visible = true;
-    branch_segment.command.clear();  // startup-mode text is a readout, not a control
+    branch_segment.command = {};  // startup-mode text is a readout, not a control
   }
-  status_bar_service.SetSegment(StatusBarSegmentId::Branch, std::move(branch_segment));
+  status_bar_service.SetSegment(StatusBarSegmentId::Branch, branch_segment);
 
   if (active_viewport != nullptr) {
     const editor::TextViewport* const viewport = active_viewport;
@@ -154,12 +156,12 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
           "Ln " + std::to_string(viewport->cursor_line() + 1) + ", Col " +
           std::to_string(viewport->cursor_column() + 1);
     }
-    StatusBarSegmentValue line_col;
+    StatusBarService::StatusBarSegmentUpdate line_col;
     line_col.text = editor_segments_cache_.line_column_text;
     line_col.tooltip = "Go to line/column";
     line_col.command = "goto";
     line_col.visible = true;
-    status_bar_service.SetSegment(StatusBarSegmentId::LineColumn, std::move(line_col));
+    status_bar_service.SetSegment(StatusBarSegmentId::LineColumn, line_col);
 
     if (editor_segments_cache_.viewport != viewport ||
         editor_segments_cache_.soft_tabs != viewport->soft_tabs() ||
@@ -170,51 +172,70 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       editor_segments_cache_.indent_text =
           (viewport->soft_tabs() ? "Spaces: " : "Tabs: ") + std::to_string(viewport->tab_size());
     }
-    StatusBarSegmentValue indent;
+    StatusBarService::StatusBarSegmentUpdate indent;
     indent.text = editor_segments_cache_.indent_text;
     indent.tooltip = "Change indent settings";
     indent.command = "settings";
     indent.visible = true;
-    status_bar_service.SetSegment(StatusBarSegmentId::Indent, std::move(indent));
+    status_bar_service.SetSegment(StatusBarSegmentId::Indent, indent);
 
-    StatusBarSegmentValue language;
+    StatusBarService::StatusBarSegmentUpdate language;
     // The viewport owns the memo, so a settled buffer costs a field compare here.
     // The normalized-path cache this used to keep existed only to key the status
     // bar's own filetype memo; both went away with it.
     const std::string& filetype = viewport->language_id();
     if (!filetype.empty()) {
+      // The tooltip is the only composed string here, so it gets its own memo
+      // rather than being rebuilt per frame from a filetype that rarely changes.
+      if (editor_segments_cache_.language_tooltip_source != filetype) {
+        editor_segments_cache_.language_tooltip_source = filetype;
+        editor_segments_cache_.language_tooltip.clear();
+        editor_segments_cache_.language_tooltip.reserve(filetype.size() + 10);
+        editor_segments_cache_.language_tooltip.append("Language: ");
+        editor_segments_cache_.language_tooltip.append(filetype);
+      }
       language.text = filetype;
-      language.tooltip = "Language: " + filetype;
+      language.tooltip = editor_segments_cache_.language_tooltip;
       language.visible = true;
     }
-    status_bar_service.SetSegment(StatusBarSegmentId::Language, std::move(language));
+    status_bar_service.SetSegment(StatusBarSegmentId::Language, language);
 
-    StatusBarSegmentValue encoding;
+    StatusBarService::StatusBarSegmentUpdate encoding;
+    // `EncodingLabel`/`LineEndingLabel` return owned strings and the joined form
+    // is a third; all three were rebuilt per painted frame for a value that only
+    // moves when the file's encoding or line ending does. Memoized on the pair.
     const std::string encoding_label = viewport->EncodingLabel();
     const std::string line_ending_label = viewport->LineEndingLabel();
     if (!encoding_label.empty() || !line_ending_label.empty()) {
-      if (!encoding_label.empty() && !line_ending_label.empty()) {
-        encoding.text = encoding_label + " · " + line_ending_label;
-      } else if (!encoding_label.empty()) {
-        encoding.text = encoding_label;
-      } else {
-        encoding.text = line_ending_label;
+      if (editor_segments_cache_.encoding_source_left != encoding_label ||
+          editor_segments_cache_.encoding_source_right != line_ending_label) {
+        editor_segments_cache_.encoding_source_left = encoding_label;
+        editor_segments_cache_.encoding_source_right = line_ending_label;
+        editor_segments_cache_.encoding_text.clear();
+        editor_segments_cache_.encoding_text.reserve(encoding_label.size() +
+                                                     line_ending_label.size() + 4);
+        editor_segments_cache_.encoding_text.append(encoding_label);
+        if (!encoding_label.empty() && !line_ending_label.empty()) {
+          editor_segments_cache_.encoding_text.append(" · ");
+        }
+        editor_segments_cache_.encoding_text.append(line_ending_label);
       }
+      encoding.text = editor_segments_cache_.encoding_text;
       encoding.tooltip = "File encoding and line endings";
       encoding.visible = true;
     }
-    status_bar_service.SetSegment(StatusBarSegmentId::Encoding, std::move(encoding));
+    status_bar_service.SetSegment(StatusBarSegmentId::Encoding, encoding);
   } else {
     editor_segments_cache_.viewport = nullptr;
     editor_segments_cache_.line_column_text.clear();
     editor_segments_cache_.indent_text.clear();
-    status_bar_service.SetSegment(StatusBarSegmentId::LineColumn, StatusBarSegmentValue{});
-    status_bar_service.SetSegment(StatusBarSegmentId::Indent, StatusBarSegmentValue{});
-    status_bar_service.SetSegment(StatusBarSegmentId::Language, StatusBarSegmentValue{});
-    status_bar_service.SetSegment(StatusBarSegmentId::Encoding, StatusBarSegmentValue{});
+    status_bar_service.ClearSegment(StatusBarSegmentId::LineColumn);
+    status_bar_service.ClearSegment(StatusBarSegmentId::Indent);
+    status_bar_service.ClearSegment(StatusBarSegmentId::Language);
+    status_bar_service.ClearSegment(StatusBarSegmentId::Encoding);
   }
 
-  StatusBarSegmentValue problems;
+  StatusBarService::StatusBarSegmentUpdate problems;
   {
     const std::size_t errors = project_state.diagnostics_store.ErrorCount();
     const std::size_t warnings = project_state.diagnostics_store.WarningCount();
@@ -238,25 +259,28 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       editor_segments_cache_.problems_text.clear();
     }
   }
-  status_bar_service.SetSegment(StatusBarSegmentId::Problems, std::move(problems));
+  status_bar_service.SetSegment(StatusBarSegmentId::Problems, problems);
 
-  StatusBarSegmentValue lsp;
+  StatusBarService::StatusBarSegmentUpdate lsp;
   if (active_viewport != nullptr) {
-    std::string lsp_text;
-    std::string lsp_tooltip;
+    // Reused buffers, not locals: the callback assigns into them, so a steady
+    // frame reuses the capacity rather than allocating both strings again.
+    editor_segments_cache_.lsp_text.clear();
+    editor_segments_cache_.lsp_tooltip.clear();
     StatusBarSegmentTone lsp_tone = StatusBarSegmentTone::Default;
-    operations.active_lsp_status_strings(false, lsp_text, lsp_tooltip, lsp_tone);
-    if (!lsp_text.empty()) {
+    operations.active_lsp_status_strings(false, editor_segments_cache_.lsp_text,
+                                         editor_segments_cache_.lsp_tooltip, lsp_tone);
+    if (!editor_segments_cache_.lsp_text.empty()) {
       // The tone comes from typed LSP readiness state (idle/busy/failed), so a
       // server named "Ready…" or a "Not Ready" message no longer mis-colors the
       // segment, and a failed server is flagged Error rather than mere Info.
       lsp.tone = lsp_tone;
-      lsp.text = std::move(lsp_text);
-      lsp.tooltip = std::move(lsp_tooltip);
+      lsp.text = editor_segments_cache_.lsp_text;
+      lsp.tooltip = editor_segments_cache_.lsp_tooltip;
       lsp.visible = true;
     }
   }
-  status_bar_service.SetSegment(StatusBarSegmentId::Lsp, std::move(lsp));
+  status_bar_service.SetSegment(StatusBarSegmentId::Lsp, lsp);
 }
 
 }  // namespace microide::workspace

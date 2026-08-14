@@ -96,6 +96,19 @@ class StatusBarModelService {
     std::string line_column_text;
     std::string indent_text;
     std::string problems_text;
+    // Composed segment strings and the inputs they were composed from. All three
+    // used to be rebuilt on every painted frame from values that move only when
+    // the file's language, encoding or line ending does.
+    std::string language_tooltip_source;
+    std::string language_tooltip;
+    std::string encoding_source_left;
+    std::string encoding_source_right;
+    std::string encoding_text;
+    // The LSP readout, filled by the operations callback. Held so the callback
+    // assigns into buffers that already have capacity instead of two fresh
+    // strings per frame.
+    std::string lsp_text;
+    std::string lsp_tooltip;
   };
 
   ProjectSegmentCache project_segment_cache_;

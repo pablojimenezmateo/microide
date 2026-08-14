@@ -829,6 +829,29 @@ void TestSidebarHideView() {
   Expect(!has_git, "hidden view should not appear in ordered list");
 }
 
+// The ordering must be STABLE: views the policy set says nothing about all share
+// order = INT_MAX, and their relative order is the registration order the sidebar
+// rail is expected to show. The sort was a `std::stable_sort`, which takes a
+// `_Temporary_buffer` — one heap allocation per call, on a path that runs once per
+// painted frame — and is now a `std::sort` keyed on (order, insertion index).
+// This is the assertion that key has to earn (TD-2026-08-14-229).
+void TestSidebarUnpolicedViewsKeepRegistrationOrder() {
+  PluginHost host;
+  const auto baseline = OrderedSidebarViews(host, {});
+  Expect(baseline.size() > 1, "the built-in view set should have more than one view");
+  // Pin the LAST view to the front. Everything else stays unpoliced, so the rest
+  // must follow in exactly the order they had with no policies at all.
+  std::vector<SidebarViewPolicy> policies;
+  policies.push_back(SidebarViewPolicy{std::string(baseline.back().id), false, 0});
+  const auto ordered = OrderedSidebarViews(host, policies);
+  Expect(ordered.size() == baseline.size(), "pinning a view must not drop any");
+  Expect(ordered.front().id == baseline.back().id, "the pinned view should sort first");
+  for (std::size_t i = 0; i + 1 < baseline.size(); ++i) {
+    Expect(ordered[i + 1].id == baseline[i].id,
+           "unpoliced views must keep their registration order behind the pinned one");
+  }
+}
+
 void TestSidebarReorderViews() {
   PluginHost host;
   std::vector<SidebarViewPolicy> policies;
@@ -1302,6 +1325,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "FileIconRegistry/PluginContributions", TestPluginFileIconTheme);
   AddTest(tests, "SidebarRegistry/OrderedNoPolicy", TestSidebarOrderedViewsNoPolicy);
   AddTest(tests, "SidebarRegistry/HideView", TestSidebarHideView);
+  AddTest(tests, "SidebarRegistry/UnpolicedViewsKeepRegistrationOrder",
+          TestSidebarUnpolicedViewsKeepRegistrationOrder);
   AddTest(tests, "SidebarRegistry/ReorderViews", TestSidebarReorderViews);
   AddTest(tests, "SettingsRegistry/GetCallback", TestPluginSettingsGetCallback);
   AddTest(tests, "SettingsRegistry/SnapshotCacheInvalidation",

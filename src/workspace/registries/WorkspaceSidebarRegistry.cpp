@@ -164,6 +164,11 @@ OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host
   struct Ordered {
     SidebarViewInfo info;
     int order;
+    // Insertion index, so the sort below can be a plain `std::sort` and still be
+    // stable. `std::stable_sort` takes a `_Temporary_buffer` above libstdc++'s
+    // 15-element threshold, which is one heap allocation per call — and this runs
+    // once per painted frame.
+    std::size_t index;
   };
   const auto builtins = BuiltinSidebarViewSpecs();
   const auto& plugin_providers = plugin_host.SidebarProviders();
@@ -176,7 +181,7 @@ OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host
     if (policy.hidden) {
       return;
     }
-    ordered.push_back(Ordered{info, policy.order});
+    ordered.push_back(Ordered{info, policy.order, ordered.size()});
   };
   for (const SidebarViewSpec& spec : builtins) {
     consider(SidebarViewInfo{.id = spec.id, .label = spec.label, .mode = spec.mode});
@@ -185,8 +190,9 @@ OrderedSidebarViewList OrderedSidebarViews(const plugin::PluginHost& plugin_host
     consider(SidebarViewInfo{
         .id = provider.id, .label = provider.label, .mode = SidebarMode::Plugin});
   }
-  std::stable_sort(ordered.begin(), ordered.end(),
-                   [](const Ordered& a, const Ordered& b) { return a.order < b.order; });
+  std::sort(ordered.begin(), ordered.end(), [](const Ordered& a, const Ordered& b) {
+    return a.order != b.order ? a.order < b.order : a.index < b.index;
+  });
 
   OrderedSidebarViewList result;
   result.reserve(ordered.size());

@@ -4,6 +4,7 @@
 
 #include <array>
 #include <string>
+#include <string_view>
 
 namespace microide::workspace {
 
@@ -61,6 +62,38 @@ class StatusBarService {
     }
     slot = std::move(value);
   }
+
+  // A segment's fields as VIEWS of strings the caller already owns.
+  struct StatusBarSegmentUpdate {
+    std::string_view text;
+    std::string_view tooltip;
+    std::string_view command;
+    std::string_view command_arg;
+    bool visible = false;
+    StatusBarSegmentTone tone = StatusBarSegmentTone::Default;
+  };
+
+  // Assign INTO the stored segment instead of replacing it.
+  //
+  // The model refresh runs once per painted frame and most segments say the same
+  // thing on consecutive frames, but the value-taking form above made the caller
+  // build a fresh `StatusBarSegmentValue` — one allocation per non-SSO field —
+  // and then move-assigned it, which also freed the slot's identically sized
+  // buffers. Assigning reuses them, so a steady frame allocates nothing here.
+  void SetSegment(StatusBarSegmentId id, const StatusBarSegmentUpdate& update) {
+    StatusBarSegmentValue& slot = segments_[static_cast<std::size_t>(id)];
+    if (slot.text != update.text || slot.visible != update.visible || slot.tone != update.tone) {
+      painted_state_changed_ = true;
+    }
+    slot.text.assign(update.text);
+    slot.tooltip.assign(update.tooltip);
+    slot.command.assign(update.command);
+    slot.command_arg.assign(update.command_arg);
+    slot.visible = update.visible;
+    slot.tone = update.tone;
+  }
+  // Clear a segment without naming its (empty) fields.
+  void ClearSegment(StatusBarSegmentId id) { SetSegment(id, StatusBarSegmentUpdate{}); }
   const StatusBarSegmentValue& Segment(StatusBarSegmentId id) const {
     return segments_[static_cast<std::size_t>(id)];
   }

@@ -580,6 +580,14 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
                                       bool sticky_scroll_enabled,
                                       int sticky_max_depth,
                                       std::vector<std::size_t>& out_opener_lines) {
+  // The two working buffers, held across calls rather than declared here. A
+  // scroll changes the viewport's top line every frame, so every frame is a
+  // sticky-scroll cache MISS by design and lands in this function — and a fresh
+  // `ancestors` (reserve(8), 192 bytes) plus a fresh `openers` was two
+  // allocations per painted frame. thread_local for the same reason the memo
+  // above is: a non-main thread computing this keeps its own.
+  thread_local std::vector<editor::FoldRange> ancestors;
+  thread_local std::vector<std::size_t> openers;
   out_opener_lines.clear();
   if (!sticky_scroll_enabled || folding_model == nullptr || folding_model->resolved_ranges().empty()) {
     return;
@@ -592,14 +600,12 @@ void ComputeStickyScrollLinesUncached(const editor::TextViewport& viewport,
   const std::size_t top_line = viewport.VisualRowLineIndex(viewport.scroll_line());
   // The indexed AppendFoldsContaining walk returns ranges in outer→inner order
   // via the prefix-max-closer cache instead of a linear scan over ranges().
-  std::vector<editor::FoldRange> ancestors;
-  ancestors.reserve(8);
+  ancestors.clear();
   folding_model->AppendFoldsContaining(top_line, &ancestors);
   // The sticky-scroll bar paints openers strictly above the viewport's top
   // visible line (opener_line < top_line); drop the self-containing entry if
   // the top happens to land on an opener.
-  std::vector<std::size_t> openers;
-  openers.reserve(ancestors.size());
+  openers.clear();
   for (const editor::FoldRange& range : ancestors) {
     if (range.opener_line < top_line && top_line <= range.closer_line) {
       openers.push_back(range.opener_line);
