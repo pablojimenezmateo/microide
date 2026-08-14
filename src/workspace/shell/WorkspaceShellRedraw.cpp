@@ -154,6 +154,7 @@ WorkspaceShell::RenderInvalidation WorkspaceShell::ConsumePendingRenderInvalidat
 }
 
 void WorkspaceShell::RequestFullRedraw() {
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceFullRedrawRequests);
   InvalidateCursorKindFingerprint();
   pending_render_invalidation_.full = true;
   pending_render_invalidation_.rects.clear();
@@ -175,6 +176,9 @@ void WorkspaceShell::RequestRedrawRect(const SDL_FRect& rect) {
   InvalidateCursorKindFingerprint();
   pending_render_invalidation_.rects.push_back(rect);
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectsQueued);
+  // Area, not count: a strip repaint and a window repaint queue one rect each.
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceRedrawRectPixels,
+                              static_cast<std::uint64_t>(rect.w * rect.h));
   QueueEditorHoverRefresh();
 }
 

@@ -837,10 +837,41 @@ coverage and a clear owner.
 | Syntax highlighting | `syntax_highlight_cpp_lines`, `syntax_highlight_python_lines`, `syntax_advance_state_cpp_lines` | p50/p95/max wall time, allocation counts | `runtime_syntax::HighlightLine` / `AdvanceState` -- the per-line token path every cold scroll and file open pays synchronously |
 | Tech-debt hot-path coverage | `assist_ranked_union_merge`, `plugin_status_item_update`, `settings_rows_rebuild`, `reference_snippet_file_window`, `multi_caret_remap_burst`, `snippet_many_mirror_edit`, `user_config_record_decode`, `branch_review_presentation_markers` | p50/p95/max wall time, allocation counts (tight, decoupled from wall) | the TD-2026-07-17A rewritten hot paths — `assist_merge::RankedUnion`, `registry_interop::ApplyStatusItemUpdate`, `SettingsOverlayService::RebuildSettingsRows`, `util::ReadFileLineWindow`, `detail::ResolveMultiCaretRemapSites`, snippet mirror shifts, user-config decode, `ApplyBranchReviewPresentationMarkers` |
 | Editor preference application | `settings_change_many_tabs` | per-phase p50/p95/max wall time, allocation counts (**1% p50 allocation tolerance** — see below) | `ApplyEditorPreferencesToAllTabs`: the walk every settings change, project activation and session restore makes over every open tab in every editor group. Split into two measured phases so the cheap per-viewport setters and the filetype-detect + language-contract family can never hide inside one number. |
+| Pointer gestures (tab drag) | `editor_tab_drag_burst` | per-phase allocation counts, plus hard **repaint-scope invariants** the scenario asserts itself | `TabMouseCoordinator::HandleMotion` and the deferred-commit drop, over a 40-tab overflowing strip. See below. |
 | Plugin contribution-cap budgets | `plugin_status_items_resolve_at_cap`, `plugin_keybindings_resolve_at_cap` | p50/p95/max wall time, allocation counts | the resolve seams whose measured cost derives the caps in `plugin/PluginContributionLimits.h` (TD-2026-07-17-019): `ResolveStatusItems` at `kMaxPluginStatusItems`, `ResolveKeybindings` at `kMaxPluginContributionsPerKind`. Re-measure these before raising either cap. |
 
 When a hotspot class has no deterministic coverage, add a scenario + baseline in the same change
 before closing the performance pass.
+
+### Pointer gestures: the tab drag
+
+`editor_tab_drag_burst` (in `tests/perf/TechDebtCoveragePerfScenarios.cpp`) opens 40 tabs over
+`tests/perf/fixtures/settings_tabs_project/` so the strip genuinely overflows, then sweeps 600
+mouse-motion events across it inside one press/release. It exists because the drag had no scenario
+at all: the 2026-08-14 pass measured its win with a throwaway in-test harness and deleted it
+(TD-2026-08-14-212).
+
+Three things are pinned, and the third is the reason a plain timing gate would not have been
+enough:
+
+- **`tab_drag.motion_burst` allocations** — 190 for 600 events on the reference runner, because the
+  slide targets are seeded on a slot CHANGE and nothing allocates per event. The tolerance is 3 %
+  (observed spread 0.5 %), so one allocation added per motion event (+600) fails by a mile.
+- **`tab_drag.drop` allocations** — the deferred commit, measured separately so a reorder-path
+  regression cannot hide inside a burst-dominated total.
+- **Repaint scope**, which no timing or allocation number can see. `ScenarioContext::
+  MouseMoveDragging` hands back the shell's own `RenderInvalidation` for that one event, so the
+  scenario sums the rect areas and **throws** if the drag ever asks for a full-window repaint or
+  exceeds 2.0 tab-strip areas per event (measured: 1.09; a 1920x1080 window is ~38). That is a hard
+  invariant rather than a baseline number: it is deterministic, independent of the runner's clock,
+  and it fires the moment somebody routes the drag back through `RequestFullRedraw` — a change a
+  wall gate would report as a rounding error. All three invariants were probed by making them fire
+  before the scenario was committed, per `dev-docs/project/validation-traps.md`.
+
+The counters behind the third one are `workspace.redraw_rect_pixels` and
+`workspace.full_redraw_requests`, added with this scenario: `workspace.redraw_rects_queued` counts
+rects and so reads identically for a 40x1920 strip and a 1920x1080 window, which are exactly the two
+outcomes a drag chooses between.
 
 ### Editor preference application
 

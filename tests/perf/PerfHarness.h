@@ -414,6 +414,21 @@ class ScenarioContext {
   void CloseAllTerminals();
   void ResizeWindow(int width, int height);
 
+  // Raw pointer input. Every other driver on this class expresses an intent
+  // (Scroll, Type, JumpCompareHunk); these are deliberately the mechanism,
+  // because a drag is a gesture made of individual events and the thing being
+  // measured is the per-EVENT cost. The return value is the shell's damage for
+  // that one event: `rects` is what would repaint, so a scenario can measure
+  // repaint SCOPE — the property a headless event-cost measurement is otherwise
+  // blind to (TD-2026-08-14-212).
+  workspace::WorkspaceShell::RenderInvalidation MousePress(float x, float y);
+  workspace::WorkspaceShell::RenderInvalidation MouseMoveDragging(float x, float y);
+  workspace::WorkspaceShell::RenderInvalidation MouseRelease(float x, float y);
+  // The rect of one editor tab / one group's tab strip, so a drag scenario can
+  // aim at real geometry instead of guessed coordinates.
+  SDL_FRect EditorTabRect(std::size_t tab_index);
+  SDL_FRect EditorGroupTabStripRect(std::size_t group_index);
+
   void SetSetting(std::string_view id, std::string value);
   void ApplyEditorPreferencesToAllTabs();
   editor::TextViewport& ActiveViewport();

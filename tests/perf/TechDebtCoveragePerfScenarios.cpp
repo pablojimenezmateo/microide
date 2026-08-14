@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -659,6 +660,164 @@ const ScenarioRegistration g_perf_project_traversal_filter_scan({Scenario{
     // (TD-2026-08-12-191, TD-2026-08-07-167).
     .measurement_revision = 2,
     .run = RunProjectTraversalFilterScan,
+}});
+
+
+// TD-2026-08-14-212: the tab drag had no scenario at all. The 2026-08-14 pass
+// moved it off the hover pipeline and off the full-window repaint and measured
+// the win with a throwaway in-test harness, which is exactly the shape that
+// leaves a hot path ungated once the harness is deleted.
+//
+// Three things are pinned here, matching what that entry asked for:
+//
+//  1. the per-motion-event cost of `TabMouseCoordinator::HandleMotion` on an
+//     OVERFLOWING strip (the interesting case: it resolves the strip, re-lays the
+//     visible list on an auto-scroll step, and reseeds the slide targets) --
+//     `tab_drag.motion_burst`, a declared phase so its allocations gate
+//     separately from the 40-tab setup that dwarfs them;
+//  2. the allocation count of one drag from press to drop, which should be
+//     bounded by the slide-target vectors (seeded on a slot CHANGE) and nothing
+//     per event -- the same phase, whose count must scale with slots crossed
+//     rather than with events sent;
+//  3. the damage AREA per drag frame, which a headless event-cost measurement
+//     cannot see at all and is the change with the largest real-world effect.
+//     `MouseMoveDragging` hands back the shell's own invalidation for that one
+//     event, so the scenario adds the rect areas up itself and THROWS if the
+//     drag ever asks for a full-window repaint or spends more than a few strip
+//     areas per event. That check is a hard invariant rather than a baseline
+//     number: it is deterministic, it is independent of the runner's clock, and
+//     it fails loudly the moment somebody reverts the drag to `RequestFullRedraw`
+//     -- which is precisely the regression a wall-time gate would report as a
+//     rounding error.
+void RunEditorTabDragBurst(ScenarioContext& context) {
+  const std::filesystem::path project = "tests/perf/fixtures/settings_tabs_project";
+  if (!RequireFixture(context, project, "editor_tab_drag_burst")) {
+    return;
+  }
+  (void)context.Open(project);
+  context.PumpFrames(2);
+
+  // 40 tabs at 1920 logical pixels is a comfortably overflowing strip, which is
+  // the case worth measuring: the drop slot pins to what is VISIBLE and the
+  // pointer parked at an edge walks the strip under itself.
+  constexpr int kTabCount = 40;
+  int opened = 0;
+  for (int index = 1; index <= kTabCount; ++index) {
+    char name[32];
+    std::snprintf(name, sizeof(name), "unit_%02d.cpp", index);
+    const std::filesystem::path file = project / "src" / name;
+    if (!PathExistsNoThrow(file)) {
+      continue;
+    }
+    context.OpenTab(file);
+    ++opened;
+  }
+  if (opened < 8) {
+    context.SkipScenario("editor_tab_drag_burst: fixture opened only " + std::to_string(opened) +
+                         " tabs under " + (project / "src").string());
+    return;
+  }
+  context.PumpFrames(2);
+
+  const SDL_FRect strip = context.EditorGroupTabStripRect(0);
+  // The FIRST VISIBLE tab, not tab 0 and not the last one: an overflowing strip
+  // is a window onto the list, so most model indices have no rect at all, and
+  // asking for one that is scrolled off measures a press on empty chrome.
+  SDL_FRect source{};
+  for (int index = 0; index < opened && source.w <= 0.0f; ++index) {
+    source = context.EditorTabRect(static_cast<std::size_t>(index));
+  }
+  if (strip.w <= 0.0f || source.w <= 0.0f) {
+    context.SkipScenario("editor_tab_drag_burst: the tab strip has no geometry to drag across");
+    return;
+  }
+  const float strip_area = strip.w * strip.h;
+  const float grab_x = source.x + source.w * 0.5f;
+  const float grab_y = source.y + source.h * 0.5f;
+
+  // Enough events that per-event cost dominates the fixed press/release, swept
+  // back and forth across the whole strip so the burst crosses many slots and
+  // parks at both edges (which is what arms the auto-scroll).
+  constexpr int kMotionEvents = 600;
+  double damage_pixels = 0.0;
+  int full_redraws = 0;
+
+  context.MousePress(grab_x, grab_y);
+  context.Measure("tab_drag.motion_burst", [&] {
+    for (int i = 0; i < kMotionEvents; ++i) {
+      // A triangle sweep: 0 -> 1 -> 0 across the strip's usable width.
+      const int period = kMotionEvents / 4;
+      const int phase = i % (2 * period);
+      const float t = phase < period
+                          ? static_cast<float>(phase) / static_cast<float>(period)
+                          : 2.0f - static_cast<float>(phase) / static_cast<float>(period);
+      const float x = strip.x + t * (strip.w - 1.0f);
+      const workspace::WorkspaceShell::RenderInvalidation redraw =
+          context.MouseMoveDragging(x, grab_y);
+      if (redraw.full) {
+        ++full_redraws;
+      }
+      for (const SDL_FRect& rect : redraw.rects) {
+        damage_pixels += static_cast<double>(rect.w) * static_cast<double>(rect.h);
+      }
+    }
+  });
+  context.Measure("tab_drag.drop",
+                  [&] { context.MouseRelease(strip.x + strip.w * 0.5f, grab_y); });
+
+  // Hard invariants on repaint scope. `strip_area` is ~40x the height of one
+  // tab strip band; a drag that damages the window instead would read ~60x this
+  // per event on a 1920x1080 surface.
+  if (full_redraws != 0) {
+    throw std::runtime_error("editor_tab_drag_burst: the drag asked for " +
+                             std::to_string(full_redraws) +
+                             " FULL-WINDOW repaints; a tab drag must damage the strip it is on");
+  }
+  const double average_areas_per_event =
+      damage_pixels / (static_cast<double>(kMotionEvents) * static_cast<double>(strip_area));
+  // Measured 1.09 strip areas per event on the reference runner (the strip plus
+  // its ghost-shadow padding). 2.0 leaves room for the second strip a split adds
+  // and for the frame that damages the tooltip the gesture retired, while still
+  // failing an order of magnitude below a full-window repaint — a 1920x1080
+  // window is ~38 strip areas, so that regression reads as 38.0 here. The bound
+  // was probed by lowering it until it fired, which is the only way to know a
+  // check like this is not structurally green (dev-docs/project/validation-traps.md).
+  if (average_areas_per_event > 2.0) {
+    throw std::runtime_error(
+        "editor_tab_drag_burst: the drag damaged " + std::to_string(average_areas_per_event) +
+        " tab-strip areas per motion event; the drag repaint must stay scoped to the strip");
+  }
+  // Vacuity guard: a drag that damaged NOTHING would sail past the two checks
+  // above while rendering no feedback at all.
+  if (damage_pixels <= 0.0) {
+    throw std::runtime_error(
+        "editor_tab_drag_burst: the drag produced no damage at all, so it measured nothing");
+  }
+}
+
+const ScenarioRegistration g_perf_editor_tab_drag_burst({Scenario{
+    .name = "editor_tab_drag_burst",
+    .smoke = false,
+    .baseline_gated = true,
+    // warmup: the first pass pays the project's cold open (background file-index
+    // build, initial watch batch) plus every tab's first title/width measurement,
+    // which dwarfs the measured burst and would otherwise govern p95/max on its
+    // own -- the same shape as settings_change_many_tabs.
+    .warmup_iterations = 1,
+    // No jitter widening: unlike this file's pure-unit micro-benchmarks this is a
+    // 5 ms app-driver iteration, and its measured wall spread on the reference
+    // runner is 7.6 % — the default 100/150/200 envelopes are already an order of
+    // magnitude looser than the signal.
+    //
+    // Allocations are the oracle here and they are deterministic: the burst
+    // reads 190/191 across ten iterations (0.5 % spread), because the seed path
+    // runs on a slot CHANGE and nothing else allocates per event. 3 % is 6x that
+    // spread and still fails on a single allocation added per motion event, which
+    // would be +600 on a 190-allocation phase. Inherited by the per-phase gate,
+    // which is the one that matters — the scenario total is dominated by the
+    // 40-tab setup.
+    .tolerance_alloc_p50_percent = 3.0,
+    .run = RunEditorTabDragBurst,
 }});
 
 }  // namespace

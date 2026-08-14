@@ -519,7 +519,52 @@ Not a shim: the reason it is filed rather than done is the third bullet — one
 `TabSlideState` for two animating strips is a state-shape change, not a
 conditional.
 
-### TD-2026-08-14-212 — the tab drag has no perf scenario, so its cost is only ever measured by hand. [OPEN 2026-08-14.]
+### TD-2026-08-14-212 — the tab drag has no perf scenario, so its cost is only ever measured by hand. [RESOLVED 2026-08-14 — all three, and the third needed two new counters and a new instrument.]
+
+**Shipped as `editor_tab_drag_burst`** (`tests/perf/TechDebtCoveragePerfScenarios.cpp`, gated, with
+a reference-runner baseline recorded on perf-runner-v1). 40 tabs over
+`settings_tabs_project` so the strip genuinely overflows, 600 motion events swept
+across it inside one press/release. Against the three things the entry asked for:
+
+1. **Per-motion cost.** `tab_drag.motion_burst` is a declared phase, so it gates
+   separately from the 40-tab setup that dwarfs it. 0.95 ms for 600 events —
+   ~1.6 us/event, against the 4.7–5.2 us/event the deleted throwaway harness
+   measured over a 12-tab strip.
+2. **Allocations for one drag.** 190 for those 600 events (0.5 % spread across ten
+   iterations), which is the entry's own prediction confirmed: the seed path runs
+   on a slot CHANGE and nothing allocates per event. `tolerance_alloc_p50_percent`
+   is 3 %, so one allocation added per motion event (+600, i.e. +315 %) fails
+   loudly. `tab_drag.drop` is a second phase at 5,249 — the deferred commit and
+   its session write — measured apart so neither can hide in the other.
+3. **Damage area per drag frame**, the one the entry called invisible to an
+   event-cost measurement, and it was: nothing in the harness could see repaint
+   scope. Three pieces were needed.
+   - `ScenarioContext::MousePress/MouseMoveDragging/MouseRelease` return the
+     shell's `RenderInvalidation` for that one event. Every other driver on that
+     class expresses an intent; these are deliberately the mechanism, because a
+     drag is a gesture made of individual events.
+   - Two production counters, `workspace.redraw_rect_pixels` and
+     `workspace.full_redraw_requests`. The existing
+     `workspace.redraw_rects_queued` counts rects, so it reads **identically** for
+     a 1920x28 strip and a 1920x1080 window — the two outcomes a drag chooses
+     between.
+   - A **hard invariant in the scenario body** rather than a baseline number: it
+     throws if the drag ever requests a full-window repaint, or exceeds 2.0
+     tab-strip areas per motion event (measured 1.09; a full window is ~38), or
+     produces no damage at all. Deterministic, clock-independent, and it fires the
+     moment somebody routes the drag back through `RequestFullRedraw` — which a
+     wall gate would report as a rounding error.
+
+All three invariants were **probed by making them fire** before the scenario was
+committed (lower the bound until it throws, restore), because a check that has
+never failed is not evidence — `validation-traps.md` § Lint Vacuity, applied to a
+perf scenario. One real finding from writing it: the first draft grabbed the LAST
+tab, which on an overflowing strip has no rect at all, and the scenario dutifully
+SKIPped — the `RequireFixture`/`SkipScenario` discipline from
+[170](#td-2026-08-10-170) is what turned that into a visible skip rather than a
+green run measuring a press on empty chrome.
+
+The original report follows.
 
 `AdvisoryPerfScenarios.cpp` has `project_tab_strip_layout_hittest` (opt-in, by
 name) and nothing that exercises a DRAG. The 2026-08-14 pass moved the drag off

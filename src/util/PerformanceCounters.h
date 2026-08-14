@@ -195,6 +195,17 @@ namespace microide::util {
   /* round-trip per event again, which is exactly what SmallVector removed.       */             \
   X(WorkspaceRedrawRectsQueued, "workspace.redraw_rects_queued")                                \
   X(WorkspaceRedrawRectSpills, "workspace.redraw_rect_spills")                                  \
+  /* Damage AREA, in logical pixels, and how often an event gave up on rects and  */            \
+  /* asked for the whole window. rects_queued counts how many rects an event      */            \
+  /* produced; it cannot tell a 40x1000 tab strip from a 1920x1080 window, and    */            \
+  /* those are the two outcomes a drag chooses between. Repaint scope is the      */            \
+  /* change with the largest real-world effect on a drag and the one a headless   */            \
+  /* event-cost measurement cannot see at all (TD-2026-08-14-212); these are how  */            \
+  /* a perf scenario sees it. A full request contributes no pixels here -- it is  */            \
+  /* counted in its own counter precisely so "many pixels" and "gave up" stay     */            \
+  /* distinguishable rather than summing into one number.                          */          \
+  X(WorkspaceRedrawRectPixels, "workspace.redraw_rect_pixels")                                  \
+  X(WorkspaceFullRedrawRequests, "workspace.full_redraw_requests")                              \
   /* How many times the menu bar was laid out, and how many label widths that     */             \
   /* actually measured. The layout runs from at least three independent chains    */             \
   /* per pointer motion (hit test, cursor kind, chrome redraw rect) -- about ten  */             \

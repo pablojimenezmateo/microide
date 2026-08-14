@@ -785,6 +785,42 @@ void ScenarioContext::CloseAllTerminals() {
   PumpFrames(1);
 }
 
+workspace::WorkspaceShell::RenderInvalidation ScenarioContext::MousePress(float x, float y) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+  event.button.button = SDL_BUTTON_LEFT;
+  event.button.x = x;
+  event.button.y = y;
+  event.button.clicks = 1;
+  return shell_.HandleEvent(event).redraw;
+}
+
+workspace::WorkspaceShell::RenderInvalidation ScenarioContext::MouseMoveDragging(float x, float y) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_MOTION;
+  event.motion.x = x;
+  event.motion.y = y;
+  event.motion.state = SDL_BUTTON_LMASK;
+  return shell_.HandleEvent(event).redraw;
+}
+
+workspace::WorkspaceShell::RenderInvalidation ScenarioContext::MouseRelease(float x, float y) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_BUTTON_UP;
+  event.button.button = SDL_BUTTON_LEFT;
+  event.button.x = x;
+  event.button.y = y;
+  return shell_.HandleEvent(event).redraw;
+}
+
+SDL_FRect ScenarioContext::EditorTabRect(std::size_t tab_index) {
+  return workspace::WorkspaceShell::TestAccess::EditorTabRect(shell_, tab_index);
+}
+
+SDL_FRect ScenarioContext::EditorGroupTabStripRect(std::size_t group_index) {
+  return workspace::WorkspaceShell::TestAccess::GroupTabStripRect(shell_, group_index);
+}
+
 void ScenarioContext::ResizeWindow(int width, int height) {
   if (window_ != nullptr) {
     SDL_SetWindowSize(window_, width, height);
