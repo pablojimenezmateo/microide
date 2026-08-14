@@ -433,7 +433,34 @@ wants the same treatment.
 Smaller than 198 was: the fingerprint already exists, so this is the cache and the
 reference return, not a new invalidation key.
 
-### TD-2026-08-14-210 — render-whitespace is walked by two implementations of different asymptotic shape.
+### TD-2026-08-14-210 — render-whitespace is walked by two implementations of different asymptotic shape. [RESOLVED 2026-08-14, same session it was filed.]
+
+**Fixed as the entry proposed.** `AppendWhitespaceMarkers` takes an optional
+per-cell pixel displacement (`CellShiftRef`), the editor pane passes its
+inlay-hint shift through it, and the editor's private copy of the walk is deleted.
+Three walks became one walk plus the view-model glyph-run table — and that table
+is legitimately different: it is a precomputed run set, not a walk, and is the
+editor's fast path by design.
+
+`CellShiftRef` is a non-owning type-erased callable rather than a
+`std::function`: the editor's shift captures three values, which exceeds
+libstdc++'s small-object buffer, so a `std::function` there would have allocated
+once per painted row — on the path this whole entry is about.
+
+The remaining pair is now covered by
+`EditorEssentials/WhitespaceGlyphRunsAgreeWithTheSharedWalk`, built for the trap
+`dev-docs/project/validation-traps.md` names: it compares them on the inputs where
+they could actually diverge (a multi-byte glyph before whitespace, a tab expanding
+across cells, trailing spaces), rect by rect, rather than on a fixture small enough
+to hide a difference.
+
+The walk also returns the bytes it visited now, so the editor's
+`EditorWhitespaceMarkerWalkBytes` counter — which exists to keep
+[187](#td-2026-08-12-187)'s "the walk resumes at the row" a measurement rather
+than a comment — survived the move.
+
+#### Original entry
+
 
 [206](#td-2026-08-13-206) put the marker walk in
 `editor/RowDecorationBuilder` (`AppendWhitespaceMarkers`) so the compare panes

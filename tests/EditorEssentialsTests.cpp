@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "editor/RowDecorationBuilder.h"
+
 #include <set>
 
 #include "editor/BracketScanner.h"
@@ -1233,6 +1235,58 @@ void TestRenderViewModelBuilderWhitespaceGlyphRunsToggle() {
   Expect(saw_dot && saw_tab, "visible whitespace should surface both dots and tab rules");
 }
 
+// TD-2026-08-14-210: after the walk was shared, TWO implementations of
+// render-whitespace remain — the walk (editor fallback + both compare panes) and
+// the view model's precomputed glyph-run table, which is the editor's fast path.
+// `dev-docs/project/validation-traps.md` names the trap they form: a parity test
+// only holds on fixtures small enough to hide the difference. So this compares
+// them on the cases where they could actually diverge — a tab that expands across
+// cells, a multi-byte glyph before whitespace, and a window that starts mid-line.
+void TestWhitespaceGlyphRunsAgreeWithTheSharedWalk() {
+  microide::workspace::WorkspaceContext ctx;
+  microide::workspace::RenderViewModelBuilder builder(ctx);
+  microide::editor::TextViewport viewport;
+  // "é" before a space (byte offset != visual column), a tab at a column that
+  // expands across several cells, and trailing spaces.
+  const std::string line = "a\xc3\xa9 b\tc  d";
+  viewport.LoadContent(line + "\n", "/tmp/ws-parity.txt");
+  viewport.SetTabSize(4);
+  viewport.SetScrollLine(0);
+  viewport.SetViewportSize(5, 80);
+
+  const auto vm = builder.BuildEditorViewModel(viewport, 5, nullptr, false, false, false, 3, true);
+
+  constexpr float kCharWidth = 10.0f;
+  constexpr float kTextX = 100.0f;
+  constexpr float kY = 50.0f;
+  constexpr float kLineHeight = 16.0f;
+  const SDL_Color color{1, 2, 3, 255};
+
+  // What the run table would paint, in the same order the row loop emits it.
+  std::vector<microide::editor::DecoratedTextFill> from_runs;
+  for (const auto& glyph : vm.whitespace_glyph_runs) {
+    microide::editor::PushWhitespaceMarker(
+        from_runs, glyph.is_tab_rule,
+        kTextX + static_cast<float>(glyph.cell_visual_start) * kCharWidth, kCharWidth,
+        static_cast<float>(glyph.cell_visual_extent) * kCharWidth, kY, kLineHeight, color);
+  }
+
+  std::vector<microide::editor::DecoratedTextFill> from_walk;
+  microide::editor::AppendWhitespaceMarkers(from_walk, line, /*tab_size=*/4,
+                                            /*row_visual_start=*/0, /*row_visual_end=*/80, kTextX,
+                                            kCharWidth, kY, kLineHeight, color);
+
+  Expect(!from_walk.empty(), "the fixture actually contains whitespace to mark");
+  Expect(from_runs.size() == from_walk.size(),
+         "the run table and the walk mark the same number of cells");
+  for (std::size_t i = 0; i < from_runs.size() && i < from_walk.size(); ++i) {
+    Expect(from_runs[i].rect.x == from_walk[i].rect.x &&
+               from_runs[i].rect.w == from_walk[i].rect.w &&
+               from_runs[i].rect.h == from_walk[i].rect.h,
+           "the run table and the walk place the same marker rect");
+  }
+}
+
 void TestLanguageContractAppliesUserOverrides() {
   microide::workspace::WorkspaceLanguageContract registry;
   microide::plugin::PluginHost host;
@@ -1934,6 +1988,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentGuidesFoldModelEmphasisOnInnerCloser);
   AddTest(tests, "EditorEssentials/RenderViewModel/WhitespaceGlyphRunsToggle",
           TestRenderViewModelBuilderWhitespaceGlyphRunsToggle);
+  AddTest(tests, "EditorEssentials/WhitespaceGlyphRunsAgreeWithTheSharedWalk",
+          TestWhitespaceGlyphRunsAgreeWithTheSharedWalk);
   AddTest(tests, "EditorEssentials/AutoClose/InsertsClose",
           TestAutoClosePairInsertsClose);
   AddTest(tests, "EditorEssentials/AutoClose/SkipOverClose",

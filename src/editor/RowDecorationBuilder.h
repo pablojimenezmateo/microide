@@ -47,23 +47,65 @@ void PushWhitespaceMarker(std::vector<DecoratedTextFill>& fills,
                           float line_height,
                           SDL_Color color);
 
+// A per-cell horizontal displacement, in pixels, for a marker at an absolute
+// visual column. The editor pane's rows shift right past mid-line inlay hints;
+// every other surface has none.
+//
+// Non-owning and type-erased rather than a std::function: the editor's shift
+// captures three values, which exceeds libstdc++'s small-object buffer, so a
+// std::function here would allocate once per painted row.
+class CellShiftRef {
+ public:
+  template <typename Fn>
+  CellShiftRef(const Fn& shift)  // NOLINT(google-explicit-constructor)
+      : object_(&shift), invoke_([](const void* object, std::size_t cell) {
+          return (*static_cast<const Fn*>(object))(cell);
+        }) {}
+
+  float operator()(std::size_t absolute_visual_column) const {
+    return invoke_(object_, absolute_visual_column);
+  }
+
+ private:
+  const void* object_ = nullptr;
+  float (*invoke_)(const void*, std::size_t) = nullptr;
+};
+
 // Append render-whitespace markers for the visible window [row_visual_start,
 // row_visual_end) of `text`, walking one visual cell per codepoint so tabs
 // expand and a multi-byte glyph does not shift every later marker right.
+// Returns the number of BYTES the walk visited, which the editor reports as a
+// performance counter (the walk resumes at the row rather than restarting at
+// byte 0, and "resumed" should be a measurement rather than a comment).
 //
-// The editor pane has its own copy of this walk because its markers also carry
-// the inlay-hint displacement; this is the plain form, for surfaces without
-// inlays (the compare panes).
-void AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
-                             std::string_view text,
-                             std::size_t tab_size,
-                             std::size_t row_visual_start,
-                             std::size_t row_visual_end,
-                             float text_x,
-                             float char_width,
-                             float y,
-                             float line_height,
-                             SDL_Color color);
+// This is the single whitespace walk for every surface: the editor pane passes
+// its inlay-hint displacement through `shift_px`, the compare panes pass nothing
+// (TD-2026-08-14-210). The editor's view-model path is deliberately NOT this —
+// it is a precomputed glyph-run table, not a walk, and is the fast path by
+// design.
+std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
+                                    std::string_view text,
+                                    std::size_t tab_size,
+                                    std::size_t row_visual_start,
+                                    std::size_t row_visual_end,
+                                    float text_x,
+                                    float char_width,
+                                    float y,
+                                    float line_height,
+                                    SDL_Color color,
+                                    CellShiftRef shift_px);
+
+// The same, with no displacement.
+std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
+                                    std::string_view text,
+                                    std::size_t tab_size,
+                                    std::size_t row_visual_start,
+                                    std::size_t row_visual_end,
+                                    float text_x,
+                                    float char_width,
+                                    float y,
+                                    float line_height,
+                                    SDL_Color color);
 
 // A row background/match/selection/bracket highlight expressed in source byte
 // columns. The builder resolves source -> visual columns (via the row layout or

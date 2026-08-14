@@ -283,16 +283,17 @@ void PushWhitespaceMarker(std::vector<DecoratedTextFill>& fills,
   }
 }
 
-void AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
-                             std::string_view text,
-                             std::size_t tab_size,
-                             std::size_t row_visual_start,
-                             std::size_t row_visual_end,
-                             float text_x,
-                             float char_width,
-                             float y,
-                             float line_height,
-                             SDL_Color color) {
+std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
+                                    std::string_view text,
+                                    std::size_t tab_size,
+                                    std::size_t row_visual_start,
+                                    std::size_t row_visual_end,
+                                    float text_x,
+                                    float char_width,
+                                    float y,
+                                    float line_height,
+                                    SDL_Color color,
+                                    CellShiftRef shift_px) {
   std::size_t visual_col = 0;
   std::size_t i = 0;
   // Resume at the row rather than at byte 0 when everything before it is plain
@@ -302,6 +303,7 @@ void AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
     i = prefix_probe;
     visual_col = prefix_probe;
   }
+  const std::size_t start_byte = i;
   for (; i < text.size();) {
     const char c = text[i];
     i += util::Utf8SequenceLength(text, i);
@@ -318,10 +320,27 @@ void AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
       continue;
     }
     PushWhitespaceMarker(fills, c == '\t',
-                         text_x + static_cast<float>(cell_start - row_visual_start) * char_width,
+                         text_x + static_cast<float>(cell_start - row_visual_start) * char_width +
+                             shift_px(cell_start),
                          char_width, static_cast<float>(cell_width) * char_width, y, line_height,
                          color);
   }
+  return i - start_byte;
+}
+
+std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
+                                    std::string_view text,
+                                    std::size_t tab_size,
+                                    std::size_t row_visual_start,
+                                    std::size_t row_visual_end,
+                                    float text_x,
+                                    float char_width,
+                                    float y,
+                                    float line_height,
+                                    SDL_Color color) {
+  const auto no_shift = [](std::size_t) { return 0.0f; };
+  return AppendWhitespaceMarkers(fills, text, tab_size, row_visual_start, row_visual_end, text_x,
+                                 char_width, y, line_height, color, no_shift);
 }
 
 void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {
