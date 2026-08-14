@@ -588,7 +588,7 @@ the wrap splice first buys nothing measurable.
 Prerequisite before starting: a perf scenario that types into a large wrapped
 compare tab. There is none — `soft_wrap_*` measures the editor surface only.
 
-### TD-2026-08-13-207 — `HandleCompareKeyDown` is a hand-maintained subset of the editor's key handler, so the compare pane silently lacks whatever nobody remembered to copy. [PARTIAL 2026-08-14 — the compare/merge duplication is gone; convergence with the editor handler is not.]
+### TD-2026-08-13-207 — `HandleCompareKeyDown` is a hand-maintained subset of the editor's key handler, so the compare pane silently lacks whatever nobody remembered to copy. [RESOLVED 2026-08-14 — the duplication is gone and the three suspected gaps were enumerated; one was real.]
 
 **Done 2026-08-14: one switch for the two non-editor panes.** The differences were
 enumerated first, as the entry asked. Against the editor pane, both the compare
@@ -607,10 +607,25 @@ selection re-sync, which are what the two hooks carry.
 
 Pinned by `WorkspaceShell/CompareEditablePaneIndentsAndOutdents`.
 
-**Still open: convergence with `HandleDefaultEditorKeyDown` itself.** It owns
-snippet (tab / backspace / delete / escape), inline-completion accept, and the
-column-selection clear, all of which assume an editor tab. Routing the diff panes
-through it is the rest of this entry.
+**The convergence gap was then enumerated rather than assumed (2026-08-14), and
+only one of the three was real.**
+
+- **the column-selection clear — REAL, and now fixed.** The `ColumnSelect*`
+  actions resolve through `ActiveEditableViewport()`, which IS the compare right
+  pane on a compare tab, so Ctrl+Shift+Alt+Arrow started a box gesture there that
+  nothing ever ended: the next chord extended a stale box instead of re-anchoring.
+  The shared switch now clears it, exactly as the editor pane does. Pinned by
+  `ColumnSelection/GestureEndsOnACompareTabToo`, mirroring the editor's own
+  assertion on the surface that lacked it.
+- **snippet arms — not applicable.** A snippet session is bound to an editor tab;
+  the hooks resolve nothing on a diff pane.
+- **inline-completion accept — not applicable**, for the same reason.
+
+So "route the diff panes through `HandleDefaultEditorKeyDown`" is no longer worth
+doing for behaviour: the shared switch plus the action layer now covers what the
+panes were missing. It would still remove a switch, which is a structural argument
+rather than a user-visible one, and it belongs with the render convergence in
+[206](#td-2026-08-13-206) if it is ever taken.
 
 #### Original entry
 

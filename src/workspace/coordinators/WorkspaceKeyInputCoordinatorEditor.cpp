@@ -57,6 +57,14 @@ bool HandleEditablePaneKey(KeyInputCoordinator::Operations& operations,
                            bool* handled) {
   *handled = true;
   const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
+  // Any key that is not a column-select step ends the box gesture, so the next
+  // Ctrl+Shift+Alt+Arrow re-anchors where the caret ended up rather than
+  // extending a stale box. The editor pane has done this since column selection
+  // shipped; the diff panes never did, even though the ColumnSelect* actions
+  // resolve through ActiveEditableViewport() and therefore reach them
+  // (TD-2026-08-13-207). The steps themselves arrive as actions and are
+  // dispatched before this handler runs.
+  viewport.ClearColumnSelection();
   switch (event.key) {
     case SDLK_TAB: {
       // Same three-way split as the editor pane: Shift outdents, a multi-line
