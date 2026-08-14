@@ -230,7 +230,13 @@ void TestProjectStripCacheMissesOnDirtyFlip() {
   // A dirty buffer prefixes the title with "*", so the fingerprint must move.
   microide::workspace::TabEntry tab;
   tab.kind = microide::workspace::TabEntry::Kind::Editor;
-  tab.editor_state.emplace();
+  // Assigned, not `emplace()`d: `optional<EditorTabState>` is declared inside the
+  // very class EditorTabState is nested in, and clang answers
+  // `is_constructible_v<EditorTabState>` false forever after that point — so
+  // `emplace()` does not compile under clang anywhere in the tree, while GCC
+  // takes it (TD-2026-08-14-214). Aggregate-initialize and move, as every other
+  // test that builds one of these does.
+  tab.editor_state = microide::workspace::TabEntry::EditorTabState{};
   tab.editor_state->viewport.InsertText("dirty");
   harness.context.current_project_state.focused_group().open_tabs.push_back(std::move(tab));
 
