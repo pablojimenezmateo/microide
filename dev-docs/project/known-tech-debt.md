@@ -389,19 +389,56 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-14-234 — the allocation half of roughly a dozen gates is loose, and only the reference runner can re-record them. OPEN.
+### TD-2026-08-14-234 — the allocation half of roughly a dozen gates is loose, and only the reference runner can re-record them. [RESOLVED 2026-08-14 — done deliberately, with the pre-check and the re-gate, and it caught two red gates that turned out to be an accounting shift rather than a regression.]
 
 Split out of [233](#td-2026-08-14-233), whose last bullet is the whole of it. The
 2026-08-14 allocation session cut allocation counts by 15–95 % on the paths it
-touched; the gates are one-sided, so those scenarios now pass with far more slack
-than they were recorded with, and a later regression can hide inside it.
+touched; the gates are one-sided, so those scenarios passed with far more slack
+than they were recorded with, and a later regression could hide inside it.
 
-The fix is a deliberate `--update-baseline=deterministic` pass on
-perf-runner-v1, bare (no xvfb), on an idle box, at the DEFAULT iteration count —
-and, per [148](#td-2026-08-06-148)/[173](#td-2026-08-10-173), re-gated against
-what it just wrote, because a rebaseline is not evidence of itself. Check first
-that no allocation gate is *near* its envelope: rebaselining one that is about to
-fail buries the regression instead of recording it.
+**Done in the order the entry demanded, and the order matters.**
+
+1. **Full gate run first, before touching a baseline: 103 PASS, 3 FAIL.** Only two
+   *duration/resident* headroom warnings, and **no allocation gate near its
+   envelope** — which is the pre-check that makes a rebaseline safe rather than a
+   way to bury a regression.
+2. **The two red gates were diagnosed, not rebaselined blind.** Both were
+   `p50_net_heap_bytes` and both moved enormously:
+   `editor_toggle_comment_large_selection` 10,661 → 2,815,870 (+26,000 %), and
+   `editor_shaping_multi_caret` 11,312 → 137,686 (+1,117 %). The cause is the
+   chunked add buffer from [233](#td-2026-08-14-233), and it is an **accounting
+   shift, not a retention regression**: the old single `std::string` reserved
+   capacity in one iteration and then absorbed several iterations' worth of
+   appends into it for free, so `operator new` saw nothing while the pages were
+   touched anyway. The proof is the *resident* metric, which never moved:
+
+   | | `mean_rss_growth_bytes` baseline | measured | new `p50_net_heap_bytes` |
+   | --- | ---: | ---: | ---: |
+   | `editor_toggle_comment_large_selection` | 2,811,221 | ~2,780,000 | 2,815,870 |
+   | `editor_shaping_multi_caret` | 136,533 | ~136,000 | 137,686 |
+
+   The two metrics now agree to within 0.2 %, where before they disagreed by 260x.
+   Chunking also *lowers* the true peak: capacity overshoot is at most one 64 KiB
+   chunk instead of a doubling string's 2x, and there is no 3x spike during a
+   realloc.
+3. **`--update-baseline=deterministic --reference-runner=perf-runner-v1`**, bare,
+   idle box, DEFAULT iteration count. 106 scenarios re-recorded; **exactly one
+   moved the wrong way, by 8 allocations (+0.016 %)**, which is noise.
+   Representative cuts: `large_file_restore_deep_scroll_first_paint` −53.5 %,
+   `menu_popup_hover_rows` −52.7 %, `editor_surround_multi_caret` −48.7 %,
+   `typing_large_file` −47.6 %, `editor_auto_close_typing` −36.7 %,
+   `git_sidebar_refresh_large_repo` −31.8 %.
+4. **Re-gated against what it just wrote: 106 PASS, 0 FAIL**, one duration/resident
+   headroom warning. A rebaseline is not evidence of itself; this is the evidence.
+
+The third failure in step 1 was `terminal_stream_chunked_output`, the scenario
+added that same day — a timing failure on a baseline recorded standalone and then
+run inside a full suite. Its timing half is now explicitly **advisory**: four
+consecutive runs of one unchanged binary gave p95 walls of 6.15 / 6.32 / 4.75 /
+4.48 ms (a 41 % spread) tracking `harness.cpu_calibration_ns` at 673k / 674k /
+501k / 467k, which the clock normalisation does not fully cancel, while the
+allocation count was byte-identical at 6,590 in all four. The half that gates is
+the half that reproduces ([186](#td-2026-08-12-186)).
 
 ### TD-2026-08-14-233 — `editor_smart_indent_typing`'s retention gate is red, and was red before this session touched anything. [RESOLVED 2026-08-14 — it was the piece tree's add buffer doubling, and the fix removes a multi-megabyte memcpy from the typing path as well as the red gate.]
 
@@ -449,8 +486,21 @@ count so neither "one chunk per append" nor "one chunk ever" passes) and
 `PieceTree/AddChunkHoldsAnOversizedInsertContiguously`. `PieceTreeEquivalenceFuzz`
 ran 115,369 cases clean against the `vector<string>` oracle.
 
+**One consequence worth knowing before reading a net-heap gate.** Two other
+scenarios' `p50_net_heap_bytes` jumped hugely after this change —
+`editor_toggle_comment_large_selection` 10,661 → 2,815,870,
+`editor_shaping_multi_caret` 11,312 → 137,686 — and neither is a retention
+regression. The old single buffer reserved capacity in one iteration and then
+absorbed several iterations' worth of appends into it for free, so `operator new`
+saw nothing while the pages were touched anyway. Their *resident* growth never
+moved (2,811,221 and 136,533 bytes, baselined long before this), and the two
+metrics now agree to within 0.2 % where they used to disagree by 260x. Chunking
+also lowers the true peak: at most one 64 KiB chunk of overshoot instead of a
+doubling string's 2x, and no 3x spike during a realloc. Handled in
+[234](#td-2026-08-14-234).
+
 The follow-up in the last bullet below (a deliberate `--update-baseline=deterministic`
-pass) is still outstanding and is now [TD-2026-08-14-234](#td-2026-08-14-234).
+pass) is now [TD-2026-08-14-234](#td-2026-08-14-234), and is done.
 
 #### Original entry
 

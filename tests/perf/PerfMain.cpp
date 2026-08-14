@@ -947,6 +947,15 @@ void RegisterBuiltInScenarios() {
   // replaces it (TD-2026-08-14-231). Nothing measured that shape until this
   // scenario, so the recycling it exercises was a blind spot rather than a
   // regression risk.
+  //
+  // Its baseline's timing half is deliberately ADVISORY. Four consecutive runs of
+  // one unchanged binary gave p95 walls of 6.15 / 6.32 / 4.75 / 4.48 ms — a 41 %
+  // spread — tracking `harness.cpu_calibration_ns` at 673k / 674k / 501k / 467k,
+  // which the clock normalisation does not fully cancel (TD-2026-08-05-137,
+  // cpu time here measures the governor's residency state).
+  // The allocation count was byte-identical at 6,590 in all four. So the half that
+  // gates is the half that reproduces, and the wall number is reported rather than
+  // enforced (TD-2026-08-12-186).
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_stream_chunked_output",
       .smoke = false,
