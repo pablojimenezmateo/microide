@@ -127,8 +127,15 @@ std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
 std::optional<std::filesystem::path> AbsoluteToRelativePath(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path) {
+  return AbsoluteToRelativePathRef(root, absolute_path);
+}
+
+const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
+    const std::filesystem::path& root,
+    const std::filesystem::path& absolute_path) {
+  static const std::optional<std::filesystem::path> kNone;
   if (root.empty() || absolute_path.empty()) {
-    return std::nullopt;
+    return kNone;
   }
 
   // Memoized because this is on the per-frame render path and it is expensive

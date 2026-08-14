@@ -57,7 +57,10 @@ struct GitBlameLine {
 };
 
 struct GitBlameSnapshot {
-  std::filesystem::path absolute_path;
+  // No `absolute_path` here. It was filled on every Snapshot() -- which is once
+  // per painted frame while inline blame is on -- with a `lexically_normal` copy
+  // of the request's path, and nothing in `src/` or `tests/` ever read it
+  // (TD-2026-08-14-223). The caller passed the path in; it does not need it back.
   std::size_t visible_start_line = 0;
   std::size_t visible_line_count = 0;
   bool eligible = false;

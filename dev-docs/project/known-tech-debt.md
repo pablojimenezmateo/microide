@@ -389,6 +389,37 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-223 — the inline-blame overlay resolves the same two paths three times a frame, and fills a field nothing reads. [RESOLVED 2026-08-14, same session it was filed.]
+
+Inline blame builds its overlay from the render path, so `Request()` and
+`Snapshot()` both run once per painted frame while the caret sits in a tracked
+file. Between them and the overlay's own eligibility check, each frame did:
+
+- **three `AbsoluteToRelativePath` calls.** Already memoized (it is ~12
+  allocations of `lexically_normal` otherwise) — but the memo returns
+  `std::optional<std::filesystem::path>` **by value**, so each call copied a path
+  out of it. `AbsoluteToRelativePathRef` hands back the entry.
+- **two `BuildFileKey` calls**, two allocations each, for a string that is a pure
+  function of (root, relative path). Memoized per thread together with the
+  relative path itself, which is what makes the resolve one call instead of two.
+- **two `BuildRequestKey` calls**, each four `std::to_string`s and a concatenation
+  chain. Built into a per-thread scratch with `std::to_chars`; the callers either
+  compare it or copy it into an owner.
+- **one `GitBlameSnapshot::absolute_path` assignment** — a `lexically_normal`
+  path copy into a field that **nothing in `src/` or `tests/` ever reads**. The
+  caller passes the path in; it does not need it back. Field and its memo helper
+  deleted.
+
+`p50_allocations` for the phase, clean A/B against the commit before it:
+
+| phase | | |
+| --- | ---: | ---: |
+| `editor_scroll_only_no_content_bump.scroll_frame` | 3,350 → 1,650 | −51 % |
+| `multi_tab.cycle_tabs` | 3,100 → 1,300 | −58 % |
+
+~8.5 allocations per painted frame, which is what "the same two paths, three
+times" costs when each resolution is a path copy and a string build.
+
 ### TD-2026-08-14-222 — a tab-strip rebuild lays the strip out four times and materialises three vectors on each pass. [RESOLVED 2026-08-14, same session it was filed.]
 
 The open tail of [221](#td-2026-08-14-221). `BuildVisibleStripTabs` tops 5

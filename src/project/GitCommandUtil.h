@@ -34,6 +34,16 @@ bool HasGitMarker(const std::filesystem::path& root);
 std::optional<std::filesystem::path> AbsoluteToRelativePath(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path);
+// The memo entry itself, which is what the form above copies out of. The copy is
+// a `std::filesystem::path`, so it is an allocation (or two) per call on a path
+// that runs three times per painted frame — and most callers only ask
+// `has_value()` or read the result and drop it (TD-2026-08-14-223).
+//
+// The reference is valid until the next call to EITHER form on this thread: the
+// memo is a four-entry LRU and a miss rotates its entries.
+const std::optional<std::filesystem::path>& AbsoluteToRelativePathRef(
+    const std::filesystem::path& root,
+    const std::filesystem::path& absolute_path);
 std::optional<std::string> ResolveHeadId(const std::filesystem::path& root);
 
 // The repository's git directory: `<root>/.git` when it is a real directory, or

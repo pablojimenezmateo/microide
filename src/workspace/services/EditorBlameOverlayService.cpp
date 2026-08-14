@@ -67,7 +67,7 @@ std::optional<editor::EditorBlameOverlay> EditorBlameOverlayService::BuildEditor
     return std::nullopt;
   }
 
-  if (!project::internal::AbsoluteToRelativePath(project_root, viewport.path()).has_value()) {
+  if (!project::internal::AbsoluteToRelativePathRef(project_root, viewport.path()).has_value()) {
     return std::nullopt;
   }
 

@@ -1,6 +1,8 @@
 #include "project/GitBlameService.h"
 
 #include <algorithm>
+#include <array>
+#include <charconv>
 #include <chrono>
 #include <cctype>
 #include <cstdlib>
@@ -168,29 +170,84 @@ const std::string& NormalizedRootText(const std::filesystem::path& root) {
   return cached_text;
 }
 
-const std::filesystem::path& NormalizedPath(const std::filesystem::path& path) {
-  thread_local std::filesystem::path cached_input;
-  thread_local std::filesystem::path cached_result;
-  thread_local bool cached = false;
-  if (!cached || cached_input != path) {
-    cached_input = path;
-    cached_result = path.lexically_normal();
-    cached = true;
-  }
-  return cached_result;
-}
+// `NormalizedPath` lived here too, memoizing `lexically_normal` for the one
+// caller that filled `GitBlameSnapshot::absolute_path`. That field was write-only
+// (TD-2026-08-14-223), so both are gone -- even memoized, the assignment out of
+// it was a path copy per painted frame.
 
 std::string BuildFileKey(const std::filesystem::path& root,
                          const std::filesystem::path& relative_path) {
   return NormalizedRootText(root) + '\n' + relative_path.generic_string();
 }
 
-std::string BuildRequestKey(const std::string& file_key,
-                            Span window,
-                            std::uint64_t file_generation,
-                            std::uint64_t clear_generation) {
-  return file_key + '\n' + std::to_string(window.start) + ':' + std::to_string(window.end) +
-         '\n' + std::to_string(file_generation) + ':' + std::to_string(clear_generation);
+// (root, absolute_path) -> {relative path, file key}, memoized per thread.
+//
+// Both halves are pure functions of those two paths -- `AbsoluteToRelativePath`
+// is lexical and the key is `normalized-root \n relative` -- so a memo cannot go
+// stale on git state. They were recomputed twice per painted frame, once in
+// `Request()` and once in `Snapshot()`, and the key alone is two allocations
+// (TD-2026-08-14-223).
+//
+// The returned reference is valid until the next call ON THIS THREAD. One slot:
+// only the active pane builds a blame overlay, so a frame asks about one file.
+struct ResolvedBlameFile {
+  bool has_relative = false;
+  std::filesystem::path relative_path;
+  std::string file_key;
+};
+
+const ResolvedBlameFile& ResolveBlameFile(const std::filesystem::path& root,
+                                          const std::filesystem::path& absolute_path) {
+  thread_local std::filesystem::path cached_root;
+  thread_local std::filesystem::path cached_absolute;
+  thread_local ResolvedBlameFile cached;
+  thread_local bool valid = false;
+  if (valid && cached_root == root && cached_absolute == absolute_path) {
+    return cached;
+  }
+  cached_root = root;
+  cached_absolute = absolute_path;
+  const auto& relative = gitutil::AbsoluteToRelativePathRef(root, absolute_path);
+  cached.has_relative = relative.has_value();
+  if (relative.has_value()) {
+    cached.relative_path = *relative;
+    cached.file_key = BuildFileKey(root, *relative);
+  } else {
+    cached.relative_path.clear();
+    cached.file_key.clear();
+  }
+  valid = true;
+  return cached;
+}
+
+// Appends `value` as decimal without allocating; `std::to_string` builds a
+// std::string per number and this is called four times per painted frame.
+void AppendDecimal(std::string& out, std::uint64_t value) {
+  std::array<char, 24> digits{};
+  const auto result = std::to_chars(digits.data(), digits.data() + digits.size(), value);
+  out.append(digits.data(), static_cast<std::size_t>(result.ptr - digits.data()));
+}
+
+// Built into a per-thread scratch rather than returned by value: this runs once
+// per painted frame in `Snapshot()` and again in `Request()`, and every caller
+// either compares it or copies it into an owner. The reference is valid until
+// the next call on this thread.
+const std::string& BuildRequestKey(const std::string& file_key,
+                                   Span window,
+                                   std::uint64_t file_generation,
+                                   std::uint64_t clear_generation) {
+  thread_local std::string scratch;
+  scratch.clear();
+  scratch += file_key;
+  scratch += '\n';
+  AppendDecimal(scratch, window.start);
+  scratch += ':';
+  AppendDecimal(scratch, window.end);
+  scratch += '\n';
+  AppendDecimal(scratch, file_generation);
+  scratch += ':';
+  AppendDecimal(scratch, clear_generation);
+  return scratch;
 }
 
 bool SpansCoverWindow(const std::vector<Span>& spans, Span window) {
@@ -365,15 +422,15 @@ struct GitBlameService::Impl {
   }
 
   void Request(const GitBlameRequest& request) {
-    const auto relative_path = gitutil::AbsoluteToRelativePath(request.root, request.absolute_path);
-    if (!relative_path.has_value() || request.visible_line_count == 0 || request.total_line_count == 0 ||
-        request.dirty) {
+    const ResolvedBlameFile& resolved = ResolveBlameFile(request.root, request.absolute_path);
+    if (!resolved.has_relative || request.visible_line_count == 0 ||
+        request.total_line_count == 0 || request.dirty) {
       return;
     }
 
     const Span window =
         NormalizeWindow(request.visible_start_line, request.visible_line_count, request.total_line_count);
-    const std::string file_key = BuildFileKey(request.root, *relative_path);
+    const std::string& file_key = resolved.file_key;
     const auto now = Clock::now();
 
     PendingRequest pending_request;
@@ -381,7 +438,7 @@ struct GitBlameService::Impl {
       std::lock_guard lock(mutex);
       const std::uint64_t file_generation = CurrentFileGenerationLocked(file_key);
       const std::uint64_t request_clear_generation = clear_generation;
-      const std::string request_key =
+      const std::string& request_key =
           BuildRequestKey(file_key, window, file_generation, request_clear_generation);
       FileCache* cache = nullptr;
       if (auto it = file_caches.find(file_key); it != file_caches.end()) {
@@ -417,7 +474,7 @@ struct GitBlameService::Impl {
 
       pending_request = PendingRequest{
         .request = request,
-        .relative_path = *relative_path,
+        .relative_path = resolved.relative_path,
         .file_key = file_key,
         .request_key = request_key,
         .window = window,
@@ -447,13 +504,12 @@ struct GitBlameService::Impl {
     // hit rate here is what keeps inline blame off the git subprocess path.
     util::AddPerformanceCounter(util::PerfCounterId::GitBlameQueries);
     GitBlameSnapshot snapshot;
-    snapshot.absolute_path = NormalizedPath(request.absolute_path);
     snapshot.visible_start_line = request.visible_start_line;
     snapshot.visible_line_count = request.visible_line_count;
 
-    const auto relative_path = gitutil::AbsoluteToRelativePath(request.root, request.absolute_path);
-    if (!relative_path.has_value() || request.visible_line_count == 0 || request.total_line_count == 0 ||
-        request.dirty) {
+    const ResolvedBlameFile& resolved = ResolveBlameFile(request.root, request.absolute_path);
+    if (!resolved.has_relative || request.visible_line_count == 0 ||
+        request.total_line_count == 0 || request.dirty) {
       return snapshot;
     }
 
@@ -485,12 +541,12 @@ struct GitBlameService::Impl {
               };
     const Span normalized_window =
         NormalizeWindow(request.visible_start_line, request.visible_line_count, request.total_line_count);
-    const std::string file_key = BuildFileKey(request.root, *relative_path);
+    const std::string& file_key = resolved.file_key;
 
     std::lock_guard lock(mutex);
-    const std::string request_key = BuildRequestKey(file_key, normalized_window,
-                                                    CurrentFileGenerationLocked(file_key),
-                                                    clear_generation);
+    const std::string& request_key = BuildRequestKey(file_key, normalized_window,
+                                                     CurrentFileGenerationLocked(file_key),
+                                                     clear_generation);
     const auto cache_it = file_caches.find(file_key);
     if (cache_it != file_caches.end()) {
       util::AddPerformanceCounter(util::PerfCounterId::GitBlameCacheHits);
