@@ -1308,8 +1308,45 @@ many lines the surrounded text has, and how long its last one is. It now measure
 them with `util::MeasureLines` and allocates nothing. The same helper's two
 callers were also handing it a `substr` of the selection's first line purely to
 read `.size()`, which is the start column — on a minified line that copy was the
-line. The rest of the table is unaddressed; it is drift inside envelopes with
-room, and the entry stays open for it.
+line.
+
+**Two more rows were then found not to measure what they name (2026-08-14),
+which is a better answer than tuning them.** `editor_smart_indent_typing` and
+`scroll_large_file` declared NO measured phase at all, so the numbers in the table
+above are the whole scenario — including the project/file open each begins with.
+Declaring the inner loop as a phase and measuring the split says how much:
+
+| scenario | its named operation, as a share of the scenario's allocations |
+| --- | ---: |
+| `scroll_large_file` → `scroll_large_file.scroll_burst` | **16.8 %** |
+| `editor_smart_indent_typing` → `smart_indent.newline_undo_burst` | **17.7 %** |
+
+So over 80 % of both rows is scaffolding: a 40-line scroll burst and 120
+newline+undo cycles were being reported under numbers dominated by opening a
+50,000-line C++ file and a large project. A +1.9 % or +3.1 % drift against those
+totals says nothing about smart indent or scrolling — it is movement in the open
+path wearing another scenario's name. This is the shape
+[151](#td-2026-08-06-151) swept for and [163](#td-2026-08-07-163) measured; these
+two were missed by that sweep.
+
+Both phases are measured and reported now, and the harness itself prints what is
+left to do (`phases_not_in_baseline ... rerun --update-baseline to gate what the
+scenario actually measures`). Arming them needs an idle runner.
+
+**Status of the remaining rows.** The largest, `moby.mid_edit_burst`, was
+re-traced on 2026-08-14: its top sites today are `TextLayoutCache::
+VisibleLineLayoutRefCached` (the visible-line layout cache's miss path) and
+`PieceTree::ExtractLineRangeInto<LineBlob>` under `BuildRangeHistoryEntry` (one
+blob per undo entry — the blob work behaving as designed). Neither is an
+avoidable allocation, so no loose end remains there of the kind the traced row
+turned out to be.
+
+What genuinely remains is the entry's METHOD point, which is worth keeping and is
+not a bug to fix: a baseline envelope answers "is this within contract", and only
+an A/B answers "did this change cost anything". Re-running the A/B against
+`origin/main` today would measure fifty-odd commits rather than the push this
+table describes, so the table stands as a historical record and the entry stays
+open only as the standing reminder to A/B a push rather than trust its gates.
 
 `editor_snippet_expand` is the one that also shows against its own baseline
 (`max_allocations` 463 → 469, `p95` 462.1 → 467.6) — the TD-2026-08-06-139
