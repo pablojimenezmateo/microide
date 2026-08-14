@@ -129,13 +129,27 @@ const std::vector<SyntaxTokenKind>& TextViewport::HighlightedLineTokens(
   // a line other than this one (which is not in the map yet on the new-entry
   // path, and is refreshed in place on the stale path).
   const bool slot_is_new = highlight_cache_.find(line_index) == highlight_cache_.end();
+  HighlightCacheEntry* recycled_slot = nullptr;
   if (slot_is_new && highlight_cache_.size() >= kHighlightCacheLimit &&
       !highlight_cache_order_.empty()) {
-    highlight_cache_.erase(highlight_cache_order_.front());
+    // Re-key the evicted node onto this line rather than erasing it and letting
+    // the insert below allocate a replacement. The node and the token vector it
+    // owns are precisely what that pair of calls would free and then re-allocate,
+    // and a scroll misses on every newly visible line — so at the cache cap this
+    // was two allocations per line per painted frame, the two biggest sites of
+    // every scroll phase in the perf suite (TD-2026-08-14-219). `assign` in
+    // HighlightLineInto then reuses the carried buffer's capacity.
+    auto node = highlight_cache_.extract(highlight_cache_order_.front());
     highlight_cache_order_.pop_front();
     util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
+    if (!node.empty()) {
+      node.key() = line_index;
+      recycled_slot = &highlight_cache_.insert(std::move(node)).position->second;
+      util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheNodesRecycled);
+    }
   }
-  HighlightCacheEntry& slot = highlight_cache_[line_index];
+  HighlightCacheEntry& slot =
+      recycled_slot != nullptr ? *recycled_slot : highlight_cache_[line_index];
   SyntaxState end_state;
   {
     util::PerformanceTrace::Scope highlight_scope(
@@ -407,17 +421,26 @@ void TextViewport::InstallPrefetchedHighlights(HighlightPrefetchResult result) {
       continue;
     }
     const bool slot_is_new = highlight_cache_.find(line) == highlight_cache_.end();
-    HighlightCacheEntry& slot = highlight_cache_[line];
-    slot.tokens = std::move(result.tokens[offset]);
-    slot.generation = highlight_cache_generation_;
-    if (!slot_is_new) {
-      continue;
-    }
-    highlight_cache_order_.push_back(line);
-    if (highlight_cache_.size() > kHighlightCacheLimit) {
-      highlight_cache_.erase(highlight_cache_order_.front());
+    // Same node re-key as the on-demand miss above: evict first so the node this
+    // line needs is the one the cap is about to release (TD-2026-08-14-219).
+    HighlightCacheEntry* recycled_slot = nullptr;
+    if (slot_is_new && highlight_cache_.size() >= kHighlightCacheLimit &&
+        !highlight_cache_order_.empty()) {
+      auto node = highlight_cache_.extract(highlight_cache_order_.front());
       highlight_cache_order_.pop_front();
       util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
+      if (!node.empty()) {
+        node.key() = line;
+        recycled_slot = &highlight_cache_.insert(std::move(node)).position->second;
+        util::AddPerformanceCounter(util::PerfCounterId::EditorHighlightCacheNodesRecycled);
+      }
+    }
+    HighlightCacheEntry& slot =
+        recycled_slot != nullptr ? *recycled_slot : highlight_cache_[line];
+    slot.tokens = std::move(result.tokens[offset]);
+    slot.generation = highlight_cache_generation_;
+    if (slot_is_new) {
+      highlight_cache_order_.push_back(line);
     }
   }
 }

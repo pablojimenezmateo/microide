@@ -185,6 +185,13 @@ namespace microide::util {
   X(RenderViewModelBuildOverlaySurfaceCalls, "render.view_model_build_overlay_surface_calls")   \
   X(EditorHighlightCacheForcedMisses, "editor.highlight_cache_forced_misses")                   \
   X(EditorHighlightCacheEvictions, "editor.highlight_cache_evictions")                          \
+  /* Evictions that handed their MAP NODE (and the token vector it owns) straight  */           \
+  /* to the line replacing it, instead of freeing one and allocating the other. A  */           \
+  /* scroll misses on every newly visible line, so at the cache cap that was two   */           \
+  /* allocations per line per frame -- the #1 and #2 sites of several scroll        */          \
+  /* phases (TD-2026-08-14-219). Should equal `_evictions` in the steady state; a   */          \
+  /* gap means the rekey path stopped being taken.                                 */           \
+  X(EditorHighlightCacheNodesRecycled, "editor.highlight_cache_nodes_recycled")                  \
   X(RenderClipInvocations, "render.clip_invocations")                                           \
   X(WorkspaceScheduledWakes, "workspace.scheduled_wakes")                                       \
   /* Damage rects queued per event, and how often the per-event list outgrew its  */             \

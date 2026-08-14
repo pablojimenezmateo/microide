@@ -170,6 +170,87 @@ void TestTextViewportEditRecyclesVisibleLineLayouts() {
          "the repaint after an edit must build into the layouts the invalidation retired");
 }
 
+// TD-2026-08-14-219: the per-line token cache is capped, so scrolling through a
+// file misses on every newly visible line and evicts the LRU one to make room.
+// Erasing and re-inserting freed the map node AND the token vector it owned, then
+// allocated both back on the same call -- the two biggest allocation sites of
+// every scroll phase in the perf suite. Re-keying the evicted node hands both
+// straight over.
+void TestTextViewportScrollRecyclesHighlightCacheNodes() {
+  TextViewport viewport;
+  std::string content;
+  // Comfortably past kHighlightCacheLimit (256) so the cap is what decides.
+  for (int i = 0; i < 900; ++i) {
+    content += "int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  viewport.LoadContent(content, "/tmp/highlight-recycle.cpp");
+  Expect(viewport.syntax_highlighting_enabled(), "the fixture must actually tokenize");
+
+  // Fill the cache to its cap.
+  for (std::size_t line = 0; line < 300; ++line) {
+    (void)viewport.HighlightedLineTokens(line);
+  }
+
+  const std::uint64_t evictions_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions);
+  const std::uint64_t recycled_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorHighlightCacheNodesRecycled);
+  for (std::size_t line = 300; line < 900; ++line) {
+    (void)viewport.HighlightedLineTokens(line);
+  }
+  const std::uint64_t evictions =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorHighlightCacheEvictions) -
+      evictions_before;
+  const std::uint64_t recycled =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorHighlightCacheNodesRecycled) -
+      recycled_before;
+
+  Expect(evictions >= 500,
+         "600 fresh lines against a 256-entry cap must evict, or this proves nothing");
+  Expect(recycled == evictions,
+         "every eviction past the cap must hand its node to the line replacing it");
+
+  // The recycled buffer must not carry the evicted line's tokens: the line it now
+  // belongs to is a different length, and `assign` is what resizes it.
+  const std::vector<SyntaxTokenKind>& last = viewport.HighlightedLineTokens(899);
+  Expect(last.size() == viewport.lines()[899].size(),
+         "a recycled token buffer must be resized to the line it now caches");
+}
+
+// The allocation claim the entry above is actually about. Deterministic (counts,
+// not durations), so it cannot go flaky -- but it only compiles in the perf
+// harness build, which is what arms the counting operator new.
+void TestTextViewportScrollHighlightCacheStopsAllocatingAtTheCap() {
+#if MICROIDE_PERF_HARNESS_BUILD
+  namespace perf = microide::tests::perf;
+  TextViewport viewport;
+  std::string content;
+  for (int i = 0; i < 900; ++i) {
+    content += "int value_" + std::to_string(i) + " = " + std::to_string(i) + ";\n";
+  }
+  viewport.LoadContent(content, "/tmp/highlight-recycle-alloc.cpp");
+
+  // Warm past the cap so every line below is a steady-state evict-and-refill, and
+  // the token buffers in flight are already sized for lines of this shape.
+  for (std::size_t line = 0; line < 400; ++line) {
+    (void)viewport.HighlightedLineTokens(line);
+  }
+
+  const auto before = perf::Allocations::Snapshot();
+  for (std::size_t line = 400; line < 900; ++line) {
+    (void)viewport.HighlightedLineTokens(line);
+  }
+  const auto delta = perf::Allocations::DeltaSince(before);
+
+  // 500 lines. Before the re-key this was a map node plus a token vector each --
+  // 1,000 allocations minimum. What is left is the highlighter's own state
+  // bookkeeping, which is not per line.
+  Expect(delta.allocations < 200,
+         "scrolling past the token cache's cap must reuse the evicted entry, not "
+         "free and re-allocate one per line");
+#endif
+}
+
 void TestTextViewportSmallFileKeepsSyntaxHighlighting() {
   TextViewport viewport;
   viewport.LoadContent("int value = 42;\n", "/tmp/sample.cpp");
@@ -5399,6 +5480,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportSyntaxReloadStalesEveryTokenCacheEntry);
   AddTest(tests, "TextViewport/EditRecyclesVisibleLineLayouts",
           TestTextViewportEditRecyclesVisibleLineLayouts);
+  AddTest(tests, "TextViewport/ScrollRecyclesHighlightCacheNodes",
+          TestTextViewportScrollRecyclesHighlightCacheNodes);
+  AddTest(tests, "TextViewport/ScrollHighlightCacheStopsAllocatingAtTheCap",
+          TestTextViewportScrollHighlightCacheStopsAllocatingAtTheCap);
   AddTest(tests, "TextViewport/LargeCodeFixtureKeepsSyntaxHighlighting",
           TestTextViewportLargeCodeFixtureKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/LargePlainFixtureKeepsSyntaxHighlighting",
