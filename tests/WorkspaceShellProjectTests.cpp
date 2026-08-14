@@ -923,6 +923,12 @@ void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
          "first project should open");
   WorkspaceShellTestAccess::SetTransientDragTargetSidebarDivider(shell);
   WorkspaceShellTestAccess::SetTransientMouseSelecting(shell, true);
+  // A selection drag and a box selection both hold line/column coordinates
+  // captured at press. Surviving the switch means the next button-up applies them
+  // to a DIFFERENT document — a text drag would move text it never selected, at an
+  // offset it never pointed at (TD-2026-08-14-216).
+  WorkspaceShellTestAccess::SetTransientTextDragging(shell);
+  WorkspaceShellTestAccess::SetTransientBoxSelecting(shell);
 
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root_b, false, false),
          "second project should open");
@@ -930,9 +936,15 @@ void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
          "opening a different project should clear the transient drag target");
   Expect(!WorkspaceShellTestAccess::TransientMouseSelecting(shell),
          "opening a different project should clear transient selection tracking");
+  Expect(WorkspaceShellTestAccess::TransientTextDragIsIdle(shell),
+         "opening a different project should abandon a live text drag");
+  Expect(!WorkspaceShellTestAccess::TransientBoxSelecting(shell),
+         "opening a different project should abandon a live box selection");
 
   WorkspaceShellTestAccess::SetTransientDragTargetBottomPanelScrollbar(shell);
   WorkspaceShellTestAccess::SetTransientMouseSelecting(shell, true);
+  WorkspaceShellTestAccess::SetTransientTextDragging(shell);
+  WorkspaceShellTestAccess::SetTransientBoxSelecting(shell);
 
   Expect(WorkspaceShellTestAccess::SwitchProject(shell, 0, false),
          "switching back to the first project should succeed");
@@ -940,6 +952,10 @@ void TestWorkspaceShellProjectSwitchClearsTransientInteractionState() {
          "switching back should not restore stale drag state from the previous project");
   Expect(!WorkspaceShellTestAccess::TransientMouseSelecting(shell),
          "switching back should not restore stale transient selection state");
+  Expect(WorkspaceShellTestAccess::TransientTextDragIsIdle(shell),
+         "switching back should not leave a text drag armed against the old document");
+  Expect(!WorkspaceShellTestAccess::TransientBoxSelecting(shell),
+         "switching back should not leave a box selection armed against the old document");
 }
 
 void TestWorkspaceShellProjectOpenShowsDefaultTerminalPanel() {
