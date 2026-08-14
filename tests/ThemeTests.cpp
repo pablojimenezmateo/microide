@@ -164,15 +164,25 @@ void ExpectSharedAnsiPaletteParity() {
   const auto same = [](SDL_Color a, SDL_Color b) {
     return a.r == b.r && a.g == b.g && a.b == b.b && a.a == b.a;
   };
+  // Built with `+=` rather than chained `operator+`. GCC 13 mis-analyses the
+  // moved-from temporary that `const char* + std::string&&` produces and reports
+  // a bogus out-of-bounds memcpy on the small-string buffer; nothing here is
+  // hot, so the append form costs nothing and keeps a clean build clean.
+  const auto label = [](std::string_view prefix, int value) {
+    std::string text(prefix);
+    text += std::to_string(value);
+    text += " should match the terminal palette";
+    return text;
+  };
   for (int i = 0; i < 8; ++i) {
     Expect(same(render::BasicAnsiColor(i, false), terminal::BasicAnsiColor(i, false)),
-           "normal ANSI colour " + std::to_string(i) + " should match the terminal palette");
+           label("normal ANSI colour ", i));
     Expect(same(render::BasicAnsiColor(i, true), terminal::BasicAnsiColor(i, true)),
-           "bright ANSI colour " + std::to_string(i) + " should match the terminal palette");
+           label("bright ANSI colour ", i));
   }
   for (int index : {0, 7, 15, 16, 100, 231, 232, 255}) {
     Expect(same(render::Ansi256Color(index), terminal::Ansi256Color(index)),
-           "256-colour index " + std::to_string(index) + " should match the terminal palette");
+           label("256-colour index ", index));
   }
 }
 

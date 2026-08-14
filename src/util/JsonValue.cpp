@@ -408,4 +408,60 @@ std::string SerializeJson(const JsonValue& value) {
   return out;
 }
 
+// Deliberately OUT OF LINE, unlike the rest of JsonObject's members.
+//
+// `find` / `operator[]` sit on the LSP/DAP/control decode hot path and want to
+// inline; this does not — it runs once per parsed or constructed object, and its
+// cost is the string moves, not the call. Keeping it in the header meant every
+// `JsonObject{...}` literal in the tree (there are many, on the control and
+// protocol paths) got the insertion sort fully UNROLLED against its known
+// initializer-list length: more code at every site, and GCC 13's -Warray-bounds
+// then lost the link between the vector's allocation size and the unrolled
+// indices and reported ~21 false out-of-bounds warnings across a clean build.
+void JsonObject::SortAfterParse() {
+  if (entries_.size() < 2) {
+    return;
+  }
+  // Stable, so a duplicate key's document order survives into the run below and
+  // last-wins stays well defined. std::stable_sort allocates a temporary buffer;
+  // JSON objects are small enough that the hand-rolled insertion sort is both
+  // faster and allocation-free at the sizes that actually occur, and the library
+  // sort only takes over for the pathological wide object.
+  constexpr std::size_t kInsertionSortLimit = 32;
+  if (entries_.size() <= kInsertionSortLimit) {
+    for (std::size_t i = 1; i < entries_.size(); ++i) {
+      JsonObjectEntry pivot = std::move(entries_[i]);
+      std::size_t j = i;
+      while (j > 0 && detail::JsonKeyOrderLess(pivot.key, entries_[j - 1].key)) {
+        entries_[j] = std::move(entries_[j - 1]);
+        --j;
+      }
+      entries_[j] = std::move(pivot);
+    }
+  } else {
+    std::stable_sort(entries_.begin(), entries_.end(),
+                     [](const JsonObjectEntry& a, const JsonObjectEntry& b) {
+                       return detail::JsonKeyOrderLess(a.key, b.key);
+                     });
+  }
+  // Collapse each equal-key run to its LAST member, matching the `obj[key] =
+  // value` overwrite the unordered_map parser did.
+  auto write = entries_.begin();
+  for (auto read = entries_.begin(); read != entries_.end();) {
+    auto next = read + 1;
+    while (next != entries_.end() && next->key == read->key) {
+      ++next;
+    }
+    // Guard the self-assignment. With no duplicate keys -- every real object --
+    // `write` IS `next - 1` on every step, and self-move-assigning a std::string
+    // leaves it in a valid but unspecified state, which in practice empties it.
+    if (write != next - 1) {
+      *write = std::move(*(next - 1));
+    }
+    ++write;
+    read = next;
+  }
+  entries_.erase(write, entries_.end());
+}
+
 }  // namespace microide::util

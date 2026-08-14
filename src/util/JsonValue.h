@@ -278,52 +278,6 @@ inline void JsonObject::AppendInDocumentOrder(std::string key, JsonValue value) 
   entries_.push_back(JsonObjectEntry{std::move(key), std::move(value)});
 }
 
-inline void JsonObject::SortAfterParse() {
-  if (entries_.size() < 2) {
-    return;
-  }
-  // Stable, so a duplicate key's document order survives into the run below and
-  // last-wins stays well defined. std::stable_sort allocates a temporary buffer;
-  // JSON objects are small enough that the hand-rolled insertion sort is both
-  // faster and allocation-free at the sizes that actually occur, and the library
-  // sort only takes over for the pathological wide object.
-  constexpr std::size_t kInsertionSortLimit = 32;
-  if (entries_.size() <= kInsertionSortLimit) {
-    for (std::size_t i = 1; i < entries_.size(); ++i) {
-      JsonObjectEntry pivot = std::move(entries_[i]);
-      std::size_t j = i;
-      while (j > 0 && detail::JsonKeyOrderLess(pivot.key, entries_[j - 1].key)) {
-        entries_[j] = std::move(entries_[j - 1]);
-        --j;
-      }
-      entries_[j] = std::move(pivot);
-    }
-  } else {
-    std::stable_sort(entries_.begin(), entries_.end(),
-                     [](const JsonObjectEntry& a, const JsonObjectEntry& b) {
-                       return detail::JsonKeyOrderLess(a.key, b.key);
-                     });
-  }
-  // Collapse each equal-key run to its LAST member, matching the `obj[key] =
-  // value` overwrite the unordered_map parser did.
-  auto write = entries_.begin();
-  for (auto read = entries_.begin(); read != entries_.end();) {
-    auto next = read + 1;
-    while (next != entries_.end() && next->key == read->key) {
-      ++next;
-    }
-    // Guard the self-assignment. With no duplicate keys -- every real object --
-    // `write` IS `next - 1` on every step, and self-move-assigning a std::string
-    // leaves it in a valid but unspecified state, which in practice empties it.
-    if (write != next - 1) {
-      *write = std::move(*(next - 1));
-    }
-    ++write;
-    read = next;
-  }
-  entries_.erase(write, entries_.end());
-}
-
 // Parse JSON text; returns nullopt on parse error.
 std::optional<JsonValue> ParseJson(std::string_view text);
 

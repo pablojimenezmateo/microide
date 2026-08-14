@@ -897,9 +897,12 @@ void TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel() {
   for (int i = 0; i < 8; ++i) {
     WorkspaceShellTestAccess::AddTerminalTab(shell);
     TerminalSessionTestAccess::Reset(WorkspaceShellTestAccess::ActiveTerminalSession(shell), 24, 80);
+    // `+=`, not chained `operator+`: see ThemeTests' palette-parity helper for
+    // the GCC 13 -Warray-bounds false positive the concatenation form triggers.
+    std::string launch_label = "terminal-session-";
+    launch_label += std::to_string(i);
     TerminalSessionTestAccess::SetLaunchLabel(
-        WorkspaceShellTestAccess::ActiveTerminalSession(shell),
-        "terminal-session-" + std::to_string(i));
+        WorkspaceShellTestAccess::ActiveTerminalSession(shell), std::move(launch_label));
   }
   // Narrow window so the eight terminal tabs cannot all fit in the strip.
   WorkspaceShellTestAccess::SetWindowSize(shell, 520, 600);
