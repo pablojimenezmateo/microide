@@ -376,6 +376,30 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 1,
           .command_name = {},
       },
+      // Reordering a tab was mouse-only: `tabmove` existed as a command with a
+      // relative offset, but nothing reached it from the keyboard. These are VS
+      // Code's Move Editor Left / Right, and like it they clamp at the ends
+      // rather than wrapping.
+      KeybindingSpec{
+          .id = "move-tab-right",
+          .action = ActionId::TabMove,
+          .key = SDLK_PAGEDOWN,
+          .modifiers = SDL_KMOD_CTRL | SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Editor,
+          .args = {"+1", {}},
+          .arg_count = 1,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "move-tab-left",
+          .action = ActionId::TabMove,
+          .key = SDLK_PAGEUP,
+          .modifiers = SDL_KMOD_CTRL | SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Editor,
+          .args = {"-1", {}},
+          .arg_count = 1,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "close-tab",
           .action = ActionId::CloseActiveTab,
