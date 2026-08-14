@@ -64,6 +64,19 @@ namespace microide::util {
   /* is what makes "resumed" a testable claim rather than a comment                   */          \
   /* (TD-2026-08-12-187). Bumped once per row, not per glyph.                         */          \
   X(EditorWhitespaceMarkerWalkBytes, "editor.whitespace_marker_walk_bytes")                      \
+  /* Bytes the RESUME PROBE reads to decide the walk above can start at the row     */           \
+  /* instead of at byte 0. Counted separately because it is not walked text and     */           \
+  /* because the walk counter is structurally blind to it: the probe is             */           \
+  /* `FirstNonAsciiOrByte(line[0, row_start))`, so it re-reads the whole prefix on  */           \
+  /* every row while reporting a walk of only the row -- quadratic in scroll depth  */           \
+  /* inside one wrapped line, with the one counter that exists to catch exactly     */           \
+  /* that reading flat (TD-2026-08-14-218). Bumped once per row that probes.        */           \
+  X(EditorWhitespaceMarkerPrefixBytesScanned,                                                     \
+    "editor.whitespace_marker_prefix_bytes_scanned")                                              \
+  /* Rows whose walk resumed from the PREVIOUS row of the same line instead of      */           \
+  /* re-deriving its start. Rows of a soft-wrapped line arrive in ascending order,  */           \
+  /* so all but the first row of a line should land here.                           */           \
+  X(EditorWhitespaceMarkerRowsCarried, "editor.whitespace_marker_rows_carried")                   \
   /* What an open editor tab costs to KEEP open, in retained heap bytes, broken   */             \
   /* down by which cache holds it. Bumped ONLY by the measurement surface         */             \
   /* (WorkspaceShell::TestAccess::EditorDerivedCacheResidency, driven by the      */             \

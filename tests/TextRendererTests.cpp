@@ -2432,10 +2432,17 @@ void TestEditorViewRendererWhitespaceMarkersMatchAcrossViewModelAndFallbackPaths
 // EditorWhitespaceMarkerWalkBytes counts the bytes each row's walk visits, in
 // both producers. Under soft wrap a from-byte-0 walk is quadratic in the rows of
 // one wrapped line; a resuming walk is linear in the line (TD-2026-08-12-187).
+struct WhitespaceWalkReading {
+  std::uint64_t walk_bytes = 0;
+  std::uint64_t prefix_bytes = 0;
+  std::uint64_t rows_carried = 0;
+  std::size_t rows = 0;
+  std::size_t visible_rows = 0;
+};
+
 void ExpectWhitespaceWalkBytes(std::string_view content,
                                bool use_view_model,
-                               std::uint64_t& out_bytes,
-                               std::size_t& out_rows) {
+                               WhitespaceWalkReading& out) {
   EnsureDummySdlVideo();
   const SDL_Color background{0x08, 0x08, 0x08, 0xff};
   const SDL_FRect rect{0.0f, 0.0f, 96.0f, 700.0f};
@@ -2463,11 +2470,16 @@ void ExpectWhitespaceWalkBytes(std::string_view content,
 
   SoftwareCanvas canvas(96, 700);
   render_to(canvas, /*vm=*/nullptr);  // settles the renderer-owned geometry
-  out_rows = viewport.visual_line_count();
-  Expect(out_rows > viewport.lines().size(), "the walk-bytes fixture must actually wrap");
+  out.rows = viewport.visual_line_count();
+  out.visible_rows = viewport.visible_lines();
+  Expect(out.rows > viewport.lines().size(), "the walk-bytes fixture must actually wrap");
 
-  const std::uint64_t before =
-      microide::util::ReadPerformanceCounter(microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes);
+  const std::uint64_t before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes);
+  const std::uint64_t prefix_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorWhitespaceMarkerPrefixBytesScanned);
+  const std::uint64_t carried_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorWhitespaceMarkerRowsCarried);
   if (use_view_model) {
     microide::workspace::WorkspaceContext ctx;
     microide::workspace::RenderViewModelBuilder builder(ctx);
@@ -2485,9 +2497,16 @@ void ExpectWhitespaceWalkBytes(std::string_view content,
   } else {
     render_to(canvas, /*vm=*/nullptr);
   }
-  out_bytes = microide::util::ReadPerformanceCounter(
-                  microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes) -
-              before;
+  out.walk_bytes = microide::util::ReadPerformanceCounter(
+                       microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes) -
+                   before;
+  out.prefix_bytes =
+      microide::util::ReadPerformanceCounter(
+          microide::util::PerfCounterId::EditorWhitespaceMarkerPrefixBytesScanned) -
+      prefix_before;
+  out.rows_carried = microide::util::ReadPerformanceCounter(
+                         microide::util::PerfCounterId::EditorWhitespaceMarkerRowsCarried) -
+                     carried_before;
 }
 
 void TestEditorViewRendererWhitespaceWalkResumesAtTheRow() {
@@ -2503,25 +2522,62 @@ void TestEditorViewRendererWhitespaceWalkResumesAtTheRow() {
   const std::string tabbed = "\t" + plain;
 
   for (const bool use_view_model : {false, true}) {
-    std::uint64_t plain_bytes = 0;
-    std::uint64_t tabbed_bytes = 0;
-    std::size_t plain_rows = 0;
-    std::size_t tabbed_rows = 0;
-    ExpectWhitespaceWalkBytes(plain, use_view_model, plain_bytes, plain_rows);
-    ExpectWhitespaceWalkBytes(tabbed, use_view_model, tabbed_bytes, tabbed_rows);
+    WhitespaceWalkReading plain_read;
+    WhitespaceWalkReading tabbed_read;
+    ExpectWhitespaceWalkBytes(plain, use_view_model, plain_read);
+    ExpectWhitespaceWalkBytes(tabbed, use_view_model, tabbed_read);
 
-    Expect(plain_rows > 8 && tabbed_rows > 8,
-           "the fixtures must wrap into enough rows for the two shapes to differ");
+    Expect(plain_read.rows > 8 && tabbed_read.rows > 8,
+           "the fixtures must wrap into enough rows for the bound below to mean anything");
     // Linear: each row visits only its own slice, so the sum is about one pass
     // over the line (plus the rows that end mid-codepoint, which is none here).
-    Expect(plain_bytes <= plain.size() * 2,
+    Expect(plain_read.walk_bytes <= plain.size() * 2,
            "a resuming whitespace walk must cost about one pass over the line, not one per row");
-    // Quadratic control: without a resume the same fixture is rows x line. If
-    // this stops holding, the check above has stopped meaning anything.
-    Expect(tabbed_bytes > plain_bytes * 4,
-           "the un-resumable fixture must cost dramatically more, or the linear bound above "
-           "proves nothing");
+    // The tab in column 0 is what used to make this the quadratic case: byte
+    // offset stops being visual column, so no row past the first could derive its
+    // own start and every row walked from 0. Carrying the previous row's stopping
+    // point does not care what is in the line (TD-2026-08-14-218).
+    Expect(tabbed_read.walk_bytes <= tabbed.size() * 2,
+           "a leading tab must not cost a walk from byte 0 on every row");
+    // And the prefix probe that TD-2026-08-12-187 put in front of the walk is not
+    // paid per row either -- it is the SAME quadratic shape one level down, since
+    // it reads [0, row_start) to decide. Only the first row of a line probes, and
+    // that row starts at column 0, so this is ~nothing.
+    Expect(plain_read.prefix_bytes <= plain.size() && tabbed_read.prefix_bytes <= tabbed.size(),
+           "the resume probe must be paid once per line, not once per row");
+    // The mechanism, measured directly: every visible row except the first of
+    // each logical line carried. Two logical lines here (the content plus the
+    // empty tail), so allow that many non-carrying rows plus slack.
+    Expect(plain_read.visible_rows > 8 && tabbed_read.visible_rows > 8,
+           "the visible window must hold enough rows of one line for a carry to happen");
+    Expect(plain_read.rows_carried + 4 >= plain_read.visible_rows &&
+               tabbed_read.rows_carried + 4 >= tabbed_read.visible_rows,
+           "all but each line's first visible row must resume from the previous row");
   }
+
+  // Positive control for the two bounds above, which a walk that had silently
+  // stopped resuming would still pass if the fixture stopped wrapping. Drive the
+  // resolver itself: with no cursor it can only fall back to byte 0 on the tabbed
+  // line, and with one it returns the carried offset.
+  const microide::editor::WhitespaceWalkStart cold =
+      microide::editor::ResolveWhitespaceWalkStart(tabbed, /*row_visual_start=*/400,
+                                                   microide::editor::WhitespaceRowResume{});
+  Expect(cold.byte == 0 && cold.visual_col == 0,
+         "without a cursor a tabbed line has no cheap start, which is the cost being removed");
+  microide::editor::WhitespaceWalkCursor cursor{/*line_key=*/7, /*byte=*/321, /*visual_col=*/400,
+                                                /*valid=*/true};
+  const microide::editor::WhitespaceWalkStart warm =
+      microide::editor::ResolveWhitespaceWalkStart(
+          tabbed, /*row_visual_start=*/400,
+          microide::editor::WhitespaceRowResume{&cursor, /*line_key=*/7});
+  Expect(warm.byte == 321 && warm.visual_col == 400,
+         "a cursor on the same line hands the row its start with no reading at all");
+  const microide::editor::WhitespaceWalkStart other_line =
+      microide::editor::ResolveWhitespaceWalkStart(
+          tabbed, /*row_visual_start=*/400,
+          microide::editor::WhitespaceRowResume{&cursor, /*line_key=*/8});
+  Expect(other_line.byte == 0,
+         "a cursor from a DIFFERENT line must not be carried onto this one");
 }
 
 // TD-2026-08-12-187: both producers resume their whitespace walk at the row's own

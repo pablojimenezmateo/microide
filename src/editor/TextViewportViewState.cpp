@@ -479,6 +479,15 @@ LineLayoutFacts TextViewport::CachedLineFacts(std::size_t line) const {
                                           document_->content_revision);
 }
 
+std::size_t TextViewport::PlainAsciiPrefixEnd(std::size_t line, std::size_t probe) const {
+  if (document_ == nullptr || line >= document_->lines.size()) {
+    return 0;
+  }
+  return layout_cache_.PlainAsciiPrefixEnd(LineSpan(document_->lines), line,
+                                           std::min(probe, document_->lines.LineLength(line)),
+                                           document_->content_revision);
+}
+
 std::size_t TextViewport::cursor_visual_column() const {
   return VisualColumnAt(cursor_line_, cursor_column_);
 }

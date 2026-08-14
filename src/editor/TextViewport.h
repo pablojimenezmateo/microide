@@ -344,6 +344,12 @@ class TextViewport {
   // What the layout cache currently knows about `line`, or an unknown value when
   // its width table does not describe this document.
   LineLayoutFacts CachedLineFacts(std::size_t line) const;
+  // First byte of `line` that is not plain single-cell ASCII, searched in
+  // [0, probe) and returning `probe` when there is none — so byte offset IS
+  // visual column everywhere below the result. Memoized per line and content
+  // revision by the layout cache, which is what makes it safe to ask per rendered
+  // row (see TextLayoutCache::PlainAsciiPrefixEnd).
+  std::size_t PlainAsciiPrefixEnd(std::size_t line, std::size_t probe) const;
   std::size_t cursor_visual_row() const;
   std::size_t scroll_line() const { return scroll_line_; }
   std::size_t horizontal_scroll() const { return horizontal_scroll_; }

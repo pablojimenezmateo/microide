@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <deque>
@@ -428,6 +429,44 @@ class TextLayoutCache {
   // and the window itself). A member, not a local, so the capacity survives: a
   // local would allocate once per rendered row of every line that spans pieces.
   mutable std::string line_window_scratch_;
+
+ public:
+  // First byte of `line_index` that is not plain single-cell ASCII (no tab, no
+  // byte >= 0x80), searched in [0, probe) and returning `probe` when there is
+  // none. Byte offset IS visual column below that point, which is what lets a
+  // visible-row build start mid-line without decoding what precedes it.
+  //
+  // Memoized, because the answer is a property of the LINE and the question is
+  // asked per ROW. Soft wrap turns one long line into thousands of rows, each
+  // built with an ever-larger `probe`, so the un-memoized form re-reads the whole
+  // prefix on every row of every frame -- 29 MB per iteration of
+  // `editor_soft_wrap_long_line_scroll`, growing with scroll depth, on the
+  // default render path. This is the same shape TD-2026-08-12-187 removed one
+  // level up in the whitespace walk, which is where it was found
+  // (TD-2026-08-14-220).
+  std::size_t PlainAsciiPrefixEnd(LineSpan lines,
+                                  std::size_t line_index,
+                                  std::size_t probe,
+                                  std::uint64_t content_revision) const;
+
+ private:
+  // One slot per line the memo is tracking. Rows of a line arrive consecutively,
+  // so a single slot already collapses a frame's per-row scans into one; the four
+  // keep a document with several very long lines on screen from re-priming the
+  // slot per line per frame. Round-robin replacement — with four slots and this
+  // access pattern, an LRU would cost more than it saves.
+  struct PlainPrefixMemo {
+    std::size_t line_index = 0;
+    std::uint64_t content_revision = 0;
+    // How far [0, ...) has been examined, and the first offending byte found.
+    // `first_non_plain == scanned_through` means "none found so far".
+    std::size_t scanned_through = 0;
+    std::size_t first_non_plain = 0;
+    bool valid = false;
+  };
+  static constexpr std::size_t kPlainPrefixMemoSlots = 4;
+  mutable std::array<PlainPrefixMemo, kPlainPrefixMemoSlots> plain_prefix_memo_{};
+  mutable std::size_t plain_prefix_memo_next_ = 0;
 
   // Wrapped-row table
   mutable std::vector<WrappedRow> wrapped_row_layouts_;

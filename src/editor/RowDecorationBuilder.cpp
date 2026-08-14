@@ -4,6 +4,7 @@
 #include <cmath>
 
 #include "editor/DiagnosticsRender.h"
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
 namespace microide::editor {
@@ -283,6 +284,49 @@ void PushWhitespaceMarker(std::vector<DecoratedTextFill>& fills,
   }
 }
 
+WhitespaceWalkStart ResolveWhitespaceWalkStart(std::string_view text,
+                                               std::size_t row_visual_start,
+                                               WhitespaceRowResume resume) {
+  // The previous row of this line stopped exactly where this one starts, so the
+  // answer is already in hand and costs no reading at all.
+  if (resume.cursor != nullptr && resume.cursor->valid &&
+      resume.cursor->line_key == resume.line_key && resume.cursor->byte <= text.size() &&
+      resume.cursor->visual_col <= row_visual_start) {
+    util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerRowsCarried);
+    return WhitespaceWalkStart{resume.cursor->byte, resume.cursor->visual_col};
+  }
+  // First row of this line in this pass (or the caller kept no cursor): resume at
+  // the row rather than at byte 0 when everything before it is plain single-cell
+  // ASCII, because there byte offset IS visual column (TD-2026-08-12-187). This
+  // reads the prefix, which is why it must not happen once per row.
+  const std::size_t prefix_probe = std::min(row_visual_start, text.size());
+  // ...and when the caller already knows the answer, it need not happen at all.
+  if (prefix_probe <= resume.plain_prefix_end) {
+    return WhitespaceWalkStart{prefix_probe, prefix_probe};
+  }
+  util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerPrefixBytesScanned,
+                              prefix_probe);
+  if (util::FirstNonAsciiOrByte(text.substr(0, prefix_probe), '\t') >= prefix_probe) {
+    return WhitespaceWalkStart{prefix_probe, prefix_probe};
+  }
+  return WhitespaceWalkStart{};
+}
+
+void RecordWhitespaceWalkStop(WhitespaceRowResume resume,
+                              std::size_t byte,
+                              std::size_t visual_col) {
+  if (resume.cursor == nullptr) {
+    return;
+  }
+  *resume.cursor = WhitespaceWalkCursor{resume.line_key, byte, visual_col, true};
+}
+
+void InvalidateWhitespaceWalkCursor(WhitespaceRowResume resume) {
+  if (resume.cursor != nullptr) {
+    resume.cursor->valid = false;
+  }
+}
+
 std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
                                     std::string_view text,
                                     std::size_t tab_size,
@@ -293,24 +337,23 @@ std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
                                     float y,
                                     float line_height,
                                     SDL_Color color,
-                                    CellShiftRef shift_px) {
-  std::size_t visual_col = 0;
-  std::size_t i = 0;
-  // Resume at the row rather than at byte 0 when everything before it is plain
-  // single-cell ASCII: there byte offset IS visual column (TD-2026-08-12-187).
-  const std::size_t prefix_probe = std::min(row_visual_start, text.size());
-  if (util::FirstNonAsciiOrByte(text.substr(0, prefix_probe), '\t') >= prefix_probe) {
-    i = prefix_probe;
-    visual_col = prefix_probe;
-  }
+                                    CellShiftRef shift_px,
+                                    WhitespaceRowResume resume) {
+  const WhitespaceWalkStart start = ResolveWhitespaceWalkStart(text, row_visual_start, resume);
+  std::size_t visual_col = start.visual_col;
+  std::size_t i = start.byte;
   const std::size_t start_byte = i;
+  bool stopped_at_row_end = false;
   for (; i < text.size();) {
+    const std::size_t cell_byte = i;
     const char c = text[i];
     i += util::Utf8SequenceLength(text, i);
     const std::size_t cell_start = visual_col;
     visual_col = TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
     const std::size_t cell_width = visual_col - cell_start;
     if (cell_start >= row_visual_end) {
+      RecordWhitespaceWalkStop(resume, cell_byte, cell_start);
+      stopped_at_row_end = true;
       break;
     }
     if (cell_start < row_visual_start || visual_col > row_visual_end) {
@@ -325,6 +368,10 @@ std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
                          char_width, static_cast<float>(cell_width) * char_width, y, line_height,
                          color);
   }
+  if (!stopped_at_row_end) {
+    // The line ran out inside this row, so there is no next row of it to carry to.
+    InvalidateWhitespaceWalkCursor(resume);
+  }
   return i - start_byte;
 }
 
@@ -337,10 +384,11 @@ std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
                                     float char_width,
                                     float y,
                                     float line_height,
-                                    SDL_Color color) {
+                                    SDL_Color color,
+                                    WhitespaceRowResume resume) {
   const auto no_shift = [](std::size_t) { return 0.0f; };
   return AppendWhitespaceMarkers(fills, text, tab_size, row_visual_start, row_visual_end, text_x,
-                                 char_width, y, line_height, color, no_shift);
+                                 char_width, y, line_height, color, no_shift, resume);
 }
 
 void BuildDecoratedRow(DecoratedTextRow& row, const RowDecorationInput& in) {

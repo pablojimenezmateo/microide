@@ -8,6 +8,7 @@
 #include "editor/TextLayout.h"
 #include "editor/FoldingModel.h"
 #include "editor/PluginSurfaceStore.h"
+#include "editor/RowDecorationBuilder.h"
 #include "render/TextRenderer.h"
 #include "util/Parse.h"
 #include "util/PathMatch.h"
@@ -471,6 +472,12 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
     finalize_remaining_rows(0);
     return;
   }
+  // Rows of one soft-wrapped line arrive in ascending order, so the previous
+  // row's stopping point is this row's start. Without the carry every row
+  // re-derives it from the line's own start -- which the prefix probe below does
+  // by READING [0, row_start), so scrolling deep into a wrapped megabyte line
+  // re-read ~a megabyte per visible row per frame (TD-2026-08-14-218).
+  editor::WhitespaceWalkCursor walk_cursor;
   for (std::size_t row = 0; row < visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= visual_total) {
@@ -490,21 +497,23 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
     const std::string_view line_text = lines.LineView(line_index);
     const std::size_t row_start_visual = row_meta.visual_start;
     const std::size_t row_end_visual = row_meta.visual_end;
-    std::size_t visual_col = 0;
-    std::size_t byte = 0;
-    // Start at the row instead of at the line, when the bytes before it are all
+    // Carry from the previous row of this line when there was one; otherwise
+    // start at the row instead of at the line, when the bytes before it are all
     // plain single-cell ASCII -- there byte offset IS visual column, so the walk
-    // can resume mid-line exactly. Without this every visible row re-walked its
-    // logical line from byte 0, which under soft wrap means walking the same long
-    // line once per row on screen (quadratic in the rows of one wrapped line).
-    // The scan itself is word-at-a-time; the per-cell loop below is not.
-    const std::size_t prefix_probe = std::min(row_start_visual, line_text.size());
-    if (util::FirstNonAsciiOrByte(line_text.substr(0, prefix_probe), '\t') >= prefix_probe) {
-      byte = prefix_probe;
-      visual_col = prefix_probe;
-    }
+    // can resume mid-line exactly. Without either, every visible row re-walked
+    // its logical line from byte 0, which under soft wrap means walking the same
+    // long line once per row on screen (quadratic in the rows of one wrapped
+    // line). The scan itself is word-at-a-time; the per-cell loop below is not.
+    const editor::WhitespaceRowResume resume{
+        &walk_cursor, line_index, viewport.PlainAsciiPrefixEnd(line_index, row_start_visual)};
+    const editor::WhitespaceWalkStart walk_start =
+        editor::ResolveWhitespaceWalkStart(line_text, row_start_visual, resume);
+    std::size_t visual_col = walk_start.visual_col;
+    std::size_t byte = walk_start.byte;
     const std::size_t walk_start_byte = byte;
+    bool stopped_at_row_end = false;
     while (byte < line_text.size()) {
+      const std::size_t cell_byte = byte;
       const char c = line_text[byte];
       // One authoritative tab-stop/width step, stepping by CODE POINT: a per-byte
       // walk over-counted columns after any multibyte glyph and shifted every
@@ -516,6 +525,8 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
       visual_col = editor::TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
       const std::size_t cell_width = visual_col - cell_start;
       if (cell_start >= row_end_visual) {
+        editor::RecordWhitespaceWalkStop(resume, cell_byte, cell_start);
+        stopped_at_row_end = true;
         break;
       }
       if (cell_start < row_start_visual) {
@@ -537,6 +548,9 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
         run.is_tab_rule = true;
         out->push_back(run);
       }
+    }
+    if (!stopped_at_row_end) {
+      editor::InvalidateWhitespaceWalkCursor(resume);
     }
     // Bytes this row's walk actually visited (the loop stops at the row's end),
     // so "resumed at the row" is a measurement rather than a comment. Once per

@@ -29,9 +29,9 @@ constexpr std::size_t kMaxLineWindowBytes = 64u * 1024u;
 // multi-megabyte copy per rendered row per frame (TD-2026-08-05-133). The scan
 // itself is already bounded by the horizontal scroll offset, which is what makes
 // the chunked form finite.
-std::size_t FirstNonPlainAsciiByteInPrefix(LineSpan lines, std::size_t index, std::size_t limit,
-                                           std::string& scratch) {
-  std::size_t offset = 0;
+std::size_t FirstNonPlainAsciiByteInRange(LineSpan lines, std::size_t index, std::size_t from,
+                                          std::size_t limit, std::string& scratch) {
+  std::size_t offset = from;
   while (offset < limit) {
     const std::string_view chunk =
         lines.LineWindow(index, offset, std::min(kPrefixScanChunkBytes, limit - offset), scratch);
@@ -48,6 +48,46 @@ std::size_t FirstNonPlainAsciiByteInPrefix(LineSpan lines, std::size_t index, st
 }
 
 }  // namespace
+
+std::size_t TextLayoutCache::PlainAsciiPrefixEnd(LineSpan lines,
+                                                 std::size_t line_index,
+                                                 std::size_t probe,
+                                                 std::uint64_t content_revision) const {
+  if (probe == 0) {
+    return 0;
+  }
+  for (PlainPrefixMemo& memo : plain_prefix_memo_) {
+    if (!memo.valid || memo.line_index != line_index ||
+        memo.content_revision != content_revision) {
+      continue;
+    }
+    if (memo.first_non_plain < memo.scanned_through) {
+      // Already found the line's first offending byte; every larger probe has the
+      // same answer, clipped.
+      return std::min(memo.first_non_plain, probe);
+    }
+    if (probe <= memo.scanned_through) {
+      return probe;  // known clean this far
+    }
+    // Extend the scan, reading only the bytes nobody has read yet.
+    const std::size_t hit = FirstNonPlainAsciiByteInRange(lines, line_index, memo.scanned_through,
+                                                          probe, line_window_scratch_);
+    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
+                                std::min(hit, probe) - memo.scanned_through);
+    memo.scanned_through = probe;
+    memo.first_non_plain = hit;
+    return std::min(hit, probe);
+  }
+
+  const std::size_t hit =
+      FirstNonPlainAsciiByteInRange(lines, line_index, 0, probe, line_window_scratch_);
+  util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
+                              std::min(hit, probe));
+  PlainPrefixMemo& slot = plain_prefix_memo_[plain_prefix_memo_next_];
+  plain_prefix_memo_next_ = (plain_prefix_memo_next_ + 1) % kPlainPrefixMemoSlots;
+  slot = PlainPrefixMemo{line_index, content_revision, probe, hit, true};
+  return hit;
+}
 
 const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::size_t line_index,
@@ -112,14 +152,13 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
   if (facts.known) {
     const std::size_t line_length = lines.LineLength(line_index);
     const std::size_t probe = std::min(horizontal_scroll, line_length);
+    // Memoized: the scan's answer is a property of the line, and soft wrap asks it
+    // once per row of the same line with an ever-larger probe. The counter now
+    // reports bytes actually READ, so it goes to (almost) zero rather than merely
+    // being amortized (TD-2026-08-14-220).
     const std::size_t plain_prefix_end =
         facts.plain_ascii ? line_length
-                          : FirstNonPlainAsciiByteInPrefix(lines, line_index, probe,
-                                                           line_window_scratch_);
-    if (!facts.plain_ascii) {
-      util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
-                                  std::min(plain_prefix_end, probe));
-    }
+                          : PlainAsciiPrefixEnd(lines, line_index, probe, content_revision);
     const std::size_t start_byte = TextLayout::ComputeVisibleLineWindowStart(
         horizontal_scroll, line_length, plain_prefix_end);
     const std::size_t want =

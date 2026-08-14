@@ -429,6 +429,11 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     }
   };
 
+  // One cursor per pane so a wrapped row's whitespace walk resumes where the
+  // previous row of the same model row stopped, instead of re-deriving its start
+  // from the line's own start on every row (TD-2026-08-14-218).
+  editor::WhitespaceWalkCursor left_whitespace_cursor;
+  editor::WhitespaceWalkCursor right_whitespace_cursor;
   for (int row = 0; row < surface.visible_rows; ++row) {
     const int visual_index = compare_tab->scroll_row + row;
     if (visual_index < 0 ||
@@ -657,7 +662,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         editor::AppendWhitespaceMarkers(
             compare_whitespace_scratch_, compare_row.left_text,
             compare_tab->right_viewport.tab_size(), left_row_start, left_row_end,
-            left_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled);
+            left_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled,
+            editor::WhitespaceRowResume{&left_whitespace_cursor, model_index});
       }
       append_guides(compare_whitespace_scratch_, compare_guide_left_runs_,
                     static_cast<std::size_t>(row), left_row_start, left_row_end,
@@ -824,7 +830,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         editor::AppendWhitespaceMarkers(
             compare_whitespace_scratch_, compare_row.right_text,
             compare_tab->right_viewport.tab_size(), right_row_start, right_row_end,
-            right_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled);
+            right_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled,
+            editor::WhitespaceRowResume{&right_whitespace_cursor, model_index});
       }
       append_guides(compare_whitespace_scratch_, compare_guide_right_runs_,
                     static_cast<std::size_t>(row), right_row_start, right_row_end,

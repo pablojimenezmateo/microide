@@ -71,6 +71,69 @@ class CellShiftRef {
   float (*invoke_)(const void*, std::size_t) = nullptr;
 };
 
+// Resume state for a whitespace walk driven row by row over the SAME logical
+// line, which is what soft wrap makes of every long line: one line owns many
+// consecutive visual rows, and each row needs the byte offset its visual start
+// sits at.
+//
+// Deriving that per row is quadratic in the rows of one line. The obvious form
+// -- re-walking the text from byte 0 -- was fixed in TD-2026-08-12-187 by
+// probing the prefix instead, and the probe has the SAME shape: it reads
+// [0, row_visual_start) on every row, so scrolling deep into a wrapped megabyte
+// line re-reads ~a megabyte per visible row per frame. Rows arrive in ascending
+// order, so the previous row's stopping point IS this row's start, and neither
+// read is needed at all (TD-2026-08-14-218).
+//
+// A cursor is valid for one pass over one line's rows on one frame; hold it as a
+// local of the row loop, never across frames -- the text it indexes into may
+// have been edited in between.
+struct WhitespaceWalkCursor {
+  std::size_t line_key = 0;
+  std::size_t byte = 0;
+  std::size_t visual_col = 0;
+  bool valid = false;
+};
+
+// The cursor plus which line the caller is about to walk. `line_key` is any
+// value stable for one logical line and different between lines; a line index is
+// the natural choice. A default-constructed value (null cursor) disables the
+// carry and restores the probe-every-row behaviour.
+struct WhitespaceRowResume {
+  WhitespaceWalkCursor* cursor = nullptr;
+  std::size_t line_key = 0;
+  // How far into the line the caller already knows every byte is plain
+  // single-cell ASCII -- i.e. where byte offset stops being visual column. A row
+  // starting at or below this needs no deriving at all. Understating it is safe:
+  // it only falls back to the probe. Callers with a viewport get it memoized from
+  // `TextViewport::PlainAsciiPrefixEnd`, which matters because the carry alone
+  // still leaves one probe per line per frame -- and on a wrapped megabyte line
+  // scrolled deep, one probe is ~a megabyte of reading.
+  std::size_t plain_prefix_end = 0;
+};
+
+// Where a row's whitespace walk should start, in bytes and visual columns.
+struct WhitespaceWalkStart {
+  std::size_t byte = 0;
+  std::size_t visual_col = 0;
+};
+
+// Resolve a row's walk start: carry from `resume` when it describes this line at
+// or before this row, otherwise probe the prefix (and fall back to byte 0 when
+// the prefix is not plain single-cell ASCII). Bumps
+// `editor.whitespace_marker_prefix_bytes_scanned` / `..._rows_carried`, which is
+// what makes "the row carried" a measurement rather than a comment.
+WhitespaceWalkStart ResolveWhitespaceWalkStart(std::string_view text,
+                                               std::size_t row_visual_start,
+                                               WhitespaceRowResume resume);
+
+// Hand the next row of the same line the cell this row stopped on.
+void RecordWhitespaceWalkStop(WhitespaceRowResume resume,
+                              std::size_t byte,
+                              std::size_t visual_col);
+
+// The line ran out before the row did, so there is no next row to carry to.
+void InvalidateWhitespaceWalkCursor(WhitespaceRowResume resume);
+
 // Append render-whitespace markers for the visible window [row_visual_start,
 // row_visual_end) of `text`, walking one visual cell per codepoint so tabs
 // expand and a multi-byte glyph does not shift every later marker right.
@@ -93,7 +156,8 @@ std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
                                     float y,
                                     float line_height,
                                     SDL_Color color,
-                                    CellShiftRef shift_px);
+                                    CellShiftRef shift_px,
+                                    WhitespaceRowResume resume = {});
 
 // The same, with no displacement.
 std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
@@ -105,7 +169,8 @@ std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
                                     float char_width,
                                     float y,
                                     float line_height,
-                                    SDL_Color color);
+                                    SDL_Color color,
+                                    WhitespaceRowResume resume = {});
 
 // A row background/match/selection/bracket highlight expressed in source byte
 // columns. The builder resolves source -> visual columns (via the row layout or

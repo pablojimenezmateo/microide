@@ -624,6 +624,10 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   // CharWidth() is fixed for the whole frame (font size does not change mid-render),
   // so resolve the backend's advance once instead of per row / per glyph-cell.
   const float char_width_px = text_renderer.CharWidth();
+  // Only the fallback whitespace walk below uses this; the view-model glyph-run
+  // path carries its own. Rows of one wrapped line arrive in ascending order, so
+  // each resumes where the last stopped (TD-2026-08-14-218).
+  WhitespaceWalkCursor whitespace_cursor;
   for (std::size_t row = 0; row < metrics.visible_rows; ++row) {
     const std::size_t visual_row_index = scroll_line + row;
     if (visual_row_index >= viewport.visual_line_count()) {
@@ -974,7 +978,9 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
         const std::size_t walked_bytes = AppendWhitespaceMarkers(
             prepositioned_fill_scratch_, lines.LineView(line_index), viewport.tab_size(),
             row_start_visual, row_end_visual, row_text_x, char_width, y, metrics.line_height,
-            theme.text_disabled, inlay_shift_px);
+            theme.text_disabled, inlay_shift_px,
+            WhitespaceRowResume{&whitespace_cursor, line_index,
+                                viewport.PlainAsciiPrefixEnd(line_index, row_start_visual)});
         util::AddPerformanceCounter(util::PerfCounterId::EditorWhitespaceMarkerWalkBytes,
                                     walked_bytes);
       }

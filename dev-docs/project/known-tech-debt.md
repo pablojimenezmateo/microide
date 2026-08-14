@@ -389,6 +389,128 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-220 — a soft-wrapped row asks where its text starts, and the answer is re-derived from the line's start on every row of every frame. [RESOLVED 2026-08-14, same session it was filed.]
+
+**29,411,505 bytes per iteration of `editor_soft_wrap_long_line_scroll`, on the
+default render path.** Not the whitespace overlay, not a setting anybody has to
+turn on: every visible row of every soft-wrapped line.
+
+`TextLayoutCache::VisibleLineLayoutRefCached` has to know where a row's visible
+text begins in the line's bytes. TD-2026-08-12-187 made that cheap by scanning
+the prefix for the first byte that is not plain single-cell ASCII — below that
+point byte offset IS visual column, so the walk can start at the row outright
+instead of decoding up to it. What the scan replaced was O(line) *decoding* per
+row with O(row_start) *scanning* per row, which is the same asymptotic shape one
+constant factor down: soft wrap makes one long line into thousands of rows, each
+built with a larger probe than the last, so the prefix is re-read once per row
+per frame and the cost grows with how deep the scroll is.
+
+**The answer is a property of the LINE and the question is asked per ROW.**
+`TextLayoutCache::PlainAsciiPrefixEnd` memoizes it, keyed by (line, content
+revision), storing how far [0, …) has been examined and the first offending byte
+if one was found. A later, deeper probe reads only the bytes nobody has read yet;
+once an offending byte is found, every probe is answered from it. Four slots, so
+a document with several very long lines on screen does not re-prime one slot per
+line per frame.
+
+The counter now reports bytes actually READ rather than bytes the scan covered,
+which is what makes the result legible: `editor.visible_line_layout_prefix_bytes_scanned`
+goes 29,411,505 → **0** per iteration (the one scan per revision lands in
+warm-up). Allocations follow, because each chunk of that scan is a bounded
+`LineWindow` read on a piece tree:
+
+| scenario | p50 allocations | |
+| --- | ---: | ---: |
+| `editor_soft_wrap_long_line_scroll` | 8,695 → 5,968 | −31 % |
+| ↳ `soft_wrap_long_line.up_arrow_burst` | 1,856 → 960 | −48 % |
+| ↳ `soft_wrap_long_line.down_arrow_burst` | 2,258 → 1,362 | −40 % |
+| `editor_long_line_horizontal_scroll` | 1,540 → 919 | −40 % |
+
+Found from [218](#td-2026-08-14-218) — the whitespace walk carries the same
+question, one level up, and fixing it there is what made this one visible.
+
+### TD-2026-08-14-219 — the token cache frees the buffer that the line replacing it immediately allocates back. [RESOLVED 2026-08-14, same session it was filed.]
+
+**The #1 and #2 allocation sites of several scroll phases, and they are the same
+event.** `TextViewport`'s per-line token cache is capped at 256 entries, so
+scrolling through a file misses on every newly visible line and evicts the LRU
+one to make room. The eviction was `highlight_cache_.erase(...)` followed by
+`highlight_cache_[line_index]` — which frees the map node *and* the
+`vector<SyntaxTokenKind>` it owns, then allocates both back on the same call, to
+hold a line of about the same length.
+
+The allocation tracer named both halves in one phase:
+`editor_sticky_scroll_scroll.fast_scroll_frame` reported 1,861 allocations of
+645 bytes from `runtime_syntax::HighlightLineInto` (the token vector) and 1,861
+of 48 bytes from the hash node — identical counts, because they are one event
+counted twice.
+
+`extract` the evicted node, re-key it onto the incoming line, `insert` it back:
+zero allocations, and `HighlightLineInto`'s `assign` reuses the carried buffer's
+capacity. This is the same fix `TextLayoutCache` already applies to its
+visible-line cache for the same measured reason — the two caches sit next to each
+other on the render path and only one of them did it.
+
+The 2026-08-13 pass had made the *edit* path allocation-free (a generation stamp
+instead of an erase); the *eviction* path was the half it did not cover, and
+scrolling is where that one lives.
+
+Gated by `TextViewport/ScrollHighlightCacheStopsAllocatingAtTheCap` (600 fresh
+lines past the cap must cost under 200 allocations; it was ≥1,000 before) and
+`TextViewport/ScrollRecyclesHighlightCacheNodes` (`editor.highlight_cache_nodes_recycled`
+must equal `editor.highlight_cache_evictions`, plus a check that the recycled
+buffer is resized to the line it now caches rather than carrying the evicted
+line's tokens).
+
+### TD-2026-08-14-218 — the whitespace walk resumes at the row, and pays for the privilege once per row. [RESOLVED 2026-08-14, same session it was filed.]
+
+TD-2026-08-12-187 removed a whitespace walk that restarted at byte 0 for every
+visible row, by probing `[0, row_start)` for the first non-plain-ASCII byte and
+starting the walk at the row when the probe comes back clean. The walk became
+linear and `editor.whitespace_marker_walk_bytes` proved it.
+
+**The probe it left behind has the shape the walk used to have, and the counter
+that exists to catch exactly that reads flat**, because it counts bytes WALKED
+and the probe is not a walk. Two consequences, both measured on
+`editor_soft_wrap_whitespace_paint` (added here — see below):
+
+- On a line whose prefix is not plain ASCII — one leading tab is enough — the
+  probe fails on every row and the walk restarts at byte 0 anyway. The
+  quadratic never went away for that shape; it moved behind a check.
+- On a plain-ASCII line the probe succeeds, and re-reads the whole prefix to do
+  it: 13,539,696 bytes over 48 frames, scrolled ~1,800 rows into a wrapped 2 MB
+  line.
+
+Rows of one wrapped line arrive in ascending order, so **the previous row's
+stopping point IS this row's start** — no probing, no walking, and it does not
+care what is in the line. `WhitespaceWalkCursor` / `ResolveWhitespaceWalkStart`
+in `editor/RowDecorationBuilder.h` carry it, threaded through all three row loops
+(the view-model glyph-run builder, the editor's fallback walk, and the two
+compare panes). The first row of each line still needs a start, and gets it from
+[220](#td-2026-08-14-220)'s memo rather than from a fresh scan.
+
+Result on the walk itself: 335,616 bytes over 48 frames — 159 bytes per row —
+where the un-carried form is `visible_rows` × the row's distance into the line.
+
+**Two counters and a scenario, because none of this was observable.**
+`editor.whitespace_marker_prefix_bytes_scanned` counts what the walk counter
+structurally cannot see, and `editor.whitespace_marker_rows_carried` makes "the
+row resumed" a measurement rather than a comment. The blind spot that allowed it:
+`editor_render_whitespace_paint` runs on the 50k C++ fixture (short lines, no
+wrap) and the two soft-wrap scenarios leave `editor.view.render_whitespace` at
+its default of off, so **no scenario had ever combined them** — and this cost
+only exists in the combination. `editor_soft_wrap_whitespace_paint` does, deep
+into the line, with hard invariants so it gates on any box.
+
+The old quadratic control in
+`TextRenderer editor view whitespace walk resumes at the row` had to be replaced:
+it asserted the tabbed fixture costs 4x the plain one, which is now false and was
+the whole point. It gates the mechanism directly instead — both fixtures linear,
+the probe paid once per line, `rows_carried` covering every row but each line's
+first, plus a unit-level control on `ResolveWhitespaceWalkStart` (no cursor →
+byte 0; a cursor on this line → the carried offset; a cursor from a different
+line → not carried).
+
 ### TD-2026-08-14-217 — `repo_open_rss_idle` gated a CPU number that is 99 % sleep, and had been red since before this session. [RESOLVED 2026-08-14 — same day it was found.]
 
 **Found by running the full perf gate, not by a test.** `repo_open_rss_idle`

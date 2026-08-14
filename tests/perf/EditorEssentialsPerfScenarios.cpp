@@ -887,6 +887,106 @@ void RunEditorSoftWrapLongLineTyping(ScenarioContext& context) {
   });
 }
 
+// Render-whitespace ON, under soft wrap, scrolled deep into a line with no line
+// breaks in it. Nothing measured that combination: `editor_render_whitespace_paint`
+// runs on the 50k C++ fixture (short lines, no wrap), and the two soft-wrap
+// scenarios leave the setting at its default of off. The gap mattered, because the
+// whitespace producers derive each row's start FROM THE LINE'S START -- which is
+// exactly the shape soft wrap makes quadratic, and the deeper the scroll the worse
+// it gets (TD-2026-08-14-218).
+//
+// The invariants below are hard, not baseline-derived, so they gate on any box: a
+// frame may read a bounded multiple of what its visible rows cover, and may not
+// read a multiple of the LINE.
+void RunEditorSoftWrapWhitespacePaint(ScenarioContext& context) {
+  editor::TextViewport* viewport =
+      OpenMinifiedFixtureOrSkip(context, "editor_soft_wrap_whitespace_paint");
+  if (viewport == nullptr) {
+    return;
+  }
+  context.SetSetting("editor.wrap", "word");
+  context.SetSetting("editor.view.render_whitespace", "true");
+  viewport->MoveCursorTo(0, 0, false);
+  context.PumpFrames(4);
+  if (!context.ActiveViewport().soft_wrap()) {
+    throw std::runtime_error(
+        "editor_soft_wrap_whitespace_paint: editor.wrap=word did not reach the viewport");
+  }
+  const std::size_t total_rows = context.ActiveViewport().visual_line_count();
+  if (total_rows < 1000) {
+    throw std::runtime_error(
+        "editor_soft_wrap_whitespace_paint: the fixture line did not wrap into rows");
+  }
+
+  // Scroll a long way in before measuring. The cost being gated grows with the
+  // row's distance from the line's start, so measuring at the top of the file
+  // would read near zero whether the fix is present or not.
+  for (int i = 0; i < 200; ++i) {
+    context.Scroll(-3);
+  }
+  context.PumpFrames(2);
+  const std::size_t deep_scroll_row = context.ActiveViewport().scroll_line();
+  if (deep_scroll_row < 400) {
+    throw std::runtime_error(
+        "editor_soft_wrap_whitespace_paint: the scroll did not reach a deep row (" +
+        std::to_string(deep_scroll_row) + ")");
+  }
+
+  const std::size_t visible_rows = context.ActiveViewport().visible_lines();
+  constexpr int kFrames = 48;
+  const std::uint64_t walk_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes);
+  const std::uint64_t prefix_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::EditorWhitespaceMarkerPrefixBytesScanned);
+  context.Measure("soft_wrap_whitespace.deep_scroll_frames", [&] {
+    for (int i = 0; i < kFrames; ++i) {
+      context.Scroll((i % 2) == 0 ? -1 : 1);
+      context.PumpFrames(1);
+    }
+  });
+  const std::uint64_t walked = microide::util::ReadPerformanceCounter(
+                                   microide::util::PerfCounterId::EditorWhitespaceMarkerWalkBytes) -
+                               walk_before;
+  const std::uint64_t probed =
+      microide::util::ReadPerformanceCounter(
+          microide::util::PerfCounterId::EditorWhitespaceMarkerPrefixBytesScanned) -
+      prefix_before;
+
+  // A row covers at most `visible_columns` cells and a cell is at most 4 bytes of
+  // UTF-8; 8x that per row leaves room for the rows a scroll re-paints and for the
+  // partial cell each row ends on. Against the un-resumed shape this is four
+  // orders of magnitude tight: one frame there read ~`deep_scroll_row` columns per
+  // row, and there are `kFrames` of them.
+  const std::uint64_t per_row_budget =
+      8ull * 4ull * static_cast<std::uint64_t>(context.ActiveViewport().visible_columns() + 1);
+  const std::uint64_t budget =
+      per_row_budget * static_cast<std::uint64_t>(visible_rows + 1) * kFrames;
+  if (walked > budget) {
+    throw std::runtime_error(
+        "editor_soft_wrap_whitespace_paint: the whitespace walk read " + std::to_string(walked) +
+        " bytes over " + std::to_string(kFrames) + " frames, past the " + std::to_string(budget) +
+        " a visible-window-bounded walk can need — it is deriving each row's start from the "
+        "line's start again");
+  }
+  // The resume PROBE has the same shape one level down: it reads [0, row_start) to
+  // decide whether the walk may start at the row. What is gated here is that it is
+  // paid once per LINE per frame, not once per row — a row's own probe is bounded
+  // by how far into the line the row sits, so per-row it is the very cost the
+  // resume was added to remove. Four probes a frame leaves room for the second
+  // producer and for the frames a scroll repaints; per-row is `visible_rows` of
+  // them, an order of magnitude past this.
+  const std::uint64_t deepest_row_start =
+      static_cast<std::uint64_t>(deep_scroll_row + visible_rows + kFrames + 8) *
+      static_cast<std::uint64_t>(context.ActiveViewport().visible_columns() + 1);
+  const std::uint64_t probe_budget = 4ull * kFrames * deepest_row_start;
+  if (probed > probe_budget) {
+    throw std::runtime_error(
+        "editor_soft_wrap_whitespace_paint: the resume probe read " + std::to_string(probed) +
+        " bytes over " + std::to_string(kFrames) + " frames, past " +
+        std::to_string(probe_budget) + " — it is being paid per row rather than per line");
+  }
+}
+
 // Whole-document edit verbs on a line with no line breaks in it: select all, cut,
 // paste, undo, redo. The same five the Moby-Dick workout drives, on the file shape
 // where "the affected line" is the whole document -- so the undo entry, the
@@ -1337,6 +1437,14 @@ const ScenarioRegistration g_perf_editor_soft_wrap_long_line_typing({Scenario{
     .baseline_gated = true,
     .warmup_iterations = 1,
     .run = RunEditorSoftWrapLongLineTyping,
+}});
+// Carries hard invariants of its own (see the body), so it gates on any box with
+// or without a baseline. Not baseline_gated yet: no reference run has recorded it.
+const ScenarioRegistration g_perf_editor_soft_wrap_whitespace_paint({Scenario{
+    .name = "editor_soft_wrap_whitespace_paint",
+    .smoke = true,
+    .warmup_iterations = 1,
+    .run = RunEditorSoftWrapWhitespacePaint,
 }});
 const ScenarioRegistration g_perf_editor_moby_dick_workout({Scenario{
     .name = "editor_moby_dick_workout",
