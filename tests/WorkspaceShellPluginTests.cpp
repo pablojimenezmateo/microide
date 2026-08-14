@@ -1662,6 +1662,81 @@ return ide.plugin({
          "LSP hover fallback should populate the hover cache from the server contents");
 }
 
+// Regression: a hover completion that lands after the cache has moved on must be
+// dropped. The completion used to prove "still my cell" by carrying a copy of the
+// cell's std::filesystem::path -- four allocations per kickoff, on a path that
+// runs every painted frame the pointer spends over text -- and now compares the
+// cache's generation stamp instead. This is the assertion that stamp has to earn:
+// stage two hovers, answer the FIRST one after the second has re-pointed the
+// cache, and require its content not to appear under the second cell.
+void TestWorkspaceShellHoverSupersededCompletionIsDropped() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path py_file = project / "main.py";
+  WriteFile(py_file, "value = 1\nother = 2\n");
+
+  WritePluginInit(
+      plugins_root, "pylsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "pylsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "pylsp.server", language_id = "python", command = { "py-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "hover supersede fixture should open the project");
+
+  // Park every hover callback instead of answering it, so the test decides when
+  // (and in which order) a reply lands.
+  std::vector<workspace::LspClient::HoverCallback> parked;
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  stub_raw->SetTestHoverHandler(
+      [&parked](std::string uri, workspace::LspClient::HoverCallback cb) {
+        (void)uri;
+        parked.push_back(std::move(cb));
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
+         "supersede fixture should attach a stub python client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, py_file);
+  // The stub routes each request through the main-thread mailbox, so the parking
+  // handler only runs on the drain.
+  WorkspaceShellTestAccess::BeginLspHoverForTesting(shell, py_file, 1, 1);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  WorkspaceShellTestAccess::BeginLspHoverForTesting(shell, py_file, 2, 1);
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(parked.size() == 2, "each hovered cell should dispatch its own hover request");
+
+  // Answer the first cell's request now that the cache describes the second.
+  parked.front()(util::ParseJson(R"({"contents":{"kind":"markdown","value":"stale"}})"));
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::HoverCacheContentForTesting(shell).empty(),
+         "a hover reply for a superseded cell must not populate the current cell");
+
+  // The live cell still resolves from its own reply.
+  parked.back()(util::ParseJson(R"({"contents":{"kind":"markdown","value":"fresh"}})"));
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::HoverCacheContentForTesting(shell) == "fresh",
+         "the current cell's own hover reply should still resolve it");
+}
+
 // Regression: the format-document command applies the language server's TextEdit[]
 // to the active buffer. Guards the full end-to-end path: action -> LSP request ->
 // multi-edit apply (the request bug that dropped all but the first edit would drop
@@ -5528,6 +5603,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/OutlineCapsLargeLspResult",
           TestWorkspaceShellOutlineCapsLargeLspResult);
   AddTest(tests, "WorkspaceShell/HoverFromLspFallback", TestWorkspaceShellHoverFromLspFallback);
+  AddTest(tests, "WorkspaceShell/HoverSupersededCompletionIsDropped",
+          TestWorkspaceShellHoverSupersededCompletionIsDropped);
   AddTest(tests, "WorkspaceShell/FormatDocumentAppliesLspEdits",
           TestWorkspaceShellFormatDocumentAppliesLspEdits);
   AddTest(tests, "WorkspaceShell/RenameSymbolAppliesLspEdit",

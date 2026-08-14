@@ -389,6 +389,51 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-225 — an async hover completion proved "still my cell" by carrying a copy of the cell's path, once per painted frame. [RESOLVED 2026-08-14, same session it was filed.]
+
+`WorkspaceShell::KickOffPluginHover` dispatched its query with
+`[this, path, line, column]`, and `KickOffLspHover` did the same. The capture
+existed for one line of the callback: `plugin_hover_cache_.Matches(path, line,
+column)`, i.e. "has the pointer moved on since I was dispatched?".
+
+A libstdc++ `std::filesystem::path` copy is **four** allocations, not one — the
+pathname string, the `_List` of components, and a string per component. And this
+is not a mouse-move path: hover resolution runs on every painted frame the
+pointer spends over text, and during a scroll the cell under a *stationary*
+pointer changes every frame, so every frame re-pointed the cache and re-kicked.
+
+Three costs, all on that frame path:
+
+1. `PluginHost::QueryHoverAsync(std::filesystem::path path, …)` took its path
+   **by value**, so the copy was charged before any of its guards ran — including
+   the `has_hover_providers` fast-reject TD-2026-08-06-159 added precisely so this
+   call would be free when nothing is registered. The eager-argument-before-a-guard
+   shape, again.
+2. The callback's own captured copy.
+3. `std::function`'s functor allocation: `this` + a path + two `size_t` is far
+   past libstdc++'s 16-byte inline buffer.
+
+Now `PluginHoverCache` carries a `generation` stamp, bumped wherever the cache is
+re-pointed at a different cell, and the completions capture `this` + that stamp —
+16 bytes, which fits the inline buffer, so the closure does not allocate either.
+`QueryHoverAsync` takes `const std::filesystem::path&`.
+
+Measured on `editor_fold_viewport_refresh.scroll_frame` (96 frames), whole-phase
+allocations under the site tracer: **4,782 → 4,123, −13.8 %**. The 659 removed are
+exactly the four path-copy sites plus the functor.
+
+Two things found on the way:
+
+- `QueryHoverAsync`'s `#else` branch (`MICROIDE_HAS_LUA_PLUGINS` off) said
+  `(void)resolved_path;` for a variable declared inside the `#if`. It has never
+  compiled; no lane builds that configuration. Now `(void)path;`.
+- The supersede rule had no test. `WorkspaceShell/HoverSupersededCompletionIsDropped`
+  parks two stub hover callbacks, answers the **first** after the second has
+  re-pointed the cache, and requires its content not to appear — then requires the
+  live cell's own reply to still resolve. Note the stub routes through the
+  main-thread mailbox, so the parking handler needs a `ConsumeLspCallbacks` per
+  dispatch (the same per-hop drain rule the LSP stubs already have).
+
 ### TD-2026-08-14-224 — the glyph-texture cache's LRU order stored a second copy of every key string. [RESOLVED 2026-08-14, same session it was filed.]
 
 `SdlTtfTextBackend::ResolveEntry` is the widest site in the whole suite — the #1

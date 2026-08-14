@@ -677,13 +677,22 @@ void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::
                                         std::size_t column) {
   // Mark the cell in flight so the const resolver does not re-kick while we wait.
   plugin_hover_cache_.state = PluginHoverCache::State::Pending;
+  // Capture the cell's generation stamp rather than a copy of its path: the
+  // callback only needs to answer "is this still the cell I was dispatched for",
+  // and an integer answers it without the four allocations a
+  // `std::filesystem::path` copy costs — on a hot path that runs on every painted
+  // frame the pointer spends over text. It also keeps the closure at 16 bytes,
+  // inside std::function's inline buffer, so constructing it allocates nothing
+  // either — including on the fast-reject path where no provider is registered
+  // and the callback is invoked and dropped immediately.
+  const std::uint64_t generation = plugin_hover_cache_.generation;
   plugin_runtime_.Host().QueryHoverAsync(
       path, line, column,
-      [this, path, line, column](bool ok, plugin::PluginHost::HoverResult result) {
+      [this, generation](bool ok, plugin::PluginHost::HoverResult result) {
         // Apply only if we are still waiting on this exact cell (not superseded by
         // a newer hover position).
         if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
-            !plugin_hover_cache_.Matches(path, line, column)) {
+            plugin_hover_cache_.generation != generation) {
           return;
         }
         if (ok) {
@@ -700,7 +709,10 @@ void WorkspaceShell::KickOffPluginHover(const std::filesystem::path& path, std::
         }
         // No plugin hover for this cell: fall back to the language server. The cell
         // stays Pending until the LSP result lands (KickOffLspHover finalizes it).
-        KickOffLspHover(path, line, column);
+        // The generation check above established that the cache still describes the
+        // cell this query was dispatched for, so its own fields are that cell.
+        KickOffLspHover(plugin_hover_cache_.path, plugin_hover_cache_.line,
+                        plugin_hover_cache_.column);
       });
 }
 
@@ -734,12 +746,16 @@ void WorkspaceShell::KickOffLspHover(const std::filesystem::path& path, std::siz
   const std::size_t byte_column = column > 0 ? column - 1 : 0;
   const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   BeginTrackedLspRequest();
+  // Same generation stamp as the plugin kickoff, for the same reason: the only
+  // question the completion asks is whether the cache still describes the cell it
+  // was dispatched for, and a path copy is four allocations to answer it.
+  const std::uint64_t generation = plugin_hover_cache_.generation;
   client->RequestHoverAsync(
       FileUriForPath(path), ByteColumnToLspPosition(*viewport, line0, byte_column, encoding),
-      [this, path, line, column](LspResult<util::JsonValue> result) {
+      [this, generation](LspResult<util::JsonValue> result) {
         FinishTrackedLspRequest();
         if (plugin_hover_cache_.state != PluginHoverCache::State::Pending ||
-            !plugin_hover_cache_.Matches(path, line, column)) {
+            plugin_hover_cache_.generation != generation) {
           return;
         }
         std::string content =

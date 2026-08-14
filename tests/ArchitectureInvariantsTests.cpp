@@ -229,8 +229,14 @@ void TestArchitectureFileSizes() {
              // on every project switch to pick up plugin themes and was re-walking the
              // themes directory each time; the memo (and its mtime check) lives in
              // render::ThemeNameCatalog, not the shell.
+             // 1696: +1 for PluginHoverCache::generation. The async hover completions
+             // used to prove "this is still my cell" by capturing a copy of the cell's
+             // std::filesystem::path, which is four allocations per kickoff and ran on
+             // every painted frame the pointer spent over text. A generation stamp
+             // answers the same question with an integer, and shrinks the closure to
+             // 16 bytes so std::function stops heap-allocating the functor too.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1695);
+                                                     1696);
            });
 
   AssertRuleResultsPass(results);

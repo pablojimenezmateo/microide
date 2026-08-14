@@ -721,7 +721,10 @@ class PluginHost {
       std::function<void(std::vector<DocumentSymbolNode>, std::string)> on_result);
   // Async hover query. `on_result(ok, hover)` runs on the UI-thread drain; ok=false
   // means no provider answered. Mouse-driven, so a superseded request is dropped.
-  void QueryHoverAsync(std::filesystem::path path,
+  // `path` is by reference on purpose: every guard below it can reject, and this
+  // runs on every painted frame the pointer spends over text, so a by-value
+  // parameter charged four allocations to a call that usually answers "no".
+  void QueryHoverAsync(const std::filesystem::path& path,
                        std::size_t line,
                        std::size_t column,
                        std::function<void(bool, HoverResult)> on_result);

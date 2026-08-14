@@ -856,7 +856,7 @@ void PluginHost::QueryDocumentSymbolsAsync(
 #endif
 }
 
-void PluginHost::QueryHoverAsync(std::filesystem::path path,
+void PluginHost::QueryHoverAsync(const std::filesystem::path& path,
                                  std::size_t line,
                                  std::size_t column,
                                  std::function<void(bool, HoverResult)> on_result) {
@@ -901,7 +901,9 @@ void PluginHost::QueryHoverAsync(std::filesystem::path path,
         on_result(result.ok, std::move(result.hover));
       });
 #else
-  (void)resolved_path;
+  // `resolved_path` is inside the #if above, so naming it here never compiled;
+  // no default lane builds with MICROIDE_HAS_LUA_PLUGINS off, which is why it sat.
+  (void)path;
   on_result(false, HoverResult{});
 #endif
 }

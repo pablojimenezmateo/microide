@@ -12,19 +12,32 @@
   static bool HasPendingLspBufferOpen(const WorkspaceShell& shell) {
     return shell.lsp_service_.HasPendingBufferOpen();
   }
+  // Re-point the hover cache at a cell (1-based line/column) exactly as a hit-test
+  // miss does -- generation bump included, since that stamp is what an in-flight
+  // completion compares against -- and dispatch the LSP fallback for it WITHOUT
+  // draining. Pair with HoverCacheContentForTesting to stage a superseded reply.
+  static void BeginLspHoverForTesting(WorkspaceShell& shell, const std::filesystem::path& path,
+                                      std::size_t line, std::size_t column) {
+    shell.plugin_hover_cache_.path = path;
+    shell.plugin_hover_cache_.line = line;
+    shell.plugin_hover_cache_.column = column;
+    shell.plugin_hover_cache_.state = WorkspaceShell::PluginHoverCache::State::Pending;
+    shell.plugin_hover_cache_.result.title.clear();
+    shell.plugin_hover_cache_.result.content.clear();
+    ++shell.plugin_hover_cache_.generation;
+    shell.KickOffLspHover(path, line, column);
+  }
+  static std::string HoverCacheContentForTesting(const WorkspaceShell& shell) {
+    return shell.plugin_hover_cache_.result.content;
+  }
   // Drive the LSP hover fallback for a cell (1-based line/column) directly, drain
   // the async result, and return the resolved hover content ("" if it failed).
   static std::string ResolveLspHoverForTesting(WorkspaceShell& shell,
                                                const std::filesystem::path& path, std::size_t line,
                                                std::size_t column) {
-    shell.plugin_hover_cache_.path = path;
-    shell.plugin_hover_cache_.line = line;
-    shell.plugin_hover_cache_.column = column;
-    shell.plugin_hover_cache_.state = WorkspaceShell::PluginHoverCache::State::Pending;
-    shell.plugin_hover_cache_.result = plugin::PluginHost::HoverResult{};
-    shell.KickOffLspHover(path, line, column);
+    BeginLspHoverForTesting(shell, path, line, column);
     shell.ConsumeLspCallbacks();
-    return shell.plugin_hover_cache_.result.content;
+    return HoverCacheContentForTesting(shell);
   }
   // Apply a settings change to live subsystem state, as the next prepared frame does.
   static void ApplyLiveSettings(WorkspaceShell& shell) { shell.ApplyLiveSettings(); }

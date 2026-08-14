@@ -515,6 +515,15 @@
     std::filesystem::path path;
     std::size_t line = 0;
     std::size_t column = 0;
+    // Bumped by MoveTo whenever the cache starts describing a different cell, so
+    // an in-flight async completion can ask "is this still my cell?" by comparing
+    // one integer. It used to ask by capturing a copy of `path` in the callback,
+    // and a libstdc++ `std::filesystem::path` copy is four allocations (the
+    // string, the component vector, and a string per component). During a scroll
+    // the cell under a stationary pointer changes every frame, so that was a
+    // per-frame cost; capturing `this` plus this stamp is 16 bytes, which also
+    // fits std::function's inline buffer and stops the functor allocating.
+    std::uint64_t generation = 0;
     State state = State::Empty;
     plugin::PluginHost::HoverResult result;
     bool Matches(const std::filesystem::path& other_path, std::size_t other_line,

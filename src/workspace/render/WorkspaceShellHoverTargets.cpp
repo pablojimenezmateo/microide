@@ -302,12 +302,19 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     }
   } else {
     // Cache miss for this cell: record the kickoff and show nothing yet.
-    plugin_hover_cache_ = PluginHoverCache{
-        .path = path,
-        .line = query_line,
-        .column = query_column,
-        .state = PluginHoverCache::State::Kickoff,
-    };
+    //
+    // Field-by-field rather than `plugin_hover_cache_ = PluginHoverCache{...}`:
+    // the aggregate destroys and rebuilds the path and both result strings, where
+    // assignment reuses whatever capacity they already hold. The generation bump
+    // is what an in-flight async completion compares against to learn its cell was
+    // superseded, so it must happen on every re-point.
+    plugin_hover_cache_.path = path;
+    plugin_hover_cache_.line = query_line;
+    plugin_hover_cache_.column = query_column;
+    plugin_hover_cache_.state = PluginHoverCache::State::Kickoff;
+    plugin_hover_cache_.result.title.clear();
+    plugin_hover_cache_.result.content.clear();
+    ++plugin_hover_cache_.generation;
     return std::nullopt;
   }
 
