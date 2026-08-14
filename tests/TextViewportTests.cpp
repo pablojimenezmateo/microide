@@ -138,11 +138,17 @@ void TestTextViewportSyntaxReloadStalesEveryTokenCacheEntry() {
          "the next query must recompute rather than return the retained buffer");
 }
 
-// The visible-line layout cache retires an invalidated row's LayoutLine into a
-// pool instead of destroying it, so the repaint that follows an edit builds the
-// rows below the caret into buffers it already owns. Asserted through the
-// recycle counter the eviction path already published: without the pool, an edit
-// plus repaint recycles nothing at all.
+// The visible-line layout cache retires an invalidated row's whole map NODE into
+// a pool instead of destroying it, so the repaint that follows an edit builds the
+// rows below the caret into the map allocation and the three layout buffers it
+// already owns. Asserted two ways: through the recycle counter the eviction path
+// already published (without the pool, an edit plus repaint recycles nothing at
+// all), and -- where the counting allocator is armed -- as a hard zero, because
+// a pool that reuses everything has nothing left to ask the allocator for.
+//
+// The zero is the point. Pooling only the LayoutLine left the map node, and one
+// node per visible row per keystroke was HALF of everything the typing-latency
+// perf phases did (TD-2026-08-15-235).
 void TestTextViewportEditRecyclesVisibleLineLayouts() {
   TextViewport viewport;
   std::string content;
@@ -151,9 +157,13 @@ void TestTextViewportEditRecyclesVisibleLineLayouts() {
   }
   viewport.LoadContent(content, "/tmp/layout-recycle.cpp");
   viewport.SetViewportSize(30, 80);
+  // By reference, which is what the render path uses. The by-value sibling copies
+  // the LayoutLine's three buffers out, so a paint through it allocates three
+  // times per row no matter what the cache does -- and would measure the copy
+  // rather than the cache.
   const auto paint = [&]() {
     for (std::size_t line = 0; line < 30; ++line) {
-      (void)viewport.VisibleLineLayout(line);
+      (void)viewport.VisibleLineLayoutRef(line);
     }
   };
   paint();
@@ -168,6 +178,26 @@ void TestTextViewportEditRecyclesVisibleLineLayouts() {
 
   Expect(after > before,
          "the repaint after an edit must build into the layouts the invalidation retired");
+
+#if MICROIDE_PERF_HARNESS_BUILD
+  namespace perf = microide::tests::perf;
+  // One more edit-and-repaint, now that every buffer in flight is sized for rows
+  // of this shape and the pool is warm. Every row the edit invalidates is rebuilt
+  // from a pooled node, so the layout cache asks the allocator for nothing.
+  const auto snapshot = perf::Allocations::Snapshot();
+  viewport.MoveCursorTo(0, 0);
+  viewport.InsertText("y");
+  paint();
+  const auto delta = perf::Allocations::DeltaSince(snapshot);
+
+  // Not zero for the whole call: the edit itself touches the piece tree, the undo
+  // history and the width table. 30 rows rebuilt from nothing would be 120
+  // allocations on their own (a node plus three buffers each), which is what this
+  // separates from the edit's own fixed cost.
+  Expect(delta.allocations < 30,
+         "an edit plus repaint must rebuild every invalidated row into a pooled "
+         "node, not allocate one per visible row");
+#endif
 }
 
 // TD-2026-08-14-220: the plain-ASCII prefix scan is memoized per (line, length,

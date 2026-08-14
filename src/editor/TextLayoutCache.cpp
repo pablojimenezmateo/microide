@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdlib>
+#include <iterator>
 
 #include "editor/FoldingModel.h"
 #include "util/PerformanceCounters.h"
@@ -230,16 +231,23 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
       return result.position->second.layout;
     }
   }
+  // A node retired by the last invalidation carries the map allocation AND the
+  // same three layout buffers this row would otherwise allocate from scratch;
+  // build_into overwrites the contents and keeps every capacity. This is the
+  // steady state of typing: an edit invalidates every visible row at or below the
+  // caret and the repaint immediately rebuilds them.
+  if (!visible_line_node_pool_.empty()) {
+    auto node = visible_line_node_pool_.Take();
+    build_into(node.mapped().layout);
+    node.mapped().key = cache_key;
+    node.key() = cache_key;
+    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
+    const auto result = visible_line_cache_.insert(std::move(node));
+    VisibleLineLruPushBack(result.position->second);
+    return result.position->second.layout;
+  }
   const auto [it, _] = visible_line_cache_.emplace(cache_key, VisibleLineCacheEntry{});
   it->second.key = cache_key;
-  // A layout retired by the last invalidation carries the same three buffers this
-  // row would otherwise allocate from scratch; build_into overwrites the contents
-  // and keeps the capacity.
-  if (!visible_line_layout_pool_.empty()) {
-    it->second.layout = std::move(visible_line_layout_pool_.back());
-    visible_line_layout_pool_.pop_back();
-    util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutRecycled);
-  }
   build_into(it->second.layout);
   VisibleLineLruPushBack(it->second);
   return it->second.layout;
@@ -856,32 +864,35 @@ void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
   // that edit's rows, so clearing the pool here handed the buffers back to the
   // allocator one call before the repaint asked for them again. `InvalidateAll`
   // is the wipe that actually releases them.
-  RetireVisibleLineLayouts();
-  visible_line_cache_.clear();
+  RetireVisibleLineNodes();
   visible_line_lru_head_ = nullptr;
   visible_line_lru_tail_ = nullptr;
 }
 
-void TextLayoutCache::RetireVisibleLineLayouts() {
-  for (auto& [key, entry] : visible_line_cache_) {
-    if (visible_line_layout_pool_.size() >= kVisibleLineCacheLimit) {
+void TextLayoutCache::RetireVisibleLineNodes() {
+  for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {
+    // Once the pool is full the rest are plain erases, and `clear()` below does
+    // that in one pass rather than one extract-and-drop at a time.
+    if (visible_line_node_pool_.size() >= kVisibleLineCacheLimit) {
       break;
     }
-    visible_line_layout_pool_.push_back(std::move(entry.layout));
+    const auto next = std::next(it);
+    visible_line_node_pool_.Retire(visible_line_cache_.extract(it));
+    it = next;
   }
+  visible_line_cache_.clear();
 }
 
 void TextLayoutCache::InvalidateVisibleLineCacheFrom(std::size_t start_line) {
   for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {
     if (it->first.line_index >= start_line) {
       VisibleLineLruUnlink(it->second);
-      // Retire the layout instead of destroying it; see
-      // visible_line_layout_pool_. Over the cap it is dropped, which is the plain
-      // erase this used to be.
-      if (visible_line_layout_pool_.size() < kVisibleLineCacheLimit) {
-        visible_line_layout_pool_.push_back(std::move(it->second.layout));
-      }
-      it = visible_line_cache_.erase(it);
+      // Retire the whole node instead of destroying it; see
+      // visible_line_node_pool_. extract() invalidates only the extracted
+      // element's iterator, so the successor taken first stays valid.
+      const auto next = std::next(it);
+      visible_line_node_pool_.Retire(visible_line_cache_.extract(it));
+      it = next;
       continue;
     }
     ++it;
@@ -935,10 +946,11 @@ std::size_t TextLayoutCache::ApproximateResidentBytes() const {
     bytes += entry.layout.source_columns.capacity() * sizeof(std::size_t);
     bytes += entry.layout.text_offsets.capacity() * sizeof(std::size_t);
   }
-  // Retired layouts hold their buffers until a miss claims them, so they are
+  // Retired nodes hold their buffers until a miss claims them, so they are
   // resident and belong in the number this reports.
-  for (const LayoutLine& layout : visible_line_layout_pool_) {
-    bytes += sizeof(LayoutLine);
+  for (const auto& node : visible_line_node_pool_.nodes()) {
+    const LayoutLine& layout = node.mapped().layout;
+    bytes += sizeof(VisibleLineCacheKey) + sizeof(VisibleLineCacheEntry) + sizeof(void*) * 2;
     bytes += layout.text.capacity();
     bytes += layout.source_columns.capacity() * sizeof(std::size_t);
     bytes += layout.text_offsets.capacity() * sizeof(std::size_t);
@@ -955,8 +967,7 @@ void TextLayoutCache::InvalidateAll() {
   DropWrappedRowLayouts();
   // The one caller that means "release it all". Everything else drops the cache
   // but keeps the buffers for the repaint that follows.
-  visible_line_layout_pool_.clear();
-  visible_line_layout_pool_.shrink_to_fit();
+  visible_line_node_pool_.Release();
 }
 
 }  // namespace microide::editor

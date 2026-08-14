@@ -386,9 +386,71 @@ class TextLayoutCache {
     VisibleLineCacheEntry* lru_next = nullptr;
   };
 
-  // Move every live entry's layout into the pool, up to its cap. The caller is
-  // about to drop the entries themselves.
-  void RetireVisibleLineLayouts();
+  using VisibleLineCacheMap =
+      std::unordered_map<VisibleLineCacheKey, VisibleLineCacheEntry, VisibleLineCacheKeyHash>;
+
+  // Whole map nodes retired by invalidation, held for the next miss to build
+  // into. A node carries the map's own allocation AND the LayoutLine's three
+  // buffers, so a reuse costs zero allocations where a rebuild-from-nothing cost
+  // four.
+  //
+  // This used to pool bare `LayoutLine`s, on the reasoning that a node handle is
+  // move-only and TextLayoutCache has to stay copyable (a split pane copies its
+  // sibling's caches). That left the map node itself to allocate on every miss --
+  // and an EDIT misses on every visible row at or below the caret, because
+  // InvalidateVisibleLineCacheFrom erased them all. On the typing-latency
+  // scenarios that one remaining allocation was HALF of everything the phase did.
+  //
+  // Copyability is restored here rather than given up: a copied pool is an EMPTY
+  // pool. The pool is pure allocation reuse, so starting cold is correct, just
+  // slower for one repaint.
+  class VisibleLineNodePool {
+   public:
+    VisibleLineNodePool() = default;
+    VisibleLineNodePool(const VisibleLineNodePool&) {}
+    VisibleLineNodePool& operator=(const VisibleLineNodePool&) {
+      nodes_.clear();
+      return *this;
+    }
+    VisibleLineNodePool(VisibleLineNodePool&&) = default;
+    VisibleLineNodePool& operator=(VisibleLineNodePool&&) = default;
+
+    bool empty() const { return nodes_.empty(); }
+    std::size_t size() const { return nodes_.size(); }
+    const std::vector<VisibleLineCacheMap::node_type>& nodes() const { return nodes_; }
+
+    // Over the cap the node is dropped, which is the plain erase this replaced.
+    void Retire(VisibleLineCacheMap::node_type node) {
+      if (node.empty() || nodes_.size() >= kVisibleLineCacheLimit) {
+        return;
+      }
+      // A pooled node's recency links point into the live list it just left.
+      // Nothing reads them before VisibleLineLruPushBack overwrites both, but a
+      // dangling pointer that is merely never read is one refactor from being
+      // read.
+      node.mapped().lru_prev = nullptr;
+      node.mapped().lru_next = nullptr;
+      nodes_.push_back(std::move(node));
+    }
+
+    VisibleLineCacheMap::node_type Take() {
+      VisibleLineCacheMap::node_type node = std::move(nodes_.back());
+      nodes_.pop_back();
+      return node;
+    }
+
+    void Release() {
+      nodes_.clear();
+      nodes_.shrink_to_fit();
+    }
+
+   private:
+    std::vector<VisibleLineCacheMap::node_type> nodes_;
+  };
+
+  // Move every live entry into the pool, up to its cap. The caller is about to
+  // drop the map itself.
+  void RetireVisibleLineNodes();
   void VisibleLineLruUnlink(VisibleLineCacheEntry& entry) const;
   void VisibleLineLruPushBack(VisibleLineCacheEntry& entry) const;
   void VisibleLineLruTouch(VisibleLineCacheEntry& entry) const {
@@ -399,26 +461,10 @@ class TextLayoutCache {
     VisibleLineLruPushBack(entry);
   }
 
-  mutable std::unordered_map<VisibleLineCacheKey, VisibleLineCacheEntry, VisibleLineCacheKeyHash>
-      visible_line_cache_;
-  // Layout buffers retired by invalidation, held for the next miss to build into.
-  //
-  // The eviction path already recycles an entry rather than erasing and
-  // re-emplacing, because a scroll through fresh content misses on every row and
-  // each miss costs the map node plus the LayoutLine's three vectors. An EDIT
-  // took the other path: InvalidateVisibleLineCacheFrom erased every entry at or
-  // after it, and the same repaint rebuilt those rows from nothing -- so typing
-  // paid, on every visible row below the caret, three of the four allocations the
-  // eviction path exists to avoid.
-  //
-  // The pool holds LayoutLines rather than extracted map nodes because a node
-  // handle is move-only and TextLayoutCache has to stay copyable (a split pane
-  // copies its sibling's caches). That leaves the map node itself to allocate;
-  // the three per-row buffers, which are the ones sized to the row, are reused.
-  //
+  mutable VisibleLineCacheMap visible_line_cache_;
   // Bounded by the cache limit, so this never holds more than the live cache
   // could have.
-  mutable std::vector<LayoutLine> visible_line_layout_pool_;
+  mutable VisibleLineNodePool visible_line_node_pool_;
   // Least / most recently used ends of the intrusive list above.
   mutable VisibleLineCacheEntry* visible_line_lru_head_ = nullptr;
   mutable VisibleLineCacheEntry* visible_line_lru_tail_ = nullptr;
