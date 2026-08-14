@@ -77,6 +77,11 @@ class TabMouseCoordinator {
   // event. The shell's animation tick calls this so a pointer parked at the edge
   // of an overflowing strip keeps auto-scrolling. Returns true if anything moved.
   bool TickDragAutoScroll();
+  // Abandons a live drag: the lifted tab glides home and nothing is reordered.
+  // Escape does this, and so does the window losing focus — the button-up would
+  // be delivered to whoever took the focus, so the gesture cannot be finished.
+  // Returns true if there was a drag to abandon.
+  bool CancelDrag();
 
  private:
   // Resolved geometry/state for the strip that owns the in-flight drag. Shared

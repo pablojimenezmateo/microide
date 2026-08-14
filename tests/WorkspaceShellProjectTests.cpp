@@ -4113,6 +4113,65 @@ void TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit() {
          "the second neighbour keeps its unfinished ease instead of teleporting");
 }
 
+// A drag owns the pointer, so it owns the cancel key too — and it cannot survive
+// the window losing focus, because the button-up goes to whoever took the focus.
+// Both abandon the gesture: the lifted tab glides home and nothing is reordered.
+void TestWorkspaceShellEditorTabDragIsAbandonedByEscapeAndFocusLoss() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  const auto open_three = [&](WorkspaceShell& shell) {
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  };
+  const auto start_drag_past_the_end = [&](WorkspaceShell& shell) {
+    const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+    const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
+    const float cy = source_rect.y + source_rect.h * 0.5f;
+    Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f, cy, SDL_BUTTON_LEFT),
+           "press starts a drag on tab 0");
+    Expect(SendMouseMotion(shell, third_rect.x + third_rect.w + 20.0f, cy, SDL_BUTTON_LMASK),
+           "drag past the last tab");
+    Expect(WorkspaceShellTestAccess::TabDrag(shell).reordered, "a reorder is pending");
+  };
+  const auto expect_unmoved = [&](WorkspaceShell& shell, const char* how) {
+    Expect(WorkspaceShellTestAccess::TabDrag(shell).kind == microide::workspace::TabDragKind::None,
+           how);
+    const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+    Expect(tabs.size() == 3 && tabs[0].path == file_a.lexically_normal() &&
+               tabs[2].path == file_c.lexically_normal(),
+           "an abandoned drag commits nothing");
+    Expect(WorkspaceShellTestAccess::TabSlide(shell).settling,
+           "the lifted tab still glides home rather than snapping back");
+  };
+
+  {
+    WorkspaceShell shell;
+    open_three(shell);
+    start_drag_past_the_end(shell);
+    Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape is handled by the live drag");
+    expect_unmoved(shell, "Escape clears the drag state");
+  }
+  {
+    WorkspaceShell shell;
+    open_three(shell);
+    start_drag_past_the_end(shell);
+    SDL_Event focus_lost{};
+    focus_lost.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+    Expect(shell.HandleEvent(focus_lost).handled, "focus loss is handled");
+    expect_unmoved(shell, "losing focus clears the drag state");
+  }
+}
+
 // An overflowing strip has to walk under a drag held at its edge; without that the
 // off-screen end of the strip is unreachable, because the drop slot now pins to
 // what is visible rather than teleporting the tab to a slot nobody can see.
@@ -5395,6 +5454,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit);
   AddTest(tests, "WorkspaceShell/EditorTabDragAutoScrollsOverflowingStrip",
           TestWorkspaceShellEditorTabDragAutoScrollsOverflowingStrip);
+  AddTest(tests, "WorkspaceShell/EditorTabDragIsAbandonedByEscapeAndFocusLoss",
+          TestWorkspaceShellEditorTabDragIsAbandonedByEscapeAndFocusLoss);
   AddTest(tests, "WorkspaceShell/EditorTabDragHomeStillGlides",
           TestWorkspaceShellEditorTabDragHomeStillGlides);
   AddTest(tests, "WorkspaceShell/OutputTabReorderMovesActiveChannel",

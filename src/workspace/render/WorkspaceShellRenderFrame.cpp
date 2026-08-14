@@ -409,13 +409,13 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     const auto measure = [this](std::string_view text) {
       return text_renderer_.MeasureWidth(text);
     };
-    prepare_cached_bottom_panel_vm_->tabs = tab_strip_service_.ComputeVisibleBottomPanelTabs(
+    prepare_cached_bottom_panel_vm_->tabs = &tab_strip_service_.ComputeVisibleBottomPanelTabs(
         project_state, panel_header, layout_mode_service_.CurrentMode(), measure,
         output_channels_.Channels());
     prepare_cached_bottom_panel_vm_->tab_overflow =
         tab_strip_service_.ComputeBottomPanelTabOverflowControls(
             project_state, panel_header, layout_mode_service_.CurrentMode(),
-            prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
+            *prepare_cached_bottom_panel_vm_->tabs, output_channels_.Channels());
   }
   // 1a) Terminal find bar: rescan and lay the bar out here, where the panel rect
   //     is known, so the render TU paints a fully prepared widget. The rescan is

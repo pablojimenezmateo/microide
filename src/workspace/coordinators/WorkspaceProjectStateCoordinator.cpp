@@ -217,6 +217,12 @@ void WorkspaceShell::ClearDragState() {
 void WorkspaceShell::ResetTransientInteractionState() {
   ClearDragState();
   context_.interaction_state.mouse_selecting = false;
+  // The tab drag and its slide animation are transient interaction state too. The
+  // slide was surviving a project reset with offsets indexed by the old project's
+  // tabs, and kept the animation tick awake asking to finish an animation whose
+  // strip no longer existed.
+  context_.interaction_state.tab_drag = TabDragState{};
+  context_.interaction_state.tab_slide = TabSlideState{};
   selection_autoscroll::Disarm(context_.interaction_state);
 }
 
@@ -282,7 +288,6 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
 
   context_.current_project_state.sidebar.visible = !show_welcome;
   context_.current_project_state.surface.focus = show_welcome ? FocusTarget::Editor : FocusTarget::Sidebar;
-  context_.interaction_state.tab_drag = TabDragState{};
   persistence.ApplyColorscheme(context_.current_project_state.active_colorscheme_name, false, false);
   ApplyEditorPreferences(context_.current_project_state.focused_group().welcome_surface.viewport);
   if (show_welcome) {

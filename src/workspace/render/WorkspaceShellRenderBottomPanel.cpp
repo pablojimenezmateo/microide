@@ -77,7 +77,8 @@ void WorkspaceShell::RenderBottomPanelSurface(SDL_Renderer* renderer,
   const bool terminal_panel = panel_vm.content == PanelContentKind::Terminal;
   const bool output_panel = panel_vm.content == PanelContentKind::Output;
   // Prebuilt by PrepareFrameOnce (which owns the state read + strip geometry).
-  const std::vector<VisibleStripTab>& visible_panel_tabs = panel_vm.tabs;
+  const std::vector<VisibleStripTab>& visible_panel_tabs =
+      panel_vm.tabs != nullptr ? *panel_vm.tabs : TabStripService::EmptyVisibleTabs();
 
   const auto draw_tab_close_button = [&](const SDL_FRect& rect,
                                          SDL_Color color,

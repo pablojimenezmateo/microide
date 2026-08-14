@@ -437,6 +437,19 @@ bool TabMouseCoordinator::HandleMotion(const SDL_Event& event) {
   return true;
 }
 
+bool TabMouseCoordinator::CancelDrag() {
+  if (tab_drag_state_.kind == TabDragKind::None) {
+    return false;
+  }
+  // FinishDrag already knows how to drop without moving anything and glide the
+  // lifted tab home from wherever the ghost is; clearing `reordered` is the whole
+  // difference between abandoning a drag and completing one.
+  tab_drag_state_.reordered = false;
+  FinishDrag();
+  operations_.clear_tab_drag();
+  return true;
+}
+
 bool TabMouseCoordinator::TickDragAutoScroll() {
   if (tab_drag_state_.kind == TabDragKind::None || !tab_drag_state_.dragging ||
       tab_drag_state_.autoscroll_direction == 0) {
@@ -601,7 +614,9 @@ void TabMouseCoordinator::FinishDrag() {
                                     ? tab_drag_state_.target_slot - before.model_offset
                                     : 0;
   const std::size_t target = MoveTargetIndexForInsertion(list_slot, before.active, before.count);
-  if (tab_drag_state_.reordered && target != before.active && before.move && before.move(target)) {
+  const bool moved = tab_drag_state_.reordered && target != before.active && before.move &&
+                     before.move(target);
+  if (moved) {
     PersistReorderedTabs(kind);
   }
 
@@ -619,15 +634,20 @@ void TabMouseCoordinator::FinishDrag() {
   const float ghost_x = ClampedGhostX(after.strip.x, after.strip.w, tab_drag_state_.ghost_width,
                                       tab_drag_state_.pointer_x, tab_drag_state_.grab_offset_x);
 
-  // Carry the neighbors' unfinished ease across the commit. Each was rendered at
-  // `base + current` and the reorder makes `base + target` its new base, so its
-  // residual is `current - target`; zeroing them here teleported every neighbor
-  // that had not finished gliding, which is most of them on a brisk drop.
+  // Carry the neighbors' unfinished ease across the drop. Each was rendered at
+  // `base + current`; a committed reorder makes `base + target` its new base, so
+  // its residual is `current - target`, and an abandoned drag leaves the base
+  // alone, so its residual is `current` and it eases back to rest. Zeroing them
+  // here teleported every neighbor that had not finished gliding, which is most
+  // of them on a brisk drop.
   const std::vector<float> previous_current = tab_slide_state_.current;
   const std::vector<float> previous_target = tab_slide_state_.target;
   // Pre-reorder model index -> post-reorder model index for the single move that
-  // just happened (identity when the drop landed home).
-  const auto post_index = [source_index, dropped_index](std::size_t i) -> std::size_t {
+  // just happened (identity when nothing moved).
+  const auto post_index = [moved, source_index, dropped_index](std::size_t i) -> std::size_t {
+    if (!moved) {
+      return i;
+    }
     if (i == source_index) {
       return dropped_index;
     }
@@ -647,9 +667,10 @@ void TabMouseCoordinator::FinishDrag() {
     if (i == source_index) {
       continue;
     }
-    const float residual = previous_current[i] - (i < previous_target.size() ? previous_target[i] : 0.0f);
+    const float committed_shift =
+        moved && i < previous_target.size() ? previous_target[i] : 0.0f;
     if (const std::size_t p = post_index(i); p < total) {
-      tab_slide_state_.current[p] = residual;
+      tab_slide_state_.current[p] = previous_current[i] - committed_shift;
     }
   }
   for (const auto& tab : *after.tabs) {
