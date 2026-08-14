@@ -389,9 +389,32 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-14-214 — `optional<EditorTabState>::emplace()` does not compile under clang, anywhere, and only one lane would ever say so. [OPEN 2026-08-14.]
+### TD-2026-08-14-214 — `optional<EditorTabState>::emplace()` does not compile under clang, anywhere, and only one lane would ever say so. [RESOLVED 2026-08-14 — the third option, plus a guard that does not need a clang lane to fire.]
 
-`TabEntry` declares `std::optional<EditorTabState> editor_state;` as a member of
+**Fixed.** `EditorTabState` and `DeferredTabHandle` moved out to namespace scope
+in `WorkspaceTabState.h`; `TabEntry` keeps `TabEntry::EditorTabState` /
+`TabEntry::DeferredTabHandle` as member aliases, so all 69 references across
+`src/` and `tests/` are untouched. The first of the entry's three options
+(`EditorTabState() = default;`) would NOT have worked and is worth recording as
+wrong: the trait is false because the nested class's *default member initializer*
+is parsed only at the closing brace of the enclosing class, so at the point the
+`optional` is declared the class has no usable default constructor yet —
+declaring one explicitly does not change when the NSDMI is parsed. Verified on
+the four-line reduction: nested-with-NSDMI fails, the same struct at namespace
+scope reached through an alias compiles.
+
+Two `static_assert(std::is_default_constructible_v<...>)` lines now sit directly
+after `TabEntry`, and `TabStripServiceTests`' construction site went back to
+`emplace()` with a comment saying not to simplify it away. The assert is the
+better guard of the two — it fires in the header that owns the shape rather than
+at whichever call site next reaches for `emplace()` — but note it still only
+fires under clang, because GCC re-evaluates the trait and answers true. There is
+no GCC-visible symptom to gate on at all; `clang-build` remains the only lane
+that can see this class of defect, which is the entry's real lesson.
+
+The original report follows.
+
+`TabEntry` declared `std::optional<EditorTabState> editor_state;` as a member of
 the very class `EditorTabState` is nested in. Clang evaluates
 `__is_constructible(EditorTabState)` while `TabEntry` is still incomplete at that
 declaration and caches the answer as **false** for the rest of the translation

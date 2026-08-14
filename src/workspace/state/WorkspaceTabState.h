@@ -5,6 +5,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <type_traits>
 #include <unordered_map>
 #include <vector>
 
@@ -298,6 +299,50 @@ struct MergeTabState {
   bool persistable = true;
 };
 
+// Namespace scope, NOT nested in `TabEntry`, and it must stay that way: a class
+// with a default member initializer that is nested inside the class holding an
+// `std::optional` of it is not `is_constructible` at the point the optional is
+// declared (the NSDMI is parsed only at the closing brace of the *enclosing*
+// class). GCC re-evaluates the trait later; clang caches the `false` for the
+// whole translation unit, so `optional<...>::emplace()` then fails to compile
+// under clang and only under clang. TD-2026-08-14-214. `TabEntry` keeps the
+// `TabEntry::EditorTabState` spelling as an alias below.
+struct EditorTabState {
+  // A tab owns exactly one editor viewport. Side-by-side / stacked layouts are
+  // modelled as editor *groups* above the tab level (see `EditorGroup`), not as
+  // a split tree inside a tab.
+  editor::TextViewport viewport;
+  // Deferred-restore metadata: while `needs_restore` is true the viewport is a
+  // placeholder and these fields carry the real on-disk path + caret/scroll so
+  // the tab can be hydrated lazily (session restore / background open).
+  std::filesystem::path restored_path;
+  std::size_t restored_cursor_line = 0;
+  std::size_t restored_cursor_column = 0;
+  std::size_t restored_scroll_line = 0;
+  std::size_t restored_horizontal_scroll = 0;
+  bool needs_restore = false;
+  // Per-tab fold-region model. Lazily computed by the renderer / fold action
+  // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
+  // close; rekeyed implicitly through its `(layout_revision, tab_size,
+  // language_id)` fingerprint when the buffer or language changes.
+  std::unique_ptr<editor::FoldingModel> folding_model =
+      std::make_unique<editor::FoldingModel>();
+  editor::SnippetSessionState snippet_session;
+};
+
+// Namespace scope for the same reason as `EditorTabState` above: it has no NSDMI
+// today, but a nested type reachable through an `optional` member of its own
+// enclosing class is the landmine, not the initializer.
+struct DeferredTabHandle {
+  std::filesystem::path path;
+  std::string language_hint;
+  std::size_t cursor_line = 0;
+  std::size_t cursor_column = 0;
+  std::size_t scroll_line = 0;
+  std::size_t horizontal_scroll = 0;
+  std::optional<editor::SelectionRange> selection;
+};
+
 struct TabEntry {
   enum class Kind {
     Editor,
@@ -305,38 +350,8 @@ struct TabEntry {
     Merge,
   };
 
-  struct EditorTabState {
-    // A tab owns exactly one editor viewport. Side-by-side / stacked layouts are
-    // modelled as editor *groups* above the tab level (see `EditorGroup`), not as
-    // a split tree inside a tab.
-    editor::TextViewport viewport;
-    // Deferred-restore metadata: while `needs_restore` is true the viewport is a
-    // placeholder and these fields carry the real on-disk path + caret/scroll so
-    // the tab can be hydrated lazily (session restore / background open).
-    std::filesystem::path restored_path;
-    std::size_t restored_cursor_line = 0;
-    std::size_t restored_cursor_column = 0;
-    std::size_t restored_scroll_line = 0;
-    std::size_t restored_horizontal_scroll = 0;
-    bool needs_restore = false;
-    // Per-tab fold-region model. Lazily computed by the renderer / fold action
-    // path through `EnsureFoldingModelFresh(...)`. Cleared automatically on tab
-    // close; rekeyed implicitly through its `(layout_revision, tab_size,
-    // language_id)` fingerprint when the buffer or language changes.
-    std::unique_ptr<editor::FoldingModel> folding_model =
-        std::make_unique<editor::FoldingModel>();
-    editor::SnippetSessionState snippet_session;
-  };
-
-  struct DeferredTabHandle {
-    std::filesystem::path path;
-    std::string language_hint;
-    std::size_t cursor_line = 0;
-    std::size_t cursor_column = 0;
-    std::size_t scroll_line = 0;
-    std::size_t horizontal_scroll = 0;
-    std::optional<editor::SelectionRange> selection;
-  };
+  using EditorTabState = workspace::EditorTabState;
+  using DeferredTabHandle = workspace::DeferredTabHandle;
 
   Kind kind = Kind::Editor;
   std::filesystem::path path;
@@ -353,6 +368,14 @@ struct TabEntry {
   std::optional<CompareTabState> compare;
   std::optional<MergeTabState> merge;
 };
+
+// The trait clang caches as `false` when the optional's element type is nested in
+// the class holding the optional (TD-2026-08-14-214). Asserting it here — after
+// `TabEntry` is complete — makes the landmine a compile error in the header that
+// owns the shape, rather than an error at whichever call site next reaches for
+// `emplace()`.
+static_assert(std::is_default_constructible_v<TabEntry::EditorTabState>);
+static_assert(std::is_default_constructible_v<TabEntry::DeferredTabHandle>);
 
 struct TerminalTabState {
   terminal::TerminalSession session;
