@@ -426,6 +426,72 @@ void TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits() {
          "compaction during an edit must leave the untouched lines alone");
 }
 
+// Regression (TD-2026-08-14-233): the add side is CHUNKED, so appending never
+// copies edit history that is already stored.
+//
+// The old single `std::string add_` took std::string's doubling curve, which put
+// a memcpy of the whole dead history inside a keystroke — up to ~4 MiB, since the
+// memory-pressure compaction lets the history reach that before reclaiming it.
+// It also made a scenario's retention series geometric, which is what left
+// `editor_smart_indent_typing`'s `p50_net_heap_bytes` gate reading a doubling
+// step rather than what the scenario retains.
+//
+// Asserted here as the property that matters and that the old shape could not
+// have: the number of distinct backing allocations grows with the BYTES typed
+// divided by the chunk cap, not with the number of appends, and every byte
+// already written keeps its address.
+void TestPieceTreeAddChunksNeverMoveStoredHistory() {
+  PieceTree tree({"seed"});
+  // 4,000 small appends. Under doubling this is ~12 reallocations, each copying
+  // everything appended so far; under chunking it is one allocation per chunk and
+  // zero bytes copied.
+  const std::string payload(64, 'x');
+  std::vector<const char*> observed;
+  observed.reserve(4000);
+  for (int i = 0; i < 4000; ++i) {
+    tree.PushBackLine(payload);
+    // The most recently appended text is the last line; its view points straight
+    // into the chunk that holds it (a fresh push is contiguous by construction).
+    observed.push_back(tree.LineView(tree.LineCount() - 1).data());
+  }
+  Expect(tree.LineCount() == 4001, "every append landed");
+
+  // Every early view must still read its own bytes. Under doubling the buffer
+  // these point into would have been freed and copied elsewhere ~12 times, so
+  // this loop is exactly the use-after-free the chunking removes.
+  for (const char* view : observed) {
+    Expect(std::string_view(view, payload.size()) == payload,
+           "text already in a chunk keeps its address and its bytes");
+  }
+
+  // ~260 KB of history in <= 64 KiB chunks: a handful of allocations, not 4,000,
+  // and not one per doubling either. Bounded on both sides so neither
+  // "one chunk per append" nor "one chunk ever" passes.
+  const std::size_t chunks = tree.AddChunkCountForTesting();
+  Expect(chunks >= 4 && chunks <= 16,
+         "chunk count tracks bytes typed / chunk cap, not the append count");
+}
+
+// A single insert larger than the chunk cap must still land in ONE chunk: a piece
+// is a [offset, len) slice of one buffer, so a value split across two chunks would
+// be unrepresentable. This is the paste / formatter-rewrite shape.
+void TestPieceTreeAddChunkHoldsAnOversizedInsertContiguously() {
+  PieceTree tree({"seed"});
+  const std::string huge(200u * 1024u, 'q');  // > kMaxAddChunkBytes (64 KiB)
+  tree.PushBackLine(huge);
+  Expect(tree.LineCount() == 2, "the oversized insert is one line");
+  const std::string_view view = tree.LineView(1);
+  Expect(view.size() == huge.size() && view == huge,
+         "an insert larger than the chunk cap reads back intact");
+  // Zero-copy is the point: a contiguous piece is viewable without materializing.
+  Expect(tree.LineOwnedIfMaterialized(1) == nullptr,
+         "an oversized insert stays one contiguous piece (no spanning-line copy)");
+  // And a normal-sized append after it still works.
+  tree.PushBackLine("after");
+  Expect(tree.LineView(2) == "after", "a small append after an oversized chunk lands correctly");
+  Expect(tree.LineView(1) == huge, "the oversized chunk is untouched by later appends");
+}
+
 // Regression: a spanning line (content crossing a piece boundary, the shape
 // mid-line character editing produces) is materialized into a per-index cache
 // slot. A second LineView() for the SAME index must return the already-cached
@@ -949,6 +1015,10 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PieceTree/AddBufferCompaction", TestPieceTreeAddBufferCompaction);
   AddTest(tests, "PieceTree/AddBufferStaysBoundedUnderRepeatedLargeEdits",
           TestPieceTreeAddBufferStaysBoundedUnderRepeatedLargeEdits);
+  AddTest(tests, "PieceTree/AddChunksNeverMoveStoredHistory",
+          TestPieceTreeAddChunksNeverMoveStoredHistory);
+  AddTest(tests, "PieceTree/AddChunkHoldsAnOversizedInsertContiguously",
+          TestPieceTreeAddChunkHoldsAnOversizedInsertContiguously);
   AddTest(tests, "PieceTree/MidLineEdits", TestPieceTreeMidLineEdits);
   AddTest(tests, "PieceTree/RandomizedEquivalence", TestPieceTreeRandomizedEquivalence);
   AddTest(tests, "PieceTree/RandomAccessOrderMatchesModel",

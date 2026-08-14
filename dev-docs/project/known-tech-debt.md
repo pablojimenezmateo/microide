@@ -389,7 +389,70 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-14-233 — `editor_smart_indent_typing`'s retention gate is red, and was red before this session touched anything. OPEN.
+### TD-2026-08-14-234 — the allocation half of roughly a dozen gates is loose, and only the reference runner can re-record them. OPEN.
+
+Split out of [233](#td-2026-08-14-233), whose last bullet is the whole of it. The
+2026-08-14 allocation session cut allocation counts by 15–95 % on the paths it
+touched; the gates are one-sided, so those scenarios now pass with far more slack
+than they were recorded with, and a later regression can hide inside it.
+
+The fix is a deliberate `--update-baseline=deterministic` pass on
+perf-runner-v1, bare (no xvfb), on an idle box, at the DEFAULT iteration count —
+and, per [148](#td-2026-08-06-148)/[173](#td-2026-08-10-173), re-gated against
+what it just wrote, because a rebaseline is not evidence of itself. Check first
+that no allocation gate is *near* its envelope: rebaselining one that is about to
+fail buries the regression instead of recording it.
+
+### TD-2026-08-14-233 — `editor_smart_indent_typing`'s retention gate is red, and was red before this session touched anything. [RESOLVED 2026-08-14 — it was the piece tree's add buffer doubling, and the fix removes a multi-megabyte memcpy from the typing path as well as the red gate.]
+
+**What it was.** `PieceTree`'s add side was one `std::string add_` taking
+std::string's doubling curve. `MICROIDE_PERF_BIG_ALLOC_BYTES=60000` over 25
+iterations named it directly — `PieceTree::InsertText` →
+`__new_allocator<char>::allocate`, at 229,377 then 458,753 bytes, each one a
+doubling step, each `+1` for the string's NUL.
+
+That produces two distinct problems, and only the second one was visible as a
+gate failure:
+
+- **A reallocation copies every byte of dead edit history to make room for the
+  next few typed ones.** The memory-pressure compaction
+  ([130](#td-2026-08-04-130)) deliberately lets the history reach 4 MiB before
+  reclaiming it, so the last growth step before a compaction was a ~4 MiB memcpy
+  *inside a keystroke*. Nothing measured it because the doubling amortizes: the
+  mean is fine and the tail is a hitch.
+- **The retention series is geometric, so `p50_net_heap_bytes` measures where the
+  doubling boundaries land rather than what the scenario retains.** The series is
+  byte-deterministic (three consecutive runs of the same binary reproduced it
+  exactly), and at 25 iterations it read
+  `[37925, 44644, 6292, 63444, 14772, 1924, 1876, 116564, 1876, …, 231671, …]` —
+  a ~1,800-byte floor with growing spikes on top. The default 10-iteration window
+  medians the *early*, spiky half, which is the whole 26,348.5.
+
+**The fix: the add side is chunked** (`add_chunks_`, geometric capacity from
+8 KiB to a 64 KiB cap; an insert larger than the cap gets a chunk of its own exact
+size, because a piece must be contiguous in one buffer). `Node::buffer` went from
+`uint8_t` (original/add) to a `BufferId` where 0 is the original and *k* is add
+chunk *k−1*; `Node` is 36 bytes either way, so this costs nothing per piece. An
+append never moves a byte that is already stored, and the 4 GiB offset-wrap guard
+in `InsertText` is *deleted* rather than kept, because an offset is now
+chunk-relative and a chunk cannot approach uint32.
+
+After: the series is a flat floor plus a constant 64 KiB step, and the gate is
+green at both iteration counts on an unchanged baseline —
+`[55574, 13796, 8340, 72661, 9652, 1924, 5972, 1876, 68661]` at 10.
+**The baseline was not touched**, which was the entry's own instruction.
+
+Pinned by `PieceTree/AddChunksNeverMoveStoredHistory` (4,000 appends; every early
+view is re-read through its original pointer, which is the use-after-free the old
+buffer's reallocation would have created, plus a two-sided bound on the chunk
+count so neither "one chunk per append" nor "one chunk ever" passes) and
+`PieceTree/AddChunkHoldsAnOversizedInsertContiguously`. `PieceTreeEquivalenceFuzz`
+ran 115,369 cases clean against the `vector<string>` oracle.
+
+The follow-up in the last bullet below (a deliberate `--update-baseline=deterministic`
+pass) is still outstanding and is now [TD-2026-08-14-234](#td-2026-08-14-234).
+
+#### Original entry
 
 A full gate run at the end of the 2026-08-14 allocation session: **104 PASS, 1
 FAIL**, and the one failure is retention, not allocations.

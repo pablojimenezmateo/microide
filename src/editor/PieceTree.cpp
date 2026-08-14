@@ -55,8 +55,8 @@ void PieceTree::ResetFromText(std::string content) {
 }
 
 void PieceTree::RebuildFromOriginal() {
-  add_.clear();
-  add_newlines_.clear();
+  add_chunks_.clear();
+  add_total_bytes_ = 0;
   original_newlines_.clear();
   // Piece offsets and lengths are 32-bit. The editor caps file loads far below
   // this (kMaxTextFileBytes = 512 MiB), but guard here too so PieceTree stays
@@ -94,7 +94,7 @@ void PieceTree::RebuildFromOriginal() {
 
 // --- buffer helpers ---
 
-std::uint32_t PieceTree::CountNewlines(std::uint8_t buffer, std::uint32_t from,
+std::uint32_t PieceTree::CountNewlines(BufferId buffer, std::uint32_t from,
                                        std::uint32_t to) const {
   const std::vector<std::uint32_t>& nls = NewlinesOf(buffer);
   const auto lo = std::lower_bound(nls.begin(), nls.end(), from);
@@ -102,16 +102,34 @@ std::uint32_t PieceTree::CountNewlines(std::uint8_t buffer, std::uint32_t from,
   return static_cast<std::uint32_t>(hi - lo);
 }
 
-std::uint32_t PieceTree::NthNewlineOffset(std::uint8_t buffer, std::uint32_t from,
-                                          std::uint32_t nth) const {
-  const std::vector<std::uint32_t>& nls = NewlinesOf(buffer);
-  const auto lo = std::lower_bound(nls.begin(), nls.end(), from);
-  return *(lo + nth);
+void PieceTree::StartAddChunk(std::size_t needed) {
+  // Geometric up to the cap, so a document that is edited twice keeps an 8 KiB
+  // chunk rather than a 64 KiB one, and a long session still amortizes to one
+  // allocation per kMaxAddChunkBytes typed.
+  std::size_t capacity = kMinAddChunkBytes;
+  if (!add_chunks_.empty()) {
+    capacity = std::min(kMaxAddChunkBytes, add_chunks_.back().bytes.capacity() * 2);
+  }
+  // A single insert larger than the cap (a paste, a formatter rewrite) gets a
+  // chunk of its own exact size: a piece must be contiguous in one buffer, so it
+  // can never be split across chunks.
+  capacity = std::max(capacity, needed);
+  add_chunks_.emplace_back();
+  add_chunks_.back().bytes.reserve(capacity);
 }
 
-std::uint32_t PieceTree::AppendToAdd(std::string_view text) {
-  const std::uint32_t start = static_cast<std::uint32_t>(add_.size());
-  add_.append(text);
+PieceTree::AddLocation PieceTree::AppendToAdd(std::string_view text) {
+  // `capacity()` (not the requested size) is the reallocation threshold, and
+  // std::string guarantees append does not reallocate while size() stays within
+  // it — which is the property that makes an append never copy stored history.
+  if (add_chunks_.empty() ||
+      add_chunks_.back().bytes.size() + text.size() > add_chunks_.back().bytes.capacity()) {
+    StartAddChunk(text.size());
+  }
+  AddChunk& chunk = add_chunks_.back();
+  const std::uint32_t start = static_cast<std::uint32_t>(chunk.bytes.size());
+  chunk.bytes.append(text);
+  add_total_bytes_ += text.size();
   // Same memchr scan as RebuildFromOriginal: a paste appends its whole payload
   // here, so this is O(pasted bytes) on the edit path.
   for (const char* cursor = text.data(), *const end = cursor + text.size(); cursor != end;) {
@@ -120,10 +138,10 @@ std::uint32_t PieceTree::AppendToAdd(std::string_view text) {
     if (newline == nullptr) {
       break;
     }
-    add_newlines_.push_back(start + static_cast<std::uint32_t>(newline - text.data()));
+    chunk.newlines.push_back(start + static_cast<std::uint32_t>(newline - text.data()));
     cursor = newline + 1;
   }
-  return start;
+  return AddLocation{.buffer = static_cast<BufferId>(add_chunks_.size()), .offset = start};
 }
 
 // --- node pool ---
@@ -137,7 +155,7 @@ std::uint32_t PieceTree::NextPriority() {
   return x;
 }
 
-PieceTree::NodeId PieceTree::Allocate(std::uint8_t buffer, std::uint32_t start,
+PieceTree::NodeId PieceTree::Allocate(BufferId buffer, std::uint32_t start,
                                       std::uint32_t length) {
   NodeId id;
   if (!free_list_.empty()) {
@@ -206,7 +224,7 @@ void PieceTree::Split(NodeId t, std::uint32_t pos, NodeId& left, NodeId& right) 
     // Split this node's piece at byte `within`.
     const std::uint32_t within = pos - left_len;
     const NodeId right_child = nodes_[t].right;
-    const std::uint8_t buffer = nodes_[t].buffer;
+    const BufferId buffer = nodes_[t].buffer;
     const std::uint32_t piece_start = nodes_[t].start;
     const std::uint32_t piece_len = nodes_[t].length;
     const std::uint32_t priority = nodes_[t].priority;
@@ -251,30 +269,26 @@ void PieceTree::CompactAddBuffer() {
   CopyRange(0, byte_size, materialized);
   original_ = std::move(materialized);
   RebuildFromOriginal();
-  // RebuildFromOriginal clear()s these, which keeps their capacity — and the
-  // capacity is the entire point here: what is being compacted away is tens of MB
-  // of dead edit history. Swap with empty objects so the pages actually go back.
-  std::string().swap(add_);
-  std::vector<std::uint32_t>().swap(add_newlines_);
+  // RebuildFromOriginal clear()s the chunk vector, which keeps its capacity — and
+  // the capacity is the entire point here: what is being compacted away is tens of
+  // MB of dead edit history. clear() destroys each AddChunk, so the chunk bytes go
+  // back; swap the outer vector too so its element storage does as well.
+  std::vector<AddChunk>().swap(add_chunks_);
   line_count_ = saved_line_count;
 }
 
 void PieceTree::InsertText(std::uint32_t pos, std::string_view text) {
   if (text.empty()) return;
-  // add_ is append-only: deletes never reclaim it and only Reset*/compaction
-  // clears it, so add_.size() tracks *cumulative* inserted bytes over the
-  // document's lifetime, decoupled from the uint32-bounded live size. A formatter
-  // plugin or the --control channel repeatedly rewriting a large document can
-  // drive it past 4 GiB while the live document stays small; then AppendToAdd's
-  // static_cast<uint32_t>(add_.size()) would wrap and later pieces would reference
-  // stale early bytes -> silent corruption. Compact first (mirrors
-  // RebuildFromOriginal's original_ self-defense) so add_ offsets stay in range.
-  if (add_.size() + text.size() > std::numeric_limits<std::uint32_t>::max()) {
-    CompactAddBuffer();
-  } else if (add_.size() >= kAddBufferCompactionFloorBytes &&
-             add_.size() / kAddBufferDeadHistoryMultiple > ByteSize()) {
-    // Memory-pressure compaction (TD-2026-08-04-130). The 4 GiB guard above is a
-    // correctness backstop and essentially never fires; without this, a session
+  // The add side is append-only: deletes never reclaim it and only
+  // Reset*/compaction clears it, so add_total_bytes_ tracks *cumulative* inserted
+  // bytes over the document's lifetime, decoupled from the uint32-bounded live
+  // size. There is no 4 GiB offset-wrap guard here any more because there is
+  // nothing left to wrap: an offset is CHUNK-relative, and a chunk is at most
+  // max(kMaxAddChunkBytes, one insert), which the live-document ceiling already
+  // bounds below uint32. Only the memory-pressure trigger remains.
+  if (add_total_bytes_ >= kAddBufferCompactionFloorBytes &&
+      add_total_bytes_ / kAddBufferDeadHistoryMultiple > ByteSize()) {
+    // Memory-pressure compaction (TD-2026-08-04-130). Without this, a session
     // doing sustained large multi-line editing grows resident memory with no upper
     // bound and no way for the user to get it back short of restarting.
     //
@@ -283,11 +297,13 @@ void PieceTree::InsertText(std::uint32_t pos, std::string_view text) {
     // a 1,000-line selection grew RSS 2.68 MB per repetition, indefinitely, while
     // the per-thread allocation counts stayed BALANCED to within 12 and glibc's
     // arena/uordblks were flat. Both are consistent with what was actually
-    // happening: `add_` is one std::string doubling itself (17 -> 35 -> 70 MB),
-    // which is one allocation and one free each time, and lives in an mmap'd chunk
-    // that never touches the sbrk arena. The original hypothesis in the debt entry
-    // was heap fragmentation; a backtrace on allocations >= 16 MB named this line
-    // instead.
+    // happening: the add buffer was then one std::string doubling itself
+    // (17 -> 35 -> 70 MB), which is one allocation and one free each time, and
+    // lives in an mmap'd chunk that never touches the sbrk arena. The original
+    // hypothesis in the debt entry was heap fragmentation; a backtrace on
+    // allocations >= 16 MB named this line instead. (The doubling itself is gone
+    // as of TD-2026-08-14-233; the unbounded *retention* it exposed is not, which
+    // is why this trigger stays.)
     //
     // Amortized cost is a fraction of a byte-copy per inserted byte: compaction is
     // O(live document) and cannot recur until another
@@ -295,8 +311,9 @@ void PieceTree::InsertText(std::uint32_t pos, std::string_view text) {
     // floor keeps small documents from compacting on ordinary typing.
     CompactAddBuffer();
   }
-  const std::uint32_t start = AppendToAdd(text);
-  const NodeId node = Allocate(kAdd, start, static_cast<std::uint32_t>(text.size()));
+  const AddLocation location = AppendToAdd(text);
+  const NodeId node =
+      Allocate(location.buffer, location.offset, static_cast<std::uint32_t>(text.size()));
   NodeId left = kNull;
   NodeId right = kNull;
   Split(root_, pos, left, right);

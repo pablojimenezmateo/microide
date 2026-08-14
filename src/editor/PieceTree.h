@@ -131,7 +131,7 @@ class PieceTree {
   // byte offsets. `ReplaceLineRange` is the line-shaped wrapper around it, and
   // expressing an in-line edit through that wrapper costs two copies of the whole
   // affected line: the caller must compose the post-edit line, and this class then
-  // joins it into `replacement` and appends it to `add_`. On a file with no line
+  // joins it into `replacement` and appends it to the add side. On a file with no line
   // breaks in it (a minified bundle) that is two multi-megabyte copies per
   // keystroke. This form copies only `text`.
   //
@@ -174,12 +174,14 @@ class PieceTree {
   }
 
   // Testing seam: force the add-buffer compaction that InsertText performs
-  // automatically when the append-only add_ buffer would overflow the 32-bit
-  // offset space. Content and line count are invariant across a compaction; the
-  // add buffer is emptied. Exposed so the overflow guard's correctness can be
-  // tested without allocating 4 GiB.
+  // automatically once the dead edit history has outgrown the live document.
+  // Content and line count are invariant across a compaction; the add buffer is
+  // emptied.
   void CompactAddBufferForTesting() { CompactAddBuffer(); }
-  std::size_t AddBufferSizeForTesting() const noexcept { return add_.size(); }
+  // Total live bytes across every add chunk (not their reserved capacity), which
+  // is the "how much dead history is retained" number the compaction tests read.
+  std::size_t AddBufferSizeForTesting() const noexcept { return add_total_bytes_; }
+  std::size_t AddChunkCountForTesting() const noexcept { return add_chunks_.size(); }
 
   // Testing seam: byte-level mid-line insertion (the shape TextViewport character
   // editing produces) so a single line's content can be forced to span multiple
@@ -206,14 +208,15 @@ class PieceTree {
   // 0 = null sentinel; real nodes are indices >= 1 into nodes_.
   using NodeId = std::uint32_t;
   static constexpr NodeId kNull = 0;
-  static constexpr std::uint8_t kOriginal = 0;
-  static constexpr std::uint8_t kAdd = 1;
+  // Buffer id: 0 is the immutable original buffer, k >= 1 is add chunk k - 1.
+  using BufferId = std::uint32_t;
+  static constexpr BufferId kOriginal = 0;
 
   struct Node {
     NodeId left = kNull;
     NodeId right = kNull;
     std::uint32_t priority = 0;
-    std::uint8_t buffer = kOriginal;
+    BufferId buffer = kOriginal;
     std::uint32_t start = 0;        // byte offset into the buffer
     std::uint32_t length = 0;       // piece length in bytes
     std::uint32_t self_newlines = 0;
@@ -221,30 +224,66 @@ class PieceTree {
     std::uint32_t subtree_newlines = 0;
   };
 
+  // The add side is CHUNKED rather than one growing buffer (TD-2026-08-14-233).
+  //
+  // It used to be a single `std::string add_` taking std::string's doubling
+  // curve. Two costs came out of that, and both are on the typing path:
+  //
+  //   * A reallocation copies every byte of dead edit history to make room for
+  //     the next few typed ones. The memory-pressure compaction below lets the
+  //     history reach 4 MiB before it is reclaimed, so the last growth step
+  //     before a compaction memcpy'd ~4 MiB *inside a keystroke*.
+  //   * The growth steps are geometric, so a scenario's retention series is
+  //     dominated by where the doubling boundaries happen to land rather than by
+  //     what it retains. That is what made `editor_smart_indent_typing`'s
+  //     `p50_net_heap_bytes` gate read 26 KB against a 14 KB baseline while the
+  //     steady-state floor was 1.8 KB.
+  //
+  // Chunks fix both: an append never moves a byte that is already stored, so the
+  // copy is gone, and the retention series is a flat floor plus a bounded step.
+  // A chunk is also exactly what makes a piece contiguous — every append lands
+  // wholly inside one chunk, which is the invariant TryViewRange's zero-copy read
+  // depends on.
+  //
+  // Chunk capacity climbs geometrically to a cap, so a document edited twice does
+  // not retain a full-size chunk while a long session still amortizes to one
+  // allocation per kMaxAddChunkBytes.
+  static constexpr std::size_t kMinAddChunkBytes = 8u * 1024u;
+  static constexpr std::size_t kMaxAddChunkBytes = 64u * 1024u;
+
+  struct AddChunk {
+    std::string bytes;
+    std::vector<std::uint32_t> newlines;  // chunk-relative offsets of each '\n'
+  };
+
+  struct AddLocation {
+    BufferId buffer = kOriginal;
+    std::uint32_t offset = 0;
+  };
+
   // --- buffer access ---
-  const std::string& BufferOf(std::uint8_t buffer) const {
-    return buffer == kOriginal ? original_ : add_;
+  const std::string& BufferOf(BufferId buffer) const {
+    return buffer == kOriginal ? original_ : add_chunks_[buffer - 1].bytes;
   }
-  const std::vector<std::uint32_t>& NewlinesOf(std::uint8_t buffer) const {
-    return buffer == kOriginal ? original_newlines_ : add_newlines_;
+  const std::vector<std::uint32_t>& NewlinesOf(BufferId buffer) const {
+    return buffer == kOriginal ? original_newlines_ : add_chunks_[buffer - 1].newlines;
   }
   // Number of '\n' in buffer `b` within byte range [from, to).
-  std::uint32_t CountNewlines(std::uint8_t buffer, std::uint32_t from, std::uint32_t to) const;
-  // Byte offset (within the buffer) of the `nth` (0-based) '\n' inside [from, to).
-  std::uint32_t NthNewlineOffset(std::uint8_t buffer, std::uint32_t from, std::uint32_t nth) const;
-  // Append `text` to the add buffer; returns its start offset there.
-  std::uint32_t AppendToAdd(std::string_view text);
-  // Below this, `add_` is too small to be worth a compaction pass; ordinary typing
-  // in a small document never reaches it.
+  std::uint32_t CountNewlines(BufferId buffer, std::uint32_t from, std::uint32_t to) const;
+  // Append `text` to the add side; returns the chunk and offset it landed at.
+  AddLocation AppendToAdd(std::string_view text);
+  // Start a chunk able to hold `needed` bytes without ever reallocating.
+  void StartAddChunk(std::size_t needed);
+  // Below this, the dead history is too small to be worth a compaction pass;
+  // ordinary typing in a small document never reaches it.
   static constexpr std::size_t kAddBufferCompactionFloorBytes = 4u * 1024u * 1024u;
   // Compact once the dead edit history exceeds this multiple of the LIVE document,
   // so the bound on resident text is proportional to the document rather than to
   // how long the session has been editing it. Larger = fewer compactions and more
   // retained history; smaller = tighter memory and more O(document) rebuilds.
   static constexpr std::size_t kAddBufferDeadHistoryMultiple = 4;
-  // Materialize the live document into `original_` and clear the append-only
-  // `add_` buffer, preserving content and line_count_. Called by InsertText when
-  // add_ would otherwise overflow the 32-bit offset space, and when the dead
+  // Materialize the live document into `original_` and drop every add chunk,
+  // preserving content and line_count_. Called by InsertText when the dead
   // history has outgrown the live document by kAddBufferDeadHistoryMultiple.
   void CompactAddBuffer();
   // Rebuild the newline index + single root piece from the current `original_`
@@ -252,7 +291,7 @@ class PieceTree {
   void RebuildFromOriginal();
 
   // --- node pool ---
-  NodeId Allocate(std::uint8_t buffer, std::uint32_t start, std::uint32_t length);
+  NodeId Allocate(BufferId buffer, std::uint32_t start, std::uint32_t length);
   void Free(NodeId id);
   std::uint32_t NextPriority();
 
@@ -340,9 +379,12 @@ class PieceTree {
   }
 
   std::string original_;
-  std::string add_;
   std::vector<std::uint32_t> original_newlines_;  // offsets of each '\n' in original_
-  std::vector<std::uint32_t> add_newlines_;       // offsets of each '\n' in add_
+  // Append-only edit history, chunked (see AddChunk). Never reordered or erased
+  // while pieces reference it — only CompactAddBuffer/RebuildFromOriginal drop it,
+  // and both rebuild every piece.
+  std::vector<AddChunk> add_chunks_;
+  std::size_t add_total_bytes_ = 0;  // live bytes across all chunks, not capacity
 
   std::vector<Node> nodes_;        // index 0 is the null sentinel
   std::vector<NodeId> free_list_;
