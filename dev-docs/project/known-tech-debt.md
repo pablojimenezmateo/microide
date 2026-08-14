@@ -389,6 +389,79 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-213 — a tab cannot be dragged into the other editor group, so a split is populated only by keyboard. [OPEN 2026-08-14.]
+
+`TabMouseCoordinator::ResolveDragStrip` resolves ONE strip — the focused group's —
+and `HandleMotion` never asks whether the pointer left it. Dragging an editor tab
+over the other group's strip in a split therefore does nothing at all: the ghost
+follows the pointer across the divider, the target strip does not react, and the
+drop lands the tab back in the group it came from. VS Code moves the editor
+between groups on that gesture, and it is the obvious way to populate a split.
+
+What the shape needs, given what this pass already built:
+
+- `DragStrip` is already a resolved (strip rect, visible list, kind range, move
+  fn) tuple. Cross-group means resolving it for the strip the POINTER is over
+  rather than for `state_.focused_group_index`, which
+  `ResolveEditorGroupTabStrips` already enumerates heap-free.
+- The commit is not `move_active_tab_to` — it is a move BETWEEN groups, which is
+  a different operation (`MoveTabToGroup(from, index, to, slot)`) and does not
+  exist yet. `WorkspaceShellEditorGroups` owns the group vector.
+- The slide animation is per-strip (`TabSlideState::group_index`), so a
+  cross-group drag needs the destination group's neighbours to open a gap while
+  the source group's close up — two animating strips at once, which the single
+  `TabSlideState` cannot express.
+- The commit guard added in this pass (`before.model_offset + before.active ==
+  source_index`) assumes the dragged tab is the active one in ITS group; a
+  cross-group drop has to re-express that against the source group.
+
+Not a shim: the reason it is filed rather than done is the third bullet — one
+`TabSlideState` for two animating strips is a state-shape change, not a
+conditional.
+
+### TD-2026-08-14-212 — the tab drag has no perf scenario, so its cost is only ever measured by hand. [OPEN 2026-08-14.]
+
+`AdvisoryPerfScenarios.cpp` has `project_tab_strip_layout_hittest` (opt-in, by
+name) and nothing that exercises a DRAG. The 2026-08-14 pass moved the drag off
+the hover pipeline and off the full-window repaint, and measured the win with a
+throwaway in-test harness — 4000 synthetic motion events over a 12-tab strip,
+~14 us/event before (bimodal, 5.6–14.8 across runs) to a steady 4.7–5.2 after —
+then deleted the harness, because a scenario needs a committed baseline and this
+session was asked not to run the comparison.
+
+What a real scenario would pin, none of which is covered today:
+
+- the per-motion-event cost of `TabMouseCoordinator::HandleMotion` on an
+  overflowing strip (the interesting case: it resolves the strip, re-lays the
+  visible list on an auto-scroll step, and reseeds the slide targets),
+- the allocation count of one drag from press to drop, which should now be
+  bounded by the slide-target vectors and nothing per event,
+- the damage area per drag frame, which is the change with the largest real-world
+  effect and the one a headless micro-benchmark cannot see at all.
+
+The third is the reason this is worth a scenario rather than a re-run of the
+throwaway: repaint scope is invisible to an event-cost measurement, and it is
+what a user feels.
+
+### TD-2026-08-14-211 — every coordinator that takes a strip list by value undoes the memo it reads from. [RESOLVED 2026-08-14, same session it was filed.]
+
+**Fixed for the tab mouse path and the bottom-panel view model.**
+`TabMouseCoordinator::Operations`' three `compute_visible_*` hooks were declared
+`std::function<std::vector<VisibleStripTab>(const SDL_FRect&)>` — by VALUE — while
+every implementation behind them returns the service's memoized vector by
+reference. Three `std::string`s per visible tab were copied on every mouse-motion
+event of a drag, every press on a strip, and twice per wheel tick, i.e. exactly on
+the paths [198](#td-2026-08-13-198) and [209](#td-2026-08-14-209) added the caches
+for. `BottomPanelSurfaceViewModel::tabs` had the same shape and did it once per
+PAINTED frame.
+
+Both now borrow. The rule that came with it, and the reason this is worth
+recording rather than just fixing: a borrowed strip list is only valid until
+something rebuilds that strip, so the press hit-test can no longer hold a
+reference across `activate` / `close` / `switch` — it copies the POD fields it
+needs first (`HitStripTab`). Any future by-reference conversion of a memoized list
+has to answer the same question at each call site.
+
 ### TD-2026-08-14-209 — the bottom-panel strip is the third strip with no visible-list cache, and its four callers ask per frame. [RESOLVED 2026-08-14, same session it was filed.]
 
 **Fixed.** `ComputeVisibleBottomPanelTabs` now memoizes the laid-out list and
