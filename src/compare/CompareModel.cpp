@@ -1420,10 +1420,15 @@ class RowSink {
 
 }  // namespace
 
-CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
-                                                  const std::string& left,
-                                                  const std::string& right,
-                                                  const CompareBuildOptions& options) {
+// Internal linkage: both callers are the two public entry points at the bottom of
+// this file, and nothing declares it in the header. Left external it was the only
+// -Wmissing-declarations hit in the tree, and it denied the optimizer the one
+// thing worth having here -- this is the whole diff build, so whether it can be
+// inlined into `BuildCompareModel` is not a rounding error.
+static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
+                                                         const std::string& left,
+                                                         const std::string& right,
+                                                         const CompareBuildOptions& options) {
   CompareBuildProfile profile;
   model.hunks.clear();
 
