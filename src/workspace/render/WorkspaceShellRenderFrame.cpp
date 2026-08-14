@@ -666,8 +666,27 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
         CaretVisibleNow() &&
         !(overlay_vm.current_surface == TextInputSurface::Editor &&
           !context_.text_input.composition.text.empty());
-    RenderCompareSurface(renderer, layout.editor_surface, *active_compare_tab, project_state.root,
-                         draw_compare_caret, project_state.diagnostics_store);
+    // Plugin decorations for the EDITABLE right pane only, and resolved here
+    // because the compare render TU may not read project state itself. The left
+    // pane is a different revision of the file, so a decoration published against
+    // the working-tree line numbers would land on the wrong line there
+    // (TD-2026-08-13-206).
+    const editor::FileDecorations* compare_right_decorations = nullptr;
+    if (active_compare_tab->right_editable &&
+        !active_compare_tab->right_viewport.path().empty() &&
+        !active_compare_tab->right_viewport.dirty()) {
+      const auto* presentation = project_state.plugin_presentation_if_present();
+      compare_right_decorations =
+          presentation != nullptr
+              ? presentation->decorations.FindByPathKey(active_compare_tab->right_viewport.path_key())
+              : nullptr;
+    }
+    RenderCompareSurface(renderer, layout.editor_surface, *active_compare_tab, draw_compare_caret,
+                         CompareRenderProjectInputs{
+                             .project_root = &project_state.root,
+                             .diagnostics_store = &project_state.diagnostics_store,
+                             .right_plugin_decorations = compare_right_decorations,
+                         });
   } else if (active_merge_tab != nullptr) {
     const bool draw_merge_caret =
         project_state.surface.focus == FocusTarget::Editor && CaretVisibleNow();

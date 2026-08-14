@@ -11,6 +11,8 @@
 
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsRender.h"
+#include "editor/GutterIconRegistry.h"
+#include "editor/PluginDecorationStore.h"
 #include "editor/IndentGuides.h"
 #include "editor/RowDecorationBuilder.h"
 #include "editor/SyntaxHighlighter.h"
@@ -168,9 +170,12 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
 void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                           const SDL_FRect& rect,
                                           CompareTabState& compare_tab_state,
-                                          const std::filesystem::path& project_root,
                                           bool draw_compare_caret,
-                                          const editor::DiagnosticsStore& diagnostics_store) {
+                                          const CompareRenderProjectInputs& project_inputs) {
+  const std::filesystem::path& project_root = *project_inputs.project_root;
+  const editor::DiagnosticsStore& diagnostics_store = *project_inputs.diagnostics_store;
+  const editor::FileDecorations* const right_plugin_decorations =
+      project_inputs.right_plugin_decorations;
   CompareTabState* compare_tab = &compare_tab_state;
   if (renderer == nullptr || rect.w <= 0.0f || rect.h <= 0.0f) {
     return;
@@ -838,6 +843,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                     right_input.text_x, y);
       right_input.prepositioned_fills =
           std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
+      // Plugin text styles, keyed by the RIGHT pane's own line numbers — the only
+      // side whose line space matches the file the decoration was published
+      // against (TD-2026-08-13-206). Same field the editor renderer fills, so a
+      // decoration paints identically in either surface.
+      if (right_plugin_decorations != nullptr) {
+        right_input.text_styles = right_plugin_decorations->TextStylesForLine(
+            static_cast<std::uint32_t>(right_line_index));
+      }
       if (right_diagnostics != nullptr) {
         right_input.diagnostics =
             std::span<const editor::PublishedDiagnostic>(*right_diagnostics);
@@ -859,6 +872,22 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           editor::DrawDiagnosticGutterMarker(renderer, theme_, surface.right_x, y,
                                              surface.gutter_width, surface.line_height,
                                              *severity);
+        }
+      }
+      // Plugin gutter marks share the diagnostic marker slot and are drawn after
+      // it, which is exactly the precedence EditorViewRenderer uses — a mark and a
+      // diagnostic on the same line resolve the same way in both surfaces. Once
+      // per logical line, so a wrapped row does not stamp it per segment.
+      if (right_plugin_decorations != nullptr && wrap_row.first) {
+        const std::span<const editor::GutterMarkDecoration> marks =
+            right_plugin_decorations->GutterMarksForLine(
+                static_cast<std::uint32_t>(right_line_index));
+        if (!marks.empty()) {
+          // Sorted (line, -priority), so the first entry is the winner of the
+          // single slot.
+          editor::GutterIconRegistry::Draw(renderer, marks.front().shape, marks.front().color,
+                                           surface.right_x, y, surface.gutter_width,
+                                           surface.line_height);
         }
       }
       if (wrap_row.first) {

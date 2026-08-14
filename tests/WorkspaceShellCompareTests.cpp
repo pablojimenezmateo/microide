@@ -6,6 +6,7 @@
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "render/Theme.h"
+#include "editor/PluginDecorationStore.h"
 
 #include <algorithm>
 #include <atomic>
@@ -166,6 +167,76 @@ void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
          "Shift+Tab should be handled on the compare editable pane");
   Expect(compare.right_viewport.lines().LineView(0) == "alpha",
          "Shift+Tab outdents the block back rather than inserting a tab");
+}
+
+// TD-2026-08-13-206's remaining render feature: plugin decorations on the
+// editable compare pane.
+//
+// Asserted in PIXELS, and both ways round. A decoration that is merely plumbed
+// into `RowDecorationInput` and then dropped by the row builder — or drawn behind
+// the diff tint, or clipped out of the pane — would still pass a "the field is
+// set" test. So: render once with nothing published (the color must be absent),
+// publish, render again (the color must appear), and do the same for the gutter
+// mark, which paints through a different path entirely.
+void TestWorkspaceShellComparePaintsPluginDecorations() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add decoration fixture", "decoration fixture");
+  WriteFile(source, "int beta(int x) {\n  return (x + 1);\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  // Colors no theme uses, so finding one is proof the decoration painted it.
+  constexpr SDL_Color kStyleBackground{13, 240, 111, 255};
+  constexpr SDL_Color kMarkColor{240, 13, 200, 255};
+  SoftwareCanvas canvas(1280, 720);
+  const auto canvas_contains = [&canvas](SDL_Color wanted) {
+    for (int y = 0; y < 720; ++y) {
+      for (int x = 0; x < 1280; ++x) {
+        const SDL_Color pixel = canvas.PixelAt(x, y);
+        if (pixel.r == wanted.r && pixel.g == wanted.g && pixel.b == wanted.b) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(!canvas_contains(kStyleBackground) && !canvas_contains(kMarkColor),
+         "the probe colors are absent before anything is published");
+
+  auto& project_state = WorkspaceShellTestAccess::CurrentProjectState(shell);
+  editor::PluginDecorationData data;
+  data.text_styles.push_back(editor::TextStyleDecoration{
+      .line = 1,  // the `return (x + 1);` line, which exists on the right side
+      .start_column = 0,
+      .end_column = 0,
+      .background = kStyleBackground,
+      .flags = editor::kDecorationWholeLine,
+  });
+  data.gutter_marks.push_back(editor::GutterMarkDecoration{
+      .line = 1,
+      .shape = editor::GutterIconShape::Dot,
+      .color = kMarkColor,
+      .priority = 1,
+  });
+  Expect(project_state.EnsurePluginPresentation().decorations.ReplaceForOwnerFile(
+             "decoration-test", source, std::move(data)),
+         "publishing decorations for the compared file should change the store");
+
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(canvas_contains(kStyleBackground),
+         "a plugin text style paints on the editable compare pane");
+  Expect(canvas_contains(kMarkColor),
+         "a plugin gutter mark paints in the editable pane's gutter");
 }
 
 // TD-2026-08-13-206's last render feature: bracket-match highlight on the
@@ -2255,6 +2326,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable);
   AddTest(tests, "WorkspaceShell/CompareBracketMatchIsMemoized",
           TestWorkspaceShellCompareBracketMatchIsMemoized);
+  AddTest(tests, "WorkspaceShell/ComparePaintsPluginDecorations",
+          TestWorkspaceShellComparePaintsPluginDecorations);
   AddTest(tests, "WorkspaceShell/CompareEditablePaneIndentsAndOutdents",
           TestWorkspaceShellCompareEditablePaneIndentsAndOutdents);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",

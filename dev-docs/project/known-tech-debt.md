@@ -1689,7 +1689,48 @@ Do not take this without first enumerating the behavioural differences between
 the two switches — Esc means "close the tab" on compare and "collapse carets" in
 the editor, and that divergence is deliberate.
 
-### TD-2026-08-13-206 — the compare surface paints through its own row loop, so its editable pane is missing the editor's view features. [PARTIAL 2026-08-14 — whitespace, indent guides and bracket match all shipped; folding and plugin decorations did not.]
+### TD-2026-08-13-206 — the compare surface paints through its own row loop, so its editable pane is missing the editor's view features. [RESOLVED 2026-08-14 — whitespace, indent guides, bracket match and plugin decorations shipped; folding is a reasoned WON'T DO.]
+
+**Plugin decorations shipped 2026-08-14, on the right pane, and the scoping is
+the interesting part.** Text styles fill the same `RowDecorationInput::text_styles`
+the editor renderer fills, so a decoration paints identically in either surface;
+gutter marks go through `GutterIconRegistry::Draw` in the slot the compare pane
+already uses for the diagnostic marker, drawn *after* it — the same precedence
+`EditorViewRenderer` uses, so a mark and a diagnostic on one line resolve the same
+way in both.
+
+Three deliberate exclusions, each for a reason rather than for effort:
+
+- **The left pane gets nothing.** Decorations are published against the
+  working-tree file's line numbers, and the left pane is a *different revision*.
+  Applying them there would attach a decoration to the wrong line — a silent
+  wrongness, which is worse than the absence.
+- **Inline texts and code lenses are out.** Both need either a trailing layout
+  extension or a whole extra row, and a compare row is an *aligned pair*: giving
+  one side an extra row desynchronizes it from the other. That is the "teach
+  `EditorViewRenderer` to paint a diff pane" half of this entry, and it is a row-
+  model change, not a plumbing one.
+- **Folding is WON'T DO.** VS Code — this repo's stated reference — does not fold
+  in its diff editor either, and the compare surface already has the collapse that
+  a diff actually wants: `ComparePresentationRowKind::CollapsedContext` collapses
+  unchanged runs, which is VS Code's "Collapse Unchanged Regions". Syntax folding
+  on top of that would give two independent collapse mechanisms over one row list,
+  with the fold ranges computed in buffer-line space and the rows living in
+  presentation space.
+
+Plumbing note: the compare render TU may not read `context_.current_project_state`
+(`CheckCompareRenderStructuralGate`), so each injected input arrived as its own
+parameter and the list had grown to five. They are one `CompareRenderProjectInputs`
+now — which is also what made this fit: `WorkspaceShellMembers.inc`'s code-line cap
+is a hard invariant, and it was the thing about to decide whether the diff surface
+got the feature.
+
+Pinned by `WorkspaceShell/ComparePaintsPluginDecorations`, which asserts in PIXELS
+and both ways round: render with nothing published (the probe colors must be
+absent), publish, render again (they must appear). A decoration merely plumbed
+into the input and then dropped by the row builder, painted behind the diff tint,
+or clipped out of the pane would pass a "the field is set" test. Probed for
+vacuity — it fails with either wiring compiled out.
 
 **Done 2026-08-14: render-whitespace, from one implementation.** The marker
 geometry and the per-row walk moved into `editor/RowDecorationBuilder`
@@ -1728,10 +1769,11 @@ one caret. Pinned by `WorkspaceShell/CompareBracketMatchIsMemoized`, which paint
 through a REAL renderer (the null-renderer path returns before any of this) and
 asserts an unchanged repaint keeps the memo key while a caret move re-keys it.
 
-**Still open:** folding and plugin decorations on the compare panes, unchanged
-from the entry. Both are structural — they want the row model the diff surface
-does not share with the editor — and are the part that genuinely needs the
-"teach EditorViewRenderer to paint a diff pane" half of this entry.
+**Was still open at that point:** folding and plugin decorations on the compare
+panes. Both were called structural — wanting the row model the diff surface does
+not share with the editor. That held for folding, for inline texts and for code
+lenses; it did not hold for text styles and gutter marks, which slot into fields
+the row the compare loop already builds has. See the resolution above.
 
 #### Original entry
 
