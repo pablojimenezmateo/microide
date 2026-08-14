@@ -455,7 +455,7 @@ std::uint64_t TabStripService::ComputeBottomPanelTabsFingerprint(
   return hash;
 }
 
-std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
+const std::vector<BottomPanelTabModel>& TabStripService::BuildBottomPanelTabs(
     const ProjectWorkspaceState& state,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
   const std::uint64_t fingerprint = ComputeBottomPanelTabsFingerprint(state, channels);
@@ -534,20 +534,34 @@ std::vector<BottomPanelTabModel> TabStripService::BuildBottomPanelTabs(
   }
 
   bottom_panel_tabs_cache_.fingerprint = fingerprint;
-  bottom_panel_tabs_cache_.tabs = tabs;
+  bottom_panel_tabs_cache_.tabs = std::move(tabs);
   bottom_panel_tabs_cache_.valid = true;
-  return tabs;
+  // A model rebuild invalidates the laid-out list built from it.
+  visible_bottom_panel_tabs_cache_.valid = false;
+  return bottom_panel_tabs_cache_.tabs;
 }
 
-std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
+const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTabs(
     const ProjectWorkspaceState& state,
     const SDL_FRect& panel_header,
     LayoutMode layout_mode,
     const MeasureWidthFn& measure_width,
     std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const {
-  const std::vector<BottomPanelTabModel> tabs = BuildBottomPanelTabs(state, channels);
+  const std::vector<BottomPanelTabModel>& tabs = BuildBottomPanelTabs(state, channels);
+  VisibleBottomPanelTabsCache& cache = visible_bottom_panel_tabs_cache_;
   if (tabs.empty()) {
-    return {};
+    cache.valid = false;
+    cache.tabs.clear();
+    return cache.tabs;
+  }
+
+  const bool header_matches = cache.header.x == panel_header.x && cache.header.y == panel_header.y &&
+                              cache.header.w == panel_header.w && cache.header.h == panel_header.h;
+  if (cache.valid && cache.model_fingerprint == bottom_panel_tabs_cache_.fingerprint &&
+      header_matches && cache.layout_mode == layout_mode &&
+      cache.active_terminal_tab_index == state.active_terminal_tab_index &&
+      cache.tab_scroll_index == state.panel.tab_scroll_index) {
+    return cache.tabs;
   }
 
   std::vector<float> widths;
@@ -604,7 +618,14 @@ std::vector<VisibleStripTab> TabStripService::ComputeVisibleBottomPanelTabs(
   if (all_tabs_visible) {
     visible = build_tabs(panel_header.x, 0.0f);
   }
-  return visible;
+  cache.model_fingerprint = bottom_panel_tabs_cache_.fingerprint;
+  cache.header = panel_header;
+  cache.layout_mode = layout_mode;
+  cache.active_terminal_tab_index = state.active_terminal_tab_index;
+  cache.tab_scroll_index = state.panel.tab_scroll_index;
+  cache.tabs = std::move(visible);
+  cache.valid = true;
+  return cache.tabs;
 }
 
 std::vector<VisibleStripTab> TabStripService::ComputeVisibleTerminalTabs(

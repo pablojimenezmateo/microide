@@ -86,6 +86,68 @@ void TestBottomPanelTabsCacheInvalidatesOnOpenIdChange() {
   Expect(after[1].output_channel_id == "test", "the newly opened channel appears");
 }
 
+// TD-2026-08-14-209: the bottom-panel strip had a model cache but no LAID-OUT
+// cache, and four call sites asked for the layout per frame. The model cache
+// deliberately does not key on which tab is active or how far the strip is
+// scrolled — neither shapes the model list — so the layout cache must.
+void TestBottomPanelVisibleTabsAreMemoized() {
+  TabStripService service;
+  ProjectWorkspaceState state;
+  state.panel.content = PanelContentKind::Output;
+  state.panel.output.channel_id = "build";
+  state.panel.output.open_channel_ids = {"build", "test", "lint"};
+  std::vector<ChannelInfo> channels = {
+      {"build", "Build"}, {"test", "Test Results"}, {"lint", "Lint"}};
+  const SDL_FRect header{0.0f, 700.0f, 1200.0f, 26.0f};
+  int measure_calls = 0;
+  const auto measure = [&](std::string_view text) {
+    ++measure_calls;
+    return static_cast<float>(text.size()) * 8.0f;
+  };
+
+  const auto& first = service.ComputeVisibleBottomPanelTabs(
+      state, header, microide::workspace::LayoutMode::Regular, measure, channels);
+  Expect(first.size() == 3, "three output tabs are laid out");
+  const int calls_after_first = measure_calls;
+
+  for (int i = 0; i < 4; ++i) {
+    const auto& repeat = service.ComputeVisibleBottomPanelTabs(
+        state, header, microide::workspace::LayoutMode::Regular, measure, channels);
+    Expect(repeat.size() == 3, "repeat calls return the same laid-out strip");
+  }
+  Expect(measure_calls == calls_after_first, "repeat calls measure no text at all");
+  Expect(&first == &service.ComputeVisibleBottomPanelTabs(
+                       state, header, microide::workspace::LayoutMode::Regular, measure, channels),
+         "the memoized vector is returned by reference");
+
+  // The strip scroll index shapes the LAYOUT but not the model, so the model
+  // fingerprint cannot see it — the layout key has to.
+  state.panel.tab_scroll_index = 1;
+  const auto& scrolled = service.ComputeVisibleBottomPanelTabs(
+      state, header, microide::workspace::LayoutMode::Regular, measure, channels);
+  Expect(!scrolled.empty() && scrolled.front().index == 1,
+         "scrolling the strip re-lays it out rather than serving the old scroll");
+
+  // Same for the header rect.
+  const SDL_FRect narrow{0.0f, 700.0f, 200.0f, 26.0f};
+  const auto& resized = service.ComputeVisibleBottomPanelTabs(
+      state, narrow, microide::workspace::LayoutMode::Regular, measure, channels);
+  Expect(resized.size() <= scrolled.size(), "a narrower header fits no more tabs than a wide one");
+
+  // And a genuine model change still misses both caches. Scroll back to the top
+  // first: with the strip scrolled past it, tab 0 is not laid out at all and this
+  // would be asserting about a tab that is off-screen rather than about the cache.
+  state.panel.tab_scroll_index = 0;
+  channels[0].label = "Build (Debug)";
+  const auto& relabelled = service.ComputeVisibleBottomPanelTabs(
+      state, header, microide::workspace::LayoutMode::Regular, measure, channels);
+  bool found_relabelled = false;
+  for (const auto& tab : relabelled) {
+    found_relabelled = found_relabelled || tab.display_title == "Build (Debug)";
+  }
+  Expect(found_relabelled, "a relabelled channel is not served stale from the layout cache");
+}
+
 // TD-2026-08-13-198: the project strip used to be rebuilt from scratch by every
 // caller that asked what was on it — five per frame, each producing a title, a
 // tooltip, a badge label and a text measurement per project. The chrome adapter
@@ -197,6 +259,8 @@ void TestProjectStripCacheMissesOnGeometryEpochAndLayoutMode() {
 }  // namespace
 
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TabStripService/BottomPanelVisibleTabsAreMemoized",
+          TestBottomPanelVisibleTabsAreMemoized);
   AddTest(tests, "TabStripService/ProjectStripSourcesAreMemoized",
           TestProjectStripSourcesAreMemoized);
   AddTest(tests, "TabStripService/ProjectStripCacheMissesOnDirtyFlip",

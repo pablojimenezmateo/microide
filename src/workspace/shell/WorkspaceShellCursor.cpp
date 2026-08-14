@@ -673,7 +673,7 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
                    x, y)) {
         return CursorKind::Pointer;
       }
-      const std::vector<VisibleStripTab> visible_panel_tabs =
+      const std::vector<VisibleStripTab>& visible_panel_tabs =
           tab_strip_service_.ComputeVisibleBottomPanelTabs(
               context_.current_project_state, panel_header, layout_mode_service_.CurrentMode(),
               [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },

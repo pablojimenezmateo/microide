@@ -307,7 +307,7 @@ bool WorkspaceTabStripChrome::ScrollBottomPanelTabStrip(int direction) {
 }
 
 bool WorkspaceTabStripChrome::ActivateBottomPanelTab(std::size_t model_index) {
-  const std::vector<BottomPanelTabModel> tabs = tab_strip_service_->BuildBottomPanelTabs(
+  const std::vector<BottomPanelTabModel>& tabs = tab_strip_service_->BuildBottomPanelTabs(
       context_->current_project_state, output_channels_->Channels());
   if (model_index >= tabs.size()) {
     return false;
@@ -341,7 +341,7 @@ bool WorkspaceTabStripChrome::ActivateBottomPanelTab(std::size_t model_index) {
 }
 
 bool WorkspaceTabStripChrome::CloseBottomPanelTab(std::size_t model_index) {
-  const std::vector<BottomPanelTabModel> tabs = tab_strip_service_->BuildBottomPanelTabs(
+  const std::vector<BottomPanelTabModel>& tabs = tab_strip_service_->BuildBottomPanelTabs(
       context_->current_project_state, output_channels_->Channels());
   if (model_index >= tabs.size()) {
     return false;

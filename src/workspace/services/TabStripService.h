@@ -117,10 +117,15 @@ class TabStripService {
   bool ScrollProjectTabStrip(ProjectCatalogState& catalog, int direction) const;
   bool ScrollEditorTabStrip(EditorGroup& group, std::size_t group_index, int direction);
 
-  std::vector<BottomPanelTabModel> BuildBottomPanelTabs(
+  // Both memoized, both returned BY REFERENCE. The model list has been cached on
+  // a content fingerprint since TD-2026-07-17A-084, but it was handed back by
+  // value — five std::strings per tab, copied on every cache HIT — and the
+  // laid-out list above it had no cache at all while four call sites asked for it
+  // per frame or per motion event (TD-2026-08-14-209).
+  const std::vector<BottomPanelTabModel>& BuildBottomPanelTabs(
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;
-  std::vector<VisibleStripTab> ComputeVisibleBottomPanelTabs(
+  const std::vector<VisibleStripTab>& ComputeVisibleBottomPanelTabs(
       const ProjectWorkspaceState& state,
       const SDL_FRect& panel_header,
       LayoutMode layout_mode,
@@ -212,6 +217,22 @@ class TabStripService {
     std::vector<BottomPanelTabModel> tabs;
     bool valid = false;
   };
+  // Memoizes the LAID-OUT bottom-panel strip. The model cache above answers "what
+  // tabs are there"; this answers "where are they", which additionally depends on
+  // the header rect, the layout mode (the new-tab button's reserve), which tab is
+  // active and how far the strip is scrolled — none of which shape the model, so
+  // none of which are in its fingerprint.
+  struct VisibleBottomPanelTabsCache {
+    std::uint64_t model_fingerprint = 0;
+    SDL_FRect header{};
+    LayoutMode layout_mode = LayoutMode::Regular;
+    std::size_t active_terminal_tab_index = 0;
+    int tab_scroll_index = 0;
+    std::vector<VisibleStripTab> tabs;
+    bool valid = false;
+  };
+  mutable VisibleBottomPanelTabsCache visible_bottom_panel_tabs_cache_;
+
   std::uint64_t ComputeBottomPanelTabsFingerprint(
       const ProjectWorkspaceState& state,
       std::span<const WorkspaceOutputChannels::ChannelInfo> channels) const;

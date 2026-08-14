@@ -389,7 +389,28 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-14-209 — the bottom-panel strip is the third strip with no visible-list cache, and its four callers ask per frame.
+### TD-2026-08-14-209 — the bottom-panel strip is the third strip with no visible-list cache, and its four callers ask per frame. [RESOLVED 2026-08-14, same session it was filed.]
+
+**Fixed.** `ComputeVisibleBottomPanelTabs` now memoizes the laid-out list and
+returns it by reference, and `BuildBottomPanelTabs` returns its cached model list
+by reference too — on a HIT it was copying five std::strings per tab, which is the
+sibling defect [198](#td-2026-08-13-198) found on the editor strip.
+
+The layout key is the part worth recording: the model fingerprint deliberately
+does NOT include which tab is active or how far the strip is scrolled, because
+neither shapes the model list — so the layout cache keys on the model fingerprint
+PLUS the header rect, the layout mode (the new-tab button's reserve), the active
+terminal index and the strip scroll index. A model rebuild drops the layout cache.
+
+Covered by `TabStripService/BottomPanelVisibleTabsAreMemoized`, which asserts
+repeat calls measure no text at all and return the same vector by reference, and
+that a scroll, a resize and a channel relabel each still re-lay-out.
+
+`ComputeVisibleTerminalTabs` was left alone deliberately: its only callers are in
+test access, so it costs nothing per frame.
+
+#### Original entry
+
 
 [198](#td-2026-08-13-198) gave the project strip the cache pair the editor strip
 already had. The bottom panel did not get one, and it has the same shape:
