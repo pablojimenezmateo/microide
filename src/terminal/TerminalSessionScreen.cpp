@@ -416,9 +416,33 @@ std::size_t TerminalSession::PutAsciiRunLocked(std::string_view run) {
 }
 
 void TerminalSession::ResizeLineLocked(TerminalLine& line, std::size_t size) {
-  if (line.cells.size() < size) {
-    line.cells.resize(size, MakeAsciiTerminalCell(' ', TerminalStyle{}));
+  if (line.cells.size() >= size) {
+    return;
   }
+  // A line is written a RUN at a time, so letting the vector double its way to
+  // the line's width costs one allocation per doubling: ~8 for an 80-column line,
+  // ~11 measured. `TerminalLineBufferPool` already removed that for a line whose
+  // buffer came from a trimmed one — but the pool is empty until the scrollback
+  // reaches its cap, which is the whole first `max_scrollback_lines_` of every
+  // session and the entirety of `terminal.stream_chunked`. The pool fixed the
+  // steady state and left the fill (TD-2026-08-15-240).
+  //
+  // Reserve the terminal's width on the FIRST growth of an unpooled buffer, so
+  // the line allocates once and every later run on it is free. Capacity only —
+  // `size` still says how long the line is, which is what every reader means by
+  // it.
+  //
+  // This is the memory trade `TerminalLineBufferPool`'s comment declined, and the
+  // reason it is taken now is that the pool bounds it: a full-width buffer that
+  // scrolls out is rescued into the pool and handed to the next line rather than
+  // freed and regrown, so the width is paid once per live line rather than once
+  // per line of output. Only the first growth reserves, so a line that legitimately
+  // exceeds `columns_` (a resize narrowing the terminal under existing content)
+  // still just grows.
+  if (line.cells.capacity() < size) {
+    line.cells.reserve(std::max(size, columns_));
+  }
+  line.cells.resize(size, MakeAsciiTerminalCell(' ', TerminalStyle{}));
 }
 
 void TerminalSession::BreakWideGlyphPairForWriteLocked(TerminalLine& line, std::size_t start,
