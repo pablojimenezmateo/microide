@@ -95,6 +95,7 @@ void PushPluginContext(lua_State* state, void* host_upvalue, const ApiFns& fns) 
 
   PushAddOnlyModule(state, host_upvalue, "formatters", fns.formatters_add);
   PushAddOnlyModule(state, host_upvalue, "save_participants", fns.save_participants_add);
+  PushAddOnlyModule(state, host_upvalue, "virtual_documents", fns.virtual_documents_add);
   PushAddOnlyModule(state, host_upvalue, "completion", fns.completion_add);
   PushAddOnlyModule(state, host_upvalue, "code_actions", fns.code_action_add);
   PushAddOnlyModule(state, host_upvalue, "definition", fns.definition_add);

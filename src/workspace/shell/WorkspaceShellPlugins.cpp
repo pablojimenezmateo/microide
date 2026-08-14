@@ -613,6 +613,20 @@ void WorkspaceShell::RebuildPhase3Registries(bool reconcile_language_servers) {
     save_participant_registry_.Register(
         SaveParticipantSpec{.id = participant.id, .plugin_id = participant.plugin_id});
   }
+  // The eighth sibling, and the one that used to be missing: without this the
+  // read side (open-in-tab, reload-on-change, read-only enforcement, the
+  // `open_file` virtual:// branch) was complete and unreachable, because the
+  // registry's only writer was the test backdoor (TD-2026-07-27-001).
+  virtual_document_registry_.Clear();
+  for (const auto& document : host.ContributedVirtualDocuments()) {
+    virtual_document_registry_.Register(VirtualDocumentSpec{
+        .uri = document.uri,
+        .language_id = document.language_id,
+        .content = document.content,
+        .editable = document.editable,
+        .plugin_id = document.plugin_id,
+    });
+  }
   for (const auto& completion : host.ContributedCompletions()) {
     completion_registry_.Register(CompletionProviderSpec{
         .id = completion.id,

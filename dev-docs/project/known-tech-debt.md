@@ -6695,8 +6695,41 @@ A registry whose only writers are its own tests is a subsystem that cannot run i
 the product, however complete and well-tested its read side looks. Two of the
 shell's registries answered no. One was deleted; the other is filed below.
 
-- **[OPEN] TD-2026-07-27-001 — `VirtualDocumentRegistry` has no producer, so a
-  plugin can ask to open a virtual document but nothing can ever create one.**
+- **[RESOLVED 2026-08-14] TD-2026-07-27-001 — `VirtualDocumentRegistry` has no
+  producer, so a plugin can ask to open a virtual document but nothing can ever
+  create one.**
+
+  **The producer exists now: `ctx.virtual_documents.add{ id, language_id, content,
+  editable }`.** It is the eighth contribution kind rebuilt by
+  `RebuildPhase3Registries`, alongside the seven siblings it used to be the odd
+  one out from. Three decisions worth recording:
+
+  - **The URI is DERIVED, never taken from the plugin** —
+    `virtual://<plugin_id>/<id>`. A plugin-supplied URI could name another
+    plugin's document, or a non-virtual scheme, and the consumer side treats a URI
+    as an identity.
+  - **Re-registering a URI replaces it** rather than appending, so a plugin
+    republishes content by adding again instead of accumulating duplicates the
+    registry would have to disambiguate.
+  - **Unload removes them**, like every other contribution, and the shell clears
+    the registry before rebuilding — otherwise an unloaded plugin's documents keep
+    serving content whose owner is gone.
+
+  It is the only contribution kind with no runtime callback (a virtual document
+  is pure data), so it carries no `*Runtime` sibling and no re-entrancy to reason
+  about — which is why it is markedly smaller than the neighbours it sits with.
+
+  Covered end to end by `WorkspaceShell/PluginContributesVirtualDocument`: a real
+  Lua plugin registers one and the shell opens it with the plugin's content,
+  read-only. The pre-existing coverage went through the `TestAccess` backdoor —
+  which was precisely this entry's complaint, so it could not have caught the
+  missing wire.
+
+  The AST longjmp audit (`tools/audit-lua-longjmp.py`) was rerun over the new
+  raise path: 34 TUs, 142 raise-capable call sites, clean.
+
+  #### Original entry
+
   `WorkspaceShellPlugins.cpp` rebuilds seven sibling registries from plugin
   contributions in one function (formatters, save participants, completions, code
   actions, tools, SCM providers, annotation providers). Virtual documents are the

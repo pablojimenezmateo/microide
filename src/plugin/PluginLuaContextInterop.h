@@ -44,6 +44,7 @@ struct ApiFns {
   lua_CFunction file_icons_register;
   lua_CFunction formatters_add;
   lua_CFunction save_participants_add;
+  lua_CFunction virtual_documents_add;
   lua_CFunction completion_add;
   lua_CFunction code_action_add;
   lua_CFunction definition_add;

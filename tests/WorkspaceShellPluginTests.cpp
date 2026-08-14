@@ -687,6 +687,56 @@ return ide.plugin({
          "opening a project should record plugin-contributed auth providers on the host");
 }
 
+// TD-2026-07-27-001: the virtual-document registry had a complete, tested READ
+// side and no producer at all — its only writer was the TestAccess backdoor, so a
+// plugin could ask to open a virtual document and nothing could ever create one.
+// This drives the new `ctx.virtual_documents.add` contribution end to end: a real
+// plugin registers one, and it opens with the plugin's content.
+void TestWorkspaceShellPluginContributesVirtualDocument() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  WriteFile(project_root / "README.md", "virtual document producer fixture\n");
+
+  WritePluginInit(
+      plugins_root, "vdocs",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "vdocs",
+  setup = function(ctx)
+    ctx.virtual_documents.add({
+      id = "notes.md",
+      language_id = "markdown",
+      content = "from the plugin",
+      editable = false,
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "virtual document producer fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::PluginErrors(shell).empty(), DescribePluginState(shell).c_str());
+
+  // The URI is DERIVED from the plugin id, never taken from the plugin: a
+  // plugin-supplied URI could name another plugin's document.
+  Expect(WorkspaceShellTestAccess::OpenVirtualDocument(shell, "virtual://vdocs/notes.md"),
+         "a plugin-contributed virtual document should be openable");
+  Expect(!WorkspaceShellTestAccess::ActiveEditor(shell).lines().empty() &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).lines().front() == "from the plugin",
+         "the opened tab should hold the content the plugin contributed");
+  Expect(!WorkspaceShellTestAccess::HandleTextInput(shell, "edit"),
+         "a non-editable contributed document stays read-only");
+}
+
 void TestWorkspaceShellVirtualDocumentsOpenAndRefresh() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path project_root = temp_dir.path() / "project";
@@ -5449,6 +5499,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSavePipelineOverlappingSavesCoalesceCorrectly);
   AddTest(tests, "WorkspaceShell/Phase4RegistriesReloadWithPlugins",
           TestWorkspaceShellPhase4RegistriesReloadWithPlugins);
+  AddTest(tests, "WorkspaceShell/PluginContributesVirtualDocument",
+          TestWorkspaceShellPluginContributesVirtualDocument);
   AddTest(tests, "WorkspaceShell/VirtualDocumentsOpenAndRefresh",
           TestWorkspaceShellVirtualDocumentsOpenAndRefresh);
   AddTest(tests, "WorkspaceShell/LoadsPluginsAndRunsBufferHooks",

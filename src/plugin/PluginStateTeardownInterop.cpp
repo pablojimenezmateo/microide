@@ -58,6 +58,7 @@ void UnregisterContributionsForState(
     std::vector<PluginHost::ContributedStatusItem>* status_item_order,
     std::vector<PluginHost::ContributedFormatter>* formatters,
     std::vector<PluginHost::ContributedSaveParticipant>* save_participants,
+    std::vector<PluginHost::ContributedVirtualDocument>* virtual_documents,
     std::vector<runtime_types::SaveParticipantRuntime>* save_participant_runtimes,
     std::vector<PluginHost::ContributedCompletion>* completions,
     std::vector<runtime_types::CompletionRuntime>* completion_runtimes,
@@ -164,6 +165,15 @@ void UnregisterContributionsForState(
                                             return e.plugin_id == plugin_id;
                                           }),
                            save_participants->end());
+  // An unloaded plugin's virtual documents go with it: the consumer side treats a
+  // URI as an identity, so leaving them would keep serving content whose owner is
+  // gone (and a reload would then register duplicates).
+  virtual_documents->erase(
+      std::remove_if(virtual_documents->begin(), virtual_documents->end(),
+                     [&](const PluginHost::ContributedVirtualDocument& e) {
+                       return e.plugin_id == plugin_id;
+                     }),
+      virtual_documents->end());
   for (auto it = save_participant_runtimes->begin(); it != save_participant_runtimes->end();) {
     if (it->plugin_id != plugin_id) {
       ++it;

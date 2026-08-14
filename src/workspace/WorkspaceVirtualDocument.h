@@ -37,6 +37,11 @@ class VirtualDocumentRegistry {
   // Remove virtual document.
   void Remove(const std::string& uri);
 
+  // Drop every document. The shell rebuilds this registry wholesale from plugin
+  // contributions (as it does the other seven), so it needs to start empty or an
+  // unloaded plugin's documents would survive its unload.
+  void Clear() { documents_.clear(); }
+
   // Set change callback.
   using OnContentChange = std::function<void(const std::string& uri)>;
   void SetOnChange(OnContentChange callback) { on_change_ = std::move(callback); }

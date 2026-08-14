@@ -395,6 +395,7 @@ struct PluginHost::Impl {
     std::vector<PluginHost::ContributedSettingSpec> settings;
     std::vector<PluginHost::ContributedFormatter> formatters;
     std::vector<PluginHost::ContributedSaveParticipant> save_participants;
+    std::vector<PluginHost::ContributedVirtualDocument> virtual_documents;
     std::vector<PluginHost::ContributedCompletion> completions;
     std::vector<PluginHost::ContributedCodeAction> code_actions;
     std::vector<PluginHost::ContributedLanguageServer> language_servers;
@@ -482,6 +483,7 @@ struct PluginHost::Impl {
   std::unordered_map<std::string, std::size_t> status_item_index;
   std::vector<PluginHost::ContributedFormatter> formatters;
   std::vector<PluginHost::ContributedSaveParticipant> save_participants;
+  std::vector<PluginHost::ContributedVirtualDocument> virtual_documents;
   std::vector<SaveParticipantRuntime> save_participant_runtimes;
   std::vector<PluginHost::ContributedCompletion> completions;
   std::vector<CompletionRuntime> completion_runtimes;
@@ -633,6 +635,7 @@ struct PluginHost::Impl {
     snapshot.settings = settings;
     snapshot.formatters = formatters;
     snapshot.save_participants = save_participants;
+    snapshot.virtual_documents = virtual_documents;
     snapshot.completions = completions;
     snapshot.code_actions = code_actions;
     snapshot.language_servers = language_servers;
