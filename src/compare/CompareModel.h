@@ -48,6 +48,10 @@ struct CompareRow {
   //
   // A row built by hand (tests, fixtures) may instead view any storage that
   // outlives it; the model does not assume its rows point into its own buffers.
+  // A string LITERAL is fine — static storage. A `std::string` local or parameter
+  // is not: assigning one here compiles silently and dangles the moment it goes
+  // out of scope. Put such text in the model's `left_source`/`right_source` (see
+  // `MakeCompareText`) and view that, which is what the builder does.
   std::string_view left_text;
   std::string_view right_text;
   int left_line = 0;

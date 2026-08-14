@@ -175,12 +175,19 @@ void RegisterBranchReviewStateTests(std::vector<TestCase>& tests) {
                      // left+right byte concatenation is the same, but split differently:
                      // ("hello","world") vs ("hell","oworld"). The old undelimited hash
                      // collided on these; the length-prefixed hash must tell them apart.
-                     auto make_model = [](std::string left, std::string right) {
+                     auto make_model = [](std::string_view left, std::string_view right) {
                        compare::CompareModel model;
+                       // A row's text is a VIEW (TD-2026-08-14-232), so the bytes
+                       // have to live somewhere that outlives the row. Put them in
+                       // the model's own source buffers, exactly where the builder
+                       // puts them — assigning a temporary std::string to
+                       // `left_text` compiles and dangles.
+                       model.left_source = compare::MakeCompareText(std::string(left));
+                       model.right_source = compare::MakeCompareText(std::string(right));
                        compare::CompareRow row;
                        row.kind = compare::CompareRowKind::Modified;
-                       row.left_text = std::move(left);
-                       row.right_text = std::move(right);
+                       row.left_text = *model.left_source;
+                       row.right_text = *model.right_source;
                        row.left_line = 1;
                        row.right_line = 1;
                        model.rows.push_back(std::move(row));
