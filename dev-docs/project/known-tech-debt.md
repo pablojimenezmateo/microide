@@ -563,7 +563,57 @@ change is a lifetime contract, not a local edit: every one of those has to be
 re-read for "does this outlive the source buffer?". Worth doing as its own change
 with the arena option costed against the view option.
 
-### TD-2026-08-14-231 — a terminal line's cell buffer grows by doubling, ~3 allocations per line of streamed output. OPEN, and the obvious fix is a memory trade.
+### TD-2026-08-14-231 — a terminal line's cell buffer grows by doubling, ~3 allocations per line of streamed output. [RESOLVED 2026-08-14 — neither of the entry's two options; and its measurement was already stale, which is the more useful half of this.]
+
+**First, the correction.** The entry's premise no longer held. Re-traced with
+`MICROIDE_PERF_ALLOC_TRACE_PHASE=terminal.feed_output`, the phase's #1 site is
+still `ResizeLineLocked → vector::_M_fill_insert`, but at **4,000 allocations /
+1.49 MB for 4,000 lines — one per line, not three.** `PutAsciiRunLocked` writing
+a whole run in one `resize` had already collapsed the doubling curve for a line
+that arrives in one piece. The A/B against the commit before this session
+confirms it: 4,260 before, 4,260 after, unchanged by anything here.
+
+So the entry's framing — a memory trade for a 3x allocation cut — was costing
+something that no longer existed.
+
+**Second, the blind spot that hid the real steady state.**
+`terminal_scroll_long_output` hands the emulator its whole 96 KB in ONE call, so
+the end-of-chunk scrollback trim runs exactly once, *after* every line has already
+been created. A real PTY delivers ~8 KB at a time, which interleaves trims with
+line creation — and that interleaving is the entire question here. Nothing in the
+suite measured that shape. `terminal_stream_chunked_output` now does: 12,000 lines
+(six times the scrollback cap) in 8 KiB chunks.
+
+**The fix: recycle, which is neither of the two options the entry costed.** It
+rejected a pool because "to cover a whole trim batch the pool has to hold
+`max_lines / 4` buffers, so it delays a ~2 MB free rather than avoiding an
+allocation." The first half is right and the second is not: those buffers are
+handed straight to the lines being created, so the allocation *is* avoided and the
+high-water mark does not move — a trim followed by growth becomes a rename.
+`TerminalLineBufferPool` (its own header; `TerminalSession.h`'s private-`Locked`-
+helper cap is a lint, and this is a focused type, not three more methods) holds
+trimmed lines' cell vectors, bounded by **1 MiB and 4,096 buffers** — a bound that
+only matters when output *stops* right after a large trim and the pool has no
+consumer.
+
+Measured on `terminal_stream_chunked_output`, A/B with the recycling compiled out:
+
+| | before | after |
+| --- | ---: | ---: |
+| `terminal.stream_chunked` allocations | 12,799 | **6,510** (−49.1 %) |
+| pool hit rate | — | **9,264 / 12,000 lines (77 %)** |
+
+The misses are the initial fill before the first trim, which no pool can cover.
+`terminal_scroll_long_output` is unchanged by construction — its single trim comes
+after the last line — and that is now a documented property of that scenario
+rather than an unexplained flat result.
+
+Pinned by `TerminalSession/RecyclesTrimmedLineBuffers`, which feeds in chunks,
+asserts the pool fills on a trim and then drains by *exactly* the number of lines
+the next (sub-watermark) chunk creates, and checks no line ever carries cells from
+two chunks. Probed for vacuity: it fails with the recycling compiled out.
+
+#### Original entry
 
 `terminal.feed_output`'s #1 and #2 sites are both
 `TerminalSession::PutAsciiRunLocked` → `ResizeLineLocked` →

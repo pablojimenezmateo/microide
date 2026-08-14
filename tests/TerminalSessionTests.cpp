@@ -2218,6 +2218,75 @@ void TestTerminalSessionScrollbackTrimTotalTracksDroppedLines() {
          "trim total should equal written lines minus surviving lines");
 }
 
+// Regression (TD-2026-08-14-231): a trimmed scrollback line's cell buffer backs
+// the line that replaces it, instead of being freed while the next line allocates
+// an identical one.
+//
+// Asserted through the pool's own occupancy and the cells' ADDRESSES, not through
+// an allocation count: a counter would also go green if the allocator merely
+// handed the same block back, and the point is that no allocation happens at all.
+void TestTerminalSessionRecyclesTrimmedLineBuffers() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 4, 80);
+  session.SetMaxScrollbackLines(200);  // clamped floor is 200
+
+  // Chunked exactly as a PTY delivers: the end-of-chunk trim is what fills the
+  // pool, so a single giant write would never exercise this (which is why
+  // `terminal_scroll_long_output` did not, and `terminal_stream_chunked_output`
+  // now does).
+  const auto feed_chunk = [&](int first, int count) {
+    std::string output;
+    for (int i = first; i < first + count; ++i) {
+      output += "recycled scrollback line ";
+      output += std::to_string(i);
+      output += "\r\n";
+    }
+    TerminalSessionTestAccess::AppendOutput(session, output);
+  };
+
+  feed_chunk(0, 300);  // past the coalesced high-watermark: one trim, pool fills
+  Expect(session.ScrollbackTrimTotal() > 0, "the first chunk trims");
+  const std::size_t pooled = TerminalSessionTestAccess::LineBufferPoolSize(session);
+  Expect(pooled > 0, "a trim hands its lines' cell buffers to the pool");
+
+  // A second chunk small enough to stay under the coalesced high-watermark, so it
+  // creates lines WITHOUT triggering another trim: every one of them must come out
+  // of the pool, which is only visible as the pool shrinking by exactly that many.
+  const int kSecondChunkLines = 20;
+  feed_chunk(300, kSecondChunkLines);
+  Expect(session.LineCount() < 251, "the second chunk stays under the trim watermark");
+  Expect(TerminalSessionTestAccess::LineBufferPoolSize(session) ==
+             pooled - static_cast<std::size_t>(kSecondChunkLines),
+         "the lines created after a trim drain the pool rather than allocating");
+
+  // Content is the real contract; recycling must be invisible. The last line
+  // written is the one just above the cursor's own (fresh) line.
+  const std::vector<microide::terminal::TerminalLine> lines = session.SnapshotLines();
+  Expect(!lines.empty(), "the session still has lines");
+  const auto text_of = [](const microide::terminal::TerminalLine& line) {
+    std::string text;
+    for (const microide::terminal::TerminalCell& cell : line.cells) {
+      text.append(cell.bytes.data(), cell.length);
+    }
+    while (!text.empty() && text.back() == ' ') {
+      text.pop_back();
+    }
+    return text;
+  };
+  bool found_last = false;
+  for (const microide::terminal::TerminalLine& line : lines) {
+    if (text_of(line) == "recycled scrollback line 319") {
+      found_last = true;
+    }
+    // A recycled buffer that kept stale cells would show up as a line carrying
+    // text from BOTH chunks; every line must be exactly one of them or blank.
+    const std::string text = text_of(line);
+    Expect(text.empty() || text.rfind("recycled scrollback line ", 0) == 0,
+           "a recycled buffer never leaks the previous line's cells");
+  }
+  Expect(found_last, "the most recent line is present and intact");
+}
+
 // DECSTBM (CSI r) requires the top margin to be strictly above the bottom.
 // A one-line region (top == bottom) is invalid and must leave the region
 // unchanged. We reveal the effective scroll-region top with origin mode: with
@@ -2572,6 +2641,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionDecstbmFullScreenResetsRegion);
   AddTest(tests, "TerminalSession/ScrollbackTrimTotalTracksDroppedLines",
           TestTerminalSessionScrollbackTrimTotalTracksDroppedLines);
+  AddTest(tests, "TerminalSession/RecyclesTrimmedLineBuffers",
+          TestTerminalSessionRecyclesTrimmedLineBuffers);
   AddTest(tests, "TerminalSession/OriginModeToggleHomesToVisibleScreenTop",
           TestTerminalSessionOriginModeToggleHomesToVisibleScreenTop);
   AddTest(tests, "TerminalSession/CursorUpClampsToVisibleScreenTop",

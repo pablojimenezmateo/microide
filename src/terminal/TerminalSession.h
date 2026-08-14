@@ -4,6 +4,7 @@
 
 #include "platform/TerminalBackend.h"
 #include "terminal/TerminalCell.h"
+#include "terminal/TerminalLineBufferPool.h"
 #include "terminal/TerminalSearch.h"
 
 #include <algorithm>
@@ -336,6 +337,9 @@ class TerminalSession {
   // (round-4 Finding 3). Random access (`lines_[i]`) and iterator-based
   // algorithms (`std::rotate`, `assign`, snapshot copy) still work.
   std::deque<TerminalLine> lines_ = {TerminalLine{}};
+  // Cell buffers rescued from trimmed scrollback lines, waiting to back the lines
+  // that replace them (TD-2026-08-14-231). See TerminalLineBufferPool.
+  TerminalLineBufferPool line_buffer_pool_;
   ScreenState primary_screen_;
   ScreenState alternate_screen_;
   // shared_ptr (not unique_ptr) so Resize()/SendBytes() can copy it under the lock

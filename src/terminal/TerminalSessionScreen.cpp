@@ -25,7 +25,13 @@ namespace microide::terminal {
 void TerminalSession::EnsureCursorLineExistsLocked() {
   if (lines_.size() <= cursor_row_) {
     const std::size_t grew = cursor_row_ + 1 - lines_.size();
-    lines_.resize(cursor_row_ + 1);
+    // Not `resize`: each new line takes a recycled cell buffer when one is
+    // waiting, so the growth that follows a trim reuses the trim's own storage
+    // instead of walking std::vector's doubling curve from empty
+    // (TD-2026-08-14-231).
+    for (std::size_t i = 0; i < grew; ++i) {
+      lines_.push_back(line_buffer_pool_.Take());
+    }
     util::AddPerformanceCounter(util::PerfCounterId::TerminalScrollbackLinesAllocated, grew);
   }
 }
@@ -536,6 +542,10 @@ void TerminalSession::EraseInDisplayLocked(int mode) {
         const std::size_t visible = std::max<std::size_t>(1, rows_);
         if (lines_.size() > visible) {
           const std::size_t trim_count = lines_.size() - visible;
+          // Same rescue as TrimScrollbackLocked: ED 3 drops the whole scrollback
+          // and the screen keeps writing straight afterwards.
+          line_buffer_pool_.RecycleRange(
+              lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
           lines_.erase(lines_.begin(),
                        lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
           cursor_row_ = cursor_row_ > trim_count ? cursor_row_ - trim_count : 0;
@@ -810,6 +820,11 @@ void TerminalSession::TrimScrollbackLocked() {
   const std::size_t trim_count = lines_.size() - max_lines;
   util::AddPerformanceCounter(util::PerfCounterId::TerminalTrimScrollbackCalls);
   util::AddPerformanceCounter(util::PerfCounterId::TerminalTrimScrollbackLines, trim_count);
+  // Rescue the batch's cell buffers before the erase frees them: the lines that
+  // replace these are about to be created and would otherwise each grow from
+  // empty (TD-2026-08-14-231).
+  line_buffer_pool_.RecycleRange(lines_.begin(),
+                                 lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
   lines_.erase(lines_.begin(), lines_.begin() + static_cast<std::ptrdiff_t>(trim_count));
   cursor_row_ = cursor_row_ > trim_count ? cursor_row_ - trim_count : 0;
   saved_cursor_row_ = saved_cursor_row_ > trim_count ? saved_cursor_row_ - trim_count : 0;

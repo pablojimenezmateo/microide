@@ -939,6 +939,45 @@ void RegisterBuiltInScenarios() {
             context.CloseAllTerminals();
           },
   });
+  // `terminal_scroll_long_output` hands the emulator its whole 96 KB in ONE call,
+  // so the end-of-chunk scrollback trim runs exactly once, after every line has
+  // already been created. A real PTY delivers ~8 KB at a time, which interleaves
+  // trims with line creation — a different steady state, and the one that decides
+  // whether a trimmed line's cell buffer is still around to back the line that
+  // replaces it (TD-2026-08-14-231). Nothing measured that shape until this
+  // scenario, so the recycling it exercises was a blind spot rather than a
+  // regression risk.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "terminal_stream_chunked_output",
+      .smoke = false,
+      // Iteration 0 pays the project open and the emulator's first buffer growth.
+      .warmup_iterations = 1,
+      .run =
+          [](ScenarioContext& context) {
+            (void)context.Open("tests/perf/fixtures/small_project");
+            context.PumpFrames(2);
+            context.Measure("terminal.open", [&]() { context.OpenTerminal("perf-stream"); });
+            // Deliberately more lines than the 2,000-line scrollback cap, several
+            // times over, so the run reaches the trim/refill steady state rather
+            // than measuring only the initial fill.
+            std::string output;
+            output.reserve(12000 * 24);
+            for (int i = 0; i < 12000; ++i) {
+              output += "perf-stream-line ";
+              output += std::to_string(i);
+              output += "\r\n";
+            }
+            constexpr std::size_t kPtyChunkBytes = 8192;
+            context.Measure("terminal.stream_chunked", [&]() {
+              for (std::size_t offset = 0; offset < output.size(); offset += kPtyChunkBytes) {
+                context.FeedTerminalOutput(
+                    std::string_view(output).substr(offset, kPtyChunkBytes));
+              }
+            });
+            context.PumpFrames(2);
+            context.CloseAllTerminals();
+          },
+  });
   PerfHarness::RegisterScenario(Scenario{
       .name = "terminal_alt_screen_toggle",
       .smoke = false,

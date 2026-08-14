@@ -52,6 +52,14 @@ struct TerminalSessionTestAccess {
     session.FlushPendingReply();
   }
 
+  // Live buffers in the trimmed-line recycler (TD-2026-08-14-231). Reading the
+  // pool directly is what lets a test tell "the buffers were reused" from "the
+  // allocator happened to hand back the same block".
+  static std::size_t LineBufferPoolSize(const microide::terminal::TerminalSession& session) {
+    std::scoped_lock lock(session.mutex_);
+    return session.line_buffer_pool_.size();
+  }
+
   static void EmitProcessExitMarker(microide::terminal::TerminalSession& session) {
     std::scoped_lock lock(session.mutex_);
     session.EmitProcessExitMarkerLocked();

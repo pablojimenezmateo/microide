@@ -240,6 +240,11 @@ namespace microide::util {
   X(WorkspaceWakeReasonCaretBlink, "workspace.wake_reason_caret_blink")                         \
   X(WorkspaceWakeReasonNone, "workspace.wake_reason_none")                                      \
   X(TerminalScrollbackLinesAllocated, "terminal.scrollback_lines_allocated")                    \
+  /* A new scrollback line backed by a trimmed line's cell buffer (hit) vs one    */            \
+  /* that had to grow from empty (miss). The hit rate is what says whether the    */            \
+  /* recycling in TD-2026-08-14-231 is actually catching the steady state.        */            \
+  X(TerminalLineBufferPoolHits, "terminal.line_buffer_pool_hits")                               \
+  X(TerminalLineBufferPoolMisses, "terminal.line_buffer_pool_misses")                           \
   X(TerminalEscapeSequencesAborted, "terminal.escape_sequences_aborted")                        \
   X(RenderGlyphAtlasRuns, "render.glyph_atlas_runs")                                            \
   X(RenderGlyphAtlasGlyphs, "render.glyph_atlas_glyphs")                                        \
