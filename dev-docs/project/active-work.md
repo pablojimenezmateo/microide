@@ -190,6 +190,26 @@ The emulator covers the full-screen and shell workflows exercised so far.
   poll loop WAS the measurement (TD-2026-08-10-179). Drive the path instead of
   waiting for it, and `SkipScenario()` when the setup does not land. The other two
   `WaitFor*` helpers are unaudited (TD-2026-08-10-180)
+- **`p50_net_heap_bytes` can move 260x with retention completely unchanged, and
+  `mean_rss_growth_bytes` is what adjudicates.** The metric counts
+  `operator new` bytes inside the measurement window, so moving an allocation's
+  *timing* moves it — even when nothing about what is retained changes. Chunking
+  the piece tree's add buffer did exactly that: the old single `std::string`
+  reserved capacity in one iteration and absorbed several iterations' appends into
+  it for free, so `operator new` saw nothing while the pages were touched anyway.
+  `editor_toggle_comment_large_selection` went 10,661 → 2,815,870 while its
+  `mean_rss_growth_bytes` sat unmoved at its long-standing 2,811,221 baseline —
+  the two now agree to 0.2 % where they used to disagree by 260x
+  (TD-2026-08-14-234). Before calling a net-heap jump a leak, check whether the
+  resident number moved with it; if it did not, the accounting moved, not the
+  memory.
+- **a geometric buffer makes a scenario's retention series bimodal, and the p50
+  picks whichever mode the iteration count lands in.** `editor_smart_indent_typing`
+  read 26,348 against a 14,004 baseline at the default 10 iterations and 1,876 at
+  25, from a byte-deterministic series that was a ~1,800-byte floor plus growing
+  doubling steps. The gate was reading where the doubling boundaries fell, not what
+  the scenario retains (TD-2026-08-14-233). A net-heap gate that moves with the
+  iteration count is measuring an allocator growth curve.
 - **check the allocation tracer's drop warning before reading its table.** An
   aggregating instrument with a bounded key space drops each new site whole when
   full, so the listing stays correctly sorted and becomes wrong. At the old
