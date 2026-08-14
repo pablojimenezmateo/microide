@@ -600,6 +600,53 @@ void TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth() {
          "triple glyph width should match three character widths");
 }
 
+// TD-2026-08-14-224: the glyph-texture cache's LRU order is intrusive now (two
+// pointers inside the entry) rather than a `std::list<CacheKey>` that stored a
+// second copy of every key string. The mechanism that has to survive that is the
+// one TD-2026-08-12-189 named for the other cache: a HIT must protect an entry
+// from the next miss's eviction, or a hot string is evicted by cold ones and
+// re-rasterized forever.
+void TestSdlTtfTextureCacheLruProtectsARepeatedlyDrawnString() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 96);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf",
+         "the texture-cache LRU test must exercise the SDL_ttf backend");
+
+  const SDL_Color color{255, 255, 255, 255};
+  // Past the 4,096-entry cap, so eviction is what decides what survives.
+  constexpr int kDistinct = 5000;
+  const std::uint64_t misses_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::RenderTextTextureCacheMisses);
+  const std::uint64_t evictions_before = microide::util::ReadPerformanceCounter(
+      microide::util::PerfCounterId::RenderTextTextureCacheEvictions);
+
+  renderer.DrawString(canvas.renderer(), 0.0f, 0.0f, color, "hot");
+  std::string cold;
+  for (int i = 0; i < kDistinct; ++i) {
+    cold = "cold-";
+    cold += std::to_string(i);
+    renderer.DrawString(canvas.renderer(), 0.0f, 0.0f, color, cold);
+    renderer.DrawString(canvas.renderer(), 0.0f, 0.0f, color, "hot");
+  }
+
+  const std::uint64_t misses = microide::util::ReadPerformanceCounter(
+                                   microide::util::PerfCounterId::RenderTextTextureCacheMisses) -
+                               misses_before;
+  const std::uint64_t evictions =
+      microide::util::ReadPerformanceCounter(
+          microide::util::PerfCounterId::RenderTextTextureCacheEvictions) -
+      evictions_before;
+
+  Expect(evictions > 0,
+         "5,000 distinct strings against a 4,096-entry cap must evict, or this proves nothing");
+  // One miss per distinct cold string plus exactly one for "hot". Any more and
+  // "hot" was evicted between two of its own draws.
+  Expect(misses == static_cast<std::uint64_t>(kDistinct) + 1,
+         "a string drawn on every pass must never be evicted by the cold ones around it");
+}
+
 void TestSdlTtfAsciiPrefixGlyphStaysFixedWhenAppendingMatches() {
   EnsureDummySdlVideo();
   SoftwareCanvas single_canvas(320, 96);
@@ -2782,6 +2829,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer SDL_ttf repeated glyphs measure by char width",
           TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth);
+  AddTest(tests,
+          "TextRenderer SDL_ttf texture cache LRU protects a repeatedly drawn string",
+          TestSdlTtfTextureCacheLruProtectsARepeatedlyDrawnString);
   AddTest(tests,
           "TextRenderer SDL_ttf SetFontPointSize resizes glyph metrics",
           TestSdlTtfSetFontPointSizeResizesGlyphMetrics);

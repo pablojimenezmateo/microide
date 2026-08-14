@@ -389,6 +389,39 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-224 — the glyph-texture cache's LRU order stored a second copy of every key string. [RESOLVED 2026-08-14, same session it was filed.]
+
+`SdlTtfTextBackend::ResolveEntry` is the widest site in the whole suite — the #1
+allocator of **22** phases. A cache miss is inherently a few allocations (the
+owned key, the map node, the surface), but one of them was pure bookkeeping:
+`cache_order_` was a `std::list<CacheKey>` and the insert did
+`cache_order_.push_back(map_it->first)`, i.e. a list node **plus a full copy of
+the key's string**, for an ordering the map node could carry itself. Eviction
+then looked the copy back up by hash.
+
+Intrusive now — two pointers inside `CacheEntry`, the same shape
+`TextLayoutCache`'s visible-line LRU already uses, valid because
+`unordered_map` never moves its elements.
+
+Clean A/B against the commit before it, `p50_allocations` for the phase:
+`editor_render_whitespace_paint.scroll_overlay_frame` 3,313.5 → 2,733.5 (−17.5 %).
+`editor_sticky_scroll_scroll.fast_scroll_frame` moves 1 % and
+`scroll_large_file.scroll_burst` not at all — **the size of the win is the miss
+rate**, and a scroll only misses on strings it has not drawn before. The
+whitespace overlay's rows are the case that keeps producing new ones.
+
+Two details worth keeping: eviction does `find(*victim->key)` and then
+`erase(iterator)` rather than `erase(*victim->key)`, because the key lives inside
+the node the erase destroys; and the (unreachable, defensive) replace-an-existing
+-entry branch has to `LruUnlink` before the assignment overwrites the links that
+say where the entry sits.
+
+`TextRenderer SDL_ttf texture cache LRU protects a repeatedly drawn string` gates
+the property TD-2026-08-12-189 named for the other cache: 5,000 distinct strings
+against the 4,096 cap with one hot string drawn between each pair, and the miss
+count must come out at exactly `distinct + 1`. Confirmed to fail with `LruTouch`
+stubbed out.
+
 ### TD-2026-08-14-223 — the inline-blame overlay resolves the same two paths three times a frame, and fills a field nothing reads. [RESOLVED 2026-08-14, same session it was filed.]
 
 Inline blame builds its overlay from the render path, so `Request()` and

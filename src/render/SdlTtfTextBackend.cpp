@@ -344,7 +344,9 @@ void SdlTtfTextBackend::ClearCache() {
     }
   }
   cache_.clear();
-  cache_order_.clear();
+  lru_head_ = nullptr;
+  lru_tail_ = nullptr;
+  cache_bytes_ = 0;
 }
 
 bool SdlTtfTextBackend::CanUseFastAscii(std::string_view text) const {
@@ -1142,7 +1144,7 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   };
   if (auto it = cache_.find(key_view); it != cache_.end()) {
     util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheHits);
-    cache_order_.splice(cache_order_.end(), cache_order_, it->second.order);
+    LruTouch(it->second);
     return &it->second;
   }
   util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheMisses);
@@ -1191,24 +1193,35 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   const std::size_t entry_bytes = EntryByteCost(entry.width, entry.height);
   auto [map_it, inserted] = cache_.emplace(std::move(key), std::move(entry));
   if (!inserted) {
+    // Unreachable in practice — we are here because `find` missed — but the
+    // assignment below overwrites the LRU links, so the existing entry has to
+    // leave the list before it stops describing where it sits in it.
+    LruUnlink(map_it->second);
     cache_bytes_ -= EntryByteCost(map_it->second.width, map_it->second.height);
     if (map_it->second.texture != nullptr) {
       SDL_DestroyTexture(map_it->second.texture);
     }
-    map_it->second = std::move(entry);
+    map_it->second = entry;
   }
   cache_bytes_ += entry_bytes;
-  cache_order_.push_back(map_it->first);
-  map_it->second.order = std::prev(cache_order_.end());
+  map_it->second.key = &map_it->first;
+  LruPushBack(map_it->second);
 
   // Evict oldest entries until both the count and VRAM budgets are satisfied.
   // Keep at least the just-inserted entry (>1 guard) so a single oversized
   // composite that alone exceeds kMaxCacheBytes never evicts itself, which would
   // dangle the returned pointer.
-  while (cache_order_.size() > 1 &&
-         (cache_order_.size() > kMaxCacheEntries || cache_bytes_ > kMaxCacheBytes)) {
-    auto evict_it = cache_.find(cache_order_.front());
-    cache_order_.pop_front();
+  while (cache_.size() > 1 &&
+         (cache_.size() > kMaxCacheEntries || cache_bytes_ > kMaxCacheBytes)) {
+    CacheEntry* victim = lru_head_;
+    if (victim == nullptr || victim->key == nullptr) {
+      break;
+    }
+    // `find` before `erase`, not `erase(key)`: the key lives inside the node the
+    // erase destroys, so passing a reference to it is a use-after-free waiting
+    // for an implementation that hashes late.
+    const auto evict_it = cache_.find(*victim->key);
+    LruUnlink(*victim);
     if (evict_it != cache_.end()) {
       util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheEvictions);
       cache_bytes_ -= EntryByteCost(evict_it->second.width, evict_it->second.height);
@@ -1220,6 +1233,33 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
   }
 
   return &map_it->second;
+}
+
+void SdlTtfTextBackend::LruUnlink(CacheEntry& entry) {
+  if (entry.lru_prev != nullptr) {
+    entry.lru_prev->lru_next = entry.lru_next;
+  } else if (lru_head_ == &entry) {
+    lru_head_ = entry.lru_next;
+  }
+  if (entry.lru_next != nullptr) {
+    entry.lru_next->lru_prev = entry.lru_prev;
+  } else if (lru_tail_ == &entry) {
+    lru_tail_ = entry.lru_prev;
+  }
+  entry.lru_prev = nullptr;
+  entry.lru_next = nullptr;
+}
+
+void SdlTtfTextBackend::LruPushBack(CacheEntry& entry) {
+  entry.lru_prev = lru_tail_;
+  entry.lru_next = nullptr;
+  if (lru_tail_ != nullptr) {
+    lru_tail_->lru_next = &entry;
+  }
+  lru_tail_ = &entry;
+  if (lru_head_ == nullptr) {
+    lru_head_ = &entry;
+  }
 }
 
 }  // namespace microide::render

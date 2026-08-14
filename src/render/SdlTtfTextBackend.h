@@ -100,7 +100,14 @@ class SdlTtfTextBackend final : public TextRendererBackend {
     SDL_Texture* texture = nullptr;
     int width = 0;
     int height = 0;
-    std::list<CacheKey>::iterator order;
+    // Intrusive LRU. The order used to be a `std::list<CacheKey>`, so every
+    // insert allocated a list node AND a second copy of the key's string — two
+    // allocations per cache MISS, on a path where scrolling through fresh
+    // content misses on every row (TD-2026-08-14-224). `unordered_map` never
+    // moves its elements, so links into them stay valid across rehash.
+    const CacheKey* key = nullptr;  // back-pointer into the map, for eviction
+    CacheEntry* lru_prev = nullptr;
+    CacheEntry* lru_next = nullptr;
   };
 
   SdlTtfTextBackend() = default;
@@ -138,6 +145,14 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   void EnsureAsciiAtlas();
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
   CacheEntry* ResolveEntry(std::string_view text, SDL_Color color);
+  void LruUnlink(CacheEntry& entry);
+  void LruPushBack(CacheEntry& entry);
+  void LruTouch(CacheEntry& entry) {
+    if (lru_tail_ != &entry) {
+      LruUnlink(entry);
+      LruPushBack(entry);
+    }
+  }
   // GPU-only batched-text path: upload the ASCII coverage atlas once and draw a
   // same-colour ASCII run as a single SDL_RenderGeometry call (per-vertex colour,
   // so colour never enters a cache key). Returns false to fall back to the
@@ -174,7 +189,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float presentation_scale_y_ = 1.0f;
   bool ttf_initialized_ = false;
   std::unordered_map<CacheKey, CacheEntry, CacheKeyHash, CacheKeyEqual> cache_;
-  std::list<CacheKey> cache_order_;
+  // Least / most recently used ends of the intrusive list threaded through
+  // CacheEntry. Same shape as TextLayoutCache's visible-line LRU.
+  CacheEntry* lru_head_ = nullptr;
+  CacheEntry* lru_tail_ = nullptr;
   // Running sum of EntryByteCost over every live cache_ entry; kept in lockstep
   // with cache_ so eviction can enforce a VRAM budget without rescanning.
   std::size_t cache_bytes_ = 0;
