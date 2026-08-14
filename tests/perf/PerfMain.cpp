@@ -609,12 +609,19 @@ void RegisterBuiltInScenarios() {
           [](ScenarioContext& context) {
             (void)context.Open("tests/perf/fixtures/large_project");
             context.OpenTab("tests/perf/fixtures/large_project/pkg0/file_1.txt");
-            for (int i = 0; i < 40; ++i) {
-              context.Scroll(-1);
-            }
-            for (int i = 0; i < 20; ++i) {
-              context.KeyDown(SDLK_PAGEDOWN);
-            }
+            // The SCROLLING, declared as a phase. Without one, this scenario's
+            // metrics cover the project open and the tab open as well, and those
+            // dominate — so a drift row against the scenario total says nothing
+            // about scrolling (TD-2026-08-12-193, and the shape
+            // TD-2026-08-06-151 swept for).
+            context.Measure("scroll_large_file.scroll_burst", [&] {
+              for (int i = 0; i < 40; ++i) {
+                context.Scroll(-1);
+              }
+              for (int i = 0; i < 20; ++i) {
+                context.KeyDown(SDLK_PAGEDOWN);
+              }
+            });
             context.PumpFrames(2);
           },
   });
@@ -1643,16 +1650,24 @@ void RegisterBuiltInScenarios() {
             vp.MoveCursorTo(header_line, vp.lines()[header_line].size(), false);
             std::vector<double> samples_us;
             samples_us.reserve(128);
-            for (int i = 0; i < 120; ++i) {
-              const auto t0 = std::chrono::steady_clock::now();
-              vp.InsertNewline();
-              const auto t1 = std::chrono::steady_clock::now();
-              samples_us.push_back(
-                  std::chrono::duration<double, std::micro>(t1 - t0).count());
-              if (!vp.Undo()) {
-                throw std::runtime_error("editor_smart_indent_typing: undo failed");
+            // Declared as a phase so the numbers describe SMART INDENT. Without
+            // one, the scenario's allocation metric covered
+            // OpenEditorEssentials50kCppOrThrow — opening a 50,000-line C++ file
+            // — which dwarfs 120 newline+undo cycles, so a drift row against it
+            // was reporting movement in the file-open path under this scenario's
+            // name (TD-2026-08-12-193).
+            context.Measure("smart_indent.newline_undo_burst", [&] {
+              for (int i = 0; i < 120; ++i) {
+                const auto t0 = std::chrono::steady_clock::now();
+                vp.InsertNewline();
+                const auto t1 = std::chrono::steady_clock::now();
+                samples_us.push_back(
+                    std::chrono::duration<double, std::micro>(t1 - t0).count());
+                if (!vp.Undo()) {
+                  throw std::runtime_error("editor_smart_indent_typing: undo failed");
+                }
               }
-            }
+            });
             EnforceP95Microseconds("editor_smart_indent_typing", samples_us, 200'000.0);
             context.PumpFrames(2);
           },
