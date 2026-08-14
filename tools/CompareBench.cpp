@@ -206,8 +206,8 @@ CompareSyntaxBenchData TokenizeCompareRows(const std::filesystem::path& path,
   all_left_lines.reserve(model.rows.size());
   all_right_lines.reserve(model.rows.size());
   for (const auto& row : model.rows) {
-    all_left_lines.push_back(row.left_text);
-    all_right_lines.push_back(row.right_text);
+    all_left_lines.emplace_back(row.left_text);
+    all_right_lines.emplace_back(row.right_text);
   }
 
   auto left_state = microide::editor::SyntaxHighlighter::InitialState(path, all_left_lines);
@@ -258,7 +258,7 @@ void AppendChangedUnderlines(microide::editor::DecoratedTextRow& row_desc,
                              float y,
                              float line_height,
                              std::size_t visible_columns,
-                             const std::string& text,
+                             std::string_view text,
                              const std::vector<microide::compare::CompareTextSpan>& changed_spans,
                              SDL_Color underline_color) {
   if (text.empty() || changed_spans.empty()) {
