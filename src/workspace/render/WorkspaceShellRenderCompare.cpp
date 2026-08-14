@@ -11,6 +11,7 @@
 
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsRender.h"
+#include "editor/IndentGuides.h"
 #include "editor/RowDecorationBuilder.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextLayout.h"
@@ -312,6 +313,96 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // Read once per frame, not per row: the lookup is string-keyed.
   const bool render_whitespace_enabled =
       SettingFlagEnabled(GetSettingValue("editor.view.render_whitespace"), false);
+  const bool indent_guides_enabled =
+      SettingFlagEnabled(GetSettingValue("editor.view.indent_guides.enabled"), true);
+
+  // Indent guides for both panes (TD-2026-08-13-206). The entry filed this as
+  // blocked on the row->line mapping, because a diff's visible rows are not
+  // contiguous line indices — the blank padding rows of an added/deleted hunk
+  // have no line at all. They do not need to be: the visible window is handed to
+  // ComputeIndentGuides as its OWN little document (one string_view per visible
+  // row, empty for a padding row), which is exactly what the editor does with its
+  // visible rows, and an empty row measures zero leading indent and therefore
+  // breaks the run — which is the right rendering for filler.
+  // Reused across frames, and TU-local rather than shell members: this is render
+  // scratch for one surface, and the shell's declaration budget is a hard
+  // invariant. Same shape as the frame renderer's tls_editor_surface_vm.
+  thread_local std::vector<std::string_view> compare_guide_left_texts_;
+  thread_local std::vector<std::string_view> compare_guide_right_texts_;
+  thread_local std::vector<std::size_t> compare_guide_row_indices_;
+  thread_local std::vector<editor::IndentGuideRun> compare_guide_left_runs_;
+  thread_local std::vector<editor::IndentGuideRun> compare_guide_right_runs_;
+  compare_guide_left_texts_.clear();
+  compare_guide_right_texts_.clear();
+  compare_guide_left_runs_.clear();
+  compare_guide_right_runs_.clear();
+  if (indent_guides_enabled) {
+    compare_guide_left_texts_.reserve(static_cast<std::size_t>(surface.visible_rows));
+    compare_guide_right_texts_.reserve(static_cast<std::size_t>(surface.visible_rows));
+    for (int row = 0; row < surface.visible_rows; ++row) {
+      const int visual_index = compare_tab->scroll_row + row;
+      if (visual_index < 0 ||
+          static_cast<std::size_t>(visual_index) >= CompareTabVisualRowCount(*compare_tab)) {
+        break;
+      }
+      const DiffWrapRow guide_wrap_row =
+          compare_tab->wrap_layout.RowAt(static_cast<std::size_t>(visual_index));
+      const compare::ComparePresentationRow* guide_row =
+          CompareTabPresentationRowAt(*compare_tab, guide_wrap_row.unit);
+      const compare::CompareRow* model_row =
+          guide_row != nullptr &&
+                  guide_row->kind == compare::ComparePresentationRowKind::Model &&
+                  guide_row->model_row_index >= 0 &&
+                  static_cast<std::size_t>(guide_row->model_row_index) < compare_tab->model.rows.size()
+              ? &compare_tab->model.rows[static_cast<std::size_t>(guide_row->model_row_index)]
+              : nullptr;
+      compare_guide_left_texts_.push_back(
+          model_row != nullptr && guide_wrap_row.left_present ? std::string_view(model_row->left_text)
+                                                              : std::string_view{});
+      compare_guide_right_texts_.push_back(
+          model_row != nullptr && guide_wrap_row.right_present
+              ? std::string_view(model_row->right_text)
+              : std::string_view{});
+    }
+    // Row i of the little document IS visible row i.
+    compare_guide_row_indices_.resize(compare_guide_left_texts_.size());
+    for (std::size_t i = 0; i < compare_guide_row_indices_.size(); ++i) {
+      compare_guide_row_indices_[i] = i;
+    }
+    const std::size_t tab_size = compare_tab->right_viewport.tab_size();
+    const std::size_t indent_width = compare_tab->right_viewport.indent_width() == 0
+                                         ? 1
+                                         : compare_tab->right_viewport.indent_width();
+    editor::ComputeIndentGuides(editor::LineSpan(compare_guide_left_texts_),
+                                compare_guide_row_indices_, tab_size, indent_width,
+                                /*caret_line=*/SIZE_MAX, 0, &compare_guide_left_runs_);
+    editor::ComputeIndentGuides(editor::LineSpan(compare_guide_right_texts_),
+                                compare_guide_row_indices_, tab_size, indent_width,
+                                /*caret_line=*/SIZE_MAX, 0, &compare_guide_right_runs_);
+  }
+
+  // Append the guides covering visible `row` into `fills`, in the pane's own
+  // column window. Same geometry as the editor pane's: a 1px column at the
+  // guide's visual column, skipped when it is scrolled out of the row's window.
+  const auto append_guides = [&](std::vector<editor::DecoratedTextFill>& fills,
+                                 const std::vector<editor::IndentGuideRun>& runs,
+                                 std::size_t visible_row, std::size_t row_start,
+                                 std::size_t row_end, float text_x, float y) {
+    for (const editor::IndentGuideRun& guide : runs) {
+      if (visible_row < guide.start_row || visible_row > guide.end_row) {
+        continue;
+      }
+      if (guide.column < row_start || guide.column >= row_end) {
+        continue;
+      }
+      fills.push_back(editor::DecoratedTextFill{
+          .rect = MakeRect(text_x + static_cast<float>(guide.column - row_start) * char_width_px,
+                           y - 1.0f, 1.0f, surface.line_height),
+          .color = theme_.border,
+      });
+    }
+  };
+
   for (int row = 0; row < surface.visible_rows; ++row) {
     const int visual_index = compare_tab->scroll_row + row;
     if (visual_index < 0 ||
@@ -535,15 +626,18 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       left_input.layout = CompareVisibleLayoutForRow(
           *compare_tab, model_index, false, left_row_start,
           wrapped ? left_row_end - left_row_start : surface.left_visible_columns);
+      compare_whitespace_scratch_.clear();
       if (render_whitespace_enabled) {
-        compare_whitespace_scratch_.clear();
         editor::AppendWhitespaceMarkers(
             compare_whitespace_scratch_, compare_row.left_text,
             compare_tab->right_viewport.tab_size(), left_row_start, left_row_end,
             left_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled);
-        left_input.prepositioned_fills =
-            std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
       }
+      append_guides(compare_whitespace_scratch_, compare_guide_left_runs_,
+                    static_cast<std::size_t>(row), left_row_start, left_row_end,
+                    left_input.text_x, y);
+      left_input.prepositioned_fills =
+          std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
       left_input.text_renderer = &text_renderer_;
       left_input.theme = &theme_;
       editor::DecoratedTextRow& left_row = compare_left_scratch_row_;
@@ -675,19 +769,23 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       right_input.layout = CompareVisibleLayoutForRow(
           *compare_tab, model_index, true, right_row_start,
           wrapped ? right_row_end - right_row_start : surface.right_visible_columns);
+      // The editable pane is where working-tree review edits happen, and it was
+      // the one text surface in the product where "Render Whitespace" and indent
+      // guides did nothing (TD-2026-08-13-206). Same marker and guide geometry as
+      // the editor pane — one implementation each, in RowDecorationBuilder and
+      // IndentGuides.
+      compare_whitespace_scratch_.clear();
       if (render_whitespace_enabled) {
-        // The editable pane is where working-tree review edits happen, and it was
-        // the one text surface in the product where "Render Whitespace" did
-        // nothing (TD-2026-08-13-206). Same marker geometry as the editor pane —
-        // one implementation, in RowDecorationBuilder.
-        compare_whitespace_scratch_.clear();
         editor::AppendWhitespaceMarkers(
             compare_whitespace_scratch_, compare_row.right_text,
             compare_tab->right_viewport.tab_size(), right_row_start, right_row_end,
             right_input.text_x, char_width_px, y, surface.line_height, theme_.text_disabled);
-        right_input.prepositioned_fills =
-            std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
       }
+      append_guides(compare_whitespace_scratch_, compare_guide_right_runs_,
+                    static_cast<std::size_t>(row), right_row_start, right_row_end,
+                    right_input.text_x, y);
+      right_input.prepositioned_fills =
+          std::span<const editor::DecoratedTextFill>(compare_whitespace_scratch_);
       if (right_diagnostics != nullptr) {
         right_input.diagnostics =
             std::span<const editor::PublishedDiagnostic>(*right_diagnostics);

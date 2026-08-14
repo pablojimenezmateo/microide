@@ -658,12 +658,20 @@ expand to, and the resume-at-the-row prefix probe from
 keys on `selected_row`, which syncs from the caret — one of the four features the
 entry listed is a non-issue.
 
+**Indent guides shipped too (2026-08-14), and the blocker dissolved on contact.**
+The entry said `ComputeIndentGuides` wants the buffer line index drawn at each
+visible row, and that a diff's rows are not contiguous line indices. True — but it
+never needed them to be: the renderer hands the visible window over as its OWN
+little document (one `string_view` per visible row, empty for a blank padding
+row), which is exactly the shape the editor already passes for its visible rows.
+An empty row measures zero leading indent, so a run breaks across filler rather
+than tunnelling through it — pinned by
+`EditorEssentials/IndentGuidesBreakAcrossABlankDiffFillerRow`. Both panes get
+guides; the scratch is TU-local in the render unit, because the shell's
+declaration budget is a hard invariant and this is render state for one surface.
+
 **Still open, with the reason each was left:**
 
-- **indent guides** — `ComputeIndentGuides` wants the buffer line index drawn at
-  each visible row, and a diff's visible rows are not contiguous line indices (the
-  blank padding rows of an added/deleted hunk have no line at all). That mapping
-  is the work, not the painting.
 - **bracket match** — `EditorViewRenderer` caches its scan per frame precisely
   because `FindBracketMatch` is O(file); the compare loop has no such cache, and
   adding an uncached scan to a per-frame path is a speed regression traded for a

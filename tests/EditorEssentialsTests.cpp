@@ -1070,6 +1070,46 @@ void TestIndentGuidesEmitsRunsAtNestedDepths() {
 // must be covered by exactly one run, and no run may cover anything else. Uses
 // tabs, mixed depths, blank lines, dedents and an out-of-range row, since those
 // are where a sweep and a sort can disagree.
+// TD-2026-08-13-206 filed compare indent guides as blocked on the row->line
+// mapping: a diff's visible rows are not contiguous line indices, because the
+// blank padding rows of an added/deleted hunk have no line at all. They do not
+// have to be — the compare renderer hands the visible window over as its OWN
+// document, one view per visible row, empty for a padding row. This pins the
+// property that makes that legal: an empty row measures no indent, so it breaks
+// the run rather than continuing it through the filler.
+void TestIndentGuidesBreakAcrossABlankDiffFillerRow() {
+  using microide::editor::ComputeIndentGuides;
+  using microide::editor::IndentGuideRun;
+
+  // Visible window of a diff pane: two indented rows, a blank filler row where
+  // the other side had an inserted line, then two more indented rows.
+  const std::vector<std::string_view> window = {
+      "        deep one", "        deep two", "", "        deep three", "        deep four",
+  };
+  std::vector<std::size_t> rows(window.size());
+  for (std::size_t i = 0; i < rows.size(); ++i) {
+    rows[i] = i;
+  }
+
+  std::vector<IndentGuideRun> runs;
+  ComputeIndentGuides(microide::editor::LineSpan(window), rows, /*tab_size=*/4,
+                      /*indent_width=*/4, /*caret_line=*/SIZE_MAX, 0, &runs);
+
+  Expect(!runs.empty(), "an indented window emits guides");
+  for (const IndentGuideRun& run : runs) {
+    Expect(!(run.start_row <= 2 && run.end_row >= 2),
+           "no guide run spans the blank filler row");
+  }
+  bool covers_before = false;
+  bool covers_after = false;
+  for (const IndentGuideRun& run : runs) {
+    covers_before = covers_before || (run.start_row <= 1 && run.end_row >= 1);
+    covers_after = covers_after || (run.start_row <= 3 && run.end_row >= 3);
+  }
+  Expect(covers_before && covers_after,
+         "the indented rows on either side of the filler still get their guides");
+}
+
 void TestIndentGuidesRunsMatchNaiveCoverage() {
   using microide::editor::ComputeIndentGuides;
   using microide::editor::IndentGuideRun;
@@ -1988,6 +2028,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentGuidesFoldModelEmphasisOnInnerCloser);
   AddTest(tests, "EditorEssentials/RenderViewModel/WhitespaceGlyphRunsToggle",
           TestRenderViewModelBuilderWhitespaceGlyphRunsToggle);
+  AddTest(tests, "EditorEssentials/IndentGuidesBreakAcrossABlankDiffFillerRow",
+          TestIndentGuidesBreakAcrossABlankDiffFillerRow);
   AddTest(tests, "EditorEssentials/WhitespaceGlyphRunsAgreeWithTheSharedWalk",
           TestWhitespaceGlyphRunsAgreeWithTheSharedWalk);
   AddTest(tests, "EditorEssentials/AutoClose/InsertsClose",
