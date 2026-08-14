@@ -389,6 +389,68 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-232 — a compare row owns its text, so opening a large diff allocates two strings per row. OPEN.
+
+`diff.open_large_compare`'s #1, #2 and #3 sites are all
+`BuildCompareModelProfiledInto`: **47,988 allocations** at ~31 bytes, which is
+`row.left_text.assign(...)` and `row.right_text.assign(...)` once per row per
+side on the first build of a ~24,000-row model. `RowSink` already recycles rows
+across *rebuilds* (TD-2026-08-13-208), so this is purely the cold open — and
+opening a diff is a headline latency path.
+
+The text is copied out of `left`/`right`, which the compare tab owns and which
+outlive the model (the model is rebuilt whenever either changes — that is what
+`derived_left_content_hash` / `derived_right_content_revision` are for). So the
+rows could hold `std::string_view`s, or the model could own one `LineBlob`-style
+arena the rows index into.
+
+Not done here because `left_text`/`right_text` have ~90 uses across the compare
+render TU, the patch generator, the merge surface and branch review, and the
+change is a lifetime contract, not a local edit: every one of those has to be
+re-read for "does this outlive the source buffer?". Worth doing as its own change
+with the arena option costed against the view option.
+
+### TD-2026-08-14-231 — a terminal line's cell buffer grows by doubling, ~3 allocations per line of streamed output. OPEN, and the obvious fix is a memory trade.
+
+`terminal.feed_output`'s #1 and #2 sites are both
+`TerminalSession::PutAsciiRunLocked` → `ResizeLineLocked` →
+`vector<TerminalCell>::resize`: **12,000 allocations** across the phase, ~3 per
+line, because a line written in several runs takes `std::vector`'s doubling curve
+from empty.
+
+Two fixes were considered and neither is free:
+
+- **Reserve `columns_` on a line's first write.** A primary-screen line can never
+  exceed `columns_` cells (`PutAsciiRunLocked` clamps to the right margin), so
+  this is one allocation per line — but every scrollback line then holds
+  `columns_` cells' capacity. At the 2,000-line default and 18 bytes a cell, a
+  200-column terminal retains ~7.2 MB where content-sized growth retains 3–6 MB.
+- **Recycle the trimmed lines' buffers into a pool.** Free in principle, but to
+  cover a whole trim batch the pool has to hold `max_lines / 4` buffers, so it
+  delays a ~2 MB free rather than avoiding an allocation.
+
+Speed outranks memory here, so a trade is defensible — but it is a *product*
+decision about a resident-memory budget, not a local optimisation, and it should
+be made against a measurement of what streaming output actually costs today
+rather than against the allocation count alone.
+
+### TD-2026-08-14-230 — the debug value tree built a fresh path key, and a fresh segment vector, per node per page. [RESOLVED 2026-08-14, same session it was filed.]
+
+`DebugValueTree::PathKey` returns an owned `std::string` and walks the ancestor
+chain through a locally declared `std::vector<Segment>`. `CollectAutoExpand` calls
+it once per node of every page that lands, purely to probe `expanded_paths_` —
+and throws the key away on the (usual) miss. Two allocations per node, per page.
+
+There is a `PathKeyInto(node, out)` now, writing into two reused buffers held on
+the tree; the owning `PathKey` delegates to it and stays for the callers that keep
+the key (the insert, and the collapse path's descendant-prefix scan). The ordinal
+goes through `std::to_chars` into a stack buffer rather than `std::to_string`,
+which happens to be SSO-sized today but is an implementation detail to lean on
+rather than an invariant.
+
+`value_tree.build_expand`, site tracer, clean A/B against the commit before:
+**2,000 → 1,320 allocations (−34 %)**.
+
 ### TD-2026-08-14-229 — a scroll frame that changed nothing still allocated ten times, all of it shell chrome restating itself. [RESOLVED 2026-08-14, same session it was filed.]
 
 `editor_scroll_only_no_content_bump` exists to assert that scrolling bumps no

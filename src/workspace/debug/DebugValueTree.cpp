@@ -113,7 +113,10 @@ std::vector<DebugValueTree::ChildFetch> DebugValueTree::CollectAutoExpand(
         node->children_loaded || node->fetching) {
       continue;
     }
-    if (!expanded_paths_.contains(PathKey(*node))) {
+    // Into the reused buffer: the key is a lookup probe here, thrown away on the
+    // (common) miss, and one page of a wide container asks for one per node.
+    PathKeyInto(*node, path_key_scratch_);
+    if (!expanded_paths_.contains(path_key_scratch_)) {
       continue;
     }
     node->expanded = true;

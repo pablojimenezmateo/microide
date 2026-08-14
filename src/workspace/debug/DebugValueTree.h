@@ -236,6 +236,11 @@ class DebugValueTree {
   // Path key (root→node name chain) used to track expansion across rebuilds, since
   // variables references are not stable between stops.
   std::string PathKey(const Node& node) const;
+  // …and the allocation-free form. `out` is overwritten. `CollectAutoExpand` asks
+  // for one key per node in a page and immediately throws it away when the set
+  // does not contain it, so the by-value form's fresh `key` string plus the walk's
+  // segment vector were two allocations per node, per page (TD-2026-08-14-230).
+  void PathKeyInto(const Node& node, std::string& out) const;
   // For each id, if the node is an unfetched container the user had expanded
   // (its path is in expanded_paths_), mark it expanded + fetching and emit its
   // bounded ChildFetch. Empty/known-empty containers are marked loaded, no fetch.
@@ -273,6 +278,15 @@ class DebugValueTree {
   // Path keys (root→node name chains) of containers the user has expanded. Tracked
   // across ClearRoots/Clear so expansion survives a stop; pruned on collapse.
   std::unordered_set<std::string> expanded_paths_;
+  // Reused by PathKeyInto: the ancestor walk's segment list and the key it builds.
+  // Held here so a per-node key costs no allocation once the deepest chain seen so
+  // far has been walked.
+  struct PathKeySegment {
+    std::uint32_t ordinal = 0;
+    std::string_view name;
+  };
+  mutable std::vector<PathKeySegment> path_key_segments_;
+  mutable std::string path_key_scratch_;
   // The root scope auto-expanded once at the start of each session (empty = none).
   // The Variables model sets this to "Locals" (open by default); the shared tree
   // itself is scope-agnostic so the Watch panel is unaffected. Seeded into

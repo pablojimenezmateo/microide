@@ -1,5 +1,6 @@
 #include "workspace/debug/DebugValueTree.h"
 
+#include <charconv>
 #include <string>
 #include <utility>
 #include <vector>
@@ -66,33 +67,44 @@ const DebugValueTree::Node* DebugValueTree::FindNode(std::uint32_t id) const {
   return node.live ? &node : nullptr;  // tombstone → gone, same as a map miss
 }
 
-std::string DebugValueTree::PathKey(const Node& node) const {
+void DebugValueTree::PathKeyInto(const Node& node, std::string& out) const {
   // Root→node chain joined by a unit separator (a byte that cannot appear in a
   // DAP variable name). Each segment is the sibling ordinal plus the name, so
   // two siblings that share a name — common in array pages and maps with
   // repeated labels — get distinct keys and expand/collapse independently.
-  struct Segment {
-    std::uint32_t ordinal;
-    std::string_view name;
-  };
-  std::vector<Segment> parts;
+  path_key_segments_.clear();
   const Node* cur = &node;
   while (cur != nullptr) {
     // The sibling position is cached on the node at insertion (index in roots_ or
     // the parent's children vector), so this walk stays O(depth) rather than
     // rescanning the whole sibling vector per level.
-    parts.push_back(Segment{cur->sibling_ordinal, cur->name});
+    path_key_segments_.push_back(PathKeySegment{cur->sibling_ordinal, cur->name});
     cur = cur->parent_id == 0 ? nullptr : FindNode(cur->parent_id);
   }
-  std::string key;
-  for (auto it = parts.rbegin(); it != parts.rend(); ++it) {
-    if (!key.empty()) {
-      key.push_back('\x1f');
+  out.clear();
+  // The ordinal is written through a stack buffer rather than std::to_string: the
+  // temporary is small enough to live in the string's own inline storage today,
+  // but that is an implementation detail to lean on rather than an invariant.
+  char ordinal_digits[16];
+  for (auto it = path_key_segments_.rbegin(); it != path_key_segments_.rend(); ++it) {
+    if (!out.empty()) {
+      out.push_back('\x1f');
     }
-    key.append(std::to_string(it->ordinal));
-    key.push_back(':');
-    key.append(it->name);
+    const auto [end, ec] =
+        std::to_chars(ordinal_digits, ordinal_digits + sizeof(ordinal_digits), it->ordinal);
+    if (ec == std::errc{}) {
+      out.append(ordinal_digits, static_cast<std::size_t>(end - ordinal_digits));
+    }
+    out.push_back(':');
+    out.append(it->name);
   }
+}
+
+std::string DebugValueTree::PathKey(const Node& node) const {
+  // The owning form, for the callers that keep the key (an insert into
+  // expanded_paths_, or a prefix scan that has to outlive the scratch buffer).
+  std::string key;
+  PathKeyInto(node, key);
   return key;
 }
 
