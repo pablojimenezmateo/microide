@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <span>
+#include <string>
 #include <string_view>
 #include <utility>
 #include <vector>
@@ -120,6 +122,82 @@ std::vector<TaggedChange> TaggedChanges(std::vector<SideChange>&& changes, Merge
     });
   }
   return tagged;
+}
+
+// Walks the resolved result line-by-line, as views into the model, without
+// materializing anything. `bootstrap` selects the hunk choice: the recorded one,
+// or the one BootstrapMergeChoice would pick before the user has chosen.
+//
+// The four public result builders are the same walk with different sinks. They
+// used to be four separate copies of it, each one materializing a
+// `vector<std::string>` of every result line -- the text forms then handed that
+// to JoinLines, which copied every line into the joined buffer and freed all of
+// them. On a 25,700-line merge that was 25,700 owned strings to produce one
+// (TD-2026-08-15-239).
+template <typename Fn>
+void ForEachMergeResultLine(const MergeModel& model, bool bootstrap, Fn&& fn) {
+  const auto emit_span = [&fn](std::span<const std::string> lines) {
+    for (const std::string& line : lines) {
+      fn(std::string_view(line));
+    }
+  };
+  int base_cursor = 0;
+  for (const MergeHunk& hunk : model.hunks) {
+    for (int line = base_cursor; line < hunk.base_start; ++line) {
+      fn(std::string_view(model.base_lines[static_cast<std::size_t>(line)]));
+    }
+    const MergeChoiceLineSpans spans =
+        MergeChoiceLineViews(hunk, bootstrap ? BootstrapMergeChoice(hunk) : hunk.choice);
+    emit_span(spans.first);
+    emit_span(spans.second);
+    base_cursor = hunk.base_end;
+  }
+  for (int line = base_cursor; line < static_cast<int>(model.base_lines.size()); ++line) {
+    fn(std::string_view(model.base_lines[static_cast<std::size_t>(line)]));
+  }
+}
+
+std::vector<std::string> CollectMergeResultLines(const MergeModel& model, bool bootstrap) {
+  std::size_t count = 0;
+  ForEachMergeResultLine(model, bootstrap, [&count](std::string_view) { ++count; });
+  std::vector<std::string> lines;
+  lines.reserve(count);
+  ForEachMergeResultLine(model, bootstrap,
+                         [&lines](std::string_view line) { lines.emplace_back(line); });
+  if (lines.empty()) {
+    lines.push_back("");
+  }
+  return lines;
+}
+
+std::string BuildMergeResultText(const MergeModel& model,
+                                 std::string_view separator,
+                                 bool bootstrap) {
+  // Two passes over the same walk: bytes, then bytes. Every line is already
+  // resident in `model`, so the total is bounded by what is in memory and cannot
+  // wrap -- unlike util::JoinLines, which takes an arbitrary span and has to
+  // saturate.
+  std::size_t bytes = 0;
+  std::size_t count = 0;
+  ForEachMergeResultLine(model, bootstrap, [&](std::string_view line) {
+    bytes += line.size();
+    ++count;
+  });
+  // An empty result is one empty line, which joins to the empty string.
+  if (count == 0) {
+    return {};
+  }
+  std::string text;
+  text.reserve(bytes + (count - 1) * separator.size());
+  bool first = true;
+  ForEachMergeResultLine(model, bootstrap, [&](std::string_view line) {
+    if (!first) {
+      text.append(separator);
+    }
+    first = false;
+    text.append(line);
+  });
+  return text;
 }
 
 }  // namespace
@@ -262,132 +340,69 @@ MergeChoice BootstrapMergeChoice(const MergeHunk& hunk) {
   return MergeChoice::Base;
 }
 
-std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice choice) {
+MergeChoiceLineSpans MergeChoiceLineViews(const MergeHunk& hunk, MergeChoice choice) {
   switch (choice) {
     case MergeChoice::Base:
-      return hunk.base_lines;
+      return {hunk.base_lines, {}};
     case MergeChoice::Incoming:
-      return hunk.incoming_lines;
+      return {hunk.incoming_lines, {}};
     case MergeChoice::Current:
-      return hunk.current_lines;
+      return {hunk.current_lines, {}};
     case MergeChoice::Both:
     case MergeChoice::BothIncomingFirst:
       if (hunk.incoming_lines == hunk.current_lines) {
-        return hunk.incoming_lines;
+        return {hunk.incoming_lines, {}};
       }
       if (hunk.incoming_lines == hunk.base_lines) {
-        return hunk.current_lines;
+        return {hunk.current_lines, {}};
       }
       if (hunk.current_lines == hunk.base_lines) {
-        return hunk.incoming_lines;
+        return {hunk.incoming_lines, {}};
       }
-      {
-        std::vector<std::string> lines = hunk.incoming_lines;
-        lines.insert(lines.end(), hunk.current_lines.begin(), hunk.current_lines.end());
-        return lines;
-      }
+      return {hunk.incoming_lines, hunk.current_lines};
     case MergeChoice::BothCurrentFirst:
       if (hunk.incoming_lines == hunk.current_lines) {
-        return hunk.current_lines;
+        return {hunk.current_lines, {}};
       }
       if (hunk.incoming_lines == hunk.base_lines) {
-        return hunk.current_lines;
+        return {hunk.current_lines, {}};
       }
       if (hunk.current_lines == hunk.base_lines) {
-        return hunk.incoming_lines;
+        return {hunk.incoming_lines, {}};
       }
-      {
-        std::vector<std::string> lines = hunk.current_lines;
-        lines.insert(lines.end(), hunk.incoming_lines.begin(), hunk.incoming_lines.end());
-        return lines;
-      }
+      return {hunk.current_lines, hunk.incoming_lines};
     default:
-      return MergeChoiceLines(hunk, BootstrapMergeChoice(hunk));
+      return MergeChoiceLineViews(hunk, BootstrapMergeChoice(hunk));
   }
+}
+
+std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice choice) {
+  const MergeChoiceLineSpans spans = MergeChoiceLineViews(hunk, choice);
+  std::vector<std::string> lines;
+  lines.reserve(spans.size());
+  lines.insert(lines.end(), spans.first.begin(), spans.first.end());
+  lines.insert(lines.end(), spans.second.begin(), spans.second.end());
+  return lines;
 }
 
 std::size_t MergeChoiceLineCount(const MergeHunk& hunk, MergeChoice choice) {
-  switch (choice) {
-    case MergeChoice::Base:
-      return hunk.base_lines.size();
-    case MergeChoice::Incoming:
-      return hunk.incoming_lines.size();
-    case MergeChoice::Current:
-      return hunk.current_lines.size();
-    case MergeChoice::Both:
-    case MergeChoice::BothIncomingFirst:
-      if (hunk.incoming_lines == hunk.current_lines) {
-        return hunk.incoming_lines.size();
-      }
-      if (hunk.incoming_lines == hunk.base_lines) {
-        return hunk.current_lines.size();
-      }
-      if (hunk.current_lines == hunk.base_lines) {
-        return hunk.incoming_lines.size();
-      }
-      return hunk.incoming_lines.size() + hunk.current_lines.size();
-    case MergeChoice::BothCurrentFirst:
-      if (hunk.incoming_lines == hunk.current_lines) {
-        return hunk.current_lines.size();
-      }
-      if (hunk.incoming_lines == hunk.base_lines) {
-        return hunk.current_lines.size();
-      }
-      if (hunk.current_lines == hunk.base_lines) {
-        return hunk.incoming_lines.size();
-      }
-      return hunk.current_lines.size() + hunk.incoming_lines.size();
-    default:
-      return MergeChoiceLineCount(hunk, BootstrapMergeChoice(hunk));
-  }
+  return MergeChoiceLineViews(hunk, choice).size();
 }
 
 std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model) {
-  std::vector<std::string> lines;
-  int base_cursor = 0;
-  for (const MergeHunk& hunk : model.hunks) {
-    for (int line = base_cursor; line < hunk.base_start; ++line) {
-      lines.push_back(model.base_lines[static_cast<std::size_t>(line)]);
-    }
-    const std::vector<std::string> hunk_lines = MergeChoiceLines(hunk, BootstrapMergeChoice(hunk));
-    lines.insert(lines.end(), hunk_lines.begin(), hunk_lines.end());
-    base_cursor = hunk.base_end;
-  }
-  for (int line = base_cursor; line < static_cast<int>(model.base_lines.size()); ++line) {
-    lines.push_back(model.base_lines[static_cast<std::size_t>(line)]);
-  }
-  if (lines.empty()) {
-    lines.push_back("");
-  }
-  return lines;
+  return CollectMergeResultLines(model, /*bootstrap=*/true);
 }
 
 std::string BootstrapMergeResultText(const MergeModel& model, std::string_view separator) {
-  return util::JoinLines(BootstrapMergeResultLines(model), separator);
+  return BuildMergeResultText(model, separator, /*bootstrap=*/true);
 }
 
 std::vector<std::string> MergeResultLines(const MergeModel& model) {
-  std::vector<std::string> lines;
-  int base_cursor = 0;
-  for (const MergeHunk& hunk : model.hunks) {
-    for (int line = base_cursor; line < hunk.base_start; ++line) {
-      lines.push_back(model.base_lines[static_cast<std::size_t>(line)]);
-    }
-    const std::vector<std::string> hunk_lines = MergeChoiceLines(hunk, hunk.choice);
-    lines.insert(lines.end(), hunk_lines.begin(), hunk_lines.end());
-    base_cursor = hunk.base_end;
-  }
-  for (int line = base_cursor; line < static_cast<int>(model.base_lines.size()); ++line) {
-    lines.push_back(model.base_lines[static_cast<std::size_t>(line)]);
-  }
-  if (lines.empty()) {
-    lines.push_back("");
-  }
-  return lines;
+  return CollectMergeResultLines(model, /*bootstrap=*/false);
 }
 
 std::string MergeResultText(const MergeModel& model, std::string_view separator) {
-  return util::JoinLines(MergeResultLines(model), separator);
+  return BuildMergeResultText(model, separator, /*bootstrap=*/false);
 }
 
 MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {

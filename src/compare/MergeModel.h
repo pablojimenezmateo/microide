@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstddef>
+#include <span>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -61,6 +63,23 @@ MergeModel BuildMergeModel(const std::string& base,
                            const std::string& incoming,
                            const std::string& current);
 MergeChoice BootstrapMergeChoice(const MergeHunk& hunk);
+
+// The lines a hunk contributes under `choice`, as spans INTO the hunk's own
+// vectors. The `Both*` choices concatenate two runs, which is why there are two
+// spans; every other choice leaves `second` empty.
+//
+// This is the shared core of `MergeChoiceLines` and `MergeChoiceLineCount`,
+// which were two byte-identical decision trees kept in sync by hand — and of the
+// result-text builder, which no longer has to materialize a line vector to
+// measure or emit one (TD-2026-08-15-239).
+struct MergeChoiceLineSpans {
+  std::span<const std::string> first;
+  std::span<const std::string> second;
+
+  std::size_t size() const { return first.size() + second.size(); }
+};
+MergeChoiceLineSpans MergeChoiceLineViews(const MergeHunk& hunk, MergeChoice choice);
+
 std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice choice);
 // Allocation-free count of what MergeChoiceLines(hunk, choice) would return.
 // Use at size-only callsites to avoid materializing and copying the line vector.
