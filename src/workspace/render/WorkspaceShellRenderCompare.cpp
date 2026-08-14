@@ -316,6 +316,33 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const bool indent_guides_enabled =
       SettingFlagEnabled(GetSettingValue("editor.view.indent_guides.enabled"), true);
 
+  // Bracket-match highlight for the editable pane. FindBracketMatch is O(file),
+  // which is why the editor renderer caches it per frame; the compare surface
+  // paints through its own loop and had no such cache, so this memoizes on the
+  // same key the editor uses — (content revision, caret line, caret column) —
+  // held on the tab, one entry per caret (TD-2026-08-13-206).
+  std::optional<editor::BracketMatchPair> bracket_match_pair;
+  if (SettingFlagEnabled(GetSettingValue("editor.brackets.match_highlight.enabled"), true) &&
+      compare_tab->right_view_active) {
+    const editor::TextViewport& right_viewport = compare_tab->right_viewport;
+    const std::uint64_t content_revision = right_viewport.content_revision();
+    const std::size_t caret_line = right_viewport.cursor_line();
+    const std::size_t caret_column = right_viewport.cursor_column();
+    if (compare_tab->bracket_match_valid &&
+        compare_tab->bracket_match_content_revision == content_revision &&
+        compare_tab->bracket_match_caret_line == caret_line &&
+        compare_tab->bracket_match_caret_column == caret_column) {
+      bracket_match_pair = compare_tab->bracket_match_pair;
+    } else {
+      bracket_match_pair = editor::FindBracketMatch(right_viewport, caret_line, caret_column);
+      compare_tab->bracket_match_content_revision = content_revision;
+      compare_tab->bracket_match_caret_line = caret_line;
+      compare_tab->bracket_match_caret_column = caret_column;
+      compare_tab->bracket_match_pair = bracket_match_pair;
+      compare_tab->bracket_match_valid = true;
+    }
+  }
+
   // Indent guides for both panes (TD-2026-08-13-206). The entry filed this as
   // blocked on the row->line mapping, because a diff's visible rows are not
   // contiguous line indices — the blank padding rows of an added/deleted hunk
@@ -691,7 +718,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         }
         return &*right_visual_map;
       };
-      std::array<editor::RowFillSpan, 1> right_column_fills;
+      // Selection, plus up to two bracket-match cells.
+      std::array<editor::RowFillSpan, 3> right_column_fills;
       std::size_t right_column_fill_count = 0;
       if (right_selection.has_value()) {
         // Copy out of the optional so GCC's optimizer sees a definitely-initialized
@@ -714,6 +742,24 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
               .geometry = editor::RowFillSpan::Geometry::kRange,
           };
         }
+      }
+      if (bracket_match_pair.has_value()) {
+        const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
+          if (bracket_line != right_line_index ||
+              bracket_column >= compare_row.right_text.size() ||
+              right_column_fill_count >= right_column_fills.size()) {
+            return;
+          }
+          ensure_right_visual_map();
+          right_column_fills[right_column_fill_count++] = editor::RowFillSpan{
+              .start_column = bracket_column,
+              .end_column = bracket_column + 1,
+              .color = theme_.bracket_match_background,
+              .geometry = editor::RowFillSpan::Geometry::kSingleCell,
+          };
+        };
+        append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
+        append_bracket_cell(bracket_match_pair->close_line, bracket_match_pair->close_column);
       }
       // An unchanged row whose two sides are byte-identical stores its tokens once,
       // in the left cache; the flag says which rows those are.

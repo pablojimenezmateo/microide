@@ -19,6 +19,7 @@
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SnippetEngine.h"
 #include "editor/TextLayout.h"
+#include "editor/BracketScanner.h"
 #include "editor/TextViewport.h"
 #include "terminal/TerminalSession.h"
 #include "util/PathMatch.h"
@@ -144,6 +145,19 @@ struct CompareTabState {
   // states — where it is already computed, rather than re-deriving it per visible
   // row per frame inside a render TU.
   std::vector<std::uint8_t> right_tokens_alias_left_by_row;
+  // Bracket-match memo for the editable pane, keyed exactly as the editor
+  // renderer's is: (content revision, caret line, caret column). FindBracketMatch
+  // is O(file), and the compare surface paints through its own row loop with no
+  // access to the editor renderer's cache — so without this, turning the
+  // highlight on would have traded a per-frame O(file) scan for it
+  // (TD-2026-08-13-206). One entry, which is the natural cardinality: a tab has
+  // one caret.
+  std::uint64_t bracket_match_content_revision = 0;
+  std::size_t bracket_match_caret_line = 0;
+  std::size_t bracket_match_caret_column = 0;
+  std::optional<editor::BracketMatchPair> bracket_match_pair;
+  bool bracket_match_valid = false;
+
   std::uint64_t visible_layout_cache_model_revision = 0;
   std::vector<CompareVisibleLayoutCacheEntry> visible_layout_cache;
   std::unordered_map<CompareVisibleLayoutCacheKey, std::size_t,

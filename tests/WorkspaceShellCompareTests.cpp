@@ -168,6 +168,57 @@ void TestWorkspaceShellCompareEditablePaneIndentsAndOutdents() {
          "Shift+Tab outdents the block back rather than inserting a tab");
 }
 
+// TD-2026-08-13-206's last render feature: bracket-match highlight on the
+// editable pane. FindBracketMatch is O(file), so the entry left it out rather
+// than put an uncached scan on a per-frame path. The memo is what makes it
+// affordable, so the memo is what this pins: a repaint with an unchanged caret
+// and unchanged content must not rescan, and moving the caret must.
+void TestWorkspaceShellCompareBracketMatchIsMemoized() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add bracket fixture", "bracket fixture");
+  WriteFile(source, "int beta(int x) {\n  return (x + 1);\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_view_active, "the editable pane is active");
+  Expect(!compare.bracket_match_valid, "the memo starts cold");
+
+  // A REAL renderer: RenderFrame's null one stops at the `renderer == nullptr`
+  // guard every surface opens with, so it would prove nothing about paint state.
+  SoftwareCanvas canvas(1280, 720);
+
+  // Put the caret next to the '(' on the return line.
+  compare.right_viewport.MoveCursorTo(1, 9);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(compare.bracket_match_valid, "painting resolves and memoizes the bracket match");
+  const auto first_pair = compare.bracket_match_pair;
+  const std::uint64_t revision_after_first = compare.bracket_match_content_revision;
+
+  // A repaint with nothing changed must reuse the memo: same key, same answer.
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(compare.bracket_match_content_revision == revision_after_first &&
+             compare.bracket_match_caret_line == 1 && compare.bracket_match_caret_column == 9,
+         "an unchanged repaint keeps the memo key");
+  Expect(compare.bracket_match_pair.has_value() == first_pair.has_value(),
+         "an unchanged repaint keeps the memoized answer");
+
+  // Moving the caret changes the key, so the next paint re-resolves.
+  compare.right_viewport.MoveCursorTo(0, 0);
+  WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer());
+  Expect(compare.bracket_match_caret_line == 0 && compare.bracket_match_caret_column == 0,
+         "moving the caret re-keys the memo rather than serving the old match");
+}
+
 void TestWorkspaceShellCompareClickTogglesEditablePaneFocus() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -2202,6 +2253,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareEditActionRefreshesDiffModel);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",
           TestWorkspaceShellWorkingTreeCompareRejectsBinaryAndUnreadable);
+  AddTest(tests, "WorkspaceShell/CompareBracketMatchIsMemoized",
+          TestWorkspaceShellCompareBracketMatchIsMemoized);
   AddTest(tests, "WorkspaceShell/CompareEditablePaneIndentsAndOutdents",
           TestWorkspaceShellCompareEditablePaneIndentsAndOutdents);
   AddTest(tests, "WorkspaceShell/CompareClickTogglesEditablePaneFocus",

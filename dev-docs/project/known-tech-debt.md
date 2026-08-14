@@ -640,7 +640,7 @@ Do not take this without first enumerating the behavioural differences between
 the two switches — Esc means "close the tab" on compare and "collapse carets" in
 the editor, and that divergence is deliberate.
 
-### TD-2026-08-13-206 — the compare surface paints through its own row loop, so its editable pane is missing the editor's view features. [PARTIAL 2026-08-14 — render-whitespace shipped; guides, bracket match, folding and plugin decorations did not.]
+### TD-2026-08-13-206 — the compare surface paints through its own row loop, so its editable pane is missing the editor's view features. [PARTIAL 2026-08-14 — whitespace, indent guides and bracket match all shipped; folding and plugin decorations did not.]
 
 **Done 2026-08-14: render-whitespace, from one implementation.** The marker
 geometry and the per-row walk moved into `editor/RowDecorationBuilder`
@@ -670,13 +670,19 @@ than tunnelling through it — pinned by
 guides; the scratch is TU-local in the render unit, because the shell's
 declaration budget is a hard invariant and this is render state for one surface.
 
-**Still open, with the reason each was left:**
+**Bracket match shipped too (2026-08-14), with the cache that made it
+affordable.** The reason it was deferred was real — `FindBracketMatch` is O(file)
+and the compare loop had no cache — so the fix was to give it one: a memo on the
+compare tab keyed exactly as the editor renderer's is (content revision, caret
+line, caret column), one entry, which is the natural cardinality since a tab has
+one caret. Pinned by `WorkspaceShell/CompareBracketMatchIsMemoized`, which paints
+through a REAL renderer (the null-renderer path returns before any of this) and
+asserts an unchanged repaint keeps the memo key while a caret move re-keys it.
 
-- **bracket match** — `EditorViewRenderer` caches its scan per frame precisely
-  because `FindBracketMatch` is O(file); the compare loop has no such cache, and
-  adding an uncached scan to a per-frame path is a speed regression traded for a
-  highlight.
-- **folding and plugin decorations** — unchanged from the entry.
+**Still open:** folding and plugin decorations on the compare panes, unchanged
+from the entry. Both are structural — they want the row model the diff surface
+does not share with the editor — and are the part that genuinely needs the
+"teach EditorViewRenderer to paint a diff pane" half of this entry.
 
 #### Original entry
 
