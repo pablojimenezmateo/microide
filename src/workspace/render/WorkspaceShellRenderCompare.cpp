@@ -379,9 +379,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       const compare::CompareRow* model_row =
           guide_row != nullptr &&
                   guide_row->kind == compare::ComparePresentationRowKind::Model &&
-                  guide_row->model_row_index >= 0 &&
-                  static_cast<std::size_t>(guide_row->model_row_index) < compare_tab->model.rows.size()
-              ? &compare_tab->model.rows[static_cast<std::size_t>(guide_row->model_row_index)]
+                  guide_row->model_row_index < compare_tab->model.rows.size()
+              ? &compare_tab->model.rows[guide_row->model_row_index]
               : nullptr;
       compare_guide_left_texts_.push_back(
           model_row != nullptr && guide_wrap_row.left_present ? std::string_view(model_row->left_text)

@@ -389,6 +389,32 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-214 — `optional<EditorTabState>::emplace()` does not compile under clang, anywhere, and only one lane would ever say so. [OPEN 2026-08-14.]
+
+`TabEntry` declares `std::optional<EditorTabState> editor_state;` as a member of
+the very class `EditorTabState` is nested in. Clang evaluates
+`__is_constructible(EditorTabState)` while `TabEntry` is still incomplete at that
+declaration and caches the answer as **false** for the rest of the translation
+unit; GCC re-evaluates and answers true. The consequence is narrow but total:
+`optional<EditorTabState>::emplace(...)` fails to compile under clang forever,
+while `T a;`, `T{}`, and `optional = T{}` all compile fine under both compilers.
+Reduced to four lines — an identical struct copied out of the class is
+constructible, the nested one is not.
+
+This is a landmine rather than a live defect: production code does not use
+`emplace()` here, and the one site that did was a test added on this branch, now
+converted to assignment. What makes it worth filing is the detection gap — every
+GCC lane (`tests`, all three sanitizers, `perf-tests`, `coverage`) takes it, and
+`clang-build` is the *only* thing in the repo that rejects it. It was caught here
+exactly that way.
+
+Options, none taken yet: give `EditorTabState` an explicit
+`EditorTabState() = default;`, hold it by `unique_ptr`, or move the nested struct
+out to namespace scope so the optional no longer names an enclosing-incomplete
+type. Until then the working rule is: **assign an aggregate, do not `emplace`**,
+for any optional whose element type is nested in the class holding the optional.
+See also [validation-traps.md](validation-traps.md) § Second Compiler.
+
 ### TD-2026-08-14-213 — a tab cannot be dragged into the other editor group, so a split is populated only by keyboard. [OPEN 2026-08-14.]
 
 `TabMouseCoordinator::ResolveDragStrip` resolves ONE strip — the focused group's —
@@ -442,6 +468,51 @@ What a real scenario would pin, none of which is covered today:
 The third is the reason this is worth a scenario rather than a re-run of the
 throwaway: repaint scope is invisible to an event-cost measurement, and it is
 what a user feels.
+
+### TD-2026-08-14-216 — a text drag and a box selection outlived the document they were measured against. [RESOLVED 2026-08-14.]
+
+**Fixed.** `ResetTransientInteractionState` cleared `mouse_selecting`, the drag
+target, the tab drag and its slide — but not `text_drag` / `text_drag_has_drop`
+(added by the selection-drag pass) and not `editor_box_selecting`. Neither is
+tracked by `mouse_selecting`, which is exactly why both were missed.
+
+Both carry line/column coordinates captured at press. A project reset with either
+armed left them pointed at a document that no longer exists, and the next
+button-up applied them to the new one — for the box selection a wrong selection,
+for the text drag an **edit**: `FinishTextDrag` reads its source range from the
+captured coordinates by design (so a drop cannot move whatever happens to be
+selected at release), so it would move text it never selected, at an offset the
+user never pointed at, in a file they did not have open when they pressed.
+
+The focus-loss handler (`end_selection_gesture`) already ends all three gestures
+together; this was the same list, one call site short. Which is the general shape
+worth remembering: **a new gesture flag has two homes, not one** — focus loss and
+project reset — and [3ad3752f](#) fixed precisely this for the tab drag on this
+same branch without the text drag being swept up with it. Covered by
+`WorkspaceShell/ProjectSwitchClearsTransientInteractionState`, which now asserts
+on all four flags and fails on the text-drag assertion without the fix.
+
+### TD-2026-08-14-215 — the bottom-panel strip was the one strip whose layout cache could not see a font change. [RESOLVED 2026-08-14.]
+
+**Fixed.** The layout cache [209](#td-2026-08-14-209) added keyed on the model
+fingerprint, the header rect, the layout mode, the active index and the scroll
+index. Every one of those is unchanged by a font-size or font-family change, yet
+the cached `rect.w` values come straight out of `measure_width` — and the header
+rect cannot stand in for the font, because it is a constant height over a
+user-resized panel, not a font-derived one.
+
+So the strip served the old font's widths until something unrelated moved: wrong
+rects to paint, and wrong rects to hit-test with. The editor strip
+(`InvalidateTabStripGeometry` drops it outright) and the project strip (folds
+`GeometryEpoch()` into its fingerprint) were both already correct — this was the
+third strip, converted last, and the epoch was the piece it did not take with it.
+It now folds `geometry_epoch_` into the layout key.
+
+Generalisable: `InvalidateTabStripGeometry` is the *only* signal that font metrics
+moved, so **any cache holding a measured width must consume the epoch**, and a new
+one has to opt in explicitly — nothing forces it. Covered by
+`TabStripService/BottomPanelVisibleTabsMissOnGeometryEpoch`, which measures with a
+mutable glyph width and asserts the rect grows.
 
 ### TD-2026-08-14-211 — every coordinator that takes a strip list by value undoes the memo it reads from. [RESOLVED 2026-08-14, same session it was filed.]
 
