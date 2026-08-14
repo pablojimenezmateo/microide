@@ -349,6 +349,12 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   // FULL-WINDOW repaint. Nothing outside the dragged strip moves, so the damage
   // is that strip (padded for the ghost's drop shadow).
   if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
+    // The tab tooltip that was up when the gesture started is hidden for the whole
+    // drag (HoveredTooltip refuses while dragging), so the frame that starts the
+    // drag has to damage where it was or its card is left painted on the strip.
+    const bool was_dragging = context_.interaction_state.tab_drag.dragging;
+    const std::optional<HoverTooltip> tooltip_before =
+        was_dragging ? std::nullopt : HoveredTooltip(layout);
     const bool handled = HandleTabMouseMotion(event, layout);
     if (handled) {
       EnsureRedraw([this]() {
@@ -364,6 +370,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         RequestRedrawRect(MakeRect(strip->x, strip->y, strip->w + kGhostShadowPaddingPx,
                                    strip->h + kGhostShadowPaddingPx));
       });
+      if (!was_dragging && context_.interaction_state.tab_drag.dragging &&
+          tooltip_before.has_value()) {
+        const SDL_FRect& card = tooltip_before->rect;
+        RequestRedrawRect(MakeRect(card.x - 1.0f, card.y - 1.0f, card.w + 2.0f, card.h + 2.0f));
+      }
     }
     return handled;
   }

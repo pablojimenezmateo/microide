@@ -4113,6 +4113,46 @@ void TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit() {
          "the second neighbour keeps its unfinished ease instead of teleporting");
 }
 
+// Hovering a tab shows its full path. Starting a drag from that hover used to
+// leave the card up for the whole gesture, floating over the strip the tab is
+// being dragged across and naming whatever the pointer first rested on — the
+// drag path owns the pointer and stops re-resolving hover, so nothing retired it.
+void TestWorkspaceShellEditorTabDragHidesTheHoverTooltip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  const float cx = source_rect.x + source_rect.w * 0.5f;
+  const float cy = source_rect.y + source_rect.h * 0.5f;
+  SendMouseMotion(shell, cx, cy, 0);
+  Expect(!WorkspaceShellTestAccess::HoveredTooltipLabel(shell).empty(),
+         "hovering a tab shows its path tooltip");
+
+  Expect(SendMouseDown(shell, cx, cy, SDL_BUTTON_LEFT), "press starts a drag");
+  const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
+  Expect(SendMouseMotion(shell, third_rect.x + 1.0f, cy, SDL_BUTTON_LMASK), "drag is handled");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).dragging, "the drag is live");
+  Expect(WorkspaceShellTestAccess::HoveredTooltipLabel(shell).empty(),
+         "no tooltip is shown while a tab is being dragged");
+
+  Expect(SendMouseUp(shell, third_rect.x + 1.0f, cy, SDL_BUTTON_LEFT), "release handled");
+  Expect(!WorkspaceShellTestAccess::HoveredTooltipLabel(shell).empty(),
+         "the tooltip comes back once the drag ends");
+}
+
 // A drag owns the pointer, so it owns the cancel key too — and it cannot survive
 // the window losing focus, because the button-up goes to whoever took the focus.
 // Both abandon the gesture: the lifted tab glides home and nothing is reordered.
@@ -5456,6 +5496,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDragAutoScrollsOverflowingStrip);
   AddTest(tests, "WorkspaceShell/EditorTabDragIsAbandonedByEscapeAndFocusLoss",
           TestWorkspaceShellEditorTabDragIsAbandonedByEscapeAndFocusLoss);
+  AddTest(tests, "WorkspaceShell/EditorTabDragHidesTheHoverTooltip",
+          TestWorkspaceShellEditorTabDragHidesTheHoverTooltip);
   AddTest(tests, "WorkspaceShell/EditorTabDragHomeStillGlides",
           TestWorkspaceShellEditorTabDragHomeStillGlides);
   AddTest(tests, "WorkspaceShell/OutputTabReorderMovesActiveChannel",

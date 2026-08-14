@@ -59,6 +59,13 @@ std::optional<HoverTooltip> WorkspaceShell::HoveredTooltip(const WorkspaceLayout
   if (!last_mouse_position_valid_ || MenuSurfaceCapturingMouse()) {
     return std::nullopt;
   }
+  // A live tab drag hides every tooltip. The one that was up when the gesture
+  // started used to stay up for the whole drag — floating over the strip the tab
+  // is being dragged across, naming whatever the pointer happened to rest on
+  // first — because the drag path owns the pointer and stops re-resolving hover.
+  if (context_.interaction_state.tab_drag.dragging) {
+    return std::nullopt;
+  }
   const float x = last_mouse_x_;
   const float y = last_mouse_y_;
 

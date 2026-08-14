@@ -555,7 +555,10 @@ bool TabMouseCoordinator::UpdateDragForPointer() {
   } else {
     AdvanceSlideOnInputThread();
   }
-  return true;
+  // Reports whether the STRIP changed, not whether the pointer moved: the
+  // auto-scroll tick uses this as its repaint signal, and it fires at ~60fps
+  // against a step that lands at ~11fps.
+  return slot_changed || scrolled;
 }
 
 void TabMouseCoordinator::SeedSlideTargets(const DragStrip& d, std::size_t insertion_slot) {
