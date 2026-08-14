@@ -528,8 +528,11 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
         "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
     const std::string right_content =
         util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()), right_line_ending);
-    compare_tab.model = compare::BuildCompareModel(compare_tab.left_content, right_content,
-                                                   compare_tab.build_options);
+    // In place, recycling the previous build's row storage: a fresh model is two
+    // string allocations per row, and this runs on every keystroke in the
+    // editable pane (TD-2026-08-13-208).
+    compare::BuildCompareModelInto(compare_tab.model, compare_tab.left_content, right_content,
+                                   compare_tab.build_options);
     ++compare_tab.model_revision;
     compare_tab.visible_layout_cache_model_revision = compare_tab.model_revision;
     compare_tab.visible_layout_cache.clear();

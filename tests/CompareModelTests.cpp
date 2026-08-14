@@ -7,11 +7,13 @@
 #include <sstream>
 #include <string>
 #include <string_view>
+#include <vector>
 
 namespace microide::tests {
 namespace {
 
 using microide::compare::BuildCompareModel;
+using microide::compare::BuildCompareModelInto;
 using microide::compare::BuildCompareModelProfiled;
 using microide::compare::CompareBuildOptions;
 using microide::compare::CompareModel;
@@ -1139,7 +1141,108 @@ void TestCompareLineEqualityInterningMatchesPredicate() {
   }
 }
 
+// TD-2026-08-13-208: a compare rebuild recycles the previous build's row storage,
+// because a CompareRow owns two std::strings and the rebuild runs on every
+// keystroke in an editable pane. The load-bearing property is that recycling
+// changes NOTHING about the result — including when the previous model was
+// longer, shorter, or a completely different diff.
+void TestBuildCompareModelIntoMatchesAFreshBuild() {
+  const auto rows_equal = [](const CompareModel& a, const CompareModel& b) {
+    if (a.rows.size() != b.rows.size() || a.hunks.size() != b.hunks.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < a.rows.size(); ++i) {
+      const CompareRow& lhs = a.rows[i];
+      const CompareRow& rhs = b.rows[i];
+      if (lhs.left_text != rhs.left_text || lhs.right_text != rhs.right_text ||
+          lhs.left_line != rhs.left_line || lhs.right_line != rhs.right_line ||
+          lhs.kind != rhs.kind || lhs.hunk != rhs.hunk ||
+          lhs.left_changed_spans.size() != rhs.left_changed_spans.size() ||
+          lhs.right_changed_spans.size() != rhs.right_changed_spans.size()) {
+        return false;
+      }
+    }
+    for (std::size_t i = 0; i < a.hunks.size(); ++i) {
+      if (a.hunks[i].index != b.hunks[i].index || a.hunks[i].start_row != b.hunks[i].start_row ||
+          a.hunks[i].end_row != b.hunks[i].end_row) {
+        return false;
+      }
+    }
+    return true;
+  };
+
+  struct Case {
+    std::string left;
+    std::string right;
+  };
+  const std::vector<Case> cases = {
+      // A long diff first, so every later build recycles rows from a longer one.
+      {"a1\na2\na3\na4\na5\na6\na7\na8\n", "b1\nb2\nb3\nb4\nb5\nb6\nb7\nb8\n"},
+      // Shorter, and structurally different (a pure insert).
+      {"one\ntwo\n", "one\ninserted\ntwo\n"},
+      // Identical sides: every row Unchanged, no hunks — the case where leftover
+      // hunks or leftover changed-spans from the previous build would show.
+      {"same\nsame\n", "same\nsame\n"},
+      // A modified line, which populates changed spans on a recycled row.
+      {"alpha bravo\n", "alpha charlie\n"},
+      // Empty right side.
+      {"only left\n", ""},
+      // Back to long, growing past the recycled storage again.
+      {"x1\nx2\nx3\nx4\nx5\nx6\nx7\nx8\nx9\n", "y1\ny2\ny3\ny4\ny5\ny6\ny7\ny8\ny9\n"},
+  };
+
+  CompareModel recycled;
+  for (const Case& test_case : cases) {
+    BuildCompareModelInto(recycled, test_case.left, test_case.right, CompareBuildOptions{});
+    const CompareModel fresh =
+        BuildCompareModel(test_case.left, test_case.right, CompareBuildOptions{});
+    Expect(rows_equal(recycled, fresh),
+           "a recycled rebuild must equal a fresh build of the same inputs");
+    Expect(recycled.left_empty == fresh.left_empty && recycled.right_empty == fresh.right_empty &&
+               recycled.left_final_newline_missing == fresh.left_final_newline_missing &&
+               recycled.right_final_newline_missing == fresh.right_final_newline_missing &&
+               recycled.left_uses_crlf == fresh.left_uses_crlf &&
+               recycled.right_uses_crlf == fresh.right_uses_crlf,
+           "the whole-model flags are rebuilt too, not carried over");
+  }
+}
+
+// The reason the recycling exists: rebuilding the same diff must not keep
+// allocating. This asserts the row STORAGE is genuinely reused rather than
+// reallocated, which is the property the allocation win rests on.
+void TestBuildCompareModelIntoReusesRowStorage() {
+  std::string left;
+  std::string right;
+  for (int i = 0; i < 200; ++i) {
+    left += "line " + std::to_string(i) + " left\n";
+    right += "line " + std::to_string(i) + " right\n";
+  }
+
+  CompareModel model;
+  BuildCompareModelInto(model, left, right, CompareBuildOptions{});
+  Expect(model.rows.size() >= 200, "the fixture produces a large row set");
+
+  std::vector<const char*> first_row_buffers;
+  first_row_buffers.reserve(model.rows.size());
+  for (const CompareRow& row : model.rows) {
+    first_row_buffers.push_back(row.right_text.data());
+  }
+
+  // Same inputs, so every row's text is the same length and fits its buffer.
+  BuildCompareModelInto(model, left, right, CompareBuildOptions{});
+  std::size_t reused = 0;
+  for (std::size_t i = 0; i < model.rows.size() && i < first_row_buffers.size(); ++i) {
+    reused += static_cast<std::size_t>(model.rows[i].right_text.data() == first_row_buffers[i]);
+  }
+  Expect(reused == model.rows.size(),
+         "every row's string buffer is reused on a rebuild, not reallocated");
+}
+
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "CompareModel/BuildCompareModelIntoMatchesAFreshBuild",
+          TestBuildCompareModelIntoMatchesAFreshBuild);
+  AddTest(tests, "CompareModel/BuildCompareModelIntoReusesRowStorage",
+          TestBuildCompareModelIntoReusesRowStorage);
   AddTest(tests, "CompareModel/LineEqualityInterningMatchesPredicate",
           TestCompareLineEqualityInterningMatchesPredicate);
   AddTest(tests, "Compare/IntralineBudgetBoundsLargeModifiedHunk",

@@ -113,6 +113,22 @@ CompareModel BuildCompareModel(const std::string& left, const std::string& right
 CompareModel BuildCompareModel(const std::string& left,
                                const std::string& right,
                                const CompareBuildOptions& options);
+// Rebuild `model` in place, RECYCLING its existing row storage.
+//
+// A CompareRow owns two std::strings, so building a fresh model costs two string
+// allocations per row — 24,000 of them for a 12,000-row diff, on every keystroke
+// in an editable compare pane (TD-2026-08-13-208). Consecutive rebuilds produce
+// nearly identical rows, so reusing the previous build's buffers makes that cost
+// approximately zero without changing what is produced: every field of a recycled
+// row is reset, and rows past the new end are dropped.
+//
+// The by-value builders below are thin wrappers that start from an empty model,
+// so a caller with nothing to recycle pays exactly what it did before.
+void BuildCompareModelInto(CompareModel& model,
+                           const std::string& left,
+                           const std::string& right,
+                           const CompareBuildOptions& options);
+
 CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right);
 CompareBuildResult BuildCompareModelProfiled(const std::string& left,
                                              const std::string& right,

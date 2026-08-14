@@ -436,7 +436,56 @@ Until then, a change to whitespace-marker geometry has to be made in three place
 and only two of them have a test.
 
 
-### TD-2026-08-13-208 — a wrapped compare pane re-wraps the whole file on every keystroke, because the diff below it is rebuilt whole on every keystroke. [PREREQUISITE DONE 2026-08-14 — the scenario exists, and it is worse than the entry guessed.]
+### TD-2026-08-13-208 — a wrapped compare pane re-wraps the whole file on every keystroke, because the diff below it is rebuilt whole on every keystroke. [LARGELY RESOLVED 2026-08-14 — 50x fewer allocations, 11x faster, without an incremental diff.]
+
+**The scenario the entry asked for came first, and then said where to look.**
+`compare_type_in_wrapped_diff` types 16 characters into a wrapped working-tree
+comparison of the large-diff fixture, one keystroke per pumped frame. First
+reading: 391,891 allocations and 766 ms — ~24,500 allocations and ~48 ms per
+character.
+
+**The tracer then named the cause, and it was not the wrap pass or the diff
+algorithm.** Sites #1 and #2 were 191,952 allocations EACH — 98 % of the phase
+between them — both `std::string::_M_capacity` under `BuildCompareModelProfiled`.
+That is `CompareRow::left_text` and `CompareRow::right_text`: the row struct owns
+two `std::string`s, the diff has ~12,000 rows, and every keystroke built all
+24,000 of them from scratch.
+
+**Fix: rebuild in place, recycling the previous build's row storage.**
+`BuildCompareModelInto` hands the builder the existing rows and `assign()`s into
+their buffers — which reuse their allocation whenever capacity suffices, and for a
+typing burst that is essentially always. Rows past the new end are dropped
+(`resize` down never reallocates). Every field of a recycled row is reset, so the
+result is identical to a fresh build; the by-value builders are now thin wrappers
+that start from an empty model, so callers with nothing to recycle pay exactly
+what they did before.
+
+| `compare.type_in_wrapped_diff` | before | after | |
+| --- | ---: | ---: | ---: |
+| p50 allocations (16 keystrokes) | 391,891 | 7,830 | **−98.0 %** |
+| per keystroke | ~24,500 | ~489 | |
+| p50 wall | 766 ms | 70 ms | **10.9x** |
+| per keystroke | ~48 ms | ~4.4 ms | |
+| share of the scenario's allocations | 93.7 % | 22.8 % | |
+
+Pinned by `CompareModel/BuildCompareModelIntoMatchesAFreshBuild` (six diffs of
+different shapes rebuilt into one model — longer, shorter, identical-sides,
+modified-with-spans, empty-side, growing again — each compared field-by-field
+against a fresh build) and `CompareModel/BuildCompareModelIntoReusesRowStorage`
+(every row's string buffer address survives a rebuild, which is the property the
+win rests on).
+
+**What is still true from the entry.** The rebuild is still O(file) per keystroke
+in TIME — it is now a cheap O(file), not an allocating one — so the incremental
+compare model remains the durable answer, and the wrap-table splice still buys
+nothing until it exists. The remaining 22.8 % is syntax re-highlighting
+(`HighlightLineInto` under `RenderCompareSurface`) after the per-row token vectors
+are cleared, which is the next thread to pull.
+
+Scenario still ungated: arm it with a baseline recorded on an idle runner.
+
+#### Original entry (prerequisite note)
+
 
 **The prerequisite this entry names is landed: `compare_type_in_wrapped_diff`**
 (tests/perf/GitWorkstationPerfScenarios.cpp). It opens the large-diff fixture as a
