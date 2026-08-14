@@ -20,6 +20,7 @@
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
 #include "workspace/render/TabStripAnimation.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
@@ -750,6 +751,11 @@ std::optional<WorkspaceShell::ChangedLineSpan> WorkspaceShell::ComputeChangedLin
 }
 
 std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
+  // A drag parked at the edge of an overflowing strip auto-scrolls on a timer, and
+  // a still pointer emits no motion events, so the wake has to come from here.
+  if (context_.interaction_state.tab_drag.autoscroll_direction != 0) {
+    return static_cast<Uint32>(16);
+  }
   const TabSlideState& slide = context_.interaction_state.tab_slide;
   if (slide.kind == TabDragKind::None) {
     return std::nullopt;
@@ -771,9 +777,15 @@ std::optional<Uint32> WorkspaceShell::NextTabSlideDelayMs() const {
 }
 
 bool WorkspaceShell::AdvanceTabSlide() {
+  // Pump the drag auto-scroll first: it can move every tab, which reseeds the
+  // slide targets the ease below then steps.
+  bool scrolled = false;
+  if (context_.interaction_state.tab_drag.autoscroll_direction != 0) {
+    scrolled = MakeTabMouseCoordinator().TickDragAutoScroll();
+  }
   TabSlideState& slide = context_.interaction_state.tab_slide;
   if (slide.kind == TabDragKind::None) {
-    return false;
+    return scrolled;
   }
   const Uint64 now = SDL_GetTicks();
   const Uint64 raw_dt = now >= slide.last_advance_ms ? now - slide.last_advance_ms : 0;
@@ -789,28 +801,29 @@ bool WorkspaceShell::AdvanceTabSlide() {
       slide = TabSlideState{};
       return true;
     }
-    // Converged mid-drag with the pointer still: no repaint, no further wakes.
-    return false;
+    // Converged mid-drag with the pointer still: no repaint unless auto-scroll
+    // moved the strip under it.
+    return scrolled;
   }
   return true;
 }
 
-std::optional<SDL_FRect> WorkspaceShell::CurrentTabSlideDirtyRect() const {
-  const TabSlideState& slide = context_.interaction_state.tab_slide;
-  if (slide.kind == TabDragKind::None) {
+std::optional<SDL_FRect> WorkspaceShell::TabStripRectForKind(TabDragKind kind,
+                                                             std::size_t group_index) const {
+  if (kind == TabDragKind::None) {
     return std::nullopt;
   }
   const auto layout = CurrentWorkspaceLayout();
   if (!layout.has_value()) {
     return std::nullopt;
   }
-  switch (slide.kind) {
+  switch (kind) {
     case TabDragKind::Project:
       return layout->project_tab_strip;
     case TabDragKind::Editor: {
       const EditorGroupRectsLayout groups = ComputeEditorGroupRectsForState(*layout);
-      if (slide.group_index < groups.groups.size()) {
-        return groups.groups[slide.group_index].tab_strip;
+      if (group_index < groups.groups.size()) {
+        return groups.groups[group_index].tab_strip;
       }
       return layout->tab_strip;
     }
@@ -822,6 +835,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentTabSlideDirtyRect() const {
   }
   return std::nullopt;
 }
+
 
 std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
   std::optional<Uint32> next_delay = NextCaretBlinkDelayMs();
@@ -1142,8 +1156,14 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   // Step the Chrome-like tab-slide animation. Capture the dirty strip before
   // advancing so the settle-end frame (which clears the state) still repaints
   // the right region instead of falling back to a full redraw.
-  if (context_.interaction_state.tab_slide.kind != TabDragKind::None) {
-    const std::optional<SDL_FRect> slide_rect = CurrentTabSlideDirtyRect();
+  if (context_.interaction_state.tab_slide.kind != TabDragKind::None ||
+      context_.interaction_state.tab_drag.autoscroll_direction != 0) {
+    const TabSlideState& slide = context_.interaction_state.tab_slide;
+    const std::optional<SDL_FRect> slide_rect =
+        slide.kind != TabDragKind::None
+            ? TabStripRectForKind(slide.kind, slide.group_index)
+            : TabStripRectForKind(context_.interaction_state.tab_drag.kind,
+                                  FocusedEditorGroupIndex());
     if (AdvanceTabSlide()) {
       return EventResult{
           .handled = true,

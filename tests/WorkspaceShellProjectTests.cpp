@@ -4019,6 +4019,140 @@ void TestWorkspaceShellEditorTabDragHomeStillGlides() {
          "even a no-reorder drop glides the lifted tab back home instead of snapping");
 }
 
+// The drop slot follows the DRAGGED TAB, not the cursor. Grabbing a tab near its
+// left edge and pushing right used to need the cursor itself to cross the next
+// tab's midpoint, so the tab visually covered its neighbour a long way before
+// anything moved — the strip read as lagging half a tab behind the drag.
+void TestWorkspaceShellEditorTabDragSlotFollowsTheTabNotTheGrabPoint() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  const SDL_FRect second_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 1);
+  Expect(source_rect.w > 24.0f, "the fixture needs tabs wide enough for a grab offset to matter");
+
+  // Grab tab 0 near its LEFT edge, so the tab's own body sits well to the right
+  // of the cursor for the whole gesture.
+  const float grab_x = source_rect.x + 2.0f;
+  const float grab_y = source_rect.y + source_rect.h * 0.5f;
+  Expect(SendMouseDown(shell, grab_x, grab_y, SDL_BUTTON_LEFT), "press starts a drag");
+
+  // Park the cursor just SHORT of tab 1's midpoint. The dragged tab's own centre
+  // is already past it, which is what decides.
+  const float second_midpoint = second_rect.x + second_rect.w * 0.5f;
+  Expect(SendMouseMotion(shell, second_midpoint - 4.0f, grab_y, SDL_BUTTON_LMASK),
+         "dragging is handled");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).reordered,
+         "the dragged tab's centre passed tab 1's midpoint, so a reorder is pending "
+         "even though the cursor has not");
+
+  Expect(SendMouseUp(shell, second_midpoint - 4.0f, grab_y, SDL_BUTTON_LEFT), "release handled");
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(shell);
+  Expect(tabs.size() == 3 && tabs[0].path == file_b.lexically_normal() &&
+             tabs[1].path == file_a.lexically_normal(),
+         "the drop lands where the dragged tab was drawn, not where the cursor was");
+}
+
+// A tab dropped mid-glide used to snap its neighbours to their new resting slots
+// on the release frame, because the settle zeroed every offset. Their unfinished
+// ease has to carry across the commit instead.
+void TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  const SDL_FRect source_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 0);
+  const SDL_FRect third_rect = WorkspaceShellTestAccess::EditorTabRect(shell, 2);
+  const float cy = source_rect.y + source_rect.h * 0.5f;
+  Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f, cy, SDL_BUTTON_LEFT),
+         "press starts a drag on tab 0");
+  const float drop_x = third_rect.x + third_rect.w + 20.0f;
+  Expect(SendMouseMotion(shell, drop_x, cy, SDL_BUTTON_LMASK), "drag past the last tab");
+
+  // Snapshot the in-flight ease. Each neighbour is drawn at `base + current` and
+  // the commit makes `base + target` its new base, so its carried offset is
+  // exactly `current - target` — whatever the elapsed time happened to be.
+  const microide::workspace::TabSlideState during = WorkspaceShellTestAccess::TabSlide(shell);
+  Expect(during.current.size() == 3 && during.target.size() == 3,
+         "the drag arms one slide offset per tab");
+  const float residual_for_tab_1 = during.current[1] - during.target[1];
+  const float residual_for_tab_2 = during.current[2] - during.target[2];
+
+  Expect(SendMouseUp(shell, drop_x, cy, SDL_BUTTON_LEFT), "release commits the reorder");
+  const auto& settle = WorkspaceShellTestAccess::TabSlide(shell);
+  Expect(settle.settling && settle.current.size() == 3, "release hands off to a settle glide");
+  // Tab 0 moved to the end, so pre-reorder tabs 1 and 2 are now 0 and 1.
+  Expect(std::fabs(settle.current[0] - residual_for_tab_1) < 1e-3f,
+         "the first neighbour keeps its unfinished ease instead of teleporting");
+  Expect(std::fabs(settle.current[1] - residual_for_tab_2) < 1e-3f,
+         "the second neighbour keeps its unfinished ease instead of teleporting");
+}
+
+// An overflowing strip has to walk under a drag held at its edge; without that the
+// off-screen end of the strip is unreachable, because the drop slot now pins to
+// what is visible rather than teleporting the tab to a slot nobody can see.
+void TestWorkspaceShellEditorTabDragAutoScrollsOverflowingStrip() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  for (int i = 0; i < 10; ++i) {
+    const std::filesystem::path file =
+        root / ("file-" + std::to_string(i) + "-with-a-very-long-name.cpp");
+    WriteFile(file, "int value() { return 1; }\n");
+    Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file), "editor tab fixture opens");
+  }
+  WorkspaceShellTestAccess::SetWindowSize(shell, 640, 720);
+  WorkspaceShellTestAccess::ActivateTab(shell, 9);
+  const int scrolled_index = WorkspaceShellTestAccess::EditorTabScrollIndex(shell);
+  Expect(scrolled_index > 0, "activating the last tab scrolls the overflowing strip");
+
+  const SDL_FRect strip = WorkspaceShellTestAccess::GroupTabStripRect(shell, 0);
+  const SDL_FRect source_rect =
+      WorkspaceShellTestAccess::EditorTabRect(shell, static_cast<std::size_t>(scrolled_index));
+  const float cy = source_rect.y + source_rect.h * 0.5f;
+  Expect(SendMouseDown(shell, source_rect.x + source_rect.w * 0.5f, cy, SDL_BUTTON_LEFT),
+         "press starts a drag on the first visible tab");
+  // The press activates that tab, which re-runs EnsureActiveTabVisible and can
+  // move the strip on its own — so the auto-scroll is measured from here, not
+  // from the pre-press index.
+  const int pressed_index = WorkspaceShellTestAccess::EditorTabScrollIndex(shell);
+  Expect(pressed_index > 0, "the strip is still scrolled after the press");
+  Expect(SendMouseMotion(shell, strip.x + 2.0f, cy, SDL_BUTTON_LMASK),
+         "dragging to the strip's left edge is handled");
+  Expect(WorkspaceShellTestAccess::EditorTabScrollIndex(shell) < pressed_index,
+         "holding a drag at the left edge walks the overflowing strip back toward the start");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).autoscroll_direction == -1,
+         "the auto-scroll stays armed so a still pointer keeps stepping from the animation tick");
+
+  Expect(SendMouseUp(shell, strip.x + 2.0f, cy, SDL_BUTTON_LEFT), "release handled");
+}
+
 void TestWorkspaceShellOutputTabReorderMovesActiveChannel() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetOutputChannelTabs(shell, {"build", "lint", "run"}, "build");
@@ -5255,6 +5389,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDragTargetSlotTracksPointer);
   AddTest(tests, "WorkspaceShell/EditorTabDragSeedsSlideAnimation",
           TestWorkspaceShellEditorTabDragSeedsSlideAnimation);
+  AddTest(tests, "WorkspaceShell/EditorTabDragSlotFollowsTheTabNotTheGrabPoint",
+          TestWorkspaceShellEditorTabDragSlotFollowsTheTabNotTheGrabPoint);
+  AddTest(tests, "WorkspaceShell/EditorTabDropCarriesNeighborEaseAcrossTheCommit",
+          TestWorkspaceShellEditorTabDropCarriesNeighborEaseAcrossTheCommit);
+  AddTest(tests, "WorkspaceShell/EditorTabDragAutoScrollsOverflowingStrip",
+          TestWorkspaceShellEditorTabDragAutoScrollsOverflowingStrip);
   AddTest(tests, "WorkspaceShell/EditorTabDragHomeStillGlides",
           TestWorkspaceShellEditorTabDragHomeStillGlides);
   AddTest(tests, "WorkspaceShell/OutputTabReorderMovesActiveChannel",

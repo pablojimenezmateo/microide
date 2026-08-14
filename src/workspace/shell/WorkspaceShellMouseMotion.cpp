@@ -341,6 +341,33 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     return false;
   }
 
+  // A live tab drag owns the pointer, exactly like the divider/scrollbar drags
+  // above it. It used to be handled at the very bottom of this function, which
+  // meant every motion event first ran the whole hover pipeline — two tooltip
+  // resolutions, two interactive-rect hit tests, the sidebar/status/floating
+  // probes — for hover state that a drag cannot change, and then asked for a
+  // FULL-WINDOW repaint. Nothing outside the dragged strip moves, so the damage
+  // is that strip (padded for the ghost's drop shadow).
+  if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
+    const bool handled = HandleTabMouseMotion(event, layout);
+    if (handled) {
+      EnsureRedraw([this]() {
+        const auto strip = TabStripRectForKind(context_.interaction_state.tab_drag.kind,
+                                               FocusedEditorGroupIndex());
+        if (!strip.has_value()) {
+          RequestWindowRedraw();
+          return;
+        }
+        // The ghost paints a 1px-right / 2px-down drop shadow, so its damage runs
+        // a couple of pixels past the strip it belongs to.
+        constexpr float kGhostShadowPaddingPx = 3.0f;
+        RequestRedrawRect(MakeRect(strip->x, strip->y, strip->w + kGhostShadowPaddingPx,
+                                   strip->h + kGhostShadowPaddingPx));
+      });
+    }
+    return handled;
+  }
+
   if (context_.interaction_state.mouse_selecting && (event.motion.state & SDL_BUTTON_LMASK) != 0) {
     // Deliberately NOT gated on the pointer being inside `layout.editor_surface`.
     // It used to be, which is why a selection drag stopped extending the moment
@@ -621,14 +648,6 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
   if (MakeChromeMouseCoordinator().HandleMotion(event, layout)) {
     EnsureRedraw([this]() { RequestChromeRedraw(); });
     return true;
-  }
-
-  if (context_.interaction_state.tab_drag.kind != TabDragKind::None) {
-    const bool handled = HandleTabMouseMotion(event, layout);
-    if (handled) {
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
-    }
-    return handled;
   }
 
   if (MakePanelMouseCoordinator().HandleMotion(event)) {

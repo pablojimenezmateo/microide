@@ -55,9 +55,19 @@ struct TabDragState {
   std::size_t source_index = 0;     // active index captured at press
   float pointer_x = 0.0f;           // live cursor x (drives ghost + slot)
   float pointer_y = 0.0f;
-  std::size_t target_slot = 0;      // StripInsertionSlot() for pointer_x
+  std::size_t target_slot = 0;      // insertion slot under the dragged tab's box
   float ghost_width = 0.0f;         // dragged tab rect width
   float grab_offset_x = 0.0f;       // press_x - dragged_tab.rect.x
+  // True once the slide targets have been seeded at least once for this drag, so
+  // a motion event that does not change the insertion slot can advance the ease
+  // instead of rebuilding the whole target layout.
+  bool slide_seeded = false;
+  // Drag auto-scroll of an overflowing strip (VS Code holds the pointer at the
+  // edge and the strip walks under it). Direction is latched so the repeat can be
+  // pumped from the animation tick while the pointer sits perfectly still, and
+  // rate-limited so it steps at a readable pace rather than per motion event.
+  int autoscroll_direction = 0;
+  Uint64 last_autoscroll_ms = 0;
 };
 
 // Chrome-like sliding reorder animation. While a tab drag is live, neighbor tabs

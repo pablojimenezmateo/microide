@@ -1934,10 +1934,12 @@
   // Chrome-like tab-slide animation (WorkspaceShellRedraw.cpp). NextTabSlideDelayMs
   // schedules ~60fps wakes while a strip is easing; AdvanceTabSlide steps the
   // offsets on a scheduled wake and clears the state when the post-release settle
-  // finishes; CurrentTabSlideDirtyRect scopes the repaint to the animating strip.
+  // finishes; TabStripRectForKind scopes the repaint to the animating strip. It
+  // is also what the live drag and the drag auto-scroll pump damage, so all three
+  // resolve the same rect from the same place.
   std::optional<Uint32> NextTabSlideDelayMs() const;
   bool AdvanceTabSlide();
-  std::optional<SDL_FRect> CurrentTabSlideDirtyRect() const;
+  std::optional<SDL_FRect> TabStripRectForKind(TabDragKind kind, std::size_t group_index) const;
   void ResetCaretBlink();
   bool ShouldBlinkCaret() const;
   // Caret-blink settings: whether the caret blinks at all (else it stays solid)

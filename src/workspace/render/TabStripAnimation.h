@@ -1,10 +1,25 @@
 #pragma once
 
+#include <algorithm>
 #include <cstddef>
 #include <span>
 #include <vector>
 
 namespace microide::workspace {
+
+// Leading x of the floating ghost for a live tab drag, pinned inside the strip.
+// The drop-slot math, the post-release settle and the paint all have to agree on
+// this to the pixel — they used to each spell the clamp out, and `std::clamp`
+// with a strip narrower than the tab is undefined behaviour, which a very narrow
+// window reaches.
+inline float ClampedGhostX(float strip_x,
+                           float strip_w,
+                           float ghost_width,
+                           float pointer_x,
+                           float grab_offset_x) {
+  const float max_x = std::max(strip_x, strip_x + strip_w - ghost_width);
+  return std::clamp(pointer_x - grab_offset_x, strip_x, max_x);
+}
 
 // Minimal view of a visible tab needed to animate a strip. Callers build these
 // from their `VisibleStripTab` rects so this math module stays free of the heavy
