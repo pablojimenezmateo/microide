@@ -389,6 +389,50 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-233 — `editor_smart_indent_typing`'s retention gate is red, and was red before this session touched anything. OPEN.
+
+A full gate run at the end of the 2026-08-14 allocation session: **104 PASS, 1
+FAIL**, and the one failure is retention, not allocations.
+
+```
+[perf] FAIL editor_smart_indent_typing (p50_wall=9.75702ms, p50_alloc=1732)
+[perf]   p50_net_heap_bytes: baseline=14004.5 measured=26348.5 (+88.1%, tolerance +29.2%)
+```
+
+**A/B'd against the session's base commit** (`cacd6a3f`, built from the
+`microide-perf` preset in a throwaway worktree, fixtures copied in):
+
+| | `p50_net_heap_bytes` | `p50_allocations` |
+| --- | ---: | ---: |
+| baseline in the JSON | 14,004.5 | — |
+| `cacd6a3f` (session base) | **27,987** | 1,976 |
+| HEAD | **26,348.5** | 1,732 |
+
+So the gate was already ~2x red before the session, and the session moved it
+slightly the *right* way. Same shape as the four in
+[191](#td-2026-08-12-191) — a retention regression landed at some point and no
+gate run caught it, because nothing reruns the gate ([141](#td-2026-08-06-141)).
+**Do not rebaseline it.** That would enshrine the thing worth finding.
+
+Ruled out on the way: the session's `LineBlob` byte reserve
+([227](#td-2026-08-14-227)). Compiling it out reproduced 26,348.5 **to the byte**,
+so it is not the cause — and that A/B doubles as a check that
+`PieceTree/ExtractIntoBlobSizesItsByteBuffer` fails without the reserve, which it
+did.
+
+Two related notes from the same run:
+
+- The run prints `runner_class=local-advisory; not authoritative for baseline
+  updates` unless `--reference-runner=` names the machine, which is the guard that
+  should stop an ad-hoc rebaseline.
+- **The allocation half of roughly a dozen scenarios is now loose**, because this
+  session cut allocation counts by 15–95 % on the paths it touched and the gates
+  are one-sided. Nothing is *near* its envelope (the only two headroom warnings
+  are duration/resident and machine-sensitive), so a deliberate
+  `--update-baseline=deterministic` pass on the reference runner is the right
+  follow-up — deliberately, and not as the tail of a session that just moved every
+  one of those numbers.
+
 ### TD-2026-08-14-232 — a compare row owns its text, so opening a large diff allocates two strings per row. OPEN.
 
 `diff.open_large_compare`'s #1, #2 and #3 sites are all
