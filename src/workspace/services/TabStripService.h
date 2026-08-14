@@ -179,6 +179,25 @@ class TabStripService {
     bool valid = false;
   };
 
+  // Fills `out` in place. The two strip builders settle their overflow reserve by
+  // laying the strip out up to four times, and each pass used to materialise
+  // three vectors and copy each tab's title twice, on its way through
+  // ComputeVisibleStripLayouts -> BuildChromeTabRenderItems -> VisibleStripTab
+  // (TD-2026-08-14-222). Building into the memo's own vector means a rebuild
+  // reuses the buffers the previous rebuild left.
+  void BuildVisibleStripTabsInto(
+      std::vector<VisibleStripTab>& out,
+      const std::vector<float>& widths,
+      float start_x,
+      float gap,
+      float max_tab_x,
+      std::size_t scroll_index,
+      float tab_y,
+      float tab_height,
+      std::span<const std::size_t> model_indices,
+      std::size_t active_index,
+      std::span<const std::string> display_titles,
+      std::span<const std::string> tooltip_labels) const;
   std::vector<VisibleStripTab> BuildVisibleStripTabs(
       const std::vector<float>& widths,
       float start_x,
@@ -249,6 +268,11 @@ class TabStripService {
   mutable std::array<TabStripGeometryCache, kMaxEditorGroups> editor_tab_geometry_cache_;
   mutable std::array<VisibleEditorTabsCache, kMaxEditorGroups> visible_editor_tabs_cache_;
   mutable BottomPanelTabsCache bottom_panel_tabs_cache_;
+  // Scratch for the two intermediate lists a strip build walks through. Members,
+  // not locals, so a rebuild that lays the strip out four times allocates once
+  // rather than eight times (TD-2026-08-14-222).
+  mutable std::vector<StripSlotLayout> strip_slot_scratch_;
+  mutable std::vector<ChromeTabRenderItem> chrome_item_scratch_;
   std::uint64_t geometry_epoch_ = 0;
 };
 

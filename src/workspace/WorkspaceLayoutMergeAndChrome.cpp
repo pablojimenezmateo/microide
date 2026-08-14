@@ -20,32 +20,40 @@ float ComputeChromeButtonWidth(float measured_label_width) {
   return std::clamp(measured_label_width + 18.0f, 64.0f, 160.0f);
 }
 
-std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
-                                                        float start_x,
-                                                        float gap,
-                                                        float max_x,
-                                                        std::size_t first_index) {
-  std::vector<StripSlotLayout> slots;
+void ComputeVisibleStripLayoutsInto(std::vector<StripSlotLayout>& out,
+                                    const std::vector<float>& widths,
+                                    float start_x,
+                                    float gap,
+                                    float max_x,
+                                    std::size_t first_index) {
+  out.clear();
   if (widths.empty()) {
-    return slots;
+    return;
   }
 
-  const std::size_t clamped_first =
-      std::min(first_index, widths.empty() ? 0 : widths.size() - 1);
+  const std::size_t clamped_first = std::min(first_index, widths.size() - 1);
   float x = start_x;
   for (std::size_t i = clamped_first; i < widths.size(); ++i) {
     const float width = widths[i];
     if (x + width > max_x) {
       break;
     }
-    slots.push_back(StripSlotLayout{
+    out.push_back(StripSlotLayout{
         .index = i,
         .x = x,
         .width = width,
     });
     x += width + gap;
   }
+}
 
+std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
+                                                        float start_x,
+                                                        float gap,
+                                                        float max_x,
+                                                        std::size_t first_index) {
+  std::vector<StripSlotLayout> slots;
+  ComputeVisibleStripLayoutsInto(slots, widths, start_x, gap, max_x, first_index);
   return slots;
 }
 
@@ -90,6 +98,45 @@ std::size_t EnsureVisibleStripIndex(const std::vector<float>& widths,
   return first_visible;
 }
 
+void BuildChromeTabRenderItemsInto(std::vector<ChromeTabRenderItem>& out,
+                                   std::span<const StripSlotLayout> slots,
+                                   float tab_y,
+                                   float tab_height,
+                                   std::span<const std::size_t> model_indices,
+                                   std::size_t active_index,
+                                   std::span<const std::string> display_titles,
+                                   std::span<const std::string> tooltip_labels,
+                                   float close_button_size,
+                                   float close_button_right_inset) {
+  // resize, not clear+push_back: the elements that survive keep their two string
+  // buffers, and `assign` below refills them in place.
+  out.resize(slots.size());
+  for (std::size_t i = 0; i < slots.size(); ++i) {
+    const StripSlotLayout& slot = slots[i];
+    const std::size_t model_index =
+        slot.index < model_indices.size() ? model_indices[slot.index] : slot.index;
+    const SDL_FRect rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
+    ChromeTabRenderItem& item = out[i];
+    item.index = model_index;
+    item.rect = rect;
+    item.close_rect = MakeRect(
+        rect.x + rect.w - close_button_right_inset - close_button_size,
+        rect.y + std::floor(std::max(0.0f, rect.h - close_button_size) * 0.5f), close_button_size,
+        close_button_size);
+    item.active = model_index == active_index;
+    if (slot.index < display_titles.size()) {
+      item.display_title.assign(display_titles[slot.index]);
+    } else {
+      item.display_title.clear();
+    }
+    if (slot.index < tooltip_labels.size()) {
+      item.tooltip_label.assign(tooltip_labels[slot.index]);
+    } else {
+      item.tooltip_label.clear();
+    }
+  }
+}
+
 std::vector<ChromeTabRenderItem> BuildChromeTabRenderItems(
     std::span<const StripSlotLayout> slots,
     float tab_y,
@@ -101,29 +148,9 @@ std::vector<ChromeTabRenderItem> BuildChromeTabRenderItems(
     float close_button_size,
     float close_button_right_inset) {
   std::vector<ChromeTabRenderItem> items;
-  items.reserve(slots.size());
-
-  for (const StripSlotLayout& slot : slots) {
-    const std::size_t model_index =
-        slot.index < model_indices.size() ? model_indices[slot.index] : slot.index;
-    const SDL_FRect rect = MakeRect(slot.x, tab_y, slot.width, tab_height);
-    ChromeTabRenderItem item;
-    item.index = model_index;
-    item.rect = rect;
-    item.close_rect = MakeRect(
-        rect.x + rect.w - close_button_right_inset - close_button_size,
-        rect.y + std::floor(std::max(0.0f, rect.h - close_button_size) * 0.5f), close_button_size,
-        close_button_size);
-    item.active = model_index == active_index;
-    if (slot.index < display_titles.size()) {
-      item.display_title = display_titles[slot.index];
-    }
-    if (slot.index < tooltip_labels.size()) {
-      item.tooltip_label = tooltip_labels[slot.index];
-    }
-    items.push_back(std::move(item));
-  }
-
+  BuildChromeTabRenderItemsInto(items, slots, tab_y, tab_height, model_indices, active_index,
+                                display_titles, tooltip_labels, close_button_size,
+                                close_button_right_inset);
   return items;
 }
 

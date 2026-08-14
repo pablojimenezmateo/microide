@@ -389,6 +389,26 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-14-222 — a tab-strip rebuild lays the strip out four times and materialises three vectors on each pass. [RESOLVED 2026-08-14, same session it was filed.]
+
+The open tail of [221](#td-2026-08-14-221). `BuildVisibleStripTabs` tops 5
+phases. It is memoized, so it is not per-frame — but a rebuild settles the
+overflow reserve by laying the strip out up to four times, and each pass ran
+`ComputeVisibleStripLayouts` → `BuildChromeTabRenderItems` → `VisibleStripTab`,
+three fresh vectors with each tab's title and tooltip copied twice.
+
+`…Into` forms throughout: the two intermediates are scratch members on
+`TabStripService`, the settle loop builds straight into the memo's own vector
+(it only runs on a miss, where those contents are being replaced anyway), and
+both item lists `resize`-and-assign rather than clear-and-push_back so the
+surviving elements keep their string buffers. `EnsureActiveEditorTabVisible`'s
+fit search — which lays the strip out up to three times per candidate index, for
+several indices — shares the same scratch.
+
+`multi_tab.open_tabs` 5,048.5 → 4,430.5 (−12 %); `multi_tab.cycle_tabs` is
+unchanged at 3,100, which is the memo working — cycling tabs does not rebuild
+the strip.
+
 ### TD-2026-08-14-221 — three view models rebuild themselves on every painted frame, and one of them copies a `std::filesystem::path`. [RESOLVED 2026-08-14, same session it was filed.]
 
 The allocation tracer's cross-phase table ranks a site by how many unrelated

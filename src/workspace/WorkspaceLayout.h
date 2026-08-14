@@ -460,6 +460,16 @@ std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model);
 float ComputeChromeButtonWidth(float measured_label_width);
+// Fills `out` rather than returning a fresh vector. Both strip builders run
+// their layout several times to settle the overflow reserve, so a returning form
+// materialises the same list three or four times per rebuild
+// (TD-2026-08-14-222); the returning form below is this plus a temporary.
+void ComputeVisibleStripLayoutsInto(std::vector<StripSlotLayout>& out,
+                                    const std::vector<float>& widths,
+                                    float start_x,
+                                    float gap,
+                                    float max_x,
+                                    std::size_t first_index);
 std::vector<StripSlotLayout> ComputeVisibleStripLayouts(const std::vector<float>& widths,
                                                         float start_x,
                                                         float gap,
@@ -471,6 +481,19 @@ std::size_t EnsureVisibleStripIndex(const std::vector<float>& widths,
                                     float max_x,
                                     std::size_t current_first_index,
                                     std::size_t active_index);
+// Same contract as ComputeVisibleStripLayoutsInto, and the reuse matters more
+// here: each item owns two strings, so a returning form allocates two per tab per
+// pass and frees the identical two when the next pass replaces the vector.
+void BuildChromeTabRenderItemsInto(std::vector<ChromeTabRenderItem>& out,
+                                   std::span<const StripSlotLayout> slots,
+                                   float tab_y,
+                                   float tab_height,
+                                   std::span<const std::size_t> model_indices,
+                                   std::size_t active_index,
+                                   std::span<const std::string> display_titles,
+                                   std::span<const std::string> tooltip_labels,
+                                   float close_button_size,
+                                   float close_button_right_inset);
 std::vector<ChromeTabRenderItem> BuildChromeTabRenderItems(
     std::span<const StripSlotLayout> slots,
     float tab_y,

@@ -63,6 +63,43 @@ float TabStripService::MeasureEditorTabWidth(std::string_view display_title,
   return std::clamp(measure_width(display_title) + 58.0f, 132.0f, 220.0f);
 }
 
+void TabStripService::BuildVisibleStripTabsInto(
+    std::vector<VisibleStripTab>& out,
+    const std::vector<float>& widths,
+    float start_x,
+    float gap,
+    float max_tab_x,
+    std::size_t scroll_index,
+    float tab_y,
+    float tab_height,
+    std::span<const std::size_t> model_indices,
+    std::size_t active_index,
+    std::span<const std::string> display_titles,
+    std::span<const std::string> tooltip_labels) const {
+  ComputeVisibleStripLayoutsInto(strip_slot_scratch_, widths, start_x, gap, max_tab_x,
+                                 scroll_index);
+  BuildChromeTabRenderItemsInto(chrome_item_scratch_, strip_slot_scratch_, tab_y, tab_height,
+                                model_indices, active_index, display_titles, tooltip_labels,
+                                kWorkspaceTabCloseButtonSize, kWorkspaceTabCloseButtonRightInset);
+
+  // resize, not clear+push_back, for the same reason the item list does it: the
+  // surviving elements keep the three string buffers this refills.
+  out.resize(chrome_item_scratch_.size());
+  for (std::size_t i = 0; i < chrome_item_scratch_.size(); ++i) {
+    const ChromeTabRenderItem& model = chrome_item_scratch_[i];
+    VisibleStripTab& tab = out[i];
+    tab.index = model.index;
+    tab.rect = model.rect;
+    tab.close_rect = model.close_rect;
+    tab.active = model.active;
+    tab.display_title.assign(model.display_title);
+    tab.tooltip_label.assign(model.tooltip_label);
+    tab.badge_text.clear();
+    tab.badge_color = SDL_Color{};
+    tab.show_badge = false;
+  }
+}
+
 std::vector<VisibleStripTab> TabStripService::BuildVisibleStripTabs(
     const std::vector<float>& widths,
     float start_x,
@@ -75,24 +112,9 @@ std::vector<VisibleStripTab> TabStripService::BuildVisibleStripTabs(
     std::size_t active_index,
     std::span<const std::string> display_titles,
     std::span<const std::string> tooltip_labels) const {
-  const auto visible = ComputeVisibleStripLayouts(widths, start_x, gap, max_tab_x, scroll_index);
-  const auto models =
-      BuildChromeTabRenderItems(visible, tab_y, tab_height, model_indices, active_index,
-                                display_titles, tooltip_labels, kWorkspaceTabCloseButtonSize,
-                                kWorkspaceTabCloseButtonRightInset);
-
   std::vector<VisibleStripTab> tabs;
-  tabs.reserve(models.size());
-  for (const ChromeTabRenderItem& model : models) {
-    VisibleStripTab tab;
-    tab.index = model.index;
-    tab.rect = model.rect;
-    tab.close_rect = model.close_rect;
-    tab.active = model.active;
-    tab.display_title = model.display_title;
-    tab.tooltip_label = model.tooltip_label;
-    tabs.push_back(std::move(tab));
-  }
+  BuildVisibleStripTabsInto(tabs, widths, start_x, gap, max_tab_x, scroll_index, tab_y, tab_height,
+                            model_indices, active_index, display_titles, tooltip_labels);
   return tabs;
 }
 
@@ -217,12 +239,15 @@ void TabStripService::EnsureActiveEditorTabVisible(EditorGroup& group,
   const auto active_fits_from = [&](std::size_t candidate_first) {
     const float candidate_start_x = candidate_first > 0 ? OverflowStripReserveForHiddenCount(1) : 0.0f;
     float candidate_right_reserve = OverflowStripReserveForHiddenCount(1);
-    std::vector<StripSlotLayout> visible;
+    // The shared scratch, not a local: this runs once per candidate first-index
+    // and lays the strip out up to three times each, and the whole loop below can
+    // walk back several indices (TD-2026-08-14-222).
+    std::vector<StripSlotLayout>& visible = strip_slot_scratch_;
     for (int pass = 0; pass < 3; ++pass) {
       const float candidate_max_x =
           std::max(candidate_start_x + 120.0f, strip_width - candidate_right_reserve);
-      visible = ComputeVisibleStripLayouts(geometry.widths, candidate_start_x, gap,
-                                           candidate_max_x, candidate_first);
+      ComputeVisibleStripLayoutsInto(visible, geometry.widths, candidate_start_x, gap,
+                                     candidate_max_x, candidate_first);
       if (visible.empty()) {
         return false;
       }
@@ -289,11 +314,15 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   const float tab_y = tab_strip.y + 2.0f;
   const float tab_height = std::max(22.0f, tab_strip.h - 2.0f);
   const float gap = 1.0f;
+  // Built straight into the memo's own vector: this runs only on a miss, where
+  // the previous contents are being replaced anyway, and the settle loop below
+  // lays the strip out up to four times (TD-2026-08-14-222).
+  std::vector<VisibleStripTab>& tabs = visible_cache.tabs;
   const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
     const float max_tab_x =
         std::max(start_x + 120.0f, tab_strip.x + tab_strip.w - right_overflow_reserve);
-    return BuildVisibleStripTabs(
-        geometry.widths, start_x, gap, max_tab_x,
+    BuildVisibleStripTabsInto(
+        tabs, geometry.widths, start_x, gap, max_tab_x,
         static_cast<std::size_t>(std::clamp(group.tab_scroll_index, 0,
                                             std::max(0, static_cast<int>(group.open_tabs.size()) - 1))),
         tab_y, tab_height, {}, group.active_tab_index, geometry.display_titles,
@@ -302,9 +331,8 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
 
   float start_x = tab_strip.x + OverflowStripReserveForHiddenCount(1);
   float right_overflow_reserve = OverflowStripReserveForHiddenCount(1);
-  std::vector<VisibleStripTab> tabs;
   for (int pass = 0; pass < 3; ++pass) {
-    tabs = build_tabs(start_x, right_overflow_reserve);
+    build_tabs(start_x, right_overflow_reserve);
     if (tabs.empty()) {
       break;
     }
@@ -321,14 +349,13 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
   const bool all_tabs_visible = !tabs.empty() && tabs.front().index == 0 &&
                                 tabs.back().index + 1 == group.open_tabs.size();
   if (all_tabs_visible) {
-    tabs = build_tabs(tab_strip.x, 0.0f);
+    build_tabs(tab_strip.x, 0.0f);
   }
 
   visible_cache.geometry_version = geometry.version;
   visible_cache.strip = tab_strip;
   visible_cache.active_tab_index = group.active_tab_index;
   visible_cache.tab_scroll_index = group.tab_scroll_index;
-  visible_cache.tabs = std::move(tabs);
   visible_cache.valid = true;
   return visible_cache.tabs;
 }
@@ -608,16 +635,19 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   const float strip_right = std::max(panel_header.x, new_tab_rect.x - 8.0f);
   const std::size_t scroll_index = static_cast<std::size_t>(
       std::clamp(state.panel.tab_scroll_index, 0, std::max(0, static_cast<int>(tabs.size()) - 1)));
+  // Into the memo's own vector; see ComputeVisibleEditorTabs (TD-2026-08-14-222).
+  std::vector<VisibleStripTab>& visible = cache.tabs;
   const auto build_tabs = [&](float start_x, float right_overflow_reserve) {
     const float max_tab_x = std::max(start_x, strip_right - right_overflow_reserve);
-    return BuildVisibleStripTabs(widths, start_x, gap, max_tab_x, scroll_index, tab_y, tab_height,
-                                 model_indices, active_model_index, display_titles, tooltip_labels);
+    BuildVisibleStripTabsInto(visible, widths, start_x, gap, max_tab_x, scroll_index, tab_y,
+                              tab_height, model_indices, active_model_index, display_titles,
+                              tooltip_labels);
   };
-  auto visible = build_tabs(panel_header.x + kTabStripOverflowReserve, kTabStripOverflowReserve);
+  build_tabs(panel_header.x + kTabStripOverflowReserve, kTabStripOverflowReserve);
   const bool all_tabs_visible = !visible.empty() && visible.front().index == 0 &&
                                 visible.back().index + 1 == tabs.size();
   if (all_tabs_visible) {
-    visible = build_tabs(panel_header.x, 0.0f);
+    build_tabs(panel_header.x, 0.0f);
   }
   cache.model_fingerprint = bottom_panel_tabs_cache_.fingerprint;
   cache.geometry_epoch = geometry_epoch_;
@@ -625,7 +655,6 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleBottomPanelTa
   cache.layout_mode = layout_mode;
   cache.active_terminal_tab_index = state.active_terminal_tab_index;
   cache.tab_scroll_index = state.panel.tab_scroll_index;
-  cache.tabs = std::move(visible);
   cache.valid = true;
   return cache.tabs;
 }
