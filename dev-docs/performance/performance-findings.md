@@ -168,11 +168,32 @@ somewhere rather than vanishing from the profile.
   `status` and one `blame` over a 12-second idle run, all off the shell thread
   (`main ms` 0.000). An earlier reading of five `status` calls in five seconds
   was a concurrent build writing into the tree, not a refresh storm.
-- **`ReloadSyntaxDefinitions`** (1.7 ms, main thread) clones the built-in
-  registry element-wise. `CompiledRegex` is `shared_ptr`-backed so nothing
-  recompiles; the cost is copying ~3,600 rules and the two per-definition rule
-  index maps. Making `PartitionDefinitionRules` lazy would move it, and it was
-  not measured this pass.
+- **`ReloadSyntaxDefinitions`** (1.7 ms, main thread) cloned the built-in
+  registry element-wise. **Fixed 2026-08-15, and the fix was not the one this
+  entry guessed at.** `PartitionDefinitionRules` did not need to become lazy: the
+  clone did not need to happen at all. `GetRegistry()` returns `BuiltInRegistry()`
+  exactly when `MutableRegistry()` is empty — that alias is the documented reason
+  the reload path is supposed to be cheap with no plugin definitions — but
+  `BuildRegistry`'s empty-input branch cloned the built-in tables into the output
+  anyway, and the caller moved that clone INTO `MutableRegistry()`, so the alias
+  never applied to anything. Returning an empty registry restores it:
+
+      ReloadSyntaxDefinitions (shell thread, launch)   1.71-1.93 ms -> 0.06-0.20 ms
+      allocations per reload                                 88,496 -> 2
+
+  Measured three launches each of the real binary
+  (`MICROIDE_STARTUP_SUMMARY=1`, quit over the control channel), and by the new
+  `syntax_definitions_reload_no_plugins` perf scenario, whose allocation gate is
+  what stops the clone coming back. Nothing in the harness could see this before:
+  no interactive scenario reloads syntax definitions (the fingerprint check
+  early-returns after the first), and the launch cost lives outside the harness
+  entirely.
+
+  A second property comes with it: the alias keeps the built-in registry's
+  lazily-compiled rule regexes across a reload. The clone copied each `Rule`'s
+  `mutable CompiledRegex` but got a fresh `once_flag` table, so the compiled state
+  was carried over and then ignored — every filetype recompiled its rules on the
+  first line highlighted after a reload.
 
 ## 2026-08-13 (seventh pass) the two per-line caches free what the next frame rebuilds
 

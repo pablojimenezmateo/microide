@@ -20,6 +20,7 @@
 #include <string>
 #include <vector>
 
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "editor/SyntaxHighlighter.h"
 
 namespace microide::tests::perf {
@@ -127,6 +128,35 @@ void RunSyntaxAdvanceStateCppLines(ScenarioContext& context) {
   (void)depth_checksum;
 }
 
+// A reload with NO plugin definitions must ALIAS the built-in registry, not copy
+// it. `GetRegistry()` returns `BuiltInRegistry()` exactly when `MutableRegistry()`
+// is empty, so leaving it empty is the whole mechanism — and for a long time
+// `BuildRegistry` cloned the built-in tables into it anyway, which silently
+// disabled the alias and cost 1.7 ms of shell thread at every launch and at every
+// project switch whose syntax fingerprint moved.
+//
+// A pure-unit gate, because nothing else can see this: no interactive scenario
+// reloads syntax definitions (the fingerprint check early-returns after the
+// first), and the launch cost lives in the real binary, outside the harness. The
+// allocation count is the oracle — a re-introduced clone is ~3,600 rules and two
+// rule-index maps per definition, so it moves this from tens to tens of
+// thousands. The wall half is incidental.
+void RunSyntaxDefinitionsReloadNoPlugins(ScenarioContext& context) {
+  editor::runtime_syntax::EnsureInitialized();
+  const std::vector<editor::runtime_syntax::RuntimeSyntaxDefinitionData> no_definitions;
+  // Warm: the first reload after EnsureInitialized may still be publishing the
+  // built-in registry, and the measured loop wants the steady state.
+  (void)editor::runtime_syntax::ReloadDefinitions(no_definitions, nullptr);
+  context.Measure("syntax.reload_no_plugins", [&]() {
+    for (int iter = 0; iter < 20; ++iter) {
+      const editor::runtime_syntax::RuntimeSyntaxReloadResult result =
+          editor::runtime_syntax::ReloadDefinitions(no_definitions, nullptr);
+      volatile std::size_t sink = result.built_in_definition_count;
+      (void)sink;
+    }
+  });
+}
+
 // Wall envelopes follow the tech-debt coverage precedent: allocation counts are
 // exactly deterministic here (one token vector per line) and stay the tight
 // complexity oracle, while the wall envelope absorbs this runner's scheduler
@@ -146,6 +176,14 @@ const ScenarioRegistration g_perf_syntax_highlight_python_lines({Scenario{
     .tolerance_p95_percent = tolerance::kJitterWallP95,
     .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunSyntaxHighlightPythonLines,
+}});
+const ScenarioRegistration g_perf_syntax_definitions_reload_no_plugins({Scenario{
+    .name = "syntax_definitions_reload_no_plugins",
+    .smoke = true,
+    .baseline_gated = true,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
+    .run = RunSyntaxDefinitionsReloadNoPlugins,
 }});
 const ScenarioRegistration g_perf_syntax_advance_state_cpp_lines({Scenario{
     .name = "syntax_advance_state_cpp_lines",

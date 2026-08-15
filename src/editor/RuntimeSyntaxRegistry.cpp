@@ -739,15 +739,32 @@ void AppendRegistryWithOffset(Registry& destination, const Registry& source) {
 BuildOutput BuildRegistry(const std::vector<RuntimeSyntaxDefinitionData>& runtime_definitions,
                           std::vector<std::string>* errors) {
   BuildOutput output;
-  // Registry is move-only (its per-definition once_flag guards cannot be
-  // copied), so clone the built-in registry element-wise via
-  // AppendRegistryWithOffset rather than copy-assigning it. The trailing
-  // PartitionDefinitionRules gives the clone its own fresh guard table.
+  // No plugin definitions: return an EMPTY registry and let GetRegistry() alias
+  // BuiltInRegistry() — which is exactly what it does when MutableRegistry() is
+  // empty, and what the "avoiding a multi-MB copy" comment on MutableRegistry()
+  // has always claimed happens.
+  //
+  // It did not. This branch used to clone the built-in tables element-wise into
+  // `output.registry`, and the caller then moved that clone INTO
+  // MutableRegistry() — which is no longer empty, so the alias never applied.
+  // Every reload therefore copied ~3,600 rules and rebuilt both per-definition
+  // rule-index maps, on the shell thread, to produce a registry identical to the
+  // one already sitting in a function-local static: 1.7 ms at launch and again on
+  // any project switch whose syntax fingerprint moved, for nothing.
+  //
+  // Aliasing also KEEPS the lazily compiled rule regexes. A clone copies each
+  // Rule's `mutable CompiledRegex` but gets a fresh once_flag table from
+  // PartitionDefinitionRules, so the compiled state was reachable but the guards
+  // said "not compiled yet" — every filetype recompiled its rules on the first
+  // line highlighted after a reload.
   if (runtime_definitions.empty()) {
-    AppendRegistryWithOffset(output.registry, BuiltInRegistry());
-    PartitionDefinitionRules(output.registry);
     return output;
   }
+  // With plugin definitions present the clone is unavoidable: their rules are
+  // prepended, so every built-in rule/definition index shifts. Registry is
+  // move-only (its per-definition once_flag guards cannot be copied), so clone
+  // element-wise via AppendRegistryWithOffset rather than copy-assigning it. The
+  // trailing PartitionDefinitionRules gives the clone its own guard table.
 
   for (const auto& definition : runtime_definitions) {
     if (AppendRuntimeDefinition(output.registry, definition, errors)) {

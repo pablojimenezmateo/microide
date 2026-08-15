@@ -1008,6 +1008,12 @@ void TestWorkspaceShellProjectOpenSchedulesNoIdleWatcherTick() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "idle watcher tick fixture should open the project");
+  // The caret blink is the other producer of a sub-second wake, and its delay is a
+  // countdown to the next phase change — i.e. anywhere in (0, interval]. Leaving it
+  // on makes this assertion fail at random rather than when a watcher tick comes
+  // back, which is exactly the flake it produced on the first run.
+  Expect(WorkspaceShellTestAccess::SetSettingValue(shell, "editor.caret_blink.enabled", "false"),
+         "idle watcher tick fixture should be able to disable the caret blink");
 
   // Drain whatever the initial index batch queued, so what remains is the steady
   // idle state rather than the open itself.
