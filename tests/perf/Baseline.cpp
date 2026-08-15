@@ -694,11 +694,27 @@ bool SaveBaseline(const std::filesystem::path& path, const BaselineRecord& basel
       {"p50_allocations", baseline.metrics.p50_allocations},
       {"p95_allocations", baseline.metrics.p95_allocations},
       {"max_allocations", baseline.metrics.max_allocations},
-      {"mean_rss_growth_bytes", baseline.metrics.mean_rss_growth_bytes},
-      {"p50_rss_growth_bytes", baseline.metrics.p50_rss_growth_bytes},
-      {"p95_rss_growth_bytes", baseline.metrics.p95_rss_growth_bytes},
-      {"max_rss_growth_bytes", baseline.metrics.max_rss_growth_bytes},
   };
+  // Omitted entirely, not written as zero, for the SAME reason cpu is: the loader
+  // decides `has_rss_metrics` from whether mean_rss_growth_bytes is a number, and
+  // a zero would gate every future run against zero resident growth with only the
+  // 64 KiB floor for slack.
+  //
+  // Unguarded, this block armed gates nobody ever measured. A baseline predating
+  // the resident metric loads with has_rss_metrics=false — correctly ungated —
+  // and MergeDeterministicMetrics carries that false forward, because it starts
+  // from `existing` precisely so a metric this mode does not measure is preserved
+  // by omission. Writing the fields anyway threw that away: the next load saw
+  // four numbers, called them a recording, and gated on 0. That is how
+  // editor_moby_dick_workout ended up failing `mean_rss_growth_bytes:
+  // baseline=65536 measured=1.57e6` on a reading the file never contained
+  // (TD-2026-08-15-250).
+  if (baseline.has_rss_metrics) {
+    metrics["mean_rss_growth_bytes"] = baseline.metrics.mean_rss_growth_bytes;
+    metrics["p50_rss_growth_bytes"] = baseline.metrics.p50_rss_growth_bytes;
+    metrics["p95_rss_growth_bytes"] = baseline.metrics.p95_rss_growth_bytes;
+    metrics["max_rss_growth_bytes"] = baseline.metrics.max_rss_growth_bytes;
+  }
   // Omitted entirely, not written as zero, when the scenario opts out: the
   // loader decides `has_cpu_metrics` from whether p50_cpu_ms is a number, and a
   // zero baseline would gate every future run against 0 ms.

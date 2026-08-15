@@ -531,9 +531,11 @@ void TestPerfBaselineCpuAndRssRoundTrip() {
   baseline.metrics.p50_rss_growth_bytes = 131072.0;
   baseline.metrics.p95_rss_growth_bytes = 262144.0;
   baseline.metrics.max_rss_growth_bytes = 524288.0;
-  // Load-bearing on SAVE as well as load: a scenario with gate_cpu_metrics=false
-  // must not write cpu metrics at all (see the sibling test below).
+  // Load-bearing on SAVE as well as load: a record that never measured cpu or
+  // resident growth must not write those metrics at all (see the two sibling
+  // tests below).
   baseline.has_cpu_metrics = true;
+  baseline.has_rss_metrics = true;
   Expect(perf::SaveBaseline(path, baseline), "saving a baseline with cpu/rss should succeed");
 
   const std::optional<perf::BaselineRecord> loaded = perf::LoadBaseline(path);
@@ -551,6 +553,67 @@ void TestPerfBaselineCpuAndRssRoundTrip() {
 // has_cpu_metrics from whether p50_cpu_ms is a number, so a zero would come back
 // gated and hold every future run against a 0 ms budget -- the opt-out would
 // invert into the tightest gate in the suite.
+// The resident half of the same rule, and the one that was NOT being followed.
+//
+// A baseline written before `mean_rss_growth_bytes` existed loads with
+// has_rss_metrics=false and is correctly ungated on resident growth.
+// MergeDeterministicMetrics carries that false forward on purpose — it starts
+// from `existing` so a metric this mode does not measure survives by omission.
+// SaveBaseline then wrote the four resident fields anyway, as zeros, and the next
+// load read four numbers and called them a recording. An allocation-only
+// rebaseline therefore ARMED a gate against zero resident growth that nobody had
+// ever measured, which is how editor_moby_dick_workout came to fail
+// `mean_rss_growth_bytes: baseline=65536 measured=1.57e6` on a reading its file
+// never contained (TD-2026-08-15-250).
+void TestPerfBaselineDeterministicMergeDoesNotMintAResidentGate() {
+  TemporaryDirectory temp;
+  const std::filesystem::path path = temp.path() / "no_resident_history.json";
+
+  // A committed baseline from before the resident metric: no rss fields at all.
+  perf::BaselineRecord committed = MakeBaseline();
+  committed.has_rss_metrics = false;
+  Expect(perf::SaveBaseline(path, committed), "the pre-resident baseline should save");
+  Expect(ReadFile(path).find("mean_rss_growth_bytes") == std::string::npos,
+         "a record that never measured resident growth must not write the field");
+
+  const std::optional<perf::BaselineRecord> reloaded = perf::LoadBaseline(path);
+  Expect(reloaded.has_value(), "the pre-resident baseline should load");
+  Expect(!reloaded->has_rss_metrics, "and come back ungated on resident growth");
+
+  // Now the allocation-only rebaseline: a fresh full record (which always
+  // measures resident growth) merged onto it.
+  perf::BaselineRecord fresh = MakeBaseline();
+  fresh.metrics.p50_allocations = 40.0;
+  fresh.metrics.mean_rss_growth_bytes = 1500000.0;
+  fresh.has_rss_metrics = true;
+  const perf::BaselineRecord merged = perf::MergeDeterministicMetrics(*reloaded, fresh);
+  Expect(merged.metrics.p50_allocations == 40.0, "the allocation half is re-recorded");
+  Expect(!merged.has_rss_metrics,
+         "the merge must not adopt a resident reading this mode is not entitled to take");
+
+  Expect(perf::SaveBaseline(path, merged), "the merged baseline should save");
+  Expect(ReadFile(path).find("mean_rss_growth_bytes") == std::string::npos,
+         "and it must still not write a resident metric it does not have");
+
+  const std::optional<perf::BaselineRecord> after = perf::LoadBaseline(path);
+  Expect(after.has_value(), "the merged baseline should load");
+  Expect(!after->has_rss_metrics,
+         "an allocation-only rebaseline must leave the resident gate exactly as it found it: "
+         "unarmed, until someone re-records it on the reference runner");
+
+  // And the comparison must report no resident metric at all, rather than a zero
+  // expectation that any real growth fails.
+  perf::Aggregate aggregate;
+  aggregate.scenario_name = after->scenario_name;
+  aggregate.metrics = after->metrics;
+  aggregate.metrics.mean_rss_growth_bytes = 1500000.0;
+  const perf::BaselineComparison comparison = perf::CompareToBaseline(*after, aggregate);
+  for (const perf::MetricComparison& metric : comparison.metrics) {
+    Expect(metric.metric != "mean_rss_growth_bytes",
+           "an unrecorded resident half must not appear as a gate");
+  }
+}
+
 void TestPerfBaselineUngatedCpuIsOmittedNotZeroed() {
   TemporaryDirectory temp;
   const std::filesystem::path path = temp.path() / "cpu_ungated.json";
@@ -560,6 +623,7 @@ void TestPerfBaselineUngatedCpuIsOmittedNotZeroed() {
   baseline.metrics.max_cpu_ms = 24.5;
   baseline.metrics.p50_rss_growth_bytes = 131072.0;
   baseline.has_cpu_metrics = false;
+  baseline.has_rss_metrics = true;
   Expect(perf::SaveBaseline(path, baseline), "saving an ungated-cpu baseline should succeed");
 
   const std::string text = ReadFile(path);
@@ -1744,6 +1808,8 @@ void RegisterPerfBaselineTests(std::vector<TestCase>& tests) {
   AddTest(tests, "PerfBaseline/CpuAndRssRoundTrip", TestPerfBaselineCpuAndRssRoundTrip);
   AddTest(tests, "PerfBaseline/UngatedCpuIsOmittedNotZeroed",
           TestPerfBaselineUngatedCpuIsOmittedNotZeroed);
+  AddTest(tests, "PerfBaseline/DeterministicMergeDoesNotMintAResidentGate",
+          TestPerfBaselineDeterministicMergeDoesNotMintAResidentGate);
 }
 
 }  // namespace microide::tests

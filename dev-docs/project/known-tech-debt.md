@@ -530,7 +530,7 @@ scenario only because what was above them is gone.
   container for the erase+insert at index 0 that an Enter or Backspace at the top
   of a large file performs; a vector would memmove the whole 400 KB table there.
 
-### TD-2026-08-15-250 — `editor_moby_dick_workout`'s baseline is stale by 16x on allocations and red on resident growth, and it is opt-in so nothing notices.
+### TD-2026-08-15-250 — `editor_moby_dick_workout`'s baseline is stale by 16x on allocations and red on resident growth, and it is opt-in so nothing notices. [PARTLY RESOLVED 2026-08-15 — the allocation gate is 16x tighter and the red resident gate turned out to be a HARNESS bug, not a measurement. The timing half still needs a quiet reference runner.]
 
 Not caused by this session's work: the scenario fails identically at `04af154f`,
 the commit this session started from, measured by building that commit in a
@@ -564,6 +564,43 @@ Worth checking at the same time whether 1.5 MB of resident growth per iteration
 is *correct* for a workout that pastes Moby Dick and undoes it, or whether the
 65,536 baseline was right and something retains now. This session did not settle
 that; it only established that the number is not new.
+
+**What it actually was (2026-08-15).** The resident gate was never recorded. The
+scenario was added on 2026-07-05, before `mean_rss_growth_bytes` existed, so its
+file had no resident metrics and `LoadBaseline` correctly reported
+`has_rss_metrics = false` — ungated, exactly as the documented "starts gating
+when re-recorded" rule intends. Then `--update-baseline=deterministic`
+(`c2f10165`) ran over it. `MergeDeterministicMetrics` preserved the false, as it
+is written to — but `SaveBaseline` wrote the four resident fields
+**unconditionally**, as zeros, while guarding cpu, calibration and net-heap
+behind their `has_*` flags. The next load read four numbers, called them a
+recording, and armed the gate at zero with only the 64 KiB floor for slack.
+
+So `baseline 65536 measured 1_568_310` was never a regression, and the answer to
+"is 1.5 MB per iteration correct?" is yes: the scenario pastes a whole 1.2 MB
+novel into the same buffer every iteration, and the piece tree's add buffer plus
+the (capped, 128 entries / 256 MiB) undo history legitimately keep it. The
+retention is bounded and by design.
+
+Fixed: `SaveBaseline` now omits the resident block when `has_rss_metrics` is
+false, matching the cpu block right below it, with
+`PerfBaseline/DeterministicMergeDoesNotMintAResidentGate` covering the whole
+round trip (save -> load -> merge -> save -> load -> compare). The two existing
+round-trip tests were relying on the bug to get a gated record and now set the
+flag explicitly. `editor_moby_dick_workout.json` had the four fabricated fields
+stripped, returning it to honestly ungated.
+
+Allocation half re-recorded the same day: **21,682.5 -> 1,305.5 (-94 %)**, with
+per-phase gates (`moby.paste` 19,145 -> 397 after the add-buffer chunking). The
+scenario PASSES again.
+
+**Still open:** the timing half. That file still carries wall numbers from
+2026-07-05 and — alone among all 110 baselines — no `p50_cpu_calibration_ns` and
+no cpu metrics at all, so its wall gate cannot be clock-normalised and its cpu
+gate does not exist. `p50_wall_ms` consumes 77 % of its envelope on a busy box
+because of it. That needs a full `--update-baseline` on a quiet reference runner;
+the box was at load average 26 (another project saturating all 24 cores) for the
+whole of this session.
 
 ### TD-2026-08-14-234 — the allocation half of roughly a dozen gates is loose, and only the reference runner can re-record them. [RESOLVED 2026-08-14 — done deliberately, with the pre-check and the re-gate, and it caught two red gates that turned out to be an accounting shift rather than a regression.]
 
