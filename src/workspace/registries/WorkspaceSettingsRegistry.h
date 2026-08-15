@@ -77,6 +77,12 @@ const SettingSpec* FindBuiltinSettingSpec(std::string_view id);
 // Returns nullopt if the string is invalid for the given type.
 std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::string_view text);
 std::string SerializeSettingValue(const SettingValue& value);
+// Assigns the same text into a string the caller already owns, reusing its
+// buffer. The by-value form returns a fresh string, and a caller that
+// move-assigns it over a retained row field frees exactly the capacity that field
+// was being retained for — which is what the Settings row rebuild was doing on
+// every keystroke of its filter (TD-2026-08-15-243).
+void SerializeSettingValueInto(const SettingValue& value, std::string* out);
 
 // Unified view merging built-ins and plugin-contributed settings.
 struct SettingInfo {

@@ -1117,21 +1117,33 @@ std::optional<SettingValue> ParseSettingValue(const SettingSpec& spec, std::stri
   return std::nullopt;
 }
 
-std::string SerializeSettingValue(const SettingValue& value) {
-  return std::visit(
-      [](const auto& v) -> std::string {
+void SerializeSettingValueInto(const SettingValue& value, std::string* out) {
+  if (out == nullptr) {
+    return;
+  }
+  std::visit(
+      [out](const auto& v) {
         using T = std::decay_t<decltype(v)>;
         if constexpr (std::is_same_v<T, bool>) {
-          return v ? "true" : "false";
+          out->assign(v ? "true" : "false");
         } else if constexpr (std::is_same_v<T, int>) {
-          return std::to_string(v);
+          // to_string of an int or a float is always short enough for the
+          // small-string buffer, so it allocates nothing; `assign` then copies
+          // into whatever `out` already holds.
+          out->assign(std::to_string(v));
         } else if constexpr (std::is_same_v<T, float>) {
-          return std::to_string(v);
+          out->assign(std::to_string(v));
         } else {
-          return v;
+          out->assign(v);
         }
       },
       value);
+}
+
+std::string SerializeSettingValue(const SettingValue& value) {
+  std::string text;
+  SerializeSettingValueInto(value, &text);
+  return text;
 }
 
 bool ApplyCanonicalEditorPreference(EditorPreferences& prefs, std::string_view id,

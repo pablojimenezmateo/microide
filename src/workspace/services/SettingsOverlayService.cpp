@@ -13,21 +13,28 @@ namespace {
 
 // Renders a float setting value without std::to_string's trailing zeros so the
 // overlay shows "1" / "1.25" instead of "1.000000".
-std::string CompactFloat(std::string_view value) {
+// Into a string the caller already owns: the rows are retained across rebuilds
+// precisely so their buffers are not freed and re-allocated on every keystroke of
+// the filter, and returning a fresh string to move-assign over one undoes that.
+void CompactFloatInto(std::string_view value, std::string* out) {
   const auto parsed = util::ParseFloat(value);
   if (!parsed.has_value()) {
-    return std::string(value);
+    out->assign(value);
+    return;
   }
-  std::string text = std::to_string(*parsed);
-  if (text.find('.') != std::string::npos) {
-    while (!text.empty() && text.back() == '0') {
-      text.pop_back();
+  // to_string of a float is always short enough for the small-string buffer.
+  out->assign(std::to_string(*parsed));
+  if (out->find('.') != std::string::npos) {
+    while (!out->empty() && out->back() == '0') {
+      out->pop_back();
     }
-    if (!text.empty() && text.back() == '.') {
-      text.pop_back();
+    if (!out->empty() && out->back() == '.') {
+      out->pop_back();
     }
   }
-  return text.empty() ? "0" : text;
+  if (out->empty()) {
+    out->assign("0");
+  }
 }
 
 // Fill `index` with one (key -> payload) pair per element of `layer`, sorted for
@@ -279,10 +286,10 @@ void SettingsOverlayService::RebuildSettingsRows(
     if (active_stored != nullptr) {
       row.value.assign(*active_stored);
     } else {
-      row.value = SerializeSettingValue(setting.default_value);
+      SerializeSettingValueInto(setting.default_value, &row.value);
     }
     if (setting.type == SettingType::Float) {
-      row.value_display = CompactFloat(row.value);
+      CompactFloatInto(row.value, &row.value_display);
     } else {
       row.value_display.assign(row.value);
     }
