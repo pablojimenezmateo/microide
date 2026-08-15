@@ -1503,13 +1503,13 @@ void TestWorkspaceShellMergeSyntaxTokensAreDeferredUntilRender() {
          "merge editor should open for deferred syntax-token fixture");
 
   const auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
-  Expect(merge.incoming_tokens.size() == merge.model.incoming_lines.size(),
+  Expect(merge.incoming_token_window.line_count() == merge.model.incoming_lines.size(),
          "deferred merge syntax should size incoming token cache to incoming lines");
-  Expect(merge.current_tokens.size() == merge.model.current_lines.size(),
+  Expect(merge.current_token_window.line_count() == merge.model.current_lines.size(),
          "deferred merge syntax should size current token cache to current lines");
-  Expect(merge.incoming_syntax_rows_tokenized == 0,
+  Expect(merge.incoming_token_window.frontier() == 0,
          "deferred merge syntax should avoid eager incoming tokenization during tab open");
-  Expect(merge.current_syntax_rows_tokenized == 0,
+  Expect(merge.current_token_window.frontier() == 0,
          "deferred merge syntax should avoid eager current tokenization during tab open");
 }
 

@@ -26,6 +26,7 @@
 #include "util/PathMatch.h"
 #include "workspace/DiffWrapLayout.h"
 #include "workspace/render/OverviewRuler.h"
+#include "workspace/state/SurfaceTokenWindow.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTerminalSelection.h"
 
@@ -256,14 +257,11 @@ struct MergeTabState {
   std::string status_message;
   editor::TextViewport::LineEnding result_line_ending = editor::TextViewport::LineEnding::LF;
   compare::MergeModel model;
-  std::vector<std::vector<editor::SyntaxTokenKind>> incoming_tokens;
-  std::vector<std::vector<editor::SyntaxTokenKind>> current_tokens;
-  editor::SyntaxState incoming_initial_syntax_state;
-  editor::SyntaxState incoming_current_syntax_state;
-  editor::SyntaxState current_initial_syntax_state;
-  editor::SyntaxState current_current_syntax_state;
-  std::size_t incoming_syntax_rows_tokenized = 0;
-  std::size_t current_syntax_rows_tokenized = 0;
+  // Syntax tokens for the two read-only source panes. See SurfaceTokenWindow:
+  // these used to be a `vector<vector<SyntaxTokenKind>>` holding one heap buffer
+  // per LINE OF THE FILE, filled by a monotone frontier and never released.
+  SurfaceTokenWindow incoming_token_window;
+  SurfaceTokenWindow current_token_window;
   editor::TextViewport result_viewport;
   // Soft-wrap row table for the two read-only source panes (incoming = left,
   // current = right). Inactive unless `editor.wrap` is on. The result pane wraps

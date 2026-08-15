@@ -78,6 +78,7 @@ void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests);
 void RegisterDapProtocolTests(std::vector<TestCase>& tests);
 void RegisterDebugServiceTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
+void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests);
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
 void RegisterReviewTabPlanTests(std::vector<TestCase>& tests);
 void RegisterReviewSessionTests(std::vector<TestCase>& tests);
@@ -546,6 +547,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterDapProtocolTests(tests);
   microide::tests::RegisterDebugServiceTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
+  microide::tests::RegisterSurfaceTokenWindowTests(tests);
   microide::tests::RegisterReviewTabPlanTests(tests);
   microide::tests::RegisterReviewSessionTests(tests);
   microide::tests::RegisterMergeConflictResolutionTests(tests);

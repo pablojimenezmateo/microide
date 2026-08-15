@@ -512,39 +512,18 @@ void WorkspaceShell::RefreshMergeTabDerivedState(MergeTabState& merge_tab) const
 void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
                                                         std::size_t visible_start_row,
                                                         std::size_t visible_end_row) {
-  const std::size_t clamped_incoming_end =
-      std::min(visible_end_row, merge_tab.model.incoming_lines.size());
-  if (visible_start_row < clamped_incoming_end) {
-    constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
-    const std::size_t target_row =
-        std::min(clamped_incoming_end, merge_tab.incoming_syntax_rows_tokenized + kMergeSyntaxRowsPerFrame);
-    while (merge_tab.incoming_syntax_rows_tokenized < target_row) {
-      const std::size_t index = merge_tab.incoming_syntax_rows_tokenized;
-      // Into, not the by-value form: that one builds a fresh empty vector and the
-      // move-assignment then frees the buffer this row already owned, so a scroll
-      // paid one allocation per row of its window per pass. It was the #1 site of
-      // merge_large.scroll_burst at 24,196 allocations (TD-2026-08-15-237).
-      merge_tab.incoming_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
-          merge_tab.model.incoming_lines[index], merge_tab.output_path,
-          merge_tab.incoming_current_syntax_state, &merge_tab.incoming_tokens[index]);
-      ++merge_tab.incoming_syntax_rows_tokenized;
-    }
-  }
-
-  const std::size_t clamped_current_end =
-      std::min(visible_end_row, merge_tab.model.current_lines.size());
-  if (visible_start_row < clamped_current_end) {
-    constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
-    const std::size_t target_row =
-        std::min(clamped_current_end, merge_tab.current_syntax_rows_tokenized + kMergeSyntaxRowsPerFrame);
-    while (merge_tab.current_syntax_rows_tokenized < target_row) {
-      const std::size_t index = merge_tab.current_syntax_rows_tokenized;
-      merge_tab.current_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
-          merge_tab.model.current_lines[index], merge_tab.output_path,
-          merge_tab.current_current_syntax_state, &merge_tab.current_tokens[index]);
-      ++merge_tab.current_syntax_rows_tokenized;
-    }
-  }
+  // The two panes tokenize cumulatively from the top, so reaching a row means
+  // walking every row above it. SurfaceTokenWindow does that walk with
+  // `AdvanceState` (which allocates nothing) and keeps token buffers only for a
+  // bounded window around the viewport, recycled as it slides — where this used
+  // to keep one heap buffer per line of the file forever (TD-2026-08-15-242).
+  constexpr std::size_t kMergeSyntaxRowsPerFrame = 256;
+  merge_tab.incoming_token_window.EnsureWindow(
+      visible_start_row, visible_end_row, merge_tab.output_path, kMergeSyntaxRowsPerFrame,
+      [&](std::size_t row) -> std::string_view { return merge_tab.model.incoming_lines[row]; });
+  merge_tab.current_token_window.EnsureWindow(
+      visible_start_row, visible_end_row, merge_tab.output_path, kMergeSyntaxRowsPerFrame,
+      [&](std::size_t row) -> std::string_view { return merge_tab.model.current_lines[row]; });
 }
 
 void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
@@ -713,16 +692,12 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildMergeTabFromBuffers
           .current_content = current_content,
       });
   merge_tab.file_conflict = merge_tab.model.file_conflict;
-  merge_tab.incoming_tokens.resize(merge_tab.model.incoming_lines.size());
-  merge_tab.current_tokens.resize(merge_tab.model.current_lines.size());
-  merge_tab.incoming_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_output, merge_tab.model.incoming_lines);
-  merge_tab.current_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(normalized_output, merge_tab.model.current_lines);
-  merge_tab.incoming_current_syntax_state = merge_tab.incoming_initial_syntax_state;
-  merge_tab.current_current_syntax_state = merge_tab.current_initial_syntax_state;
-  merge_tab.incoming_syntax_rows_tokenized = 0;
-  merge_tab.current_syntax_rows_tokenized = 0;
+  merge_tab.incoming_token_window.Reset(
+      merge_tab.model.incoming_lines.size(),
+      editor::SyntaxHighlighter::InitialState(normalized_output, merge_tab.model.incoming_lines));
+  merge_tab.current_token_window.Reset(
+      merge_tab.model.current_lines.size(),
+      editor::SyntaxHighlighter::InitialState(normalized_output, merge_tab.model.current_lines));
   merge_tab.persisted_output_baseline = output_text;
   merge_tab.selected_hunk = selected_hunk;
   merge_tab.scroll_row = 0;

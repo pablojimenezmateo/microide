@@ -954,16 +954,14 @@ void WorkspaceShell::InvalidateRuntimeSyntaxStateCaches(
       if (language.empty() || !changed_language_set.contains(language)) {
         continue;
       }
-      merge_tab.incoming_initial_syntax_state =
-          editor::SyntaxHighlighter::InitialState(merge_tab.output_path, merge_tab.model.incoming_lines);
-      merge_tab.current_initial_syntax_state =
-          editor::SyntaxHighlighter::InitialState(merge_tab.output_path, merge_tab.model.current_lines);
-      merge_tab.incoming_current_syntax_state = merge_tab.incoming_initial_syntax_state;
-      merge_tab.current_current_syntax_state = merge_tab.current_initial_syntax_state;
-      merge_tab.incoming_tokens.assign(merge_tab.model.incoming_lines.size(), {});
-      merge_tab.current_tokens.assign(merge_tab.model.current_lines.size(), {});
-      merge_tab.incoming_syntax_rows_tokenized = 0;
-      merge_tab.current_syntax_rows_tokenized = 0;
+      merge_tab.incoming_token_window.Reset(
+          merge_tab.model.incoming_lines.size(),
+          editor::SyntaxHighlighter::InitialState(merge_tab.output_path,
+                                                  merge_tab.model.incoming_lines));
+      merge_tab.current_token_window.Reset(
+          merge_tab.model.current_lines.size(),
+          editor::SyntaxHighlighter::InitialState(merge_tab.output_path,
+                                                  merge_tab.model.current_lines));
       merge_tab.result_viewport.InvalidateSyntaxHighlighting();
     }
   }

@@ -115,18 +115,12 @@ PathMutationCoordinator::RetargetSpecialTabForRename(TabEntry& tab,
   tab.merge->result_label = RelativePathLabel(state.root, updated_output);
   tab.merge->current_label = RelativePathLabel(state.root, updated_current);
   tab.merge->result_viewport.SetPath(updated_output);
-  tab.merge->incoming_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.incoming_lines);
-  tab.merge->current_initial_syntax_state =
-      editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.current_lines);
-  tab.merge->incoming_current_syntax_state = tab.merge->incoming_initial_syntax_state;
-  tab.merge->current_current_syntax_state = tab.merge->current_initial_syntax_state;
-  tab.merge->incoming_syntax_rows_tokenized = 0;
-  tab.merge->current_syntax_rows_tokenized = 0;
-  std::fill(tab.merge->incoming_tokens.begin(), tab.merge->incoming_tokens.end(),
-            std::vector<editor::SyntaxTokenKind>{});
-  std::fill(tab.merge->current_tokens.begin(), tab.merge->current_tokens.end(),
-            std::vector<editor::SyntaxTokenKind>{});
+  tab.merge->incoming_token_window.Reset(
+      tab.merge->model.incoming_lines.size(),
+      editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.incoming_lines));
+  tab.merge->current_token_window.Reset(
+      tab.merge->model.current_lines.size(),
+      editor::SyntaxHighlighter::InitialState(updated_output, tab.merge->model.current_lines));
   tab.merge->result_viewport.SetScrollLine(
       static_cast<std::size_t>(std::max(0, tab.merge->scroll_row)));
   tab.merge->result_viewport.SetHorizontalScroll(tab.merge->horizontal_scroll);

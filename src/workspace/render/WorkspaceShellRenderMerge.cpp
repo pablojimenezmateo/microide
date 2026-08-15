@@ -409,8 +409,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       const SDL_Color number_color =
           selected_incoming ? theme_.current_line_number : theme_.line_number;
       const std::vector<editor::SyntaxTokenKind>& tokens =
-          line_index < merge_tab->incoming_tokens.size() ? merge_tab->incoming_tokens[line_index]
-                                                         : kEmptyTokens;
+          merge_tab->incoming_token_window.Tokens(line_index);
       editor::RowDecorationInput incoming_input;
       incoming_input.text_x = surface.left_x + surface.gutter_width +
                               static_cast<float>(wrap_row.left_indent) * char_width_px;
@@ -452,8 +451,7 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       const SDL_Color number_color =
           selected_current ? theme_.current_line_number : theme_.line_number;
       const std::vector<editor::SyntaxTokenKind>& tokens =
-          line_index < merge_tab->current_tokens.size() ? merge_tab->current_tokens[line_index]
-                                                        : kEmptyTokens;
+          merge_tab->current_token_window.Tokens(line_index);
       editor::RowDecorationInput current_input;
       current_input.text_x = surface.right_x + surface.gutter_width +
                              static_cast<float>(wrap_row.right_indent) * char_width_px;

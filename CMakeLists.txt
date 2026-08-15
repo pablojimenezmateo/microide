@@ -1010,6 +1010,7 @@ add_executable(microide_tests
   tests/DebugServiceTests.cpp
   tests/GitBlameServiceTests.cpp
   tests/MergeModelTests.cpp
+  tests/SurfaceTokenWindowTests.cpp
   tests/MergeConflictResolutionTests.cpp
   tests/GitMergeConflictFixtures.cpp
   tests/ReviewTabPlanTests.cpp
