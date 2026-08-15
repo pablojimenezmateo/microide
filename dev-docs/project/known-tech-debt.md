@@ -389,6 +389,41 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-15-250 — `editor_moby_dick_workout`'s baseline is stale by 16x on allocations and red on resident growth, and it is opt-in so nothing notices.
+
+Not caused by this session's work: the scenario fails identically at `04af154f`,
+the commit this session started from, measured by building that commit in a
+worktree and running it against the same fixtures.
+
+    mean_rss_growth_bytes  baseline 65536   measured 1_568_310   (+2293 %)
+    p50_allocations        baseline 21682.5 measured 1574.5      at 04af154f
+                                            measured 1305.5      at HEAD
+
+Two separate problems, and the second is the reason the first survived:
+
+1. **The allocation half is 16x loose.** A baseline of 21,682 against a measured
+   1,574 is not a gate — it would pass a fourteen-fold regression without
+   comment. It went stale when the piece tree's add buffer was chunked
+   (`478e16fa`, TD-2026-08-14-234's session), which took `moby.paste` from 19,145
+   allocations to ~400.
+
+2. **`run_by_default = false`.** The fixture is a network fetch, so the scenario
+   is absent from the default and smoke suites — it is not in any of the four
+   full-suite runs this session took, and it was not in the sweep that re-recorded
+   everything else. An opt-in scenario does not get swept by "rebaseline the
+   suite"; it has to be named.
+
+What to do: re-record it on an idle reference runner with the full
+`--update-baseline`, since the half that is red (`mean_rss_growth_bytes`) is the
+machine-sensitive half that `=deterministic` deliberately does not touch. Doing
+only the deterministic half would fix the vacuous allocation gate and leave the
+scenario failing, which is worse signal than either end state.
+
+Worth checking at the same time whether 1.5 MB of resident growth per iteration
+is *correct* for a workout that pastes Moby Dick and undoes it, or whether the
+65,536 baseline was right and something retains now. This session did not settle
+that; it only established that the number is not new.
+
 ### TD-2026-08-14-234 — the allocation half of roughly a dozen gates is loose, and only the reference runner can re-record them. [RESOLVED 2026-08-14 — done deliberately, with the pre-check and the re-gate, and it caught two red gates that turned out to be an accounting shift rather than a regression.]
 
 Split out of [233](#td-2026-08-14-233), whose last bullet is the whole of it. The

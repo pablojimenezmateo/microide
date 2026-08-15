@@ -2,8 +2,8 @@
 
 #include <algorithm>
 #include <cstddef>
-#include <new>
 #include <initializer_list>
+#include <memory>
 #include <type_traits>
 #include <utility>
 
@@ -174,7 +174,7 @@ class SmallVector {
     other.size_ = 0;
   }
 
-  // Raw sized allocation, not `new T[]`.
+  // `std::allocator`, not `new T[]`.
   //
   // Two reasons, and the second is the one that bit. `new T[n]` VALUE-INITIALISES
   // all n slots, which for a spilled buffer is a memset of capacity the caller has
@@ -183,7 +183,10 @@ class SmallVector {
   //
   // And `delete[]` on a trivially-destructible type compiles to the UNSIZED
   // `operator delete[](void*)`, which the perf harness's counting allocator can
-  // only record as "freed 0 bytes" -- it has no size to report. So a SmallVector
+  // only record as "freed 0 bytes" -- it has no size to report. `std::allocator`
+  // routes to the SIZED overload where the compiler supports it, portably: a
+  // direct `::operator delete(p, n)` does not compile under clang, which defaults
+  // to `-fno-sized-deallocation` (caught by the second-compiler lane). So a SmallVector
   // that spilled looked, to `p50_net_heap_bytes`, like memory that was allocated
   // and never released: moving `LineBlob::starts_` onto this container moved
   // `editor_sort_lines_large` from 2,476 to 162,476 net bytes with its allocation
@@ -191,7 +194,7 @@ class SmallVector {
   // deallocation reports the real number.
   void Grow(size_type required) {
     const size_type new_capacity = std::max<size_type>(required, capacity_ * 2);
-    T* buffer = static_cast<T*>(::operator new(new_capacity * sizeof(T)));
+    T* buffer = std::allocator<T>{}.allocate(new_capacity);
     std::copy_n(data(), size_, buffer);
     FreeHeap();
     heap_ = buffer;
@@ -203,7 +206,7 @@ class SmallVector {
   // elements it just copied into the new buffer.
   void FreeHeap() noexcept {
     if (heap_ != nullptr) {
-      ::operator delete(heap_, capacity_ * sizeof(T));
+      std::allocator<T>{}.deallocate(heap_, capacity_);
       heap_ = nullptr;
     }
     capacity_ = N;
