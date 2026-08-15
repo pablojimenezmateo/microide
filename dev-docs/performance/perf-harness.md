@@ -398,11 +398,26 @@ percentiles.
 
 ### Triage heuristics
 
+- **Compare against the commit before YOUR first one, not against `origin/main`.**
+  `perf-compare.py` defaults to local `main`, and local `main` is routinely tens
+  of commits ahead of the remote. A run against `origin/main` after a
+  45-commit-ahead branch attributed three other sessions' deltas to this one:
+  `terminal_scroll_long_output` read +12-14 % on wall AND cpu across every
+  percentile — the shape the heuristics below call a real signal — and against the
+  session's own base commit the same scenario was 9 % FASTER. Use
+  `perf-compare.py <sha-before-your-first-commit>` to answer "did I regress this";
+  use `origin/main` only to answer "what does the whole branch do".
 - **Identical allocation counts on both sides means the same work is being done.**
   A wall delta there is code layout, inlining, or machine noise — never an
   algorithmic regression. This is the single most useful discriminator.
 - `max_wall_ms`-only movement with a flat p50 is a single-sample outlier. Ignore
-  it.
+  it — UNLESS you moved a one-time, once-per-process cost later in startup, in
+  which case it is real and correctly reported. The tell is that the bump equals
+  that cost (a ~1 ms font-fallback load showed up as +38 % max / +12 % p95 / −0.5 %
+  p50 on `cold_startup_no_project`, with byte-identical allocations). The harness
+  forks per scenario and warms on the bare driver, so a cost the warm-up frames do
+  not reach now lands inside iteration 1 instead of before the loop. Total work
+  went down; where it lands moved.
 - p50 **and** p95 **and** max all moving the same direction is a real signal.
 - Check whether the change even touches what the scenario exercises:
   `git diff --stat <base>..HEAD -- src/<subsystem>/`.
