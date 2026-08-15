@@ -848,6 +848,50 @@ note and gets skipped.
 
 See TD-2026-08-10-178.
 
+### A gate can be MINTED for a metric nobody measured
+
+`SaveBaseline` guards cpu, calibration and net-heap behind their `has_*` flags —
+a record that never measured them writes no field, and `LoadBaseline` reads the
+absence as "not gated". The four resident fields were written unconditionally,
+including as zeros. So an `--update-baseline=deterministic` over a baseline that
+predated the resident metric — a mode whose entire contract is "I am not entitled
+to take a machine-sensitive reading" — wrote `mean_rss_growth_bytes: 0`, and the
+next load called that a recording and gated on it with only the 64 KiB floor for
+slack.
+
+The victim (`editor_moby_dick_workout`) then failed `baseline=65536
+measured=1.57e6` for a month, and the failure read as a leak. It was a gate for a
+number the file never contained.
+
+**What generalises:** presence-keyed optionality has to be enforced on the WRITE
+side as well as the read side. If a loader infers "not recorded" from a missing
+field, every writer that emits a default value is quietly converting "unknown"
+into "measured zero" — and zero is the tightest gate in the suite.
+
+See TD-2026-08-15-250.
+
+### A scenario can gate a path its own fixture prevents from running
+
+`external_change_refresh_open_merge` gated 31 allocations for six pumped frames
+around a refresh that never happened: its fixture primed the project by
+**assigning** `current_project_state.root` rather than opening it, so there was no
+file index and no watcher for the change to be observed through, and the forced
+check returned false immediately. The gate was green, stable, and measuring a
+no-op — the most durable kind of vacuity, because nothing about a no-op is noisy.
+
+It surfaced only when an unrelated change (retiring the second project watcher)
+moved the forced path's cost, which moved BOTH external-change scenarios: one down
+2,073 -> 892, which would have been read as a win.
+
+**What generalises:** a cheap fixture prime is right until the thing it skips is
+the scenario's subject. When a scenario is named for a subsystem's response,
+check the run's `perf_counters` block for evidence that the subsystem actually
+ran — `watch.file_index_apply_batch_calls`, `compare.model_builds` — rather than
+trusting the phase name. A phase whose counters are all frame plumbing is not
+measuring what it says.
+
+See TD-2026-08-15-253.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit
