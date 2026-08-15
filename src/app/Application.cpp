@@ -23,6 +23,7 @@
 #include "app/ApplicationPresentationCache.h"
 #include "app/EventDrainBudget.h"
 #include "app/IdleWaitStrategy.h"
+#include "editor/RuntimeSyntaxRegistry.h"
 #include "platform/RuntimePaths.h"
 #include "platform/SubprocessSandbox.h"
 #include "render/RasterDecode.h"
@@ -295,6 +296,14 @@ bool Application::Initialize() {
 
   util::StartupTrace::Reset();
   util::StartupTrace::Scope trace_scope("Application::Initialize");
+
+  // Build the built-in syntax registry off-thread, starting now. It is ~4 ms of
+  // pure CPU (161 definitions, their detection regexes, the rule tables) that
+  // WorkspaceShell::Initialize otherwise pays inline, and everything between
+  // here and there — SDL_Init, window creation, renderer creation — is the shell
+  // thread waiting on the display server rather than computing. Nothing depends
+  // on this call: EnsureInitialized() joins the thread if it is still running.
+  editor::runtime_syntax::WarmInBackground();
 
   // Deliver the mouse click that activates an unfocused window to the app
   // instead of swallowing it. SDL's default ("0") eats the focusing click, so a

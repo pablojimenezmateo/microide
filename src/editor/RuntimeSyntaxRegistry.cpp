@@ -10,6 +10,7 @@
 #include <shared_mutex>
 #include <string>
 #include <string_view>
+#include <thread>
 #include <unordered_map>
 #include <utility>
 #include <vector>
@@ -1379,8 +1380,53 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
   };
 }
 
+namespace {
+
+// The optional warm thread started by WarmInBackground(). A plain handle rather
+// than an atomic or a mutex-guarded one: both entry points are documented
+// main-thread-only, and the actual cross-thread synchronization is the magic
+// static inside BuiltInRegistry() — a main-thread EnsureInitialized() racing the
+// warm thread blocks on that guard and gets the same object either way.
+//
+// The holder exists for the join: ~std::thread on a still-joinable handle calls
+// std::terminate, and a startup that fails before WorkspaceShell::Initialize
+// (SDL_Init, window or renderer creation) returns from main without ever
+// reaching EnsureInitialized. Joining here makes that path an ordinary exit.
+struct WarmThreadHolder {
+  std::thread thread;
+  ~WarmThreadHolder() {
+    if (thread.joinable()) {
+      thread.join();
+    }
+  }
+};
+
+std::thread& WarmThread() {
+  static WarmThreadHolder holder;
+  return holder.thread;
+}
+
+}  // namespace
+
+void WarmInBackground() {
+  std::thread& thread = WarmThread();
+  if (thread.joinable()) {
+    return;  // already warming (or warmed and not yet joined)
+  }
+  thread = std::thread([]() {
+    util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::WarmInBackground");
+    (void)BuiltInRegistry();
+  });
+}
+
 void EnsureInitialized() {
   util::PerformanceTrace::Scope perf_scope("RuntimeSyntaxRegistry::EnsureInitialized");
+  // Join first: with a warm in flight this is where the main thread waits for
+  // whatever is left of it, and the scope above is what makes that wait visible
+  // instead of it looking like the build got cheaper.
+  if (std::thread& thread = WarmThread(); thread.joinable()) {
+    thread.join();
+  }
   // Touch BuiltInRegistry() directly so the static magic-init runs here
   // even when MutableRegistry() is empty (the lazy-alias case).
   (void)BuiltInRegistry();

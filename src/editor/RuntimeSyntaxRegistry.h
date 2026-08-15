@@ -55,6 +55,14 @@ RuntimeSyntaxReloadResult ReloadDefinitions(
     const std::vector<RuntimeSyntaxDefinitionData>& definitions,
     std::vector<std::string>* errors = nullptr);
 void EnsureInitialized();
+// Build the built-in registry on a background thread so its cost overlaps with
+// work the shell has to do anyway (SDL/window/renderer creation). Optional:
+// EnsureInitialized() joins the warm thread if one is running and otherwise
+// builds inline, so nothing depends on this having been called.
+//
+// Main-thread only, and at most once per process: both functions touch the same
+// non-atomic thread handle. Startup work is what this exists for.
+void WarmInBackground();
 std::size_t RegistryRevision();
 // Initial highlight state for a document. Like DetectFiletype, this only
 // inspects a bounded head (signature/shebang scan), so passing a LineSpan over
