@@ -335,10 +335,14 @@ void RunMergeEditResultThenScroll(ScenarioContext& context) {
 // `soft_wrap_*` measures the editor surface. So the work the entry describes had
 // no number attached to it, which is why the entry says to build this first.
 //
-// Deliberately not gated yet: a baseline recorded on a loaded machine is a
-// fiction, and this scenario's whole purpose is to be the before/after for work
-// that has not started. `baseline_gated=false` means it runs and reports without
-// asserting; arm it in the same pass that records its baseline on an idle runner.
+// Gated as of TD-2026-08-15-245, on the DETERMINISTIC half only. It was left
+// ungated on the reasoning that a baseline recorded on a loaded machine is a
+// fiction — true of the timing half, and not of the allocation half, which
+// reproduces to the count on any machine. `--update-baseline=deterministic` mints
+// a record with `timing_is_advisory`, so the allocation and net-heap gates arm
+// immediately and wall/cpu/rss are measured, printed and explicitly not enforced
+// until a reference run arms them. Ungated meant this scenario — a per-keystroke
+// path through the compare surface — was checking nothing at all.
 void RunCompareTypeInWrappedDiff(ScenarioContext& context) {
   PrimeGitWorkstationFixture(context, kLargeDiffFixture, "compare_type_in_wrapped_diff");
   const std::filesystem::path source =
@@ -560,7 +564,7 @@ const ScenarioRegistration g_perf_git_workstation_merge_edit_result_then_scroll(
 const ScenarioRegistration g_perf_git_workstation_compare_type_in_wrapped_diff({
     .name = "compare_type_in_wrapped_diff",
     .smoke = false,
-    .baseline_gated = false,
+    .baseline_gated = true,
     .run_by_default = true,
     .run = RunCompareTypeInWrappedDiff,
 });
