@@ -1324,12 +1324,26 @@ WorkspaceShell::EventResult WorkspaceShell::HandleScheduledWakeSources() {
   return Bootstrapper(*this).BuildWakeController().HandleScheduledWake();
 }
 
-bool WorkspaceShell::ConsumePostRenderFullRedrawRequest() {
-  if (post_render_full_redraws_remaining_ <= 0) {
-    return false;
+std::optional<WorkspaceShell::RenderInvalidation>
+WorkspaceShell::ConsumePostRenderRedrawRequest() {
+  if (post_render_redraws_remaining_ <= 0) {
+    return std::nullopt;
   }
-  --post_render_full_redraws_remaining_;
-  return true;
+  --post_render_redraws_remaining_;
+  // Both producers are the terminal reflow (a panel resize, or a terminal font
+  // change that re-grids it), and a reflow can only change what the bottom panel
+  // shows. It used to force two whole-window redraws per reflow, which on the
+  // startup path — a restored terminal tab is re-gridded on the first prepared
+  // frame — meant two more full renders of a frame the user was already looking
+  // at. Scope them to the panel; RequestBottomPanelRedraw falls back to a window
+  // repaint when the panel is not laid out or not visible.
+  RenderInvalidation invalidation;
+  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value() && BottomPanelVisible()) {
+    invalidation.rects.push_back(layout->bottom_panel);
+  } else {
+    invalidation.full = true;
+  }
+  return invalidation;
 }
 
 ScrollSurfaceLayout WorkspaceShell::ComputeEditorScrollLayout(

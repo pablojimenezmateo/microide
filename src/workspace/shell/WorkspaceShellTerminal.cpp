@@ -243,7 +243,7 @@ void WorkspaceShell::ApplyTerminalFontPreferences() {
     // metrics; the extra full redraws cover the reflow.
     last_terminal_panel_rect_.reset();
     MarkLayoutDirty();
-    post_render_full_redraws_remaining_ = std::max(post_render_full_redraws_remaining_, 2);
+    post_render_redraws_remaining_ = std::max(post_render_redraws_remaining_, 2);
   }
 }
 

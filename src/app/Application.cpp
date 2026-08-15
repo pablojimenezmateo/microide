@@ -168,9 +168,31 @@ int Application::Run() {
   while (running_) {
     if (full_redraw_pending || !dirty_rects.empty()) {
       Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
-      if (workspace_shell_.ConsumePostRenderFullRedrawRequest()) {
-        full_redraw_pending = true;
-        dirty_rects.clear();
+
+      // Map the window exactly once, as soon as a real frame has been painted.
+      // The window was created hidden, so this is its first and only map: it
+      // appears already borderless and already drawn, with no black flash or
+      // borderless remap. The present above may be dropped while hidden, so
+      // re-blit the retained scene texture to the freshly-mapped window (a cheap
+      // texture copy, not a second full render).
+      //
+      // This has to come BEFORE the settle branch below, not after it. A restored
+      // terminal tab is re-gridded on the first prepared frame, which owes two
+      // follow-up repaints — and each `continue` skipped this block, so the window
+      // the user is waiting for stayed unmapped for two more vsync intervals while
+      // the app repainted a panel nobody could see yet.
+      if (!window_shown && first_render_complete_ && window_ != nullptr) {
+        SDL_ShowWindow(window_);
+        if (scene_texture_.valid()) {
+          SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
+          SDL_RenderPresent(renderer_);
+        }
+        window_shown = true;
+      }
+
+      if (auto settle = workspace_shell_.ConsumePostRenderRedrawRequest(); settle.has_value()) {
+        full_redraw_pending = settle->full;
+        dirty_rects.assign(settle->rects.begin(), settle->rects.end());
         redraw_reason = "render-settle";
         continue;
       }
@@ -182,21 +204,6 @@ int Application::Run() {
       // around the (possibly newly scrolled) editor viewport so later frames
       // hit the highlight cache instead of tokenizing on the render path.
       workspace_shell_.RequestActiveHighlightPrefetch();
-
-      // Map the window exactly once, after the first real frame is painted. The
-      // window was created hidden, so this is its first and only map: it appears
-      // already borderless and already drawn, with no black flash or remap. The
-      // present above may be dropped while hidden, so re-blit the retained scene
-      // texture to the freshly-mapped window (a cheap texture copy, not a second
-      // full render).
-      if (!window_shown && first_render_complete_ && window_ != nullptr) {
-        SDL_ShowWindow(window_);
-        if (scene_texture_.valid()) {
-          SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
-          SDL_RenderPresent(renderer_);
-        }
-        window_shown = true;
-      }
     }
 
     SDL_Event event;
@@ -587,7 +594,39 @@ workspace::WorkspaceShell::EventResult Application::HandleEvent(const SDL_Event&
       };
     case SDL_EVENT_WINDOW_SHOWN:
     case SDL_EVENT_WINDOW_EXPOSED:
+      presentation_state_dirty_ = true;
+      UpdateRendererPresentation();
+      // An expose damaged the WINDOW, not the scene. Every frame — full or
+      // partial — ends by blitting the whole retained scene texture to the
+      // window and presenting it, so re-presenting repairs the damage exactly;
+      // re-running the workspace render would recompute pixel-identical content.
+      // That mattered on the startup path, where mapping the window (deliberately
+      // after the first frame, so it appears already drawn) fired SHOWN and cost a
+      // second full render of the frame just painted.
+      //
+      // The 1x1 damage rect is the cheapest way to make Render() run and present;
+      // its size is irrelevant because the blit is whole (same reasoning as
+      // RequestCursorPresent). With no retained scene to present, fall through to
+      // a real full redraw.
+      if (scene_texture_.valid()) {
+        return workspace::WorkspaceShell::EventResult{
+            .handled = true,
+            .redraw = workspace::WorkspaceShell::RenderInvalidation{
+                .full = false,
+                .rects = {SDL_FRect{0.0f, 0.0f, 1.0f, 1.0f}},
+            },
+        };
+      }
+      return workspace::WorkspaceShell::EventResult{
+          .handled = true,
+          .redraw = workspace::WorkspaceShell::RenderInvalidation{
+              .full = true,
+              .rects = {},
+          },
+      };
     case SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED:
+      // Unlike an expose, this changes what the scene should CONTAIN (every glyph
+      // is re-rasterized at the new scale), so it keeps the full redraw.
       presentation_state_dirty_ = true;
       UpdateRendererPresentation();
       return workspace::WorkspaceShell::EventResult{

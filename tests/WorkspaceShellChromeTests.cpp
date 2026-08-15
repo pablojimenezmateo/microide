@@ -2516,7 +2516,7 @@ void TestWorkspaceShellSidebarResizeRequestsFullRedrawAndMatchesFullRender() {
 
   RenderRetainedInvalidation(
       retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, retained_drag.redraw);
-  Expect(!retained_shell.ConsumePostRenderFullRedrawRequest(),
+  Expect(!retained_shell.ConsumePostRenderRedrawRequest().has_value(),
          "sidebar resize should not require terminal settle redraws");
 
   WorkspaceShell reference_shell;
@@ -2624,13 +2624,25 @@ void TestWorkspaceShellBottomPanelResizeRequestsFullRedrawAndSettleFrames() {
          "bottom-panel resize should promote to a full redraw for correctness");
 
   RenderRetainedInvalidation(retained_shell, retained_canvas, kCanvasWidth, kCanvasHeight, redraw);
-  Expect(retained_shell.ConsumePostRenderFullRedrawRequest(),
+  const auto first_settle = retained_shell.ConsumePostRenderRedrawRequest();
+  Expect(first_settle.has_value(),
          "bottom-panel resize should schedule a follow-up redraw after the first full render");
+  // Scoped to the panel, not the window: the reflow can only change what the
+  // bottom panel shows, and two whole-window repaints per reflow were the third
+  // and fourth full renders of the startup path.
+  Expect(!first_settle->full && first_settle->rects.size() == 1,
+         "the settle redraw should be a single rect, not a whole-window repaint");
+  const SDL_FRect settle_rect = first_settle->rects.front();
+  Expect(settle_rect.x == resized_layout.bottom_panel.x &&
+             settle_rect.y == resized_layout.bottom_panel.y &&
+             settle_rect.w == resized_layout.bottom_panel.w &&
+             settle_rect.h == resized_layout.bottom_panel.h,
+         "the settle redraw rect should be the bottom panel");
   retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
-  Expect(retained_shell.ConsumePostRenderFullRedrawRequest(),
+  Expect(retained_shell.ConsumePostRenderRedrawRequest().has_value(),
          "bottom-panel resize should schedule a second settle redraw");
   retained_shell.Render(retained_canvas.renderer(), kCanvasWidth, kCanvasHeight);
-  Expect(!retained_shell.ConsumePostRenderFullRedrawRequest(),
+  Expect(!retained_shell.ConsumePostRenderRedrawRequest().has_value(),
          "bottom-panel resize should settle after the bounded follow-up redraws");
 }
 

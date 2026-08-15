@@ -138,7 +138,10 @@
   void RootViewRenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   IdleWaitState CurrentIdleWaitState() const;
   std::optional<Uint32> NextAnimationDelayMs() const;
-  bool ConsumePostRenderFullRedrawRequest();
+  // The repaint owed after a frame that reflowed the terminal, or nullopt when
+  // none is owed. Scoped to the bottom panel rather than the whole window --
+  // see the definition.
+  std::optional<RenderInvalidation> ConsumePostRenderRedrawRequest();
   // Background highlight prefetch around the active viewport; no-ops when cached.
   void RequestActiveHighlightPrefetch();
   void OnFramePresented();
@@ -2265,7 +2268,7 @@
   // saves (Ctrl+S) still format.
   bool autosave_suppress_format_on_save_ = false;
   RenderInvalidation pending_render_invalidation_;
-  int post_render_full_redraws_remaining_ = 0;
+  int post_render_redraws_remaining_ = 0;
   CursorKind cursor_kind_ = CursorKind::Default;
   // When set, the next UpdateMouseCursor bypasses both the fingerprint and the
   // unchanged-kind short-circuits and forces the platform cursor to be re-shown.

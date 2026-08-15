@@ -236,7 +236,7 @@ void WorkspaceShell::ResizeTerminalToPanel(const SDL_FRect& panel_rect) {
     return;
   }
   terminal_tab->session.Resize(static_cast<std::size_t>(rows), static_cast<std::size_t>(columns));
-  post_render_full_redraws_remaining_ = std::max(post_render_full_redraws_remaining_, 2);
+  post_render_redraws_remaining_ = std::max(post_render_redraws_remaining_, 2);
 }
 
 void WorkspaceShell::DrawFilledRect(SDL_Renderer* renderer,

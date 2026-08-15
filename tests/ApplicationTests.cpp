@@ -36,6 +36,13 @@ struct ApplicationTestAccess {
   static bool FirstRenderComplete(const app::Application& application) {
     return application.first_render_complete_;
   }
+  static workspace::WorkspaceShell::EventResult HandleEvent(app::Application& application,
+                                                            const SDL_Event& event) {
+    return application.HandleEvent(event);
+  }
+  static void InvalidateScene(app::Application& application) {
+    application.scene_texture_.Invalidate();
+  }
 };
 
 namespace {
@@ -262,6 +269,58 @@ void TestHeadlessRendersRetainedSceneFrame() {
          "Shutdown() after rendering should destroy the renderer and scene texture");
 }
 
+void TestExposeRePresentsRetainedSceneInsteadOfRerendering() {
+  EnsureDummySdlVideoInitialized();
+  TemporaryDirectory temp_dir;
+  HeadlessHomeGuard homes(temp_dir.path());
+
+  const std::filesystem::path project = temp_dir.path() / "project";
+  std::filesystem::create_directories(project);
+  app::AppStartupOptions options = HeadlessStartupOptions();
+  options.project_path = project;
+
+  app::Application application(options);
+  Expect(ApplicationTestAccess::Initialize(application), "headless Initialize() should succeed");
+  ApplicationTestAccess::Render(application);
+  Expect(ApplicationTestAccess::SceneValid(application),
+         "the first frame should populate the retained scene texture");
+
+  // An expose damaged the window, not the scene. Every frame ends by blitting the
+  // whole retained scene texture and presenting it, so the repair is a present --
+  // re-rendering the workspace would recompute pixel-identical content. On the
+  // startup path that mattered: mapping the window fires SHOWN right after the
+  // first frame, and answering it with a full redraw rendered that frame twice.
+  SDL_Event exposed{};
+  exposed.type = SDL_EVENT_WINDOW_EXPOSED;
+  const auto exposed_result = ApplicationTestAccess::HandleEvent(application, exposed);
+  Expect(exposed_result.handled, "an expose should be handled");
+  Expect(!exposed_result.redraw.full,
+         "an expose with a valid retained scene should not force a full redraw");
+  Expect(exposed_result.redraw.rects.size() == 1,
+         "an expose should ask for the minimal damage rect that triggers a present");
+
+  SDL_Event shown{};
+  shown.type = SDL_EVENT_WINDOW_SHOWN;
+  Expect(!ApplicationTestAccess::HandleEvent(application, shown).redraw.full,
+         "window-shown should take the same present-only path as an expose");
+
+  // With nothing retained to present, the expose has to be a real full redraw.
+  ApplicationTestAccess::InvalidateScene(application);
+  Expect(ApplicationTestAccess::HandleEvent(application, exposed).redraw.full,
+         "an expose with no valid retained scene should fall back to a full redraw");
+
+  // A display-scale change alters what the scene should CONTAIN (every glyph is
+  // re-rasterized), so it keeps the full redraw even with a valid scene.
+  ApplicationTestAccess::Render(application);
+  Expect(ApplicationTestAccess::SceneValid(application), "the scene should be valid again");
+  SDL_Event scale_changed{};
+  scale_changed.type = SDL_EVENT_WINDOW_DISPLAY_SCALE_CHANGED;
+  Expect(ApplicationTestAccess::HandleEvent(application, scale_changed).redraw.full,
+         "a display-scale change should still force a full redraw");
+
+  ApplicationTestAccess::Shutdown(application);
+}
+
 void TestHeadlessReinitializeAfterShutdown() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -317,6 +376,8 @@ void RegisterApplicationTests(std::vector<TestCase>& tests) {
           TestHeadlessInitializeAndShutdownTearsDownCleanly);
   AddTest(tests, "Application/HeadlessRendersRetainedSceneFrame",
           TestHeadlessRendersRetainedSceneFrame);
+  AddTest(tests, "Application/ExposeRePresentsRetainedSceneInsteadOfRerendering",
+          TestExposeRePresentsRetainedSceneInsteadOfRerendering);
   AddTest(tests, "Application/HeadlessReinitializeAfterShutdown",
           TestHeadlessReinitializeAfterShutdown);
   AddTest(tests, "Application/HeadlessDestructorShutsDownInitializedApp",
