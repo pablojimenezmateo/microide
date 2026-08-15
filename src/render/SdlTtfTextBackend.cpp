@@ -81,25 +81,34 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
     return false;
   }
 
-  if (!TTF_Init()) {
-    SDL_Log("microide text: TTF_Init failed: %s", SDL_GetError());
-    return false;
+  {
+    util::PerformanceTrace::Scope ttf_init_scope("SdlTtfTextBackend::Initialize::TTF_Init");
+    if (!TTF_Init()) {
+      SDL_Log("microide text: TTF_Init failed: %s", SDL_GetError());
+      return false;
+    }
   }
   ttf_initialized_ = true;
   renderer_ = renderer;
 
-  const auto font_path = LocateFontFile();
+  std::filesystem::path font_path;
+  {
+    util::PerformanceTrace::Scope locate_scope("SdlTtfTextBackend::Initialize::LocateFontFile");
+    font_path = LocateFontFile();
+  }
   if (font_path.empty()) {
     SDL_Log("microide text: no usable font found for SDL_ttf backend");
     return false;
   }
 
-  if (!OpenPrimaryFont(font_path)) {
-    SDL_Log("microide text: TTF_OpenFont failed for %s: %s", font_path.string().c_str(),
-            SDL_GetError());
-    return false;
+  {
+    util::PerformanceTrace::Scope open_scope("SdlTtfTextBackend::Initialize::OpenPrimaryFont");
+    if (!OpenPrimaryFont(font_path)) {
+      SDL_Log("microide text: TTF_OpenFont failed for %s: %s", font_path.string().c_str(),
+              SDL_GetError());
+      return false;
+    }
   }
-  LoadFallbackFonts();
 
   // Build glyph composites in the format the renderer will actually store them
   // in. SDL_CreateTextureFromSurface converts when the surface format differs
@@ -134,18 +143,29 @@ bool SdlTtfTextBackend::Initialize(SDL_Renderer* renderer) {
   const char* atlas_env = SDL_getenv("MICROIDE_RENDER_GLYPH_ATLAS");
   glyph_atlas_enabled_ = (atlas_env == nullptr) || (atlas_env[0] != '0');
 
-  RefreshMetrics();
+  {
+    util::PerformanceTrace::Scope metrics_scope("SdlTtfTextBackend::Initialize::RefreshMetrics");
+    RefreshMetrics();
+  }
   return true;
+}
+
+int SdlTtfTextBackend::CurrentHorizontalDpi() const {
+  return std::max(1, static_cast<int>(std::lround(
+                         72.0f * std::max(kMinPresentationScale, presentation_scale_x_))));
+}
+
+int SdlTtfTextBackend::CurrentVerticalDpi() const {
+  return std::max(1, static_cast<int>(std::lround(
+                         72.0f * std::max(kMinPresentationScale, presentation_scale_y_))));
 }
 
 void SdlTtfTextBackend::ApplyFontSizeAtCurrentScale() {
   if (font_ == nullptr) {
     return;
   }
-  const int hdpi = std::max(1, static_cast<int>(std::lround(
-                                  72.0f * std::max(kMinPresentationScale, presentation_scale_x_))));
-  const int vdpi = std::max(1, static_cast<int>(std::lround(
-                                  72.0f * std::max(kMinPresentationScale, presentation_scale_y_))));
+  const int hdpi = CurrentHorizontalDpi();
+  const int vdpi = CurrentVerticalDpi();
   if (!TTF_SetFontSizeDPI(font_, font_point_size_, hdpi, vdpi)) {
     return;
   }
@@ -229,11 +249,55 @@ bool SdlTtfTextBackend::SetFontFamily(std::string_view family) {
             static_cast<int>(family.size()), family.data(), resolved.string().c_str());
     return false;
   }
-  // Fallbacks are relative to the new primary; reload, then rebuild caches/metrics
-  // for the new glyph shapes at the current size/scale.
-  LoadFallbackFonts();
+  // Fallbacks are relative to the new primary. Reload them only if they were
+  // already open — otherwise stay lazy and let the next shaped subject resolve
+  // them against the new primary (a family switch before any non-ASCII text must
+  // not be what pays for five TTF opens).
+  if (fallback_fonts_loaded_) {
+    LoadFallbackFonts();
+  } else {
+    // The previous primary's registrations died with TTF_CloseFont in
+    // OpenPrimaryFont, but the handles are ours to free.
+    CloseFallbackFonts();
+  }
   ApplyFontSizeAtCurrentScale();
   return true;
+}
+
+SdlTtfTextBackend::PixelMetrics SdlTtfTextBackend::MeasurePixelMetrics(TTF_Font* font,
+                                                                      const MetricsKey& key) {
+  // 95 FT_Load_Glyph calls, ~0.9 ms, and it runs once per backend per font-size
+  // or presentation-scale change. Two backends exist (editor text and terminal
+  // text) and at startup they open the same file at the same size, so this used
+  // to be measured twice on the frame the user waits for. Process-wide because
+  // the answer is a property of (file, size, dpi) and of nothing else.
+  //
+  // A font file edited in place during a session would go unnoticed here. That
+  // is not a case worth a stat() per lookup on this path.
+  static std::map<MetricsKey, PixelMetrics> cache;
+  if (const auto it = cache.find(key); it != cache.end()) {
+    return it->second;
+  }
+
+  util::PerformanceTrace::Scope perf_scope("SdlTtfTextBackend::MeasurePixelMetrics");
+  PixelMetrics metrics;
+  metrics.font_height = TTF_GetFontHeight(font);
+  for (unsigned char ch = 0x20; ch <= 0x7E; ++ch) {
+    int minx = 0;
+    int maxx = 0;
+    int miny = 0;
+    int maxy = 0;
+    int advance = 0;
+    if (!TTF_GetGlyphMetrics(font, ch, &minx, &maxx, &miny, &maxy, &advance)) {
+      continue;
+    }
+    metrics.max_left_padding = std::max(metrics.max_left_padding, std::max(0, -minx));
+    metrics.max_right_padding =
+        std::max(metrics.max_right_padding, std::max(0, maxx - std::max(advance, 0)));
+    metrics.max_advance = std::max(metrics.max_advance, std::max(0, advance));
+  }
+  cache.emplace(key, metrics);
+  return metrics;
 }
 
 void SdlTtfTextBackend::RefreshMetrics() {
@@ -243,29 +307,18 @@ void SdlTtfTextBackend::RefreshMetrics() {
 
   const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
   const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
-  const int font_height_pixels = TTF_GetFontHeight(font_);
-  line_height_ = static_cast<float>(font_height_pixels) / scale_y;
+  const PixelMetrics pixels = MeasurePixelMetrics(
+      font_, MetricsKey{.font_path = font_path_.string(),
+                        .point_size = font_point_size_,
+                        .hdpi = CurrentHorizontalDpi(),
+                        .vdpi = CurrentVerticalDpi()});
+  line_height_ = static_cast<float>(pixels.font_height) / scale_y;
 
-  int max_left_padding_pixels = 0;
-  int max_right_padding_pixels = 0;
-  int max_advance_pixels = 0;
-  for (unsigned char ch = 0x20; ch <= 0x7E; ++ch) {
-    int minx = 0;
-    int maxx = 0;
-    int miny = 0;
-    int maxy = 0;
-    int advance = 0;
-    if (!TTF_GetGlyphMetrics(font_, ch, &minx, &maxx, &miny, &maxy, &advance)) {
-      continue;
-    }
-    max_left_padding_pixels = std::max(max_left_padding_pixels, std::max(0, -minx));
-    max_right_padding_pixels =
-        std::max(max_right_padding_pixels, std::max(0, maxx - std::max(advance, 0)));
-    max_advance_pixels = std::max(max_advance_pixels, std::max(0, advance));
-  }
+  const int max_left_padding_pixels = pixels.max_left_padding;
+  const int max_right_padding_pixels = pixels.max_right_padding;
 
-  if (max_advance_pixels > 0) {
-    char_width_ = static_cast<float>(max_advance_pixels) / scale_x;
+  if (pixels.max_advance > 0) {
+    char_width_ = static_cast<float>(pixels.max_advance) / scale_x;
   }
 
   if (char_width_ <= 0.0f) {
@@ -290,6 +343,9 @@ float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
     return static_cast<float>(text.size()) * char_width_;
   }
 
+  // Shaped path: the subject can reach a code point the primary has no glyph
+  // for, so this is one of the two places the fallbacks have to exist.
+  EnsureFallbackFontsLoaded();
   int width = 0;
   int height = 0;
   if (TTF_GetStringSize(font_, text.data(), text.size(), &width, &height)) {
@@ -930,6 +986,7 @@ void SdlTtfTextBackend::CloseFallbackFonts() {
     }
   }
   fallback_fonts_.clear();
+  fallback_fonts_loaded_ = false;
 }
 
 void SdlTtfTextBackend::CloseFonts() {
@@ -944,11 +1001,19 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
   if (font_ == nullptr) {
     return;
   }
+  util::PerformanceTrace::Scope perf_scope("SdlTtfTextBackend::LoadFallbackFonts");
   // Free any fallbacks registered against a previous primary before opening a new
   // set; otherwise repeated family switches leak TTF_Font handles and grow the
   // vector unbounded.
   CloseFallbackFonts();
+  fallback_fonts_loaded_ = true;
 
+  // The primary is already at the current scale's DPI by the time a lazy load
+  // runs (Initialize and every size/scale change size it immediately), so a
+  // fallback opened at the bare point size would shape at the wrong size on a
+  // scaled display. Size each one the way ApplyFontSizeAtCurrentScale would.
+  const int hdpi = CurrentHorizontalDpi();
+  const int vdpi = CurrentVerticalDpi();
   for (const auto& fallback_path : LocateFallbackFontFiles(font_path_)) {
     TTF_Font* fallback_font = TTF_OpenFont(fallback_path.string().c_str(), font_point_size_);
     if (fallback_font == nullptr) {
@@ -956,12 +1021,20 @@ void SdlTtfTextBackend::LoadFallbackFonts() {
     }
     TTF_SetFontHinting(fallback_font, TTF_HINTING_LIGHT_SUBPIXEL);
     TTF_SetFontKerning(fallback_font, false);
+    TTF_SetFontSizeDPI(fallback_font, font_point_size_, hdpi, vdpi);
     if (!TTF_AddFallbackFont(font_, fallback_font)) {
       TTF_CloseFont(fallback_font);
       continue;
     }
     fallback_fonts_.push_back(fallback_font);
   }
+}
+
+void SdlTtfTextBackend::EnsureFallbackFontsLoaded() const {
+  if (fallback_fonts_loaded_ || font_ == nullptr) {
+    return;
+  }
+  const_cast<SdlTtfTextBackend*>(this)->LoadFallbackFonts();
 }
 
 std::size_t SdlTtfTextBackend::CacheKeyHash::operator()(const CacheKeyView& key) const noexcept {
@@ -1165,6 +1238,10 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
       surface = BuildAsciiCompositeSurface(text, color);
     }
     if (surface == nullptr) {
+      // Shaped path (see MeasureWidth): the other place a fallback glyph can be
+      // needed. Reached both for genuinely non-ASCII text and when the ASCII
+      // composite could not be built.
+      EnsureFallbackFontsLoaded();
       surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
     }
   }

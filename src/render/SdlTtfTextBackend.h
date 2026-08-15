@@ -11,9 +11,11 @@
 #include <cstdint>
 #include <filesystem>
 #include <list>
+#include <map>
 #include <memory>
 #include <string>
 #include <string_view>
+#include <tuple>
 #include <unordered_map>
 #include <vector>
 
@@ -117,6 +119,32 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // presentation scale, then clears caches and refreshes metrics. Shared by the
   // presentation-scale and font-size entry points.
   void ApplyFontSizeAtCurrentScale();
+  // The DPI pair TTF_SetFontSizeDPI is driven with, derived from the current
+  // presentation scale. A lazily-opened fallback has to be sized with the same
+  // pair the primary already got, so this is shared rather than recomputed.
+  int CurrentHorizontalDpi() const;
+  int CurrentVerticalDpi() const;
+  // Everything RefreshMetrics needs from the font itself, in device pixels and
+  // before any presentation-scale division — so the cache below keys on exactly
+  // what the numbers depend on.
+  struct PixelMetrics {
+    int font_height = 0;
+    int max_left_padding = 0;
+    int max_right_padding = 0;
+    int max_advance = 0;
+  };
+  struct MetricsKey {
+    std::string font_path;
+    float point_size = 0.0f;
+    int hdpi = 0;
+    int vdpi = 0;
+
+    bool operator<(const MetricsKey& other) const {
+      return std::tie(font_path, point_size, hdpi, vdpi) <
+             std::tie(other.font_path, other.point_size, other.hdpi, other.vdpi);
+    }
+  };
+  static PixelMetrics MeasurePixelMetrics(TTF_Font* font, const MetricsKey& key);
   void RefreshMetrics();
   void ClearCache();
   // Open `path` as the primary font, applying hinting/kerning; on success closes
@@ -141,6 +169,22 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   // set is freed rather than leaked, and by CloseFonts during teardown.
   void CloseFallbackFonts();
   void LoadFallbackFonts();
+  // Open the broad-Unicode / symbol fallbacks the first time a caller actually
+  // asks the primary font about a non-ASCII subject.
+  //
+  // The set is up to five whole TTFs (Noto Sans, Noto Sans Symbols 1+2, DejaVu
+  // Sans, FreeSans) and opening them was ~60% of this backend's initialization,
+  // paid on the frame the user is waiting for. Nothing they carry can affect an
+  // ASCII subject: a fallback is only consulted for a code point the primary has
+  // no glyph for, and the primary is a programming font with full ASCII coverage
+  // (it is also the atlas the ASCII fast paths rasterize from directly, without
+  // going through TTF shaping at all). So the load moves to the first shaped
+  // non-ASCII string — MeasureWidth and the texture-cache miss below — which in a
+  // session that never renders one never happens.
+  //
+  // `const` + mutable state because MeasureWidth is const and is one of those
+  // two entry points.
+  void EnsureFallbackFontsLoaded() const;
   bool CanUseFastAscii(std::string_view text) const;
   void EnsureAsciiAtlas();
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
@@ -173,7 +217,11 @@ class SdlTtfTextBackend final : public TextRendererBackend {
 
   SDL_Renderer* renderer_ = nullptr;
   TTF_Font* font_ = nullptr;
-  std::vector<TTF_Font*> fallback_fonts_;
+  mutable std::vector<TTF_Font*> fallback_fonts_;
+  // False until EnsureFallbackFontsLoaded has run for the current primary font.
+  // Reset by a primary-font change (SetFontFamily) so the next non-ASCII subject
+  // re-resolves fallbacks against the new primary.
+  mutable bool fallback_fonts_loaded_ = false;
   std::filesystem::path font_path_;
   // The requested editor font family (empty = platform default). Retained so a
   // later size / presentation-scale change re-resolves the same family.
