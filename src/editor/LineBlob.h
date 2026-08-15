@@ -10,6 +10,8 @@
 #include <string_view>
 #include <vector>
 
+#include "util/SmallVector.h"
+
 namespace microide::editor {
 
 // A run of lines stored as ONE byte buffer plus a line-start table, instead of
@@ -184,10 +186,9 @@ class LineBlob {
     next.append(with.data_);
     next.append(std::string_view(data_).substr(byte_last));
 
-    std::vector<std::uint32_t> next_starts;
+    util::SmallVector<std::uint32_t, kInlineStarts> next_starts;
     next_starts.reserve(first + with.starts_.size() + (line_count - last));
-    next_starts.insert(next_starts.end(), starts_.begin(),
-                       starts_.begin() + static_cast<std::ptrdiff_t>(first));
+    next_starts.append(starts_.begin(), starts_.begin() + static_cast<std::ptrdiff_t>(first));
     for (const std::uint32_t start : with.starts_) {
       next_starts.push_back(static_cast<std::uint32_t>(byte_first + start));
     }
@@ -241,11 +242,24 @@ class LineBlob {
   }
 
  private:
+  // Inline offset slots. A blob covering a handful of lines -- which is what a
+  // multi-caret line op builds, one per caret per keystroke -- then costs the
+  // offset table nothing at all: `move_line_down.multi_caret_burst` spent 52 % of
+  // its allocations on EIGHT-byte `starts_` tables, two offsets for a one-line
+  // region plus the neighbour it swaps with (TD-2026-08-15-244). Beyond the
+  // inline slots it spills to the heap and behaves as before, so the big
+  // whole-selection ops (toggle comment, sort) are unchanged.
+  //
+  // Six, not four: the shaping ops build (region + 1 neighbour), and a region is
+  // commonly a handful of lines. Costs 24 bytes inside a LineBlob, which undo
+  // entries hold two of.
+  static constexpr std::size_t kInlineStarts = 6;
+
   std::string data_;
   // Byte offset of each line's first byte. Line i ends at starts_[i + 1], or at
   // data_.size() for the last one -- no sentinel, so `size()` is `starts_.size()`
   // and an empty blob is two empty containers.
-  std::vector<std::uint32_t> starts_;
+  util::SmallVector<std::uint32_t, kInlineStarts> starts_;
 };
 
 }  // namespace microide::editor

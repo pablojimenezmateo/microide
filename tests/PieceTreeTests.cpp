@@ -244,6 +244,43 @@ void TestPieceTreeExtractIntoBlobSizesItsByteBuffer() {
          "blob extract should reproduce the buffer's lines");
 }
 
+// The other half of a blob's cost: a SMALL one. A multi-caret line op builds a
+// blob per caret per keystroke covering a handful of lines, and the offset table
+// for two or three lines was still a heap allocation of eight or twelve bytes --
+// 52 % of `move_line_down.multi_caret_burst` (TD-2026-08-15-244). With inline
+// offset slots a small blob's table costs nothing, and short lines ride the
+// string's own small buffer, so the whole blob is allocation-free.
+void TestPieceTreeSmallBlobIsAllocationFree() {
+  PieceTree tree({"one", "two", "three", "four", "five"});
+  // Warm: the tree's line-start cache and walk stack allocate on first use.
+  editor::LineBlob warmup;
+  tree.AppendLines(0, 3, warmup);
+#if MICROIDE_PERF_HARNESS_BUILD
+  const perf::AllocationSnapshot before = perf::Allocations::Snapshot();
+#endif
+  editor::LineBlob blob;
+  blob.reserve_lines(3);
+  tree.AppendLines(1, 4, blob);
+#if MICROIDE_PERF_HARNESS_BUILD
+  const perf::AllocationDelta delta = perf::Allocations::DeltaSince(before);
+  Expect(delta.allocations == 0,
+         "a blob of a few short lines must fit its inline offset slots and the "
+         "string's own small buffer, and allocate nothing");
+#endif
+  Expect(blob.size() == 3 && blob[0] == "two" && blob[2] == "four",
+         "the inline-capacity blob must still hold the right lines");
+
+  // And it must spill correctly rather than truncate: past the inline slots the
+  // offsets move to the heap and every line stays readable.
+  editor::LineBlob spilled;
+  for (int i = 0; i < 40; ++i) {
+    spilled.push_back(std::string(1, static_cast<char>('a' + (i % 26))));
+  }
+  Expect(spilled.size() == 40, "a blob past its inline slots must keep every line");
+  Expect(spilled[0] == "a" && spilled[39] == std::string(1, static_cast<char>('a' + (39 % 26))),
+         "spilling to the heap must not disturb the offsets already recorded");
+}
+
 void TestPieceTreeSliceLines() {
   PieceTree tree({"l0", "l1", "l2", "l3", "l4"});
   const std::vector<std::string> slice = tree.SliceLines(1, 4);
@@ -1045,6 +1082,7 @@ void RegisterPieceTreeTests(std::vector<TestCase>& tests) {
           TestPieceTreeReplaceTextRangeHonorsByteCeiling);
   AddTest(tests, "PieceTree/ExtractIntoBlobSizesItsByteBuffer",
           TestPieceTreeExtractIntoBlobSizesItsByteBuffer);
+  AddTest(tests, "PieceTree/SmallBlobIsAllocationFree", TestPieceTreeSmallBlobIsAllocationFree);
 }
 
 }  // namespace microide::tests
