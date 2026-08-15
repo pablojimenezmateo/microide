@@ -728,7 +728,44 @@ void ScenarioContext::SimulateExternalFileChange(const std::filesystem::path& pa
   if (!output.good()) {
     throw std::runtime_error("SimulateExternalFileChange: failed to write " + resolved.string());
   }
-  (void)workspace::WorkspaceShell::TestAccess::ReloadProjectIfFilesChanged(shell_, true);
+  // Deliver the change the way the running app does: an incremental
+  // FileIndexWatcher batch, dispatched through the shell's own watcher callback,
+  // so the phase measures the product path (index apply -> coalescer ->
+  // ApplyProjectChangeBatch -> compare/merge refresh) and nothing else.
+  //
+  // This used to force a synchronous whole-tree check
+  // (`ReloadProjectIfFilesChanged(shell_, true)`), and that check IS scaffolding —
+  // no production path calls it. It also changed shape under the feet of these
+  // gates when the second project watcher was retired (TD-2026-08-15-252): the
+  // forced path went from "walk until the first mtime newer than the arm
+  // baseline" to "scan the tree and diff it against the file index", which is much
+  // cheaper on a big fixture and much dearer on a tiny one. Both directions were
+  // being charged to a phase named for the refresh —
+  // `external.refresh_open_diff` read 2,073 -> 892 allocations (a "win" that was
+  // not one) and `external.refresh_open_merge` 31 -> 342 (a "regression" that was
+  // not one) — which is exactly the blindness TD-2026-08-07-163 is about.
+  platform::IndexUpdateBatch batch;
+  batch.is_initial = false;
+  platform::IndexUpdateBatch::Change change;
+  change.kind = platform::IndexUpdateBatch::Kind::CreatedOrModified;
+  const std::filesystem::path root = workspace::WorkspaceShell::TestAccess::ProjectRoot(shell_);
+  change.entry.relative_path =
+      root.empty() ? resolved : resolved.lexically_relative(root.lexically_normal());
+  std::error_code mtime_error;
+  change.entry.mtime = std::filesystem::last_write_time(resolved, mtime_error);
+  std::error_code size_error;
+  change.entry.size = std::filesystem::file_size(resolved, size_error);
+  batch.changes.push_back(std::move(change));
+  if (!workspace::WorkspaceShell::TestAccess::DispatchFileIndexWatcherBatchForTesting(
+          shell_, std::move(batch))) {
+    // No live watcher (no project root): fall back to the synchronous check so a
+    // scenario that opens no project still observes its own edit.
+    (void)workspace::WorkspaceShell::TestAccess::ReloadProjectIfFilesChanged(shell_, true);
+  }
+  // Drain the batch on this thread rather than waiting for the wake to be
+  // processed by a pumped frame, so the phase's cost does not depend on which
+  // frame the SDL event lands in.
+  (void)workspace::WorkspaceShell::TestAccess::ReloadProjectIfFilesChanged(shell_, false);
   PumpFrames(2);
 }
 

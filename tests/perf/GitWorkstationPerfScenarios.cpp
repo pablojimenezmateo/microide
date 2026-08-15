@@ -40,6 +40,28 @@ void PrimeGitWorkstationFixture(ScenarioContext& context, const std::filesystem:
   context.PumpFrames(2);
 }
 
+// As above, but the project is OPENED first rather than having its root assigned.
+//
+// `PerfPrimeGitRepository` writes `current_project_state.root` directly — enough
+// for the git surfaces, which only need a repository path, and deliberately cheap.
+// It also means no file index and no FileIndexWatcher exist, which is fine until a
+// scenario's subject IS the watcher. The two external-change scenarios were in that
+// position: their "refresh" ran against an empty index and a monitor with no root,
+// so `external.refresh_open_merge` gated 31 allocations for a refresh that did not
+// happen. Opening the project first is what makes the phase measure the path it is
+// named after (TD-2026-08-15-253).
+void PrimeGitWorkstationProject(ScenarioContext& context, const std::filesystem::path& fixture,
+                                const char* scenario_label) {
+  if (!DirectoryExistsNoThrow(fixture)) {
+    throw std::runtime_error(std::string(scenario_label) + ": missing fixture " + fixture.string());
+  }
+  if (!context.Open(fixture)) {
+    throw std::runtime_error(std::string(scenario_label) + ": failed to open fixture project");
+  }
+  context.PumpFrames(2);
+  PrimeGitWorkstationFixture(context, fixture, scenario_label);
+}
+
 void PumpGitRefreshCycle(ScenarioContext& context, std::size_t min_entries) {
   TA::OnFramePresented(context.Shell());
   context.ShowGitSidebar();
@@ -397,7 +419,7 @@ void RunCommitOpenWithLargeStagedSet(ScenarioContext& context) {
 }
 
 void RunExternalChangeRefreshOpenDiff(ScenarioContext& context) {
-  PrimeGitWorkstationFixture(context, kLargeDiffFixture, "external_change_refresh_open_diff");
+  PrimeGitWorkstationProject(context, kLargeDiffFixture, "external_change_refresh_open_diff");
   const std::filesystem::path source =
       TA::ProjectRoot(context.Shell()) / "src" / "large.cpp";
   if (!TA::OpenWorkingTreeComparison(context.Shell(), source, "HEAD", "HEAD")) {
@@ -415,7 +437,7 @@ void RunExternalChangeRefreshOpenDiff(ScenarioContext& context) {
 }
 
 void RunExternalChangeRefreshOpenMerge(ScenarioContext& context) {
-  PrimeGitWorkstationFixture(context, kManyConflictsFixture, "external_change_refresh_open_merge");
+  PrimeGitWorkstationProject(context, kManyConflictsFixture, "external_change_refresh_open_merge");
   if (!context.ExecuteCommand("merge base.cpp incoming.cpp current.cpp result.cpp")) {
     throw std::runtime_error("external_change_refresh_open_merge: merge command failed");
   }
@@ -570,16 +592,28 @@ const ScenarioRegistration g_perf_git_workstation_compare_type_in_wrapped_diff({
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(commit_open_with_large_staged_set, RunCommitOpenWithLargeStagedSet);
 // The third of the same family; see diff_stage_hunk_large_patch above.
+// revision 2 (2026-08-15): both external-change scenarios now OPEN the project
+// rather than assigning its root, and the change is delivered as a
+// FileIndexWatcher batch rather than by forcing a whole-tree rescan. The phases
+// measure the refresh they are named for instead of a no-op plus scaffolding, so
+// their numbers are not comparable with revision 1's (TD-2026-08-15-253).
 const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_diff({
     .name = "external_change_refresh_open_diff",
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
     .tolerance_rss_percent = 150.0,
+    .measurement_revision = 2,
     .run = RunExternalChangeRefreshOpenDiff,
 });
-REGISTER_GIT_WORKSTATION_SCENARIO(external_change_refresh_open_merge,
-                                 RunExternalChangeRefreshOpenMerge);
+const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_merge({
+    .name = "external_change_refresh_open_merge",
+    .smoke = false,
+    .baseline_gated = true,
+    .run_by_default = true,
+    .measurement_revision = 2,
+    .run = RunExternalChangeRefreshOpenMerge,
+});
 
 #undef REGISTER_GIT_WORKSTATION_SCENARIO
 

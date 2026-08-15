@@ -389,6 +389,47 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-15-253 — the two external-change perf scenarios gated a refresh that never happened. [RESOLVED 2026-08-15, same session it was found.]
+
+Found by TD-2026-08-15-252's own gate run: `external_change_refresh_open_merge`'s
+phase went from 31 to 342 allocations and failed. The regression was not one.
+
+`PrimeGitWorkstationFixture` primes a git fixture by **assigning**
+`current_project_state.root` — deliberately cheap, and exactly right for the git
+surfaces, which need only a repository path. It also means the project was never
+opened: no file index, no `FileIndexWatcher`, and (before 252) no root on the
+project file monitor either. So `SimulateExternalFileChange`'s forced check found
+a watcher with no roots, returned false immediately, and **nothing refreshed**.
+31 allocations was the cost of the six pumped frames around a no-op.
+
+Retiring the monitor changed the forced path from "walk until the first mtime
+newer than the arm baseline" to "scan the tree and diff it against the file
+index", which on an empty index reports every file as created. Both scenarios
+moved — the diff one from 2,073 to 892 (which would have been read as a *win*)
+and the merge one from 31 to 342 — and neither movement was about the product.
+
+Three fixes, all in the harness:
+
+1. **`SimulateExternalFileChange` delivers a `FileIndexWatcher` batch** through the
+   shell's own watcher callback, which is what a real external change does, rather
+   than forcing a synchronous whole-tree check. That check is scaffolding: no
+   production path calls `ReloadProjectIfFilesChanged(force_check=true)`.
+2. **The two scenarios open the project** (`PrimeGitWorkstationProject`) so there is
+   an index and a watcher for the batch to land in. Only those two; every other
+   git-workstation scenario keeps the cheap prime, which is correct for what it
+   measures.
+3. **`measurement_revision` bumped to 2 on both**, so the revision guard refuses to
+   difference the new numbers against the old — which is what it is for.
+
+Re-recorded on the reference lane at load 0.4. Both now show the refresh in their
+counters (`watch.file_index_apply_batch_calls`, and for the diff scenario two
+compare model builds over 24,010 rows) where before they showed neither.
+
+The general lesson, which is the same one TD-2026-08-07-163 recorded from the
+other direction: a scenario that primes its subsystem cheaply can end up gating a
+path that never runs, and the gate stays green forever because nothing about a
+no-op is unstable. What exposed it here was an unrelated change moving the number.
+
 ### TD-2026-08-15-252 — the project file monitor is a second full tree walk and a second inotify instance over directories the file index watcher already watches. [RESOLVED 2026-08-15 — the monitor is deleted, not merged; the one bit it produced now rides on the index watcher's batches.]
 
 Found by the launch sweep (`dev-docs/performance/performance-findings.md`
