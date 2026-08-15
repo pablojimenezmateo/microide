@@ -190,7 +190,13 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   const std::size_t syntax_model_start = model_row_for_visual(visible_start_row);
   const std::size_t syntax_model_end =
       std::min(compare_tab->model.rows.size(), model_row_for_visual(visible_end_row) + 1);
-  PopulateCompareSyntaxTokensForWindow(*compare_tab, syntax_model_start, syntax_model_end);
+  {
+    // 95 % of `RenderCompareSurface`'s per-frame self time sat between its own
+    // scope and `SideRows`, with nothing naming it (TD-2026-08-15-248).
+    util::PerformanceTrace::Scope syntax_scope(
+        "WorkspaceShell::RenderCompareSurface::SyntaxTokens");
+    PopulateCompareSyntaxTokensForWindow(*compare_tab, syntax_model_start, syntax_model_end);
+  }
   // The tokenizer is cumulative and capped per frame; if it has not yet reached the
   // deepest visible model row (e.g. after scrolling past a giant collapsed run),
   // request another frame so it progressively catches up instead of leaving those
@@ -199,10 +205,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       compare_tab->right_token_window.frontier() < syntax_model_end) {
     RequestRedrawRect(rect);
   }
-  PrepareCompareVisibleLayoutsForWindow(
-      *compare_tab, visible_start_row,
-      visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)),
-      surface.left_visible_columns, surface.right_visible_columns);
+  {
+    util::PerformanceTrace::Scope layouts_scope(
+        "WorkspaceShell::RenderCompareSurface::VisibleLayouts");
+    PrepareCompareVisibleLayoutsForWindow(
+        *compare_tab, visible_start_row,
+        visible_start_row + static_cast<std::size_t>(std::max(1, surface.visible_rows)),
+        surface.left_visible_columns, surface.right_visible_columns);
+  }
   const TextGridInteractionLayout right_interaction =
       BuildCompareRightInteractionLayout(surface, *compare_tab);
   const std::optional<editor::SelectionRange> right_selection =
