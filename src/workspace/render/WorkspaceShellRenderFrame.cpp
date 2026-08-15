@@ -852,21 +852,34 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
             text_renderer_, *viewport, pane.rect, sticky_rows, line_numbers_enabled);
         viewport->SetViewportSize(metrics.visible_rows, metrics.visible_columns);
       }
-      util::PerformanceTrace::Scope vm_scope("WorkspaceShell::Render::BuildEditorViewModel");
-      editor_render_builder.BuildEditorViewModelInto(
-          tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
-          occurrences_for_pane, occurrences_case_sensitive, sticky_active, sticky_scroll_max_depth,
-          render_whitespace_enabled, debug_enabled, breakpoint_store, debug_execution,
-          inset_flags, metrics.line_height);
+      // Named for the whole pane, because that is what it covers: the view-model
+      // build, the blame overlay, the find-highlight fragments, the row render and
+      // the insets. It used to be called `BuildEditorViewModel`, which is only the
+      // first of those -- and on `editor_soft_wrap_long_line_scroll` the pane cost
+      // 1.05 ms a frame while its one instrumented child accounted for 0.19, so
+      // 0.86 ms a frame had no name at all (TD-2026-08-15-248).
+      util::PerformanceTrace::Scope vm_scope("WorkspaceShell::Render::EditorPane");
+      {
+        util::PerformanceTrace::Scope build_scope(
+            "WorkspaceShell::Render::EditorPane::BuildViewModel");
+        editor_render_builder.BuildEditorViewModelInto(
+            tls_editor_surface_vm, *viewport, metrics.visible_rows, folding_for_vm,
+            occurrences_for_pane, occurrences_case_sensitive, sticky_active,
+            sticky_scroll_max_depth, render_whitespace_enabled, debug_enabled, breakpoint_store,
+            debug_execution, inset_flags, metrics.line_height);
+      }
       tls_pane_scroll_metrics[pane_index] = metrics;
       tls_pane_scroll_metrics_valid[pane_index] = 1;
-      const auto blame_overlay =
-          (pane.active && blame_inline_enabled)
-              ? editor_blame_overlay_service_.BuildEditorOverlay(
-                    project_state.root, text_renderer_, git_blame_service_, *viewport,
-                    pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size(),
-                    line_numbers_enabled)
-                      : std::nullopt;
+      const auto blame_overlay = [&] {
+        util::PerformanceTrace::Scope blame_scope(
+            "WorkspaceShell::Render::EditorPane::BlameOverlay");
+        return (pane.active && blame_inline_enabled)
+                   ? editor_blame_overlay_service_.BuildEditorOverlay(
+                         project_state.root, text_renderer_, git_blame_service_, *viewport,
+                         pane.rect, 520.0f, tls_editor_surface_vm.sticky_lines.size(),
+                         line_numbers_enabled)
+                   : std::nullopt;
+      }();
       if (pane.active) {
         // When blame is disabled this clears any previously-visible overlay so
         // hover/click targets never resolve against stale blame geometry.
@@ -902,8 +915,12 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                                    group_folding_model, nullptr,
                                    decorations_for_viewport(*viewport), line_numbers_enabled,
                                    explicit_search_matches);
-      DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
-                       tls_editor_surface_vm);
+      {
+        util::PerformanceTrace::Scope insets_scope(
+            "WorkspaceShell::Render::EditorPane::Insets");
+        DrawEditorInsets(renderer, pane.rect, metrics, viewport->scroll_line(),
+                         tls_editor_surface_vm);
+      }
 
       // Insertion-point indicator for a selection drag-and-drop in flight. No
       // other gesture here has one, and without it the drop is a guess: the real

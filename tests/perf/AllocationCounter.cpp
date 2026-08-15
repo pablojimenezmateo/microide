@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstdlib>
+#include <malloc.h>
 #include <execinfo.h>
 #include <mutex>
 #include <vector>
@@ -380,8 +381,20 @@ void* operator new(std::size_t size) {
 
 void operator delete(void* ptr) noexcept {
   if (ptr != nullptr) {
-    // Sized-deallocation is unavailable on this overload, so only the count moves.
-    RecordFree(0);
+    // Sized deallocation is unavailable on this overload, so the block's own
+    // usable size is the honest answer. Recording 0 was NOT neutral: it made
+    // `p50_net_heap_bytes` count every unsized free as memory that was allocated
+    // and never released. Moving one container onto `new[]`/`delete[]` moved
+    // `editor_sort_lines_large` from 2,476 net bytes to 162,476, with its
+    // allocation count and its resident growth both unchanged — a 65x reading on
+    // a scenario whose memory behaviour had not moved at all (TD-2026-08-15-249).
+    //
+    // `malloc_usable_size` is >= the requested size, so this over-reports frees
+    // slightly where `operator new` recorded the request. That asymmetry is
+    // bounded by the allocator's rounding and is the smaller error by a wide
+    // margin; and it is one-sided in the SAFE direction, since a net-heap gate
+    // only fires upward.
+    RecordFree(::malloc_usable_size(ptr));
   }
   std::free(ptr);
 }

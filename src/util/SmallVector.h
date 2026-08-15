@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstddef>
+#include <new>
 #include <initializer_list>
 #include <type_traits>
 #include <utility>
@@ -63,16 +64,14 @@ class SmallVector {
 
   SmallVector& operator=(SmallVector&& other) noexcept {
     if (this != &other) {
-      delete[] heap_;
-      heap_ = nullptr;
-      capacity_ = N;
+      FreeHeap();
       size_ = 0;
       Steal(other);
     }
     return *this;
   }
 
-  ~SmallVector() { delete[] heap_; }
+  ~SmallVector() { FreeHeap(); }
 
   size_type size() const { return size_; }
   size_type capacity() const { return capacity_; }
@@ -175,13 +174,39 @@ class SmallVector {
     other.size_ = 0;
   }
 
+  // Raw sized allocation, not `new T[]`.
+  //
+  // Two reasons, and the second is the one that bit. `new T[n]` VALUE-INITIALISES
+  // all n slots, which for a spilled buffer is a memset of capacity the caller has
+  // not written yet -- pure waste for a type this container already requires to be
+  // trivially copyable and trivially destructible.
+  //
+  // And `delete[]` on a trivially-destructible type compiles to the UNSIZED
+  // `operator delete[](void*)`, which the perf harness's counting allocator can
+  // only record as "freed 0 bytes" -- it has no size to report. So a SmallVector
+  // that spilled looked, to `p50_net_heap_bytes`, like memory that was allocated
+  // and never released: moving `LineBlob::starts_` onto this container moved
+  // `editor_sort_lines_large` from 2,476 to 162,476 net bytes with its allocation
+  // count and its resident growth both unchanged (TD-2026-08-15-249). Sized
+  // deallocation reports the real number.
   void Grow(size_type required) {
     const size_type new_capacity = std::max<size_type>(required, capacity_ * 2);
-    T* buffer = new T[new_capacity];
+    T* buffer = static_cast<T*>(::operator new(new_capacity * sizeof(T)));
     std::copy_n(data(), size_, buffer);
-    delete[] heap_;
+    FreeHeap();
     heap_ = buffer;
     capacity_ = new_capacity;
+  }
+
+  // Frees the spilled buffer, if any, passing the size the sized-deallocation
+  // overload needs. Deliberately does NOT touch `size_`: `Grow` still holds the
+  // elements it just copied into the new buffer.
+  void FreeHeap() noexcept {
+    if (heap_ != nullptr) {
+      ::operator delete(heap_, capacity_ * sizeof(T));
+      heap_ = nullptr;
+    }
+    capacity_ = N;
   }
 
   T inline_storage_[N]{};

@@ -13,6 +13,7 @@
 #include "util/Parse.h"
 #include "util/PathMatch.h"
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 #include "util/StringUtil.h"
 
 #include "workspace/persistence/RecentsService.h"
@@ -280,6 +281,15 @@ void RefillOccurrenceSeedCache(const editor::TextViewport& viewport,
   }
 }
 
+// A visible buffer line, with the union of the visual-column spans its on-screen
+// rows cover. Under soft wrap that is a small window into a possibly enormous
+// line; in every other mode it is the horizontal scroll window.
+struct VisibleLineVisualSpan {
+  std::size_t line_index = 0;
+  std::size_t first_visual = 0;
+  std::size_t last_visual = 0;
+};
+
 bool OccurrenceScanCacheMatches(const editor::TextViewport& viewport,
                                 std::uintptr_t viewport_key,
                                 std::size_t visible_rows,
@@ -320,11 +330,13 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
 
   scan_cache.ranges.clear();
 
-  // Reused across calls; cleared (not reallocated) every refresh. Wrapped rows
-  // can share a buffer line, so we sort+unique instead of carrying a hash set.
-  thread_local std::vector<std::size_t> visible_line_indices_scratch;
-  std::vector<std::size_t>& visible_line_indices = visible_line_indices_scratch;
-  visible_line_indices.clear();
+  // Each visible line, with the VISUAL COLUMN span its on-screen rows actually
+  // cover. Several wrapped rows can share a buffer line, and a line's rows are
+  // contiguous (see TextLayoutCache::WrappedRowRangeForLine), so merging into the
+  // last entry collects the union without a sort or a hash set.
+  thread_local std::vector<VisibleLineVisualSpan> visible_line_spans_scratch;
+  std::vector<VisibleLineVisualSpan>& visible_line_spans = visible_line_spans_scratch;
+  visible_line_spans.clear();
   const std::size_t scroll = viewport.scroll_line();
   const std::size_t visual_total = viewport.visual_line_count();
   for (std::size_t row = 0; row < visible_rows; ++row) {
@@ -333,12 +345,20 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
       break;
     }
     const auto row_meta = viewport.WrappedVisualRowLayout(visual_row_index);
-    visible_line_indices.push_back(row_meta.line_index);
+    if (!visible_line_spans.empty() &&
+        visible_line_spans.back().line_index == row_meta.line_index) {
+      visible_line_spans.back().first_visual =
+          std::min(visible_line_spans.back().first_visual, row_meta.visual_start);
+      visible_line_spans.back().last_visual =
+          std::max(visible_line_spans.back().last_visual, row_meta.visual_end);
+      continue;
+    }
+    visible_line_spans.push_back(VisibleLineVisualSpan{
+        .line_index = row_meta.line_index,
+        .first_visual = row_meta.visual_start,
+        .last_visual = row_meta.visual_end,
+    });
   }
-  std::sort(visible_line_indices.begin(), visible_line_indices.end());
-  visible_line_indices.erase(
-      std::unique(visible_line_indices.begin(), visible_line_indices.end()),
-      visible_line_indices.end());
 
   const auto& lines = viewport.lines();
   const std::string_view needle_view(needle.data(), needle.size());
@@ -384,41 +404,46 @@ void RefillOccurrenceScanCache(const editor::TextViewport& viewport,
   };
 
   // An occurrence is only ever painted inside a row's visible window -- the
-  // row-fill loops clip every span to it -- so scanning the whole line produces
+  // row-fill loops clip every span to it -- so scanning outside it produces
   // matches that are discarded on arrival. On ordinary text that is a few dozen
   // wasted bytes. On a file with no line breaks in it the "line" is the whole
   // document, and the scan re-lowercases and re-searches a megabyte every time the
-  // caret moves to a different word, which is every keystroke of word motion
-  // (TD-2026-08-05-132 follow-up, `editor_long_line_horizontal_scroll`).
+  // caret moves to a different word (TD-2026-08-05-132 follow-up,
+  // `editor_long_line_horizontal_scroll`).
   //
-  // Soft wrap lays the whole line out across several rows, so all of it is visible
-  // and the full scan is the right one.
-  const bool bounded_by_window = !viewport.soft_wrap() && viewport.visible_columns() != 0;
-  const std::size_t window_first_visual = viewport.horizontal_scroll();
-  const std::size_t window_last_visual = window_first_visual + viewport.visible_columns();
+  // ONE rule for every layout mode, because the row layout already states the
+  // window: in the trivial and fold-but-no-wrap modes `WrappedRowAt` returns
+  // exactly [horizontal_scroll, horizontal_scroll + visible_columns), which is the
+  // horizontal window this used to compute separately; under soft wrap it returns
+  // the row's own visual span.
+  //
+  // Soft wrap used to opt OUT of the bound entirely, on the reasoning that "soft
+  // wrap lays the whole line out across several rows, so all of it is visible".
+  // That is true of the LAYOUT and false of the SCREEN: a one-megabyte line wraps
+  // to ~10,000 rows and about forty of them are on screen. The scan read and
+  // lower-cased the whole megabyte every frame, which measured as 0.49 ms of the
+  // 1.05 ms an editor pane spent per frame in `editor_soft_wrap_long_line_scroll`
+  // -- the single largest app-side cost in the perf suite (TD-2026-08-15-248).
+  //
   // Pad by the needle so a match straddling either edge is still found; the edge
   // conversion is a nearest-column mapping, not an exact one.
   const std::size_t window_pad = std::max<std::size_t>(needle.size(), 1);
 
-  for (std::size_t line_index : visible_line_indices) {
-    if (line_index >= lines.size()) {
+  for (const VisibleLineVisualSpan& span : visible_line_spans) {
+    if (span.line_index >= lines.size()) {
       continue;
     }
-    const std::string_view line = lines.LineView(line_index);
-    if (!bounded_by_window) {
-      append_occurrences(line_index, line, 0);
-      continue;
-    }
+    const std::string_view line = lines.LineView(span.line_index);
     const std::size_t first_byte =
-        viewport.TextColumnAtVisualColumn(line_index, window_first_visual);
+        viewport.TextColumnAtVisualColumn(span.line_index, span.first_visual);
     const std::size_t last_byte =
-        viewport.TextColumnAtVisualColumn(line_index, window_last_visual);
+        viewport.TextColumnAtVisualColumn(span.line_index, span.last_visual);
     const std::size_t begin = first_byte > window_pad ? first_byte - window_pad : 0;
     const std::size_t end = std::min(line.size(), last_byte + window_pad);
     if (begin >= end) {
       continue;
     }
-    append_occurrences(line_index, line.substr(begin, end - begin), begin);
+    append_occurrences(span.line_index, line.substr(begin, end - begin), begin);
   }
 }
 
@@ -1403,8 +1428,16 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   // above their line. Built here so the render TU stays view-model-only; bounded
   // to the visible window so it is O(visible).
   out.code_lens_above = false;
-  BuildEditorInsetGaps(out, viewport, visible_rows, inset_flags, line_height);
+  // Phase scopes, because this function is half the cost of an editor pane on the
+  // soft-wrap scroll scenario -- 0.48 ms of 1.05 ms a frame -- and not one of its
+  // five phases had a name to hang that on (TD-2026-08-15-248).
+  {
+    util::PerformanceTrace::Scope insets_scope("RenderViewModelBuilder::Editor::InsetGaps");
+    BuildEditorInsetGaps(out, viewport, visible_rows, inset_flags, line_height);
+  }
 
+  {
+  util::PerformanceTrace::Scope gutter_scope("RenderViewModelBuilder::Editor::GutterMarks");
   if (folding_model != nullptr && !folding_model->resolved_ranges().empty()) {
     out.fold_gutter_marks.reserve(visible_rows);
     for (std::size_t row = 0; row < visible_rows; ++row) {
@@ -1473,10 +1506,16 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
     }
   }
 
-  out.sticky_lines = StickyScrollLines(viewport, folding_model, sticky_scroll_enabled,
-                                      sticky_max_depth);
+  }  // GutterMarks
+
+  {
+    util::PerformanceTrace::Scope sticky_scope("RenderViewModelBuilder::Editor::StickyLines");
+    out.sticky_lines = StickyScrollLines(viewport, folding_model, sticky_scroll_enabled,
+                                        sticky_max_depth);
+  }
 
   if (render_whitespace_enabled && !viewport.is_placeholder()) {
+    util::PerformanceTrace::Scope ws_scope("RenderViewModelBuilder::Editor::Whitespace");
     CollectWhitespaceGlyphRuns(viewport, visible_rows, &out.whitespace_glyph_runs,
                                 &out.whitespace_row_offsets);
   }
@@ -1484,6 +1523,8 @@ void RenderViewModelBuilder::BuildEditorViewModelInto(
   if (!occurrences_highlight_enabled || viewport.is_placeholder()) {
     return;
   }
+  util::PerformanceTrace::Scope occurrences_scope(
+      "RenderViewModelBuilder::Editor::Occurrences");
 
   // While a word is being actively typed/deleted the occurrence seed is a growing
   // prefix ("a" → "ap" → "app"), which both churns the scan cache every keystroke
