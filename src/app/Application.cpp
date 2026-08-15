@@ -167,6 +167,7 @@ int Application::Run() {
 
   while (running_) {
     if (full_redraw_pending || !dirty_rects.empty()) {
+      const bool was_first_frame = !first_render_complete_;
       Render(full_redraw_pending ? std::vector<SDL_FRect>{} : dirty_rects, redraw_reason);
 
       // Map the window exactly once, as soon as a real frame has been painted.
@@ -190,7 +191,22 @@ int Application::Run() {
         window_shown = true;
       }
 
-      if (auto settle = workspace_shell_.ConsumePostRenderRedrawRequest(); settle.has_value()) {
+      if (was_first_frame) {
+        // Drop the settle repaints the FIRST frame scheduled, rather than paying
+        // two more vsync intervals for them before the app quiesces.
+        //
+        // They come from the terminal reflow: a restored terminal tab is re-gridded
+        // during the first prepared frame, and a reflow owes two follow-up repaints
+        // so a terminal the user is watching catches up with the PTY. On the first
+        // frame there is nothing to catch up with — the frame being presented is
+        // itself the first thing on screen and already paints the new grid, and the
+        // PTY was spawned moments ago, so its output arrives on the terminal wake
+        // with a repaint of its own. Every later reflow (a divider drag, a font
+        // change) still gets both.
+        while (workspace_shell_.ConsumePostRenderRedrawRequest().has_value()) {
+        }
+      } else if (auto settle = workspace_shell_.ConsumePostRenderRedrawRequest();
+                 settle.has_value()) {
         full_redraw_pending = settle->full;
         dirty_rects.assign(settle->rects.begin(), settle->rects.end());
         redraw_reason = "render-settle";
