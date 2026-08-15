@@ -1783,7 +1783,7 @@ void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
   }
 
   auto& tokenized_compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-  Expect(tokenized_compare.syntax_rows_tokenized == tokenized_compare.model.rows.size(),
+  Expect(tokenized_compare.left_token_window.frontier() == tokenized_compare.model.rows.size(),
          "tokenization reaches the deepest visible model row behind the collapsed run");
   // A deep content row (the bottom v299 change) is highlighted — not left blank.
   // Scan the tail (the very last model row is the phantom trailing empty line).
@@ -1792,8 +1792,8 @@ void TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows() {
                                      ? tokenized_compare.model.rows.size() - 8
                                      : 0;
   for (std::size_t row = tail_start; row < tokenized_compare.model.rows.size(); ++row) {
-    if (!tokenized_compare.left_tokens_by_row[row].empty() ||
-        !tokenized_compare.right_tokens_by_row[row].empty()) {
+    if (!tokenized_compare.left_token_window.Tokens(row).empty() ||
+        !tokenized_compare.right_token_window.Tokens(row).empty()) {
       deep_row_has_tokens = true;
       break;
     }
@@ -1885,10 +1885,10 @@ void TestWorkspaceShellCompareOpenDoesNotMaterializeEitherSide() {
   Expect(!compare.model.hunks.empty(), "the fixture must actually differ");
   // The `.txt` extension says nothing; only the shebang can produce a definition,
   // so a non-empty id proves the head reached the detector on both sides.
-  Expect(compare.left_initial_syntax_state.definition_id != 0,
+  Expect(compare.left_token_window.StateBefore(0).definition_id != 0,
          "the left side's syntax state must still be detected from its shebang");
-  Expect(compare.right_initial_syntax_state.definition_id ==
-             compare.left_initial_syntax_state.definition_id,
+  Expect(compare.right_token_window.StateBefore(0).definition_id ==
+             compare.left_token_window.StateBefore(0).definition_id,
          "both sides detect the same definition from the same shebang");
 }
 

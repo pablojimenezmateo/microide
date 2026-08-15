@@ -82,12 +82,18 @@ class SurfaceTokenWindow {
   // `AdvanceState`, which computes the same end state WITHOUT materializing
   // tokens and therefore without allocating: passing over a row is what most of
   // this work is, and it no longer costs a buffer.
-  template <typename LineAt>
+  // `should_fill(row)` may decline to tokenize a row whose tokens the caller can
+  // read from somewhere else — compare's right pane declines every unchanged row
+  // that is byte-identical to the left one and resumes from the same state, since
+  // the two panes then produce the same token run. Declining does not affect the
+  // state walk, which is what keeps the two panes in step.
+  template <typename LineAt, typename FillFilter>
   void EnsureWindow(std::size_t start,
                     std::size_t end,
                     const std::filesystem::path& path,
                     std::size_t walk_budget,
-                    LineAt&& line_at) {
+                    LineAt&& line_at,
+                    FillFilter&& should_fill) {
     const std::size_t rows = end_states_.size();
     if (rows == 0) {
       return;
@@ -136,13 +142,24 @@ class SurfaceTokenWindow {
     //    never filled, which is exactly the miss condition.
     const std::size_t fill_end = std::min(end, frontier_);
     for (std::size_t row = start; row < fill_end; ++row) {
-      if (!tokens_[row].empty()) {
+      if (!tokens_[row].empty() || !should_fill(row)) {
         continue;
       }
       TakePooledBufferInto(tokens_[row]);
       editor::SyntaxHighlighter::HighlightLineInto(line_at(row), path, StateBefore(row),
                                                    &tokens_[row]);
     }
+  }
+
+  // Fills every requested row.
+  template <typename LineAt>
+  void EnsureWindow(std::size_t start,
+                    std::size_t end,
+                    const std::filesystem::path& path,
+                    std::size_t walk_budget,
+                    LineAt&& line_at) {
+    EnsureWindow(start, end, path, walk_budget, std::forward<LineAt>(line_at),
+                 [](std::size_t) { return true; });
   }
 
   // Frees everything, including the pool. For a tab being torn down or a pane

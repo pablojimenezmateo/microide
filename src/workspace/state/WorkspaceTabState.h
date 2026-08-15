@@ -124,10 +124,6 @@ struct CompareTabState {
   bool opened_from_commit_picker = false;
   std::vector<std::filesystem::path> review_files;
   std::size_t review_file_index = 0;
-  editor::SyntaxState left_initial_syntax_state;
-  editor::SyntaxState right_initial_syntax_state;
-  editor::SyntaxState left_current_syntax_state;
-  editor::SyntaxState right_current_syntax_state;
   compare::CompareModel model;
   editor::TextViewport right_viewport;
   // Soft-wrap row table for the two panes. Inactive (and empty) unless
@@ -137,21 +133,20 @@ struct CompareTabState {
   // `scroll_row` is an index into THIS table; `selected_row` stays a
   // presentation-row index, so a selected wrapped line highlights whole.
   DiffWrapLayout wrap_layout;
-  std::vector<std::vector<editor::SyntaxTokenKind>> left_tokens_by_row;
-  std::vector<std::vector<editor::SyntaxTokenKind>> right_tokens_by_row;
-  // Non-zero where this row's right-pane tokens ARE its left-pane tokens, so the
-  // right cache holds nothing for it and the render site reads the left vector.
+  // Syntax tokens for the two diff panes, indexed by MODEL row. See
+  // SurfaceTokenWindow: these used to be a `vector<vector<SyntaxTokenKind>>`
+  // holding one heap buffer per row of the diff, filled by a monotone frontier
+  // and never released — 86 % of `diff.next_hunk_burst`'s allocations.
   //
-  // A diff is mostly unchanged rows, and an unchanged row whose two sides are
-  // byte-identical and start from the same syntax state highlights to the same
-  // token run — which the tokenizer used to store TWICE, one owned vector per
-  // pane. That second vector was half of `diff.next_hunk_burst`'s per-frame
-  // allocations, for a byte-for-byte copy of the one beside it
-  // (TD-2026-08-06-159). A flag beside the caches keeps the read sites O(1) and
-  // keeps the predicate — which needs the two lines' text and the two syntax
-  // states — where it is already computed, rather than re-deriving it per visible
-  // row per frame inside a render TU.
-  std::vector<std::uint8_t> right_tokens_alias_left_by_row;
+  // The alias flag that used to sit beside them is gone with it. It existed
+  // because an unchanged row whose two sides are byte-identical highlights to the
+  // same token run, which the old cache stored twice, once per pane, for every
+  // such row in the FILE (TD-2026-08-06-159). What the window bounds is exactly
+  // that: only the rows on screen hold tokens at all, so the second copy costs a
+  // pooled buffer and one tokenize of a line already in cache, and the flag array
+  // plus its two read sites cost more than they save.
+  SurfaceTokenWindow left_token_window;
+  SurfaceTokenWindow right_token_window;
   // Bracket-match memo for the editable pane, keyed exactly as the editor
   // renderer's is: (content revision, caret line, caret column). FindBracketMatch
   // is O(file), and the compare surface paints through its own row loop with no
@@ -170,7 +165,6 @@ struct CompareTabState {
   std::unordered_map<CompareVisibleLayoutCacheKey, std::size_t,
                      CompareVisibleLayoutCacheKeyHash>
       visible_layout_cache_index;
-  std::size_t syntax_rows_tokenized = 0;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
   // Cheap change-detection signals the model + syntax + tokenization were last built
@@ -233,6 +227,27 @@ struct CompareTabState {
   // git refs, keeping staging/branch-review off. See ApplyCompareTabReviewMetadata.
   bool plain_compare = false;
 };
+
+// True when this model row's right-pane tokens ARE its left-pane tokens: both
+// sides present, byte-identical, and resuming from the same syntax state, which
+// makes the two panes produce the same token run.
+//
+// A diff is mostly unchanged rows, so this is most of them. The right window
+// declines to tokenize such a row and the render site reads the left window's
+// buffer, which saves both the second tokenize and the second buffer.
+//
+// ONE definition, called from the tokenizer and from the render site, because
+// the two must agree exactly: if the render reads left's buffer for a row the
+// tokenizer did fill on the right, or vice versa, the pane paints unstyled.
+inline bool CompareRowRightTokensAliasLeft(const CompareTabState& tab, std::size_t row) {
+  if (row >= tab.model.rows.size()) {
+    return false;
+  }
+  const compare::CompareRow& compare_row = tab.model.rows[row];
+  return compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
+         compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
+         tab.left_token_window.StateBefore(row) == tab.right_token_window.StateBefore(row);
+}
 
 struct MergeTabState {
   std::filesystem::path base_path;

@@ -584,21 +584,18 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
     // Straight off the blob: detection reads a bounded head, and splitting the
     // whole left side into owned lines to hand it over was one allocation per line
     // of the file — 14 % of a large compare's open (TD-2026-08-06-159).
-    compare_tab.left_initial_syntax_state =
-        editor::SyntaxHighlighter::InitialState(compare_tab.path, *compare_tab.left_content);
+    compare_tab.left_token_window.Reset(
+        compare_tab.model.rows.size(),
+        editor::SyntaxHighlighter::InitialState(compare_tab.path, *compare_tab.left_content));
     // The buffer itself, not `Snapshot()`. Detection reads a bounded head through
     // `LineWindow`, whereas asking for the snapshot materialized the WHOLE document
     // into a second owned copy — 20 % of a large compare's open, and retained until
     // the next edit. Nothing downstream here reads the snapshot (the serialization
     // above walks the piece tree directly), so warming it bought nothing.
-    compare_tab.right_initial_syntax_state = editor::SyntaxHighlighter::InitialState(
-        compare_tab.path, compare_tab.right_viewport.lines());
-    compare_tab.left_current_syntax_state = compare_tab.left_initial_syntax_state;
-    compare_tab.right_current_syntax_state = compare_tab.right_initial_syntax_state;
-    compare_tab.left_tokens_by_row.assign(compare_tab.model.rows.size(), {});
-    compare_tab.right_tokens_by_row.assign(compare_tab.model.rows.size(), {});
-    compare_tab.right_tokens_alias_left_by_row.assign(compare_tab.model.rows.size(), 0);
-    compare_tab.syntax_rows_tokenized = 0;
+    compare_tab.right_token_window.Reset(
+        compare_tab.model.rows.size(),
+        editor::SyntaxHighlighter::InitialState(compare_tab.path,
+                                                compare_tab.right_viewport.lines()));
     compare_tab.syntax_highlighting_enabled = true;
     compare_tab.max_visual_columns = CompareMaxVisualColumns(compare_tab.model);
   }

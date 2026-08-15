@@ -107,69 +107,33 @@ void WorkspaceShell::PopulateCompareSyntaxTokensForWindow(CompareTabState& compa
     return;
   }
 
-  const std::size_t row_count = compare_tab.model.rows.size();
-  const std::size_t clamped_end = std::min(visible_end_row, row_count);
-  if (visible_start_row >= clamped_end) {
-    return;
-  }
-
+  // Both panes tokenize cumulatively down the MODEL rows, so reaching a row means
+  // walking every row above it. SurfaceTokenWindow does that walk with
+  // `AdvanceState` — which allocates nothing — and keeps token buffers only for a
+  // bounded band around the viewport, where this used to hold one heap buffer per
+  // row of the diff for the tab's life (TD-2026-08-15-242).
+  //
+  // A row absent on a side reads as the empty line, which is exactly what the
+  // per-row form did: it left that side's tokens empty and carried the side's
+  // syntax state forward untouched, and `AdvanceState`/`HighlightLineInto` both
+  // do that for an empty line.
   constexpr std::size_t kCompareSyntaxRowsPerFrame = 256;
-  std::size_t target_row = std::min(clamped_end, compare_tab.syntax_rows_tokenized + kCompareSyntaxRowsPerFrame);
-  while (compare_tab.syntax_rows_tokenized < target_row) {
-    const std::size_t index = compare_tab.syntax_rows_tokenized;
-    const auto& compare_row = compare_tab.model.rows[index];
-    auto& left_tokens = compare_tab.left_tokens_by_row[index];
-    auto& right_tokens = compare_tab.right_tokens_by_row[index];
-
-    const bool reuse_tokens =
-        compare_row.kind == compare::CompareRowKind::Unchanged && compare_row.left_line > 0 &&
-        compare_row.right_line > 0 && compare_row.left_text == compare_row.right_text &&
-        compare_tab.left_current_syntax_state == compare_tab.right_current_syntax_state;
-    const bool has_alias_flags =
-        index < compare_tab.right_tokens_alias_left_by_row.size();
-    // Tokenize straight INTO the row's own cache vector. The by-value
-    // `HighlightLine` builds a fresh, empty vector and the move-assignment then
-    // frees the buffer this row already owned -- one allocation per row per pass,
-    // and a scroll re-tokenizes its whole window. That was the #1 site of the
-    // diff and merge scroll phases (28,005 and 24,196 allocations,
-    // TD-2026-08-15-237). `HighlightLineInto` assigns in place and keeps the
-    // capacity, which is the entire reason the Into form exists.
-    if (reuse_tokens && has_alias_flags) {
-      const editor::SyntaxState end_state = editor::SyntaxHighlighter::HighlightLineInto(
-          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state,
-          &left_tokens);
-      compare_tab.left_current_syntax_state = end_state;
-      compare_tab.right_current_syntax_state = end_state;
-      // One vector, two panes. This used to copy it into the left cache and move
-      // it into the right, so an identical unchanged row cost two owned token
-      // vectors to paint the same run twice (TD-2026-08-06-159).
-      right_tokens.clear();
-      compare_tab.right_tokens_alias_left_by_row[index] = 1;
-      ++compare_tab.syntax_rows_tokenized;
-      continue;
-    }
-    if (has_alias_flags) {
-      compare_tab.right_tokens_alias_left_by_row[index] = 0;
-    }
-
-    if (compare_row.left_line > 0) {
-      compare_tab.left_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
-          compare_row.left_text, compare_tab.path, compare_tab.left_current_syntax_state,
-          &left_tokens);
-    } else {
-      left_tokens.clear();
-    }
-
-    if (compare_row.right_line > 0) {
-      compare_tab.right_current_syntax_state = editor::SyntaxHighlighter::HighlightLineInto(
-          compare_row.right_text, compare_tab.path, compare_tab.right_current_syntax_state,
-          &right_tokens);
-    } else {
-      right_tokens.clear();
-    }
-
-    ++compare_tab.syntax_rows_tokenized;
-  }
+  compare_tab.left_token_window.EnsureWindow(
+      visible_start_row, visible_end_row, compare_tab.path, kCompareSyntaxRowsPerFrame,
+      [&](std::size_t row) -> std::string_view {
+        const compare::CompareRow& compare_row = compare_tab.model.rows[row];
+        return compare_row.left_line > 0 ? compare_row.left_text : std::string_view{};
+      });
+  compare_tab.right_token_window.EnsureWindow(
+      visible_start_row, visible_end_row, compare_tab.path, kCompareSyntaxRowsPerFrame,
+      [&](std::size_t row) -> std::string_view {
+        const compare::CompareRow& compare_row = compare_tab.model.rows[row];
+        return compare_row.right_line > 0 ? compare_row.right_text : std::string_view{};
+      },
+      // Skip the rows whose tokens the render site will read from the LEFT window
+      // — an unchanged row identical on both sides. Left is ensured first, so its
+      // states are current when this asks.
+      [&](std::size_t row) { return !CompareRowRightTokensAliasLeft(compare_tab, row); });
 }
 
 void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
@@ -231,7 +195,8 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
   // deepest visible model row (e.g. after scrolling past a giant collapsed run),
   // request another frame so it progressively catches up instead of leaving those
   // rows permanently unhighlighted. Self-terminates once caught up (no idle redraw).
-  if (compare_tab->syntax_rows_tokenized < syntax_model_end) {
+  if (compare_tab->left_token_window.frontier() < syntax_model_end ||
+      compare_tab->right_token_window.frontier() < syntax_model_end) {
     RequestRedrawRect(rect);
   }
   PrepareCompareVisibleLayoutsForWindow(
@@ -624,9 +589,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     if (compare_row.left_line > 0 && wrap_row.left_present) {
       std::array<char, 20> line_number_buf;
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
-          static_cast<std::size_t>(model_index) < compare_tab->left_tokens_by_row.size()
-              ? &compare_tab->left_tokens_by_row[static_cast<std::size_t>(model_index)]
-              : &kEmptyTokens;
+          &compare_tab->left_token_window.Tokens(static_cast<std::size_t>(model_index));
       const std::vector<compare::CompareTextSpan>& left_changed_spans =
           compare::CompareInlineLeftSpans(compare_tab->presentation, compare_tab->model, model_index);
       const bool left_diff_edge = compare_row.kind == compare::CompareRowKind::Deleted ||
@@ -776,18 +739,14 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
         append_bracket_cell(bracket_match_pair->close_line, bracket_match_pair->close_column);
       }
-      // An unchanged row whose two sides are byte-identical stores its tokens once,
-      // in the left cache; the flag says which rows those are.
+      // An unchanged row identical on both sides holds its tokens once, in the
+      // left window; the right one declined to fill it. Same predicate, one
+      // definition — see CompareRowRightTokensAliasLeft.
       const std::size_t right_token_row = static_cast<std::size_t>(model_index);
-      const bool right_aliases_left =
-          right_token_row < compare_tab->right_tokens_alias_left_by_row.size() &&
-          compare_tab->right_tokens_alias_left_by_row[right_token_row] != 0 &&
-          right_token_row < compare_tab->left_tokens_by_row.size();
       const std::vector<editor::SyntaxTokenKind>* cached_tokens =
-          right_aliases_left ? &compare_tab->left_tokens_by_row[right_token_row]
-          : right_token_row < compare_tab->right_tokens_by_row.size()
-              ? &compare_tab->right_tokens_by_row[right_token_row]
-              : &kEmptyTokens;
+          CompareRowRightTokensAliasLeft(*compare_tab, right_token_row)
+              ? &compare_tab->left_token_window.Tokens(right_token_row)
+              : &compare_tab->right_token_window.Tokens(right_token_row);
       const std::vector<compare::CompareTextSpan>& right_changed_spans =
           compare::CompareInlineRightSpans(compare_tab->presentation, compare_tab->model,
                                            model_index);
