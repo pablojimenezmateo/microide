@@ -93,16 +93,6 @@ bool IsEscapingRelativePath(const std::filesystem::path& relative_path) {
   return it != relative_path.end() && std::string_view(it->native()) == "..";
 }
 
-// `lexically_normal()`, skipped when the text already is normal — which is what a
-// directory iterator hands back, since it spells every entry as an already-normal
-// root plus a filename. Without the guard each entry of every tree walk pays the
-// ~12 allocations of a normalization that changes nothing (TD-2026-08-10-174).
-std::filesystem::path NormalizedCopy(const std::filesystem::path& path) {
-  if (util::PathTextNeedsNormalizing(path.native())) {
-    return path.lexically_normal();
-  }
-  return path;
-}
 
 bool TryComputeRelativePath(const std::filesystem::path& absolute_path,
                             const std::filesystem::path& root,
@@ -200,10 +190,16 @@ bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& root,
     return false;
   }
   // The filter walks the full ancestor chain (nested .gitignore + defaults) itself.
-  return !filter->Includes(NormalizedCopy(root / relative_path),
+  return !filter->Includes(util::NormalizedPath(root / relative_path),
                            platform::PathType::RegularFile);
 }
 #endif
+
+// Called once per KEPT directory (post-prune, pre-descend) by the walk below.
+// The native backend registers an inotify watch here, which is what lets the
+// watch registration and the file scan share one traversal instead of running
+// two identical ones over the same tree.
+using DirectoryVisitor = std::function<void(const std::filesystem::path&)>;
 
 // Build an initial IndexUpdateBatch by scanning root recursively, pruning excluded
 // directories (VCS/build/deps/nested-.gitignore) and files, and stopping once
@@ -213,12 +209,19 @@ bool ShouldIgnoreTrackedRelativePath(const std::filesystem::path& root,
 // reaches `max_entries`. Returns true if that budget was hit (truncated). Both the
 // initial full scan and the incremental subtree scans (moved-in dir, overflow
 // recovery) go through here so the ignore/prune/relative-path rules stay identical.
+//
+// `on_directory`, when set, is invoked for every directory the filter keeps. Every
+// caller that wanted the directory set wanted the file set from the same tree at
+// the same moment (project open, a moved-in subtree, overflow recovery), and each
+// was walking twice to get them.
 bool CollectTrackedCreations(const std::filesystem::path& walk_root,
                              const std::filesystem::path& index_root,
                              project::ProjectTraversalFilter* filter,
                              std::size_t max_entries,
                              const std::atomic<bool>* stop_requested,
-                             std::vector<IndexUpdateBatch::Change>* changes) {
+                             std::vector<IndexUpdateBatch::Change>* changes,
+                             const DirectoryVisitor& on_directory = {}) {
+  bool truncated = false;
   std::error_code error;
   constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
   for (std::filesystem::recursive_directory_iterator it(walk_root, options, error), end;
@@ -227,21 +230,30 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
       break;
     }
     std::error_code status_error;
-    const auto status = it->status(status_error);
+    // EntryPathType, not status(): the type readdir already reported, instead of
+    // one newfstatat per entry of the whole tree (see platform/Filesystem.h).
+    const platform::PathType type = platform::EntryPathType(*it, status_error);
     if (status_error) {
       continue;
     }
-    if (std::filesystem::is_directory(status)) {
+    if (type == platform::PathType::Directory) {
       // Prune excluded subtrees before descending so they cost zero budget.
       if (ShouldSkipWatchedDirectory(it->path(), filter)) {
         it.disable_recursion_pending();
+        continue;
+      }
+      if (on_directory) {
+        on_directory(it->path());
       }
       continue;
     }
-    if (!std::filesystem::is_regular_file(status)) {
+    if (type != platform::PathType::RegularFile) {
       continue;
     }
-    const std::filesystem::path abs_path = NormalizedCopy(it->path());
+    if (truncated) {
+      continue;  // file budget spent; still walking so watches keep being registered
+    }
+    const std::filesystem::path abs_path = util::NormalizedPath(it->path());
     std::filesystem::path rel;
     if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
       continue;
@@ -252,7 +264,15 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
       continue;
     }
     if (changes->size() >= max_entries) {
-      return true;
+      truncated = true;
+      // Without a directory visitor there is nothing left to collect, so stop.
+      // With one, the walk continues for watches only: a tree whose file count
+      // exceeds the budget still has to be watched in full, exactly as the
+      // separate registration walk used to do.
+      if (!on_directory) {
+        return true;
+      }
+      continue;
     }
     std::error_code mtime_error;
     const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
@@ -265,20 +285,21 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
     change.entry.size = size_error ? 0 : size;
     changes->push_back(std::move(change));
   }
-  return false;
+  return truncated;
 }
 
 IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
                                    project::ProjectTraversalFilter* filter,
                                    std::size_t max_entries,
-                                   const std::atomic<bool>* stop_requested = nullptr) {
+                                   const std::atomic<bool>* stop_requested = nullptr,
+                                   const DirectoryVisitor& on_directory = {}) {
   // Full recursive walk of the project tree. Runs once per watch on a background
   // thread, and it is the dominant single cost of opening a project.
   util::PerformanceTrace::Scope perf_scope("watch::BuildInitialBatch");
   IndexUpdateBatch batch;
   batch.is_initial = true;
-  batch.truncated =
-      CollectTrackedCreations(root, root, filter, max_entries, stop_requested, &batch.changes);
+  batch.truncated = CollectTrackedCreations(root, root, filter, max_entries, stop_requested,
+                                            &batch.changes, on_directory);
   return batch;
 }
 
@@ -336,18 +357,19 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
   for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
        !error && it != end; it.increment(error)) {
     std::error_code status_error;
-    const auto status = it->status(status_error);
+    const platform::PathType type = platform::EntryPathType(*it, status_error);
     if (status_error) {
       continue;
     }
-    if (std::filesystem::is_directory(status) && ShouldSkipWatchedDirectory(it->path(), &filter)) {
+    if (type == platform::PathType::Directory &&
+        ShouldSkipWatchedDirectory(it->path(), &filter)) {
       it.disable_recursion_pending();
       continue;
     }
-    if (!std::filesystem::is_regular_file(status)) {
+    if (type != platform::PathType::RegularFile) {
       continue;
     }
-    const std::filesystem::path abs_path = NormalizedCopy(it->path());
+    const std::filesystem::path abs_path = util::NormalizedPath(it->path());
     std::filesystem::path rel;
     if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
       continue;
@@ -431,17 +453,6 @@ void RunPollFallbackWorker(const std::filesystem::path& root,
   }
 }
 
-// Append creations for the pre-existing files inside a directory that was created or
-// moved into the tree: inotify emits no per-file events for them, so without this
-// bounded walk they never enter the index until a full rescan.
-void AppendSubtreeCreations(const std::filesystem::path& dir,
-                            const std::filesystem::path& root,
-                            project::ProjectTraversalFilter* filter,
-                            std::size_t max_entries,
-                            std::vector<IndexUpdateBatch::Change>* changes) {
-  CollectTrackedCreations(dir, root, filter, max_entries, /*stop_requested=*/nullptr, changes);
-}
-
 }  // namespace
 
 std::vector<IndexUpdateBatch::Change> detail::BuildPollSnapshotDiff(
@@ -518,25 +529,15 @@ struct FileIndexWatcher::Impl {
   std::chrono::milliseconds poll_interval{750};
   std::thread poll_worker;
   PollStopSignal stop_poll;
-  std::thread initial_scan_worker;
-  std::atomic<bool> stop_initial_scan{false};
 
   ~Impl() {
     StopNative();
     StopPoll();
   }
 
-  void StopInitialScan() {
-    stop_initial_scan.store(true, std::memory_order_release);
-    if (initial_scan_worker.joinable()) {
-      util::PerformanceTrace::Scope scope("watch::StopInitialScan::Join");
-      initial_scan_worker.join();
-    }
-    stop_initial_scan.store(false, std::memory_order_release);
-  }
-
   void StopNative() {
-    StopInitialScan();
+    // No initial-scan thread to stop: the setup thread's single walk produces the
+    // initial batch, and stop_native_setup below is what aborts it.
     // Tell the setup thread to bail and unblock the worker (if it's already running).
     stop_native_setup.store(true, std::memory_order_release);
     if (control_pipe[1] >= 0) {
@@ -605,19 +606,6 @@ struct FileIndexWatcher::Impl {
     }
   }
 
-  void StartInitialScan() {
-    StopInitialScan();
-    stop_initial_scan.store(false, std::memory_order_release);
-    initial_scan_worker = std::thread([this]() {
-      project::ProjectTraversalFilter filter(root, exclude_globs);
-      IndexUpdateBatch initial =
-          BuildInitialBatch(root, &filter, entry_budget, &stop_initial_scan);
-      if (!stop_initial_scan.load(std::memory_order_acquire) && callback) {
-        callback(std::move(initial));
-      }
-    });
-  }
-
   // Mask used for every inotify watch. Defined here so both the synchronous root-watch
   // bootstrap and the background recursive walk use identical event filters.
   static constexpr std::uint32_t kInotifyMask = IN_CREATE | IN_DELETE | IN_DELETE_SELF |
@@ -656,50 +644,70 @@ struct FileIndexWatcher::Impl {
     return true;
   }
 
-  // Add inotify watches recursively for dir and all subdirectories. Periodically checks
-  // stop_native_setup so an Unwatch() during bootstrap returns promptly. Returns false
-  // only on inotify watch-limit exhaustion (ENOSPC); other per-watch errors are skipped.
-  bool AddWatchRecursive(const std::filesystem::path& dir,
-                         project::ProjectTraversalFilter* filter) {
+  // Walk `dir` once, registering an inotify watch for every kept directory and —
+  // when `changes` is non-null — collecting the tracked files in the SAME pass.
+  //
+  // Every caller here needs both halves of that tree, and each used to get them
+  // from two identical traversals: project open ran the registration walk on the
+  // setup thread while the initial-scan thread ran BuildInitialBatch over the same
+  // entries; a moved-in directory registered watches and then re-walked for
+  // AppendSubtreeCreations; overflow recovery registered and then re-walked for
+  // BuildInitialBatch. The traversal is the expensive part (~55k entries, ~130 ms
+  // on this repo) and the prune rules were already required to be identical, so
+  // they are now literally one walk.
+  //
+  // Returns false only on inotify watch-limit exhaustion (ENOSPC) or our own watch
+  // budget; other per-watch errors are skipped. When `changes` is set the walk
+  // continues collecting files after that point, because a partial index is a
+  // worse degradation than a partial watch set.
+  //
+  // Periodically checks stop_native_setup so an Unwatch() during bootstrap returns
+  // promptly.
+  bool WalkSubtree(const std::filesystem::path& dir,
+                   project::ProjectTraversalFilter* filter,
+                   std::vector<IndexUpdateBatch::Change>* changes,
+                   bool* files_truncated = nullptr) {
     bool added = false;
     if (!AddSingleWatch(dir, filter, added)) {
       return false;
     }
 
-    std::error_code error;
-    constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
-    for (std::filesystem::recursive_directory_iterator it(dir, opts, error), end;
-         !error && it != end; it.increment(error)) {
-      if (stop_native_setup.load(std::memory_order_acquire)) {
-        return true;
-      }
-      std::error_code status_error;
-      const auto status = it->status(status_error);
-      if (status_error) {
-        continue;
-      }
-      if (std::filesystem::is_directory(status) &&
-          ShouldSkipWatchedDirectory(it->path(), filter)) {
-        it.disable_recursion_pending();
-        continue;
-      }
-      if (!std::filesystem::is_directory(status)) {
-        continue;
+    bool watches_ok = true;
+    const DirectoryVisitor register_watch = [&](const std::filesystem::path& subdir_path) {
+      if (!watches_ok) {
+        return;
       }
       if (wd_to_path.size() >= kMaxIndexWatchEntries) {
-        return false;  // budget exhausted -> partial-tree degradation
+        watches_ok = false;  // budget exhausted -> partial-tree degradation
+        return;
       }
-      const std::filesystem::path subdir = NormalizedCopy(it->path());
+      std::filesystem::path subdir = util::NormalizedPath(subdir_path);
       const int sub_wd = inotify_add_watch(inotify_fd, subdir.c_str(), kInotifyMask);
       if (sub_wd < 0) {
         if (errno == ENOSPC) {
-          return false;
+          watches_ok = false;
         }
-        continue;
+        return;
       }
-      wd_to_path[sub_wd] = subdir;
+      wd_to_path[sub_wd] = std::move(subdir);
+    };
+
+    if (changes != nullptr) {
+      const bool truncated = CollectTrackedCreations(dir, root, filter, entry_budget,
+                                                     &stop_native_setup, changes,
+                                                     register_watch);
+      if (files_truncated != nullptr) {
+        *files_truncated = truncated;
+      }
+      return watches_ok;
     }
-    return true;
+
+    // Watches only: max_entries = 0 trips the file budget on the first regular
+    // file, after which the walk skips every file and keeps registering watches.
+    std::vector<IndexUpdateBatch::Change> discarded;
+    CollectTrackedCreations(dir, root, filter, /*max_entries=*/0, &stop_native_setup,
+                            &discarded, register_watch);
+    return watches_ok;
   }
 
   // StartNative opens the inotify fd + control pipe and registers a watch on the project
@@ -746,9 +754,17 @@ struct FileIndexWatcher::Impl {
     // from a second thread, so there's no data race on wd_to_path.
     setup_thread = std::thread([this]() {
       project::ProjectTraversalFilter filter(root, exclude_globs);
-      // Walk subdirectories of root and register watches for each. AddWatchRecursive
-      // re-uses the existing root watch (inotify_add_watch returns the same wd).
-      const bool watches_ok = AddWatchRecursive(root, &filter);
+      // ONE walk of the tree, producing both halves of what a project open needs:
+      // an inotify watch per kept directory, and the initial file batch. This used
+      // to be two threads walking the same ~55k entries with the same filter (this
+      // one, and StartInitialScan's) — the same directories read, classified and
+      // ignore-matched twice. WalkSubtree re-uses the existing root watch
+      // (inotify_add_watch returns the same wd for it).
+      util::PerformanceTrace::Scope perf_scope("watch::NativeSetupWalk");
+      IndexUpdateBatch initial;
+      initial.is_initial = true;
+      const bool watches_ok =
+          WalkSubtree(root, &filter, &initial.changes, &initial.truncated);
       if (stop_native_setup.load(std::memory_order_acquire)) {
         setup_done.store(true, std::memory_order_release);
         return;
@@ -758,7 +774,13 @@ struct FileIndexWatcher::Impl {
         SDL_Log(
             "FileIndexWatcher: inotify watch limit exhausted; tracking partial tree only");
       }
+      // Start the read loop BEFORE dispatching, so events that arrive while the
+      // consumer applies the batch are queued rather than dropped. Kernel-queued
+      // events from the root watch are drained by this worker either way.
       worker = std::thread([this]() { WorkerMain(); });
+      if (callback) {
+        callback(std::move(initial));
+      }
       setup_done.store(true, std::memory_order_release);
     });
     return true;
@@ -842,19 +864,18 @@ struct FileIndexWatcher::Impl {
 
             if (ev->len > 0 && ev->name[0] != '\0') {
               const std::string name(ev->name, ::strnlen(ev->name, ev->len));
-              const std::filesystem::path abs_path = NormalizedCopy(dir / name);
+              const std::filesystem::path abs_path = util::NormalizedPath(dir / name);
 
               if (is_dir && (ev->mask & (IN_CREATE | IN_MOVED_TO)) != 0) {
                 // New directory: add watches for it recursively. Build a fresh
                 // filter per event (rare) so this single-threaded worker never
                 // shares the filter's mutable cache with another walk.
                 project::ProjectTraversalFilter filter(root, exclude_globs);
-                AddWatchRecursive(abs_path, &filter);
                 // A moved-in directory can already be populated, and inotify emits no
-                // per-file events for files that existed before the move. Walk the new
-                // subtree and enqueue creations so those files enter the index instead
-                // of staying invisible until a full rescan.
-                AppendSubtreeCreations(abs_path, root, &filter, entry_budget, &changes);
+                // per-file events for files that existed before the move. One walk
+                // registers the new subtree's watches AND enqueues creations for the
+                // files that were already in it.
+                WalkSubtree(abs_path, &filter, &changes);
               } else if (is_dir && (ev->mask & (IN_DELETE | IN_MOVED_FROM)) != 0) {
                 // A subdirectory was deleted or moved out. inotify sends no per-file
                 // deletion for its contents, so emit one recursive deletion and let the
@@ -929,17 +950,17 @@ struct FileIndexWatcher::Impl {
         // have appeared during the gap) and resync the whole index with a fresh full
         // scan. is_initial=true makes the consumer replace the index wholesale, so the
         // partial `changes` gathered this cycle are intentionally discarded.
-        project::ProjectTraversalFilter watch_filter(root, exclude_globs);
-        AddWatchRecursive(root, &watch_filter);
+        //
+        // One walk for both, as at project open. WalkSubtree observes
+        // stop_native_setup, which stays true across the worker join, so a
+        // teardown arriving mid-recovery bails promptly instead of blocking
+        // worker.join() for the whole scan budget.
+        project::ProjectTraversalFilter recovery_filter(root, exclude_globs);
+        IndexUpdateBatch resync;
+        resync.is_initial = true;
+        WalkSubtree(root, &recovery_filter, &resync.changes, &resync.truncated);
         if (callback) {
-          project::ProjectTraversalFilter scan_filter(root, exclude_globs);
-          // Observe the WORKER's stop flag, not the initial-scan thread's:
-          // StopNative() calls StopInitialScan() (which resets stop_initial_scan to
-          // false) BEFORE it sets stop_native_setup and joins this worker. Polling
-          // stop_initial_scan here would ignore a teardown that arrives mid-recovery
-          // and block worker.join() for the full scan budget. stop_native_setup stays
-          // true across the worker join, so this recovery scan bails promptly.
-          callback(BuildInitialBatch(root, &scan_filter, entry_budget, &stop_native_setup));
+          callback(std::move(resync));
         }
         continue;
       }
@@ -1533,7 +1554,7 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
       !std::filesystem::is_directory(absolute_root, dir_error) || dir_error) {
     return false;
   }
-  impl_->root = NormalizedCopy(absolute_root);
+  impl_->root = util::NormalizedPath(absolute_root);
   // Reset the dispatch-ordering guard for this watch: Unwatch() above joined the
   // previous watch's workers, so no worker can race this reset. The next initial
   // scan will re-arm initial_applied when its is_initial batch lands.
@@ -1554,7 +1575,8 @@ bool FileIndexWatcher::Watch(const std::filesystem::path& root_path) {
   if (!impl_->force_poll) {
     if (impl_->StartNative()) {
       impl_->is_native.store(true, std::memory_order_release);
-      impl_->StartInitialScan();
+      // No StartInitialScan() here: the native setup thread's single walk produces
+      // the initial batch as well as the watch registrations (see StartNative).
       return true;
     }
     if (!impl_->warned_fallback) {

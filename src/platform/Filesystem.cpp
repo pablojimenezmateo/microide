@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <system_error>
 
+#include "util/PathMatch.h"
+
 namespace microide::platform {
 
 namespace {
@@ -38,8 +40,8 @@ std::vector<DirectoryEntry> ListDirectory(const std::filesystem::path& directory
        it.increment(error)) {
     std::error_code status_error;
     entries.push_back(DirectoryEntry{
-        .path = it->path().lexically_normal(),
-        .type = PathTypeFromStatus(it->status(status_error)),
+        .path = util::NormalizedPath(it->path()),
+        .type = EntryPathType(*it, status_error),
     });
   }
   SortPaths(&entries);
@@ -84,7 +86,9 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
       }
     }
     snapshot.push_back(TreeSnapshotEntry{
-        .path = path.lexically_normal(),
+        // Both call sites hand in an already-normal path (a normalized root, or
+        // a directory-iterator entry); the guard keeps the no-op off the walk.
+        .path = util::NormalizedPath(path),
         .type = type,
         .size = size,
         .write_time = write_time,
@@ -112,12 +116,16 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
         budget_exhausted = true;
         break;
       }
-      const std::filesystem::path path = it->path().lexically_normal();
       std::error_code status_error;
-      const PathType type = PathTypeFromStatus(it->status(status_error));
+      const PathType type = EntryPathType(*it, status_error);
       if (status_error) {
         continue;
       }
+      // Guarded normalization: see EntryPathType's note. A directory iterator's
+      // path is already normal, and the unguarded call was ~12 allocations per
+      // entry of every poll re-walk.
+      std::filesystem::path path_scratch;
+      const std::filesystem::path& path = util::NormalizedPathView(it->path(), path_scratch);
       if (filter && !filter(path, type)) {
         if (type == PathType::Directory) {
           it.disable_recursion_pending();

@@ -67,22 +67,12 @@ bool HasGitMarker(const std::filesystem::path& root) {
 
 namespace {
 
-// `lexically_normal()`, skipped when the text already is normal. Every path this
-// subsystem holds arrives normalized (the project catalog, the git status ingress
-// and the branch-review store all normalize once on the way in), and the call is
-// ~12 allocations even when it changes nothing (TD-2026-08-10-174).
-std::filesystem::path NormalizedCopy(const std::filesystem::path& path) {
-  if (util::PathTextNeedsNormalizing(path.native())) {
-    return path.lexically_normal();
-  }
-  return path;
-}
 
 std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
     const std::filesystem::path& root,
     const std::filesystem::path& absolute_path) {
-  const std::filesystem::path normalized_root = NormalizedCopy(root);
-  const std::filesystem::path normalized_path = NormalizedCopy(absolute_path);
+  const std::filesystem::path normalized_root = util::NormalizedPath(root);
+  const std::filesystem::path normalized_path = util::NormalizedPath(absolute_path);
 
   // The overwhelmingly common answer -- the path sits under the root -- is a
   // prefix strip, not a component walk. Taking it here matters on the MISS path
@@ -119,7 +109,7 @@ std::optional<std::filesystem::path> ComputeAbsoluteToRelativePath(
 #endif
     return std::nullopt;
   }
-  return NormalizedCopy(relative);
+  return util::NormalizedPath(relative);
 }
 
 }  // namespace

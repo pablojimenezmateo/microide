@@ -1,6 +1,7 @@
 #include "platform/FileWatcher.h"
 
 #include "platform/DescriptorRetire.h"
+#include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 
 #include <algorithm>
@@ -81,11 +82,15 @@ std::vector<std::filesystem::path> CollectRecursiveWatchPaths(
         break;
       }
       std::error_code status_error;
-      const PathType type = PathTypeFromStatus(it->status(status_error));
+      const PathType type = EntryPathType(*it, status_error);
       if (status_error) {
         continue;
       }
-      const std::filesystem::path path = it->path().lexically_normal();
+      // Guarded normalization: a directory iterator hands back an already-normal
+      // path, and `lexically_normal()` is ~12 allocations even when it changes
+      // nothing (TD-2026-08-10-174). This ran unguarded on every entry.
+      std::filesystem::path path_scratch;
+      const std::filesystem::path& path = util::NormalizedPathView(it->path(), path_scratch);
       if (filter && !filter(path, type)) {
         if (type == PathType::Directory) {
           it.disable_recursion_pending();
@@ -759,8 +764,18 @@ FileTreeWatcher::PreparedNativeBackend FileTreeWatcher::PrepareNativeBackend(
 #if defined(__linux__) || defined(__APPLE__)
   bool requires_polling = false;
   bool truncated = false;
-  const std::vector<std::filesystem::path> watch_paths = CollectRecursiveWatchPaths(
-      roots, filter, entry_budget_.load(std::memory_order_relaxed), &requires_polling, &truncated);
+  // The two halves of arming a native watch, separately named: the recursive
+  // enumeration of directories to watch, and the inotify_add_watch storm that
+  // registers them. Together they are the second full tree walk a project open
+  // pays (the file index's initial scan is the first), and until these scopes
+  // existed the only number for it was the caller's total.
+  std::vector<std::filesystem::path> watch_paths;
+  {
+    util::PerformanceTrace::Scope collect_scope("watch::PrepareNativeBackend::CollectWatchPaths");
+    watch_paths = CollectRecursiveWatchPaths(roots, filter,
+                                             entry_budget_.load(std::memory_order_relaxed),
+                                             &requires_polling, &truncated);
+  }
   if (truncated) {
     // Tree too large to enumerate within budget: do not watch a partial set, and
     // do not poll-walk the whole tree on a timer. Degrade to "too large" mode.
@@ -774,9 +789,15 @@ FileTreeWatcher::PreparedNativeBackend FileTreeWatcher::PrepareNativeBackend(
   }
 
   auto backend = std::make_unique<NativeBackend>([this]() { NotifyWake(); });
-  if (!backend->Start(watch_paths)) {
-    prepared.polling_required = true;
-    return prepared;
+  {
+    util::PerformanceTrace::ScopeLabel start_label(
+        "watch::PrepareNativeBackend::StartNativeBackend");
+    start_label.Field("dirs", static_cast<long long>(watch_paths.size()));
+    util::PerformanceTrace::Scope start_scope(start_label.View());
+    if (!backend->Start(watch_paths)) {
+      prepared.polling_required = true;
+      return prepared;
+    }
   }
 
   prepared.backend = std::move(backend);
