@@ -709,7 +709,11 @@ void RegisterBuiltInScenarios() {
   PerfHarness::RegisterScenario(Scenario{
       .name = "editor_scroll_fresh_content_large",
       .smoke = false,
-      .baseline_gated = false,
+      // Gated on its deterministic half (TD-2026-08-15-245). The advisory
+      // envelope below is a wall ceiling and stays one; what was missing is that
+      // a 640-frame sweep through fresh content -- the glyph-texture cache's
+      // worst case -- had no allocation gate at all.
+      .baseline_gated = true,
       .run =
           [](ScenarioContext& context) {
             OpenEditorEssentials50kCppOrThrow(context);

@@ -541,7 +541,11 @@ const ScenarioRegistration g_perf_debug_pane_hittest_geometry({Scenario{
 const ScenarioRegistration g_perf_debug_session_stop_to_variables({Scenario{
     .name = "debug_session_stop_to_variables",
     .smoke = false,
-    .baseline_gated = false,  // advisory: reference-runner baseline pending; promote later
+    // Deterministic half only (TD-2026-08-15-245): the allocation and net-heap
+    // gates reproduce on any machine, so "reference-runner baseline pending" was
+    // never a reason for this to gate on NOTHING. `--update-baseline=deterministic`
+    // mints the record with `timing_is_advisory`; a reference run arms wall/cpu/rss.
+    .baseline_gated = true,
     .run = RunDebugSessionStopToVariables,
 }});
 
