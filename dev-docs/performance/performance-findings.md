@@ -59,6 +59,19 @@ waiting on the display server rather than computing, which is why the syntax
 registry build fits inside it for free. The join keeps its own scope, so a wait
 that does NOT get hidden reads as a wait rather than as a cheaper build.
 
+**This thread existed before and was deleted as useless — read why before
+assuming it is back by mistake.** The 2026-07-01 pass (below, "Lazy
+per-definition syntax-rule compilation") removed a `syntax_registry_warmup_`
+thread with exactly this shape, because at the time the build was ~75 ms and
+`WorkspaceShell::Initialize` forced `EnsureInitialized()` about 0.1 ms later, so
+the main thread blocked on the same magic-static barrier and the whole 75 ms
+stayed on the critical path. That pass is what made the build 4 ms — small enough
+to actually fit inside the display-server wait — and the warm now starts as the
+FIRST statement of `Application::Initialize`, ahead of `SDL_Init`, rather than
+0.1 ms ahead of the join. The measured join is 0.06 ms, which is the number that
+says it worked; if a future change moves the warm later or grows the build past
+the SDL setup, that scope will say so instead of going quiet.
+
 ### The frame sequence is the metric
 
     before   full(startup) full(settle) full(settle) full(event) partial   [5 frames]

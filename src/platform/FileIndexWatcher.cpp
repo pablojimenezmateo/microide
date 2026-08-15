@@ -288,20 +288,25 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
   return truncated;
 }
 
+#if defined(__APPLE__) || defined(_WIN32)
+// Standalone initial scan, for the backends whose watch registration is not a
+// tree walk and so has nothing to share one with. On Linux the registration walk
+// IS the initial scan (see Impl::WalkSubtree), which is why this is guarded
+// rather than merely unused there.
 IndexUpdateBatch BuildInitialBatch(const std::filesystem::path& root,
                                    project::ProjectTraversalFilter* filter,
                                    std::size_t max_entries,
-                                   const std::atomic<bool>* stop_requested = nullptr,
-                                   const DirectoryVisitor& on_directory = {}) {
+                                   const std::atomic<bool>* stop_requested = nullptr) {
   // Full recursive walk of the project tree. Runs once per watch on a background
   // thread, and it is the dominant single cost of opening a project.
   util::PerformanceTrace::Scope perf_scope("watch::BuildInitialBatch");
   IndexUpdateBatch batch;
   batch.is_initial = true;
-  batch.truncated = CollectTrackedCreations(root, root, filter, max_entries, stop_requested,
-                                            &batch.changes, on_directory);
+  batch.truncated =
+      CollectTrackedCreations(root, root, filter, max_entries, stop_requested, &batch.changes);
   return batch;
 }
+#endif
 
 // Stop flag plus wakeup channel for the poll-fallback worker. The worker used to
 // sleep its interval in fixed slices purely so a stop request was noticed
@@ -657,9 +662,10 @@ struct FileIndexWatcher::Impl {
   // they are now literally one walk.
   //
   // Returns false only on inotify watch-limit exhaustion (ENOSPC) or our own watch
-  // budget; other per-watch errors are skipped. When `changes` is set the walk
-  // continues collecting files after that point, because a partial index is a
-  // worse degradation than a partial watch set.
+  // budget; other per-watch errors are skipped. Neither stops the file half: the
+  // walk keeps collecting after a watch failure, and keeps registering after the
+  // file budget is spent, because a partial index and a partial watch set are
+  // independent degradations and merging the walks must not couple them.
   //
   // Periodically checks stop_native_setup so an Unwatch() during bootstrap returns
   // promptly.
@@ -667,12 +673,13 @@ struct FileIndexWatcher::Impl {
                    project::ProjectTraversalFilter* filter,
                    std::vector<IndexUpdateBatch::Change>* changes,
                    bool* files_truncated = nullptr) {
+    // Best-effort, and deliberately NOT an early return: when the two walks were
+    // separate, a watch budget exhausted at the subtree root still left the file
+    // scan to run, so a directory moved in at the inotify limit still entered the
+    // index. Bailing here instead would have made the merged walk lose those files.
     bool added = false;
-    if (!AddSingleWatch(dir, filter, added)) {
-      return false;
-    }
+    bool watches_ok = AddSingleWatch(dir, filter, added);
 
-    bool watches_ok = true;
     const DirectoryVisitor register_watch = [&](const std::filesystem::path& subdir_path) {
       if (!watches_ok) {
         return;

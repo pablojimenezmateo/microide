@@ -389,6 +389,48 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-15-252 — the project file monitor is a second full tree walk and a second inotify instance over directories the file index watcher already watches.
+
+Found by the launch sweep (`dev-docs/performance/performance-findings.md`
+§ 2026-08-15). Opening a project used to walk the whole tree **three** times, on
+three threads, with the same `ProjectTraversalFilter` and the same prune rules.
+Two of them — the file index's initial scan and that same watcher's inotify
+registration — are now one walk. The third is still there:
+
+    WorkspaceProjectFileMonitor::ArmPendingWatch
+      -> FileTreeWatcher::SetRoots
+        -> PrepareNativeBackend -> CollectRecursiveWatchPaths   96 ms, 755 dirs
+        -> NativeBackend::Start -> inotify_add_watch x755       0.8 ms
+
+`strace` counts 1,513 `inotify_add_watch` calls for 755 directories: every
+directory in the project is watched twice, by two independent inotify instances,
+on every project open and every project switch.
+
+What the second one buys is one bit — `tree_rescan_requested`, a coarse
+"something under the root changed" that drives a directory-tree refresh — plus
+the poll fallback and the "tree too large to live-watch" notice. The file index
+watcher already delivers per-file created/modified/deleted batches under the same
+filter, and `ReloadProjectIfFilesChanged` already consumes both on the same path.
+So the coarse signal is very likely derivable from the fine-grained batches.
+
+**Why it was left.** It is a boundary change across two subsystems
+(`platform/FileWatcher` + `WorkspaceProjectFileMonitor` on one side,
+`platform/FileIndexWatcher` on the other), the two have genuinely different
+degradation modes (the monitor polls when native watching is unavailable and has
+its own entry budget and too-large notice, which the index watcher expresses
+differently), and it is a correctness-sensitive path — a missed change signal is
+a stale sidebar, which is exactly the class of bug that is invisible in tests and
+obvious in use. That is a phase, not a fix folded into a perf sweep.
+
+**What it is worth.** ~96 ms of background CPU and 755 kernel watch entries per
+project open, plus one thread. On the shell thread: nothing — `ArmPendingWatch`
+reads 0.21 ms of main-thread time. So this is a CPU/memory item, not a latency
+one, which is the other reason it lost to the rest of the sweep.
+
+**Where to start.** `WorkspaceShellRedraw.cpp`'s `ReloadProjectIfFilesChanged` is
+the single consumer of both signals; it is the place to prove the fine-grained
+batches can produce `tree_rescan_requested` before touching either watcher.
+
 ### TD-2026-08-15-251 — what the 2026-08-15 sweep looked at and deliberately left, with the number that says why.
 
 Recorded so the next pass does not re-derive it. Each of these was traced and

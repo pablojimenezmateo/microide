@@ -274,6 +274,11 @@ SdlTtfTextBackend::PixelMetrics SdlTtfTextBackend::MeasurePixelMetrics(TTF_Font*
   //
   // A font file edited in place during a session would go unnoticed here. That
   // is not a case worth a stat() per lookup on this path.
+  //
+  // Unsynchronized because this type is shell-thread-confined by construction:
+  // it holds the SDL_Renderer, and SDL renderers are main-thread only. The cache
+  // stores plain integers, not TTF handles, so it also stays valid across the
+  // TTF_Quit/TTF_Init of a shutdown/re-initialize cycle.
   static std::map<MetricsKey, PixelMetrics> cache;
   if (const auto it = cache.find(key); it != cache.end()) {
     return it->second;
