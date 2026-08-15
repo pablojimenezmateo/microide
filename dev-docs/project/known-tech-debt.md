@@ -389,6 +389,57 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-15-251 — what the 2026-08-15 sweep looked at and deliberately left, with the number that says why.
+
+Recorded so the next pass does not re-derive it. Each of these was traced and
+costed; none is a defect, and all of them are now the largest thing left in their
+scenario only because what was above them is gone.
+
+- **`breakpoints_model.rebuild`, ~1 allocation per row.** `row.path = *file.path`
+  clones a `std::filesystem::path`'s component list, per breakpoint row per
+  rebuild, for a value that is the same for every breakpoint in a file. The row
+  reset (`row = kEmptyRow`) is what makes the obvious "assign only when it
+  differs" guard useless, so the fix is to preserve `path` across the reset and
+  clear it explicitly on the five non-breakpoint row kinds. Left alone because
+  1,000 breakpoints is a cap test — real counts are tens — and this is not a
+  frame path. The string half of the same function WAS fixed.
+
+- **`KeyInputCoordinator::ActiveKeybindingContext`, 67 allocations of 24 bytes per
+  typing burst.** It is the top site of `first_line_edit.enter_backspace_burst`
+  only because that phase fell from 1,922 to 865; its top three sites together are
+  163 allocations.
+
+- **`persistence.user_config_decode` (351,780) and the four LSP/DAP protocol
+  phases (305,800 / 200,200 / 96,200 / 80,280).** All at their floor: one
+  allocation per decoded item, which is what an owning decode costs. Their size is
+  a benchmark multiplier — 200 parse loops, 120,000 records — not a product path.
+  Only a move-out-of-`JsonValue` refactor could improve the LSP ones, and the
+  scenarios reuse a `const JsonValue`, so it would be unmeasurable there.
+
+- **`git.refresh_dispatch` (12,955), ~2 allocations per changed file at each of
+  three sites.** Each is a container owning its own path or key. The parse and
+  repository-state halves run on the background executor — the self-time profile
+  is dominated by `RunSubprocess(git, status)` at 4.3 ms a call — and the one
+  main-thread half, `BuildGitSidebarViewModel`, is behind a presentation-key cache
+  that only rebuilds when the git state changes.
+
+- **`RenderCompareSurface::SyntaxTokens`, 0.45 ms a frame.** The cumulative syntax
+  walk catching up after a hunk jump, budgeted at 256 model rows a frame. It is
+  progressive by design and stops once the frontier reaches the visible window;
+  `SurfaceTokenWindow`'s per-row end states make every later visit O(1). Halving
+  it again would need checkpoints computed off-thread, which is what the editor's
+  own highlight cache does and what compare/merge would have to grow.
+
+- **`persistence::WriteFile::DurableWrite`, up to 5.7 ms a call.** An fsync, and
+  it runs on `PersistedRecordWriteQueue`'s own thread with path coalescing and a
+  byte memo in front of it. It shows up in the scenario traces because the trace
+  is process-wide, not because it is on the shell thread.
+
+- **`TextLayoutCache`'s `deque<PackedLineWidth>`, 1 allocation per 64 lines**
+  (101 of `large_file.open_to_first_paint`'s 180). The deque is the right
+  container for the erase+insert at index 0 that an Enter or Backspace at the top
+  of a large file performs; a vector would memmove the whole 400 KB table there.
+
 ### TD-2026-08-15-250 — `editor_moby_dick_workout`'s baseline is stale by 16x on allocations and red on resident growth, and it is opt-in so nothing notices.
 
 Not caused by this session's work: the scenario fails identically at `04af154f`,
