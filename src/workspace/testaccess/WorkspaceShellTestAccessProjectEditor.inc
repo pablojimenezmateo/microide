@@ -815,6 +815,19 @@
     }
     return changed;
   }
+  static std::uint64_t ProjectFileIndexVersion(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.file_index.version();
+  }
+  // Drives the background-rescan APPLY step directly, with a caller-chosen
+  // dispatch version, so the "a scan landed after a watcher batch" ordering can be
+  // exercised without racing a real scan against a real watcher.
+  static void ApplyForcedFileIndexRefreshForTesting(WorkspaceShell& shell,
+                                                    const std::filesystem::path& root,
+                                                    std::vector<project::ProjectFile> files,
+                                                    std::uint64_t index_version_at_dispatch) {
+    shell.ApplyForcedFileIndexRefresh(root, std::move(files), project::ProjectFileScanStatus{},
+                                      index_version_at_dispatch);
+  }
   // Whether the project file index currently holds `relative_path`. Lets a test
   // assert the observable end state of an index mutation instead of the
   // ApplyBatch "changed" bit, which is legitimately false when the live

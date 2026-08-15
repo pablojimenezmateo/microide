@@ -5000,6 +5000,60 @@ void TestWorkspaceShellReplaceAllFallsBackWhenResultsTruncated() {
   }
 }
 
+// A background rescan REPLACES the whole file list, so one that started before a
+// watcher batch landed silently deletes everything that batch reported. In the
+// product that is a file created while a project is still opening disappearing
+// from the finder and from project search until the next full rescan — which
+// nothing schedules (TD-2026-08-15-247).
+//
+// The version guard is what stops it. This drives the apply step directly with a
+// stale dispatch version rather than racing a real scan against a real watcher,
+// so it fails every run without the guard instead of one run in five.
+void TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheScan() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "forced-refresh ordering fixture should open the project");
+
+  // What a scan dispatched NOW would see: the project without the injected file.
+  const std::uint64_t version_at_dispatch =
+      WorkspaceShellTestAccess::ProjectFileIndexVersion(shell);
+  std::vector<project::ProjectFile> scanned_without_injected =
+      project::FileIndex::ScanFiles(root, false, {}, nullptr);
+
+  // …and then a watcher batch lands, while that scan is still "running".
+  const std::filesystem::path relative_injected = std::filesystem::path("src/injected.cpp");
+  WriteFile(root / relative_injected, "needle\n");
+  (void)WorkspaceShellTestAccess::ApplyFileIndexBatchForTesting(
+      shell, BuildInjectedCreateBatch(root, relative_injected));
+  Expect(WorkspaceShellTestAccess::ProjectFileIndexContains(shell, relative_injected),
+         "the batch must put the injected entry in the index to begin with");
+  Expect(WorkspaceShellTestAccess::ProjectFileIndexVersion(shell) != version_at_dispatch,
+         "a batch that changed the index must move its version, or the guard has "
+         "nothing to compare");
+
+  // The stale scan now lands. It must NOT be applied.
+  WorkspaceShellTestAccess::ApplyForcedFileIndexRefreshForTesting(
+      shell, root, std::move(scanned_without_injected), version_at_dispatch);
+  Expect(WorkspaceShellTestAccess::ProjectFileIndexContains(shell, relative_injected),
+         "a rescan that predates a watcher batch must not delete what the batch added");
+
+  // A scan dispatched with the CURRENT version is not stale and still applies —
+  // otherwise the guard would have turned the rescan path off entirely.
+  WriteFile(root / "second.txt", "second\n");
+  const std::uint64_t current_version =
+      WorkspaceShellTestAccess::ProjectFileIndexVersion(shell);
+  WorkspaceShellTestAccess::ApplyForcedFileIndexRefreshForTesting(
+      shell, root, project::FileIndex::ScanFiles(root, false, {}, nullptr), current_version);
+  Expect(WorkspaceShellTestAccess::ProjectFileIndexContains(shell, "second.txt"),
+         "an up-to-date rescan must still be applied");
+  Expect(WorkspaceShellTestAccess::ProjectFileIndexContains(shell, relative_injected),
+         "and it still sees the injected file, which is on disk");
+}
+
 void TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5447,6 +5501,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellFileFinderUsesMaintainedIndexWithoutProjectScan);
   AddTest(tests, "WorkspaceShell/ProjectSearchUsesMaintainedIndexWithoutProjectScan",
           TestWorkspaceShellProjectSearchUsesMaintainedIndexWithoutProjectScan);
+  AddTest(tests, "WorkspaceShell/ForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheScan",
+          TestWorkspaceShellForcedIndexRefreshDoesNotDropABatchThatLandedDuringTheScan);
   AddTest(tests, "WorkspaceShell/InjectedFileIndexBatchUpdatesFinderAndSearch",
           TestWorkspaceShellInjectedFileIndexBatchUpdatesFinderAndSearch);
   AddTest(tests, "WorkspaceShell/ReplaceAllAbortsWithFeedbackPastAggregateCap",

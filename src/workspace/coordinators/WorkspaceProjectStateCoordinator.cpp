@@ -161,28 +161,53 @@ void WorkspaceShell::RequestFileIndexRefresh() {
   const bool follow = context_.current_project_state.file_index.FollowOutOfRootSymlinks();
   std::vector<std::string> excludes =
       ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string()));
+  // The index's version NOW. A scan describes the filesystem as of this moment,
+  // so if a watcher batch lands while it runs, the result that comes back is
+  // already stale for whatever that batch reported. See ApplyForcedFileIndexRefresh.
+  const std::uint64_t version_at_dispatch = context_.current_project_state.file_index.version();
   // PostLatest by a fixed key so a burst of refresh requests only runs the newest
   // queued scan (an in-flight one still finishes; its result is simply superseded).
   project_background_executor_.PostLatest(
       "file-index-refresh",
-      [this, root, follow, excludes = std::move(excludes)]() {
+      [this, root, follow, version_at_dispatch, excludes = std::move(excludes)]() {
         project::ProjectFileScanStatus status;
         std::vector<project::ProjectFile> files =
             project::FileIndex::ScanFiles(root, follow, excludes, &status);
         file_index_refresh_mailbox_.Post(
-            [this, root, files = std::move(files), status]() mutable {
-              ApplyForcedFileIndexRefresh(root, std::move(files), status);
+            [this, root, files = std::move(files), status, version_at_dispatch]() mutable {
+              ApplyForcedFileIndexRefresh(root, std::move(files), status, version_at_dispatch);
             });
       });
 }
 
 void WorkspaceShell::ApplyForcedFileIndexRefresh(const std::filesystem::path& root,
                                                  std::vector<project::ProjectFile> files,
-                                                 project::ProjectFileScanStatus status) {
+                                                 project::ProjectFileScanStatus status,
+                                                 std::uint64_t index_version_at_dispatch) {
   // Drop a scan whose project has since been switched away — the current index
   // now belongs to a different project (or was reset), so applying an old root's
   // file list would corrupt it. Mirrors the generation guard on other async paths.
   if (root != context_.current_project_state.root) {
+    return;
+  }
+  // And drop a scan the index has moved on from. `ReplaceScannedFiles` REPLACES
+  // the whole file list, so a scan that started before a watcher batch landed
+  // silently deletes everything that batch reported: a file created while a
+  // project is still opening vanished from the finder and from project search
+  // until the next full rescan, which nothing schedules. It reproduced as an
+  // intermittent failure of
+  // `WorkspaceShell/InjectedFileIndexBatchUpdatesFinderAndSearch` — roughly one
+  // run in five, and only when the initial scan happened to land between the
+  // batch and the query (TD-2026-08-15-247).
+  //
+  // The version only moves on a real mutation (SetRoot, Reset, a scan apply, a
+  // batch that changed something) and never on a read, so a quiet tree re-scans
+  // zero times and a busy one re-scans exactly as often as it is changing —
+  // which is what a watcher-driven index is for. `PostLatest` coalesces the
+  // requests, so a burst still runs one scan.
+  if (context_.current_project_state.file_index.version() != index_version_at_dispatch) {
+    util::AddPerformanceCounter(util::PerfCounterId::FileIndexScanSupersededByBatch);
+    RequestFileIndexRefresh();
     return;
   }
   context_.current_project_state.file_index.ReplaceScannedFiles(std::move(files), status);

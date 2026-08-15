@@ -714,9 +714,14 @@
   // Off-thread forced full rescan (TD-2026-07-17-081/082): scan on the background
   // executor, apply the sorted result on the main thread via file_index_refresh_mailbox_.
   void RequestFileIndexRefresh();
+  // `index_version_at_dispatch` is the file index's version when the scan was
+  // requested. A scan describes the filesystem at that moment, so applying it over
+  // an index that has since taken a watcher batch DROPS whatever that batch
+  // reported — see the definition.
   void ApplyForcedFileIndexRefresh(const std::filesystem::path& root,
                                    std::vector<project::ProjectFile> files,
-                                   project::ProjectFileScanStatus status);
+                                   project::ProjectFileScanStatus status,
+                                   std::uint64_t index_version_at_dispatch);
   void SetWelcomePlaceholder();
   bool InitializeCurrentProject(const std::filesystem::path& project_root,
                                 bool restore_persistence,

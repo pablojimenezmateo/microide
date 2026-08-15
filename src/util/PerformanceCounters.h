@@ -317,6 +317,11 @@ namespace microide::util {
   X(FileWatcherPollScans, "watch.poll_scans")                                                    \
   X(FileWatcherEventsCoalesced, "watch.events_coalesced")                                       \
   X(FileIndexApplyBatchCalls, "watch.file_index_apply_batch_calls")                             \
+  /* Background rescans discarded because a watcher batch changed the index while */            \
+  /* the scan ran. Applying one anyway deletes whatever that batch reported, so   */            \
+  /* this counts corrections, not waste; a non-zero value on a QUIET tree would   */            \
+  /* mean something is bumping the index version without changing it.             */            \
+  X(FileIndexScanSupersededByBatch, "watch.file_index_scan_superseded_by_batch")                \
   X(FileIndexRebuilds, "watch.file_index_rebuilds")                                             \
   /* --- background work -------------------------------------------------- */                 \
   X(TaskExecutorTasksEnqueued, "task.enqueued")                                                 \
