@@ -323,6 +323,20 @@ namespace microide::util {
   /* mean something is bumping the index version without changing it.             */            \
   X(FileIndexScanSupersededByBatch, "watch.file_index_scan_superseded_by_batch")                \
   X(FileIndexRebuilds, "watch.file_index_rebuilds")                                             \
+  /* Batches carrying tree_structure_changed: a directory created/removed/moved, a  */          \
+  /* non-regular entry appearing, or a post-overflow resync. Each one costs a whole  */         \
+  /* sidebar-tree refresh + finder cache invalidation, so this is the number that    */         \
+  /* says whether the coarse signal that replaced the second project watcher         */         \
+  /* (TD-2026-08-15-252) is firing at the rate the tree actually changes shape, or   */         \
+  /* has quietly become a per-file refresh again. Compare against                    */         \
+  /* file_index_apply_batch_calls: on a build writing thousands of files it should   */         \
+  /* stay near zero.                                                                 */         \
+  X(FileWatcherTreeShapeBatches, "watch.tree_shape_batches")                                    \
+  /* Forced synchronous rescans (an explicit refresh, or a test/perf harness driving */         \
+  /* one). Each is a full tree walk on the SHELL thread, diffed against the index —  */         \
+  /* the one place that cost still exists after the second watcher was retired, so a */         \
+  /* non-zero value in an interactive session is worth explaining.                   */         \
+  X(FileIndexForcedRescans, "watch.file_index_forced_rescans")                                  \
   /* --- background work -------------------------------------------------- */                 \
   X(TaskExecutorTasksEnqueued, "task.enqueued")                                                 \
   X(TaskExecutorTasksRun, "task.run")                                                           \

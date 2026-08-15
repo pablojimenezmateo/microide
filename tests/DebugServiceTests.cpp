@@ -2322,6 +2322,26 @@ void TestDebugBreakpointsModelRebuildReusesRows() {
     }
   }
   Expect(beta_rows == 6, "every beta breakpoint comes back");
+
+  // `path` is the one field carried ACROSS the row reset (copy-assigning a
+  // filesystem::path is real work per row, and every breakpoint in a file wants
+  // the same value), so the row kinds that have no navigation target must clear it
+  // explicitly. Shifting the sections re-uses positions that held Breakpoint rows
+  // for headers and function rows, which is exactly where an inherited path would
+  // show up — and a non-empty path on such a row is not cosmetic: the pane's click
+  // and context-menu handlers key on `!row.path.empty()`.
+  for (int i = 0; i < 8; ++i) {
+    functions.Add("fn_" + std::to_string(i));
+  }
+  model.Rebuild(store, functions);
+  for (const DebugBreakpointRowView& row : model.Rows()) {
+    if (row.kind == DebugBreakpointRowView::Kind::Breakpoint) {
+      continue;
+    }
+    Expect(row.path.empty(),
+           "a header/filter/function row must not inherit the path of whatever breakpoint "
+           "row previously occupied its slot");
+  }
 }
 
 void TestDebugBreakpointsModelBehavior() {

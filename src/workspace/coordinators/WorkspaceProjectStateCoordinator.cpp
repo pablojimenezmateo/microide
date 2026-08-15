@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "project/ProjectChangeNormalizer.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/SdlWake.h"
 #include "util/StringUtil.h"
@@ -85,6 +86,9 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
           });
     }
     LogProjectIndexBatch(context_.current_project_state.root, batch, applied_to_index);
+    if (batch.tree_structure_changed) {
+      util::AddPerformanceCounter(util::PerfCounterId::FileWatcherTreeShapeBatches);
+    }
     if (batch.tree_structure_changed || (!batch.is_initial && !batch.changes.empty())) {
       project::ProjectChangeBatch normalized =
           project::NormalizeIndexUpdateBatch(context_.current_project_state.root, batch);
@@ -161,6 +165,7 @@ void WorkspaceShell::AppendForcedProjectRescanChanges(project::ProjectChangeBatc
     return;
   }
   util::PerformanceTrace::Scope perf_scope("WorkspaceShell::AppendForcedProjectRescanChanges");
+  util::AddPerformanceCounter(util::PerfCounterId::FileIndexForcedRescans);
   project::ProjectFileScanStatus status;
   std::vector<project::ProjectFile> files = project::FileIndex::ScanFiles(
       root, context_.current_project_state.file_index.FollowOutOfRootSymlinks(),

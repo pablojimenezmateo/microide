@@ -485,14 +485,23 @@ Recorded so the next pass does not re-derive it. Each of these was traced and
 costed; none is a defect, and all of them are now the largest thing left in their
 scenario only because what was above them is gone.
 
-- **`breakpoints_model.rebuild`, ~1 allocation per row.** `row.path = *file.path`
-  clones a `std::filesystem::path`'s component list, per breakpoint row per
-  rebuild, for a value that is the same for every breakpoint in a file. The row
-  reset (`row = kEmptyRow`) is what makes the obvious "assign only when it
-  differs" guard useless, so the fix is to preserve `path` across the reset and
-  clear it explicitly on the five non-breakpoint row kinds. Left alone because
-  1,000 breakpoints is a cap test — real counts are tens — and this is not a
-  frame path. The string half of the same function WAS fixed.
+- **`breakpoints_model.rebuild`, `row.path = *file.path` per row.** ~~1 allocation
+  per row~~ — **the allocation half of this claim was wrong, and it was fixed
+  anyway on 2026-08-15.** Measured before and after: `breakpoints_model.rebuild`
+  allocates **513 times either way**, across 200 rebuilds of 550 rows, i.e. 0.005
+  allocations per row. The row-reuse design (TD-2026-08-06-159) had already made
+  the copy allocation-free — a `path` copy-assigned into a row that already holds
+  a same-shaped path reuses both the string buffer and the component vector. What
+  the copy still costs is CPU, and that is real: preserving `path` across the row
+  reset, assigning only when the file changes, and clearing it explicitly on the
+  non-breakpoint row kinds took the scenario from **6.006 ms to 5.476 ms of CPU
+  (-8.8 %)**, comparing the minimum of five runs each (the box was busy; the
+  minimum is the least contended draw, and both series were cleanly bimodal in
+  the way `cpu-clock-state-is-per-thread-residency` describes).
+
+  The lesson is the one this section exists to record: "N allocations per row" is
+  a claim that has to be measured per row, not inferred from what a copy
+  constructor generally does. Reused storage changes the answer.
 
 - **`KeyInputCoordinator::ActiveKeybindingContext`, 67 allocations of 24 bytes per
   typing burst.** It is the top site of `first_line_edit.enter_backspace_burst`

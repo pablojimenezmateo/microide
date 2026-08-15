@@ -165,16 +165,32 @@ void DebugBreakpointsModel::Rebuild(
       rows_.emplace_back();
     }
     DebugBreakpointRowView& row = rows_[out++];
+    // `path` is carried ACROSS the reset, which the four string fields cannot be:
+    // a string is cheap to overwrite in place, but copy-assigning a
+    // std::filesystem::path rebuilds its component list, which allocates. It is
+    // also the one field whose value is the same for every breakpoint in a file,
+    // so preserving it lets the loop below assign only when the file changes —
+    // one path allocation per FILE instead of one per breakpoint row. Both moves
+    // are buffer steals; the reset in between sees an already-empty path.
+    // Non-breakpoint rows clear it explicitly (see ResetPathForNonBreakpointRow).
+    std::filesystem::path retained = std::move(row.path);
     row = kEmptyRow;
+    row.path = std::move(retained);
     return row;
   };
+  // Every row kind that is NOT a breakpoint has no navigation target, so it must
+  // drop whatever path the row held in a previous pass rather than inherit it.
+  // `clear()` keeps the buffer, which is the point of carrying it at all.
+  const auto clear_path = [](DebugBreakpointRowView& row) { row.path.clear(); };
 
   if (!advertised_.empty()) {
     DebugBreakpointRowView& header = next_row();
+    clear_path(header);
     header.kind = DebugBreakpointRowView::Kind::Header;
     header.display = "Exception Breakpoints";
     for (const dap_protocol::DapExceptionFilter& filter : advertised_) {
       DebugBreakpointRowView& row = next_row();
+      clear_path(row);
       row.kind = DebugBreakpointRowView::Kind::ExceptionFilter;
       row.display = filter.label;
       row.filter_id = filter.filter;
@@ -191,11 +207,13 @@ void DebugBreakpointsModel::Rebuild(
   const std::vector<editor::FunctionBreakpoint>& functions = function_breakpoints.All();
   if (!functions.empty()) {
     DebugBreakpointRowView& header = next_row();
+    clear_path(header);
     header.kind = DebugBreakpointRowView::Kind::Header;
     header.display = "Function Breakpoints";
     for (std::size_t i = 0; i < functions.size(); ++i) {
       const editor::FunctionBreakpoint& fn = functions[i];
       DebugBreakpointRowView& row = next_row();
+      clear_path(row);
       row.kind = DebugBreakpointRowView::Kind::FunctionBreakpoint;
       row.display = fn.name;
       row.function_name = fn.name;
@@ -228,6 +246,7 @@ void DebugBreakpointsModel::Rebuild(
   breakpoints.FillSortedFileViews(&file_views_scratch_);
   if (!file_views_scratch_.empty()) {
     DebugBreakpointRowView& header = next_row();
+    clear_path(header);
     header.kind = DebugBreakpointRowView::Kind::Header;
     header.display = "Breakpoints";
     for (const editor::BreakpointStore::FileBreakpointsView& file : file_views_scratch_) {
@@ -263,7 +282,12 @@ void DebugBreakpointsModel::Rebuild(
           row.failed = UnverifiedReasonIsFailure(reason);
           append_trailer(row.secondary, reason);
         }
-        row.path = *file.path;
+        // Only when it actually differs: this row may already hold this exact
+        // path from the previous rebuild, and every breakpoint after the first in
+        // a file certainly does. The compare is a memcmp on the native string.
+        if (row.path != *file.path) {
+          row.path = *file.path;
+        }
         row.line = breakpoint.line;
       }
     }
