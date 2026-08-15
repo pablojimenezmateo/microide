@@ -870,13 +870,12 @@ std::optional<Uint32> WorkspaceShell::NextAnimationDelayMs() const {
       next_delay = plugin_delay_ms;
     }
   }
-  if (const auto project_delay = project_file_monitor_.NextPollDelay(); project_delay.has_value()) {
-    const Uint32 project_delay_ms =
-        static_cast<Uint32>(std::max<std::int64_t>(0, project_delay->count()));
-    if (!next_delay.has_value() || project_delay_ms < *next_delay) {
-      next_delay = project_delay_ms;
-    }
-  }
+  // No project-watcher tick here any more. External file changes arrive as
+  // FileIndexWatcher batches on their own thread and wake the loop through
+  // project_file_event_type_, so an idle project schedules NOTHING — where it used
+  // to re-arm a 2 s timer forever, and (before that) walk the whole tree on it.
+  // The poll fallback for hosts without native events lives inside the watcher and
+  // wakes the same way (TD-2026-08-15-252).
   if (const auto toast_delay = notification_service_.NextExpiryDelayMs(SDL_GetTicks());
       toast_delay.has_value()) {
     const Uint32 toast_delay_ms = static_cast<Uint32>(*toast_delay);
@@ -1022,25 +1021,24 @@ bool WorkspaceShell::ReloadProjectIfFilesChanged(bool force_check) {
     supplemental.repository_changes.push_back(change);
   }
 
-  const bool tree_polled = [&]() {
-    util::PerformanceTrace::Scope scope(
-        force_check ? "WorkspaceShell::ReloadProjectIfFilesChanged::ConsumePendingProjectChanges"
-                    : "WorkspaceShell::ReloadProjectIfFilesChanged::PollProjectFileMonitor");
-    return force_check ? project_file_monitor_.ConsumePendingChanges()
-                       : project_file_monitor_.PollForChanges();
-  }();
-  if (tree_polled) {
-    supplemental.tree_rescan_requested = true;
+  // Unforced, this call only DRAINS: the FileIndexWatcher has already put whatever
+  // changed into the coalescer from its own thread. `force_check` is the "answer
+  // now, synchronously" path (an explicit refresh, and the tests/perf harness that
+  // mutate the tree and immediately ask), so it pays one tree walk and diffs it
+  // against the index.
+  if (force_check) {
+    AppendForcedProjectRescanChanges(supplemental);
   }
 
-  // Surface a one-time notice when the project tree is too large to live-watch
-  // (native watch unavailable + polling suppressed). Done before the early returns
-  // below so it fires even when there is no change batch to apply.
-  if (project_file_monitor_.ConsumeTreeTooLargeNotice()) {
-    Notify(NotificationService::Tone::Warning, "Project too large for live file watching");
+  // Surface a notice when the project is too large to index completely. Done before
+  // the early returns below so it fires even when there is no change batch to apply.
+  if (project_index_truncated_notice_pending_.exchange(false, std::memory_order_acq_rel)) {
+    Notify(NotificationService::Tone::Warning,
+           "Project too large to index fully — search and Go to File cover part of it");
   }
 
-  if (!supplemental.repository_changes.empty() || supplemental.tree_rescan_requested) {
+  if (!supplemental.repository_changes.empty() || !supplemental.file_changes.empty() ||
+      supplemental.tree_rescan_requested) {
     project_change_coalescer_.Ingest(std::move(supplemental));
   }
 

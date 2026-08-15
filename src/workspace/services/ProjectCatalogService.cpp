@@ -152,11 +152,6 @@ void ProjectCatalogService::LoadProjectState(ProjectWorkspaceState& state) {
     operations_.stop_project_search();
   }
   {
-    util::PerformanceTrace::Scope scope(
-        "ProjectCatalogService::LoadProjectState::SetProjectFileMonitorRoot");
-    operations_.set_project_file_monitor_root(state.root);
-  }
-  {
     util::PerformanceTrace::Scope scope("ProjectCatalogService::LoadProjectState::CloseTreeContextMenu");
     operations_.close_tree_context_menu();
   }

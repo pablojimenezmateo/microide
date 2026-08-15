@@ -77,7 +77,6 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
     // the wakes-vs-file_index_apply_batch_calls ratio makes an over-eager watcher
     // visible without a debugger.
     util::AddPerformanceCounter(util::PerfCounterId::FileWatcherWakes);
-    const bool consumed = operations_.project_file_monitor_consume_wake_event(event.type);
     const bool reloaded = operations_.reload_project_if_files_changed(false);
     if (reloaded) {
       return EventResult{
@@ -88,7 +87,9 @@ EventResult WorkspaceEventDispatcher::Handle(const SDL_Event& event) const {
           },
       };
     }
-    return finish(consumed || reloaded);
+    // The event type matched, so it is ours and is consumed either way — a wake
+    // whose batch turned out to change nothing is still handled, not unhandled.
+    return finish(true);
   }
   if (operations_.project_search_handles_event(event.type)) {
     util::PerformanceTrace::Scope scope("WorkspaceEventDispatcher::Handle::ProjectSearchEvent");

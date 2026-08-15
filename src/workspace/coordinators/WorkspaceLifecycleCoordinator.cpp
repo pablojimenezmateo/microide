@@ -25,7 +25,6 @@ LifecycleCoordinator::LifecycleCoordinator(WorkspaceContext& context,
 bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root) {
   util::StartupTrace::Scope trace_scope("WorkspaceShell::Initialize");
   operations_.reset_startup_state();
-  operations_.set_project_watcher_deferred_arming(true);
 
   {
     util::StartupTrace::Scope project_search_scope(
@@ -58,22 +57,18 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
   if (!operations_.skip_workspace_session_restore()) {
     util::StartupTrace::Scope restore_workspace_scope("WorkspaceShell::RestoreWorkspaceSession");
     if (operations_.restore_workspace_session()) {
-      operations_.set_project_watcher_deferred_arming(false);
       return true;
     }
   }
 
   if (project_root.empty()) {
-    operations_.set_project_watcher_deferred_arming(false);
     operations_.reload_plugins_for_current_project();
     return true;
   }
 
   util::StartupTrace::Scope open_project_scope("WorkspaceShell::OpenProjectTab");
   const bool restore_persistence = !operations_.skip_workspace_session_restore();
-  const bool opened = operations_.open_project_tab(project_root, restore_persistence, true);
-  operations_.set_project_watcher_deferred_arming(false);
-  return opened;
+  return operations_.open_project_tab(project_root, restore_persistence, true);
 }
 
 void LifecycleCoordinator::Shutdown() {
@@ -218,8 +213,6 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   }
 
   project_file_event_type_ = register_wake();
-  project_file_monitor_.SetWakeEventType(
-      project_file_event_type_ != static_cast<Uint32>(-1) ? project_file_event_type_ : 0);
   if (project_file_event_type_ == static_cast<Uint32>(-1)) {
     project_file_event_type_ = 0;
   }
@@ -227,13 +220,6 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // same project-file path.
   file_index_refresh_mailbox_.SetWakeEventType(project_file_event_type_);
   project_replace_mailbox_.SetWakeEventType(project_file_event_type_);
-  // Run the project file monitor's recursive tree walks off the shell thread, so a
-  // large project never stalls the UI while polling for external changes.
-  project_file_monitor_.SetBackgroundPoster(
-      [this](std::string key, std::function<void()> task) {
-        project_background_executor_.PostLatest(std::move(key), std::move(task));
-      });
-
   project_open_dialog_event_type_ = register_wake();
   if (project_open_dialog_event_type_ == static_cast<Uint32>(-1)) {
     project_open_dialog_event_type_ = 0;
@@ -318,8 +304,6 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .reset_project_scoped_state = [this](bool show_welcome) {
             ResetProjectScopedState(show_welcome);
           },
-          .set_project_watcher_deferred_arming =
-              [this](bool deferred) { project_file_monitor_.SetDeferredArming(deferred); },
           .skip_workspace_session_restore =
               [this]() {
                 // Startup flags (safe mode / --no-restore) or the user setting can

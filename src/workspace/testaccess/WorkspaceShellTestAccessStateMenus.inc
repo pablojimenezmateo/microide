@@ -1017,10 +1017,6 @@
   static std::optional<Uint32> NextCaretBlinkDelayMs(const WorkspaceShell& shell) {
     return shell.NextCaretBlinkDelayMs();
   }
-  static std::optional<std::chrono::milliseconds> ProjectFileMonitorNextPollDelay(
-      const WorkspaceShell& shell) {
-    return shell.project_file_monitor_.NextPollDelay();
-  }
   static void MoveMergeSelection(WorkspaceShell& shell, int delta) { shell.MoveMergeSelection(delta); }
   static bool ShouldBlinkCaret(const WorkspaceShell& shell) { return shell.ShouldBlinkCaret(); }
   static bool FocusIsOverlay(const WorkspaceShell& shell) {

@@ -815,6 +815,18 @@
     }
     return changed;
   }
+  // Push a synthetic batch through the LIVE watcher's dispatch, so the shell's own
+  // batch callback runs — index apply, coalescer ingest, truncation notice, wake —
+  // rather than only the index apply that ApplyFileIndexBatchForTesting covers.
+  // Returns false when no watcher is running (the project has no root).
+  static bool DispatchFileIndexWatcherBatchForTesting(WorkspaceShell& shell,
+                                                      platform::IndexUpdateBatch batch) {
+    if (shell.file_index_watcher_ == nullptr) {
+      return false;
+    }
+    shell.file_index_watcher_->DispatchBatchForTesting(std::move(batch));
+    return true;
+  }
   static std::uint64_t ProjectFileIndexVersion(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.file_index.version();
   }

@@ -34,6 +34,7 @@ struct WatcherContractFixture {
   std::mutex mutex;
   std::vector<platform::IndexUpdateBatch> pending;
   bool saw_initial = false;
+  bool saw_tree_structure_change = false;
 
   explicit WatcherContractFixture(bool force_poll) {
     index.SetRoot(temp.path(), project::FileIndex::RootPopulationMode::Deferred);
@@ -60,6 +61,7 @@ struct WatcherContractFixture {
     }
     for (platform::IndexUpdateBatch& batch : local) {
       saw_initial = saw_initial || batch.is_initial;
+      saw_tree_structure_change = saw_tree_structure_change || batch.tree_structure_changed;
       index.ApplyBatch(batch);
     }
   }
@@ -91,6 +93,11 @@ struct WatcherContractFixture {
 
   bool WaitGone(const char* relative) {
     return WaitUntil([&] { return !IndexHas(relative); }, std::chrono::seconds(5),
+                     std::chrono::milliseconds(5), [&] { Pump(); });
+  }
+
+  bool WaitTreeStructureChange() {
+    return WaitUntil([&] { return saw_tree_structure_change; }, std::chrono::seconds(5),
                      std::chrono::milliseconds(5), [&] { Pump(); });
   }
 };
@@ -220,6 +227,47 @@ void RunWatcherStartupWindowContract(bool force_poll) {
   Expect(fixture.saw_initial, "startup-window contract: an is_initial batch still arrives");
 }
 
+// A directory with no files in it is INVISIBLE to the index — nothing about it
+// can appear in `changes` — yet the sidebar tree, the finder's grouping and
+// project search all have to see it. `tree_structure_changed` is that signal, and
+// it is why the workspace no longer needs a second full tree walk and a second
+// inotify instance to derive one bit (TD-2026-08-15-252).
+void RunWatcherTreeShapeContract(bool force_poll) {
+  WatcherContractFixture fixture(force_poll);
+  const fs::path& root = fixture.temp.path();
+
+  WriteFile(root / "a.txt", "alpha\n");
+  WriteFile(root / ".gitignore", "ignored/\n");
+
+  Expect(fixture.watcher.Watch(root), "tree-shape contract: Watch should start");
+  Expect(fixture.WaitIndexed("a.txt"), "tree-shape contract: the initial batch lands");
+  Expect(!fixture.saw_tree_structure_change,
+         "tree-shape contract: opening a project is not itself a shape change");
+
+  // 1. An EMPTY directory: no file change exists to carry this.
+  fs::create_directories(root / "empty-dir");
+  Expect(fixture.WaitTreeStructureChange(),
+         "tree-shape contract: creating an empty directory reports a shape change");
+
+  // 2. Removing it, likewise.
+  fixture.saw_tree_structure_change = false;
+  fs::remove(root / "empty-dir");
+  Expect(fixture.WaitTreeStructureChange(),
+         "tree-shape contract: removing an empty directory reports a shape change");
+
+  // 3. An IGNORED directory must not: the tree does not show it, so refreshing for
+  //    it is pure waste — and a build creating them in bulk would be a refresh storm.
+  //    Ordering trick: the sentinel file follows, so once it is indexed the ignored
+  //    mkdir has had its chance to (wrongly) surface.
+  fixture.saw_tree_structure_change = false;
+  fs::create_directories(root / "ignored" / "nested");
+  WriteFile(root / "sentinel.txt", "s\n");
+  Expect(fixture.WaitIndexed("sentinel.txt"), "tree-shape contract: sentinel write lands");
+  fixture.Pump();
+  Expect(!fixture.saw_tree_structure_change,
+         "tree-shape contract: a gitignored directory is not a shape change");
+}
+
 void TestFileIndexWatcherContractNativeBackend() {
   // Runs against the host's preferred backend (native where available; the
   // watcher's own graceful fallback otherwise — the contract holds either way).
@@ -241,6 +289,10 @@ void RegisterFileIndexWatcherContractTests(std::vector<TestCase>& tests) {
           [] { RunWatcherStartupWindowContract(/*force_poll=*/false); });
   AddTest(tests, "FileIndexWatcherContract/PollBackendStartupWindow",
           [] { RunWatcherStartupWindowContract(/*force_poll=*/true); });
+  AddTest(tests, "FileIndexWatcherContract/NativeBackendTreeShape",
+          [] { RunWatcherTreeShapeContract(/*force_poll=*/false); });
+  AddTest(tests, "FileIndexWatcherContract/PollBackendTreeShape",
+          [] { RunWatcherTreeShapeContract(/*force_poll=*/true); });
 }
 
 }  // namespace microide::tests

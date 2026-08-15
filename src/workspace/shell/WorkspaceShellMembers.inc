@@ -714,6 +714,10 @@
   void ResetProjectScopedState(bool show_welcome);
   bool StartFileIndexWatcherForCurrentProject();
   void StopFileIndexWatcher();
+  // Synchronous "has anything changed right now?": one tree walk, diffed against
+  // the index, appended to `batch` as per-file changes plus the coarse rescan bit.
+  // Only the forced path calls it (TD-2026-08-15-252).
+  void AppendForcedProjectRescanChanges(project::ProjectChangeBatch& batch);
   // Off-thread forced full rescan (TD-2026-07-17-081/082): scan on the background
   // executor, apply the sorted result on the main thread via file_index_refresh_mailbox_.
   void RequestFileIndexRefresh();
@@ -2034,7 +2038,6 @@
   // and hover paths, so this avoids re-copying + re-sorting on every call.
   mutable StatusItemCache status_item_cache_;
   WorkspaceProjectSearchRuntime project_search_runtime_;
-  WorkspaceProjectFileMonitor project_file_monitor_;
   project::ProjectChangeCoalescer project_change_coalescer_;
   project::GitRepositoryMetadataTracker git_metadata_tracker_;
   std::uint64_t last_applied_project_change_generation_ = 0;
@@ -2096,6 +2099,10 @@
   std::uint64_t project_replace_generation_ = 0;
   std::atomic<bool> file_index_initial_build_in_flight_{false};
   std::atomic<bool> project_file_event_pending_{false};
+  // "The index holds only a prefix of this project" toast. Set on the watcher
+  // thread by a truncated initial batch, consumed on the shell thread in
+  // ReloadProjectIfFilesChanged (TD-2026-08-15-252).
+  std::atomic<bool> project_index_truncated_notice_pending_{false};
   WorkspacePluginRuntime plugin_runtime_;
   std::size_t reload_plugins_invocation_count_ = 0;
   std::size_t reload_clean_open_buffers_from_disk_invocation_count_ = 0;

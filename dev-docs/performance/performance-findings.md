@@ -127,11 +127,25 @@ overflow recovery, both of which walked a subtree twice back to back.
     index scan + watch registration    166 + ~150 ms -> 141 ms (one walk)
     project monitor watch collection            (inside the 150) -> 96 ms
 
-**Still open.** The project file monitor's `FileTreeWatcher` remains a second
-full walk and a second inotify instance over the same directories the file index
-watcher already watches, for a coarser "something changed" signal the fine-grained
-batches could probably derive. That is a boundary change across two subsystems,
-not a local fix, and it is the largest remaining item on this path.
+**Closed 2026-08-15 (TD-2026-08-15-252).** The third walk is gone with the
+monitor that owned it. The coarse signal it existed to produce is now a bit on
+the index watcher's own batches — `IndexUpdateBatch::tree_structure_changed`,
+set by the directory create/delete/move events the inotify worker was already
+reading and by a directory-set signature in the poll fallback — so the one thing
+the fine-grained batches genuinely could not describe (a directory with no file
+in it) is described without walking anything twice.
+
+    inotify_add_watch calls at project open       1,513 -> 758
+    inotify instances                                 2 -> 1 (the second is
+                                                      the plugin asset monitor)
+    background walks per open                         2 -> 1
+    idle wakes with no change pending           1 per 2 s -> 0
+
+Measured on this repo (755 directories) with
+`strace -c -e trace=inotify_init1,inotify_add_watch`. The forced synchronous
+"has anything changed right now?" check kept its behaviour by diffing a scan
+against the file index, which is the same sorted path+mtime+size list the
+retired watcher was maintaining a private second copy of.
 
 ### Instrumentation added, because these had no name
 

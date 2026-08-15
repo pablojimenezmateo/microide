@@ -51,7 +51,6 @@ void RegisterGitBranchOperationsTests(std::vector<TestCase>& tests);
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests);
 void RegisterProjectTraversalFilterTests(std::vector<TestCase>& tests);
 void RegisterCompileCommandsLocatorTests(std::vector<TestCase>& tests);
-void RegisterWorkspaceProjectFileMonitorTests(std::vector<TestCase>& tests);
 void RegisterFileFinderTests(std::vector<TestCase>& tests);
 void RegisterRecentsServiceTests(std::vector<TestCase>& tests);
 void RegisterFileIndexTests(std::vector<TestCase>& tests);
@@ -437,7 +436,6 @@ int main(int argc, char** argv) {
   microide::tests::RegisterIgnoreMatcherTests(tests);
   microide::tests::RegisterProjectTraversalFilterTests(tests);
   microide::tests::RegisterCompileCommandsLocatorTests(tests);
-  microide::tests::RegisterWorkspaceProjectFileMonitorTests(tests);
   microide::tests::RegisterFileFinderTests(tests);
   microide::tests::RegisterRecentsServiceTests(tests);
   microide::tests::RegisterFileIndexTests(tests);

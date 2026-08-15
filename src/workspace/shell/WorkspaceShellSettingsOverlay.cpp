@@ -439,7 +439,6 @@ void WorkspaceShell::ApplyLiveSettings() {
     std::vector<std::string> globs = ParseExcludeGlobs(files_exclude);
     context_.current_project_state.directory_tree.SetExcludeGlobs(globs);
     context_.current_project_state.file_index.SetExcludeGlobs(globs);
-    project_file_monitor_.SetExcludeGlobs(globs);
     context_.current_project_state.directory_tree.Refresh();
     // Whole-tree file-index rescan runs off the shell thread; the finder/search
     // invalidation happens when it applies (TD-2026-07-17-081/082).

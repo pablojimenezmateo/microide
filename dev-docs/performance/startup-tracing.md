@@ -127,8 +127,10 @@ On the perf channel, the background half of a project open is:
 
 - `watch::NativeSetupWalk` — one walk that both registers inotify watches and
   builds the initial file-index batch
-- `watch::PrepareNativeBackend::CollectWatchPaths` — the project file monitor's
-  own (still separate) walk
+- `watch::PrepareNativeBackend::CollectWatchPaths` — the PLUGIN ASSET monitor's
+  walk (a small directory). Until TD-2026-08-15-252 the project tree paid this a
+  second time, on its own `FileTreeWatcher`; if you see it with a four-figure
+  `dirs=` count, something has re-grown a second project watcher
 - `watch::PrepareNativeBackend::StartNativeBackend(dirs=N)` — the
   `inotify_add_watch` storm, which is a fraction of a millisecond next to the
   walk that feeds it

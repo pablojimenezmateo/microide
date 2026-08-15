@@ -995,18 +995,31 @@ void TestWorkspaceShellTermCommandRequestsBottomPanelRedraw() {
          "term command should open exactly one additional terminal tab");
 }
 
-void TestWorkspaceShellProjectOpenDefersProjectWatcherArming() {
+// An open project must not put a periodic tick in the idle loop. It used to: a
+// second watcher polled the whole tree on a 2 s timer, and before that re-armed on
+// a synthetic 1 ms tick. External changes now arrive as FileIndexWatcher batches
+// on the watcher's own thread and wake the loop by event, so an idle project asks
+// for no timed wake at all (TD-2026-08-15-252).
+void TestWorkspaceShellProjectOpenSchedulesNoIdleWatcherTick() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   WriteFile(root / "README.md", "project\n");
 
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
-         "watcher deferral fixture should open the project");
+         "idle watcher tick fixture should open the project");
 
-  const auto next_delay = WorkspaceShellTestAccess::ProjectFileMonitorNextPollDelay(shell);
-  Expect(!next_delay.has_value() || *next_delay != std::chrono::milliseconds(1),
-         "cold project open should not expose the old synthetic 1ms project-watcher rearm tick");
+  // Drain whatever the initial index batch queued, so what remains is the steady
+  // idle state rather than the open itself.
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+  const auto next_delay = shell.NextAnimationDelayMs();
+  Expect(!next_delay.has_value() || *next_delay > 100,
+         "an idle open project should schedule no short project-watcher wake");
 }
 
 void TestWorkspaceShellSidebarWidthCommandParsesTypedRequests() {
@@ -4550,6 +4563,90 @@ void TestWorkspaceShellProjectWatcherReloadDoesNotContinuouslyRearm() {
          "project watcher reload should settle without a zero-delay wake after refresh");
 }
 
+// An EMPTY directory created under the project has no file in it, so the file
+// index — which tracks regular files only — can report nothing about it. The
+// sidebar tree still has to show it. This is the one signal the retired
+// WorkspaceProjectFileMonitor existed to produce, and it now rides on the index
+// watcher's batches instead of a second tree walk (TD-2026-08-15-252).
+void TestWorkspaceShellEmptyDirectoryCreationRefreshesTree() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "empty-directory fixture should open the project");
+  // Settle the open before measuring, so what follows is attributable to the mkdir.
+  for (int attempt = 0; attempt < 20; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(5));
+  }
+
+  const auto tree_has = [&shell](std::string_view name) {
+    for (const project::TreeEntry& entry : WorkspaceShellTestAccess::TreeEntries(shell)) {
+      if (entry.path.filename().string() == name) {
+        return true;
+      }
+    }
+    return false;
+  };
+  Expect(!tree_has("fresh-dir"), "the directory does not exist yet");
+
+  std::error_code create_error;
+  std::filesystem::create_directory(root / "fresh-dir", create_error);
+  Expect(!create_error, "empty-directory fixture should create the directory");
+
+  Expect(WaitUntil([&] { return tree_has("fresh-dir"); }, std::chrono::seconds(5),
+                   std::chrono::milliseconds(10),
+                   [&] { WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false); }),
+         "creating an empty directory should refresh the sidebar tree");
+}
+
+// A truncated initial scan means the finder and search cover only part of the
+// project. That degradation used to be announced by the project file monitor's
+// "too large to live-watch" notice; it is now driven by the index watcher's own
+// truncated flag, which is the honest description (watching survives, indexing
+// does not). Driven through the live watcher's dispatch so the shell's real batch
+// callback runs.
+void TestWorkspaceShellTruncatedIndexBatchNotifiesOnce() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "truncated-index fixture should open the project");
+
+  const auto truncation_notices = [&shell]() {
+    std::size_t count = 0;
+    for (const auto& notification : WorkspaceShellTestAccess::ActiveNotifications(shell)) {
+      if (notification.message.find("too large to index") != std::string::npos) {
+        ++count;
+      }
+    }
+    return count;
+  };
+  Expect(truncation_notices() == 0, "a small project should raise no truncation notice");
+
+  platform::IndexUpdateBatch truncated;
+  truncated.is_initial = true;
+  truncated.truncated = true;
+  Expect(WorkspaceShellTestAccess::DispatchFileIndexWatcherBatchForTesting(shell,
+                                                                          std::move(truncated)),
+         "truncated-index fixture should have a live file index watcher");
+  WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+  Expect(truncation_notices() == 1,
+         "a truncated initial index batch should surface exactly one notice");
+
+  // Draining again must not re-raise it: the flag is consumed, not sampled.
+  WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false);
+  Expect(truncation_notices() == 1, "the truncation notice should not repeat per drain");
+}
+
 void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -5487,6 +5584,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarRefreshDispatchIsNonBlocking);
   AddTest(tests, "WorkspaceShell/ProjectSwitchDiscardsStaleGitSidebarRefreshResult",
           TestWorkspaceShellProjectSwitchDiscardsStaleGitSidebarRefreshResult);
+  AddTest(tests, "WorkspaceShell/EmptyDirectoryCreationRefreshesTree",
+          TestWorkspaceShellEmptyDirectoryCreationRefreshesTree);
+  AddTest(tests, "WorkspaceShell/TruncatedIndexBatchNotifiesOnce",
+          TestWorkspaceShellTruncatedIndexBatchNotifiesOnce);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitignoredDirectories",
           TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories);
   AddTest(tests, "WorkspaceShell/ProjectWatcherIgnoresGitMetadataLockfiles",
@@ -5533,8 +5634,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenShowsDefaultTerminalPanel);
   AddTest(tests, "WorkspaceShell/TermCommandRequestsBottomPanelRedraw",
           TestWorkspaceShellTermCommandRequestsBottomPanelRedraw);
-  AddTest(tests, "WorkspaceShell/ProjectOpenDefersProjectWatcherArming",
-          TestWorkspaceShellProjectOpenDefersProjectWatcherArming);
+  AddTest(tests, "WorkspaceShell/ProjectOpenSchedulesNoIdleWatcherTick",
+          TestWorkspaceShellProjectOpenSchedulesNoIdleWatcherTick);
   AddTest(tests, "WorkspaceShell/SidebarWidthCommandParsesTypedRequests",
           TestWorkspaceShellSidebarWidthCommandParsesTypedRequests);
   AddTest(tests, "WorkspaceShell/MergeCommandResolvesRelativePaths",

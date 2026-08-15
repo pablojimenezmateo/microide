@@ -347,8 +347,16 @@ class PollStopSignal {
 // Filtering is deliberately identical to CollectTrackedCreations (directory prune,
 // tracked-relative check, file-level ignore), so a baseline seeded from an initial
 // batch and a snapshot taken here describe the same file set.
+//
+// `out_directory_signature` (optional) accumulates a hash of every KEPT directory
+// the walk visited. The snapshot itself holds regular files only, so an empty
+// directory created or removed between two polls is invisible in the diff; the
+// signature is what lets the poll backend still report `tree_structure_changed`.
+// It is combined commutatively (recursive_directory_iterator order is not
+// contractual) and costs one hash of an existing string per directory.
 detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
-                                            const std::vector<std::string>& exclude_globs) {
+                                            const std::vector<std::string>& exclude_globs,
+                                            std::uint64_t* out_directory_signature = nullptr) {
   // The poll fallback re-walks the whole tree every interval, forever, on any
   // host without native watch events. That is a standing CPU cost with no user
   // action behind it, so it needs to be visible in an idle-soak summary -- the
@@ -356,6 +364,7 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
   util::PerformanceTrace::Scope perf_scope("watch::BuildPollSnapshot");
   util::AddPerformanceCounter(util::PerfCounterId::FileWatcherPollScans);
   detail::FileIndexSnapshot result;
+  std::uint64_t directory_signature = 0;
   project::ProjectTraversalFilter filter(root, exclude_globs);
   std::error_code error;
   constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
@@ -366,9 +375,18 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
     if (status_error) {
       continue;
     }
-    if (type == platform::PathType::Directory &&
-        ShouldSkipWatchedDirectory(it->path(), &filter)) {
-      it.disable_recursion_pending();
+    if (type == platform::PathType::Directory) {
+      if (ShouldSkipWatchedDirectory(it->path(), &filter)) {
+        it.disable_recursion_pending();
+        continue;
+      }
+      if (out_directory_signature != nullptr) {
+        // Commutative combine (sum), so the walk order never changes the answer.
+        // The odd multiplier keeps a rename that permutes names from cancelling.
+        directory_signature +=
+            std::hash<std::string_view>{}(std::string_view(it->path().native())) * 0x9E3779B9ull +
+            0x632BE59Bull;
+      }
       continue;
     }
     if (type != platform::PathType::RegularFile) {
@@ -388,6 +406,9 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
     const auto sz = std::filesystem::file_size(abs_path, size_error);
     result[rel] = {mtime_error ? std::filesystem::file_time_type{} : mtime,
                    size_error ? 0 : sz};
+  }
+  if (out_directory_signature != nullptr) {
+    *out_directory_signature = directory_signature;
   }
   return result;
 }
@@ -414,7 +435,9 @@ void RunPollFallbackWorker(const std::filesystem::path& root,
   // as the poll baseline has always been) while the initial batch it derives is
   // entry-budgeted, so a tree past the budget still reports only `entry_budget`
   // files and the later diffs do not smuggle the remainder in one interval later.
-  detail::FileIndexSnapshot snapshot = BuildPollSnapshot(root, exclude_globs);
+  std::uint64_t directory_signature = 0;
+  detail::FileIndexSnapshot snapshot =
+      BuildPollSnapshot(root, exclude_globs, &directory_signature);
   if (stop_poll.stopped()) {
     return;
   }
@@ -444,15 +467,20 @@ void RunPollFallbackWorker(const std::filesystem::path& root,
       break;
     }
 
-    detail::FileIndexSnapshot current = BuildPollSnapshot(root, exclude_globs);
+    std::uint64_t current_directory_signature = 0;
+    detail::FileIndexSnapshot current =
+        BuildPollSnapshot(root, exclude_globs, &current_directory_signature);
     std::vector<IndexUpdateBatch::Change> changes =
         detail::BuildPollSnapshotDiff(snapshot, current);
     snapshot = std::move(current);
+    const bool structure_changed = current_directory_signature != directory_signature;
+    directory_signature = current_directory_signature;
 
-    if (!changes.empty() && callback) {
+    if ((!changes.empty() || structure_changed) && callback) {
       IndexUpdateBatch batch;
       batch.is_initial = false;
       batch.changes = std::move(changes);
+      batch.tree_structure_changed = structure_changed;
       callback(std::move(batch));
     }
   }
@@ -818,6 +846,10 @@ struct FileIndexWatcher::Impl {
       // Read all available inotify events
       std::vector<IndexUpdateBatch::Change> changes;
       bool overflow_detected = false;
+      // Set by any event that moves the tree's SHAPE rather than a tracked file's
+      // content: a directory appearing/vanishing, or a non-regular entry the index
+      // cannot represent. See IndexUpdateBatch::tree_structure_changed.
+      bool structure_changed = false;
       // One ignore filter per drain cycle (poll wakeup), reused for every
       // single-file create/modify event below and rebuilt next wakeup so a
       // .gitignore edited between cycles is picked up. Constructing it here (not
@@ -882,11 +914,22 @@ struct FileIndexWatcher::Impl {
                 // per-file events for files that existed before the move. One walk
                 // registers the new subtree's watches AND enqueues creations for the
                 // files that were already in it.
+                // An EMPTY new directory adds no file change at all, so without this
+                // the sidebar tree would not learn about `mkdir` until something else
+                // happened to wake it. Gated on the same prune the walk applies, so
+                // a build creating `node_modules/` does not request a refresh of a
+                // tree that will not show it.
+                if (!ShouldSkipWatchedDirectory(abs_path, &filter)) {
+                  structure_changed = true;
+                }
                 WalkSubtree(abs_path, &filter, &changes);
               } else if (is_dir && (ev->mask & (IN_DELETE | IN_MOVED_FROM)) != 0) {
                 // A subdirectory was deleted or moved out. inotify sends no per-file
                 // deletion for its contents, so emit one recursive deletion and let the
                 // index drop every entry beneath it (otherwise they linger as ghosts).
+                if (!batch_filter.ShouldSkipDirectory(abs_path)) {
+                  structure_changed = true;
+                }
                 std::filesystem::path rel;
                 if (TryBuildTrackedRelativePath(abs_path, root, rel)) {
                   IndexUpdateBatch::Change change;
@@ -910,8 +953,20 @@ struct FileIndexWatcher::Impl {
                     // leaks into the index via this incremental event and only
                     // vanishes on a full rescan -- an inconsistent, confusing state.
                     std::error_code type_error;
-                    if (!std::filesystem::is_regular_file(abs_path, type_error) ||
-                        !batch_filter.Includes(abs_path, platform::PathType::RegularFile)) {
+                    if (!std::filesystem::is_regular_file(abs_path, type_error)) {
+                      // Not a regular file, but it IS a new entry in a watched
+                      // directory: a symlink to a directory, a fifo, a socket. The
+                      // index cannot hold it, the sidebar tree shows it, so report
+                      // it as a shape change instead of dropping the event. Gated on
+                      // the ignore filter so a build writing ignored artifacts does
+                      // not turn into a refresh storm.
+                      if (!type_error &&
+                          batch_filter.Includes(abs_path, platform::PathType::Other)) {
+                        structure_changed = true;
+                      }
+                      continue;
+                    }
+                    if (!batch_filter.Includes(abs_path, platform::PathType::RegularFile)) {
                       continue;
                     }
                     change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
@@ -931,6 +986,7 @@ struct FileIndexWatcher::Impl {
               // The watched directory itself was removed/moved. Drop the watch AND
               // emit a recursive deletion for it, or every file it contained lingers
               // in the index as a ghost until a full rescan.
+              structure_changed = true;
               std::filesystem::path rel;
               if (TryBuildTrackedRelativePath(dir, root, rel)) {
                 IndexUpdateBatch::Change change;
@@ -965,6 +1021,10 @@ struct FileIndexWatcher::Impl {
         project::ProjectTraversalFilter recovery_filter(root, exclude_globs);
         IndexUpdateBatch resync;
         resync.is_initial = true;
+        // The dropped window may have contained directory creations/removals, and a
+        // wholesale index replace says nothing about them: flag the resync so the
+        // coarse consumers (sidebar tree, finder, search) rebuild too.
+        resync.tree_structure_changed = true;
         WalkSubtree(root, &recovery_filter, &resync.changes, &resync.truncated);
         if (callback) {
           callback(std::move(resync));
@@ -972,10 +1032,11 @@ struct FileIndexWatcher::Impl {
         continue;
       }
 
-      if (!changes.empty() && callback) {
+      if ((!changes.empty() || structure_changed) && callback) {
         IndexUpdateBatch batch;
         batch.is_initial = false;
         batch.changes = std::move(changes);
+        batch.tree_structure_changed = structure_changed;
         callback(std::move(batch));
       }
     }
@@ -1088,6 +1149,7 @@ struct FileIndexWatcher::Impl {
 
     char** paths = static_cast<char**>(event_paths);
     std::vector<IndexUpdateBatch::Change> changes;
+    bool structure_changed = false;
 
     for (size_t i = 0; i < num_events; ++i) {
       const FSEventStreamEventFlags flags = event_flags[i];
@@ -1097,6 +1159,16 @@ struct FileIndexWatcher::Impl {
       const bool is_dir =
           (flags & kFSEventStreamEventFlagItemIsDir) != 0;
       if (is_dir) {
+        // The index holds regular files only, so a directory event carries no
+        // change — but it does move the tree's shape, which the coarse consumers
+        // (sidebar tree, finder, search) subscribe to. Only creates/removes/renames
+        // qualify; a plain content event on a directory is noise.
+        constexpr FSEventStreamEventFlags kShapeFlags =
+            kFSEventStreamEventFlagItemCreated | kFSEventStreamEventFlagItemRemoved |
+            kFSEventStreamEventFlagItemRenamed;
+        if ((flags & kShapeFlags) != 0) {
+          structure_changed = true;
+        }
         continue;
       }
 
@@ -1122,10 +1194,11 @@ struct FileIndexWatcher::Impl {
       changes.push_back(std::move(change));
     }
 
-    if (!changes.empty()) {
+    if (!changes.empty() || structure_changed) {
       IndexUpdateBatch batch;
       batch.is_initial = false;
       batch.changes = std::move(changes);
+      batch.tree_structure_changed = structure_changed;
       self->callback(std::move(batch));
     }
   }
@@ -1349,6 +1422,7 @@ struct FileIndexWatcher::Impl {
       }
 
       std::vector<IndexUpdateBatch::Change> changes;
+      bool structure_changed = false;
       const BYTE* ptr = buffer.data();
       while (true) {
         const FILE_NOTIFY_INFORMATION* info =
@@ -1372,6 +1446,11 @@ struct FileIndexWatcher::Impl {
           const std::filesystem::path abs_path = (root / rel).lexically_normal();
           std::error_code status_error;
           const auto status = std::filesystem::status(abs_path, status_error);
+          if (!status_error && !std::filesystem::is_regular_file(status)) {
+            // A directory (or other non-regular entry) appearing/renamed: no index
+            // change, but the tree's shape moved. See tree_structure_changed.
+            structure_changed = true;
+          }
           if (!status_error && std::filesystem::is_regular_file(status)) {
             change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
             change.entry.relative_path = rel;
@@ -1391,10 +1470,11 @@ struct FileIndexWatcher::Impl {
         ptr += info->NextEntryOffset;
       }
 
-      if (!changes.empty() && callback) {
+      if ((!changes.empty() || structure_changed) && callback) {
         IndexUpdateBatch batch;
         batch.is_initial = false;
         batch.changes = std::move(changes);
+        batch.tree_structure_changed = structure_changed;
         callback(std::move(batch));
       }
 

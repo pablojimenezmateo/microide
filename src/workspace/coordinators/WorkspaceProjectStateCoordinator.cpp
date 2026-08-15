@@ -63,6 +63,7 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
   const std::uint64_t watcher_generation =
       file_index_watcher_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
 
+  project_index_truncated_notice_pending_.store(false, std::memory_order_relaxed);
   file_index_watcher_ = std::make_unique<platform::FileIndexWatcher>();
   file_index_watcher_->SetExcludeGlobs(
       ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string())));
@@ -84,24 +85,30 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
           });
     }
     LogProjectIndexBatch(context_.current_project_state.root, batch, applied_to_index);
-    if (!batch.is_initial && !batch.changes.empty()) {
+    if (batch.tree_structure_changed || (!batch.is_initial && !batch.changes.empty())) {
       project::ProjectChangeBatch normalized =
           project::NormalizeIndexUpdateBatch(context_.current_project_state.root, batch);
       project_change_coalescer_.Ingest(std::move(normalized));
     }
-    if (batch.is_initial) {
-      project_background_executor_.PostLatest(
-          "project-file-monitor-arm",
-          [this]() { project_file_monitor_.ArmPendingWatch(); });
-    }
     if (!batch.is_initial && applied_to_index) {
       file_index_has_pending_changes_.store(true, std::memory_order_release);
+    }
+    // A truncated initial scan means the index holds only a prefix of the project:
+    // the finder and search already say so inline, but it is worth a toast. This is
+    // the successor to the project file monitor's "too large to live-watch" notice;
+    // live watching itself survives truncation here (the merged walk keeps
+    // registering watches past the file budget). The toast service coalesces
+    // duplicates, so a resync repeating it cannot flood the UI.
+    if (batch.is_initial && batch.truncated) {
+      project_index_truncated_notice_pending_.store(true, std::memory_order_release);
     }
     if (batch.is_initial &&
         file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
       app::DecrementBackgroundTaskCountAndWake();
     }
-    if (project_file_event_type_ != 0 && (batch.is_initial || applied_to_index) &&
+    if (project_file_event_type_ != 0 &&
+        (batch.is_initial || applied_to_index || batch.tree_structure_changed ||
+         project_index_truncated_notice_pending_.load(std::memory_order_acquire)) &&
         !project_file_event_pending_.exchange(true, std::memory_order_acq_rel)) {
       util::PerformanceTrace::Scope scope(
           "WorkspaceShell::FileIndexWatcherCallback::PushWakeEvent");
@@ -127,9 +134,6 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     if (file_index_initial_build_in_flight_.exchange(false, std::memory_order_acq_rel)) {
       app::DecrementBackgroundTaskCountAndWake();
     }
-    project_background_executor_.PostLatest(
-        "project-file-monitor-arm",
-        [this]() { project_file_monitor_.ArmPendingWatch(); });
     return false;
   }
   return true;
@@ -143,11 +147,38 @@ void WorkspaceShell::StopFileIndexWatcher() {
   }
   file_index_has_pending_changes_.store(false, std::memory_order_relaxed);
   project_file_event_pending_.store(false, std::memory_order_relaxed);
+  project_index_truncated_notice_pending_.store(false, std::memory_order_relaxed);
   const bool had_initial_build = file_index_initial_build_in_flight_.exchange(
       false, std::memory_order_acq_rel);
   if (had_initial_build) {
     app::DecrementBackgroundTaskCountAndWake();
   }
+}
+
+void WorkspaceShell::AppendForcedProjectRescanChanges(project::ProjectChangeBatch& batch) {
+  const std::filesystem::path& root = context_.current_project_state.root;
+  if (root.empty()) {
+    return;
+  }
+  util::PerformanceTrace::Scope perf_scope("WorkspaceShell::AppendForcedProjectRescanChanges");
+  project::ProjectFileScanStatus status;
+  std::vector<project::ProjectFile> files = project::FileIndex::ScanFiles(
+      root, context_.current_project_state.file_index.FollowOutOfRootSymlinks(),
+      ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string())),
+      &status);
+  platform::IndexUpdateBatch rescanned;
+  if (!context_.current_project_state.file_index.ReplaceScannedFilesReportingChanges(
+          std::move(files), status, &rescanned.changes)) {
+    return;  // identical to what the index already holds: nothing to report
+  }
+  project::ProjectChangeBatch normalized = project::NormalizeIndexUpdateBatch(root, rescanned);
+  batch.file_changes.insert(batch.file_changes.end(),
+                            std::make_move_iterator(normalized.file_changes.begin()),
+                            std::make_move_iterator(normalized.file_changes.end()));
+  // The coarse bit too. Consumers with no per-file handling (the sidebar tree, the
+  // finder, project search) key off it, and it is the only signal for a change the
+  // per-file diff cannot see — a directory added or removed with no file in it.
+  batch.tree_rescan_requested = true;
 }
 
 void WorkspaceShell::RequestFileIndexRefresh() {
@@ -308,7 +339,6 @@ void WorkspaceShell::ResetProjectScopedState(bool show_welcome) {
   pending_tree_git_badge_refresh_after_paint_ = false;
   StopFileIndexWatcher();
   context_.current_project_state.file_index.Reset();
-  project_file_monitor_.Reset();
   project_change_coalescer_.Reset();
   git_metadata_tracker_.Reset();
   last_applied_project_change_generation_ = 0;
@@ -347,12 +377,9 @@ bool WorkspaceShell::InitializeCurrentProject(const std::filesystem::path& proje
     util::StartupTrace::Scope set_root_scope("WorkspaceShell::SetProjectRoot");
     util::PerformanceTrace::Scope perf_set_root_scope(
         "WorkspaceShell::InitializeCurrentProject::SetProjectRoot");
-    project_file_monitor_.SetDeferredArming(true);
     if (!SetProjectRoot(project_root)) {
-      project_file_monitor_.SetDeferredArming(false);
       return false;
     }
-    project_file_monitor_.SetDeferredArming(false);
   }
 
   context_.current_project_state.project_base_color = DefaultProjectBaseColor(context_.current_project_state.root);
@@ -498,7 +525,6 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
       ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string()));
   context_.current_project_state.directory_tree.SetExcludeGlobs(exclude_globs);
   context_.current_project_state.file_index.SetExcludeGlobs(exclude_globs);
-  project_file_monitor_.SetExcludeGlobs(exclude_globs);
   {
     util::StartupTrace::Scope tree_scope("DirectoryTree::SetRoot");
     if (!context_.current_project_state.directory_tree.SetRoot(context_.current_project_state.root)) {
@@ -527,11 +553,9 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
   RefreshProblemsSidebar();
 
   {
-    util::StartupTrace::Scope monitor_scope("WorkspaceProjectFileMonitor::SetProjectRoot");
-    project_file_monitor_.SetProjectRoot(context_.current_project_state.root);
+    util::StartupTrace::Scope git_metadata_scope("GitMetadataTracker::SetProjectRoot");
     git_metadata_tracker_.SetProjectRoot(context_.current_project_state.root);
   }
-  project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
 
   if (ActiveSidebarMode() == SidebarMode::Search &&
       !context_.current_project_state.overlay.workflow.project_search.query.text().empty()) {

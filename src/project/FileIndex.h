@@ -69,6 +69,19 @@ class FileIndex {
   // replacing the current contents. Runs on the owning (main) thread. `status` is
   // the completeness status reported by ScanFiles() for this same scan.
   void ReplaceScannedFiles(std::vector<ProjectFile> files, ProjectFileScanStatus status);
+  // Same commit, but it first DIFFS the scan against what the index already holds
+  // and reports the difference through `out_changes` (optional). Returns false —
+  // leaving the index, its version and its derived caches completely untouched —
+  // when the scan is identical to the current contents.
+  //
+  // This is the synchronous "is anything different right now?" oracle. It replaced
+  // a whole second file watcher: the project used to keep an independent tree
+  // snapshot (plus its own inotify instance and thread) purely to answer that
+  // question, when the index is already a sorted list of exactly the same paths
+  // with exactly the same mtime/size (TD-2026-08-15-252).
+  bool ReplaceScannedFilesReportingChanges(
+      std::vector<ProjectFile> files, ProjectFileScanStatus status,
+      std::vector<platform::IndexUpdateBatch::Change>* out_changes);
   // Mirrors the `project.follow_out_of_root_symlinks` user setting; consulted by
   // the full rescan in Refresh(). Default false keeps the out-of-root containment
   // guard active.

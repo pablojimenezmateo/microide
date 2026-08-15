@@ -36,13 +36,6 @@ ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
           .reset_current_project_state_storage =
               [this]() { ResetCurrentProjectStateStorage(); },
           .reset_transient_interaction_state = [this]() { ResetTransientInteractionState(); },
-          .set_project_file_monitor_root =
-              [this](const std::filesystem::path& root) {
-                project_file_monitor_.SetDeferredArming(true);
-                project_file_monitor_.SetProjectRoot(root);
-                project_file_monitor_.SetDeferredArming(false);
-                project_file_monitor_.SetPollInterval(std::chrono::milliseconds(2000));
-              },
           .apply_colorscheme =
               [this]() {
                 MakePersistenceCoordinator().ApplyColorscheme(

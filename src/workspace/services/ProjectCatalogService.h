@@ -22,7 +22,6 @@ class ProjectCatalogService {
     std::function<void(ProjectWorkspaceState&)> rebind_project_state;
     std::function<void()> reset_current_project_state_storage;
     std::function<void()> reset_transient_interaction_state;
-    std::function<void(const std::filesystem::path&)> set_project_file_monitor_root;
     std::function<void()> apply_colorscheme;
     std::function<void()> apply_editor_preferences_to_all_tabs;
     std::function<void()> apply_welcome_editor_preferences_if_placeholder;

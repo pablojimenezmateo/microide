@@ -17,7 +17,6 @@ class LifecycleCoordinator {
     std::function<void()> restore_user_config;
     std::function<void()> refresh_available_colorscheme_names;
     std::function<void(bool)> reset_project_scoped_state;
-    std::function<void(bool)> set_project_watcher_deferred_arming;
     std::function<bool()> skip_workspace_session_restore;
     std::function<bool()> restore_workspace_session;
     std::function<void()> reload_plugins_for_current_project;

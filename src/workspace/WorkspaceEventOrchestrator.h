@@ -35,7 +35,6 @@ class WorkspaceEventDispatcher {
     std::function<void()> consume_pending_font_file_dialog_result;
     std::function<bool(bool)> reload_plugins_if_assets_changed;
     std::function<bool(Uint32)> plugin_runtime_consume_wake_event;
-    std::function<bool(Uint32)> project_file_monitor_consume_wake_event;
     std::function<bool(bool)> reload_project_if_files_changed;
     std::function<bool(Uint32)> project_search_handles_event;
     std::function<void()> consume_project_search_updates;

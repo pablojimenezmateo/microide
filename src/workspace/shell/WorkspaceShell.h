@@ -91,7 +91,6 @@
 #include "workspace/WorkspaceLanguageContract.h"
 #include "workspace/WorkspacePluginReloadRequest.h"
 #include "workspace/WorkspacePluginRuntime.h"
-#include "workspace/WorkspaceProjectFileMonitor.h"
 #include "workspace/state/WorkspaceProjectDialogState.h"
 #include "workspace/state/WorkspaceProjectState.h"
 #include "workspace/debug/DebugPaneRegistry.h"

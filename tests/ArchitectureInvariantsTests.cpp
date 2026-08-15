@@ -235,8 +235,14 @@ void TestArchitectureFileSizes() {
              // every painted frame the pointer spent over text. A generation stamp
              // answers the same question with an integer, and shrinks the closure to
              // 16 bytes so std::function stops heap-allocating the functor too.
+             // 1697: net +1 for retiring WorkspaceProjectFileMonitor
+             // (TD-2026-08-15-252). The member itself is gone, along with a second
+             // full tree walk, a second inotify instance over the same directories,
+             // and the 2 s idle tick it re-armed forever; what replaced it is one
+             // atomic (the "index truncated" toast the monitor used to raise) and
+             // the declaration of the synchronous forced-rescan helper.
              return architecture::CheckShellFileSize(root, "src/workspace/shell/WorkspaceShellMembers.inc",
-                                                     1696);
+                                                     1697);
            });
 
   AssertRuleResultsPass(results);

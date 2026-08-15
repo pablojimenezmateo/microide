@@ -5,7 +5,15 @@ namespace microide::project {
 ProjectChangeBatch NormalizeIndexUpdateBatch(const std::filesystem::path& project_root,
                                              const platform::IndexUpdateBatch& batch) {
   ProjectChangeBatch normalized;
-  if (batch.is_initial || project_root.empty()) {
+  if (project_root.empty()) {
+    return normalized;
+  }
+  // The coarse "something under the root moved" bit. It is the ONLY thing an
+  // initial batch contributes here: is_initial replaces the index wholesale, so
+  // its per-file changes describe the whole tree rather than a delta and must not
+  // be replayed as external-change events for every file in the project.
+  normalized.tree_rescan_requested = batch.tree_structure_changed;
+  if (batch.is_initial) {
     return normalized;
   }
 

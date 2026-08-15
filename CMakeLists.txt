@@ -541,7 +541,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/persistence/RecentsService.cpp
   src/workspace/WorkspacePluginAssetMonitor.cpp
   src/workspace/WorkspacePluginRuntime.cpp
-  src/workspace/WorkspaceProjectFileMonitor.cpp
   src/workspace/persistence/WorkspacePersistenceCoordinatorConfig.cpp
   src/workspace/persistence/WorkspacePersistenceCoordinatorSession.cpp
   src/workspace/persistence/WorkspacePersistenceCoordinatorWorkspaceSession.cpp
@@ -987,7 +986,6 @@ add_executable(microide_tests
   tests/IgnoreMatcherTests.cpp
   tests/ProjectTraversalFilterTests.cpp
   tests/CompileCommandsLocatorTests.cpp
-  tests/WorkspaceProjectFileMonitorTests.cpp
   tests/FileFinderTests.cpp
   tests/RecentsServiceTests.cpp
   tests/FileIndexTests.cpp

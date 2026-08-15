@@ -188,6 +188,71 @@ void FileIndex::ReplaceScannedFiles(std::vector<ProjectFile> files, ProjectFileS
   EnsureFresh(ProjectFileScanMode::ExcludeHidden);
 }
 
+bool FileIndex::ReplaceScannedFilesReportingChanges(
+    std::vector<ProjectFile> files, ProjectFileScanStatus status,
+    std::vector<platform::IndexUpdateBatch::Change>* out_changes) {
+  {
+    std::unique_lock lock(files_mutex_);
+    // Both sides are sorted by LessProjectFile (ScanFiles sorts its result;
+    // ApplyBatch upserts in order), so the difference is a single merge walk with
+    // no allocation for the entries that are unchanged -- which, on the forced
+    // path this serves, is essentially all of them.
+    bool differs = false;
+    const auto append_upsert = [&](const ProjectFile& file) {
+      differs = true;
+      if (out_changes == nullptr) {
+        return;
+      }
+      platform::IndexUpdateBatch::Change change;
+      change.kind = platform::IndexUpdateBatch::Kind::CreatedOrModified;
+      change.entry.relative_path = file.relative_path;
+      change.entry.mtime = file.mtime;
+      change.entry.size = file.size;
+      out_changes->push_back(std::move(change));
+    };
+    std::size_t previous_index = 0;
+    std::size_t scanned_index = 0;
+    while (previous_index < files_.size() || scanned_index < files.size()) {
+      if (scanned_index == files.size() ||
+          (previous_index < files_.size() &&
+           LessProjectFile(files_[previous_index], files[scanned_index]))) {
+        differs = true;
+        if (out_changes != nullptr) {
+          platform::IndexUpdateBatch::Change change;
+          change.kind = platform::IndexUpdateBatch::Kind::Deleted;
+          change.entry.relative_path = files_[previous_index].relative_path;
+          out_changes->push_back(std::move(change));
+        }
+        ++previous_index;
+        continue;
+      }
+      if (previous_index == files_.size() ||
+          LessProjectFile(files[scanned_index], files_[previous_index])) {
+        append_upsert(files[scanned_index]);
+        ++scanned_index;
+        continue;
+      }
+      if (files[scanned_index] != files_[previous_index]) {
+        append_upsert(files[scanned_index]);
+      }
+      ++previous_index;
+      ++scanned_index;
+    }
+    if (!differs && status == scan_status_) {
+      // Byte-identical to what the index already holds: leave it — and its version
+      // — alone, so a forced check on a quiet tree invalidates no derived cache.
+      return false;
+    }
+    files_ = std::move(files);
+    scan_status_ = status;
+    ++version_;
+    exclude_hidden_cache_.needs_refresh = true;
+    include_hidden_cache_.needs_refresh = true;
+  }
+  EnsureFresh(ProjectFileScanMode::ExcludeHidden);
+  return true;
+}
+
 void FileIndex::Refresh() {
   std::filesystem::path root;
   std::vector<std::string> excludes;

@@ -389,7 +389,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-15-252 — the project file monitor is a second full tree walk and a second inotify instance over directories the file index watcher already watches.
+### TD-2026-08-15-252 — the project file monitor is a second full tree walk and a second inotify instance over directories the file index watcher already watches. [RESOLVED 2026-08-15 — the monitor is deleted, not merged; the one bit it produced now rides on the index watcher's batches.]
 
 Found by the launch sweep (`dev-docs/performance/performance-findings.md`
 § 2026-08-15). Opening a project used to walk the whole tree **three** times, on
@@ -430,6 +430,54 @@ one, which is the other reason it lost to the rest of the sweep.
 **Where to start.** `WorkspaceShellRedraw.cpp`'s `ReloadProjectIfFilesChanged` is
 the single consumer of both signals; it is the place to prove the fine-grained
 batches can produce `tree_rescan_requested` before touching either watcher.
+
+**Resolution.** `WorkspaceProjectFileMonitor` and its tests are gone (411 + 85 +
+140 lines), and with them the second `FileTreeWatcher`, its snapshot, its
+background poll task and the 2 s idle tick it re-armed forever. What replaced it:
+
+1. **`IndexUpdateBatch::tree_structure_changed`.** The inotify worker was already
+   decoding directory create/delete/move events (it walks a moved-in subtree and
+   emits recursive deletions); it now also sets one bit for them, gated on the
+   same prune the walk applies so `node_modules/` appearing is not a refresh. The
+   poll fallback derives the same bit from a commutative hash of the kept
+   directory set, because its snapshot is files-only and an empty `mkdir` is
+   invisible in a file diff. FSEvents/ReadDirectoryChangesW set it from their own
+   directory events. Overflow resync sets it unconditionally — the dropped window
+   may have contained directory churn a wholesale index replace says nothing about.
+2. **`NormalizeIndexUpdateBatch` maps it to `tree_rescan_requested`**, which is
+   the exact signal `ApplyProjectChangeBatch` already consumed. Nothing downstream
+   of the coalescer changed.
+3. **The forced synchronous check** (`ReloadProjectIfFilesChanged(true)` — tests
+   and the perf harness only; no production path calls it) became
+   `FileIndex::ReplaceScannedFilesReportingChanges`: one walk, diffed against the
+   index by a merge walk, returning false and touching NOTHING when identical. The
+   monitor was maintaining a private second copy of a sorted path+mtime+size list
+   the index already had. The forced path is now strictly better than the coarse
+   bit it replaced: it reports per-file changes, so an external edit reaches LSP
+   didChangeWatchedFiles and the per-tab banner logic instead of a blanket
+   "reload every clean buffer".
+4. **The "too large" notice** became "too large to index fully", raised from
+   `batch.truncated`. The old wording described a degradation that no longer
+   happens: the merged walk keeps registering watches past the file budget, so
+   live watching survives truncation and only indexing is partial.
+
+Measured on this repo (755 directories):
+
+    inotify_add_watch calls at project open     1,513 -> 758
+    inotify instances                               2 -> 1
+    background tree walks per project open          2 -> 1
+    idle timed wakes on an open project       1 per 2 s -> 0
+
+The idle-tick line is the one that was not in the original estimate. The monitor's
+`NextPollDelay` fed `NextAnimationDelayMs`, so every open project woke the shell
+thread twice a minute forever to ask a watcher that had nothing to say.
+
+**Coverage.** `FileIndexWatcherContract/{Native,Poll}BackendTreeShape` (empty
+directory created, removed, and an ignored one that must NOT count — run against
+both backends), `WorkspaceShell/EmptyDirectoryCreationRefreshesTree` (end-to-end
+through the wake and the sidebar tree), `WorkspaceShell/TruncatedIndexBatchNotifiesOnce`.
+All four were vacuity-probed by disabling the production flag and confirming they
+fail.
 
 ### TD-2026-08-15-251 — what the 2026-08-15 sweep looked at and deliberately left, with the number that says why.
 

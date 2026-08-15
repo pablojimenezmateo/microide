@@ -30,6 +30,17 @@ struct IndexUpdateBatch {
   std::vector<Change> changes;
   bool is_initial = false;  // true for first full-scan batch on Watch()
   bool truncated = false;   // true when the walk hit the entry budget and stopped early
+  // True when the tree's SHAPE changed in a way `changes` cannot describe: a
+  // directory created, deleted, renamed or moved, a non-regular entry (a symlink
+  // to a directory, a fifo) appearing, or a resync after dropped events.
+  //
+  // The index tracks regular files only, so `mkdir empty/` produces no change at
+  // all — and the sidebar tree, the finder's directory grouping and project
+  // search still have to see it. This bit is what a coarse "something under the
+  // root moved" consumer subscribes to; before it existed the workspace ran a
+  // SECOND full tree walk and a second inotify instance over the same
+  // directories purely to derive it (TD-2026-08-15-252).
+  bool tree_structure_changed = false;
 };
 
 // Threading contract: The callback registered via SetCallback() fires on the watcher's
