@@ -25,6 +25,128 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-15 launch: what the shell thread does before the window is on screen
+
+Driven by the real binary (`MICROIDE_STARTUP_SUMMARY=1 MICROIDE_PERF_SUMMARY=1`,
+quit over the control channel so the summary is emitted from `Shutdown`), not by
+the perf harness — the harness measures inside an already-running process, and
+half of what launch costs happens before that.
+
+**Read this before quoting a startup number.** `Application::FirstRender` and
+anything else that contains a `SDL_RenderPresent` is **bimodal on this box**.
+Nine interleaved runs of one unchanged binary (origin/main) read 11.2, 11.3,
+11.4, 13.3, 14.7, 14.9, 15.3, 15.6, 16.5 ms — two modes about 4 ms apart, and
+the median reports which one the runs landed in. Presents are vsync-throttled,
+so a frame's wall time is "did this land before or after a refresh boundary",
+not "how much work was in it". The metrics that mean something here are the ones
+with no present inside them (the scopes below), the FRAME COUNT, and syscall
+counts. An earlier draft of this pass quoted a 14.9 -> 11.3 ms FirstRender
+"win" that was purely the two modes.
+
+### The shell thread, measured (interleaved A/B vs origin/main, 9 rounds, median)
+
+| scope | before | after | how |
+| --- | ---: | ---: | --- |
+| `RuntimeSyntaxRegistry::EnsureInitialized` | 4.02 ms | 0.06 ms | built on a warm thread started as the first statement of `Application::Initialize` |
+| `WorkspaceShell::PrepareFrameOnce` (first frame) | 3.39 ms | 0.17 ms | the font work below lived inside it |
+| `SdlTtfTextBackend::Initialize` (x2) | 3.17 ms | 1.27 ms | fallback fonts lazy, glyph metrics cached per (file, size, dpi) |
+| `Application::Render(full)` | 8.13 ms / 4 calls | 6.20 ms / 2 calls | see the frame sequence below |
+| `Application::PresentRetainedScene` | 59.1 ms / 10 | 43.7 ms / 9 | one fewer frame, and the settle frames became partial |
+
+Everything before `WorkspaceShell::Initialize` — `SDL_Init`,
+`SDL_CreateWindow`, `SDL_CreateRenderer`, 4.4 ms of it — is the shell thread
+waiting on the display server rather than computing, which is why the syntax
+registry build fits inside it for free. The join keeps its own scope, so a wait
+that does NOT get hidden reads as a wait rather than as a cheaper build.
+
+### The frame sequence is the metric
+
+    before   full(startup) full(settle) full(settle) full(event) partial   [5 frames]
+             window mapped after frame 3
+    after    full(startup) full(event) partial partial                     [4 frames]
+             window mapped after frame 1
+
+Three separate things produced that:
+
+- **the window was mapped after the settle frames.** The map lives in the run
+  loop after the post-render settle branch, and that branch `continue`s. A
+  restored terminal tab is re-gridded on the first prepared frame and owed two
+  repaints, so every launch with a terminal open skipped the map twice. Frames
+  are vsync intervals; the window appeared ~33 ms late for a panel repaint
+  nobody could see yet.
+- **the first frame's settle repaints had nothing to settle.** A reflow schedules
+  two follow-up repaints so a terminal the user is watching catches up with the
+  PTY. On the first frame there is nothing on screen to correct and the PTY was
+  spawned moments ago; its output arrives on the terminal wake with its own
+  repaint. Dropped for the first frame only.
+- **a `WINDOW_EXPOSED` re-rendered what it could have re-presented.** Every
+  frame ends by blitting the whole retained scene texture and presenting it, so
+  an expose is repaired by a present. `WINDOW_DISPLAY_SCALE_CHANGED` shared that
+  case and must not — it changes what the scene should contain.
+
+### `directory_entry::status()` is a stat; the type accessors are not
+
+The single biggest background finding, and it generalises well past this repo.
+Every recursive walk classified entries with
+`PathTypeFromStatus(entry.status(ec))`. `status()` unconditionally calls the free
+function — one `newfstatat` per entry. `is_directory()` / `is_regular_file()` go
+through libstdc++'s `_M_file_type()`, which answers from the type `readdir`
+already reported in `d_type` and only stats when the OS reported none (or a
+symlink, which has to be followed to classify).
+
+Measured with an identical walk and an identical classification over 50,844
+entries: **712 ms and 50,844 syscalls, against 127 ms and zero.**
+`platform::EntryPathType` is now the one place that decision is made, and all
+five walk sites use it.
+
+### Three walks of the same tree per project open
+
+Opening a project walked the whole tree three times, on three threads, with the
+same traversal filter and the same prune rules: the file index's initial scan,
+that same watcher's inotify registration, and the project file monitor's tree
+watcher registering the same 755 directories into a second inotify instance.
+
+`CollectTrackedCreations` grew an `on_directory` visitor, so the registration and
+the file scan are one pass; the same merge applies to a moved-in directory and to
+overflow recovery, both of which walked a subtree twice back to back.
+
+    newfstatat calls at startup            103,064 -> 22,802
+    index scan + watch registration    166 + ~150 ms -> 141 ms (one walk)
+    project monitor watch collection            (inside the 150) -> 96 ms
+
+**Still open.** The project file monitor's `FileTreeWatcher` remains a second
+full walk and a second inotify instance over the same directories the file index
+watcher already watches, for a coarser "something changed" signal the fine-grained
+batches could probably derive. That is a boundary change across two subsystems,
+not a local fix, and it is the largest remaining item on this path.
+
+### Instrumentation added, because these had no name
+
+`watch::NativeSetupWalk`, `watch::PrepareNativeBackend::CollectWatchPaths`,
+`watch::PrepareNativeBackend::StartNativeBackend(dirs=N)` — the registration walk
+had no scope at all, so two thirds of a project open's background cost was
+invisible. The split immediately showed the walk is 99% of arming a watch and the
+`inotify_add_watch` storm is 0.7 ms of it.
+
+`SdlTtfTextBackend::Initialize::{TTF_Init,LocateFontFile,OpenPrimaryFont,
+RefreshMetrics}`, `SdlTtfTextBackend::LoadFallbackFonts`,
+`SdlTtfTextBackend::MeasurePixelMetrics` — 3.2 ms with no breakdown at all.
+
+`RuntimeSyntaxRegistry::WarmInBackground` — so the moved work is still counted
+somewhere rather than vanishing from the profile.
+
+### Looked at and left
+
+- **git subprocesses at startup.** Exactly one `rev-parse`, one `ls-files`, one
+  `status` and one `blame` over a 12-second idle run, all off the shell thread
+  (`main ms` 0.000). An earlier reading of five `status` calls in five seconds
+  was a concurrent build writing into the tree, not a refresh storm.
+- **`ReloadSyntaxDefinitions`** (1.7 ms, main thread) clones the built-in
+  registry element-wise. `CompiledRegex` is `shared_ptr`-backed so nothing
+  recompiles; the cost is copying ~3,600 rules and the two per-definition rule
+  index maps. Making `PartitionDefinitionRules` lazy would move it, and it was
+  not measured this pass.
+
 ## 2026-08-13 (seventh pass) the two per-line caches free what the next frame rebuilds
 
 Found by running the allocation tracer against the real binary rather than

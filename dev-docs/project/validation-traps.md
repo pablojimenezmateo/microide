@@ -896,6 +896,20 @@ instance, enumerate all instances, and look for the one that differs. An N-of-N
 audit beats reading code because the outlier is self-evident. Now enforced by
 `CheckDescriptorCreationIsCloseOnExec`.
 
+**Count the syscalls, then ask which line makes them.** `strace -f -c -e
+trace=newfstatat,statx,getdents64,openat` over a 4-second launch is one command
+and answers "is this CPU or is this the kernel" without a profiler (this box has
+no unprivileged `perf`). Launch on this repo read **103,064 `newfstatat` calls**
+for ~55,000 filesystem entries — an obviously wrong ratio, and the second
+`strace` (without `-c`, bucketing the paths) said which subtree. The cause
+generalizes well beyond this tree: `std::filesystem::directory_entry::status()`
+always calls the free function, one stat per entry, while `is_directory()` /
+`is_regular_file()` answer from the `d_type` `readdir` already returned. A
+20-line standalone program comparing the two over the same tree measured 712 ms
+/ 50,844 syscalls against 127 ms / zero — write that program rather than reading
+libstdc++, it takes two minutes and the answer is unambiguous. See
+`platform::EntryPathType`.
+
 **Test comments naming functions that do not exist.** Grep CamelCase identifiers
 followed by `(` inside `//` comments in `tests/`, check each against the tree.
 Found a test claiming to verify `ComputeIdleHint(...)` — a function that exists

@@ -61,6 +61,48 @@ mechanism backs both channels.
 The summary is emitted from `Application::Shutdown`, so a run killed with
 `SIGKILL` prints nothing.
 
+## Measuring A Real Launch End To End
+
+The tracer streams as scopes close, so a killed process still prints. The ranked
+summary does not: it is emitted from `Application::Shutdown`, and `SIGKILL` (or
+`timeout`'s `SIGTERM`) prints nothing. Quit over the control channel instead —
+that is the only way to get a summary from a real launch:
+
+```bash
+MICROIDE_STARTUP_SUMMARY=1 MICROIDE_PERF_SUMMARY=1 SDL_VIDEODRIVER=dummy \
+  XDG_RUNTIME_DIR=/run/user/$(id -u) ./build/microide/microide <project> --control &
+sleep 3
+XDG_RUNTIME_DIR=/run/user/$(id -u) ./build/microide/microide control-send quit
+```
+
+Both summaries together are what you want: the startup channel gives the phases,
+the perf channel gives everything else including the background threads, and its
+`main ms` column separates "the user waited for this" from "a worker did this".
+
+To compare two commits, build the other one in a worktree and **interleave** the
+runs (base, head, base, head, …) rather than running nine of each. The machine
+drifts; interleaving puts the drift on both sides.
+
+## What Not To Quote
+
+`Application::FirstRender`, `Application::Render(...)`,
+`Application::PresentRetainedScene` and any other scope containing an
+`SDL_RenderPresent` are **bimodal**: presents are vsync-throttled, so the number
+is "did this land before or after a refresh boundary". Nine interleaved runs of
+one unchanged binary read 11.2 … 16.5 ms for `FirstRender` with two modes about
+4 ms apart. Its median tells you which mode the runs fell into.
+
+What is readable:
+
+- scopes with no present inside them (`WorkspaceShell::Initialize` and its
+  children, `SdlTtfTextBackend::Initialize`, `WorkspaceShell::PrepareFrameOnce`)
+- the **frame count** before the app goes idle, and which frames are full — get
+  it from `MICROIDE_TRACE_REDRAW=1 MICROIDE_TRACE_REDRAW_VERBOSE=1`, which prints
+  one line per frame with its reason
+- syscall counts (`strace -f -c -e trace=newfstatat,getdents64,inotify_add_watch`),
+  which is how the walk work in `dev-docs/performance/performance-findings.md`
+  § 2026-08-15 was found and confirmed
+
 ## How To Read It
 
 - `total` is time since tracing started
@@ -80,6 +122,16 @@ When comparing runs, focus on:
 - `FileIndex::SetRoot`
 - `FileIndex::Refresh`
 - `Application::FirstRender`
+
+On the perf channel, the background half of a project open is:
+
+- `watch::NativeSetupWalk` — one walk that both registers inotify watches and
+  builds the initial file-index batch
+- `watch::PrepareNativeBackend::CollectWatchPaths` — the project file monitor's
+  own (still separate) walk
+- `watch::PrepareNativeBackend::StartNativeBackend(dirs=N)` — the
+  `inotify_add_watch` storm, which is a fraction of a millisecond next to the
+  walk that feeds it
 
 ## Recommended Workflow
 
