@@ -539,7 +539,7 @@ scenario only because what was above them is gone.
   container for the erase+insert at index 0 that an Enter or Backspace at the top
   of a large file performs; a vector would memmove the whole 400 KB table there.
 
-### TD-2026-08-15-250 — `editor_moby_dick_workout`'s baseline is stale by 16x on allocations and red on resident growth, and it is opt-in so nothing notices. [PARTLY RESOLVED 2026-08-15 — the allocation gate is 16x tighter and the red resident gate turned out to be a HARNESS bug, not a measurement. The timing half still needs a quiet reference runner.]
+### TD-2026-08-15-250 — `editor_moby_dick_workout`'s baseline is stale by 16x on allocations and red on resident growth, and it is opt-in so nothing notices. [RESOLVED 2026-08-15 — the allocation gate is 16x tighter, the red resident gate turned out to be a HARNESS bug rather than a measurement, and the timing half was re-recorded on the reference lane once the box went quiet.]
 
 Not caused by this session's work: the scenario fails identically at `04af154f`,
 the commit this session started from, measured by building that commit in a
@@ -603,13 +603,23 @@ Allocation half re-recorded the same day: **21,682.5 -> 1,305.5 (-94 %)**, with
 per-phase gates (`moby.paste` 19,145 -> 397 after the add-buffer chunking). The
 scenario PASSES again.
 
-**Still open:** the timing half. That file still carries wall numbers from
-2026-07-05 and — alone among all 110 baselines — no `p50_cpu_calibration_ns` and
-no cpu metrics at all, so its wall gate cannot be clock-normalised and its cpu
-gate does not exist. `p50_wall_ms` consumes 77 % of its envelope on a busy box
-because of it. That needs a full `--update-baseline` on a quiet reference runner;
-the box was at load average 26 (another project saturating all 24 cores) for the
-whole of this session.
+**The timing half, re-recorded the same day.** The box was at load average 26 for
+most of the session (another project saturating all 24 cores) and dropped to 0.45
+near the end; that window is what the full `--update-baseline
+--reference-runner=perf-runner-v1` was taken in, from the `microide-perf` preset
+so the build configuration matches the other 109 baselines. The file had been the
+ONLY one of 110 with neither `p50_cpu_ms` nor `p50_cpu_calibration_ns`, so its
+wall gate could not be clock-normalised and its cpu gate did not exist at all.
+
+    p50_wall_ms             25.589 -> 28.328   (2026-07-05 numbers -> today's)
+    p50_cpu_ms                 absent -> 28.328
+    p50_cpu_calibration_ns     absent -> 673,886
+    mean_rss_growth_bytes   fabricated 0 -> 1,560,121 (measured, gated at 25 %)
+    build_config              Release+lto -> RelWithDebInfo+lto
+
+Re-gated twice against what was written: PASS both times, every gate below 75 %
+of its envelope — including the resident one, whose 25 % envelope on 1.56 MB is
+wide enough for the run-to-run spread and narrow enough to catch a doubling.
 
 ### TD-2026-08-14-234 — the allocation half of roughly a dozen gates is loose, and only the reference runner can re-record them. [RESOLVED 2026-08-14 — done deliberately, with the pre-check and the re-gate, and it caught two red gates that turned out to be an accounting shift rather than a regression.]
 
