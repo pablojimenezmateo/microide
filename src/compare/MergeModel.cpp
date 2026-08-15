@@ -19,7 +19,8 @@ namespace {
 struct SideChange {
   int base_start = 0;
   int base_end = 0;
-  std::vector<std::string> lines;
+  // Views into the variant side's source buffer, via the diff ops' own views.
+  std::vector<std::string_view> lines;
 };
 
 enum class MergeSide {
@@ -32,16 +33,17 @@ struct TaggedChange {
   SideChange change;
 };
 
-std::vector<SideChange> BuildSideChanges(const std::vector<std::string>& base_lines,
-                                         const std::vector<std::string>& variant_lines) {
+std::vector<SideChange> BuildSideChanges(const std::vector<std::string_view>& base_lines,
+                                         const std::vector<std::string_view>& variant_lines) {
   // Scoped: BuildMergeModel is one synchronous 50 ms call on the shell path when a
   // merge tab opens, and until this scope existed there was no way to say which of
   // its three phases (split, the two diffs, hunk grouping) that time was.
   util::PerformanceTrace::Scope perf_scope("merge::BuildSideChanges");
-  // BuildLineDiffOps consumes views; base_lines/variant_lines outlive `ops`.
-  const std::vector<std::string_view> base_views(base_lines.begin(), base_lines.end());
-  const std::vector<std::string_view> variant_views(variant_lines.begin(), variant_lines.end());
-  const std::vector<DiffOp> ops = BuildLineDiffOps(base_views, variant_views);
+  // BuildLineDiffOps consumes views, and the model's line vectors ARE views now,
+  // so it takes them directly. This used to copy both sides into freshly built
+  // view vectors -- two more whole-file vectors per side, on top of the owned
+  // strings that existed only to be viewed.
+  const std::vector<DiffOp> ops = BuildLineDiffOps(base_lines, variant_lines);
   std::vector<SideChange> changes;
   int base_line = 0;
   for (std::size_t op_index = 0; op_index < ops.size(); ++op_index) {
@@ -70,12 +72,13 @@ std::vector<SideChange> BuildSideChanges(const std::vector<std::string>& base_li
   return changes;
 }
 
-std::vector<std::string> SliceBaseLines(const std::vector<std::string>& base_lines,
-                                        int start,
-                                        int end) {
+std::vector<std::string_view> SliceBaseLines(const std::vector<std::string_view>& base_lines,
+                                             int start,
+                                             int end) {
   const int safe_start = std::clamp(start, 0, static_cast<int>(base_lines.size()));
   const int safe_end = std::clamp(end, safe_start, static_cast<int>(base_lines.size()));
-  return std::vector<std::string>(base_lines.begin() + safe_start, base_lines.begin() + safe_end);
+  return std::vector<std::string_view>(base_lines.begin() + safe_start,
+                                       base_lines.begin() + safe_end);
 }
 
 // `changes` is taken by mutable reference and sorted IN PLACE. It used to be a
@@ -83,10 +86,11 @@ std::vector<std::string> SliceBaseLines(const std::vector<std::string>& base_lin
 // SideChange — each of which owns a vector<string> of the changed lines. On a
 // merge with many hunks that copy was paid once per hunk per side, on the
 // synchronous shell path that opens a merge tab.
-std::vector<std::string> ApplySideChangesToSlice(const std::vector<std::string>& base_lines,
-                                                 int start,
-                                                 int end,
-                                                 std::vector<SideChange>& changes) {
+std::vector<std::string_view> ApplySideChangesToSlice(
+    const std::vector<std::string_view>& base_lines,
+    int start,
+    int end,
+    std::vector<SideChange>& changes) {
   std::sort(changes.begin(), changes.end(), [](const SideChange& lhs, const SideChange& rhs) {
     if (lhs.base_start != rhs.base_start) {
       return lhs.base_start < rhs.base_start;
@@ -94,7 +98,7 @@ std::vector<std::string> ApplySideChangesToSlice(const std::vector<std::string>&
     return lhs.base_end < rhs.base_end;
   });
 
-  std::vector<std::string> lines;
+  std::vector<std::string_view> lines;
   int cursor = start;
   for (const SideChange& change : changes) {
     const int unchanged_end = std::clamp(change.base_start, cursor, end);
@@ -136,9 +140,9 @@ std::vector<TaggedChange> TaggedChanges(std::vector<SideChange>&& changes, Merge
 // (TD-2026-08-15-239).
 template <typename Fn>
 void ForEachMergeResultLine(const MergeModel& model, bool bootstrap, Fn&& fn) {
-  const auto emit_span = [&fn](std::span<const std::string> lines) {
-    for (const std::string& line : lines) {
-      fn(std::string_view(line));
+  const auto emit_span = [&fn](std::span<const std::string_view> lines) {
+    for (std::string_view line : lines) {
+      fn(line);
     }
   };
   int base_cursor = 0;
@@ -207,11 +211,17 @@ MergeModel BuildMergeModel(const std::string& base,
                            const std::string& current) {
   util::PerformanceTrace::Scope perf_scope("merge::BuildMergeModel");
   MergeModel model;
+  model.base_source = MakeCompareText(base);
+  model.incoming_source = MakeCompareText(incoming);
+  model.current_source = MakeCompareText(current);
   {
     util::PerformanceTrace::Scope split_scope("merge::BuildMergeModel::SplitLines");
-    model.base_lines = util::SplitLines(base);
-    model.incoming_lines = util::SplitLines(incoming);
-    model.current_lines = util::SplitLines(current);
+    // Views into the model's own shared buffers, not owned strings. Splitting
+    // into owned lines was one allocation per line PER SIDE, and every consumer
+    // of them -- the diff, the hunks, the renderers -- only ever read them.
+    model.base_lines = util::SplitLineViews(*model.base_source);
+    model.incoming_lines = util::SplitLineViews(*model.incoming_source);
+    model.current_lines = util::SplitLineViews(*model.current_source);
   }
 
   std::vector<SideChange> incoming_changes =
@@ -412,16 +422,18 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
   int incoming_line = 1;
   int result_line = 1;
   int current_line = 1;
+  // Reused across hunks: one hunk's flattened choice lines are the next hunk's.
+  std::vector<std::string_view> hunk_result_scratch;
   // A run of base lines no hunk touches: identical in all three panes, so every
   // *_changed flag is false and all three line numbers advance together. Emitted
   // both for the gap ahead of each hunk and for the tail after the last one.
   const auto emit_unchanged_rows = [&](int from_line, int to_line) {
     for (int line = from_line; line < to_line; ++line) {
-      const std::string& text = model.base_lines[static_cast<std::size_t>(line)];
+      const std::string_view text = model.base_lines[static_cast<std::size_t>(line)];
       display.rows.push_back(MergeDisplayRow{
-          .incoming_text = text,
-          .result_text = text,
-          .current_text = text,
+          .incoming_text = std::string(text),
+          .result_text = std::string(text),
+          .current_text = std::string(text),
           .incoming_line = incoming_line++,
           .result_line = result_line++,
           .current_line = current_line++,
@@ -436,7 +448,16 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
   for (const MergeHunk& hunk : model.hunks) {
     emit_unchanged_rows(base_cursor, hunk.base_start);
 
-    const std::vector<std::string> hunk_result_lines = MergeChoiceLines(hunk, hunk.choice);
+    // Views, like every other line list here: the display model copies them into
+    // its own owned rows below, and comparing them against the base needs no copy.
+    const MergeChoiceLineSpans result_spans = MergeChoiceLineViews(hunk, hunk.choice);
+    hunk_result_scratch.clear();
+    hunk_result_scratch.reserve(result_spans.size());
+    hunk_result_scratch.insert(hunk_result_scratch.end(), result_spans.first.begin(),
+                               result_spans.first.end());
+    hunk_result_scratch.insert(hunk_result_scratch.end(), result_spans.second.begin(),
+                               result_spans.second.end());
+    const std::vector<std::string_view>& hunk_result_lines = hunk_result_scratch;
     const bool incoming_changed = hunk.incoming_lines != hunk.base_lines;
     const bool result_changed = hunk_result_lines != hunk.base_lines;
     const bool current_changed = hunk.current_lines != hunk.base_lines;
@@ -448,9 +469,9 @@ MergeDisplayModel BuildMergeDisplayModel(const MergeModel& model) {
       const bool has_result = row < hunk_result_lines.size();
       const bool has_current = row < hunk.current_lines.size();
       display.rows.push_back(MergeDisplayRow{
-          .incoming_text = has_incoming ? hunk.incoming_lines[row] : std::string{},
-          .result_text = has_result ? hunk_result_lines[row] : std::string{},
-          .current_text = has_current ? hunk.current_lines[row] : std::string{},
+          .incoming_text = has_incoming ? std::string(hunk.incoming_lines[row]) : std::string{},
+          .result_text = has_result ? std::string(hunk_result_lines[row]) : std::string{},
+          .current_text = has_current ? std::string(hunk.current_lines[row]) : std::string{},
           .incoming_line = has_incoming ? incoming_line++ : 0,
           .result_line = has_result ? result_line++ : 0,
           .current_line = has_current ? current_line++ : 0,

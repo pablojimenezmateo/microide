@@ -24,18 +24,34 @@ struct MergeHunk {
   int index = 0;
   int base_start = 0;
   int base_end = 0;
-  std::vector<std::string> base_lines;
-  std::vector<std::string> incoming_lines;
-  std::vector<std::string> current_lines;
+  // Views into the owning MergeModel's three source buffers, like the model's own
+  // line vectors. See MergeModel.
+  std::vector<std::string_view> base_lines;
+  std::vector<std::string_view> incoming_lines;
+  std::vector<std::string_view> current_lines;
   bool conflict = false;
   MergeChoice choice = MergeChoice::Base;
   MergeChoice bootstrap_choice = MergeChoice::Base;
 };
 
 struct MergeModel {
-  std::vector<std::string> base_lines;
-  std::vector<std::string> incoming_lines;
-  std::vector<std::string> current_lines;
+  // The three sides' bytes, shared. Every line vector below — the model's and
+  // every hunk's — is a view INTO these, so the model owns one buffer per side
+  // instead of one `std::string` per line: opening the 12,850-line merge fixture
+  // allocated 38,553 strings, 98 % of that scenario's whole open
+  // (TD-2026-08-15-246).
+  //
+  // `shared_ptr<const std::string>` and not a plain member, for the reason
+  // `CompareTextBuffer`'s own comment gives: the string OBJECT's address is then
+  // fixed for the buffer's life, so a model copy or move never relocates the
+  // bytes the views point at. A plain `std::string` member would relocate a short
+  // one (small-string buffer) on every move and dangle every view with it.
+  CompareTextBuffer base_source = EmptyCompareText();
+  CompareTextBuffer incoming_source = EmptyCompareText();
+  CompareTextBuffer current_source = EmptyCompareText();
+  std::vector<std::string_view> base_lines;
+  std::vector<std::string_view> incoming_lines;
+  std::vector<std::string_view> current_lines;
   std::vector<MergeHunk> hunks;
   MergeFileConflictMetadata file_conflict;
 };
@@ -73,8 +89,8 @@ MergeChoice BootstrapMergeChoice(const MergeHunk& hunk);
 // result-text builder, which no longer has to materialize a line vector to
 // measure or emit one (TD-2026-08-15-239).
 struct MergeChoiceLineSpans {
-  std::span<const std::string> first;
-  std::span<const std::string> second;
+  std::span<const std::string_view> first;
+  std::span<const std::string_view> second;
 
   std::size_t size() const { return first.size() + second.size(); }
 };

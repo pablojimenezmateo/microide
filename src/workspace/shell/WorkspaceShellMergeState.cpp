@@ -18,17 +18,30 @@ namespace microide::workspace {
 
 namespace {
 
-std::size_t MaxVisualColumnsForLines(std::span<const std::string> lines) {
+// Templated over the element type: the model's line lists are `std::string_view`
+// (views into its source buffers) and the result pane's are owned `std::string`.
+template <typename LinesRange>
+std::size_t MaxVisualColumnsForLines(const LinesRange& lines) {
   std::size_t max_columns = 0;
-  for (const std::string& line : lines) {
+  for (std::string_view line : lines) {
     max_columns = std::max(max_columns, util::Utf8CodepointCount(line));
   }
   return max_columns;
 }
 
-bool MatchesLineSegment(const std::vector<std::string>& lines,
+// The model's line lists are views into its source buffers and the parsed
+// conflict blocks own their strings, so the two sides of every comparison here
+// are different types that compare fine element-wise. `std::equal` rather than
+// `==`, which no longer has an overload spanning them.
+template <typename LhsRange, typename RhsRange>
+bool LinesEqual(const LhsRange& lhs, const RhsRange& rhs) {
+  return std::equal(lhs.begin(), lhs.end(), rhs.begin(), rhs.end());
+}
+
+template <typename LinesRange, typename CandidateRange>
+bool MatchesLineSegment(const LinesRange& lines,
                         std::size_t start_line,
-                        const std::vector<std::string>& candidate_lines) {
+                        const CandidateRange& candidate_lines) {
   if (start_line > lines.size() || start_line + candidate_lines.size() > lines.size()) {
     return false;
   }
@@ -71,8 +84,8 @@ struct SelectedGitConflictBlock {
 
 SelectedGitConflictBlock SelectGitConflictBlock(const compare::MergeHunk& hunk,
                                                 const ParsedGitConflictBlock& block) {
-  const bool current_matches = block.current_lines == hunk.current_lines;
-  const bool incoming_matches = block.incoming_lines == hunk.incoming_lines;
+  const bool current_matches = LinesEqual(block.current_lines, hunk.current_lines);
+  const bool incoming_matches = LinesEqual(block.incoming_lines, hunk.incoming_lines);
 
   if (!current_matches && !incoming_matches) {
     std::vector<std::string> lines = block.current_lines;
@@ -115,7 +128,8 @@ struct ParsedGitConflictSegment {
   ParsedGitConflictBlock block;
 };
 
-std::size_t CommonPrefixLength(std::span<const std::string> lhs, std::span<const std::string> rhs) {
+template <typename LhsRange, typename RhsRange>
+std::size_t CommonPrefixLength(const LhsRange& lhs, const RhsRange& rhs) {
   std::size_t prefix = 0;
   while (prefix < lhs.size() && prefix < rhs.size() && lhs[prefix] == rhs[prefix]) {
     ++prefix;
@@ -160,9 +174,10 @@ compare::MergeChoice InferMergeChoiceFromLines(const compare::MergeHunk& hunk,
   return compare::MergeChoice::Base;
 }
 
-std::optional<std::size_t> FindSequence(std::span<const std::string> haystack,
+template <typename HaystackRange, typename NeedleRange>
+std::optional<std::size_t> FindSequence(const HaystackRange& haystack,
                                         std::size_t start,
-                                        std::span<const std::string> needle) {
+                                        const NeedleRange& needle) {
   if (needle.empty()) {
     return start;
   }
@@ -398,12 +413,12 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
               : model.base_lines.size();
       const std::size_t post_context_start =
           static_cast<std::size_t>(std::max(0, hunk.base_end));
-      const std::span<const std::string> post_context =
+      const std::span<const std::string_view> post_context =
           post_context_start <= model.base_lines.size() && post_context_start <= next_base_start
-              ? std::span<const std::string>(
+              ? std::span<const std::string_view>(
                     model.base_lines.data() + static_cast<std::ptrdiff_t>(post_context_start),
                     next_base_start - post_context_start)
-              : std::span<const std::string>{};
+              : std::span<const std::string_view>{};
 
       std::vector<std::string> committed_lines;
       bool valid = false;
@@ -425,9 +440,11 @@ std::vector<WorkspaceShell::MergeTrackedConflict> WorkspaceShell::BuildMergeTrac
             continue;
           }
           if (!post_context.empty()) {
-            const std::vector<std::string> post_context_lines(post_context.begin(), post_context.end());
+            // Compared straight against the model's views. This used to copy the
+            // post-context into an owned vector purely to bridge the two types --
+            // once per candidate choice per conflict.
             const bool immediate_context_matches = MatchesLineSegment(
-                result_lines, result_line + candidate_lines.size(), post_context_lines);
+                result_lines, result_line + candidate_lines.size(), post_context);
             const bool later_context_exists =
                 FindSequence(result_lines, result_line + candidate_lines.size(), post_context)
                     .has_value();
@@ -785,11 +802,11 @@ void WorkspaceShell::FinalizeGitMergeTab(MergeTabState& merge_tab,
   // named locals so the views stay valid through ClassifyMergeFileConflict (a
   // temporary here would dangle — caught by AddressSanitizer).
   const std::string base_content =
-      util::SerializeLines(merge_tab.model.base_lines, merge_tab.result_line_ending);
+      util::SerializeLinesStreaming(merge_tab.model.base_lines, merge_tab.result_line_ending);
   const std::string incoming_content =
-      util::SerializeLines(merge_tab.model.incoming_lines, merge_tab.result_line_ending);
+      util::SerializeLinesStreaming(merge_tab.model.incoming_lines, merge_tab.result_line_ending);
   const std::string current_content =
-      util::SerializeLines(merge_tab.model.current_lines, merge_tab.result_line_ending);
+      util::SerializeLinesStreaming(merge_tab.model.current_lines, merge_tab.result_line_ending);
   const compare::MergeConflictClassificationInput classification{
       .repository_entry = entry.has_value() ? &*entry : nullptr,
       .base_exists = !merge_tab.model.base_lines.empty(),

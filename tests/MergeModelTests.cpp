@@ -18,6 +18,7 @@ using microide::compare::BuildMergeModel;
 using microide::compare::BootstrapMergeResultText;
 using microide::compare::MergeChoice;
 using microide::compare::MergeChoiceLines;
+using microide::compare::MergeModel;
 using microide::compare::MergeResultLines;
 using microide::compare::MergeResultText;
 
@@ -137,6 +138,65 @@ void TestBootstrapMergeResultTextUsesOneTimeChoices() {
          "bootstrap merge result should apply only the initial per-hunk choices");
 }
 
+// A MergeModel's line vectors — its own and every hunk's — are `string_view`s
+// into three shared source buffers rather than owned strings (TD-2026-08-15-246).
+// The whole safety argument is that the buffers are `shared_ptr<const string>`,
+// so the string OBJECT's address is fixed and a copy or move of the model cannot
+// relocate the bytes. That argument is worth a test, because the failure mode is
+// a use-after-free that reads plausibly for short lines and only bites on long
+// ones (or the other way round, depending on the small-string buffer).
+//
+// The inputs here are deliberately BOTH shorter and longer than a small-string
+// buffer, so a model that had held plain `std::string` members would dangle on at
+// least one of them.
+void TestMergeModelLinesSurviveCopyAndMove() {
+  const std::string short_base = "a\nb\n";
+  const std::string long_incoming =
+      "a\n" + std::string(200, 'x') + "\nb\n";
+  const std::string long_current = "a\n" + std::string(200, 'y') + "\nb\n";
+
+  const auto check = [](const MergeModel& model, std::string_view what) {
+    Expect(model.base_lines.size() >= 2, std::string(what) + ": base lines survived");
+    Expect(model.base_lines[0] == "a", std::string(what) + ": base line 0 still reads 'a'");
+    Expect(model.incoming_lines.size() >= 2, std::string(what) + ": incoming lines survived");
+    Expect(model.incoming_lines[1] == std::string(200, 'x'),
+           std::string(what) + ": the long incoming line still reads its own bytes");
+    Expect(model.current_lines[1] == std::string(200, 'y'),
+           std::string(what) + ": the long current line still reads its own bytes");
+    for (const auto& hunk : model.hunks) {
+      for (std::string_view line : hunk.incoming_lines) {
+        Expect(line.find('\0') == std::string_view::npos,
+               std::string(what) + ": a hunk's line view must not read freed memory");
+      }
+    }
+  };
+
+  MergeModel built = BuildMergeModel(short_base, long_incoming, long_current);
+  check(built, "as built");
+
+  // Move: the source buffers move as shared_ptrs, so the strings themselves do
+  // not move at all.
+  const MergeModel moved = std::move(built);
+  check(moved, "after move");
+
+  // Copy: the copy shares the same buffers, so its views point at the same bytes.
+  const MergeModel copied = moved;
+  check(copied, "after copy");
+
+  // And the copy outliving its source is the case a plain member would break.
+  {
+    MergeModel scoped = BuildMergeModel(short_base, long_incoming, long_current);
+    const MergeModel survivor = std::move(scoped);
+    scoped = MergeModel{};  // drop the source's own references
+    check(survivor, "after the source model was reset");
+  }
+
+  // The result text must agree with the lines the views report, which is what
+  // proves the views are not merely non-crashing but correct.
+  Expect(MergeResultText(copied) == MergeResultText(moved),
+         "a copied model must produce the same result text as its source");
+}
+
 void TestMergeResultTextHonorsRequestedLineEnding() {
   auto model = BuildMergeModel("alpha\r\nbeta\r\n", "alpha\r\nbeta-incoming\r\n",
                                "alpha\r\nbeta\r\n");
@@ -242,6 +302,7 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Merge/ChoiceLabels", TestMergeChoiceLabels);
   AddTest(tests, "Merge/BootstrapMergeResultTextUsesOneTimeChoices",
           TestBootstrapMergeResultTextUsesOneTimeChoices);
+  AddTest(tests, "Merge/ModelLinesSurviveCopyAndMove", TestMergeModelLinesSurviveCopyAndMove);
   AddTest(tests, "Merge/ResultTextHonorsRequestedLineEnding",
           TestMergeResultTextHonorsRequestedLineEnding);
   AddTest(tests, "Merge/LargeInputsUseSharedFallbackDiff",

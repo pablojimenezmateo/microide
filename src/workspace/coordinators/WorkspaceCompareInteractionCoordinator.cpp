@@ -685,9 +685,13 @@ void CompareInteractionCoordinator::CopyMergeSideSnippet(bool incoming) {
     return;
   }
   const auto& hunk = merge_tab->model.hunks[conflict.hunk_index];
-  const std::vector<std::string>& lines =
+  // Streaming form: a hunk's lines are views into the model's source buffers, and
+  // this serializes straight out of them rather than materializing owned copies
+  // first.
+  const std::vector<std::string_view>& lines =
       incoming ? hunk.incoming_lines : hunk.current_lines;
-  operations_.write_clipboard_text(util::SerializeLines(lines, merge_tab->result_line_ending));
+  operations_.write_clipboard_text(
+      util::SerializeLinesStreaming(lines, merge_tab->result_line_ending));
 }
 
 void CompareInteractionCoordinator::MarkMergeResolved() {
