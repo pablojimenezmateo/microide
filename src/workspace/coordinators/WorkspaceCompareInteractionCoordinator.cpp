@@ -390,6 +390,10 @@ void CompareInteractionCoordinator::JumpCompareHunk(int delta) {
         static_cast<std::size_t>(
             compare_tab->model.hunks[static_cast<std::size_t>(target_hunk)].start_row));
   }
+  // The caret follows the change the jump revealed. Without this the reader looks
+  // at hunk N and types into whatever line the caret was left on, which for a fresh
+  // tab is line 0.
+  SyncCompareCaretToSelectedRow(*compare_tab);
   operations_.reveal_active_compare_selection();
   operations_.request_compare_row_range_redraw(previous_selected_row, previous_selected_row + 1);
   operations_.request_compare_row_range_redraw(compare_tab->selected_row, compare_tab->selected_row + 1);

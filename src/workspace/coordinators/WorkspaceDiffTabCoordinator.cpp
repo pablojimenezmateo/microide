@@ -32,6 +32,24 @@ void NotifyBufferOpenForEditableTab(const TabEntry& tab,
   }
 }
 
+// A freshly-opened comparison lands on its FIRST change, with the editable pane's
+// caret on it — what VS Code's diff editor does, and what the reader opened the
+// diff for. Row 0 is whatever unchanged context precedes the first hunk, which on a
+// large file is the entire screen.
+//
+// Fresh tabs only. Re-activating an already-open comparison goes through
+// ActivateCompareTab without this, because the reader's own selection is the thing
+// to preserve there.
+void SelectFirstChangeOnOpen(TabEntry& tab) {
+  if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
+    return;
+  }
+  CompareTabState& compare_tab = *tab.compare;
+  compare_tab.selected_row = CompareFirstChangePresentationRow(compare_tab);
+  NormalizeCompareSelectionToModelRow(compare_tab);
+  SyncCompareCaretToSelectedRow(compare_tab);
+}
+
 }  // namespace
 
 std::optional<CompareInput> ReadFileCompareInput(const std::filesystem::path& path, bool editable) {
@@ -123,6 +141,7 @@ bool DiffTabCoordinator::OpenPlainComparison(CompareInput left, CompareInput rig
   }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
+  SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
   NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
   return true;
@@ -219,6 +238,9 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
           static_cast<std::size_t>(current - review_files.begin());
     }
   }
+  // After the review metadata, not before: it is an input to the presentation the
+  // first-change row is expressed in.
+  SelectFirstChangeOnOpen(opened);
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, true);
   NotifyBufferOpenForEditableTab(opened, operations_);
 }
@@ -310,6 +332,7 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
   }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
+  SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
   NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
   return true;
@@ -369,6 +392,7 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
   }
   operations_.sync_active_editor_tab();
   state_.focused_group().open_tabs.push_back(std::move(*compare_tab));
+  SelectFirstChangeOnOpen(state_.focused_group().open_tabs.back());
   ActivateCompareTab(state_.focused_group().open_tabs.size() - 1, false);
   NotifyBufferOpenForEditableTab(state_.focused_group().open_tabs.back(), operations_);
   return true;

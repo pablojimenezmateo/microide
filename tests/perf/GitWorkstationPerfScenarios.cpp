@@ -10,6 +10,7 @@
 #include "compare/MergeModel.h"
 #include "platform/Subprocess.h"
 #include "project/GitStatusService.h"
+#include "workspace/git/CompareTabReview.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
 namespace microide::tests::perf {
@@ -120,22 +121,28 @@ void RunDiffNextHunkLargeFile(ScenarioContext& context) {
     throw std::runtime_error("diff_next_hunk_large_file: expected a multi-hunk diff, got " +
                              std::to_string(compare.model.hunks.size()) + " hunk(s)");
   }
-  // Walk back to the first hunk before measuring forward jumps. A working-tree
-  // comparison opens with its selection on the LAST hunk (TD-2026-08-17-258 — a
-  // product question, filed separately), so a forward burst from the opening
-  // position clamps on the first jump and moves nothing at all. Setup, outside the
-  // measured window, and its own guard: if the backward walk does not move either,
-  // hunk navigation is not reaching the compare tab and nothing below means
-  // anything.
-  const std::size_t opened_on_row = compare.selected_row;
+  // Walk back to the first hunk before measuring forward jumps, so the burst always
+  // starts from the same place. The driver — and therefore the shell — is reused
+  // across iterations, so iteration 2 onward re-opens a compare tab that is ALREADY
+  // OPEN and inherits the previous iteration's selection, which the previous burst
+  // left on the last hunk. (That carry-over is what TD-2026-08-17-258 originally
+  // read as "a comparison opens on its last hunk". It does not: a fresh open lands
+  // on the FIRST change, which is what this walk-back re-establishes.)
+  //
+  // The guard is on the destination, not on movement: "the walk moved" was
+  // satisfiable by a single jump, whereas landing on hunk 0 is the property the
+  // burst below actually depends on.
   for (int i = 0; i < 40; ++i) {
     context.JumpCompareHunk(-1);
   }
   const std::size_t selected_row_before = TA::ActiveCompare(context.Shell()).selected_row;
-  if (selected_row_before == opened_on_row) {
+  const std::size_t first_hunk_row =
+      workspace::CompareFirstChangePresentationRow(TA::ActiveCompare(context.Shell()));
+  if (selected_row_before != first_hunk_row) {
     throw std::runtime_error(
         "diff_next_hunk_large_file: 40 previous-hunk jumps left the selection on row " +
-        std::to_string(opened_on_row) + "; hunk navigation is not reaching the compare tab");
+        std::to_string(selected_row_before) + ", not the first hunk's row " +
+        std::to_string(first_hunk_row) + "; hunk navigation is not reaching the compare tab");
   }
   context.Measure("diff.next_hunk_burst", [&] {
     for (int i = 0; i < 24; ++i) {
@@ -145,11 +152,10 @@ void RunDiffNextHunkLargeFile(ScenarioContext& context) {
   });
   // Vacuity guard, and the reason this scenario needed one. The phase measured 3
   // allocations against a 10,980 baseline — a 3,660x collapse that the gate
-  // reported as a PASS, because an allocation gate only fails on an increase. Two
-  // independent causes, both invisible to a count: the fixture's whole worktree
-  // diff was one appended block (so every jump clamped to the hunk the caret was
-  // already on), and the selection opens on the last hunk. A number is not
-  // evidence that the operation a phase is named for happened; this is.
+  // reported as a PASS, because an allocation gate only fails on an increase. The
+  // cause was the fixture: its whole worktree diff was one appended block, so every
+  // jump clamped to the hunk the caret was already on. A number is not evidence
+  // that the operation a phase is named for happened; this is.
   if (TA::ActiveCompare(context.Shell()).selected_row == selected_row_before) {
     throw std::runtime_error(
         "diff_next_hunk_large_file: 24 next-hunk jumps left the selection on row " +

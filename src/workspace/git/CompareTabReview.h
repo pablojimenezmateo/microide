@@ -89,6 +89,24 @@ std::size_t ComparePresentationRowToVisualRow(const CompareTabState& compare_tab
 std::size_t CompareTabRightLineForModelRow(const CompareTabState& compare_tab,
                                            std::size_t model_row);
 
+// Presentation row of the diff's FIRST change, or 0 when the diff has no hunks.
+//
+// A comparison opens to be read, and what the reader opened it for is the change;
+// landing on row 0 puts them in whatever unchanged context happens to precede it,
+// which for a large file is the whole screen. VS Code reveals the first change
+// region, and so does this (TD-2026-08-17-258's product half).
+std::size_t CompareFirstChangePresentationRow(const CompareTabState& compare_tab);
+
+// Carry the editable pane's caret to the line the selection now names.
+//
+// `selected_row` is a PRESENTATION row and the right pane edits MODEL lines, so the
+// two agree only if something maps one onto the other — and until this existed,
+// nothing did. Every hunk jump moved the selection and revealed it while the caret
+// stayed wherever it was, so a reader could jump to a change 300 lines down, type,
+// and edit line 0. No-op on a read-only right pane, where there is no caret to
+// disagree with.
+void SyncCompareCaretToSelectedRow(CompareTabState& compare_tab);
+
 // Where the right pane's caret sits on screen. `column` is measured in the pane's
 // own on-screen cells — with wrap on that is the hanging indent plus the offset
 // into the segment, with wrap off it is the line's visual column — so both feed

@@ -438,6 +438,35 @@ std::size_t CompareTabRightLineForModelRow(const CompareTabState& compare_tab,
   return compare_tab.right_viewport.line_count() - 1;
 }
 
+std::size_t CompareFirstChangePresentationRow(const CompareTabState& compare_tab) {
+  if (compare_tab.model.hunks.empty()) {
+    return 0;
+  }
+  // Prefer the hunk-indexed lookup for the same reason JumpCompareHunk does: a
+  // collapsed run maps several model rows onto one placeholder, and the hunk's own
+  // presentation row is the one the reader sees. Fall back to the model-row mapping
+  // when the hunk has no presentation row of its own.
+  const compare::CompareHunk& first = compare_tab.model.hunks.front();
+  if (const auto presentation_row = CompareTabPresentationRowForHunk(compare_tab, first.index);
+      presentation_row.has_value()) {
+    return *presentation_row;
+  }
+  return compare::ComparePresentationRowForModelRow(compare_tab.presentation,
+                                                    static_cast<std::size_t>(first.start_row));
+}
+
+void SyncCompareCaretToSelectedRow(CompareTabState& compare_tab) {
+  if (!compare_tab.right_editable || compare_tab.right_viewport.line_count() == 0) {
+    return;
+  }
+  const std::size_t right_line =
+      CompareTabRightLineForModelRow(compare_tab, CompareTabSelectedModelRow(compare_tab));
+  if (compare_tab.right_viewport.cursor_line() == right_line) {
+    return;  // Already agreed; MoveCursorTo would drop the column for nothing.
+  }
+  compare_tab.right_viewport.MoveCursorTo(right_line, 0, false);
+}
+
 CompareRightCaretPlacement CompareRightCaretPlacementFor(const CompareTabState& compare_tab,
                                                          std::size_t right_line,
                                                          std::size_t visual_column) {

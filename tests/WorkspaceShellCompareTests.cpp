@@ -92,6 +92,127 @@ std::optional<microide::editor::EditorBlameOverlay> WaitForActiveMergeBlameOverl
   return WorkspaceShellTestAccess::ActiveMergeBlameOverlay(shell);
 }
 
+// TD-2026-08-17-258's open half: opening a working-tree comparison landed the
+// selection on the LAST hunk, so a forward "next hunk" jump clamped immediately
+// and the reader started at the bottom of the file. VS Code reveals the FIRST
+// change; the caret agreed with VS Code (`right_cursor_line` was 0) while the
+// selection did not, which is what made the two disagree at open.
+//
+// Multi-hunk on purpose: a one-hunk fixture cannot tell first from last, which
+// is exactly how the perf scenario that found this stayed green for so long.
+void TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+
+  std::string committed;
+  for (int line = 0; line < 400; ++line) {
+    committed += "line " + std::to_string(line) + "\n";
+  }
+  WriteFile(source, committed);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add multi-hunk compare fixture", "multi-hunk compare fixture");
+
+  // Three well-separated edits -> three hunks, none of them at line 0.
+  std::string edited;
+  for (int line = 0; line < 400; ++line) {
+    if (line == 50 || line == 200 || line == 350) {
+      edited += "changed " + std::to_string(line) + "\n";
+    } else {
+      edited += "line " + std::to_string(line) + "\n";
+    }
+  }
+  WriteFile(source, edited);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  SoftwareCanvas canvas(1280, 720);
+  for (int frame = 0; frame < 4; ++frame) {
+    shell.Render(canvas.renderer(), 1280, 720);
+  }
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const auto& hunks = compare.model.hunks;
+  Expect(hunks.size() >= 3,
+         "the fixture must produce several hunks or this test cannot tell first from last");
+
+  const std::size_t first_hunk_row = microide::compare::ComparePresentationRowForModelRow(
+      compare.presentation, static_cast<std::size_t>(hunks.front().start_row));
+  Expect(compare.selected_row == first_hunk_row,
+         "opening a working-tree comparison should select the FIRST change, not the last");
+  Expect(compare.right_viewport.cursor_line() ==
+             microide::workspace::CompareTabRightLineForModelRow(
+                 compare, static_cast<std::size_t>(hunks.front().start_row)),
+         "the editable pane's caret should agree with the selected row at open");
+}
+
+// The other half of the same disagreement: `JumpCompareHunk` moved `selected_row`
+// and revealed it, but never moved the editable pane's caret. So after jumping to
+// a hunk in the middle of the file the reader was LOOKING at that hunk and TYPING
+// at line 0 — an edit landing 300 lines away from the cursor they can see. VS Code
+// puts the cursor on the change it reveals.
+void TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+
+  std::string committed;
+  for (int line = 0; line < 400; ++line) {
+    committed += "line " + std::to_string(line) + "\n";
+  }
+  WriteFile(source, committed);
+  InitializeGitRepo(root);
+  CommitAll(root, "Add hunk-jump fixture", "hunk jump fixture");
+
+  std::string edited;
+  for (int line = 0; line < 400; ++line) {
+    if (line == 50 || line == 200 || line == 350) {
+      edited += "changed " + std::to_string(line) + "\n";
+    } else {
+      edited += "line " + std::to_string(line) + "\n";
+    }
+  }
+  WriteFile(source, edited);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.model.hunks.size() >= 3, "the fixture should produce several hunks");
+
+  // Forward to the third change, then type. The edit must land there.
+  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_NONE),
+         "] should navigate to the next hunk");
+  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_NONE),
+         "] should navigate to the next hunk");
+  shell.Render(canvas.renderer(), 1280, 720);
+
+  auto& jumped = WorkspaceShellTestAccess::ActiveCompare(shell);
+  const std::size_t selected_model_row =
+      microide::compare::ComparePresentationToModelRow(jumped.presentation, jumped.selected_row);
+  const std::size_t selected_right_line =
+      microide::workspace::CompareTabRightLineForModelRow(jumped, selected_model_row);
+  Expect(selected_right_line > 0,
+         "the fixture's later hunks are not at line 0, so the jump must leave line 0");
+  Expect(jumped.right_viewport.cursor_line() == selected_right_line,
+         "a hunk jump should carry the editable pane's caret to the selected change");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"),
+         "text input should reach the compare current-state pane");
+  Expect(jumped.right_viewport.lines()[selected_right_line].rfind("X", 0) == 0,
+         "typing after a hunk jump should edit the hunk the reader is looking at");
+}
+
 void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1013,12 +1134,21 @@ void TestWorkspaceShellCompareSelectionStepInvalidatesRowBand() {
          "compare row invalidation fixture should open");
   (void)shell.ConsumePendingRenderInvalidation();
 
-  const auto previous_row_rect = WorkspaceShellTestAccess::ActiveCompareRowRangeRect(shell, 0, 1);
+  // Read the rows rather than assuming 0 and 1: a comparison opens on its first
+  // CHANGE now, which for this fixture is not row 0. The subject here is the redraw
+  // band, so what matters is that it covers the row the selection left and the row
+  // it arrived on, whichever those are.
+  const std::size_t before_row = WorkspaceShellTestAccess::ActiveCompare(shell).selected_row;
+  const auto previous_row_rect =
+      WorkspaceShellTestAccess::ActiveCompareRowRangeRect(shell, before_row, before_row + 1);
   SDL_Event event{};
   event.type = SDL_EVENT_KEY_DOWN;
   event.key.key = SDLK_DOWN;
   const auto result = shell.HandleEvent(event);
-  const auto next_row_rect = WorkspaceShellTestAccess::ActiveCompareRowRangeRect(shell, 1, 2);
+  const std::size_t after_row = WorkspaceShellTestAccess::ActiveCompare(shell).selected_row;
+  Expect(after_row != before_row, "Down should move the compare selection");
+  const auto next_row_rect =
+      WorkspaceShellTestAccess::ActiveCompareRowRangeRect(shell, after_row, after_row + 1);
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
 
   Expect(result.handled, "compare selection step should be handled");
@@ -2401,6 +2531,10 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSelectForCompareThenCompareWithSelected);
   AddTest(tests, "WorkspaceShell/CompareWithClipboardOpensPlainCompare",
           TestWorkspaceShellCompareWithClipboardOpensPlainCompare);
+  AddTest(tests, "WorkspaceShell/WorkingTreeCompareOpensOnFirstChange",
+          TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange);
+  AddTest(tests, "WorkspaceShell/CompareHunkJumpMovesTheEditableCaret",
+          TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret);
 }
 
 }  // namespace microide::tests
