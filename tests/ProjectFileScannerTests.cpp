@@ -179,6 +179,37 @@ void TestScannerPrunesDefaultsAndUserExcludes() {
 // reports truncated_by_budget and returns only a prefix of the tree, so the caller
 // can surface "index incomplete" instead of a silently-authoritative partial list
 // (TD-2026-07-17-008/033).
+// ExcludeHidden drops an entry whose OWN name begins with a dot, and a hidden
+// directory takes its subtree with it. The check reads the last component of the
+// relative text now instead of building `path.filename().string()` per entry, and
+// nothing asserted the mode directly before — every other scanner test runs
+// IncludeHidden. The "..cache" case is here because its name begins with a dot
+// while not being a ".." path component: it must read as hidden (it did before),
+// and the normalization fast path must not mistake it for a non-normal path.
+void TestScannerExcludeHiddenDropsDotNamedEntries() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "visible.txt", "v\n");
+  WriteFile(root / ".hidden.txt", "h\n");
+  WriteFile(root / "src" / "nested.cpp", "int nested() { return 1; }\n");
+  WriteFile(root / ".hidden_dir" / "inside.txt", "i\n");
+  WriteFile(root / "..cache" / "cached.txt", "c\n");
+
+  const auto included = CollectProjectFiles(root, ProjectFileScanMode::IncludeHidden);
+  Expect(ContainsName(included, "visible.txt") && ContainsName(included, ".hidden.txt") &&
+             ContainsName(included, "inside.txt") && ContainsName(included, "cached.txt"),
+         "IncludeHidden should list dot-named files, dot-named directories and their contents");
+
+  const auto excluded = CollectProjectFiles(root, ProjectFileScanMode::ExcludeHidden);
+  Expect(ContainsName(excluded, "visible.txt"), "ExcludeHidden keeps ordinary files");
+  Expect(ContainsName(excluded, "nested.cpp"), "ExcludeHidden descends ordinary directories");
+  Expect(!ContainsName(excluded, ".hidden.txt"), "ExcludeHidden drops a dot-named file");
+  Expect(!ContainsName(excluded, "inside.txt"),
+         "ExcludeHidden prunes the subtree under a dot-named directory");
+  Expect(!ContainsName(excluded, "cached.txt"),
+         "ExcludeHidden treats a '..'-prefixed directory name as hidden");
+}
+
 void TestScannerReportsEntryBudgetTruncation() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -246,6 +277,8 @@ void TestScannerReportsPermissionLimited() {
 }  // namespace
 
 void RegisterProjectFileScannerTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectFileScanner/ExcludeHiddenDropsDotNamedEntries",
+          TestScannerExcludeHiddenDropsDotNamedEntries);
   AddTest(tests, "ProjectFileScanner/ReportsEntryBudgetTruncation",
           TestScannerReportsEntryBudgetTruncation);
   AddTest(tests, "ProjectFileScanner/ReportsPermissionLimited",

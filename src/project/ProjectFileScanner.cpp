@@ -116,17 +116,21 @@ void CollectFiles(const std::filesystem::path& root,
       continue;
     }
 
+    // `relative_text` stays the entry's own (native) spelling — that is what gets
+    // stored. `matcher_relative_text` is the forward-slash spelling IgnoreMatcher
+    // speaks, which the native text already is on POSIX; on Windows it is the
+    // conversion, into the same reused buffer ProjectTraversalFilter::Includes
+    // uses. Keeping them as two names is the point: overwriting the one view with
+    // the other stored the matcher's spelling in the index.
+    std::string_view matcher_relative_text = relative_text;
 #ifdef _WIN32
-    // IgnoreMatcher speaks generic (forward-slash) relatives, which the native
-    // text already is on POSIX. Same conversion, and the same reused buffer, as
-    // ProjectTraversalFilter::Includes.
     generic_relative_scratch.assign(relative_text);
     for (char& c : generic_relative_scratch) {
       if (c == '\\') {
         c = '/';
       }
     }
-    relative_text = generic_relative_scratch;
+    matcher_relative_text = generic_relative_scratch;
 #endif
 
     if (is_directory) {
@@ -137,7 +141,7 @@ void CollectFiles(const std::filesystem::path& root,
       // actually descend into — otherwise every ignored dir (node_modules, build, .git,
       // target, dist, __pycache__) pays a rules-vector copy + 2 syscalls per refresh just
       // to be discarded. Mirrors DirectoryTree::AppendDirectory.
-      if (matcher->IgnoredNormalized(relative_text, true)) {
+      if (matcher->IgnoredNormalized(matcher_relative_text, true)) {
         iterator.increment(error);
         continue;
       }
@@ -157,7 +161,7 @@ void CollectFiles(const std::filesystem::path& root,
       continue;
     }
 
-    if (matcher->IgnoredNormalized(relative_text, false)) {
+    if (matcher->IgnoredNormalized(matcher_relative_text, false)) {
       iterator.increment(error);
       continue;
     }
@@ -165,14 +169,8 @@ void CollectFiles(const std::filesystem::path& root,
     std::error_code regular_error;
     if (iterator->is_regular_file(regular_error) && !regular_error) {
       // Already lexically normal (see the derivation above), so no second
-      // normalize; on Windows the stored path keeps its native spelling, which is
-      // what `relative_storage` / the un-converted view held before the generic
-      // conversion above — so push from the path, not from the scratch.
-#ifdef _WIN32
-      files.emplace_back(std::string_view(relative_storage.native()));
-#else
+      // normalize — and from the NATIVE view, not the matcher's.
       files.emplace_back(relative_text);
-#endif
     }
     iterator.increment(error);
   }
