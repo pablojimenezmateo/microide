@@ -4,24 +4,12 @@
 #include <utility>
 #include <cstdlib>
 
+#include "util/StringUtil.h"
 #include "workspace/state/WorkspaceTabState.h"
 
 namespace microide::workspace {
-namespace {
 
-// Appends `value` in decimal without materializing an intermediate string.
-void AppendUnsigned(std::string& out, std::size_t value) {
-  char buffer[24];
-  char* end = buffer + sizeof(buffer);
-  char* cursor = end;
-  do {
-    *--cursor = static_cast<char>('0' + (value % 10));
-    value /= 10;
-  } while (value != 0);
-  out.append(cursor, static_cast<std::size_t>(end - cursor));
-}
-
-}  // namespace
+using util::AppendUnsigned;  // one definition, in util/StringUtil.h
 
 void TerminalFindService::ClearMatches() {
   matches_.clear();

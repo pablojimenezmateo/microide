@@ -1,12 +1,11 @@
 #pragma once
 
-#include <array>
-#include <charconv>
 #include <initializer_list>
 #include <string>
 #include <string_view>
 
 #include "project/ProjectFileScanner.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -30,14 +29,10 @@ inline std::string_view ScanIncompleteNote(const project::ProjectFileScanStatus&
   return {};
 }
 
-inline void AppendUnsigned(std::string& out, std::size_t value) {
-  std::array<char, 20> scratch;
-  const auto [end, ec] =
-      std::to_chars(scratch.data(), scratch.data() + scratch.size(), value);
-  if (ec == std::errc{}) {
-    out.append(scratch.data(), static_cast<std::size_t>(end - scratch.data()));
-  }
-}
+// One definition, in `util/StringUtil.h`. This spelling used `std::to_chars`
+// into a 20-byte buffer and SILENTLY APPENDED NOTHING on overflow; the util one
+// sizes its buffer for the widest std::size_t so there is no failure case.
+using util::AppendUnsigned;
 
 // The one separator for key-hint lists, matching the overlay hint ("↑↓ select ·
 // Enter choose · Esc cancel"). Not for joining unrelated fields — the breadcrumb's

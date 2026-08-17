@@ -63,6 +63,23 @@ char32_t DecodeUtf8Codepoint(std::string_view glyph);
 // are encoded as written (callers are expected to pass valid scalar values).
 void AppendUtf8(std::string& out, char32_t codepoint);
 
+// Append `value` in decimal without materializing an intermediate string.
+// `std::to_string(n)` is a heap allocation for a number, and the shapes that
+// need this are all per-row or per-frame ones assembling into a reused buffer.
+// Three byte-identical private copies of this had grown in `workspace/`; keep
+// it here so a fourth does not.
+inline void AppendUnsigned(std::string& out, std::size_t value) {
+  // Longest std::size_t is 20 digits.
+  char buffer[24];
+  char* const end = buffer + sizeof(buffer);
+  char* cursor = end;
+  do {
+    *--cursor = static_cast<char>('0' + (value % 10));
+    value /= 10;
+  } while (value != 0);
+  out.append(cursor, static_cast<std::size_t>(end - cursor));
+}
+
 // Locale-independent ASCII character classification.
 //
 // These replace `<cctype>` (`std::isspace`, `std::isalnum`, `std::tolower`, …)
