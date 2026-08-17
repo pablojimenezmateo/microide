@@ -9194,6 +9194,26 @@ latent bug. Kept documented with fix direction for a maintainer on that platform
 These are dead ends proven by the perf gate. Re-attempting them in the same shape wastes effort and
 the gate will reject them again.
 
+- **Preferring the Vulkan render driver for a faster launch** (2026-08-17). `SDL_CreateRenderer`
+  costs 63-80 ms with SDL's own pick here (`opengles2`) and 41 ms with `vulkan`, and
+  `SDL_HINT_RENDER_DRIVER` takes a comma-separated fallback list, so the ~30 ms looked free. It is
+  paid back immediately: `render::TextBackend::UploadStringTexture` measures **8.9-10.6 ms per 95
+  uploads on opengles2 and 27.1-29.0 ms on vulkan** — 3x, on the shell thread, on a path that runs
+  on every glyph-cache miss. Trading interactive latency for a one-time 30 ms is the wrong direction
+  for a project whose first priority is latency. Do not retry without re-measuring the upload path;
+  the startup number is not the one that decides it. (`software` also takes ~75 ms to create here,
+  which is the tell that the cost is the Mesa/EGL load rather than anything GL-specific — there is
+  no cheap driver to switch to, only a different trade.)
+
+- **Deferring VSync until the window is mapped** (2026-08-17). The renderer is created with VSync on
+  and the first two presents (the startup frame, and the re-blit after `SDL_ShowWindow`) happen
+  while the window is still hidden, so pacing them to a refresh boundary looked like up to a frame
+  interval each of pure waste. Measured five interleaved launches each on a Wayland session: time to
+  `Application::FirstRender` **104.9 ms vs 105.9 ms** — no effect. A present against an unmapped
+  surface does not block for a frame callback that was never requested, so there was nothing to
+  save. Reverted rather than kept "because it cannot hurt": it is a second VSync state to reason
+  about for zero measured gain.
+
 - **Capacity-preserving line assembly in `PieceTree::ExtractLineRange`** (2026-08-10). The spanning
   line path does `out.push_back(std::move(current))`, which hands the buffer away and leaves `current`
   at zero capacity, so the next line that spans pieces re-allocates and grows geometrically. Copying
