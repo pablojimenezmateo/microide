@@ -170,10 +170,20 @@ int main(int argc, char** argv) {
 
   // Collect the candidate file list once (outside the timed region) and reuse it
   // across runs, mirroring how the shell hands the engine a maintained snapshot.
-  const SharedPathList indexed_files =
-      std::make_shared<const std::vector<std::filesystem::path>>(microide::project::CollectProjectFiles(
-          project_root, options.show_hidden ? microide::project::ProjectFileScanMode::IncludeHidden
-                                            : microide::project::ProjectFileScanMode::ExcludeHidden));
+  // The engine takes generic path TEXT (TD-2026-08-17-259), which is also what the
+  // index stores; CollectProjectFiles still yields paths, so convert once here —
+  // outside the timed region, like the collection itself.
+  auto indexed_paths = std::make_shared<std::vector<std::string>>();
+  {
+    const std::vector<std::filesystem::path> collected = microide::project::CollectProjectFiles(
+        project_root, options.show_hidden ? microide::project::ProjectFileScanMode::IncludeHidden
+                                          : microide::project::ProjectFileScanMode::ExcludeHidden);
+    indexed_paths->reserve(collected.size());
+    for (const std::filesystem::path& path : collected) {
+      indexed_paths->emplace_back(path.generic_string());
+    }
+  }
+  const SharedPathList indexed_files = std::move(indexed_paths);
 
   std::vector<BenchRun> runs;
   runs.reserve(static_cast<std::size_t>(run_count));
