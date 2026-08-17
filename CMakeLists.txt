@@ -1195,6 +1195,16 @@ else()
   add_test(NAME microide_tests COMMAND microide_tests)
 endif()
 
+# The perf-drift reporter decides which measurements count as a failure, and it
+# had been reporting metrics the harness deliberately does not enforce as red
+# GATE FAILURES — ten of them on a run whose own verdict was PASS. Registered in
+# the DEFAULT lane, not under MICROIDE_PERF_HARNESS_BUILD: it is pure Python with
+# no build dependency, and the perf lane is off by default, so gating it there
+# would be gating it nowhere.
+add_test(NAME microide_perf_drift_selftest
+         COMMAND python3 tools/perf-drift.py --selftest
+         WORKING_DIRECTORY ${CMAKE_SOURCE_DIR})
+
 if(MICROIDE_FUZZ)
   if(NOT CMAKE_CXX_COMPILER_ID MATCHES "Clang")
     message(FATAL_ERROR "MICROIDE_FUZZ requires clang/clang++ with libFuzzer support.")

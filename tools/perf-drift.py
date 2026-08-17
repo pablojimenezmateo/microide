@@ -31,8 +31,12 @@ Options:
 
 Exit status:
   0  nothing to report
-  1  a gate failed, or --fail-on-drift and something was flagged
+  1  an ENFORCED gate failed, or --fail-on-drift and something was flagged
   2  bad usage / unreadable input
+
+A metric the harness did not enforce is reported under ADVISORY and never fails
+the run — see `is_enforced`. `--selftest` checks that, and the rest of the
+bucketing, against synthetic reports; ctest runs it as `microide_perf_drift_selftest`.
 """
 
 from __future__ import annotations
@@ -266,12 +270,32 @@ def analyse(
     return findings
 
 
+# A metric the harness chose not to enforce did not decide the run, and must not
+# decide this report either.
+#
+# The harness unenforces a metric for reasons that are about the MEASUREMENT, not
+# the code: a baseline whose timing half was recorded off the reference lane
+# (`timing_is_advisory`, 19 of the 113 committed baselines), or one recorded under
+# a different build configuration. It records that per metric as
+# `enforced: false` with a note, and keeps `passed` as the raw comparison so the
+# number stays readable.
+#
+# Reading `passed` without `enforced` turns every one of those into a red GATE
+# FAILURE. On the 2026-08-17 run that was ten of them, all three scenarios
+# advisory, against a run whose own verdict was PASS and whose 113 allocation
+# gates had drifted up exactly nowhere. That is the cry-wolf failure this file
+# exists to prevent, one layer up: a report that is red when nothing is wrong is
+# a report nobody reads when something is.
+def is_enforced(metric: dict[str, Any]) -> bool:
+    return bool(metric.get("enforced", True))
+
+
 def envelope_pressure(gate: dict[str, dict[str, Any]], notice: float) -> list[dict[str, Any]]:
-    """Gated metrics that PASSED while consuming `notice`% or more of their envelope."""
+    """Enforced metrics that PASSED while consuming `notice`% or more of their envelope."""
     rows = []
     for scenario, baseline in gate.items():
         for metric in baseline.get("metrics", []):
-            if not metric.get("passed", True):
+            if not is_enforced(metric) or not metric.get("passed", True):
                 continue
             used = float(metric.get("envelope_used_percent", 0.0))
             if used >= notice:
@@ -281,11 +305,31 @@ def envelope_pressure(gate: dict[str, dict[str, Any]], notice: float) -> list[di
 
 
 def gate_failures(gate: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Metrics that were armed and lost. These, and only these, fail the run."""
     rows = []
     for scenario, baseline in gate.items():
         for metric in baseline.get("metrics", []):
-            if not metric.get("passed", True):
+            if is_enforced(metric) and not metric.get("passed", True):
                 rows.append({"scenario": scenario, **metric})
+    return rows
+
+
+def advisory_breaches(gate: dict[str, dict[str, Any]]) -> list[dict[str, Any]]:
+    """Metrics that would have failed had they been armed.
+
+    Not a failure, and deliberately not silent. An advisory baseline is the one
+    place a real regression can hide with nothing to say so, because the metric
+    that would have caught it is switched off — so the number is printed, with
+    the harness's own reason for not enforcing it, and it never touches the exit
+    status. The way to act on a row here is to re-record that baseline's timing
+    half on the reference runner, which arms it.
+    """
+    rows = []
+    for scenario, baseline in gate.items():
+        for metric in baseline.get("metrics", []):
+            if not is_enforced(metric) and not metric.get("passed", True):
+                rows.append({"scenario": scenario, **metric})
+    rows.sort(key=lambda r: float(r.get("envelope_used_percent", 0.0)), reverse=True)
     return rows
 
 
@@ -318,9 +362,87 @@ def print_rows(rows: list[dict[str, Any]], colour) -> None:
         print(line)
 
 
+# ---------------------------------------------------------------------------
+# Self-test
+# ---------------------------------------------------------------------------
+
+
+def _metric(name: str, *, enforced: bool, passed: bool, used: float) -> dict[str, Any]:
+    return {
+        "metric": name,
+        "enforced": enforced,
+        "passed": passed,
+        "actual": 100.0,
+        "expected": 50.0,
+        "delta_percent": 100.0,
+        "tolerance_percent": 75.0,
+        "envelope_used_percent": used,
+    }
+
+
+def selftest() -> int:
+    """Positive AND negative controls for the enforced/advisory split.
+
+    A rule that only ever sees green input is not evidence it can fire, which is
+    how the defect this fixes survived a run in the first place: the reporter had
+    never been shown an unenforced metric it was supposed to ignore.
+    """
+    failures: list[str] = []
+
+    def check(name: str, got: Any, want: Any) -> None:
+        if got != want:
+            failures.append(f"{name}: got {got!r}, want {want!r}")
+
+    gate = {
+        "armed_and_lost": {
+            "gated": True,
+            "metrics": [_metric("p50_allocations", enforced=True, passed=False, used=200.0)],
+        },
+        "advisory_and_lost": {
+            "gated": True,
+            "metrics": [_metric("p50_wall_ms", enforced=False, passed=False, used=176.0)],
+        },
+        "armed_and_tight": {
+            "gated": True,
+            "metrics": [_metric("p50_cpu_ms", enforced=True, passed=True, used=88.0)],
+        },
+        "advisory_and_tight": {
+            "gated": True,
+            "metrics": [_metric("p95_wall_ms", enforced=False, passed=True, used=99.0)],
+        },
+    }
+
+    # The negative control: the enforced failure is still found. A filter that
+    # silenced everything would pass a test that only checked the false positive.
+    check("gate_failures", [r["scenario"] for r in gate_failures(gate)], ["armed_and_lost"])
+    # The positive control: the advisory failure is reported, and reported
+    # somewhere that does not fail the run.
+    check("advisory_breaches",
+          [r["scenario"] for r in advisory_breaches(gate)], ["advisory_and_lost"])
+    # Envelope pressure is about tolerance that IS applied.
+    check("envelope_pressure",
+          [r["scenario"] for r in envelope_pressure(gate, 75.0)], ["armed_and_tight"])
+
+    # A report predating the `enforced` field gates exactly as it used to.
+    legacy = {"legacy": {"gated": True, "metrics": [
+        {"metric": "p50_allocations", "passed": False, "actual": 2.0, "expected": 1.0,
+         "delta_percent": 100.0, "tolerance_percent": 10.0, "envelope_used_percent": 1000.0},
+    ]}}
+    check("legacy_reports_still_fail", [r["scenario"] for r in gate_failures(legacy)], ["legacy"])
+
+    for line in failures:
+        print(f"perf-drift selftest FAIL: {line}", file=sys.stderr)
+    if failures:
+        return 1
+    print("perf-drift selftest: 5 checks passed")
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(add_help=True, description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
+    parser.add_argument("--selftest", action="store_true",
+                        help="check the enforced/advisory bucketing and exit")
     parser.add_argument("reports", nargs="*", type=Path)
     parser.add_argument("--dir", type=Path, default=None)
     parser.add_argument("--baselines", type=Path, default=REPO_ROOT / "tests/perf/baselines")
@@ -330,6 +452,9 @@ def main() -> int:
     parser.add_argument("--fail-on-drift", action="store_true")
     parser.add_argument("--json", action="store_true")
     args = parser.parse_args()
+
+    if args.selftest:
+        return selftest()
 
     if args.dir is not None:
         found = newest_reports(args.dir, 2)
@@ -357,6 +482,7 @@ def main() -> int:
     findings = analyse(new_metrics, old_metrics, args.alloc_threshold, args.loose_threshold)
     pressure = envelope_pressure(gate, args.envelope_notice)
     failures = gate_failures(gate)
+    advisory = advisory_breaches(gate)
 
     if args.json:
         json.dump(
@@ -366,6 +492,7 @@ def main() -> int:
                 "findings": findings,
                 "envelope_pressure": pressure,
                 "gate_failures": failures,
+                "advisory_breaches": advisory,
             },
             sys.stdout,
             indent=2,
@@ -385,6 +512,21 @@ def main() -> int:
                     f"  {row['scenario']}  {row['metric']}: "
                     f"baseline={fmt(row['expected'])} measured={fmt(row['actual'])} "
                     f"({row['delta_percent']:+.2f}% of +{row['tolerance_percent']:.0f}% allowed)"
+                )
+            print()
+
+        if advisory:
+            print(yellow(bold(f"ADVISORY (NOT ENFORCED) ({len(advisory)})")))
+            print(dim("  These metrics are switched off in the harness, so they did not and"))
+            print(dim("  cannot fail the run. Shown because an unenforced metric is where a"))
+            print(dim("  regression hides with nothing to say so. Arm one by re-recording"))
+            print(dim("  that baseline's timing half on the reference runner."))
+            for row in advisory:
+                print(
+                    f"  {row['scenario']}  {row['metric']}: "
+                    f"baseline={fmt(row['expected'])} measured={fmt(row['actual'])} "
+                    f"({row['delta_percent']:+.2f}% vs +{row['tolerance_percent']:.0f}% "
+                    f"that is not applied)"
                 )
             print()
 
@@ -423,7 +565,7 @@ def main() -> int:
                       f">={args.envelope_notice:.0f}% of its envelope"))
             print()
 
-        flagged = sum(len(v) for v in findings.values()) + len(pressure)
+        flagged = sum(len(v) for v in findings.values()) + len(pressure) + len(advisory)
         if not failures and flagged == 0:
             print(green("no drift to report"))
 

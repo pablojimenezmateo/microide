@@ -331,9 +331,19 @@ PY
 
   cat "$summary"
 
+  # The drift comparison has to be able to fail the script on the FIRST recorded
+  # run too. It could not: `previous` is empty then, so the exit status of the
+  # comparison against the committed baselines was never read, and the summary
+  # above could print a page of drift findings under an exit status of 0. That is
+  # the same defect this script exists to prevent (a signal nobody's tooling
+  # sees), one layer up — and the first run is exactly when a fresh clone or a
+  # fresh drift directory is looking for one.
   local drift_rc=0
   if [[ -n "$previous" ]]; then
     python3 tools/perf-drift.py "$report" "$previous" --fail-on-drift >/dev/null 2>&1
+    drift_rc=$?
+  else
+    python3 tools/perf-drift.py "$report" >/dev/null 2>&1
     drift_rc=$?
   fi
 
