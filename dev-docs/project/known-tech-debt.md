@@ -9375,6 +9375,20 @@ the gate will reject them again.
   which is the tell that the cost is the Mesa/EGL load rather than anything GL-specific — there is
   no cheap driver to switch to, only a different trade.)
 
+- **Pre-warming the GL stack on a background thread** (2026-08-17). `SDL_CreateRenderer` is
+  60-90 ms and traces almost entirely to Mesa's `eglInitialize` — a dlopen chain of 35 shared
+  objects including libLLVM, plus DRM ioctls. The shell thread is idle before it, so warming the
+  stack from a thread started at the top of `Application::Initialize` looked like most of that
+  moved off the critical path. Measured, ten interleaved rounds each, time from process start to a
+  created renderer: **108.8 ms cold vs 121.2 ms warmed** — worse. The warm does cut SDL's own
+  renderer creation (86 -> 58-64 ms), but it costs 62-66 ms to do it and only ~20 ms of that
+  overlaps anything (`SDL_Init` plus window creation), so the join eats the rest. Warming with
+  `dlopen` alone and no `eglInitialize` costs 0.4 ms and saves nothing (99.5 vs 102.8 ms): the
+  expensive part is the driver initialization, not loading libEGL. And an EGL display we initialize
+  on the default (X11/DRM) native display is not the one SDL initializes on the Wayland one, so
+  part of the work is done twice by construction. Do not retry without a way to warm *SDL's own*
+  display before it needs it.
+
 - **Deferring VSync until the window is mapped** (2026-08-17). The renderer is created with VSync on
   and the first two presents (the startup frame, and the re-blit after `SDL_ShowWindow`) happen
   while the window is still hidden, so pacing them to a refresh boundary looked like up to a frame
