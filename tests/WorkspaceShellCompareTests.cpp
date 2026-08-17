@@ -1237,23 +1237,42 @@ void TestWorkspaceShellCompareRenderReusesVisibleLayoutCache() {
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
          "compare layout cache fixture should open");
   auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-  Expect(compare.visible_layout_cache.empty(),
+  Expect(compare.visible_layouts.live_count == 0,
          "compare visible-layout cache should start empty before first render");
 
   SoftwareCanvas canvas(1280, 720);
   shell.Render(canvas.renderer(), 1280, 720);
-  const std::size_t warmed_cache_size = compare.visible_layout_cache.size();
+  const std::size_t warmed_cache_size = compare.visible_layouts.live_count;
   Expect(warmed_cache_size >= 2,
          "first compare render should warm visible layouts for rendered panes");
 
   shell.Render(canvas.renderer(), 1280, 720);
-  Expect(compare.visible_layout_cache.size() == warmed_cache_size,
+  Expect(compare.visible_layouts.live_count == warmed_cache_size,
          "stable compare frames should reuse cached visible layouts instead of appending more");
+
+  // The slab's own storage must SURVIVE the invalidation — that is the point of
+  // the live-count reset (TD-2026-08-17-261). Capture the buffer capacities
+  // first, then assert the rebuilt window does not reallocate them.
+  const std::size_t retained_slots = compare.visible_layouts.layouts.size();
+  const std::size_t retained_text_capacity =
+      compare.visible_layouts.layouts.front().text.capacity();
+  Expect(retained_text_capacity > 0,
+         "a warmed layout slot should hold a non-empty text buffer to recycle");
 
   compare.left_content = compare::MakeCompareText("same\tline\nolder\tline\n");
   WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
-  Expect(compare.visible_layout_cache.empty(),
-         "compare visible-layout cache should clear when the compare model changes");
+  Expect(compare.visible_layouts.live_count == 0,
+         "compare visible-layout cache should drop its live entries when the model changes");
+  Expect(compare.visible_layouts.layouts.size() == retained_slots,
+         "invalidation must recycle the layout slab, not free it");
+  Expect(compare.visible_layouts.layouts.front().text.capacity() == retained_text_capacity,
+         "a recycled layout slot must keep the buffer capacity the next build refills");
+
+  shell.Render(canvas.renderer(), 1280, 720);
+  Expect(compare.visible_layouts.live_count >= 2,
+         "the frame after an invalidation should rewarm the visible layouts");
+  Expect(compare.visible_layouts.layouts.size() == retained_slots,
+         "rewarming into a recycled slab must not grow it");
 }
 
 void TestWorkspaceShellCompareBlameLoadsForWorkingTreePane() {

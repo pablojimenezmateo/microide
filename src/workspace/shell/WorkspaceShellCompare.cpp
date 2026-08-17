@@ -12,6 +12,7 @@
 #include "util/StringUtil.h"
 #include "util/TextFileIO.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/render/CompareVisibleLayoutCache.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/WorkspaceTextSearch.h"
 
@@ -537,9 +538,8 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
                                    compare::MakeCompareText(std::move(right_content)),
                                    compare_tab.build_options);
     ++compare_tab.model_revision;
-    compare_tab.visible_layout_cache_model_revision = compare_tab.model_revision;
-    compare_tab.visible_layout_cache.clear();
-    compare_tab.visible_layout_cache_index.clear();
+    compare_tab.visible_layouts.model_revision = compare_tab.model_revision;
+    ResetCompareVisibleLayoutCache(compare_tab);
     compare_tab.derived_right_content_revision = right_content_revision;
     compare_tab.derived_right_line_ending = right_line_ending;
     compare_tab.derived_left_content_hash = left_content_hash;

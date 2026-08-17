@@ -10,19 +10,64 @@ namespace microide::workspace {
 namespace {
 
 constexpr std::size_t kMaxCompareLayoutBytes = 1u << 20;  // 1 MiB
-constexpr std::size_t kCompareVisibleLayoutCacheLimit = 512;
+
+static_assert((CompareVisibleLayoutCache::kTableSize &
+               (CompareVisibleLayoutCache::kTableSize - 1)) == 0,
+              "the index masks with kTableSize - 1, so it must be a power of two");
+static_assert(CompareVisibleLayoutCache::kTableSize >= 2 * CompareVisibleLayoutCache::kLimit,
+              "linear probing only terminates while the table keeps a free position");
+
+// Probe the open-addressed index for `key`. Returns the table position holding
+// it, or the first empty position if it is absent — `found` says which. Linear
+// probing is safe to run unguarded because `live_count` is capped at half the
+// table size, so an empty position always exists.
+struct LayoutIndexProbe {
+  std::size_t position = 0;
+  bool found = false;
+};
+
+LayoutIndexProbe ProbeLayoutIndex(const CompareVisibleLayoutCache& cache,
+                                  const CompareVisibleLayoutCacheKey& key) {
+  constexpr std::size_t kMask = CompareVisibleLayoutCache::kTableSize - 1;
+  std::size_t position = CompareVisibleLayoutCacheKeyHash{}(key) & kMask;
+  for (;;) {
+    const std::uint32_t stored = cache.table[position];
+    if (stored == 0) {
+      return {.position = position, .found = false};
+    }
+    const std::size_t slot = stored - 1;
+    if (slot < cache.live_count && cache.keys[slot] == key) {
+      return {.position = position, .found = true};
+    }
+    position = (position + 1) & kMask;
+  }
+}
 
 }  // namespace
+
+void ResetCompareVisibleLayoutCache(CompareTabState& compare_tab) {
+  CompareVisibleLayoutCache& cache = compare_tab.visible_layouts;
+  // Deliberately neither `layouts.clear()` nor an index rebuild: the slab keeps
+  // its `LayoutLine` storage so the next build refills it in place, and the
+  // table is zeroed rather than freed. See the type comment in
+  // `WorkspaceTabState.h` (TD-2026-08-17-261).
+  cache.live_count = 0;
+  std::fill(cache.table.begin(), cache.table.end(), 0u);
+}
 
 void PrepareCompareVisibleLayoutsForWindow(CompareTabState& compare_tab,
                                            std::size_t visual_start_row,
                                            std::size_t visual_end_row,
                                            std::size_t left_visible_columns,
                                            std::size_t right_visible_columns) {
-  if (compare_tab.visible_layout_cache_model_revision != compare_tab.model_revision) {
-    compare_tab.visible_layout_cache_model_revision = compare_tab.model_revision;
-    compare_tab.visible_layout_cache.clear();
-    compare_tab.visible_layout_cache_index.clear();
+  CompareVisibleLayoutCache& cache = compare_tab.visible_layouts;
+  if (cache.table.size() != CompareVisibleLayoutCache::kTableSize) {
+    cache.table.assign(CompareVisibleLayoutCache::kTableSize, 0u);
+    cache.live_count = 0;
+  }
+  if (cache.model_revision != compare_tab.model_revision) {
+    cache.model_revision = compare_tab.model_revision;
+    ResetCompareVisibleLayoutCache(compare_tab);
   }
 
   const std::size_t tab_size = compare_tab.right_viewport.tab_size();
@@ -46,24 +91,24 @@ void PrepareCompareVisibleLayoutsForWindow(CompareTabState& compare_tab,
         .tab_size = tab_size,
         .right_side = right_side,
     };
-    if (compare_tab.visible_layout_cache_index.find(key) !=
-        compare_tab.visible_layout_cache_index.end()) {
+    LayoutIndexProbe probe = ProbeLayoutIndex(cache, key);
+    if (probe.found) {
       return;
     }
-    if (compare_tab.visible_layout_cache.size() >= kCompareVisibleLayoutCacheLimit) {
-      compare_tab.visible_layout_cache.clear();
-      compare_tab.visible_layout_cache_index.clear();
+    if (cache.live_count >= CompareVisibleLayoutCache::kLimit) {
+      ResetCompareVisibleLayoutCache(compare_tab);
+      probe = ProbeLayoutIndex(cache, key);
     }
-    CompareVisibleLayoutCacheEntry entry;
-    entry.model_row = model_row;
-    entry.horizontal_scroll = row_visual_start;
-    entry.visible_columns = visible_columns;
-    entry.tab_size = tab_size;
-    entry.right_side = right_side;
-    entry.layout = editor::TextLayout::BuildVisibleLine(text, row_visual_start,
-                                                        visible_columns, tab_size);
-    compare_tab.visible_layout_cache_index.emplace(key, compare_tab.visible_layout_cache.size());
-    compare_tab.visible_layout_cache.push_back(std::move(entry));
+    const std::size_t slot = cache.live_count;
+    if (slot == cache.layouts.size()) {
+      cache.layouts.emplace_back();
+      cache.keys.emplace_back();
+    }
+    editor::TextLayout::BuildVisibleLineInto(text, row_visual_start, visible_columns, tab_size,
+                                             cache.layouts[slot]);
+    cache.keys[slot] = key;
+    cache.table[probe.position] = static_cast<std::uint32_t>(slot + 1);
+    cache.live_count = slot + 1;
   };
 
   const bool wrapped = compare_tab.wrap_layout.active();
@@ -98,7 +143,9 @@ const editor::LayoutLine* CompareVisibleLayoutForRow(const CompareTabState& comp
                                                      bool right_side,
                                                      std::size_t row_visual_start,
                                                      std::size_t visible_columns) {
-  if (compare_tab.visible_layout_cache_model_revision != compare_tab.model_revision) {
+  const CompareVisibleLayoutCache& cache = compare_tab.visible_layouts;
+  if (cache.model_revision != compare_tab.model_revision || cache.live_count == 0 ||
+      cache.table.size() != CompareVisibleLayoutCache::kTableSize) {
     return nullptr;
   }
   const CompareVisibleLayoutCacheKey key{
@@ -108,12 +155,11 @@ const editor::LayoutLine* CompareVisibleLayoutForRow(const CompareTabState& comp
       .tab_size = compare_tab.right_viewport.tab_size(),
       .right_side = right_side,
   };
-  const auto it = compare_tab.visible_layout_cache_index.find(key);
-  if (it == compare_tab.visible_layout_cache_index.end() ||
-      it->second >= compare_tab.visible_layout_cache.size()) {
+  const LayoutIndexProbe probe = ProbeLayoutIndex(cache, key);
+  if (!probe.found) {
     return nullptr;
   }
-  return &compare_tab.visible_layout_cache[it->second].layout;
+  return &cache.layouts[cache.table[probe.position] - 1];
 }
 
 }  // namespace microide::workspace

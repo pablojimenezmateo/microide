@@ -57,15 +57,6 @@ struct CompareReviewHeaderState {
   std::string action_hint_line;
 };
 
-struct CompareVisibleLayoutCacheEntry {
-  std::size_t model_row = 0;
-  std::size_t horizontal_scroll = 0;
-  std::size_t visible_columns = 0;
-  std::size_t tab_size = 0;
-  bool right_side = false;
-  editor::LayoutLine layout;
-};
-
 struct CompareVisibleLayoutCacheKey {
   std::size_t model_row = 0;
   std::size_t horizontal_scroll = 0;
@@ -85,6 +76,41 @@ struct CompareVisibleLayoutCacheKeyHash {
     h ^= static_cast<std::size_t>(key.right_side) + 0x9e3779b9ULL + (h << 6) + (h >> 2);
     return h;
   }
+};
+
+// Visible-row layouts for the two diff panes, and the index that finds them.
+//
+// Both halves are STEADY-STATE ALLOCATION-FREE on purpose, because both used to
+// be rebuilt from nothing on every keystroke: a keystroke in the editable pane
+// bumps `model_revision`, and the invalidation that follows dropped the whole
+// window (TD-2026-08-17-261).
+//
+//  - `layouts` is a SLAB, not a live list. Only `[0, live_count)` is addressed
+//    by the index; everything past that is retained storage whose three heap
+//    buffers the next build refills in place through
+//    `TextLayout::BuildVisibleLineInto`. Freeing them cost three allocations per
+//    visible row per keystroke — the top three sites of the phase.
+//  - `table` is an open-addressed index into the slab holding `slot + 1`, 0 for
+//    empty, sized so the load factor never exceeds 1/2 (so linear probing always
+//    terminates). It replaced a `std::unordered_map`, which cost one NODE
+//    allocation per cached row per frame: `clear()` frees every node and the
+//    next frame's inserts allocate them straight back. Resetting this refills
+//    4 KB with zero and allocates nothing.
+//  - `keys[i]` describes `layouts[i]`, so a probe can confirm a hit.
+//
+// Reset it with `ResetCompareVisibleLayoutCache` in
+// `workspace/render/CompareVisibleLayoutCache.h`; nothing should clear these
+// vectors.
+struct CompareVisibleLayoutCache {
+  // Bounded by the table's half-load rule below; see kCompareVisibleLayoutTableSize.
+  static constexpr std::size_t kLimit = 512;
+  static constexpr std::size_t kTableSize = 1024;  // power of two, >= 2 * kLimit
+
+  std::uint64_t model_revision = 0;
+  std::size_t live_count = 0;
+  std::vector<editor::LayoutLine> layouts;
+  std::vector<CompareVisibleLayoutCacheKey> keys;
+  std::vector<std::uint32_t> table;
 };
 
 struct CompareTabState {
@@ -160,11 +186,7 @@ struct CompareTabState {
   std::optional<editor::BracketMatchPair> bracket_match_pair;
   bool bracket_match_valid = false;
 
-  std::uint64_t visible_layout_cache_model_revision = 0;
-  std::vector<CompareVisibleLayoutCacheEntry> visible_layout_cache;
-  std::unordered_map<CompareVisibleLayoutCacheKey, std::size_t,
-                     CompareVisibleLayoutCacheKeyHash>
-      visible_layout_cache_index;
+  CompareVisibleLayoutCache visible_layouts;
   bool syntax_highlighting_enabled = true;
   std::uint64_t model_revision = 0;
   // Cheap change-detection signals the model + syntax + tokenization were last built

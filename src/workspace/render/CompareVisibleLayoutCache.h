@@ -7,6 +7,13 @@
 
 namespace microide::workspace {
 
+// Drop every cached layout without releasing its storage: the slab keeps its
+// `LayoutLine` buffers and the next build refills them in place. Call this
+// instead of clearing `visible_layout_cache` — the clear freed three heap
+// buffers per visible row that the next frame allocated straight back, which on
+// the editable pane is every keystroke (TD-2026-08-17-261).
+void ResetCompareVisibleLayoutCache(CompareTabState& compare_tab);
+
 // Build the visible-window LayoutLine for every pane row in the on-screen row
 // range [visual_start_row, visual_end_row). Rows are on-screen rows, which with
 // soft wrap off are presentation rows one-for-one and with it on are wrap
