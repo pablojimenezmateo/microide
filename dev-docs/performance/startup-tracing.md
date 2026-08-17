@@ -102,6 +102,15 @@ What is readable:
 - syscall counts (`strace -f -c -e trace=newfstatat,getdents64,inotify_add_watch`),
   which is how the walk work in `dev-docs/performance/performance-findings.md`
   § 2026-08-15 was found and confirmed
+- the counters (`MICROIDE_PERF_COUNTERS=1`), which are the only channel that
+  reports whether a frame used the retained scene at all
+  (`render.frames_retained` against `render.scene_fallback_frames`)
+
+And one thing to check before trusting any launch measurement: **the display
+scale.** `SDL_GetWindowDisplayScale` is 2.0 on a scaled desktop and 1.0 under
+`SDL_VIDEODRIVER=dummy`, and the two took genuinely different code paths through
+the render loop until 2026-08-17 (see the findings note). A number measured under
+`dummy` is not a number about the app the user runs.
 
 ## How To Read It
 
@@ -122,6 +131,14 @@ When comparing runs, focus on:
 - `FileIndex::SetRoot`
 - `FileIndex::Refresh`
 - `Application::FirstRender`
+
+`FileIndex::InitialIndexReady` is the one to read for "how long until the
+project is usable": it is scoped on the startup channel around the initial index
+batch's apply, so its **`ms total` column** is the moment the file finder,
+project search and every index-backed lookup start answering, measured from the
+top of `Application::Initialize`. Its duration column is the apply alone; the
+walk that feeds it is `watch::NativeSetupWalk` on the perf channel, which has no
+origin and so can only say how long it took, not when it landed.
 
 On the perf channel, the background half of a project open is:
 

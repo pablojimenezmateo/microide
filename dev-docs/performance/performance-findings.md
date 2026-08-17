@@ -25,6 +25,108 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-17 launch, second pass: the shell thread was waiting, and the retained scene was dead
+
+Same method as the 2026-08-15 pass below — the real binary, `MICROIDE_STARTUP_SUMMARY=1
+MICROIDE_PERF_SUMMARY=1`, quit over the control channel — on a **Wayland session
+at display scale 2.0**, which turned out to matter more than the numbers.
+
+    Application::FirstRender (total ms)      151 -> 114
+    FileIndex::InitialIndexReady (new)       214 -> 145
+    newfstatat calls at launch            21,989 -> 13,904
+    frames using the retained scene          0 % -> 100 %
+
+### `SDL_CreateRenderer` is 60-90 ms and none of it is ours
+
+It is the single biggest thing a launch does. Traced (`strace -f -tt` around
+markers), it is a dlopen chain for the GL stack — 35 shared objects including
+libLLVM and libicudata — plus DRM ioctls and display-server round trips. A
+minimal SDL3 program reproduces it exactly, so there is nothing in microide to
+fix. The shell thread is idle for all of it.
+
+Two changes exploit that instead:
+
+- **the workspace initializes BEFORE the renderer.** `WorkspaceShell::Initialize`
+  is ~3 ms of shell-thread work whose real output is that it starts the expensive
+  part of opening a project (the file-index walk, the git refreshes, plugin
+  load). It ran after the renderer, so all of that queued behind a wait it could
+  have run inside. Six interleaved launches each, median: index-ready
+  **214.0 -> 162.4 ms**, first frame unchanged (the same serial work reordered).
+  What stays after the renderer is what depends on it — the control channel, whose
+  `status` query reports the render backend.
+- **the window is created `SDL_WINDOW_BORDERLESS`** instead of being created
+  bordered and then having `SDL_SetWindowBordered(false)` retract it. On Wayland a
+  decoration is a compositor-side object, so the old sequence built libdecor state
+  and tore it down, and the `SDL_SyncWindow` that must follow a state change is a
+  blocking round trip. `WindowChromeSetup` **10.41 -> 0.01 ms**.
+
+### Preferring the Vulkan renderer: measured, and rejected
+
+`SDL_CreateRenderer` costs 63-80 ms for `opengles2` (SDL's pick here) and 41 ms
+for `vulkan` — a ~30 ms startup win, and the hint takes a comma-separated
+fallback list, so it looked free. It is not:
+
+| 95 string uploads | opengles2 | vulkan |
+| --- | ---: | ---: |
+| `render::TextBackend::UploadStringTexture` | 8.9-10.6 ms | 27.1-29.0 ms |
+
+**3x per texture upload, on the shell thread, forever.** Glyph-cache misses
+upload constantly, so that is interactive latency traded for a one-time 30 ms.
+Latency is the product; the trade is the wrong way round. Do not retry this
+without re-measuring the upload path — and note that the interesting number is
+not the startup one.
+
+(`software` also costs ~75 ms to create here, which is the tell that the cost is
+the Mesa load rather than anything GL-specific.)
+
+### The retained scene texture was never created on a HiDPI display
+
+`SceneTexturePresenter::Ensure` took the LOGICAL size, read
+`SDL_GetRenderOutputSize` (which is PIXELS), and returned false when they
+differed. They differ whenever the display scale or the UI scale is not 1.0. So
+the scene texture was never allocated, `Application::Render` took its
+direct-to-window `fallback-full` branch on every frame, and dirty-rect analysis,
+clip coalescing and the retained re-present were dead code.
+
+    before   16 of 16 frames fallback-full, 0 retained presents
+    after     2 full frames, 13 partial (24 clip rects), 15 retained presents
+              full frame 4.2 ms vs 0.51 ms per partial clip
+
+Nothing reported it. The fallback is a legitimate path with no warning attached,
+and the headless suite runs under the dummy driver, which reports a display scale
+of exactly 1.0 — so every test only ever exercised the case where the bug is
+invisible. The general shape is worth remembering: **a correctness bug that only
+exists off the test environment's default configuration is indistinguishable from
+correct behaviour until someone reads a profile for another reason.**
+`render.scene_fallback_frames` / `render.frames_retained` now put the ratio in
+any counters dump, and
+`Application/SceneTextureSurvivesScaledLogicalPresentation` drives the scaled
+case directly.
+
+### `file_size()` + `last_write_time()` is two syscalls for one inode
+
+Six call sites wanted exactly that pair, all per-file: the index's initial batch
+and its incremental batches, the poll re-walk, the tree-snapshot capture, the
+project-search index refresh, the syntax-definition fingerprint. Two were worse —
+`BuildProjectFile` classified with `status()` first (three), and the blame
+staleness stamp called `exists()` + `is_regular_file()` + both (four).
+`platform::ReadFileMetadata` answers the triple from one `::stat`, with the mtime
+bit-identical to `std::filesystem::last_write_time` (pinned by a test, because
+index diffing compares stamps captured on different paths).
+
+    newfstatat at launch     21,989 -> 13,904
+    InitialBulkLoad             9.6 ->   4.9 ms
+
+**But the stats were not what the walk costs.** A binary with the per-file stat
+removed entirely walks this tree in 121.7 ms against 128.3 ms — 7 ms out of 128
+for 46,805 stats, because the tree is page-cache warm and a warm `stat` is
+~0.15 us. The remaining ~100 ms is per-entry work in our own code
+(`recursive_directory_iterator` entry construction, relative-path building, the
+ignore filter), against ~22 ms for a bare walk of the same tree. If a future pass
+wants that time, the target is the per-file `std::filesystem::path` construction
+(libstdc++ builds a component list eagerly, so each one is two allocations), not
+the syscalls.
+
 ## 2026-08-15 launch: what the shell thread does before the window is on screen
 
 Driven by the real binary (`MICROIDE_STARTUP_SUMMARY=1 MICROIDE_PERF_SUMMARY=1`,
