@@ -165,7 +165,7 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
             .priority = selected ? kOverviewPrioSearchActive : kOverviewPrioSearchMatch});
       }
     }
-    cache.markers = overview::ReduceMarkers(inner_lane, total_rows, inputs, buckets, palette);
+    overview::ReduceMarkersInto(inner_lane, total_rows, inputs, buckets, palette, cache.markers);
     cache.sig = sig;
     cache.track = inner_lane;
   }

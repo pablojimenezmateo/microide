@@ -71,7 +71,8 @@ void EnsureMergeOverviewMarkers(const render::Theme& theme,
   }
 
   const std::span<const MergeTrackedConflict> conflicts = MergeVisualConflicts(merge_tab);
-  std::vector<overview::MarkerInput> inputs;
+  std::vector<overview::MarkerInput>& inputs = merge_tab.scrollbar_marker_input_scratch;
+  inputs.clear();
   inputs.reserve(conflicts.size());
   for (const auto& conflict : conflicts) {
     const int start_row = static_cast<int>(std::min(
@@ -86,7 +87,7 @@ void EnsureMergeOverviewMarkers(const render::Theme& theme,
         .color = MergeMarkerColor(theme, conflict.last_choice, conflict.valid),
         .priority = 0});
   }
-  merge_tab.scrollbar_marker_cache = overview::BuildMarkers(inner_lane, total_rows, inputs);
+  overview::BuildMarkersInto(inner_lane, total_rows, inputs, merge_tab.scrollbar_marker_cache);
   merge_tab.scrollbar_marker_cache_track = inner_lane;
   merge_tab.scrollbar_marker_cache_revision = merge_tab.model_revision;
   merge_tab.scrollbar_marker_cache_rows = total_rows;

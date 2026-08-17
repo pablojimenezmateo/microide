@@ -459,6 +459,12 @@ float ScrollbarGrabOffset(const ScrollbarGeometry& geometry,
 std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model);
+// Into-form for the overview-lane cache, which is invalidated by every
+// presentation-revision bump — so on the keystroke path in an editable diff the
+// returning form allocated and freed this list per keystroke (TD-2026-08-17-261).
+void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& presentation,
+                                   const compare::CompareModel& model,
+                                   std::vector<CompareScrollbarRun>& runs);
 float ComputeChromeButtonWidth(float measured_label_width);
 // Fills `out` rather than returning a fresh vector. Both strip builders run
 // their layout several times to settle the overflow reserve, so a returning form

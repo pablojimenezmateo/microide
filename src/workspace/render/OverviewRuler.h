@@ -65,12 +65,23 @@ bool BuildMarker(const SDL_FRect& inner_lane, std::size_t total_rows, const Mark
 // sources (diff runs, merge conflicts). For dense/overlapping sources use ReduceMarkers.
 std::vector<Marker> BuildMarkers(const SDL_FRect& inner_lane, std::size_t total_rows,
                                  std::span<const MarkerInput> inputs);
+// Into-form for the cached lanes. `out` is cleared and refilled, keeping its
+// capacity: every caller assigns the result into a cache that is invalidated by
+// a revision bump, so the returning form freed the marker buffer and allocated
+// the same size straight back on the next frame that touched the surface
+// (TD-2026-08-17-261).
+void BuildMarkersInto(const SDL_FRect& inner_lane, std::size_t total_rows,
+                      std::span<const MarkerInput> inputs, std::vector<Marker>& out);
 
 // Density-bounded variant for dense/overlapping sources (thousands of search matches).
 // Buckets every input's mapped pixel span into a per-pixel-row array (highest priority
 // wins each contested pixel), then coalesces adjacent equal-color pixels into runs.
 // Output size and cost are bounded by lane height, never by |inputs|. `bucket_scratch`
 // and `palette_scratch` are caller-owned to avoid per-call allocation.
+void ReduceMarkersInto(const SDL_FRect& inner_lane, std::size_t total_rows,
+                       std::span<const MarkerInput> inputs,
+                       std::vector<std::uint32_t>& bucket_scratch,
+                       std::vector<SDL_Color>& palette_scratch, std::vector<Marker>& out);
 std::vector<Marker> ReduceMarkers(const SDL_FRect& inner_lane, std::size_t total_rows,
                                   std::span<const MarkerInput> inputs,
                                   std::vector<std::uint32_t>& bucket_scratch,

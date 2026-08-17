@@ -56,11 +56,11 @@ bool BuildMarker(const SDL_FRect& inner_lane, std::size_t total_rows, const Mark
   return true;
 }
 
-std::vector<Marker> BuildMarkers(const SDL_FRect& inner_lane, std::size_t total_rows,
-                                 std::span<const MarkerInput> inputs) {
-  std::vector<Marker> markers;
+void BuildMarkersInto(const SDL_FRect& inner_lane, std::size_t total_rows,
+                      std::span<const MarkerInput> inputs, std::vector<Marker>& markers) {
+  markers.clear();
   if (inner_lane.w <= 0.0f || inner_lane.h <= 0.0f || total_rows == 0 || inputs.empty()) {
-    return markers;
+    return;
   }
 
   markers.reserve(inputs.size());
@@ -70,21 +70,27 @@ std::vector<Marker> BuildMarkers(const SDL_FRect& inner_lane, std::size_t total_
       markers.push_back(marker);
     }
   }
+}
+
+std::vector<Marker> BuildMarkers(const SDL_FRect& inner_lane, std::size_t total_rows,
+                                 std::span<const MarkerInput> inputs) {
+  std::vector<Marker> markers;
+  BuildMarkersInto(inner_lane, total_rows, inputs, markers);
   return markers;
 }
 
-std::vector<Marker> ReduceMarkers(const SDL_FRect& inner_lane, std::size_t total_rows,
-                                  std::span<const MarkerInput> inputs,
-                                  std::vector<std::uint32_t>& bucket_scratch,
-                                  std::vector<SDL_Color>& palette_scratch) {
-  std::vector<Marker> markers;
+void ReduceMarkersInto(const SDL_FRect& inner_lane, std::size_t total_rows,
+                       std::span<const MarkerInput> inputs,
+                       std::vector<std::uint32_t>& bucket_scratch,
+                       std::vector<SDL_Color>& palette_scratch, std::vector<Marker>& markers) {
+  markers.clear();
   if (inner_lane.w <= 0.0f || inner_lane.h <= 0.0f || total_rows == 0 || inputs.empty()) {
-    return markers;
+    return;
   }
 
   const int height_px = static_cast<int>(std::ceil(inner_lane.h));
   if (height_px <= 0) {
-    return markers;
+    return;
   }
   constexpr int kMinPx = static_cast<int>(kMinMarkerHeight);
 
@@ -161,6 +167,14 @@ std::vector<Marker> ReduceMarkers(const SDL_FRect& inner_lane, std::size_t total
                                .color = palette_scratch[static_cast<std::size_t>(ci)]});
     }
   }
+}
+
+std::vector<Marker> ReduceMarkers(const SDL_FRect& inner_lane, std::size_t total_rows,
+                                  std::span<const MarkerInput> inputs,
+                                  std::vector<std::uint32_t>& bucket_scratch,
+                                  std::vector<SDL_Color>& palette_scratch) {
+  std::vector<Marker> markers;
+  ReduceMarkersInto(inner_lane, total_rows, inputs, bucket_scratch, palette_scratch, markers);
   return markers;
 }
 

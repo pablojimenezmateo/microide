@@ -847,8 +847,16 @@ std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     const compare::ComparePresentationModel& presentation,
     const compare::CompareModel& model) {
   std::vector<CompareScrollbarRun> runs;
+  BuildCompareScrollbarRunsInto(presentation, model, runs);
+  return runs;
+}
+
+void BuildCompareScrollbarRunsInto(const compare::ComparePresentationModel& presentation,
+                                   const compare::CompareModel& model,
+                                   std::vector<CompareScrollbarRun>& runs) {
+  runs.clear();
   if (presentation.rows.empty() || model.rows.empty()) {
-    return runs;
+    return;
   }
 
   auto push_run = [&](int start_row, int end_row, compare::CompareRowKind kind) {
@@ -887,7 +895,6 @@ std::vector<CompareScrollbarRun> BuildCompareScrollbarRuns(
     run_kind = kind;
   }
   push_run(run_start, static_cast<int>(presentation.rows.size()), run_kind);
-  return runs;
 }
 
 namespace {

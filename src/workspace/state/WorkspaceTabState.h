@@ -239,6 +239,12 @@ struct CompareTabState {
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
+  // Working buffers for the marker rebuild above, retained because the cache key
+  // includes `presentation_revision` — so a keystroke in the editable pane
+  // invalidates it and the rebuild ran with three fresh vectors per keystroke
+  // (TD-2026-08-17-261). Meaningful only inside EnsureCompareOverviewMarkers.
+  std::vector<CompareScrollbarRun> scrollbar_run_scratch;
+  std::vector<overview::MarkerInput> scrollbar_marker_input_scratch;
   float divider_fraction = kWorkspaceDefaultCompareDividerFraction;
   bool right_editable = false;
   bool right_view_active = false;
@@ -326,6 +332,9 @@ struct MergeTabState {
   std::uint64_t scrollbar_marker_cache_theme_token = 0;
   SDL_FRect scrollbar_marker_cache_track{};
   std::vector<overview::Marker> scrollbar_marker_cache;
+  // See the compare tab's field of the same name: the marker rebuild's working
+  // buffer, retained so an invalidation does not re-allocate it.
+  std::vector<overview::MarkerInput> scrollbar_marker_input_scratch;
   // Cache for the hover-preview overlay's choice lines (MergeChoiceLines), keyed
   // by (conflict, choice, model revision). Rebuilt only on a key change so hover
   // does not reallocate the incoming/current line vectors every frame.

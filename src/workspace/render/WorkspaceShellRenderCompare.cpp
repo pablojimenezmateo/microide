@@ -73,9 +73,11 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
     return;
   }
 
-  const std::vector<CompareScrollbarRun> runs =
-      BuildCompareScrollbarRuns(compare_tab.presentation, compare_tab.model);
-  std::vector<overview::MarkerInput> inputs;
+  BuildCompareScrollbarRunsInto(compare_tab.presentation, compare_tab.model,
+                                compare_tab.scrollbar_run_scratch);
+  const std::vector<CompareScrollbarRun>& runs = compare_tab.scrollbar_run_scratch;
+  std::vector<overview::MarkerInput>& inputs = compare_tab.scrollbar_marker_input_scratch;
+  inputs.clear();
   inputs.reserve(runs.size());
   for (const CompareScrollbarRun& run : runs) {
     // Runs are presentation rows; the lane is scaled to on-screen rows, which soft
@@ -89,8 +91,8 @@ void EnsureCompareOverviewMarkers(const render::Theme& theme,
         .color = CompareMarkerColor(theme, run.kind),
         .priority = 0});
   }
-  compare_tab.scrollbar_marker_cache =
-      overview::BuildMarkers(inner_lane, marker_rows, inputs);
+  overview::BuildMarkersInto(inner_lane, marker_rows, inputs,
+                             compare_tab.scrollbar_marker_cache);
   compare_tab.scrollbar_marker_cache_track = inner_lane;
   compare_tab.scrollbar_marker_cache_revision = compare_tab.presentation_revision;
   compare_tab.scrollbar_marker_cache_rows = marker_rows;
