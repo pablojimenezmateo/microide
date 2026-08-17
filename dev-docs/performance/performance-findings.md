@@ -31,10 +31,11 @@ Same method as the 2026-08-15 pass below — the real binary, `MICROIDE_STARTUP_
 MICROIDE_PERF_SUMMARY=1`, quit over the control channel — on a **Wayland session
 at display scale 2.0**, which turned out to matter more than the numbers.
 
-    Application::FirstRender (total ms)      151 -> 114
-    FileIndex::InitialIndexReady (new)       214 -> 145
+    Application::FirstRender (total ms)      151 -> 110
+    FileIndex::InitialIndexReady (new)       214 -> 142
     newfstatat calls at launch            21,989 -> 13,904
     frames using the retained scene          0 % -> 100 %
+    tree walks per launch                        2 -> 1   (with the setting set)
 
 ### `SDL_CreateRenderer` is 60-90 ms and none of it is ours
 
@@ -102,6 +103,64 @@ correct behaviour until someone reads a profile for another reason.**
 any counters dump, and
 `Application/SceneTextureSurvivesScaledLogicalPresentation` drives the scaled
 case directly.
+
+### A launch re-applied the settings the project open had just applied
+
+`ApplyLiveSettings` decides whether `project.files_exclude` or
+`project.follow_out_of_root_symlinks` was edited by comparing the resolved value
+against a last-applied memo. Both memos started empty, and opening a project
+applies those settings itself — so the FIRST prepared frame compared the restored
+configuration against an empty memo, concluded the user had just edited it, and
+paid a whole-tree index rescan, a directory-tree refresh, and a full re-arm of
+the native watcher (a second complete tree walk plus one `inotify_add_watch` per
+directory). Every launch, for every user who has either setting set.
+
+    watch::NativeSetupWalk        2 calls, 214 ms  ->  1 call, 129 ms
+    project::CollectProjectFiles  1 call,   49 ms  ->  0 calls
+
+It was found by accident, and how is the useful part: an unrelated A/B left
+`project.files_exclude` set in the developer's own config, and the next plain
+launch profile showed a scan and a second walk that had never been there before.
+A launch measured with the default configuration cannot see this at all.
+
+The two counters that now exist so it does not need to be found by accident again
+are `watch.file_index_refresh_requests` (counted at the REQUEST, so a test can
+observe it without racing the background executor) and
+`watch.file_index_watcher_starts` (exactly one per project open; a second on the
+same project is a full walk nobody asked for).
+
+### The walk built a relative path for every file it was about to reject
+
+`CollectTrackedCreations` materialized the entry's relative
+`std::filesystem::path` and only then asked the traversal filter whether the file
+belonged in the index. Most of what a walk sees is the reject case — this repo
+visits ~52,000 entries and keeps 8,000; the other 44,000 are individually ignored
+files (fuzz corpora, generated fixtures) in directories that are not themselves
+ignored, so directory pruning cannot reach them. `Includes` allocates nothing;
+`TryBuildTrackedRelativePath` allocates twice. Both are pure predicates, so the
+order is free to change.
+
+    watch::NativeSetupWalk        136.6 ms -> 125.7 ms
+    FileIndex::InitialIndexReady  151.8 ms -> 140.7 ms
+
+Same shape, same fix, in `BuildPollSnapshot`, where an ignored file was paying
+those two allocations again on every poll interval forever.
+
+### The project scan normalized the root once per entry
+
+`CollectFiles` (the whole-tree rescan behind the sidebar Refresh button, an
+exclude-glob edit, and the forced project-change check) derived every entry's
+relative path as
+`path.lexically_normal().lexically_relative(root.lexically_normal())` — two
+normalizations per entry at ~12 allocations each, one of them of a constant — then
+normalized the result again before storing it, having already taken an owning copy
+of the entry's path and answered "is this name hidden?" with
+`path.filename().string()`.
+
+    project::CollectProjectFiles   98-108 ms -> 57-61 ms   (-41%)
+
+It had no perf scope at all, only a call counter, so a slow refresh was
+unattributable. It has one now (`project::CollectProjectFiles`).
 
 ### `file_size()` + `last_write_time()` is two syscalls for one inode
 

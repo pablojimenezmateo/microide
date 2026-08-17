@@ -389,6 +389,121 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-17-256 — the whole-tree project scan normalized its constant root once per filesystem entry. [RESOLVED 2026-08-17, same session it was found.]
+
+`ProjectFileScanner::CollectFiles` — the rescan behind the sidebar Refresh
+button, an exclude-glob edit, and the forced project-change check — derived every
+entry's relative path as
+`path.lexically_normal().lexically_relative(root.lexically_normal())`. That is two
+`lexically_normal()` calls per filesystem entry at ~12 allocations each
+(TD-2026-08-10-174), one of them of the ROOT, which does not change for the whole
+walk, plus a component-walking `lexically_relative`, plus a second
+`lexically_normal()` on the result before storing it. The loop also took an
+OWNING copy of each entry's path (libstdc++ builds the component list eagerly, so
+two more allocations) and asked "is this name hidden?" through
+`path.filename().string()`.
+
+The root is normalized once by the caller now, and the per-entry derivation is
+the allocation-free prefix strip the file-index watcher's walk already used —
+`NormalizedPathEqualsOrWithin` + `NormalizedRelativeView`, with the authoritative
+pair kept as the fallback for an input that is not already normal. The matcher is
+asked through `IgnoredNormalized`, which is the overload that exists for exactly
+this caller shape.
+
+    project::CollectProjectFiles (this repo)   98-108 ms -> 57-61 ms   (-41%)
+
+Measured over three runs, each driving four to five scans through
+`set-setting project.files_exclude`. The function had no perf scope at all before
+this — only a call counter, so a slow refresh was unattributable — and now has
+one. `util::NormalizedFileNameView` was added as the companion to the existing
+`NormalizedParentDirectoryView`.
+
+**Still open in the same file, deliberately.** `CollectFiles` runs its own
+`IgnoreMatcher` chain rather than `ProjectTraversalFilter`, and
+`FileIndexWatcher.cpp` says in a comment that the two filterings are
+"deliberately identical" — which is a duplication maintained by hand. Unifying
+them is not a perf change: the scanner threads a parent matcher down the
+recursion (cheaper than the filter's per-directory cache) and adds hidden-name
+filtering, a symlink loop guard, a depth limit and a status object that the
+filter has no notion of. It needs its own pass with its own equivalence tests.
+
+### TD-2026-08-17-255 — a launch re-applied the project settings the project open had just applied, costing a second full tree walk. [RESOLVED 2026-08-17, same session it was found.]
+
+`ApplyLiveSettings` decides whether `project.files_exclude` or
+`project.follow_out_of_root_symlinks` was edited by comparing the resolved value
+against a last-applied memo. Both memos started empty. Opening a project applies
+those settings itself — so the FIRST prepared frame compared the RESTORED
+CONFIGURATION against an empty memo, concluded the user had just edited it, and
+paid for it: a whole-tree file-index rescan, a directory-tree refresh, and a full
+re-arm of the native watcher, which means a second complete tree walk and one
+`inotify_add_watch` per directory all over again.
+
+Every launch, for every user who has either setting set. Measured on this repo
+with `project.files_exclude` present in the user config:
+
+    watch::NativeSetupWalk          2 calls, 214 ms  ->  1 call, 129 ms
+    project::CollectProjectFiles    1 call,   49 ms  ->  0 calls
+    watch.file_index_watcher_starts            2     ->  1
+
+`SetProjectRoot` records what it applied, which is all the memos were ever meant
+to hold.
+
+**How it was found is the part worth keeping.** An unrelated A/B measurement left
+`project.files_exclude` set in the developer's own config; the next plain launch
+profile showed a scan and a second walk that had never been in any earlier
+profile. With the default configuration — which is what every test, every perf
+scenario and every prior launch sweep used — the bug is invisible, because the
+memo's empty initial value happens to match the setting's empty default. That is
+the same shape as TD-2026-08-17-254 below: a defect that exists only off the
+measurement environment's default configuration.
+
+The regression test has to deliver the setting the way a launch does — persisted,
+then restored by a fresh shell's `Initialize`. Writing it through
+`SetSettingValue` on a live shell cannot exhibit it at all, because that path
+ends in `ApplyLiveSettings`, which seeds the memo before the project is open;
+the first version of the test did exactly that and passed with the fix reverted.
+
+Two counters exist now so this does not need to be found by accident again:
+`watch.file_index_refresh_requests` (counted at the REQUEST, so a test observes
+it without racing the background executor) and `watch.file_index_watcher_starts`
+(exactly one per project open).
+
+### TD-2026-08-17-254 — the retained scene texture was never created on a HiDPI display, so every frame was a full redraw. [RESOLVED 2026-08-17, same session it was found.]
+
+`SceneTexturePresenter::Ensure` took the LOGICAL size, read
+`SDL_GetRenderOutputSize` (which is PIXELS), and returned false when they
+differed. They differ whenever the display scale or the UI scale is not 1.0. So
+on a HiDPI session the scene texture was never allocated, `Application::Render`
+took its direct-to-window `fallback-full` branch on every frame, and the whole
+partial-redraw architecture — dirty-rect analysis, clip coalescing, the retained
+re-present — was dead code.
+
+    before   16 of 16 frames fallback-full, 0 retained presents
+    after     2 full frames, 13 partial (24 clip rects), 15 retained presents
+              full frame 4.2 ms vs 0.51 ms per partial clip
+
+Nothing reported it. The fallback is a legitimate path (a resize drag coalescing
+its realloc, a failed allocation) with no warning attached, and the headless
+suite runs under the dummy driver, which reports a display scale of exactly 1.0 —
+so every test only ever exercised the configuration where the bug is invisible.
+
+The texture is sized in device pixels now and carries its own copy of the
+window's logical presentation: a render target has a separate view whose
+presentation starts disabled and survives unbind/rebind, so
+`ApplyRenderTargetPresentation` maps it once per allocation right after the
+target is bound. The shell then draws in the same logical coordinates it would on
+the window, at full device resolution, and re-presenting over the logical rect is
+a 1:1 texel blit rather than a resample. A UI-scale change moves the logical grid
+without moving the drawable, so it remaps and invalidates instead of
+reallocating.
+
+`render.scene_fallback_frames` / `render.frames_retained` put the ratio in any
+counters dump. `Application/SceneTextureSurvivesScaledLogicalPresentation` drives
+the scaled case directly, since the dummy driver cannot produce a scale of its
+own; restoring the old equality guard fails it on the first assertion. Rendering
+output was verified unchanged — the same scene at `ui-scale 2` under Xvfb differs
+from the pre-fix binary in 70 of 1,600,000 pixels (a blinking terminal cursor).
+
 ### TD-2026-08-15-253 — the two external-change perf scenarios gated a refresh that never happened. [RESOLVED 2026-08-15, same session it was found.]
 
 Found by TD-2026-08-15-252's own gate run: `external_change_refresh_open_merge`'s
