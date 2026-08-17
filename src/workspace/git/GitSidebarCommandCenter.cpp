@@ -509,13 +509,20 @@ GitSidebarViewModel BuildGitSidebarViewModel(
         .show_header = true,
         .rows = {},
     };
+    // `counts` already knows how many rows this section gets, and a section with
+    // a thousand changed files would otherwise grow its row vector by doubling —
+    // ~10 reallocations, each move-constructing every row's five strings.
+    section_vm.rows.reserve(count);
 
     for (std::size_t i = 0; i < git_state.entries.size(); ++i) {
       if (git_state.entries[i].section != section) {
         continue;
       }
       const GitSidebarEntry& entry = git_state.entries[i];
-      const GitSidebarEntryTextModel text_model =
+      // Non-const so its two labels MOVE into the row below. They were copied,
+      // which on a large refresh is two string allocations per changed file, on
+      // the main thread, for strings whose only other reference dies here.
+      GitSidebarEntryTextModel text_model =
           BuildGitSidebarEntryTextModel(entry.relative_path, entry.section == GitSidebarEntry::Section::Staged);
       const GitSidebarActionAvailability actions = GitSidebarActionAvailabilityForEntry(
           entry, git_state.repo_available, git_state.supports_mutations);
@@ -532,8 +539,8 @@ GitSidebarViewModel BuildGitSidebarViewModel(
           .entry_index = static_cast<int>(i),
           .row_kind = RowKindFromSection(entry.section),
           .relative_path = entry.relative_path,
-          .primary_label = text_model.primary_label,
-          .secondary_label = text_model.secondary_label,
+          .primary_label = std::move(text_model.primary_label),
+          .secondary_label = std::move(text_model.secondary_label),
           .review_marker_label = std::move(review_marker_label),
           .primary_action_label = GitSidebarPrimaryActionLabel(entry, actions),
           .status = entry.status,
