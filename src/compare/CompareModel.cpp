@@ -925,6 +925,14 @@ bool LinesEqualForDiff(std::string_view left,
                        const CompareBuildOptions& options);
 bool LinesEqualIgnoringWhitespace(std::string_view left, std::string_view right);
 
+}  // namespace
+
+// These four types are members of `detail::CompareBuildScratch`, which the
+// header declares — so they cannot live in the anonymous namespace, or the
+// scratch would be an external-linkage class with internal-linkage fields
+// (-Wsubobject-linkage). Everything that USES them stays file-local.
+namespace detail {
+
 // Whitespace-insensitive line identity, so the ignore_whitespace interning pass
 // can key on the original view instead of a normalised copy of it. The hash
 // walks the same bytes the equality does — everything that is not ASCII space —
@@ -947,21 +955,6 @@ struct IgnoreWhitespaceLineEq {
     return LinesEqualIgnoringWhitespace(left, right);
   }
 };
-
-// Emit a run of Equal ops carrying both columns' text for the lockstep-matched
-// pair range [left_begin, left_end) <-> [right_begin, ...). The two ranges have
-// equal length by construction at every caller.
-void AppendEqualPairs(std::span<const std::string_view> left_lines,
-                      std::size_t left_begin,
-                      std::size_t left_end,
-                      std::span<const std::string_view> right_lines,
-                      std::size_t right_begin,
-                      std::vector<DiffOp>& ops) {
-  for (std::size_t offset = 0; left_begin + offset < left_end; ++offset) {
-    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[left_begin + offset],
-                         right_lines[right_begin + offset]});
-  }
-}
 
 // Per-line info for the unique-line anchor search, kept out of the function so
 // DiffScratch can hold the vector it indexes.
@@ -1002,6 +995,37 @@ struct DiffScratch {
   std::vector<std::size_t> pile_candidate_indices;
   std::vector<std::size_t> predecessor;
 };
+
+// The buffers one whole rebuild needs, retained between rebuilds. See the
+// declaration in `CompareModel.h` for why they live on the model.
+struct CompareBuildScratch {
+  std::vector<std::string_view> left_lines;
+  std::vector<std::string_view> right_lines;
+  std::vector<DiffOp> ops;
+  DiffScratch diff;
+};
+
+}  // namespace detail
+
+namespace {
+
+using detail::AnchorInfo;
+using detail::DiffScratch;
+
+// Emit a run of Equal ops carrying both columns' text for the lockstep-matched
+// pair range [left_begin, left_end) <-> [right_begin, ...). The two ranges have
+// equal length by construction at every caller.
+void AppendEqualPairs(std::span<const std::string_view> left_lines,
+                      std::size_t left_begin,
+                      std::size_t left_end,
+                      std::span<const std::string_view> right_lines,
+                      std::size_t right_begin,
+                      std::vector<DiffOp>& ops) {
+  for (std::size_t offset = 0; left_begin + offset < left_end; ++offset) {
+    ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[left_begin + offset],
+                         right_lines[right_begin + offset]});
+  }
+}
 
 void AppendExactLineOps(std::span<const std::string_view> left_lines,
                         std::span<const std::string_view> right_lines,
@@ -1369,6 +1393,18 @@ std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_line
                                      std::span<const std::string_view> right_lines,
                                      const CompareBuildOptions& options,
                                      LineDiffBuildStats* stats) {
+  std::vector<DiffOp> ops;
+  detail::DiffScratch scratch;
+  BuildLineDiffOpsInto(left_lines, right_lines, options, scratch, ops, stats);
+  return ops;
+}
+
+void BuildLineDiffOpsInto(std::span<const std::string_view> left_lines,
+                          std::span<const std::string_view> right_lines,
+                          const CompareBuildOptions& options,
+                          detail::DiffScratch& scratch,
+                          std::vector<DiffOp>& ops,
+                          LineDiffBuildStats* stats) {
   std::size_t prefix = 0;
   while (prefix < left_lines.size() && prefix < right_lines.size() &&
          LinesEqualForDiff(left_lines[prefix], right_lines[prefix], options)) {
@@ -1383,7 +1419,7 @@ std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_line
     --right_suffix;
   }
 
-  std::vector<DiffOp> ops;
+  ops.clear();
   ops.reserve(left_lines.size() + right_lines.size());
   for (std::size_t index = 0; index < prefix; ++index) {
     ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index], right_lines[index]});
@@ -1396,10 +1432,10 @@ std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_line
   if (!left_middle.empty() || !right_middle.empty()) {
     const std::size_t left_count = left_middle.size();
     const std::size_t right_count = right_middle.size();
-    // One scratch for the whole diff. Both aligners used to build (and free) a
-    // whole `middle_ops` vector here purely to copy it into `ops`, on top of the
-    // per-level buffers inside them.
-    DiffScratch scratch;
+    // One scratch for the whole diff, supplied by the caller so it also survives
+    // BETWEEN diffs. Both aligners used to build (and free) a whole `middle_ops`
+    // vector here purely to copy it into `ops`, on top of the per-level buffers
+    // inside them.
     if (ProductExceeds(left_count + 1, right_count + 1, kMaxLineLcsMatrixCells)) {
       if (stats != nullptr) {
         ++stats->anchored_alignment_calls;
@@ -1421,7 +1457,6 @@ std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_line
     ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[index],
                          right_lines[index - left_suffix + right_suffix]});
   }
-  return ops;
 }
 
 CompareBuildResult BuildCompareModelProfiled(const std::string& left, const std::string& right) {
@@ -1477,6 +1512,27 @@ class RowSink {
 
 }  // namespace
 
+namespace detail {
+
+void DestroyCompareBuildScratch(CompareBuildScratch* scratch) noexcept {
+  delete scratch;
+}
+
+}  // namespace detail
+
+namespace {
+
+// Resolve the model's rebuild scratch, creating it on first use. One allocation
+// per model, ever.
+detail::CompareBuildScratch& EnsureBuildScratch(CompareModel& model) {
+  if (model.build_scratch.get() == nullptr) {
+    model.build_scratch.reset(new detail::CompareBuildScratch());
+  }
+  return *model.build_scratch.get();
+}
+
+}  // namespace
+
 // Internal linkage: both callers are the two public entry points at the bottom of
 // this file, and nothing declares it in the header. Left external it was the only
 // -Wmissing-declarations hit in the tree, and it denied the optimizer the one
@@ -1519,10 +1575,17 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   const Clock::time_point total_start = Clock::now();
 
   const Clock::time_point split_start = Clock::now();
-  // Views into `left`/`right`, which outlive this build. CompareRow materializes
-  // its own owned strings; everything between here and row assembly stays views.
-  const std::vector<std::string_view> left_lines = util::SplitLineViews(left);
-  const std::vector<std::string_view> right_lines = util::SplitLineViews(right);
+  // Views into `left`/`right`, which outlive this build. Everything between here
+  // and row assembly stays views; the rows themselves view into the same buffers.
+  //
+  // Split into the model's retained scratch rather than two fresh vectors: this
+  // was the single largest allocator on the keystroke path of an editable
+  // compare pane (TD-2026-08-17-261).
+  detail::CompareBuildScratch& scratch = EnsureBuildScratch(model);
+  util::SplitLineViewsInto(left, scratch.left_lines);
+  util::SplitLineViewsInto(right, scratch.right_lines);
+  const std::vector<std::string_view>& left_lines = scratch.left_lines;
+  const std::vector<std::string_view>& right_lines = scratch.right_lines;
   profile.split_lines_ns = DurationNs(split_start, Clock::now());
 
   // The all-equal case is handled by the general prefix/suffix path below: when
@@ -1552,8 +1615,9 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
       std::span<const std::string_view>(right_lines).subspan(prefix, right_suffix - prefix);
 
   LineDiffBuildStats line_diff_stats;
-  const std::vector<DiffOp> ops =
-      BuildLineDiffOps(left_middle, right_middle, options, &line_diff_stats);
+  BuildLineDiffOpsInto(left_middle, right_middle, options, scratch.diff, scratch.ops,
+                       &line_diff_stats);
+  const std::vector<DiffOp>& ops = scratch.ops;
   profile.exact_line_alignment_calls += line_diff_stats.exact_alignment_calls;
   profile.anchored_line_alignment_calls += line_diff_stats.anchored_alignment_calls;
   profile.line_alignment_ns = DurationNs(line_alignment_start, Clock::now());

@@ -884,8 +884,8 @@ LineShape MeasureLines(std::string_view content) {
   return shape;
 }
 
-std::vector<std::string_view> SplitLineViews(std::string_view content) {
-  std::vector<std::string_view> lines;
+void SplitLineViewsInto(std::string_view content, std::vector<std::string_view>& lines) {
+  lines.clear();
   std::size_t line_start = 0;
   for (std::size_t i = 0; i < content.size(); ++i) {
     if (content[i] != '\r' && content[i] != '\n') {
@@ -903,6 +903,11 @@ std::vector<std::string_view> SplitLineViews(std::string_view content) {
   if (lines.empty()) {
     lines.emplace_back();
   }
+}
+
+std::vector<std::string_view> SplitLineViews(std::string_view content) {
+  std::vector<std::string_view> lines;
+  SplitLineViewsInto(content, lines);
   return lines;
 }
 

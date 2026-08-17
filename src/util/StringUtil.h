@@ -300,6 +300,11 @@ LineShape MeasureLines(std::string_view content);
 // The returned views are valid only for the lifetime of `content`; callers that
 // outlive the source buffer must copy. Used by allocation-sensitive diff paths.
 std::vector<std::string_view> SplitLineViews(std::string_view content);
+// Into-form, reusing `lines`' capacity. The diff builder splits both sides of a
+// compare on every keystroke in an editable pane, and a fresh vector per side
+// per rebuild is the single largest allocator on that path — the line count
+// barely moves between rebuilds (TD-2026-08-17-261).
+void SplitLineViewsInto(std::string_view content, std::vector<std::string_view>& lines);
 // Bounded variant of SplitLineViews: stop after `max_lines` lines so a parser with a
 // retained-entry cap does not first materialize a line view for every line of a huge
 // ref/branch listing. Unlike the unbounded form it does NOT synthesize a single empty

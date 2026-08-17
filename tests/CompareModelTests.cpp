@@ -1273,6 +1273,49 @@ void TestBuildCompareModelIntoReusesRowStorage() {
          "an adopted buffer is shared, not copied");
 }
 
+// The build's three biggest buffers — the two line-view lists and the aligner's
+// DiffOp output, plus the recursion scratch behind them — are retained on the
+// model between rebuilds (TD-2026-08-17-261). What has to hold is that they are
+// created once, reused after that, and NOT part of the model's value: two models
+// must never share one, and copying a model must not copy megabytes of dead
+// working storage.
+void TestCompareModelBuildScratchIsRetainedButNotPartOfTheValue() {
+  CompareModel model;
+  Expect(model.build_scratch.get() == nullptr, "a model starts with no build scratch");
+
+  BuildCompareModelInto(model, "a\nb\nc\n", "a\nB\nc\n", CompareBuildOptions{});
+  const auto* const first_scratch = model.build_scratch.get();
+  Expect(first_scratch != nullptr, "the first rebuild creates the scratch");
+
+  BuildCompareModelInto(model, "a\nb\nc\nd\n", "a\nB\nc\nD\n", CompareBuildOptions{});
+  Expect(model.build_scratch.get() == first_scratch,
+         "later rebuilds reuse the scratch rather than recreating it");
+
+  const CompareModel copy = model;
+  Expect(copy.build_scratch.get() == nullptr,
+         "a copied model must not share or duplicate the scratch");
+  Expect(copy.rows.size() == model.rows.size(),
+         "the copy is still a complete model — only the scratch is left behind");
+
+  CompareModel moved = std::move(model);
+  Expect(moved.build_scratch.get() == first_scratch, "a move transfers the scratch");
+
+  // A model whose scratch was left behind by a copy must still rebuild, and must
+  // produce the same thing a fresh build does.
+  CompareModel rebuilt_copy = copy;
+  BuildCompareModelInto(rebuilt_copy, "one\ntwo\n", "one\ntwo\nthree\n", CompareBuildOptions{});
+  const CompareModel fresh =
+      BuildCompareModel("one\ntwo\n", "one\ntwo\nthree\n", CompareBuildOptions{});
+  Expect(rebuilt_copy.rows.size() == fresh.rows.size(),
+         "rebuilding into a scratch-less copy produces the same model");
+  for (std::size_t i = 0; i < fresh.rows.size(); ++i) {
+    Expect(rebuilt_copy.rows[i].left_text == fresh.rows[i].left_text &&
+               rebuilt_copy.rows[i].right_text == fresh.rows[i].right_text &&
+               rebuilt_copy.rows[i].kind == fresh.rows[i].kind,
+           "every row of the rebuilt copy matches the fresh build");
+  }
+}
+
 // TD-2026-08-14-232: a row's text is a VIEW into the model's own source buffers.
 // The two things that has to survive are the model's own value semantics —
 // `BuildCompareModel` returns by value, so a move is on the ordinary path — and
@@ -1318,6 +1361,8 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
           TestBuildCompareModelIntoMatchesAFreshBuild);
   AddTest(tests, "CompareModel/BuildCompareModelIntoReusesRowStorage",
           TestBuildCompareModelIntoReusesRowStorage);
+  AddTest(tests, "CompareModel/BuildScratchIsRetainedButNotPartOfTheValue",
+          TestCompareModelBuildScratchIsRetainedButNotPartOfTheValue);
   AddTest(tests, "CompareModel/RowsSurviveCopyMoveAndTemporaryInputs",
           TestCompareModelRowsSurviveCopyMoveAndTemporaryInputs);
   AddTest(tests, "CompareModel/LineEqualityInterningMatchesPredicate",

@@ -6,6 +6,7 @@
 #include <span>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "compare/CompareReviewTypes.h"
@@ -68,6 +69,49 @@ struct CompareHunk {
   int end_row = 0;
 };
 
+// Working storage for one in-place model rebuild, kept alive between rebuilds.
+//
+// The build's three biggest buffers — the two `SplitLineViews` line lists and
+// the aligner's `DiffOp` output, plus the recursion scratch behind them — were
+// all locals, so an editable compare pane allocated and freed roughly 700 KB of
+// them PER KEYSTROKE. Every one is dead by the time a build returns and identical
+// in shape to the next build's, which is exactly what makes retaining them
+// correct (TD-2026-08-17-261).
+//
+// Opaque on purpose: the aligner's scratch is an implementation detail of
+// `CompareModel.cpp` and nothing outside it may name the members.
+namespace detail {
+struct CompareBuildScratch;
+struct DiffScratch;
+void DestroyCompareBuildScratch(CompareBuildScratch* scratch) noexcept;
+}  // namespace detail
+
+// Owning handle with value semantics chosen for what the scratch IS. Copying a
+// model must not copy megabytes of dead working buffers, and two models must
+// never share one — so a copy starts empty, and a move transfers.
+class CompareBuildScratchHandle {
+ public:
+  CompareBuildScratchHandle() = default;
+  ~CompareBuildScratchHandle() { detail::DestroyCompareBuildScratch(scratch_); }
+  CompareBuildScratchHandle(const CompareBuildScratchHandle&) {}
+  CompareBuildScratchHandle& operator=(const CompareBuildScratchHandle&) { return *this; }
+  CompareBuildScratchHandle(CompareBuildScratchHandle&& other) noexcept
+      : scratch_(std::exchange(other.scratch_, nullptr)) {}
+  CompareBuildScratchHandle& operator=(CompareBuildScratchHandle&& other) noexcept {
+    std::swap(scratch_, other.scratch_);
+    return *this;
+  }
+
+  detail::CompareBuildScratch* get() const noexcept { return scratch_; }
+  void reset(detail::CompareBuildScratch* scratch) noexcept {
+    detail::DestroyCompareBuildScratch(scratch_);
+    scratch_ = scratch;
+  }
+
+ private:
+  detail::CompareBuildScratch* scratch_ = nullptr;
+};
+
 struct CompareModel {
   // The bytes every row's `left_text`/`right_text` view points into.
   //
@@ -117,6 +161,9 @@ struct CompareModel {
   // CRLF working-tree file fails context matching (fails safe: patch rejected).
   bool left_uses_crlf = false;
   bool right_uses_crlf = false;
+  // Rebuild working storage, NOT part of the model's value. Lazily created by
+  // the first in-place rebuild and reused by every later one; empty in a copy.
+  CompareBuildScratchHandle build_scratch;
 };
 
 struct CompareBuildProfile {
@@ -200,5 +247,15 @@ std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_line
                                      std::span<const std::string_view> right_lines,
                                      const CompareBuildOptions& options,
                                      LineDiffBuildStats* stats = nullptr);
+// Into-form taking the aligner's recursion scratch AND its output vector from
+// the caller, so both survive between rebuilds. `ops` is cleared, not appended
+// to. `scratch` is opaque here on purpose — only `CompareModel.cpp` and the
+// model's own `build_scratch` produce one.
+void BuildLineDiffOpsInto(std::span<const std::string_view> left_lines,
+                          std::span<const std::string_view> right_lines,
+                          const CompareBuildOptions& options,
+                          detail::DiffScratch& scratch,
+                          std::vector<DiffOp>& ops,
+                          LineDiffBuildStats* stats = nullptr);
 
 }  // namespace microide::compare
