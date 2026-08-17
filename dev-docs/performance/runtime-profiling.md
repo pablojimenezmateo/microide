@@ -159,6 +159,18 @@ regression and a live session can be compared against each other directly.
 Counters are declared once in the `MICROIDE_PERF_COUNTERS` X-macro list — id and wire name in the
 same row. Add new ones there; do not add a parallel name table.
 
+Four of them exist to make a SILENT DEGRADATION audible rather than to profile
+anything, and are worth reading on any launch:
+
+| counter | what a healthy run reads |
+| --- | --- |
+| `render.frames_retained` / `render.scene_fallback_frames` | fallback at or near zero outside a resize drag. It sat at 100% of frames on every HiDPI display until 2026-08-17, with the entire partial-redraw path dead and nothing else reporting it |
+| `watch.file_index_watcher_starts` | exactly one per project open or switch. A second on the same project is a full tree walk and one `inotify_add_watch` per directory, again |
+| `watch.file_index_refresh_requests` | zero on a launch. A whole-tree rescan at startup is one the project open already did |
+
+That is the general shape to copy when fixing a defect that hid in a legitimate
+fallback: the fix is not finished until the degradation has a number.
+
 ## 4. Live Redraw And Resize Trace
 
 Enable the runtime profiler with:
