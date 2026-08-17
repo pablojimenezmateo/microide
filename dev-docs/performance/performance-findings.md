@@ -31,11 +31,23 @@ Same method as the 2026-08-15 pass below — the real binary, `MICROIDE_STARTUP_
 MICROIDE_PERF_SUMMARY=1`, quit over the control channel — on a **Wayland session
 at display scale 2.0**, which turned out to matter more than the numbers.
 
-    Application::FirstRender (total ms)      151 -> 110
-    FileIndex::InitialIndexReady (new)       214 -> 142
+    FileIndex::InitialIndexReady (new)       214 -> 142   (sum of three interleaved A/Bs)
     newfstatat calls at launch            21,989 -> 13,904
     frames using the retained scene          0 % -> 100 %
     tree walks per launch                        2 -> 1   (with the setting set)
+    WindowChromeSetup                      10.41 -> 0.01 ms
+
+**`Application::FirstRender` is deliberately not in that table.** The warning in
+the 2026-08-15 section below applies to this pass too, and an early draft of this
+one ignored it: a single pre-change launch read 151 ms and a post-change median
+read 110 ms, which looks like a 27 % win and is not one. That launch happened to
+spend 85.9 ms in `SDL_CreateRenderer` against a later 60-72 ms, and renderer
+creation is not something this pass changed. The only attributable first-frame
+win is `WindowChromeSetup`, 10.41 -> 0.01 ms, measured over three launches each.
+The interleaved A/B for the workspace-before-renderer reorder says so directly:
+index-ready moved 214.0 -> 162.4 ms while the first frame stayed at 100.4 ->
+101.9 ms, which is the expected result — the same serial work in a different
+order.
 
 ### `SDL_CreateRenderer` is 60-90 ms and none of it is ours
 

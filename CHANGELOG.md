@@ -32,9 +32,13 @@ than counted, because they now declare a different `measurement_revision`.
   about to reject (this repo visits ~52,000 entries and keeps 8,000), and six
   places that paired `file_size()` with `last_write_time()` — two syscalls for one
   inode, and three or four where a caller classified first — now take one stat.
-  On this repo, six interleaved launches each, median: time to the first frame
-  151 → 110 ms, time to a queryable file index 214 → 142 ms, `newfstatat` calls at
-  launch 21,989 → 13,904.
+  On this repo, interleaved launches, median: time to a queryable file index
+  214 → 142 ms, `newfstatat` calls at launch 21,989 → 13,904, and the window-chrome
+  setup 10.41 → 0.01 ms. Time to the first FRAME is deliberately not quoted: it is
+  dominated by `SDL_CreateRenderer`, which varies 60–86 ms run to run and which
+  none of this changes — the reorder's own A/B has the first frame flat (100.4 →
+  101.9 ms) while index-ready moves by 52 ms, which is exactly what reordering the
+  same serial work should do.
 - **The whole-tree project rescan is 41% faster** — the sidebar Refresh button, an
   exclude-glob edit, the forced project-change check. It derived every entry's
   relative path by normalizing the entry AND the (constant) project root, then
