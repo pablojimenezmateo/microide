@@ -18,6 +18,29 @@ suite's allocation total and none of its latency, so summing across them says
 nothing about the editor. Three scenarios are excluded by the harness rather
 than counted, because they now declare a different `measurement_revision`.
 
+- **A launch reaches a usable project about a third sooner.** Almost all of the
+  time to the first frame is `SDL_CreateRenderer` — traced, it is a dlopen chain
+  for the GL stack (35 shared objects, libLLVM among them) plus DRM ioctls and
+  display-server round trips, and a minimal SDL program reproduces it exactly, so
+  there is nothing in microide to make faster there. The shell thread is idle for
+  all of it, so the workspace now initializes BEFORE the renderer and the file
+  index walk, the git refreshes and plugin load run inside that wait instead of
+  queueing behind it. The window is also created borderless instead of being
+  created bordered and then having the decoration retracted, which on Wayland
+  built and tore down compositor-side state and forced a blocking sync. Alongside
+  those, the tree walk stopped building a relative path for every file it was
+  about to reject (this repo visits ~52,000 entries and keeps 8,000), and six
+  places that paired `file_size()` with `last_write_time()` — two syscalls for one
+  inode, and three or four where a caller classified first — now take one stat.
+  On this repo, six interleaved launches each, median: time to the first frame
+  151 → 110 ms, time to a queryable file index 214 → 142 ms, `newfstatat` calls at
+  launch 21,989 → 13,904.
+- **The whole-tree project rescan is 41% faster** — the sidebar Refresh button, an
+  exclude-glob edit, the forced project-change check. It derived every entry's
+  relative path by normalizing the entry AND the (constant) project root, then
+  normalizing the result again, having already copied the entry's path and built a
+  string to ask whether the name was hidden. 98–108 ms → 57–61 ms on this repo. It
+  also had no profiling scope at all, so a slow refresh was unattributable.
 - **Typing got cheaper by a quarter to a third on a large file.** Detecting a
   buffer's language materialised up to 64 owned head lines before every check —
   once per content revision, i.e. per keystroke, from two independent callers —
@@ -74,6 +97,28 @@ than counted, because they now declare a different `measurement_revision`.
   flight, and so does the window losing focus.
 
 ### Fixed
+
+- **On a HiDPI display, every frame was a full-window redraw.** The retained scene
+  texture is what lets a partial frame re-present the regions that did not change,
+  and the check that decides whether to allocate it compared a size in logical
+  units against one in device pixels. Those differ whenever the display scale or
+  the UI scale is not 1.0 — so on a scaled desktop the texture was never created,
+  every frame fell back to drawing straight to the window, and dirty-rect
+  analysis, clip coalescing and the retained re-present were dead code. Measured
+  on a scale-2.0 session: 16 of 16 frames were full redraws before, 13 of 15 are
+  partial after, at 0.51 ms per clip against 4.2 ms for a full frame. Rendering
+  output is unchanged (70 pixels of a 1600x1000 capture, a blinking terminal
+  cursor). The headless test driver reports a display scale of exactly 1.0, which
+  is why nothing caught this; there is now a test that drives the scaled case
+  directly and two counters that report the ratio in any session.
+- **Every launch re-applied the project settings the project open had just
+  applied**, for anyone who had `project.files_exclude` or
+  `project.follow_out_of_root_symlinks` set. The first painted frame compared the
+  restored configuration against an empty "last applied" record, concluded the
+  user had just edited it, and paid a whole-tree index rescan plus a complete
+  re-arm of the file watcher — a second full tree walk and one kernel watch
+  registration per directory. On this repo that was 214 ms of walking and a 49 ms
+  scan per launch, all of it discarded.
 
 - **A tab drag landed where the cursor was, not where the tab was drawn.** The
   drop slot was resolved from the raw pointer, so where inside a tab you grabbed
