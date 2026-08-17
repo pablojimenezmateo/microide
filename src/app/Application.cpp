@@ -754,6 +754,20 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     }
   }
 
+  const Uint64 render_start = SDL_GetTicksNS();
+  // The scene texture is ensured BEFORE the full-vs-partial decision, because
+  // `Ensure` can invalidate the texture it keeps: a UI-scale change moves the
+  // logical grid without moving the drawable, so the texture is remapped rather
+  // than reallocated and what it holds was laid out for the old grid. Deciding
+  // from a validity read taken before that would let a zoom-out frame re-present
+  // a screenful of stale, wrongly-scaled content around whatever clip it
+  // repainted.
+  bool scene_texture_ready = false;
+  {
+    util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");
+    scene_texture_ready = scene_texture_.Ensure(renderer_, width, height);
+  }
+
   const std::size_t dirty_rect_count = dirty_rects.size();
   const render::TextClipPadding clip_padding = workspace_shell_.PartialRedrawClipPadding();
   const DirtyRegionAnalysis dirty_region_analysis =
@@ -763,7 +777,6 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   const bool promote_partial_to_full =
       scene_texture_.valid() && ShouldPromotePartialFrameToFull(dirty_region_analysis);
   const bool full_redraw = dirty_rects.empty() || !scene_texture_.valid() || promote_partial_to_full;
-  const Uint64 render_start = SDL_GetTicksNS();
   std::size_t rendered_clip_count = 0;
   workspace::WorkspaceShell::FrameToken frame_token;
   {
@@ -774,11 +787,6 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
   SDL_assert(frame_token.valid() &&
              "Application::WorkspaceRenderClip requires PrepareFrameOnce() in current frame");
 #endif
-  bool scene_texture_ready = false;
-  {
-    util::PerformanceTrace::Scope scene_texture_scope("Application::EnsureSceneTexture");
-    scene_texture_ready = scene_texture_.Ensure(renderer_, width, height);
-  }
   if (scene_texture_ready) {
     if (!SDL_SetRenderTarget(renderer_, scene_texture_.texture())) {
       SDL_Log("SDL_SetRenderTarget(scene texture) failed: %s", SDL_GetError());
