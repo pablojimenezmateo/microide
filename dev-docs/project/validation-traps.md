@@ -1052,6 +1052,47 @@ emitted identical bytes for an unmodified press.
   blocked.
 - TSAN warnings do not fail the process — check the log, not just the exit code.
 
+## The Test Environment's Default Configuration
+
+A bug that only exists off the configuration the tests run in is not caught by
+any number of green runs, and the two found on 2026-08-17 were both this shape.
+The whole suite drives SDL under `SDL_VIDEODRIVER=dummy`, which reports a display
+scale of exactly **1.0**; the perf harness does the same; and every launch sweep
+before that one was run on a machine whose user config held nothing but defaults.
+
+- **`SceneTexturePresenter::Ensure` compared a LOGICAL size against
+  `SDL_GetRenderOutputSize`, which is PIXELS**, and gave up when they differed.
+  They differ whenever the display scale or the UI scale is not 1.0 — so on every
+  HiDPI desktop the retained scene texture was never created, every frame took
+  the direct-to-window fallback, and the entire partial-redraw path was dead
+  code. Under `dummy` the two numbers are equal, so the suite only ever exercised
+  the case where the bug cannot appear. See TD-2026-08-17-254.
+- **The first prepared frame re-applied `project.files_exclude`** because the
+  last-applied memo it compares against started empty — which is also the
+  setting's default, so with a default config the comparison happens to be
+  correct. Set the setting and every launch pays a whole extra tree walk. It was
+  found only because an unrelated A/B had left the setting in the developer's own
+  config. See TD-2026-08-17-255.
+
+What follows from it:
+
+- when a value has a "same as default" initial state, ask what happens when the
+  restored value is NOT the default — that is a different code path, and it is
+  the one real users are on;
+- a headless driver's answers (display scale, renderer name, output size,
+  refresh rate) are that driver's answers, not the platform's. A number or a
+  branch that depends on one has not been tested by the suite;
+- when a fix lands for one of these, add the counter that would have shown it
+  (`render.scene_fallback_frames` / `render.frames_retained`,
+  `watch.file_index_watcher_starts`), because the next one will not be found by
+  reading code either;
+- and write the regression test in the shape the real path uses. The first
+  version of the exclude-glob test set the setting through `SetSettingValue` on a
+  live shell and passed with the fix reverted — that path ends in
+  `ApplyLiveSettings`, which seeds the very memo the test was meant to catch. The
+  working version persists the setting and restores it in a fresh shell, which is
+  what a launch does.
+
 ## Things That Break Silently Elsewhere
 
 - **Bench and fuzz targets list explicit sources** rather than linking
