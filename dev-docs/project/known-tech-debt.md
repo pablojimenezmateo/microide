@@ -389,6 +389,61 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-17-257 — the file-index walk is single-threaded and is now ~90 % of the time to a usable project. [OPEN — costed, not attempted; see why below.]
+
+After the 2026-08-17 launch pass, opening this repo reaches
+`FileIndex::InitialIndexReady` at ~142 ms, and ~126 ms of that is one thread
+running `watch::NativeSetupWalk`. Everything else on the launch path is either
+SDL's (see `performance-findings.md` § 2026-08-17) or already overlapped with it.
+
+**What it is not.** Not syscalls: a binary with the per-file `stat` removed
+entirely walks the same tree in 121.7 ms against 128.3 ms — 7 ms for 46,805
+stats, because the tree is page-cache warm and a warm `stat` is ~0.15 us. Not the
+ignore filter's decision either; `project_traversal_filter_scan` gates that phase
+at zero allocations. It is per-entry work spread thin: `directory_entry`
+construction inside `recursive_directory_iterator` (libstdc++ builds a path's
+component list eagerly, so two allocations per entry before we touch it), the
+relative-path derivation for kept entries, and the sheer entry count — this repo
+visits ~52,000 entries to keep 8,000. A bare `recursive_directory_iterator` walk
+of the same tree with `d_type` classification and directory pruning is ~22 ms, so
+roughly 100 ms is ours.
+
+**The obvious fix and its price.** A shared work queue of directories with N
+workers would put this at ~20-30 ms on this box. It is not a small change:
+
+- `wd_to_path` is a `std::map` mutated by the walk's `on_directory` visitor as it
+  registers inotify watches. Parallel workers need per-worker maps merged at the
+  end, or a lock on the hot path.
+- `ProjectTraversalFilter` holds a mutable per-directory matcher cache and is not
+  thread-safe. Per-worker filters are correct (same rules, same defaults) but
+  re-read each ancestor `.gitignore` once per worker.
+- The entry budget and its `truncated` flag are currently order-dependent
+  ("stop at 50,000 kept files"); across workers that becomes an atomic counter
+  and a differently-shaped prefix.
+- `CollectTrackedCreations` is shared with four other callers (moved-in subtree,
+  overflow recovery, the poll snapshot, the macOS/Windows initial batch) whose
+  semantics differ; it would need to keep a serial form.
+
+**Why it is filed rather than done.** Same reasoning the sibling entry
+TD-2026-08-15-252 recorded: this is a correctness-sensitive path whose failure
+mode is a missed change signal — a stale sidebar — which is invisible in tests
+and obvious in use. It is also ~90 % of a number nobody is blocked on: the walk
+runs on a background thread, `main ms` is 0.000 for all of it, and the user only
+feels it if they open the file finder inside the first ~150 ms of a launch. That
+is a phase with its own equivalence tests, not something to fold into a sweep.
+
+**And it is this repo's number, not a typical one.** 52,000 entries is fuzz
+corpora and generated perf fixtures; a 3,000-file project walks in single-digit
+milliseconds and would gain nothing measurable. Anyone picking this up should
+re-measure on the tree they care about first.
+
+A cheaper half-measure worth costing at the same time: deliver the initial batch
+in chunks so the finder answers over a growing index instead of waiting for the
+whole walk. That changes `is_initial`'s "replaces the index wholesale" contract,
+which is load-bearing in `FileIndex::ApplyBatch` and in
+`NormalizeIndexUpdateBatch` (which early-returns on it precisely so an initial
+batch is not replayed as 8,000 external-change events).
+
 ### TD-2026-08-17-256 — the whole-tree project scan normalized its constant root once per filesystem entry. [RESOLVED 2026-08-17, same session it was found.]
 
 `ProjectFileScanner::CollectFiles` — the rescan behind the sidebar Refresh
