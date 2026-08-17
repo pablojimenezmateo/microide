@@ -4,9 +4,11 @@
 
 #include <algorithm>
 #include <mutex>
+#include <optional>
 #include <shared_mutex>
 #include <system_error>
 
+#include "platform/Filesystem.h"
 #include "platform/HostPlatform.h"
 #include "project/ProjectFileScanner.h"
 #include "util/DurableFile.h"
@@ -33,20 +35,16 @@ bool BatchPathEscapesRoot(const std::filesystem::path& relative_path) {
 ProjectFile BuildProjectFile(const std::filesystem::path& absolute_root,
                              const std::filesystem::path& relative_path) {
   ProjectFile file;
-  file.relative_path = relative_path.lexically_normal();
-  std::error_code error;
+  file.relative_path = util::NormalizedPath(relative_path);
+  // One stat for the whole triple. This was `status()` to classify, then
+  // `file_size()`, then `last_write_time()` -- three syscalls per file of a full
+  // rescan, each re-resolving the same path.
   const std::filesystem::path absolute_path = absolute_root / file.relative_path;
-  const auto status = std::filesystem::status(absolute_path, error);
-  if (!error && std::filesystem::is_regular_file(status)) {
-    file.size = std::filesystem::file_size(absolute_path, error);
-    if (error) {
-      file.size = 0;
-      error.clear();
-    }
-    file.mtime = std::filesystem::last_write_time(absolute_path, error);
-    if (error) {
-      file.mtime = {};
-    }
+  if (const std::optional<platform::FileMetadata> metadata =
+          platform::ReadFileMetadata(absolute_path);
+      metadata && metadata->type == platform::PathType::RegularFile) {
+    file.size = metadata->size;
+    file.mtime = metadata->mtime;
   }
   return file;
 }
@@ -290,6 +288,12 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
     std::size_t since_cancel_check = 0;
     std::vector<ProjectFile> rebuilt;
     rebuilt.reserve(batch.changes.size());
+    // The batch's paths come out of the watcher's walk already normal, and
+    // `lexically_normal()` is ~12 allocations whether or not it changes anything
+    // (TD-2026-08-10-174). At 46,805 files that no-op ran twice per entry -- once
+    // here and once more inside ToProjectFile, whose result the caller then threw
+    // away. The scratch is written only for an oddly-spelled input.
+    std::filesystem::path normalize_scratch;
     for (const auto& change : batch.changes) {
       if (is_cancelled && ++since_cancel_check >= kCancelCheckStride) {
         since_cancel_check = 0;
@@ -300,14 +304,13 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
       if (change.kind != platform::IndexUpdateBatch::Kind::CreatedOrModified) {
         continue;
       }
-      const std::filesystem::path relative_path = change.entry.relative_path.lexically_normal();
+      const std::filesystem::path& relative_path =
+          util::NormalizedPathView(change.entry.relative_path, normalize_scratch);
       if (relative_path.empty() || IsGitMetadataRelativePath(relative_path) ||
           BatchPathEscapesRoot(relative_path)) {
         continue;
       }
-      ProjectFile file = ToProjectFile(change.entry);
-      file.relative_path = relative_path;
-      rebuilt.push_back(std::move(file));
+      rebuilt.push_back(ToProjectFile(change.entry, relative_path));
     }
 
     if (is_cancelled && is_cancelled()) {
@@ -333,8 +336,10 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
 
   std::unique_lock lock(files_mutex_);
   bool changed = false;
+  std::filesystem::path normalize_scratch;
   for (const auto& change : batch.changes) {
-    const std::filesystem::path relative_path = change.entry.relative_path.lexically_normal();
+    const std::filesystem::path& relative_path =
+        util::NormalizedPathView(change.entry.relative_path, normalize_scratch);
     if (relative_path.empty() || IsGitMetadataRelativePath(relative_path) ||
         BatchPathEscapesRoot(relative_path)) {
       continue;
@@ -345,9 +350,7 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
                 changed;
       continue;
     }
-    ProjectFile file = ToProjectFile(change.entry);
-    file.relative_path = relative_path;
-    changed = UpsertProjectFileLocked(file) || changed;
+    changed = UpsertProjectFileLocked(ToProjectFile(change.entry, relative_path)) || changed;
   }
   if (!changed) {
     return false;
@@ -456,9 +459,10 @@ bool FileIndex::LessProjectFile(const ProjectFile& lhs, const ProjectFile& rhs) 
   return lhs.relative_path.native() < rhs.relative_path.native();
 }
 
-ProjectFile FileIndex::ToProjectFile(const platform::IndexFileEntry& entry) {
+ProjectFile FileIndex::ToProjectFile(const platform::IndexFileEntry& entry,
+                                     const std::filesystem::path& normalized_relative_path) {
   return ProjectFile{
-      .relative_path = entry.relative_path.lexically_normal(),
+      .relative_path = normalized_relative_path,
       .mtime = entry.mtime,
       .size = entry.size,
   };

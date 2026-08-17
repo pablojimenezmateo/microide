@@ -1,5 +1,7 @@
 #include "project/GitBlameService.h"
 
+#include "platform/Filesystem.h"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -102,20 +104,14 @@ bool FileIsWorkingTreeClean(const std::filesystem::path& root,
 }
 
 std::optional<FileStamp> ReadFileStamp(const std::filesystem::path& path) {
-  std::error_code error;
-  if (!std::filesystem::exists(path, error) || error || !std::filesystem::is_regular_file(path, error) ||
-      error) {
+  // One stat. This was four -- exists(), is_regular_file(), file_size(),
+  // last_write_time() -- each re-resolving the same path, on a staleness probe
+  // the blame overlay runs per validated file.
+  const std::optional<platform::FileMetadata> metadata = platform::ReadFileMetadata(path);
+  if (!metadata || metadata->type != platform::PathType::RegularFile) {
     return std::nullopt;
   }
-  const std::uintmax_t size = std::filesystem::file_size(path, error);
-  if (error) {
-    return std::nullopt;
-  }
-  const auto write_time = std::filesystem::last_write_time(path, error);
-  if (error) {
-    return std::nullopt;
-  }
-  return FileStamp{.size = size, .write_time = write_time};
+  return FileStamp{.size = metadata->size, .write_time = metadata->mtime};
 }
 
 Span NormalizeWindow(std::size_t visible_start_line,

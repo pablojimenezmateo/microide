@@ -3,6 +3,7 @@
 #include <cstddef>
 #include <filesystem>
 #include <functional>
+#include <optional>
 #include <system_error>
 #include <vector>
 
@@ -97,6 +98,33 @@ inline PathType EntryPathType(const std::filesystem::directory_entry& entry,
   }
   return PathType::Other;
 }
+
+// What one stat() call knows about a path.
+struct FileMetadata {
+  PathType type = PathType::Missing;
+  std::uintmax_t size = 0;
+  std::filesystem::file_time_type mtime{};
+};
+
+// Type + size + mtime for `path`, in ONE stat.
+//
+// `std::filesystem::file_size` and `std::filesystem::last_write_time` each run
+// their own stat, so the idiomatic pair is two syscalls for one inode — and a
+// caller that guards with `exists()` / `is_regular_file()` first pays three or
+// four. Every tree walk in the app wanted the same triple: the file index's
+// initial batch, the poll re-walk, the snapshot capture, the blame staleness
+// stamp, the project-search index refresh. On this repo that pair alone was
+// ~21,000 of the ~22,000 newfstatat calls a launch makes.
+//
+// Follows symlinks, matching the free functions it replaces (a symlink is
+// reported as whatever it points at, and a dangling one as Missing). Returns
+// nullopt when the path cannot be stat'ed at all; callers that only care about
+// regular files check `type` rather than making a second call.
+//
+// The mtime is bit-identical to `std::filesystem::last_write_time` for the same
+// inode — pinned by FilesystemTests/ReadFileMetadataMatchesStdFilesystem, since
+// index diffing compares stamps captured by both.
+[[nodiscard]] std::optional<FileMetadata> ReadFileMetadata(const std::filesystem::path& path);
 
 PathType ReadPathType(const std::filesystem::path& path);
 std::vector<DirectoryEntry> ListDirectory(const std::filesystem::path& directory);

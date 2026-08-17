@@ -9,6 +9,7 @@
 #include <unordered_set>
 #include <vector>
 
+#include "platform/Filesystem.h"
 #include "project/GlobMatch.h"
 #include "workspace/WorkspaceProjectSearchPresentation.h"
 #include "workspace/render/WorkspaceShellRenderPrimitives.h"
@@ -605,21 +606,18 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
   metadata_updates.is_initial = false;
   metadata_updates.changes.reserve(outcome.written.size());
   for (const auto& change : outcome.written) {
-    std::error_code status_error;
-    const auto status = std::filesystem::status(change.absolute_path, status_error);
-    if (status_error || !std::filesystem::is_regular_file(status)) {
+    // One stat for classify + mtime + size; this was three, per written file.
+    const std::optional<platform::FileMetadata> metadata =
+        platform::ReadFileMetadata(change.absolute_path);
+    if (!metadata || metadata->type != platform::PathType::RegularFile) {
       continue;
     }
-    std::error_code mtime_error;
-    const auto mtime = std::filesystem::last_write_time(change.absolute_path, mtime_error);
-    std::error_code size_error;
-    const auto size = std::filesystem::file_size(change.absolute_path, size_error);
     metadata_updates.changes.push_back(platform::IndexUpdateBatch::Change{
         .kind = platform::IndexUpdateBatch::Kind::CreatedOrModified,
         .entry = platform::IndexFileEntry{
             .relative_path = change.relative_path,
-            .mtime = mtime_error ? std::filesystem::file_time_type{} : mtime,
-            .size = size_error ? 0 : size,
+            .mtime = metadata->mtime,
+            .size = metadata->size,
         },
     });
   }

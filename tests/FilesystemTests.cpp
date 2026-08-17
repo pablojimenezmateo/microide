@@ -17,6 +17,7 @@
 #include <filesystem>
 #include <fstream>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <system_error>
 #include <thread>
@@ -132,6 +133,57 @@ void TestCaptureTreeSnapshotRespectsEntryBudget() {
   const auto bounded = CaptureTreeSnapshot({root}, {}, 5, &truncated);
   Expect(truncated, "snapshot should report truncation when the entry budget is exceeded");
   Expect(bounded.size() <= 5, "snapshot should not exceed the entry budget");
+}
+
+// The whole point of ReadFileMetadata is that callers stop pairing file_size()
+// with last_write_time(), so the stamps it produces have to be interchangeable
+// with the ones std::filesystem produces — index diffing compares a stamp taken
+// by one against a stamp taken by the other, and a conversion that is off by a
+// tick would report every file as modified, forever.
+void TestReadFileMetadataMatchesStdFilesystem() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "meta";
+  const std::filesystem::path file = root / "sized.txt";
+  WriteFile(file, "0123456789\n");
+  std::filesystem::create_directories(root / "sub");
+
+  const std::optional<platform::FileMetadata> metadata = platform::ReadFileMetadata(file);
+  Expect(metadata.has_value(), "ReadFileMetadata should succeed for an existing regular file");
+  Expect(metadata->type == PathType::RegularFile, "ReadFileMetadata should classify a regular file");
+  std::error_code error;
+  Expect(metadata->size == std::filesystem::file_size(file, error) && !error,
+         "ReadFileMetadata size should match std::filesystem::file_size");
+  Expect(metadata->mtime == std::filesystem::last_write_time(file, error) && !error,
+         "ReadFileMetadata mtime should be bit-identical to std::filesystem::last_write_time");
+
+  const std::optional<platform::FileMetadata> directory =
+      platform::ReadFileMetadata(root / "sub");
+  Expect(directory.has_value() && directory->type == PathType::Directory,
+         "ReadFileMetadata should classify a directory");
+  Expect(directory->size == 0, "ReadFileMetadata should report no size for a directory");
+
+  Expect(!platform::ReadFileMetadata(root / "absent.txt").has_value(),
+         "ReadFileMetadata should report nullopt for a missing path");
+  Expect(!platform::ReadFileMetadata({}).has_value(),
+         "ReadFileMetadata should report nullopt for an empty path");
+
+  // Symlinks resolve, exactly as file_size()/last_write_time()/status() do; a
+  // dangling one is Missing rather than Other.
+  std::error_code link_error;
+  std::filesystem::create_symlink(file, root / "link.txt", link_error);
+  if (!link_error) {
+    const std::optional<platform::FileMetadata> linked =
+        platform::ReadFileMetadata(root / "link.txt");
+    Expect(linked.has_value() && linked->type == PathType::RegularFile,
+           "ReadFileMetadata should follow a symlink to its target's type");
+    Expect(linked->size == metadata->size,
+           "ReadFileMetadata should report the target's size through a symlink");
+    std::filesystem::create_symlink(root / "absent.txt", root / "dangling.txt", link_error);
+    if (!link_error) {
+      Expect(!platform::ReadFileMetadata(root / "dangling.txt").has_value(),
+             "ReadFileMetadata should report nullopt for a dangling symlink");
+    }
+  }
 }
 
 void TestFileWatcherTreeTooLargeSuppressesPolling() {
@@ -491,6 +543,8 @@ void RegisterFilesystemTests(std::vector<TestCase>& tests) {
           TestFileWatcherEntryFilterSkipsIgnoredDirectories);
   AddTest(tests, "Filesystem/CaptureTreeSnapshotRespectsEntryBudget",
           TestCaptureTreeSnapshotRespectsEntryBudget);
+  AddTest(tests, "Filesystem/ReadFileMetadataMatchesStdFilesystem",
+          TestReadFileMetadataMatchesStdFilesystem);
   AddTest(tests, "FileWatcher/TreeTooLargeSuppressesPolling",
           TestFileWatcherTreeTooLargeSuppressesPolling);
 #if defined(__linux__) || defined(__APPLE__) || defined(_WIN32)

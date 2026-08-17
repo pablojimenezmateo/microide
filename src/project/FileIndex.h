@@ -151,7 +151,12 @@ class FileIndex {
   static bool IsTemporaryStagingRelativePath(const std::filesystem::path& path);
   static bool LessProjectPath(const ProjectFile& lhs, const std::filesystem::path& rhs);
   static bool LessProjectFile(const ProjectFile& lhs, const ProjectFile& rhs);
-  static ProjectFile ToProjectFile(const platform::IndexFileEntry& entry);
+  // `normalized_relative_path` must already be lexically normal. Both callers
+  // normalize it for the containment checks they run first, so normalizing again
+  // here was a second ~12-allocation no-op per file of a batch -- and its result
+  // was immediately overwritten with the caller's copy.
+  static ProjectFile ToProjectFile(const platform::IndexFileEntry& entry,
+                                   const std::filesystem::path& normalized_relative_path);
   void EnsureFresh(ProjectFileScanMode mode) const;
   bool UpsertProjectFileLocked(const ProjectFile& file);
   bool RemoveProjectFileLocked(const std::filesystem::path& relative_path);

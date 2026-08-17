@@ -3,9 +3,9 @@
 #include <algorithm>
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <string_view>
-#include <system_error>
 #include <unordered_set>
 #include <vector>
 
@@ -522,16 +522,17 @@ std::uint64_t SyntaxSourceFingerprint::Compute(
     fingerprint = Fnv1aAppend(fingerprint, path.generic_string());
     fingerprint = Fnv1aAppend(fingerprint, "\n");
 
-    std::error_code mtime_ec;
-    std::error_code size_ec;
+    // One stat for the (mtime, size) staleness key; this ran two per definition
+    // file on every fingerprint pass, and the pass happens at launch.
+    const std::optional<platform::FileMetadata> metadata = platform::ReadFileMetadata(path);
     const std::filesystem::file_time_type mtime =
-        std::filesystem::last_write_time(path, mtime_ec);
-    const std::uintmax_t size = std::filesystem::file_size(path, size_ec);
+        metadata ? metadata->mtime : std::filesystem::file_time_type{};
+    const std::uintmax_t size = metadata ? metadata->size : 0;
     const std::string key = path.generic_string();
 
     std::uint64_t content_hash = 0;
     const auto cached = cache_.find(key);
-    if (!mtime_ec && !size_ec && cached != cache_.end() &&
+    if (metadata && cached != cache_.end() &&
         cached->second.mtime == mtime && cached->second.size == size) {
       // Unchanged since the last compute: reuse the content hash, no re-read.
       content_hash = cached->second.content_hash;
@@ -539,7 +540,7 @@ std::uint64_t SyntaxSourceFingerprint::Compute(
       const std::optional<std::string> content = util::ReadTextFile(path);
       content_hash = content.has_value() ? Fnv1aAppend(0, *content)
                                          : Fnv1aAppend(0, "<unreadable>");
-      if (!mtime_ec && !size_ec) {
+      if (metadata) {
         cache_[key] = Entry{mtime, size, content_hash};
       } else {
         // Couldn't stat the file: don't cache, so the next compute re-reads it.

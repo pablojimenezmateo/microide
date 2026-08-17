@@ -1,6 +1,7 @@
 #include "platform/FileIndexWatcher.h"
 
 #include "platform/DescriptorRetire.h"
+#include "platform/Filesystem.h"
 #include "platform/HostPlatform.h"
 #include "project/ProjectTraversalFilter.h"
 #include "util/PathMatch.h"
@@ -22,6 +23,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <system_error>
@@ -47,6 +49,27 @@
 namespace microide::platform {
 
 namespace {
+
+// Stamp an index entry's (mtime, size) from ONE stat.
+//
+// Every site below used to call `last_write_time` and then `file_size` on the
+// same path -- two syscalls for one inode, per file, on walks that visit tens of
+// thousands. `ReadFileMetadata` answers both from a single stat and reports the
+// same values (Filesystem/ReadFileMetadataMatchesStdFilesystem pins that), which
+// matters here because a poll snapshot taken by one path is diffed against an
+// initial batch taken by another.
+//
+// An unreadable path (deleted between readdir and here, permission revoked)
+// leaves the zero stamp the callers already used for a failed stat.
+void StampEntryMetadata(const std::filesystem::path& absolute_path, IndexFileEntry& entry) {
+  if (const std::optional<FileMetadata> metadata = ReadFileMetadata(absolute_path)) {
+    entry.mtime = metadata->mtime;
+    entry.size = metadata->size;
+    return;
+  }
+  entry.mtime = {};
+  entry.size = 0;
+}
 
 #if defined(__linux__) || defined(__APPLE__)
 void CloseIfValid(int fd) {
@@ -224,6 +247,11 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
   bool truncated = false;
   std::error_code error;
   constexpr auto options = std::filesystem::directory_options::skip_permission_denied;
+  // Reused across the whole walk: `NormalizedPathView` only writes into it for an
+  // oddly-spelled entry, which a directory iterator does not produce. The owning
+  // `NormalizedPath` form here was a path COPY -- two allocations per file of the
+  // tree -- to reproduce its own input.
+  std::filesystem::path normalize_scratch;
   for (std::filesystem::recursive_directory_iterator it(walk_root, options, error), end;
        !error && it != end; it.increment(error)) {
     if (stop_requested != nullptr && stop_requested->load(std::memory_order_acquire)) {
@@ -253,7 +281,7 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
     if (truncated) {
       continue;  // file budget spent; still walking so watches keep being registered
     }
-    const std::filesystem::path abs_path = util::NormalizedPath(it->path());
+    const std::filesystem::path& abs_path = util::NormalizedPathView(it->path(), normalize_scratch);
     std::filesystem::path rel;
     if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
       continue;
@@ -274,15 +302,10 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
       }
       continue;
     }
-    std::error_code mtime_error;
-    const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-    std::error_code size_error;
-    const auto size = std::filesystem::file_size(abs_path, size_error);
     IndexUpdateBatch::Change change;
     change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
-    change.entry.relative_path = rel;
-    change.entry.mtime = mtime_error ? std::filesystem::file_time_type{} : mtime;
-    change.entry.size = size_error ? 0 : size;
+    change.entry.relative_path = std::move(rel);
+    StampEntryMetadata(abs_path, change.entry);
     changes->push_back(std::move(change));
   }
   return truncated;
@@ -400,12 +423,9 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
     if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
       continue;
     }
-    std::error_code mtime_error;
-    const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-    std::error_code size_error;
-    const auto sz = std::filesystem::file_size(abs_path, size_error);
-    result[rel] = {mtime_error ? std::filesystem::file_time_type{} : mtime,
-                   size_error ? 0 : sz};
+    const std::optional<FileMetadata> metadata = ReadFileMetadata(abs_path);
+    result[rel] = {metadata ? metadata->mtime : std::filesystem::file_time_type{},
+                   metadata ? metadata->size : 0};
   }
   if (out_directory_signature != nullptr) {
     *out_directory_signature = directory_signature;
@@ -971,13 +991,7 @@ struct FileIndexWatcher::Impl {
                     }
                     change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
                     change.entry.relative_path = rel;
-                    std::error_code mtime_error;
-                    const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-                    std::error_code size_error;
-                    const auto size = std::filesystem::file_size(abs_path, size_error);
-                    change.entry.mtime =
-                        mtime_error ? std::filesystem::file_time_type{} : mtime;
-                    change.entry.size = size_error ? 0 : size;
+                    StampEntryMetadata(abs_path, change.entry);
                   }
                   changes.push_back(std::move(change));
                 }
@@ -1184,12 +1198,7 @@ struct FileIndexWatcher::Impl {
       } else {
         change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
         change.entry.relative_path = rel;
-        std::error_code mtime_error;
-        const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-        std::error_code size_error;
-        const auto size = std::filesystem::file_size(abs_path, size_error);
-        change.entry.mtime = mtime_error ? std::filesystem::file_time_type{} : mtime;
-        change.entry.size = size_error ? 0 : size;
+        StampEntryMetadata(abs_path, change.entry);
       }
       changes.push_back(std::move(change));
     }
@@ -1454,12 +1463,7 @@ struct FileIndexWatcher::Impl {
           if (!status_error && std::filesystem::is_regular_file(status)) {
             change.kind = IndexUpdateBatch::Kind::CreatedOrModified;
             change.entry.relative_path = rel;
-            std::error_code mtime_error;
-            const auto mtime = std::filesystem::last_write_time(abs_path, mtime_error);
-            std::error_code size_error;
-            const auto sz = std::filesystem::file_size(abs_path, size_error);
-            change.entry.mtime = mtime_error ? std::filesystem::file_time_type{} : mtime;
-            change.entry.size = size_error ? 0 : sz;
+            StampEntryMetadata(abs_path, change.entry);
             changes.push_back(std::move(change));
           }
         }

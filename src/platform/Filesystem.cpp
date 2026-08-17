@@ -1,7 +1,12 @@
 #include "platform/Filesystem.h"
 
 #include <algorithm>
+#include <chrono>
 #include <system_error>
+
+#if !defined(_WIN32)
+#include <sys/stat.h>
+#endif
 
 #include "util/PathMatch.h"
 
@@ -18,6 +23,62 @@ void SortPaths(auto* entries) {
 }
 
 }  // namespace
+
+std::optional<FileMetadata> ReadFileMetadata(const std::filesystem::path& path) {
+  if (path.empty()) {
+    return std::nullopt;
+  }
+#if defined(_WIN32)
+  // No single-call equivalent worth hand-rolling here; the POSIX hosts are the
+  // ones whose walks this exists for. Same answers, three calls.
+  std::error_code error;
+  const std::filesystem::file_status status = std::filesystem::status(path, error);
+  if (error) {
+    return std::nullopt;
+  }
+  FileMetadata metadata;
+  metadata.type = PathTypeFromStatus(status);
+  if (metadata.type == PathType::RegularFile) {
+    std::error_code size_error;
+    metadata.size = std::filesystem::file_size(path, size_error);
+    if (size_error) {
+      metadata.size = 0;
+    }
+  }
+  std::error_code mtime_error;
+  metadata.mtime = std::filesystem::last_write_time(path, mtime_error);
+  if (mtime_error) {
+    metadata.mtime = {};
+  }
+  return metadata;
+#else
+  struct ::stat st {};
+  // stat(), not lstat(): std::filesystem::file_size / last_write_time / status
+  // all resolve symlinks, and this replaces those at call sites that compare
+  // stamps with them.
+  if (::stat(path.c_str(), &st) != 0) {
+    return std::nullopt;
+  }
+  FileMetadata metadata;
+  if (S_ISREG(st.st_mode)) {
+    metadata.type = PathType::RegularFile;
+    metadata.size = static_cast<std::uintmax_t>(st.st_size);
+  } else if (S_ISDIR(st.st_mode)) {
+    metadata.type = PathType::Directory;
+  } else {
+    metadata.type = PathType::Other;
+  }
+  // file_time_type's epoch is not the system clock's, so go through the
+  // documented conversion rather than constructing one from a raw duration.
+  // This is the same arithmetic libstdc++ performs inside last_write_time.
+  using std::chrono::nanoseconds;
+  using std::chrono::seconds;
+  const std::chrono::sys_time<nanoseconds> system_time{seconds{st.st_mtim.tv_sec} +
+                                                       nanoseconds{st.st_mtim.tv_nsec}};
+  metadata.mtime = std::chrono::file_clock::from_sys(system_time);
+  return metadata;
+#endif
+}
 
 PathType ReadPathType(const std::filesystem::path& path) {
   if (path.empty()) {
@@ -72,17 +133,13 @@ std::vector<TreeSnapshotEntry> CaptureTreeSnapshot(const std::vector<std::filesy
     std::uintmax_t size = 0;
     std::filesystem::file_time_type write_time{};
     if (type != PathType::Missing) {
-      std::error_code metadata_error;
-      if (type == PathType::RegularFile) {
-        size = std::filesystem::file_size(path, metadata_error);
-        if (metadata_error) {
-          size = 0;
+      // One stat for both, instead of file_size() + last_write_time() each
+      // running their own over every entry of the walk.
+      if (const std::optional<FileMetadata> metadata = ReadFileMetadata(path)) {
+        write_time = metadata->mtime;
+        if (type == PathType::RegularFile) {
+          size = metadata->size;
         }
-      }
-      metadata_error.clear();
-      write_time = std::filesystem::last_write_time(path, metadata_error);
-      if (metadata_error) {
-        write_time = std::filesystem::file_time_type{};
       }
     }
     snapshot.push_back(TreeSnapshotEntry{
