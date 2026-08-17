@@ -976,8 +976,9 @@ struct AnchorInfo {
 //
 // Every buffer here is dead by the time the function that filled it returns, so
 // one instance is safe for the whole recursion even though levels nest. The one
-// buffer that is *not* — the anchor list, which stays live while the level below
-// it runs — is deliberately absent and stays a local at each level.
+// buffer that is NOT — the anchor list, which stays live while the level below
+// it runs — is pooled BY DEPTH instead (`anchors_by_depth`), which gives it the
+// same reuse without the aliasing.
 struct DiffScratch {
   // Exact-LCS aligner.
   std::vector<std::uint32_t> left_ids;
@@ -994,6 +995,12 @@ struct DiffScratch {
   std::vector<std::size_t> pile_tops;
   std::vector<std::size_t> pile_candidate_indices;
   std::vector<std::size_t> predecessor;
+  // One anchor list per recursion depth. Level `d` reads its own list while
+  // level `d + 1` runs, so unlike everything above it this cannot be a single
+  // shared buffer — but a depth never collides with itself, so a pool works.
+  // Sized once to the depth cap (see AnchorsAtDepth): a pool that GREW during
+  // the recursion would move a live level's list out from under its loop.
+  std::vector<std::vector<std::pair<std::size_t, std::size_t>>> anchors_by_depth;
 };
 
 // The buffers one whole rebuild needs, retained between rebuilds. See the
@@ -1237,6 +1244,24 @@ void BuildUniqueLineAnchors(std::span<const std::string_view> left_lines,
   std::reverse(anchors.begin(), anchors.end());
 }
 
+// See the depth-guard comment inside AppendAnchoredFallbackOps for why this cap
+// exists; it is at file scope because the anchor pool is sized to it.
+constexpr std::size_t kMaxAnchoredFallbackDepth = 256;
+
+// The anchor list for one recursion level, from the depth pool.
+//
+// Sized to the whole cap on first use rather than grown per level, because a
+// level holds a reference to its list across the calls that recurse below it —
+// a pool that reallocated mid-recursion would move that list. 257 empty vectors
+// is one allocation of ~6 KB, once per model.
+std::vector<std::pair<std::size_t, std::size_t>>& AnchorsAtDepth(DiffScratch& scratch,
+                                                                 std::size_t depth) {
+  if (scratch.anchors_by_depth.size() <= kMaxAnchoredFallbackDepth) {
+    scratch.anchors_by_depth.resize(kMaxAnchoredFallbackDepth + 1);
+  }
+  return scratch.anchors_by_depth[depth];
+}
+
 void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
                                std::size_t left_begin,
                                std::size_t left_end,
@@ -1297,7 +1322,6 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
   // -> stack overflow, plus O(N^2) CPU rebuilding the anchor map at each level.
   // Past the cap, emit the remaining middle as a coarse delete+insert (a correct,
   // just less-minimal, diff) instead of recursing further.
-  constexpr std::size_t kMaxAnchoredFallbackDepth = 256;
   if (depth >= kMaxAnchoredFallbackDepth) {
     AppendDeleteOps(left_lines, left_begin, left_suffix, ops);
     AppendInsertOps(right_lines, right_begin, right_suffix, ops);
@@ -1305,9 +1329,12 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
     return;
   }
 
-  // Local, not scratch: this list stays live while the recursive calls below run,
-  // and those levels reuse every buffer in the scratch.
-  std::vector<std::pair<std::size_t, std::size_t>> anchors;
+  // Pooled by depth, not a local: this list stays live while the recursive calls
+  // below run (so it cannot share the scratch's single-buffer members), but no
+  // two live levels have the same depth. A fresh local here was ~10 allocations
+  // and 350 KB per rebuild on the wrapped-diff fixture, and a compare pane
+  // rebuilds on every keystroke (TD-2026-08-17-261).
+  std::vector<std::pair<std::size_t, std::size_t>>& anchors = AnchorsAtDepth(scratch, depth);
   BuildUniqueLineAnchors(left_lines, left_begin, left_suffix, right_lines, right_begin,
                          right_suffix, scratch, anchors);
   if (anchors.empty()) {
