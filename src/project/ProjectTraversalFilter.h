@@ -40,13 +40,31 @@ class ProjectTraversalFilter {
   }
 
  private:
+  // Everything cached per directory the walk enters. Both members answer a
+  // question whose answer is the same for every entry in that directory, and both
+  // used to be recomputed per ENTRY.
+  struct DirectoryState {
+    std::shared_ptr<const IgnoreMatcher> matcher;
+    // Does any ancestor directory of an entry in this directory resolve to
+    // ignored? `Includes` has to ask, because git does not let a file be
+    // re-included out of an excluded directory — but the answer depends only on
+    // the directory, and computing it per entry ran the whole rule set once per
+    // path component of every file in the tree. Lazily filled on the first entry
+    // seen here (kUnknown until then).
+    signed char ancestors_ignored = kUnknown;
+  };
+  static constexpr signed char kUnknown = -1;
+
   std::shared_ptr<const IgnoreMatcher> MatcherForParentDirectory(
       const std::filesystem::path& directory);
-  // Cache-hit fast path for the loop above: looks `directory_generic` up in the
-  // matcher cache without building the `path` and key `std::string` the general
-  // form needs, and falls back to it only on a miss (once per directory per walk).
-  std::shared_ptr<const IgnoreMatcher> MatcherForParentDirectoryText(
-      std::string_view directory_native, const std::filesystem::path& normalized_child);
+  // Cache-hit fast path for the loop above: looks `directory_native` up in the
+  // per-directory cache without building the `path` and key `std::string` the
+  // general form needs, and falls back to it only on a miss (once per directory
+  // per walk). Returns null for an entry that sits directly in the project root,
+  // which has no ancestor chain to check and needs no cache entry; the caller uses
+  // the root matcher then.
+  DirectoryState* StateForParentDirectoryText(std::string_view directory_native,
+                                              const std::filesystem::path& normalized_child);
 
   std::filesystem::path root_;
   // `root_.native()`, computed once. `Includes` compares a candidate's own text
@@ -68,9 +86,9 @@ class ProjectTraversalFilter {
   std::shared_ptr<const IgnoreMatcher> root_matcher_;
   // Transparent so the per-entry lookup can key on a view into the candidate's own
   // text instead of materialising the directory's name once per filesystem entry.
-  std::unordered_map<std::string, std::shared_ptr<const IgnoreMatcher>,
-                     util::TransparentStringHash, std::equal_to<>>
-      directory_matchers_;
+  std::unordered_map<std::string, DirectoryState, util::TransparentStringHash,
+                     std::equal_to<>>
+      directory_states_;
 };
 
 }  // namespace microide::project

@@ -16,6 +16,20 @@ std::string ToSlash(const std::filesystem::path& path) {
   return path.lexically_normal().generic_string();
 }
 
+// The characters GlobMatches gives meaning to. '\\' is included because it escapes
+// the next character, so a pattern containing one is never a plain literal.
+bool IsGlobMetacharacter(char c) {
+  return c == '*' || c == '?' || c == '[' || c == '\\';
+}
+
+std::size_t LiteralPrefixLength(std::string_view pattern) {
+  std::size_t index = 0;
+  while (index < pattern.size() && !IsGlobMetacharacter(pattern[index])) {
+    ++index;
+  }
+  return index;
+}
+
 }  // namespace
 
 std::shared_ptr<IgnoreMatcher> IgnoreMatcher::MakeChild(
@@ -128,16 +142,35 @@ bool IgnoreMatcher::Ignored(const std::filesystem::path& relative_path, bool is_
 
 bool IgnoreMatcher::IgnoredNormalized(std::string_view normalized_relative_path,
                                       bool is_directory) const {
+  // Same traversal the per-rule basename loop used to run, so a trailing '/' still
+  // yields no empty final component and "a//b" still yields the empty middle one.
+  PathComponents components;
+  for (std::size_t start = 0; start < normalized_relative_path.size();) {
+    const std::size_t end = normalized_relative_path.find('/', start);
+    if (end == std::string_view::npos) {
+      components.push_back(normalized_relative_path.substr(start));
+      break;
+    }
+    components.push_back(normalized_relative_path.substr(start, end - start));
+    start = end + 1;
+  }
+  return IgnoredWithComponents(normalized_relative_path, components, is_directory);
+}
+
+bool IgnoreMatcher::IgnoredWithComponents(std::string_view normalized_relative_path,
+                                          const PathComponents& components,
+                                          bool is_directory) const {
   // Evaluate the inherited ancestor layers first, then this directory's own
   // rules on top. Because a child's rules apply strictly after its ancestors'
   // (gitignore last-match-wins), this parent-then-local recursion is exactly
   // equivalent to a single flattened ancestor-first rule list — with no rule
   // copied into the child (TD-2026-07-17A-055).
-  bool ignored = parent_ != nullptr
-                     ? parent_->IgnoredNormalized(normalized_relative_path, is_directory)
-                     : false;
+  bool ignored =
+      parent_ != nullptr
+          ? parent_->IgnoredWithComponents(normalized_relative_path, components, is_directory)
+          : false;
   for (const auto& rule : rules_) {
-    if (!rule.Matches(normalized_relative_path, is_directory)) {
+    if (!rule.Matches(normalized_relative_path, components, is_directory)) {
       continue;
     }
     ignored = !rule.negated;
@@ -145,13 +178,35 @@ bool IgnoreMatcher::IgnoredNormalized(std::string_view normalized_relative_path,
   return ignored;
 }
 
-bool IgnoreMatcher::Rule::Matches(std::string_view relative_path, bool is_directory) const {
+bool IgnoreMatcher::Rule::MatchesText(std::string_view text) const {
+  switch (shape) {
+    case PatternShape::Exact:
+      return text == literal;
+    case PatternShape::Suffix:
+      return text.ends_with(literal);
+    case PatternShape::Prefix:
+      return text.starts_with(literal);
+    case PatternShape::Glob:
+      // Everything before the pattern's first metacharacter is literal, so a text
+      // that does not start with it cannot match however the rest expands. This is
+      // a pure short-circuit of GlobMatches, not a second matching rule.
+      if (!literal.empty() && !text.starts_with(literal)) {
+        return false;
+      }
+      return GlobMatches(pattern, text);
+  }
+  return false;
+}
+
+bool IgnoreMatcher::Rule::Matches(std::string_view relative_path,
+                                  const PathComponents& components, bool is_directory) const {
   if (directory_only && !is_directory) {
     return false;
   }
 
   // base_prefix is empty when base_relative is empty or ".", i.e. the rule applies
   // from the root and needs no path stripping.
+  std::size_t first_component = 0;
   if (!base_prefix.empty()) {
     if (relative_path == base_relative) {
       return false;
@@ -160,6 +215,9 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path, bool is_direct
       return false;
     }
     relative_path.remove_prefix(base_prefix.size());
+    // The prefix ends on a separator, so the stripped remainder is exactly the
+    // component list minus its first `base_component_count` entries.
+    first_component = base_component_count;
   }
 
   if (relative_path.empty()) {
@@ -167,19 +225,10 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path, bool is_direct
   }
 
   if (match_basename) {
-    std::size_t start = 0;
-    while (start < relative_path.size()) {
-      const std::size_t end = relative_path.find('/', start);
-      const std::string_view part = end == std::string_view::npos
-                                        ? relative_path.substr(start)
-                                        : relative_path.substr(start, end - start);
-      if (GlobMatches(pattern, part)) {
+    for (std::size_t index = first_component; index < components.size(); ++index) {
+      if (MatchesText(components[index])) {
         return true;
       }
-      if (end == std::string_view::npos) {
-        break;
-      }
-      start = end + 1;
     }
     return false;
   }
@@ -190,7 +239,7 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path, bool is_direct
   // GlobMatches folds, including zero directories). Do NOT float the pattern
   // across path suffixes — git does not, and doing so over-excludes files
   // (e.g. `a/b` must not match `x/a/b`).
-  return GlobMatches(pattern, relative_path);
+  return MatchesText(relative_path);
 }
 
 bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule& out_rule) {
@@ -259,14 +308,47 @@ bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule&
 
   std::string base = ToSlash(std::filesystem::path(std::move(base_relative)));
   std::string base_prefix;
+  std::size_t base_component_count = 0;
   if (!base.empty() && base != ".") {
     base_prefix = base + "/";
+    base_component_count = 1;
+    for (const char c : base) {
+      if (c == '/') {
+        ++base_component_count;
+      }
+    }
+  }
+
+  // Classify the pattern's shape once, here, so the per-entry test below is a
+  // compare for the overwhelmingly common forms. Suffix/Prefix are restricted to
+  // basename rules on purpose: their candidate text is a single path component and
+  // so contains no '/', which is what makes "*x" equivalent to ends_with("x") — a
+  // '*' in an anchored pattern must not cross a separator and has no such
+  // equivalence.
+  const std::size_t literal_length = LiteralPrefixLength(pattern);
+  PatternShape shape = PatternShape::Glob;
+  std::string literal;
+  if (literal_length == pattern.size()) {
+    shape = PatternShape::Exact;
+    literal = pattern;
+  } else if (!anchored && pattern[0] == '*' && LiteralPrefixLength(pattern.substr(1)) ==
+                                                   pattern.size() - 1) {
+    shape = PatternShape::Suffix;
+    literal = pattern.substr(1);
+  } else if (!anchored && pattern.back() == '*' && literal_length == pattern.size() - 1) {
+    shape = PatternShape::Prefix;
+    literal = pattern.substr(0, literal_length);
+  } else {
+    literal = pattern.substr(0, literal_length);
   }
 
   out_rule = Rule{
       .base_relative = std::move(base),
       .base_prefix = std::move(base_prefix),
       .pattern = pattern,
+      .literal = std::move(literal),
+      .base_component_count = base_component_count,
+      .shape = shape,
       .negated = negated,
       .directory_only = directory_only,
       .match_basename = !anchored,

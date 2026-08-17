@@ -113,9 +113,60 @@ void TestProjectTraversalFilterDeepAncestorAndUnnormalizedInput() {
          "a sibling directory sharing the root's string prefix is not inside it");
 }
 
+// The "is any ancestor directory ignored?" answer is cached per directory rather
+// than recomputed per entry (it used to be ~70 % of a whole-tree scan). A memo is
+// only correct if it is keyed on everything the answer depends on, so this pins
+// the two ways a per-directory cache goes wrong: an answer computed for one
+// directory must not be reused for a sibling, and it must not depend on which
+// entry of the directory happened to be asked first.
+void TestProjectTraversalFilterAncestorMemoIsPerDirectory() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root / "keep" / "inner");
+  std::filesystem::create_directories(root / "vendor" / "inner");
+  std::filesystem::create_directories(root / "keep" / "vendor");
+  WriteFile(root / ".gitignore", "vendor/\n");
+
+  // Interleaved on purpose: an ignored directory queried between two queries of an
+  // included one is what a shared-across-directories memo would get wrong.
+  ProjectTraversalFilter interleaved(root);
+  Expect(interleaved.Includes(root / "keep" / "inner" / "a.cpp", PathType::RegularFile),
+         "a file under a kept directory is included");
+  Expect(!interleaved.Includes(root / "vendor" / "inner" / "a.cpp", PathType::RegularFile),
+         "a file under an ignored ancestor is excluded even though its own name is fine");
+  Expect(interleaved.Includes(root / "keep" / "inner" / "b.cpp", PathType::RegularFile),
+         "the second file in the kept directory reads the memo, not the sibling's answer");
+  Expect(!interleaved.Includes(root / "vendor" / "inner" / "b.cpp", PathType::RegularFile),
+         "the second file under the ignored ancestor is still excluded");
+  Expect(!interleaved.Includes(root / "keep" / "vendor" / "a.cpp", PathType::RegularFile),
+         "an ignored directory nested under a kept one still excludes its files");
+
+  // Reverse order, fresh filter: the first entry seen in a directory is the one
+  // that fills the memo, so the verdicts must not depend on which one that was.
+  ProjectTraversalFilter reversed(root);
+  Expect(!reversed.Includes(root / "keep" / "vendor" / "a.cpp", PathType::RegularFile),
+         "verdict is independent of query order (nested ignored directory)");
+  Expect(!reversed.Includes(root / "vendor" / "inner" / "b.cpp", PathType::RegularFile),
+         "verdict is independent of query order (ignored ancestor)");
+  Expect(reversed.Includes(root / "keep" / "inner" / "b.cpp", PathType::RegularFile),
+         "verdict is independent of query order (kept directory)");
+
+  // The directory entries themselves take the same path through the memo as the
+  // files in them, and must answer the same way.
+  ProjectTraversalFilter directories(root);
+  Expect(directories.Includes(root / "keep" / "inner", PathType::Directory),
+         "a kept directory is included");
+  Expect(!directories.Includes(root / "vendor" / "inner", PathType::Directory),
+         "a directory under an ignored ancestor is excluded");
+  Expect(!directories.Includes(root / "vendor", PathType::Directory),
+         "the ignored directory itself is excluded");
+}
+
 }  // namespace
 
 void RegisterProjectTraversalFilterTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ProjectTraversalFilter/AncestorMemoIsPerDirectory",
+          TestProjectTraversalFilterAncestorMemoIsPerDirectory);
   AddTest(tests, "ProjectTraversalFilter/DeepAncestorAndUnnormalizedInput",
           TestProjectTraversalFilterDeepAncestorAndUnnormalizedInput);
   AddTest(tests, "ProjectTraversalFilter/ExcludesVcsAndBuildDirs",

@@ -6,6 +6,8 @@
 #include <string_view>
 #include <vector>
 
+#include "util/SmallVector.h"
+
 namespace microide::project {
 
 class IgnoreMatcher {
@@ -44,20 +46,61 @@ class IgnoreMatcher {
   bool IgnoredNormalized(std::string_view normalized_relative_path, bool is_directory) const;
 
  private:
+  // What shape a rule's pattern has, decided once at parse time. Every whole-tree
+  // walk in the app runs the full rule set (project defaults + the root
+  // `.gitignore`, ~45 rules here) against every filesystem entry AND, for a
+  // basename rule, against every path component of it — so the per-rule test is
+  // one of the hottest inner loops a project open executes. Nearly all real rules
+  // are a literal name (`node_modules`), a suffix (`*.pyc`) or a prefix
+  // (`cmake-build-*`); those answer in a compare instead of a run through the
+  // general backtracking glob matcher.
+  enum class PatternShape : unsigned char {
+    Exact,    // no metacharacters: text == literal
+    Suffix,   // "*rest", basename rules only: text ends with literal
+    Prefix,   // "rest*", basename rules only: text starts with literal
+    Glob,     // anything else: GlobMatches, gated by a literal-prefix reject
+  };
+
+  // The '/'-separated components of a candidate path, split once per query rather
+  // than once per basename rule. A whole-tree walk evaluates ~45 rules per entry
+  // and most of them are basename rules, so the old shape rescanned the same path
+  // text for separators forty-odd times per file. 16 inline slots cover any real
+  // project path; a deeper one spills and still answers correctly.
+  using PathComponents = util::SmallVector<std::string_view, 16>;
+
   struct Rule {
     std::string base_relative;
     // base_relative + "/" precomputed once at parse time; empty when the rule has
     // no base directory (root .gitignore) so Matches avoids a per-call allocation.
     std::string base_prefix;
     std::string pattern;
+    // Exact/Suffix/Prefix: the literal text the shape compares against. Glob: the
+    // leading run of literal characters before the first metacharacter, which the
+    // text must start with for any match to be possible — the cheap reject that
+    // keeps an anchored pattern like "tests/fuzz/corpora/*/*" from running the
+    // full matcher over every path in the tree.
+    std::string literal;
+    // How many leading components `base_prefix` consumes, so a based rule can skip
+    // that many entries of the shared component list instead of re-splitting the
+    // stripped remainder.
+    std::size_t base_component_count = 0;
+    PatternShape shape = PatternShape::Glob;
     bool negated = false;
     bool directory_only = false;
     bool match_basename = false;
 
-    bool Matches(std::string_view relative_path, bool is_directory) const;
+    bool Matches(std::string_view relative_path, const PathComponents& components,
+                 bool is_directory) const;
+    // The shape test for one already-stripped candidate (a whole relative path for
+    // an anchored rule, a single path component for a basename rule).
+    bool MatchesText(std::string_view text) const;
   };
 
   static bool ParseRule(std::string base_relative, std::string line, Rule& out_rule);
+  // Shared body of IgnoredNormalized and its parent-chain recursion: every layer
+  // reads the same candidate, so the split is done once by the public entry point.
+  bool IgnoredWithComponents(std::string_view normalized_relative_path,
+                             const PathComponents& components, bool is_directory) const;
 
   // Inherited ancestor context, shared and immutable. Null for a standalone /
   // root matcher. Evaluated before this matcher's own rules so a child's rules

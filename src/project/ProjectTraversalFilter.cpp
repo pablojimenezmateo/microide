@@ -80,48 +80,72 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   relative = generic_relative_scratch_;
 #endif
 
-  const std::shared_ptr<const IgnoreMatcher> matcher = MatcherForParentDirectoryText(
+  DirectoryState* const state = StateForParentDirectoryText(
       util::NormalizedParentDirectoryView(normalized_text), *normalized);
-  // `relative` is already lexically-normalized, so the string_view overload skips
-  // the per-call re-normalization the path overload would otherwise perform.
-  if (matcher->IgnoredNormalized(relative, is_directory)) {
-    return false;
-  }
-  // Walk the ancestor chain by trimming `relative` at each separator, innermost
-  // first — the same sequence `parent_path()` would yield, without a path per
-  // ancestor. (Ignored directories are also pruned via disable_recursion_pending
-  // in the walk, so this loop is defense-in-depth.)
-  for (std::string_view parent = util::NormalizedParentDirectoryView(relative);
-       !parent.empty() && parent != ".";) {
-    if (matcher->IgnoredNormalized(parent, true)) {
+  const IgnoreMatcher& matcher = state != nullptr ? *state->matcher : *root_matcher_;
+
+  // Ancestor chain first, because it is one cached byte after the first entry in
+  // this directory while the entry's own test below is the full rule set. The two
+  // are independent predicates that both veto, so the order only changes which one
+  // gets to short-circuit.
+  //
+  // Walk the chain by trimming `relative` at each separator, innermost first — the
+  // same sequence `parent_path()` would yield, without a path per ancestor.
+  // (Ignored directories are also pruned via disable_recursion_pending in the
+  // walk, so this is defense-in-depth for the callers that ask about one path.)
+  // The answer depends only on the parent directory, so it is computed once per
+  // directory rather than once per entry: this loop used to be ~70 % of a
+  // whole-tree scan, running the whole rule set once per path component of every
+  // file (TD-2026-08-17-257).
+  if (state != nullptr) {
+    if (state->ancestors_ignored == kUnknown) {
+      state->ancestors_ignored = 0;
+      for (std::string_view parent = util::NormalizedParentDirectoryView(relative);
+           !parent.empty() && parent != ".";) {
+        if (matcher.IgnoredNormalized(parent, true)) {
+          state->ancestors_ignored = 1;
+          break;
+        }
+        const std::string_view next = util::NormalizedParentDirectoryView(parent);
+        if (next.size() >= parent.size()) {
+          break;  // "/" is its own parent. A relative path never reaches it; this
+                  // keeps a malformed input from spinning here rather than pruning.
+        }
+        parent = next;
+      }
+    }
+    if (state->ancestors_ignored == 1) {
       return false;
     }
-    const std::string_view next = util::NormalizedParentDirectoryView(parent);
-    if (next.size() >= parent.size()) {
-      break;  // "/" is its own parent. A relative path never reaches it; this
-              // keeps a malformed input from spinning here rather than pruning.
-    }
-    parent = next;
   }
-  return true;
+
+  // `relative` is already lexically-normalized, so the string_view overload skips
+  // the per-call re-normalization the path overload would otherwise perform.
+  return !matcher.IgnoredNormalized(relative, is_directory);
 }
 
-std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDirectoryText(
+ProjectTraversalFilter::DirectoryState* ProjectTraversalFilter::StateForParentDirectoryText(
     std::string_view directory_native, const std::filesystem::path& normalized_child) {
   // The two answers that dominate a walk — "this entry sits directly in the
-  // project root" and "this directory's matcher is already cached" — are both
+  // project root" and "this directory's state is already cached" — are both
   // reachable from the candidate's own text, so neither builds a path or a key.
+  // A root-level entry has no ancestor chain at all, so it needs no entry.
   if (directory_native.empty() || directory_native == root_native_) {
-    return root_matcher_;
+    return nullptr;
   }
-  const auto existing = directory_matchers_.find(directory_native);
-  if (existing != directory_matchers_.end()) {
-    return existing->second;
+  const auto existing = directory_states_.find(directory_native);
+  if (existing != directory_states_.end()) {
+    return &existing->second;
   }
   // First entry seen in this directory: build the matcher through the general
   // form, which owns the recursion, the .gitignore load and the key insert.
   // `normalized_child`'s parent is normalized because `normalized_child` is.
-  return MatcherForParentDirectory(normalized_child.parent_path());
+  MatcherForParentDirectory(normalized_child.parent_path());
+  const auto inserted = directory_states_.find(directory_native);
+  // MatcherForParentDirectory returns the root matcher without caching when the
+  // directory is the root or has no relative path; both leave the chain empty, so
+  // a null state (root matcher, no ancestors) is the right answer.
+  return inserted != directory_states_.end() ? &inserted->second : nullptr;
 }
 
 std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDirectory(
@@ -136,9 +160,9 @@ std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDir
   // up: a generic key would silently never match it on Windows, turning every
   // cache hit into a full ancestor recursion.
   const std::string& key = directory.native();
-  const auto existing = directory_matchers_.find(key);
-  if (existing != directory_matchers_.end()) {
-    return existing->second;
+  const auto existing = directory_states_.find(key);
+  if (existing != directory_states_.end()) {
+    return existing->second.matcher;
   }
 
   // `directory` is normalized by every caller, and each parent_path() of a
@@ -150,7 +174,8 @@ std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDir
   // own .gitignore rules — no copy of the inherited rule set (TD-2026-07-17A-055).
   std::shared_ptr<IgnoreMatcher> matcher = IgnoreMatcher::MakeChild(parent_matcher);
   matcher->LoadIgnoreFile(directory / ".gitignore");
-  return directory_matchers_.emplace(key, std::move(matcher)).first->second;
+  return directory_states_.emplace(key, DirectoryState{.matcher = std::move(matcher)})
+      .first->second.matcher;
 }
 
 }  // namespace microide::project

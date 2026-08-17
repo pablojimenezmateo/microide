@@ -4,6 +4,10 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <string_view>
+
+#include "project/GlobMatch.h"
 
 namespace microide::tests {
 namespace {
@@ -313,7 +317,111 @@ void TestIgnoreMatcherHonorsCharacterClasses() {
          "the literal '[' pattern must not match as if '[' were a class");
 }
 
+// A rule's pattern is classified once at parse time into an exact / suffix /
+// prefix / general shape so the per-entry test is a compare rather than a run
+// through the backtracking glob matcher (that classification is what took the
+// project walk's ignore filter from 6.9 us to 1.6 us per entry). The whole risk of
+// that optimization is a shape that decides something GlobMatches would not, and
+// it is silent: the tree just quietly gains or loses files.
+//
+// So sweep a pattern corpus against a path corpus and require the matcher to agree
+// with GlobMatches applied the long way round, for every pair. The corpus keeps to
+// patterns whose parse is trivially reproducible here (no '!', no leading or
+// trailing '/', no backslash escapes) — the escape and character-class cases have
+// their own dedicated tests above, which is where a hand-written expectation is
+// worth more than a differential.
+void TestIgnoreMatcherShapeClassificationMatchesGlob() {
+  static constexpr std::string_view kPatterns[] = {
+      "node_modules", "build", "*.pyc",    "*",       "*~",     "cmake-build-*",
+      "build*",       "a*b",   "*a*",      "?x",      "**",     "x**",
+      "**x",          "a/b",   "src/*.h",  "tests/fuzz/corpora/*/*",
+      "**/gen/*.h",   "lib/**.c",          "file[0-9].log",
+  };
+  static constexpr std::string_view kPaths[] = {
+      "node_modules",
+      "src/node_modules/index.js",
+      "a.pyc",
+      "src/deep/a.pyc",
+      "a/b",
+      "x/a/b",
+      "src/x.h",
+      "src/deep/x.h",
+      "tests/fuzz/corpora/seed/case_1",
+      "tests/fuzz/corpora/case_1",
+      "gen/a.h",
+      "pkg/gen/a.h",
+      "lib/x.c",
+      "lib/deep/x.c",
+      "file7.log",
+      "fileX.log",
+      "cmake-build-debug/CMakeCache.txt",
+      "buildx/y",
+      "editor.swp~",
+      "x",
+      "deep/nested/tree/with/many/components/leaf.txt",
+      // A component that is EXACTLY the literal a shape compares against. These
+      // are the pairs that separate "ends_with" from "ends_with and is longer",
+      // "starts_with" from "starts_with and is longer", and an exact compare from
+      // a prefix compare — a corpus without them cannot see those mistakes.
+      ".pyc",
+      "src/.pyc",
+      "~",
+      "cmake-build-",
+      "b",
+      "ab",
+      "aab",
+      "abb",
+      "node_modules_extra",
+      "extra_node_modules",
+      "src/build",
+      "buildbuild",
+  };
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+
+  for (const std::string_view pattern : kPatterns) {
+    WriteFile(root / ".gitignore", std::string(pattern) + "\n");
+    IgnoreMatcher matcher;
+    matcher.SetRoot(root);
+
+    // The pre-classification shape of Rule::Matches, spelled out: a pattern with a
+    // separator is anchored to the whole relative path, one without it floats and
+    // is tried against each path component.
+    const bool anchored = pattern.find('/') != std::string_view::npos;
+    for (const std::string_view path : kPaths) {
+      bool expected = false;
+      if (anchored) {
+        expected = project::GlobMatches(pattern, path);
+      } else {
+        for (std::size_t start = 0; start < path.size();) {
+          const std::size_t end = path.find('/', start);
+          const std::string_view part =
+              end == std::string_view::npos ? path.substr(start) : path.substr(start, end - start);
+          if (project::GlobMatches(pattern, part)) {
+            expected = true;
+            break;
+          }
+          if (end == std::string_view::npos) {
+            break;
+          }
+          start = end + 1;
+        }
+      }
+      for (const bool is_directory : {false, true}) {
+        Expect(matcher.Ignored(std::filesystem::path(std::string(path)), is_directory) == expected,
+               std::string("pattern '") + std::string(pattern) + "' vs path '" +
+                   std::string(path) + "' (is_directory=" + (is_directory ? "true" : "false") +
+                   "): the precompiled shape disagrees with GlobMatches");
+      }
+    }
+  }
+}
+
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "IgnoreMatcher/ShapeClassificationMatchesGlob",
+          TestIgnoreMatcherShapeClassificationMatchesGlob);
   AddTest(tests, "IgnoreMatcher/HonorsCharacterClasses",
           TestIgnoreMatcherHonorsCharacterClasses);
   AddTest(tests, "IgnoreMatcher/HonorsGitignoreEscapes",
