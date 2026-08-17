@@ -4681,6 +4681,27 @@ void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "ignored-directory watcher fixture should open the project");
 
+  // Before asserting on a NEGATIVE, wait for the initial index batch to have
+  // LANDED and then drain it. `ReloadProjectIfFilesChanged` returns true for
+  // `file_index_has_pending_changes_` alone, and the watcher applies its initial
+  // batch from its own thread — so on a loaded machine the batch arrives inside
+  // the window between the open and the check, and a test about gitignore fails
+  // for a reason that has nothing to do with gitignore.
+  //
+  // Draining until quiet is not enough on its own, and was tried: the drain can
+  // run to completion BEFORE the batch has been applied at all, which is the same
+  // race one step earlier. Waiting for a file the fixture is known to index is
+  // what makes "the initial batch is behind us" a fact rather than a hope.
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("README.md"), true,
+                              std::chrono::seconds(5)),
+         "the initial file-index batch should land before the gitignore assertion");
+  for (int attempt = 0; attempt < 50; ++attempt) {
+    if (!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, false)) {
+      break;
+    }
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+
   WriteFile(root / "node_modules" / "pkg" / "index.js", "module.exports = 2;\n");
   Expect(!WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
          "project watcher should ignore gitignored directory changes");

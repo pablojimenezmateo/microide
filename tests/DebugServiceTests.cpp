@@ -685,13 +685,29 @@ void TestDebugSessionResolvesStackOnStopAndStepsResume() {
   Expect(captured.resume_count >= 1, "stepping should fire on_resumed optimistically");
 
   // Step in / out map to their DAP commands.
-  session->StepIn();
-  Expect(PollUntil(manager, [&]() { return captured.output.find("cmd:stepIn") != std::string::npos; }),
-         "StepIn should send the DAP `stepIn` command");
-  session->StepOut();
-  Expect(PollUntil(manager,
-                   [&]() { return captured.output.find("cmd:stepOut") != std::string::npos; }),
-         "StepOut should send the DAP `stepOut` command");
+  //
+  // Each command has to wait for the session to be STOPPED again, not merely for
+  // the previous command's text to appear in the adapter log. `SendResumeRequest`
+  // drops a command outright when `state_ != Stopped`, and a resume flips the
+  // state to Running synchronously — so issuing the next step as soon as the
+  // previous one was written sends it into a Running session, where it vanishes
+  // and the following poll waits out the whole hang ceiling. That is a property of
+  // when the adapter's `stopped` event happens to be drained, i.e. of the machine,
+  // which is what made this test fail on a loaded runner and pass everywhere else.
+  const auto step_and_wait = [&](const char* dap_command, auto&& send) {
+    const int stops = captured.stop_count;
+    const std::string marker = std::string("cmd:") + dap_command;
+    send();
+    Expect(PollUntil(manager,
+                     [&]() {
+                       return captured.output.find(marker) != std::string::npos &&
+                              captured.stop_count > stops;
+                     }),
+           std::string("the session should send the DAP `") + dap_command +
+               "` command and stop again (the mock adapter re-stops after every resume)");
+  };
+  step_and_wait("stepIn", [&] { session->StepIn(); });
+  step_and_wait("stepOut", [&] { session->StepOut(); });
   session->Continue();
   Expect(PollUntil(manager,
                    [&]() { return captured.output.find("cmd:continue") != std::string::npos; }),
