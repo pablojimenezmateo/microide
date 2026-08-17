@@ -36,6 +36,11 @@ vocabulary, not a parallel control path.
 - `set-setting <id> <value>` is a normal command (palette / socket / spec): it
   routes through the `SetSettingValue` chokepoint and **persists** like the
   Settings overlay. Unknown id / invalid value rejects with `ok:false`.
+  **Use `--set` instead for measurement work.** A persisted setting outlives the
+  run that set it and quietly changes every launch after it — an A/B that left
+  `project.files_exclude` set cost the next plain launch profile a whole extra
+  tree walk, which is how TD-2026-08-17-255 was found, but only after the numbers
+  had been confusing for a while.
 - `--set <id> <value>` (repeatable) and the spec `settings` key apply the same
   values **transiently**: live this session but never written to the saved config.
   They are tracked in `WorkspaceContext::transient_setting_keys` and stripped by
