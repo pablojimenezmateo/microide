@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <array>
+#include <bit>
 #include <cctype>
 #include <cmath>
 #include <cstdint>
@@ -49,6 +50,24 @@ constexpr std::size_t kMaxCacheEntries = 4096;
 // so the cache stays small and neither bound is hit.
 constexpr std::size_t kMaxCacheBytes = 48ull * 1024 * 1024;
 constexpr float kMinPresentationScale = 0.1f;
+
+// Give a recycled cache key a capacity that the NEXT row is likely to fit too.
+//
+// The eviction path hands the victim's map node back so the key string's buffer
+// is reused instead of freed and re-allocated (TD-2026-08-15-236). That only
+// pays off if the buffer refits: a string sized exactly to the row it last held
+// fits the next row only when that row is no longer, which on real text is a
+// coin flip. Rounding to a power of two collapses the cache's key buffers onto a
+// handful of sizes; `ResolveEntry` was the #1 allocator of six render-frame
+// phases with the exact sizing.
+//
+// libstdc++'s 15-byte SSO covers short runs, so the floor starts above it.
+void ReserveRoundedKeyCapacity(std::string& key_text, std::size_t needed) {
+  if (key_text.capacity() >= needed) {
+    return;
+  }
+  key_text.reserve(std::bit_ceil(std::max<std::size_t>(needed, 32)));
+}
 }  // namespace
 
 std::size_t SdlTtfTextBackend::EntryByteCost(int width, int height) {
@@ -1310,16 +1329,17 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
     // `text` is a view of the caller's row text, never of a key in this map (we
     // are here because `find` missed), so overwriting the node's key cannot
     // invalidate it.
+    ReserveRoundedKeyCapacity(recycled.key().text, text.size());
     recycled.key().text.assign(text);
     recycled.key().color = color;
     recycled.mapped() = entry;
     util::AddPerformanceCounter(util::PerfCounterId::RenderTextTextureCacheRecycled);
     map_it = cache_.insert(std::move(recycled)).position;
   } else {
-    CacheKey key{
-        .text = std::string(text),
-        .color = color,
-    };
+    CacheKey key;
+    ReserveRoundedKeyCapacity(key.text, text.size());
+    key.text.assign(text);
+    key.color = color;
     const auto [it, inserted] = cache_.emplace(std::move(key), entry);
     map_it = it;
     if (!inserted) {
