@@ -454,7 +454,13 @@ void WorkspaceShell::ReplaceAllProjectSearchMatches() {
             ps.options.show_hidden ? project::ProjectFileScanMode::IncludeHidden
                                    : project::ProjectFileScanMode::ExcludeHidden);
     if (snapshot.files) {
-      files = *snapshot.files;  // copy out: the shared cache pointer must not cross threads
+      // Copy out rather than hand the shared pointer to the worker: holding it
+      // would pin the index's cache buffer for the whole replace, which is what
+      // makes the next rebuild allocate a fresh one instead of recycling this.
+      files.reserve(snapshot.files->size());
+      for (const std::string& text : *snapshot.files) {
+        files.emplace_back(text);
+      }
     }
   }
   // Replace-all must honor the same scope the search did. The fast path above is

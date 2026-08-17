@@ -16,6 +16,19 @@
 namespace microide::tests {
 namespace {
 
+// The index hands out generic path TEXT, not `std::filesystem::path`
+// (TD-2026-08-17-259). Tests build their candidate lists from CollectProjectFiles,
+// which still returns paths, so convert once here rather than at six call sites.
+project::SharedPathList MakeIndexedFileList(std::vector<std::filesystem::path> paths) {
+  auto texts = std::make_shared<std::vector<std::string>>();
+  texts->reserve(paths.size());
+  for (const std::filesystem::path& path : paths) {
+    texts->emplace_back(path.generic_string());
+  }
+  return texts;
+}
+
+
 using microide::project::ProjectSearchResult;
 using microide::project::ProjectSearchCaseMode;
 using microide::project::ProjectSearchOptions;
@@ -44,7 +57,7 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
   ProjectSearchService service;
   const std::uint64_t run_id = service.Start(
       root, std::move(query), options,
-      std::make_shared<const std::vector<std::filesystem::path>>(std::move(indexed_files)));
+      MakeIndexedFileList(std::move(indexed_files)));
 
   SearchRunResult result;
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
@@ -548,8 +561,7 @@ void TestProjectSearchServiceRestartPublishesOnlyLatestRun() {
   WriteFile(root / "omega.txt", "omega\n");
 
   ProjectSearchService service;
-  const auto indexed_files = std::make_shared<const std::vector<std::filesystem::path>>(
-      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
+  const auto indexed_files = MakeIndexedFileList(project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   const std::uint64_t first_run_id = service.Start(root, "alpha", {}, indexed_files);
   const std::uint64_t second_run_id = service.Start(root, "omega", {}, indexed_files);
 
@@ -616,8 +628,7 @@ void TestProjectSearchServiceStopDiscardsLateUpdates() {
   }
 
   ProjectSearchService service;
-  const auto indexed_files = std::make_shared<const std::vector<std::filesystem::path>>(
-      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
+  const auto indexed_files = MakeIndexedFileList(project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   service.Start(root, "alpha", {}, indexed_files);
   service.Stop();
 
@@ -645,8 +656,7 @@ void TestProjectSearchServiceNoMatchFinishesPromptly() {
   WriteFile(root / "b.txt", "gamma\ndelta\n");
 
   ProjectSearchService service;
-  const auto indexed_files = std::make_shared<const std::vector<std::filesystem::path>>(
-      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
+  const auto indexed_files = MakeIndexedFileList(project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   const std::uint64_t run_id = service.Start(root, "zzz-not-present", {}, indexed_files);
 
   bool saw_finished = false;
@@ -702,8 +712,7 @@ void TestProjectSearchServiceProgressPublishesBeforeFirstMatch() {
   }
   WriteFile(root / "hit.txt", "needle\n");
 
-  const auto indexed = std::make_shared<const std::vector<std::filesystem::path>>(
-      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
+  const auto indexed = MakeIndexedFileList(project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden));
   ProjectSearchService service;
   const std::uint64_t run_id = service.Start(root, "needle", {}, indexed);
 

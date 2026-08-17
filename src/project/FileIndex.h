@@ -23,8 +23,16 @@ struct ProjectFile {
   bool operator==(const ProjectFile&) const = default;
 };
 
-// Immutable, shared list of relative paths produced by FileIndex.
-using SharedPathList = std::shared_ptr<const std::vector<std::filesystem::path>>;
+// Immutable, shared list of relative paths produced by FileIndex, as normalized
+// generic ('/'-separated) TEXT.
+//
+// Text and not `std::filesystem::path`, because a path copy allocates twice — its
+// pathname and the parsed component list — and the whole list is rebuilt on the
+// shell thread whenever the index changes. On a 10k-file project that was 20,000
+// allocations between a save and the next search (TD-2026-08-17-259). It also
+// removes an allocation on the OTHER side: the search worker's per-candidate
+// `generic_string()` is now the stored value itself.
+using SharedPathList = std::shared_ptr<const std::vector<std::string>>;
 
 struct FilePathSnapshot {
   std::uint64_t version = 0;

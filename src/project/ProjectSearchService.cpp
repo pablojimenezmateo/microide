@@ -297,9 +297,8 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
     }
   }
 
-  static const std::vector<std::filesystem::path> kEmpty;
-  const std::vector<std::filesystem::path>& candidate_files =
-      indexed_files ? *indexed_files : kEmpty;
+  static const std::vector<std::string> kEmpty;
+  const std::vector<std::string>& candidate_files = indexed_files ? *indexed_files : kEmpty;
   const std::size_t total_files = candidate_files.size();
   // Publish total_files immediately so the UI can show the denominator before
   // the first match (large empty-match prefixes were otherwise invisible).
@@ -365,12 +364,12 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
         PublishProgress(run_id, visited, total_files);
       }
 
-      const std::filesystem::path& relative_path = candidate_files[file_index];
-      // Materialized before the read (rather than after it, as this used to be) so
-      // the scope filter can reject a file from its path alone — the whole point of
-      // scoping is that an out-of-scope file is never opened. The match loop below
-      // reuses the same string, so no extra work is done on the in-scope path.
-      const std::string relative_path_string = relative_path.generic_string();
+      // The index hands out normalized generic path TEXT, so the scope filter can
+      // reject a file from its path alone — the whole point of scoping is that an
+      // out-of-scope file is never opened — with no per-candidate string to
+      // materialize. This used to be `relative_path.generic_string()`, one
+      // allocation per candidate on every search worker (TD-2026-08-17-259).
+      const std::string& relative_path_string = candidate_files[file_index];
       if (scope_active) {
         if ((!include_globs.empty() && !include_globs.Matches(relative_path_string)) ||
             (!exclude_globs.empty() && exclude_globs.Matches(relative_path_string))) {
@@ -380,7 +379,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
       }
       // One whole-file read (reusing file_buffer's capacity); returns false for
       // unreadable files and binaries (any embedded NUL), which we skip.
-      if (!util::ReadFileForTextSearch(absolute_root / relative_path, file_buffer)) {
+      if (!util::ReadFileForTextSearch(absolute_root / relative_path_string, file_buffer)) {
         continue;
       }
 
@@ -459,7 +458,7 @@ ProjectSearchService::SearchCompletion ProjectSearchService::RunSearch(
           std::string preview = util::CollapseAsciiWhitespaceTrackingMatch(
               line, match_start, match_end, &preview_match_start, &preview_match_length);
           batch.push_back(ProjectSearchResult{
-              .relative_path = relative_path,
+              .relative_path = std::filesystem::path(relative_path_string),
               .relative_path_string = relative_path_string,
               .file_index = file_index,
               .line = line_index,

@@ -380,7 +380,15 @@ FilePathSnapshot FileIndex::SnapshotPathsWithVersion(ProjectFileScanMode mode) c
 
 std::vector<std::filesystem::path> FileIndex::SnapshotPaths(ProjectFileScanMode mode) const {
   const FilePathSnapshot snapshot = SnapshotPathsWithVersion(mode);
-  return snapshot.files ? *snapshot.files : std::vector<std::filesystem::path>{};
+  std::vector<std::filesystem::path> paths;
+  if (!snapshot.files) {
+    return paths;
+  }
+  paths.reserve(snapshot.files->size());
+  for (const std::string& text : *snapshot.files) {
+    paths.emplace_back(text);
+  }
+  return paths;
 }
 
 std::uint64_t FileIndex::VisitRelativePaths(
@@ -516,14 +524,40 @@ bool FileIndex::RemoveProjectSubtreeLocked(const std::filesystem::path& relative
 void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const {
   util::PerformanceTrace::Scope perf_scope("FileIndex::RebuildCacheLocked");
   util::AddPerformanceCounter(util::PerfCounterId::FileIndexRebuilds);
-  auto rebuilt = std::make_shared<std::vector<std::filesystem::path>>();
+  // Recycle the previous list when nothing else is holding it. A one-file change
+  // invalidates the whole cache, and rebuilding into the old vector lets each
+  // `std::string` assignment reuse the capacity already sized for that entry — so
+  // the common case (one file changed, ten thousand entries identical) allocates
+  // nothing at all instead of once per file. A consumer still holding the previous
+  // snapshot (an in-flight search) keeps it: use_count says so, and we build fresh.
+  // `use_count() == 1` is sound here in both directions. Every other owner is a
+  // `FilePathSnapshot` handed out by SnapshotPathsWithVersion, which takes this
+  // same exclusive lock, so no new owner can appear while we hold it — and an
+  // owner going away concurrently only drops the count, which at worst makes us
+  // read 2 and build fresh. The unsafe direction (reading 1 while a live consumer
+  // still holds it) cannot happen, so const_pointer_cast has no observer to
+  // surprise.
+  std::shared_ptr<std::vector<std::string>> rebuilt;
+  if (cache.files != nullptr && cache.files.use_count() == 1) {
+    rebuilt = std::const_pointer_cast<std::vector<std::string>>(cache.files);
+    cache.files.reset();
+  } else {
+    rebuilt = std::make_shared<std::vector<std::string>>();
+  }
   if (root_.empty()) {
-    cache.files = std::shared_ptr<const std::vector<std::filesystem::path>>(std::move(rebuilt));
+    rebuilt->clear();
+    cache.files = std::shared_ptr<const std::vector<std::string>>(std::move(rebuilt));
     cache.needs_refresh = false;
     return;
   }
 
   rebuilt->reserve(files_.size());
+  // Overwrite in place rather than clear-and-push: `clear()` on a vector of
+  // strings runs every destructor, which hands back exactly the buffers the next
+  // entry is about to ask for. Assigning into a live string reuses its capacity,
+  // so an unchanged entry costs a memcpy and no allocation. The tail is trimmed
+  // once at the end.
+  std::size_t out = 0;
   for (const auto& file : files_) {
     if (mode == ProjectFileScanMode::ExcludeHidden && IsHiddenRelativePath(file.relative_path)) {
       continue;
@@ -537,9 +571,21 @@ void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache)
     if (IsTemporaryStagingRelativePath(file.relative_path)) {
       continue;
     }
-    rebuilt->push_back(file.relative_path);
+    // `native()`, not `generic_string()`: this is the POSIX host (see AGENTS.md
+    // § non-Linux backends), where the native separator IS '/', so the two are
+    // the same bytes — and native() returns a reference while generic_string()
+    // returns a fresh std::string, which is the allocation this loop exists to
+    // avoid. The paths were normalized on ingress by MakeGitRepositoryPathIdentity
+    // / NormalizedPathView, so no separator folding is owed here either.
+    if (out < rebuilt->size()) {
+      (*rebuilt)[out].assign(file.relative_path.native());
+    } else {
+      rebuilt->emplace_back(file.relative_path.native());
+    }
+    ++out;
   }
-  cache.files = std::shared_ptr<const std::vector<std::filesystem::path>>(std::move(rebuilt));
+  rebuilt->resize(out);
+  cache.files = std::shared_ptr<const std::vector<std::string>>(std::move(rebuilt));
   cache.needs_refresh = false;
 }
 
