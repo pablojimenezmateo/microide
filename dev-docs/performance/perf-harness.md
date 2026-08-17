@@ -62,6 +62,41 @@ That is the fourth instance of the collapse case, so treat a phase whose subject
 is an interaction as needing an assertion, in the phase, that the interaction had
 an effect. Run this after any pass that removes allocations.
 
+### The slack check cannot see the other blindness: a tight gate on the cheap case
+
+A gate can be correct, deterministic, tight against its baseline, and still
+measure a path that never does the expensive thing. Nothing above finds those,
+because there is no slack to notice — the number is right.
+
+`search_first_result.search_to_first_result` read 13 allocations for a project
+search over a 10,000-file corpus, and 13 was correct: the scenario measures a
+steady state where the file index has not moved since the last search, so the
+derived path cache is warm and the search start really does cost 13. The state a
+user is actually in — a search after a save — rebuilds that cache on the shell
+thread and cost **20,037** (TD-2026-08-17-259). Same code, same gate, three orders
+of magnitude apart, and the suite only ever visited the cheap side.
+
+The tell is not in the numbers, so look for it in the scenario: **does the setup
+put the system in the state the operation is expensive in, or in the state that
+was convenient to reach?** A warm cache, an already-open tab, an unchanged index
+and an already-resolved query are all convenient. When the answer is "the cheap
+state", the fix is another scenario, not a wider envelope — and it needs a
+phase-level guard asserting the expensive work ran (a performance counter moving
+is the cheapest form), because otherwise the new scenario drifts back onto the
+cheap path with nothing to say so.
+
+Two ways that drift happens, both found while writing that scenario and both
+caught by its guard before a baseline existed:
+
+- **Re-running an operation with the same input is often a no-op.** A warm-up
+  search using the same query as the measured one left the measured window doing
+  nothing at all.
+- **A test helper may not take the production path.** `SimulateExternalFileChange`
+  also runs a forced project check, and the forced path rebuilds the derived cache
+  EAGERLY inside the rescan, where a save takes the incremental watcher path that
+  leaves the rebuild for the next reader. The helper invalidated and re-warmed in
+  one call, so the measured window found a warm cache.
+
 ## Gating Policy: Loose Wall, Exact Allocations
 
 The two gated metrics are deliberately asymmetric, and reading a result depends on

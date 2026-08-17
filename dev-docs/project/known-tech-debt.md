@@ -389,7 +389,129 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-17-258 — `diff.next_hunk_burst` measured 3 allocations against a 10,980 baseline and the suite called it a PASS. [RESOLVED for the gate 2026-08-17; the product question it exposed is OPEN, below.]
+### TD-2026-08-17-261 — the compare surface's own scratch is per-recursion-level, and three neighbours of it are not. [OPEN — the measured part is done; this is what the same sweep looked at and left.]
+
+Recorded so the next pass starts where this one stopped rather than re-deriving it.
+
+`AppendAnchoredFallbackOps` now threads one `DiffScratch` through the whole
+recursion ([TD-2026-08-17-259](#td-2026-08-17-259)'s sibling commit), which took
+`compare.type_in_wrapped_diff` — the keystroke path in an editable diff — from
+13,874 to 9,576 allocations. What remains in that phase, from the phase-scoped
+allocation trace:
+
+| per keystroke | site |
+| ---: | --- |
+| ~30 | `BuildComparePresentationModel`, `std::to_string(n) + " unchanged lines hidden"` |
+| ~22 per frame | `TextLayout::BuildVisibleLineWindowInto`, once per visible row |
+| ~22 per frame | `PrepareCompareVisibleLayoutsForWindow` |
+
+The first is the clearest: `presentation.rows` is cleared and re-pushed on every
+keystroke, so every collapsed-run summary string is freed and rebuilt with a
+count that almost never changed. It is the shape
+[`model-rebuilt-not-overwritten`] names, and the fix is the same one
+`RebuildCacheLocked` just took — overwrite in place, trim the tail. It was left
+because the presentation rebuild is already gated behind
+`presentation_inputs_changed` and a keystroke legitimately changes the model
+revision, so the win is bounded by the collapsed-run count (~15 on the fixture)
+rather than by the row count.
+
+The two render-side ones are per visible row per frame and are invalidated
+deliberately: `RefreshCompareTabDerivedState` clears `visible_layout_cache` on
+every content change, which a keystroke is. That is correct — the layout of a
+changed line IS stale — but it invalidates the whole window rather than the rows
+the edit touched, and `LineEditSpan` already exists as the edit-extent primitive
+for exactly that narrowing.
+
+Not filed as a defect. Every number above is a measured cost of work that has to
+happen; the question is whether it has to happen for every row.
+
+### TD-2026-08-17-260 — an architecture lint walked a tree the perf fixture generators rewrite underneath it. [RESOLVED 2026-08-17, same session it was found.]
+
+`CheckTerminalInternalHeadersStayInTerminalDir` scans `src`, `tests` and `tools`
+with a throwing `recursive_directory_iterator`. `tests` holds the generated perf
+fixture repositories — **15,211 of the 15,442 source-extension files under it** —
+and the ctest fixture-setup tests (`FIXTURES_SETUP perf_fixtures`) rewrite those
+trees while the 24 shards run. An increment onto an entry another process had just
+unlinked threw, and the shard died with `cannot increment recursive directory
+iterator: No such file or directory`.
+
+Seen once in a full `run-checks.sh tests` run and green on the immediate rerun,
+which is what makes this class of failure get waved through as "flaky CI".
+
+`SourceFilesUnder` in `ArchitectureFileScanner` already existed for precisely
+this, with the `error_code` increment and the `fixtures/` skip, **and its comment
+already named this failure**. It was unusable here only because it filtered to
+`.cpp` and this rule reads `.h` and `.inc` too. It takes the extension list now.
+
+**The file count is not a speed argument, and the entry says so on purpose.**
+Skipping those 15,211 reads is not measurably faster — 0.25 s either way, three
+runs each — because the files are small and page-cached. The race is the whole
+reason. An audit of the other 45 raw `recursive_directory_iterator` sites in
+`tests/architecture/` found every one of them rooted at `src`, which no test
+writes; this rule was the only one reaching into a volatile tree.
+
+Probed rather than assumed, per [`lint-vacuity-probe-technique`]: with a synthetic
+violating include planted under `tests/support/`, the rule still reports it by
+path and line and still hard-fails. Routing it through the scanner did not quietly
+narrow what it can see.
+
+### TD-2026-08-17-259 — a save cost 20,037 shell-thread allocations before the next search, and nothing could see it. [RESOLVED 2026-08-17, same session it was found — instrument first, then fix.]
+
+`FileIndex` keeps two derived lists of relative paths (hidden included/excluded)
+and marks both dirty on any change. The next reader rebuilt one from scratch — on
+the shell thread, under the index's exclusive lock — by copying a
+`std::filesystem::path` per indexed file. **A path copy allocates twice**: its
+pathname, and the parsed component list that no consumer downstream reads. On the
+10k-file fixture that is 20,037 allocations between a save and the first result of
+the next search, scaling linearly with the project.
+
+**Why the suite could not see it, which is the more useful half.**
+`search_first_result` sits directly on this path and reads **13** allocations for
+its whole phase. That is not a collapse — it is a correct reading of a steady
+state where the index has not moved since the last search, so the cache is warm
+and the search start really does cost 13. (The counter is per-thread by design, so
+the worker's own work is charged to the worker.) The scenario's own comment
+claimed 145 and had been stale for long enough that nobody re-derived it. A gate
+can be tight, deterministic, correct, and still measure the cheap case forever.
+
+`project_search_start_after_index_change` now measures the other case. Getting it
+to measure anything took two corrections, **both caught by its own vacuity guard
+before a baseline was ever recorded** — which is [258](#td-2026-08-17-258)'s
+recommendation doing its job on the first scenario written after it:
+
+1. **Re-running a search for the query already in the box is a no-op.** A warm-up
+   that used the same string left the measured window doing nothing at all.
+2. **`SimulateExternalFileChange` also runs a forced project check**, and the
+   forced path calls `FileIndex::EnsureFresh`, which rebuilds the cache EAGERLY
+   inside the rescan. A save takes the incremental watcher path, which leaves the
+   rebuild for the next reader — so the scenario dispatches the watcher batch
+   itself. And it does so INSIDE the measured window, because the first reader
+   after the invalidation turned out to be the frame that applies the batch rather
+   than the search start.
+
+The guard asserts `watch.file_index_rebuilds` moved during the phase.
+
+**The fix, in two parts, and the second is the one that matters.** The list holds
+normalized generic path TEXT now, which halves the copy and also removes an
+allocation on the *other* side — the search worker's per-candidate
+`relative_path.generic_string()` is the stored value it reads directly. Then the
+rebuild recycles: a one-file change invalidates the whole list, so the common case
+is ten thousand entries that did not move, and rebuilding into the previous vector
+lets each `std::string` assignment reuse the buffer already sized for that entry.
+`clear()` would have defeated it — on a vector of strings it runs every destructor,
+handing back exactly the buffers the next entry asks for — so the loop overwrites
+in place and trims the tail once. A consumer still holding the previous snapshot
+keeps it; `use_count() == 1` is read under the same lock every other owner is
+handed out under, so it is sound in both directions.
+
+```
+project_search.index_change_to_search_start   20,037 -> 33   (-99.8 %)
+```
+
+`search_first_result`, `file_finder_cold` and `project_search_literal` are
+unchanged to the allocation.
+
+### TD-2026-08-17-258 — `diff.next_hunk_burst` measured 3 allocations against a 10,980 baseline and the suite called it a PASS. [RESOLVED for the gate 2026-08-17; the product question it exposed is now RESOLVED too — see below.]
 
 Found by asking a question the suite cannot ask itself: *how much slack does every
 deterministic gate have against what it gates?* Across a full 95-scenario run on
@@ -427,18 +549,37 @@ rebaselined. The diff row is not.
    `right_cursor_line=0`. Backward jumps from there work, which is what proves the
    selection really is at the end rather than the navigation being broken.
 
-**The product half is OPEN.** Opening a diff and landing on the last change is not
-what VS Code does (it reveals the first change) and not what the caret says
-(`right_cursor_line` is 0, so the caret and the selection disagree at open). This
-was found from a perf scenario and is not root-caused: `RefreshCompareTabDerivedState`
-only clamps and snaps to the first `Model`-kind row, so something else moves it.
-Whoever picks this up should start by asking who writes `selected_row` between
-`OpenWorkingTreeComparison` and the first frame. Two things were ruled out on the
-way and are worth not re-testing: the key is fine (a bare `]` navigates in the
-editable pane exactly as the `[ / ] hunks` hint advertises — an earlier hypothesis
-that the editable pane swallowed it was wrong and was measured wrong), and focus
-is fine (`PerfPrimeGitRepository` parks focus on the sidebar, but forcing it to
-the editor changed nothing).
+**The product half is RESOLVED (2026-08-17), and this entry's diagnosis of it was
+wrong.** A working-tree comparison does NOT open on its last hunk. It opened on
+`selected_row = 0`. The "236 of 240" reading above was an artifact of the
+instrument: the perf driver holds ONE `WorkspaceShell` for every iteration of a
+scenario, so from iteration 2 on `OpenWorkingTreeComparison` finds the tab already
+open and `RefreshExistingCompareTab` carries the previous iteration's selection —
+which the previous iteration's 24-jump burst had left on the last hunk. Measuring
+open-time state from inside a scenario whose shell is reused measures the previous
+iteration. Reproduce from a fresh shell before believing an open-time reading.
+
+What the entry got right is that something was wrong, and there were two things:
+
+- **A fresh open selected row 0, not the first change.** For anything but a file
+  whose first change is at the top that is unchanged context — on the 12,000-line
+  fixture it is the whole screen. VS Code's diff editor reveals the first change
+  region. `CompareFirstChangePresentationRow` resolves it and all four fresh-open
+  sites (working tree, branch head, commit picker, plain) select it. Re-activating
+  an already-open comparison deliberately does not: there the reader's own
+  selection is the thing to preserve.
+- **The caret really did disagree with the selection, and it was worse than
+  cosmetic.** `selected_row` is a presentation row, the editable right pane edits
+  model lines, and nothing mapped one onto the other — so `JumpCompareHunk` moved
+  the selection and revealed it while the caret stayed put. Jump to a change 300
+  lines down in a working-tree diff, type, and the edit landed on line 0, off
+  screen, in a pane you are looking away from. `SyncCompareCaretToSelectedRow`
+  carries the caret with the selection and no-ops on a read-only right pane.
+
+The two things this entry ruled out stay ruled out: the key is fine, and focus is
+fine. The scenario's walk-back guard asserted only that the backward walk MOVED,
+which a single jump satisfies; it asserts where it landed now, because the first
+hunk is the property the measured burst depends on.
 
 **What changed.** The fixture (30 hunks), the scenario (walks to the first hunk in
 setup, then bursts forward), and two vacuity guards that fail loudly by name: one

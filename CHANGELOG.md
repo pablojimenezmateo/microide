@@ -102,6 +102,19 @@ than counted, because they now declare a different `measurement_revision`.
 
 ### Fixed
 
+- **A diff opened at the top of the file, and typing after navigating a hunk
+  edited line 0.** Two halves of one missing mapping. A comparison opened with its
+  selection on row 0, which for anything but a file whose first change is at the
+  top is unchanged context — on a 12,000-line file it is the whole screen; it
+  reveals the first change now, as VS Code's diff editor does, on every fresh open
+  (working tree, branch head, commit picker, plain compare) while re-activating an
+  already-open comparison still restores the reader's own selection. The second
+  half was worse than cosmetic: the selection is a presentation row and the
+  editable right pane edits model lines, and nothing mapped one onto the other, so
+  jumping to a change 300 lines down moved the highlight and left the caret behind
+  — type, and the edit landed off screen at line 0. The caret follows the
+  selection now.
+
 - **On a HiDPI display, every frame was a full-window redraw.** The retained scene
   texture is what lets a partial frame re-present the regions that did not change,
   and the check that decides whether to allocate it compared a size in logical

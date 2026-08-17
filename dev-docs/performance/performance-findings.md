@@ -25,6 +25,91 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-17 interaction pass: three shapes, and one of them was invisible to the suite
+
+Driven by the phase-scoped allocation tracer over all 122 phases
+(`tools/trace-perf-phases.py`) rather than by the gate, because the gate was
+already green: 112 PASS / 0 FAIL on entry. A green suite means "nothing got
+worse", and the tracer is what answers "where does the work go".
+
+Read the three findings as three different relationships to measurement.
+
+**1. The diff rebuilt its whole working set once per anchor segment.** Typing in
+an editable compare pane rebuilds the diff on every keystroke, and the anchored
+fallback that large diffs take recurses once per anchor segment. Each level built
+its own working set: the exact-LCS aligner allocated six vectors plus an intern
+table, the anchor search seven more, and both then materialised a whole
+`std::vector<DiffOp>` purely so the caller could copy it into the ops list and
+free it. One `DiffScratch` threads the recursion now, and the aligners append into
+the caller's vector.
+
+| phase | before | after |
+| --- | ---: | ---: |
+| `merge_model.build_interleaved` | 3,805 | 1,297 |
+| `merge_interleaved.open_to_first_paint` | 4,518 | 2,010 |
+| `merge.open_many_conflicts` | 4,626 | 2,118 |
+| `compare_selection.open_to_first_paint` | 2,955 | 1,700 |
+| `compare.type_in_wrapped_diff` | 13,874 | 9,576 |
+
+Sharing one scratch across a recursion is sound only because every buffer in it is
+dead when its owner returns. The one that is not — the anchor list, live while the
+level below runs — is a local at each level, and that is load-bearing rather than
+stylistic: aliasing it into the scratch as a probe did not produce a subtly worse
+diff, it ran past a 300-second timeout. The new
+`Compare/AnchoredFallbackMatchesEveryUniqueAnchor` asserts the PAIRING (1,200
+unique anchors, all matched) because the round-trip test beside it structurally
+cannot see this class of bug: reproducing both sides only requires every line to
+be emitted once in order, not to be paired with the right partner.
+
+The trade is stated where it is taken. The scratch holds its largest segment's
+buffers for the whole recursion where each level used to allocate and free its
+own, so `compare_type_in_wrapped_diff`'s `p50_net_heap_bytes` rose 8 % and its
+advisory resident growth 573 KB → 847 KB per iteration. The peak is unchanged
+(both bounded by `kMaxLineLcsMatrixCells`); it is held longer. Memory for a 31 %
+allocation cut on the keystroke path is the stated priority order.
+
+**2. The git sidebar row model copied two labels it was handed to keep.**
+`BuildGitSidebarEntryTextModel` returns a leaf and a parent label built for one row
+and referenced nowhere else, and the row copied both out of a `const` local — two
+string allocations per changed file, on the main thread, per refresh. The section's
+row vector also grew by doubling while `counts` already knew its exact size.
+`git.refresh_dispatch` and `commit.open_staged_sidebar` each −12 %.
+
+**3. A save cost 20,037 shell-thread allocations before the next search, and
+nothing in the suite could see it.** This is the one worth reading twice.
+`FileIndex` marks its two derived path lists dirty on any change and the next
+reader rebuilds one, on the shell thread, under the index's exclusive lock, by
+copying a `std::filesystem::path` per indexed file — and a path copy allocates
+twice, its pathname and a parsed component list nothing downstream reads.
+
+`search_first_result` sits directly on this path and reads **13** allocations. That
+is not a collapsed gate; it is a correct reading of the steady state where the
+index has not moved since the last search, so the cache is warm and the search
+start really does cost 13. A gate can be tight, deterministic, correct, and still
+measure the cheap case forever. The instrument came first
+(`project_search_start_after_index_change`), and its vacuity guard rejected two
+wrong versions of itself before a baseline was ever recorded — re-running a search
+for the query already in the box is a no-op, and `SimulateExternalFileChange` takes
+the forced-rescan path, which rebuilds the cache eagerly rather than leaving it for
+the next reader the way a save does.
+
+The list holds generic path TEXT now (which also deletes the search worker's
+per-candidate `generic_string()`), and the rebuild overwrites the previous vector
+in place so an unchanged entry reuses the buffer already sized for it.
+`clear()` would have defeated that — on a vector of strings it runs every
+destructor, handing back exactly the buffers the next entry asks for.
+`project_search.index_change_to_search_start`: **20,037 → 33**.
+
+**What the rebaseline afterwards said, which is a finding about the suite.**
+Against the committed baselines 53 gates had drifted low; against the same
+binary lane's pre-change run on this box, only 22 — and all 22 were scenarios this
+pass touched. The other ~31 (`editor_shaping_multi_caret` −26 %,
+`editor_smart_indent_typing` −17 %, `editor_typing_minified_line` −16 %, the
+snippet and fold scenarios) were already below their baselines before this pass
+began. **Re-run the base commit before attributing a baseline delta to your own
+diff.** After re-recording the deterministic half, all 227 allocation gates sit
+within 10 % of their measurement, against 191 before.
+
 ## 2026-08-17 launch, third pass: the ignore filter was 73 % of the tree walk, and a zero said otherwise
 
 The second pass below left `watch::NativeSetupWalk` as ~90 % of the time to a
