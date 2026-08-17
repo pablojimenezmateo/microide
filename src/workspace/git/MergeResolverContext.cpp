@@ -1,6 +1,7 @@
 #include "workspace/git/MergeResolverContext.h"
 
 #include "project/GitCommandUtil.h"
+#include "util/StringUtil.h"
 #include "project/GitRepositoryState.h"
 #include "workspace/WorkspacePathUtils.h"
 
@@ -78,20 +79,18 @@ MergeResolverLabels BuildMergeResolverLabels(const std::filesystem::path& projec
   };
 }
 
-MergeResolverStatus BuildMergeResolverStatus(const MergeTabState& merge_tab,
+MergeResolverStatus BuildMergeResolverStatus(std::string& label_buffer,
+                                             const MergeTabState& merge_tab,
                                              std::size_t remaining_conflicted_files) {
-  MergeResolverStatus status{
-      .selected_conflict_index =
-          merge_tab.conflicts.empty()
-              ? 0
-              : std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1) + 1,
-      .total_conflicts = merge_tab.conflicts.size(),
-      .remaining_conflicts = CountRemainingMergeConflicts(merge_tab.conflicts),
-      .remaining_files = remaining_conflicted_files,
-      .result_state = ComputeMergeResultState(merge_tab, merge_tab.file_conflict),
-      .result_state_label = {},
-      .progress_label = {},
-  };
+  MergeResolverStatus status;
+  status.selected_conflict_index =
+      merge_tab.conflicts.empty()
+          ? 0
+          : std::min(merge_tab.selected_hunk, merge_tab.conflicts.size() - 1) + 1;
+  status.total_conflicts = merge_tab.conflicts.size();
+  status.remaining_conflicts = CountRemainingMergeConflicts(merge_tab.conflicts);
+  status.remaining_files = remaining_conflicted_files;
+  status.result_state = ComputeMergeResultState(merge_tab, merge_tab.file_conflict);
 
   switch (status.result_state) {
     case MergeResultState::Dirty:
@@ -111,17 +110,29 @@ MergeResolverStatus BuildMergeResolverStatus(const MergeTabState& merge_tab,
       break;
   }
 
+  // Appended into the caller's buffer rather than composed with `+`. The old
+  // spelling built four temporaries per call for one toolbar line, and the
+  // merge surface calls this on every painted frame.
+  std::string& label = label_buffer;
+  label.clear();
   if (status.total_conflicts == 0) {
+    // A literal, so the buffer is not even touched in the no-conflict case.
     status.progress_label = "No merge conflicts";
-  } else {
-    status.progress_label = "Conflict " + std::to_string(status.selected_conflict_index) + "/" +
-                            std::to_string(status.total_conflicts) + " | remaining " +
-                            std::to_string(status.remaining_conflicts);
-    if (remaining_conflicted_files > 0) {
-      status.progress_label += " | files " + std::to_string(remaining_conflicted_files);
-    }
-    status.progress_label += " | " + status.result_state_label;
+    return status;
   }
+  label += "Conflict ";
+  util::AppendUnsigned(label, status.selected_conflict_index);
+  label += '/';
+  util::AppendUnsigned(label, status.total_conflicts);
+  label += " | remaining ";
+  util::AppendUnsigned(label, status.remaining_conflicts);
+  if (remaining_conflicted_files > 0) {
+    label += " | files ";
+    util::AppendUnsigned(label, remaining_conflicted_files);
+  }
+  label += " | ";
+  label += status.result_state_label;
+  status.progress_label = label;
   return status;
 }
 

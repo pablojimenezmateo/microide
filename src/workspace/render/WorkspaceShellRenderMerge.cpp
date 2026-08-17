@@ -302,10 +302,10 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
       surface.secondary_button_y,
       ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Unresolved")),
       kMergeToolbarButtonHeight);
-  const MergeResolverStatus resolver_status =
-      BuildMergeResolverStatus(*merge_tab, merge_tab->remaining_conflicted_files);
+  const MergeResolverStatus resolver_status = BuildMergeResolverStatus(
+      merge_tab->resolver_progress_buffer, *merge_tab, merge_tab->remaining_conflicted_files);
   const std::string_view status_text = merge_tab->status_message.empty()
-                                           ? std::string_view(resolver_status.progress_label)
+                                           ? resolver_status.progress_label
                                            : std::string_view(merge_tab->status_message);
   const float status_max_width =
       std::max(0.0f, unresolved_rect.x - kMergeToolbarButtonGap - surface.left_x);

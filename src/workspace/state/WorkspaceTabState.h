@@ -343,6 +343,10 @@ struct MergeTabState {
   std::size_t preview_lines_cache_conflict = 0;
   compare::MergeChoice preview_lines_cache_choice = compare::MergeChoice::Base;
   std::uint64_t preview_lines_cache_revision = 0;
+  // Reused buffer for the toolbar's "Conflict 2/7 | remaining 5 | dirty" line,
+  // which the merge surface rebuilds on every painted frame. See
+  // `BuildMergeResolverStatus` — the status it returns views this.
+  std::string resolver_progress_buffer;
   float left_divider_fraction = kWorkspaceDefaultMergeLeftDividerFraction;
   float right_divider_fraction = kWorkspaceDefaultMergeRightDividerFraction;
   bool persistable = true;
