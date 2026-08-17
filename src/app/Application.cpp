@@ -349,8 +349,15 @@ bool Application::Initialize() {
   // fully-painted UI. Showing it later (after the first render, in Run()) maps
   // the window exactly once and avoids the black-flash + borderless-remap
   // "double popup" that toggling decorations on an already-mapped window caused.
-  const SDL_WindowFlags window_flags =
-      SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY | SDL_WINDOW_HIDDEN;
+  //
+  // BORDERLESS is a creation flag rather than a later SDL_SetWindowBordered
+  // call: on Wayland the decoration is a compositor-side object, so asking for
+  // one and then retracting it builds and tears down libdecor state, and the
+  // SDL_SyncWindow that has to follow a state change is a blocking round-trip
+  // to the display server. Asking for the shape we want up front means there is
+  // no state change to sync (measured: 10.4 ms of WindowChromeSetup -> ~0).
+  const SDL_WindowFlags window_flags = SDL_WINDOW_RESIZABLE | SDL_WINDOW_HIGH_PIXEL_DENSITY |
+                                       SDL_WINDOW_HIDDEN | SDL_WINDOW_BORDERLESS;
 
   {
     util::StartupTrace::Scope create_window_scope("SDL_CreateWindow");
@@ -511,13 +518,17 @@ bool Application::Initialize() {
 
   {
     util::StartupTrace::Scope window_chrome_scope("WindowChromeSetup");
-    if (!SDL_SetWindowBordered(window_, false)) {
-      SDL_Log("SDL_SetWindowBordered(false) failed: %s", SDL_GetError());
-    } else if (!SDL_SetWindowHitTest(window_, &Application::WindowHitTestCallback, this)) {
+    // The window was created BORDERLESS, so the only thing left is the drag/resize
+    // hit test that replaces the decorations we declined. If the platform cannot
+    // give us one, hand the borders back — a borderless window with no hit test
+    // cannot be moved or resized at all — and sync that state change, which is the
+    // only path here that has one to sync.
+    if (!SDL_SetWindowHitTest(window_, &Application::WindowHitTestCallback, this)) {
       SDL_Log("SDL_SetWindowHitTest failed: %s", SDL_GetError());
       SDL_SetWindowBordered(window_, true);
+      util::StartupTrace::Scope sync_scope("WindowChromeSetup::SyncWindow");
+      SyncWindowState(window_);
     }
-    SyncWindowState(window_);
   }
 
   {
