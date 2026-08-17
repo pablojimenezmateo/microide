@@ -389,26 +389,51 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-17-257 — the file-index walk is single-threaded and is now ~90 % of the time to a usable project. [OPEN — costed, not attempted; see why below.]
+### TD-2026-08-17-257 — the file-index walk is single-threaded and is now ~90 % of the time to a usable project. [LARGELY RESOLVED 2026-08-17 — but not by the fix this entry proposed, and the reason is that the entry ruled out the real cost on bad evidence. Parallelism remains open and is now the wrong next step.]
 
-After the 2026-08-17 launch pass, opening this repo reaches
-`FileIndex::InitialIndexReady` at ~142 ms, and ~126 ms of that is one thread
-running `watch::NativeSetupWalk`. Everything else on the launch path is either
-SDL's (see `performance-findings.md` § 2026-08-17) or already overlapped with it.
+**What this entry got wrong, and how.** It said "Not the ignore filter's decision
+either; `project_traversal_filter_scan` gates that phase at zero allocations."
+Zero allocations is not zero cost, and that scenario's fixture is a shallow tree
+with rules that match nothing — it measures 0.34 us per entry against a real
+6.9. Timed directly, `ProjectTraversalFilter::Includes` was **73 % of this
+walk**. Two commits later:
 
-**What it is not.** Not syscalls: a binary with the per-file `stat` removed
-entirely walks the same tree in 121.7 ms against 128.3 ms — 7 ms for 46,805
-stats, because the tree is page-cache warm and a warm `stat` is ~0.15 us. Not the
-ignore filter's decision either; `project_traversal_filter_scan` gates that phase
-at zero allocations. It is per-entry work spread thin: `directory_entry`
-construction inside `recursive_directory_iterator` (libstdc++ builds a path's
-component list eagerly, so two allocations per entry before we touch it), the
-relative-path derivation for kept entries, and the sheer entry count — this repo
-visits ~52,000 entries to keep 8,000. A bare `recursive_directory_iterator` walk
-of the same tree with `d_type` classification and directory pruning is ~22 ms, so
-roughly 100 ms is ours.
+    ProjectTraversalFilter::Includes   6.88 us -> 0.95 us per entry
+    filter time in the walk           178.1 ms -> 24.6 ms
+    whole walk (iterate+type+filter)  242.8 ms -> 59.6 ms   (loaded box, interleaved A/B)
+    watch::NativeSetupWalk at launch          -> 97.5 ms    (xvfb, loaded box)
 
-**The obvious fix and its price.** A shared work queue of directories with N
+Three recomputations, none of them a syscall and none of them visible to an
+allocation count: the excluded-ancestor chain re-evaluated per ENTRY when its
+answer is per DIRECTORY, every rule run through the backtracking glob matcher
+including literal names like `node_modules`, and each basename rule re-splitting
+the path into components. The general lesson is the one
+`dev-docs/project/validation-traps.md` keeps collecting: a gate that reads zero
+is evidence about the metric it gates, not about the code. Three counters
+(`project.ignore_filter_*`) and `project_traversal_filter_deep_tree` now measure
+the shape of this work, with the ratios as hard invariants.
+
+**And the walk is no longer the critical path.** Measured on a real launch
+(`MICROIDE_STARTUP_SUMMARY=1`, this repo, xvfb): `watch::NativeSetupWalk` 97.5 ms
+finishing alongside `SDL_CreateRenderer` at 100.1 ms, with `FirstRender` at
+103.4 ms. The walk now completes *inside* the renderer creation it overlaps, so
+shortening it further buys nothing on this machine's time-to-first-frame. What it
+would still buy is CPU (priority 3) and headroom on trees much larger than this
+one — which is a materially weaker case than the one this entry opened with.
+
+**What is left, measured.** With the filter fixed, iteration is now the larger
+half: `recursive_directory_iterator` costs ~1.7 us per entry against ~0.66 us for
+a hand-rolled `opendir`/`readdir` walk with `d_type` and a reused path buffer
+(84,345 entries: 142 ms vs 56 ms, three passes each). On the pruned walk that is
+~26 ms. A readdir primitive would also let the filter take a `string_view` and
+build a `std::filesystem::path` only for the ~8,000 entries actually kept rather
+than all ~26,000 — the two allocations per entry this entry correctly identified.
+That is the next step if this is picked up again, and it is single-threaded:
+same order, same budget semantics, same filter object, no locks. Do it before
+reaching for the work queue below, which is strictly more dangerous for a
+smaller marginal win.
+
+**The parallel fix and its price.** A shared work queue of directories with N
 workers would put this at ~20-30 ms on this box. It is not a small change:
 
 - `wd_to_path` is a `std::map` mutated by the walk's `on_directory` visitor as it
@@ -424,13 +449,14 @@ workers would put this at ~20-30 ms on this box. It is not a small change:
   overflow recovery, the poll snapshot, the macOS/Windows initial batch) whose
   semantics differ; it would need to keep a serial form.
 
-**Why it is filed rather than done.** Same reasoning the sibling entry
-TD-2026-08-15-252 recorded: this is a correctness-sensitive path whose failure
-mode is a missed change signal — a stale sidebar — which is invisible in tests
-and obvious in use. It is also ~90 % of a number nobody is blocked on: the walk
-runs on a background thread, `main ms` is 0.000 for all of it, and the user only
-feels it if they open the file finder inside the first ~150 ms of a launch. That
-is a phase with its own equivalence tests, not something to fold into a sweep.
+**Why the parallel form is still filed rather than done.** Same reasoning the
+sibling entry TD-2026-08-15-252 recorded: this is a correctness-sensitive path
+whose failure mode is a missed change signal — a stale sidebar — which is
+invisible in tests and obvious in use. It is also a number nobody is blocked on:
+the walk runs on a background thread, `main ms` is 0.000 for all of it, it now
+finishes inside `SDL_CreateRenderer`, and the user only feels it if they open the
+file finder inside the first ~100 ms of a launch. That is a phase with its own
+equivalence tests, not something to fold into a sweep.
 
 **And it is this repo's number, not a typical one.** 52,000 entries is fuzz
 corpora and generated perf fixtures; a 3,000-file project walks in single-digit

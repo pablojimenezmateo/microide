@@ -25,6 +25,84 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-17 launch, third pass: the ignore filter was 73 % of the tree walk, and a zero said otherwise
+
+The second pass below left `watch::NativeSetupWalk` as ~90 % of the time to a
+usable project and filed it (TD-2026-08-17-257) with the ignore filter explicitly
+ruled out: "`project_traversal_filter_scan` gates that phase at zero
+allocations". That sentence is the finding. **Zero allocations is not zero
+cost**, and the scenario behind it walks a shallow synthetic tree whose rules
+match almost nothing — 0.34 us per entry, against 6.9 us for the same filter over
+this repository.
+
+Timed directly over this repo (interleaved A/B against the pre-change binary,
+same process, 25,899 file entries, loaded box so read the ratios not the
+absolutes):
+
+    ProjectTraversalFilter::Includes   6.88 us -> 0.95 us per entry
+    filter time in the walk           178.1 ms -> 24.6 ms
+    whole walk (iterate + type + filter)
+                                      242.8 ms -> 59.6 ms
+    files kept                           8,000 -> 8,000
+
+Four recomputations, none of them a syscall:
+
+1. **The excluded-ancestor check ran per ENTRY; its answer is per DIRECTORY.**
+   git does not let a file be re-included out of an excluded directory, so
+   `Includes` walked the file's ancestor chain asking about each one — running the
+   whole rule set once per path component of every file in the tree. It is now
+   computed on the first entry seen in a directory and cached beside that
+   directory's matcher, which was already keyed and looked up by the same text.
+2. **Every rule ran through the backtracking glob matcher**, including literal
+   names like `node_modules`. A pattern's shape is decided once at parse time —
+   exact / `*suffix` / `prefix*` / general — so nearly every real rule answers in
+   a compare. A general glob carries its leading literal run as a cheap reject,
+   which is what stops an anchored pattern like `tests/fuzz/corpora/*/*` running
+   the full matcher over every path in the tree.
+3. **Each basename rule re-split the path into components**, ~45 times per entry.
+   The split happens once per query now and every rule reads the shared list.
+4. **A matcher layer was created per DIRECTORY rather than per `.gitignore`**, and
+   a query walks the whole parent chain — so a query at depth 4 walked four
+   matchers to reach one non-empty rule set. `IgnoreMatcher::ForDirectory` returns
+   the parent when a directory contributes no rules, and replaces the
+   `MakeChild` + `LoadIgnoreFile` pair the three whole-tree walks each spelled out
+   separately.
+
+### The walk is no longer the critical path, which changes what to do next
+
+Measured on a real launch (`MICROIDE_STARTUP_SUMMARY=1`, this repo, xvfb):
+
+    watch::NativeSetupWalk    97.5 ms   (background thread, main ms 0.000)
+    SDL_CreateRenderer       100.1 ms   (main thread)
+    Application::FirstRender 103.4 ms
+
+The walk now finishes *inside* the renderer creation it overlaps with, so
+shortening it further buys nothing on this machine's time-to-first-frame. What
+remains is a CPU argument (priority 3) and headroom on much larger trees — a
+materially weaker case than the one TD-2026-08-17-257 opened with, and the entry
+now says so.
+
+### What now measures this
+
+The reason a 73 % cost could be dismissed is that the only thing reported about
+the filter was an allocation count of zero, which it has always had. Two
+instruments close that, and both are deterministic so they read the same from a
+loaded box:
+
+- **`project.ignore_filter_queries` / `..._rule_set_evaluations` /
+  `..._ancestor_scans`.** The ratios are the point and no duration can express
+  them: how many times the rule set runs per entry asked about, and whether the
+  ancestor chain is walked once per directory or once per file.
+- **`project_traversal_filter_deep_tree`**, a scenario shaped like a real walk
+  (files at depth 4, every pattern shape, two thirds of entries individually
+  ignored under parents that are not), with those ratios as HARD invariants
+  rather than baseline numbers, plus a vacuity check that the fixture exercises
+  both verdicts. It earned its keep immediately: its rule-set-per-query invariant
+  is what found item 4 above, on its first run.
+
+The shallow `project_traversal_filter_scan` stays. It is the floor; the new one
+is the workload. Keeping only one of them is how this happened.
+
 ## 2026-08-17 launch, second pass: the shell thread was waiting, and the retained scene was dead
 
 Same method as the 2026-08-15 pass below — the real binary, `MICROIDE_STARTUP_SUMMARY=1
