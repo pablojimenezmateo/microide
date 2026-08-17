@@ -4,6 +4,7 @@
 #include <utility>
 
 #include "util/PathMatch.h"
+#include "util/PerformanceCounters.h"
 
 namespace microide::project {
 
@@ -31,6 +32,7 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   if (root_.empty()) {
     return true;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterQueries);
   // This runs ONCE PER FILESYSTEM ENTRY of every index walk, the poll re-walk, the
   // inotify registration, the sidebar tree and the project scanner — so the whole
   // body below is written to derive its answer from views into the caller's own
@@ -99,6 +101,7 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
   // file (TD-2026-08-17-257).
   if (state != nullptr) {
     if (state->ancestors_ignored == kUnknown) {
+      util::AddPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterAncestorScans);
       state->ancestors_ignored = 0;
       for (std::string_view parent = util::NormalizedParentDirectoryView(relative);
            !parent.empty() && parent != ".";) {
@@ -171,9 +174,10 @@ std::shared_ptr<const IgnoreMatcher> ProjectTraversalFilter::MatcherForParentDir
   const std::shared_ptr<const IgnoreMatcher> parent_matcher =
       MatcherForParentDirectory(directory.parent_path());
   // Inherit the ancestor chain as a shared layer and add only this directory's
-  // own .gitignore rules — no copy of the inherited rule set (TD-2026-07-17A-055).
-  std::shared_ptr<IgnoreMatcher> matcher = IgnoreMatcher::MakeChild(parent_matcher);
-  matcher->LoadIgnoreFile(directory / ".gitignore");
+  // own .gitignore rules — no copy of the inherited rule set (TD-2026-07-17A-055),
+  // and no layer at all when the directory has no rules to add.
+  std::shared_ptr<const IgnoreMatcher> matcher =
+      IgnoreMatcher::ForDirectory(parent_matcher, directory);
   return directory_states_.emplace(key, DirectoryState{.matcher = std::move(matcher)})
       .first->second.matcher;
 }

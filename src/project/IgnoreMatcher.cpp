@@ -6,6 +6,7 @@
 #include <system_error>
 
 #include "project/GlobMatch.h"
+#include "util/PerformanceCounters.h"
 #include "util/StringUtil.h"
 
 namespace microide::project {
@@ -40,6 +41,18 @@ std::shared_ptr<IgnoreMatcher> IgnoreMatcher::MakeChild(
     // Share the parent's root so LoadIgnoreFile computes the same base-relative
     // prefixes it would in a copied matcher.
     child->root_ = parent->root_;
+  }
+  return child;
+}
+
+std::shared_ptr<const IgnoreMatcher> IgnoreMatcher::ForDirectory(
+    const std::shared_ptr<const IgnoreMatcher>& parent, const std::filesystem::path& directory) {
+  std::shared_ptr<IgnoreMatcher> child = MakeChild(parent);
+  child->LoadIgnoreFile(directory / ".gitignore");
+  if (child->rules_.empty()) {
+    // No rules of its own, so the child layer would only add a pointer hop to
+    // every query made beneath this directory. Its verdicts are the parent's.
+    return parent;
   }
   return child;
 }
@@ -165,6 +178,9 @@ bool IgnoreMatcher::IgnoredWithComponents(std::string_view normalized_relative_p
   // (gitignore last-match-wins), this parent-then-local recursion is exactly
   // equivalent to a single flattened ancestor-first rule list — with no rule
   // copied into the child (TD-2026-07-17A-055).
+  // One bump per LAYER, so a matcher with a nested .gitignore chain reports the
+  // rule sets it actually ran rather than the query it ran them for.
+  util::AddPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterRuleSetEvaluations);
   bool ignored =
       parent_ != nullptr
           ? parent_->IgnoredWithComponents(normalized_relative_path, components, is_directory)

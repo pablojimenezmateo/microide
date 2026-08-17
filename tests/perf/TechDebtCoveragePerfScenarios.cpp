@@ -19,11 +19,15 @@
 #include "perf/PerfHarness.h"
 
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <filesystem>
 #include <fstream>
+#include <iterator>
+#include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <utility>
 #include <vector>
 
@@ -38,6 +42,7 @@
 #include "plugin/PluginHost.h"
 #include "plugin/PluginRegistryInterop.h"
 #include "project/ProjectTraversalFilter.h"
+#include "util/PerformanceCounters.h"
 #include "util/TextFileIO.h"
 #include "workspace/AssistProviderMerge.h"
 #include "workspace/services/SettingsOverlayService.h"
@@ -561,6 +566,160 @@ void RunProjectTraversalFilterScan(ScenarioContext& context) {
   });
 }
 
+// The scenario above measures 0.34 us per entry. The same filter over this
+// repository measures 1.6 us per entry, and measured 6.9 us before
+// TD-2026-08-17-257's fix — so the gate that was cited as clearing the filter of
+// that entry's 126 ms walk was structurally incapable of seeing it. The
+// difference is the fixture: a shallow tree with rules that match almost nothing
+// exercises the reject-early path and nothing else.
+//
+// This is the other half. A real project walk is mostly entries that are
+// INDIVIDUALLY ignored (this repo visits ~26,000 to keep 8,000), sitting several
+// directories deep under parents that are not themselves ignored, matched against
+// a rule set of ~45 patterns of every shape. Both scenarios are kept: the shallow
+// one is the floor, this one is the workload.
+//
+// The three counters are the deterministic part, and they gate below as hard
+// invariants rather than as baseline numbers, because what matters is a RATIO
+// that a wall time cannot express: how many times the rule set runs per entry
+// asked about, and whether the ancestor chain is walked per directory or per file.
+void RunProjectTraversalFilterDeepTree(ScenarioContext& context) {
+  // Not on disk, for the same reason the scenario above is not: the measured
+  // phase must touch no syscalls. Rules arrive through the exclude-glob list,
+  // which parses them exactly as a root `.gitignore` would.
+  const std::filesystem::path root("/microide-perf/traversal-deep-root");
+  const std::vector<std::string> excludes = {
+      "*.o",      "*.pyc",     "*.swp",       "*~",        "*.orig",   "*.log",
+      "*.tmp",    "*.class",   ".DS_Store",   "build/",    "builds/",  "out/",
+      "dist/",    "target/",   "bin/",        "obj/",      "vendor/",  "coverage/",
+      "node_modules/",         "__pycache__/", ".cache/",  ".venv/",
+      "cmake-build-*/",        "/result",     "/result-*", "generated/*/*",
+      "**/fixtures/*",         "docs/build/", "!keep.log",
+  };
+  project::ProjectTraversalFilter filter(root, excludes);
+
+  // Built once for the process — scenario INPUT, not measured work
+  // (TD-2026-08-07-163). Files sit at depth 4 under 128 leaf directories, which is
+  // where a real source tree's mass is, and the name rotation makes roughly two
+  // thirds of them individually ignored by a suffix rule while their parents stay
+  // included. Two of the mid-level names are themselves ignored (`vendor`,
+  // `build`), which is what puts entries on the excluded-ancestor path.
+  struct DeepTree {
+    std::vector<std::pair<std::filesystem::path, platform::PathType>> entries;
+    std::size_t distinct_parents = 0;
+  };
+  static const DeepTree tree = [&] {
+    DeepTree built;
+    built.entries.reserve(2048);
+    static constexpr std::string_view kMidNames[] = {"core", "vendor", "render", "build"};
+    static constexpr std::string_view kFileSuffixes[] = {".cpp", ".o", ".h", ".pyc",
+                                                         ".log", ".ts", ".swp", ".md"};
+    std::set<std::string> parents;
+    for (int pkg = 0; pkg < 8; ++pkg) {
+      for (const std::string_view mid : kMidNames) {
+        for (int leaf = 0; leaf < 4; ++leaf) {
+          const std::string directory = "pkg" + std::to_string(pkg) + "/" + std::string(mid) +
+                                        "/leaf" + std::to_string(leaf);
+          built.entries.emplace_back(root / directory, platform::PathType::Directory);
+          parents.insert((root / directory).parent_path().native());
+          for (int file = 0; file < 15; ++file) {
+            const std::string name = "unit" + std::to_string(file) +
+                                     std::string(kFileSuffixes[static_cast<std::size_t>(file) %
+                                                               std::size(kFileSuffixes)]);
+            built.entries.emplace_back(root / (directory + "/" + name),
+                                       platform::PathType::RegularFile);
+            parents.insert((root / directory).native());
+          }
+        }
+      }
+    }
+    built.distinct_parents = parents.size();
+    return built;
+  }();
+
+  const auto scan_with = [](project::ProjectTraversalFilter& target) {
+    std::size_t kept = 0;
+    for (const auto& [entry, type] : tree.entries) {
+      kept += target.Includes(entry, type) ? 1u : 0u;
+    }
+    return kept;
+  };
+  const auto scan = [&] { return scan_with(filter); };
+
+  // Warm the per-directory caches so the measured phase is steady-state per-entry
+  // cost, exactly as the shallow scenario does.
+  const std::size_t warm_kept = scan();
+
+  // One instrumented pass OUTSIDE the measured window, so the invariants below
+  // read one scan's worth of counters whatever --iterations says. It runs on a
+  // FRESH filter on purpose: the per-directory memo is what is being pinned, and
+  // a warmed filter walks no ancestor chain at all, which would make the bound
+  // below vacuously true.
+  project::ProjectTraversalFilter cold_filter(root, excludes);
+  const std::uint64_t queries_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterQueries);
+  const std::uint64_t evaluations_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterRuleSetEvaluations);
+  const std::uint64_t ancestor_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterAncestorScans);
+  const std::size_t instrumented_kept = scan_with(cold_filter);
+  const std::uint64_t queries =
+      util::ReadPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterQueries) -
+      queries_before;
+  const std::uint64_t evaluations =
+      util::ReadPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterRuleSetEvaluations) -
+      evaluations_before;
+  const std::uint64_t ancestor_scans =
+      util::ReadPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterAncestorScans) -
+      ancestor_before;
+
+  context.Measure("project.traversal_filter_deep_tree", [&]() {
+    volatile std::size_t sink = scan();
+    (void)sink;
+  });
+
+  // --- Hard invariants -------------------------------------------------------
+  //
+  // Vacuity first: a filter that answered the same way for everything would sail
+  // past the ratio checks below while measuring nothing.
+  if (instrumented_kept != warm_kept || instrumented_kept == 0 ||
+      instrumented_kept >= tree.entries.size()) {
+    throw std::runtime_error(
+        "project_traversal_filter_deep_tree: the fixture kept " +
+        std::to_string(instrumented_kept) + " of " + std::to_string(tree.entries.size()) +
+        " entries (warm pass kept " + std::to_string(warm_kept) +
+        "); the tree must exercise BOTH verdicts and be stable across passes");
+  }
+  if (queries != tree.entries.size()) {
+    throw std::runtime_error("project_traversal_filter_deep_tree: " + std::to_string(queries) +
+                             " filter queries for " + std::to_string(tree.entries.size()) +
+                             " entries; the counter is not measuring this scan alone");
+  }
+  // One matcher layer per query is the floor here (the root matcher; no nested
+  // .gitignore exists on this synthetic tree). The bound is 2x that, which still
+  // fails the shape TD-2026-08-17-257 fixed: re-checking the ancestor chain per
+  // entry read 4-5 evaluations per query on a depth-4 tree.
+  if (evaluations > 2 * queries) {
+    throw std::runtime_error(
+        "project_traversal_filter_deep_tree: the rule set ran " + std::to_string(evaluations) +
+        " times for " + std::to_string(queries) +
+        " queries; it must run a bounded number of times per entry, not once per path component");
+  }
+  // The excluded-ancestor answer is a property of the parent DIRECTORY. Walking
+  // it per entry is the regression; this bound is ~13x below what that reads.
+  if (ancestor_scans > tree.distinct_parents) {
+    throw std::runtime_error("project_traversal_filter_deep_tree: walked the ancestor chain " +
+                             std::to_string(ancestor_scans) + " times for " +
+                             std::to_string(tree.distinct_parents) +
+                             " distinct parent directories; the answer is cached per directory");
+  }
+  if (ancestor_scans == 0) {
+    throw std::runtime_error(
+        "project_traversal_filter_deep_tree: the ancestor chain was never walked, so the "
+        "excluded-ancestor path is not being measured at all");
+  }
+}
+
 // ---- Registration ----------------------------------------------------------
 //
 // These are short-to-mid pure-unit micro-benchmarks (20-55 ms). Their ALLOCATION
@@ -660,6 +819,17 @@ const ScenarioRegistration g_perf_project_traversal_filter_scan({Scenario{
     // (TD-2026-08-12-191, TD-2026-08-07-167).
     .measurement_revision = 2,
     .run = RunProjectTraversalFilterScan,
+}});
+const ScenarioRegistration g_perf_project_traversal_filter_deep_tree({Scenario{
+    .name = "project_traversal_filter_deep_tree",
+    .smoke = true,
+    .baseline_gated = true,
+    // Same reason as the scenario above: iteration 0 builds the process-wide entry
+    // fixture, and the warm + instrumented passes fill the per-directory caches.
+    .warmup_iterations = 1,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
+    .run = RunProjectTraversalFilterDeepTree,
 }});
 
 

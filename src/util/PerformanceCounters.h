@@ -189,6 +189,22 @@ namespace microide::util {
   X(FileFinderMaskRejects, "search.file_finder_mask_rejects")                                   \
   X(FileFinderNarrowedRefreshes, "search.file_finder_narrowed_refreshes")                       \
   X(ProjectFileScannerCollectProjectFilesCalls, "project.collect_project_files_calls")          \
+  /* The ignore filter, which every whole-tree walk in the app runs once per      */             \
+  /* filesystem entry. It was 73 % of the file-index setup walk while the only    */             \
+  /* thing reported about it was an allocation count of zero, which it has always */             \
+  /* had (TD-2026-08-17-257). These three are the shape of the work rather than   */             \
+  /* its duration, so they are deterministic and gate from a loaded box.          */             \
+  /*                                                                              */             \
+  /* `rule_set_evaluations / queries` is the number that matters: it is how many  */             \
+  /* times the whole rule set is run per entry asked about. One matcher layer per */             \
+  /* query is the floor (the root matcher); a nested .gitignore adds a layer.     */             \
+  /* Anything scaling with a path's DEPTH means the per-directory ancestor memo   */             \
+  /* stopped hitting, which is exactly the regression that entry describes.       */             \
+  X(ProjectIgnoreFilterQueries, "project.ignore_filter_queries")                                \
+  X(ProjectIgnoreFilterRuleSetEvaluations, "project.ignore_filter_rule_set_evaluations")        \
+  /* Ancestor chains actually walked. Bounded by the number of DIRECTORIES a walk  */            \
+  /* enters, not by its entries: the answer is a property of the parent directory. */            \
+  X(ProjectIgnoreFilterAncestorScans, "project.ignore_filter_ancestor_scans")                   \
   X(RenderTextWidthCacheQueries, "render.text_width_cache_queries")                             \
   X(RenderTextWidthCacheHits, "render.text_width_cache_hits")                                   \
   X(RenderTextTextureCacheHits, "render.text_texture_cache_hits")                               \

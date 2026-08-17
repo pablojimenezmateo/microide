@@ -429,10 +429,9 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
       std::shared_ptr<const IgnoreMatcher> child_matcher;
       if (IsExpanded(path)) {
         // Inherit the parent as a shared layer + this directory's own .gitignore;
-        // no copy of the inherited rule set (TD-2026-07-17A-055).
-        std::shared_ptr<IgnoreMatcher> child = IgnoreMatcher::MakeChild(matcher);
-        child->LoadIgnoreFile(path / ".gitignore");
-        child_matcher = std::move(child);
+        // no copy of the inherited rule set (TD-2026-07-17A-055), and no layer at
+        // all when the directory has no rules of its own.
+        child_matcher = IgnoreMatcher::ForDirectory(matcher, path);
       }
       children.push_back(SortableEntry{
           .path = path,

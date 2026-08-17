@@ -147,9 +147,9 @@ void CollectFiles(const std::filesystem::path& root,
       }
       // Inherit the parent matcher as a shared layer and add only this
       // directory's own .gitignore — no copy of the inherited rules
-      // (TD-2026-07-17A-055).
-      std::shared_ptr<IgnoreMatcher> child_matcher = IgnoreMatcher::MakeChild(matcher);
-      child_matcher->LoadIgnoreFile(path / ".gitignore");
+      // (TD-2026-07-17A-055), and no layer at all when there is nothing to add.
+      const std::shared_ptr<const IgnoreMatcher> child_matcher =
+          IgnoreMatcher::ForDirectory(matcher, path);
       std::error_code link_error;
       const bool is_symlink = iterator->is_symlink(link_error);
       const SymlinkLoopGuard::Scope scope = loop_guard.TryEnter(path, is_symlink && !link_error);

@@ -23,6 +23,21 @@ class IgnoreMatcher {
   static std::shared_ptr<IgnoreMatcher> MakeChild(
       const std::shared_ptr<const IgnoreMatcher>& parent);
 
+  // The matcher to use for entries in `directory`, given its parent's: `parent`
+  // itself when the directory contributes no rules of its own, and a child layer
+  // holding that directory's `.gitignore` when it does.
+  //
+  // Returning the parent is not an optimization detail, it is the point. Every
+  // whole-tree walk built a layer per DIRECTORY, so a query at depth 4 walked four
+  // matchers to reach one non-empty rule set — and a real tree has a handful of
+  // `.gitignore` files among thousands of directories. Now the chain has one layer
+  // per ignore file. The three walks that each spelled this out (the traversal
+  // filter, the project file scanner, the sidebar tree) share it here rather than
+  // keeping three copies that could disagree about what a directory inherits.
+  static std::shared_ptr<const IgnoreMatcher> ForDirectory(
+      const std::shared_ptr<const IgnoreMatcher>& parent,
+      const std::filesystem::path& directory);
+
   bool SetRoot(const std::filesystem::path& root);
   void LoadIgnoreFile(const std::filesystem::path& path);
   // Seed built-in ignore defaults: VCS metadata (.git/.svn/.hg/.bzr), dependency
