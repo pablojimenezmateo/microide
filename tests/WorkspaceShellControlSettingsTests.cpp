@@ -20,21 +20,6 @@ using WorkspaceShellTestAccess = microide::workspace::WorkspaceShell::TestAccess
 
 // Scope the app config/state homes so persistence is test-local on every
 // platform (XDG on Linux, *APPDATA on Windows).
-class ScopedAppHomes {
- public:
-  ScopedAppHomes(const std::filesystem::path& state_home,
-                 const std::filesystem::path& config_home)
-      : xdg_state_home_("XDG_STATE_HOME", state_home.string()),
-        xdg_config_home_("XDG_CONFIG_HOME", config_home.string()),
-        localappdata_("LOCALAPPDATA", state_home.string()),
-        appdata_("APPDATA", config_home.string()) {}
-
- private:
-  ScopedEnvVar xdg_state_home_;
-  ScopedEnvVar xdg_config_home_;
-  ScopedEnvVar localappdata_;
-  ScopedEnvVar appdata_;
-};
 
 bool RootsContain(const std::vector<std::filesystem::path>& roots,
                   const std::filesystem::path& target) {
