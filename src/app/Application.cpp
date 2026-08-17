@@ -785,6 +785,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       scene_texture_.Destroy();
       {
         util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
+        util::AddPerformanceCounter(util::PerfCounterId::RenderSceneFallbackFrames);
         workspace_shell_.RenderClip(frame_token, renderer_, width, height);
       }
       SDL_RenderPresent(renderer_);
@@ -847,6 +848,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       SDL_RenderTexture(renderer_, scene_texture_.texture(), nullptr, nullptr);
       SDL_RenderPresent(renderer_);
     }
+    util::AddPerformanceCounter(util::PerfCounterId::RenderFramesRetained);
     scene_texture_.MarkValid();
     if (!full_redraw && util::PerformanceTrace::Enabled() &&
         rendered_clip_count >= kRenderPerfPartialClipWarnThreshold) {
@@ -863,6 +865,7 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
                                           .elapsed_ns = SDL_GetTicksNS() - render_start});
   } else {
     util::PerformanceTrace::Scope fallback_scope("Application::WorkspaceRender(fallback-full)");
+    util::AddPerformanceCounter(util::PerfCounterId::RenderSceneFallbackFrames);
     workspace_shell_.RenderClip(frame_token, renderer_, width, height);
     SDL_RenderPresent(renderer_);
     redraw_trace_.Record(RedrawFrameStats{.full_redraw_requested = true,

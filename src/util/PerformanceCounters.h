@@ -211,6 +211,17 @@ namespace microide::util {
   /* gap means the rekey path stopped being taken.                                 */           \
   X(EditorHighlightCacheNodesRecycled, "editor.highlight_cache_nodes_recycled")                  \
   X(RenderClipInvocations, "render.clip_invocations")                                           \
+  /* Frames that could not use the retained scene texture and went straight to    */            \
+  /* the window, which also means the frame was a FULL redraw whatever the damage */            \
+  /* said. It is a legitimate path (a resize drag coalescing its realloc, a       */            \
+  /* target allocation that failed), so nothing about it is an error -- and that  */            \
+  /* is exactly why it needs a number. It sat at 100 % of frames on every HiDPI   */            \
+  /* display until the scene texture stopped being sized in logical units, with   */            \
+  /* the whole partial-redraw path dead and no counter, log line or test saying   */            \
+  /* so. Compare against `render.frames_retained`: a ratio that is not near zero  */            \
+  /* outside a resize drag means partial frames are not happening.                */           \
+  X(RenderSceneFallbackFrames, "render.scene_fallback_frames")                                  \
+  X(RenderFramesRetained, "render.frames_retained")                                             \
   X(WorkspaceScheduledWakes, "workspace.scheduled_wakes")                                       \
   /* Damage rects queued per event, and how often the per-event list outgrew its  */             \
   /* inline capacity (kInlineRedrawRects). rects_queued is the input-path work    */             \
