@@ -654,6 +654,43 @@ void TestCompareModelPreservesBothSidesRoundTrip() {
   }
 }
 
+// The anchored fallback recurses once per anchor segment, and every level draws
+// its working buffers from ONE scratch shared across the whole recursion. That is
+// only sound because each buffer is dead by the time its owner returns; a level
+// that clobbered a live outer buffer would misplace anchors, and the round-trip
+// test above would not notice — reproducing both sides only requires each line to
+// be emitted once in order, not to be paired with the right partner.
+//
+// So this asserts the pairing itself. Every ANCHOR_i line is unique on both sides,
+// so a correct diff matches all of them; the interleaved unique lines between them
+// force the recursion deep enough that outer and inner levels genuinely overlap.
+void TestCompareModelAnchoredFallbackMatchesEveryUniqueAnchor() {
+  constexpr int kAnchors = 1200;
+  std::string left;
+  std::string right;
+  for (int i = 0; i < kAnchors; ++i) {
+    const std::string anchor = "ANCHOR_" + std::to_string(i) + "\n";
+    left += anchor + "left_only_" + std::to_string(i) + "\n";
+    right += anchor + "right_only_" + std::to_string(i) + "\n";
+  }
+
+  const auto model = BuildCompareModel(left, right);
+  std::size_t matched_anchors = 0;
+  for (const auto& row : model.rows) {
+    if (row.kind != microide::compare::CompareRowKind::Unchanged) {
+      continue;
+    }
+    if (row.left_text.rfind("ANCHOR_", 0) == 0) {
+      Expect(row.left_text == row.right_text,
+             "an unchanged anchor row must carry the same text on both sides");
+      ++matched_anchors;
+    }
+  }
+  Expect(matched_anchors == static_cast<std::size_t>(kAnchors),
+         "the anchored fallback must pair every unique anchor line; a scratch buffer "
+         "clobbered by a deeper recursion level shows up here as a shortfall");
+}
+
 // When a modified row is long enough to exceed the intra-line LCS guards, the
 // span population skips the fine LCS but must still cover the changed region and
 // stay on UTF-8 boundaries (no crash, no degraded correctness).
@@ -1311,6 +1348,8 @@ void RegisterCompareModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Compare/ContextAwareAlignment", TestCompareContextAwareAlignment);
   AddTest(tests, "Compare/ModelPreservesBothSidesRoundTrip",
           TestCompareModelPreservesBothSidesRoundTrip);
+  AddTest(tests, "Compare/AnchoredFallbackMatchesEveryUniqueAnchor",
+          TestCompareModelAnchoredFallbackMatchesEveryUniqueAnchor);
   AddTest(tests, "Compare/IntralineFallbackCoversChangedRegion",
           TestCompareIntralineFallbackCoversChangedRegion);
   AddTest(tests, "Compare/LargeInputsUseBoundedFallback",

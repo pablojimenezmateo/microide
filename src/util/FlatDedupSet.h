@@ -77,6 +77,25 @@ class FlatDedupSet {
     return slots_[Probe(key, hash)].index_plus_one != 0;
   }
 
+  // Re-arm this set for another operation of `max_elements` without giving its
+  // two buffers back. Sizing the table with `assign` rather than a fresh vector
+  // means a set threaded through a recursive algorithm allocates for its LARGEST
+  // level and every smaller one afterwards is a memset over already-owned memory
+  // — the compare path's anchored fallback recurses once per anchor segment, and
+  // a per-level set was two allocations each.
+  //
+  // The table is sized to this call, not to the high-water mark, so a small level
+  // does not memset the big level's table.
+  void Reset(std::size_t max_elements) {
+    keys_.clear();
+    const std::size_t table_size = TableSizeFor(max_elements);
+    slots_.assign(table_size, Slot{});
+    mask_ = table_size - 1;
+    if (keys_.capacity() < max_elements) {
+      keys_.reserve(max_elements);
+    }
+  }
+
   std::size_t size() const { return keys_.size(); }
   bool empty() const { return keys_.empty(); }
   // Distinct keys in first-occurrence order — the insertion order is preserved

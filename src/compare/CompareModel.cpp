@@ -963,14 +963,55 @@ void AppendEqualPairs(std::span<const std::string_view> left_lines,
   }
 }
 
-std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lines,
-                                      std::span<const std::string_view> right_lines,
-                                      const CompareBuildOptions& options) {
+// Per-line info for the unique-line anchor search, kept out of the function so
+// DiffScratch can hold the vector it indexes.
+struct AnchorInfo {
+  std::size_t left_count = 0;
+  std::size_t right_count = 0;
+  std::size_t left_index = 0;
+  std::size_t right_index = 0;
+};
+
+// Working buffers for one whole diff, threaded through the recursion.
+//
+// The anchored fallback recurses once per anchor segment, and each level used to
+// build its own working set from scratch: the exact-LCS aligner allocated six
+// vectors plus an intern table, the anchor search seven more. On the 12,000-line
+// worktree diff the compare scenarios use — thirty hunks, so thirty-odd levels —
+// that is a few hundred allocations per rebuild, and an editable compare pane
+// rebuilds on EVERY keystroke.
+//
+// Every buffer here is dead by the time the function that filled it returns, so
+// one instance is safe for the whole recursion even though levels nest. The one
+// buffer that is *not* — the anchor list, which stays live while the level below
+// it runs — is deliberately absent and stays a local at each level.
+struct DiffScratch {
+  // Exact-LCS aligner.
+  std::vector<std::uint32_t> left_ids;
+  std::vector<std::uint32_t> right_ids;
+  std::vector<std::uint32_t> class_occurrences;
+  std::vector<std::size_t> left_match_weight;
+  std::vector<std::size_t> dp;
+  util::FlatDedupSet<std::string_view> line_ids{0};
+  util::FlatDedupSet<std::string_view, IgnoreWhitespaceLineHash, IgnoreWhitespaceLineEq>
+      whitespace_insensitive_line_ids{0};
+  // Anchor search.
+  std::vector<AnchorInfo> info_by_id;
+  std::vector<std::pair<std::size_t, std::size_t>> candidates;
+  std::vector<std::size_t> pile_tops;
+  std::vector<std::size_t> pile_candidate_indices;
+  std::vector<std::size_t> predecessor;
+};
+
+void AppendExactLineOps(std::span<const std::string_view> left_lines,
+                        std::span<const std::string_view> right_lines,
+                        const CompareBuildOptions& options,
+                        DiffScratch& scratch,
+                        std::vector<DiffOp>& ops) {
   const std::size_t left_count = left_lines.size();
   const std::size_t right_count = right_lines.size();
-  std::vector<DiffOp> ops;
   if (left_count == 0 && right_count == 0) {
-    return ops;
+    return;
   }
 
   // Intern each line to an equality-class id before the DP. The table below is
@@ -997,11 +1038,15 @@ std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lin
   // The counts are per equality CLASS, which under ignore_whitespace groups
   // lines that differ only in whitespace — the same relation the DP matches on,
   // so the rarity weight and the match it weighs now agree.
-  std::vector<std::uint32_t> left_ids(left_count);
-  std::vector<std::uint32_t> right_ids(right_count);
-  std::vector<std::uint32_t> class_occurrences;
+  std::vector<std::uint32_t>& left_ids = scratch.left_ids;
+  std::vector<std::uint32_t>& right_ids = scratch.right_ids;
+  std::vector<std::uint32_t>& class_occurrences = scratch.class_occurrences;
+  left_ids.assign(left_count, 0);
+  right_ids.assign(right_count, 0);
+  class_occurrences.clear();
   class_occurrences.reserve(left_count + right_count);
   const auto assign_ids = [&](auto& ids) {
+    ids.Reset(left_count + right_count);
     const auto intern = [&](std::string_view line) {
       const std::size_t id = ids.Intern(line);
       if (id == class_occurrences.size()) {
@@ -1015,22 +1060,21 @@ std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lin
     for (std::size_t j = 0; j < right_count; ++j) right_ids[j] = intern(right_lines[j]);
   };
   if (options.ignore_whitespace) {
-    util::FlatDedupSet<std::string_view, IgnoreWhitespaceLineHash, IgnoreWhitespaceLineEq> ids(
-        left_count + right_count);
-    assign_ids(ids);
+    assign_ids(scratch.whitespace_insensitive_line_ids);
   } else {
-    util::FlatDedupSet<std::string_view> ids(left_count + right_count);
-    assign_ids(ids);
+    assign_ids(scratch.line_ids);
   }
 
-  std::vector<std::size_t> left_match_weight(left_count, 1);
+  std::vector<std::size_t>& left_match_weight = scratch.left_match_weight;
+  left_match_weight.assign(left_count, 1);
   for (std::size_t i = 0; i < left_count; ++i) {
     left_match_weight[i] = LineMatchWeight(left_lines[i], SignificantTokenBytes(left_lines[i]),
                                            class_occurrences[left_ids[i]]);
   }
 
   const std::size_t stride = right_count + 1;
-  std::vector<std::size_t> dp((left_count + 1) * stride, 0);
+  std::vector<std::size_t>& dp = scratch.dp;
+  dp.assign((left_count + 1) * stride, 0);
   auto at = [&](std::size_t i, std::size_t j) -> std::size_t& { return dp[i * stride + j]; };
 
   // Row-pointer walk: `at()` recomputed `i * stride + j` for each of the four
@@ -1076,30 +1120,30 @@ std::vector<DiffOp> BuildExactLineOps(std::span<const std::string_view> left_lin
   }
   AppendDeleteOps(left_lines, i, left_count, ops);
   AppendInsertOps(right_lines, j, right_count, ops);
-  return ops;
 }
 
-std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
-    std::span<const std::string_view> left_lines,
-    std::size_t left_begin,
-    std::size_t left_end,
-    std::span<const std::string_view> right_lines,
-    std::size_t right_begin,
-    std::size_t right_end) {
-  struct AnchorInfo {
-    std::size_t left_count = 0;
-    std::size_t right_count = 0;
-    std::size_t left_index = 0;
-    std::size_t right_index = 0;
-  };
+// Anchors are written into `anchors` rather than returned, because the caller's
+// list stays live across the recursive calls it drives and so cannot come from
+// the shared scratch. Everything else this needs does.
+void BuildUniqueLineAnchors(std::span<const std::string_view> left_lines,
+                            std::size_t left_begin,
+                            std::size_t left_end,
+                            std::span<const std::string_view> right_lines,
+                            std::size_t right_begin,
+                            std::size_t right_end,
+                            DiffScratch& scratch,
+                            std::vector<std::pair<std::size_t, std::size_t>>& anchors) {
+  anchors.clear();
 
-  // Same shape as BuildExactLineOps' interning, and the same reason: this ran on
+  // Same shape as AppendExactLineOps' interning, and the same reason: this ran on
   // the anchored fallback path — the one large diffs take — and cost a heap node
   // per distinct line before any anchor was found (TD-2026-08-07-164). Ids from
   // `Intern` are dense indices, so the per-line info is a parallel vector.
   const std::size_t line_count = (left_end - left_begin) + (right_end - right_begin);
-  util::FlatDedupSet<std::string_view> line_ids(line_count);
-  std::vector<AnchorInfo> info_by_id;
+  util::FlatDedupSet<std::string_view>& line_ids = scratch.line_ids;
+  line_ids.Reset(line_count);
+  std::vector<AnchorInfo>& info_by_id = scratch.info_by_id;
+  info_by_id.clear();
   info_by_id.reserve(line_count);
   const auto info_for = [&](std::string_view line) -> AnchorInfo& {
     const std::size_t id = line_ids.Intern(line);
@@ -1119,7 +1163,8 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
     info.right_index = i;
   }
 
-  std::vector<std::pair<std::size_t, std::size_t>> candidates;
+  std::vector<std::pair<std::size_t, std::size_t>>& candidates = scratch.candidates;
+  candidates.clear();
   candidates.reserve(std::min(left_end - left_begin, right_end - right_begin));
   for (std::size_t id = 0; id < info_by_id.size(); ++id) {
     const AnchorInfo& info = info_by_id[id];
@@ -1132,13 +1177,16 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
   }
   std::sort(candidates.begin(), candidates.end());
   if (candidates.empty()) {
-    return {};
+    return;
   }
 
   const std::size_t kNoIndex = std::numeric_limits<std::size_t>::max();
-  std::vector<std::size_t> pile_tops;
-  std::vector<std::size_t> pile_candidate_indices;
-  std::vector<std::size_t> predecessor(candidates.size(), kNoIndex);
+  std::vector<std::size_t>& pile_tops = scratch.pile_tops;
+  std::vector<std::size_t>& pile_candidate_indices = scratch.pile_candidate_indices;
+  std::vector<std::size_t>& predecessor = scratch.predecessor;
+  pile_tops.clear();
+  pile_candidate_indices.clear();
+  predecessor.assign(candidates.size(), kNoIndex);
   for (std::size_t candidate_index = 0; candidate_index < candidates.size(); ++candidate_index) {
     const std::size_t right_index = candidates[candidate_index].second;
     const auto it = std::lower_bound(pile_tops.begin(), pile_tops.end(), right_index);
@@ -1155,16 +1203,14 @@ std::vector<std::pair<std::size_t, std::size_t>> BuildUniqueLineAnchors(
     }
   }
 
-  std::vector<std::pair<std::size_t, std::size_t>> anchors;
   if (pile_candidate_indices.empty()) {
-    return anchors;
+    return;
   }
   for (std::size_t index = pile_candidate_indices.back(); index != kNoIndex;
        index = predecessor[index]) {
     anchors.push_back(candidates[index]);
   }
   std::reverse(anchors.begin(), anchors.end());
-  return anchors;
 }
 
 void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
@@ -1174,6 +1220,7 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
                                std::size_t right_begin,
                                std::size_t right_end,
                                const CompareBuildOptions& options,
+                               DiffScratch& scratch,
                                std::vector<DiffOp>& ops,
                                std::size_t depth) {
   while (left_begin < left_end && right_begin < right_end &&
@@ -1215,8 +1262,7 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
         left_lines.subspan(left_begin, left_suffix - left_begin);
     const std::span<const std::string_view> right_slice =
         right_lines.subspan(right_begin, right_suffix - right_begin);
-    const std::vector<DiffOp> exact_ops = BuildExactLineOps(left_slice, right_slice, options);
-    ops.insert(ops.end(), exact_ops.begin(), exact_ops.end());
+    AppendExactLineOps(left_slice, right_slice, options, scratch, ops);
     AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
     return;
   }
@@ -1235,9 +1281,11 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
     return;
   }
 
-  const std::vector<std::pair<std::size_t, std::size_t>> anchors =
-      BuildUniqueLineAnchors(left_lines, left_begin, left_suffix, right_lines, right_begin,
-                             right_suffix);
+  // Local, not scratch: this list stays live while the recursive calls below run,
+  // and those levels reuse every buffer in the scratch.
+  std::vector<std::pair<std::size_t, std::size_t>> anchors;
+  BuildUniqueLineAnchors(left_lines, left_begin, left_suffix, right_lines, right_begin,
+                         right_suffix, scratch, anchors);
   if (anchors.empty()) {
     AppendDeleteOps(left_lines, left_begin, left_suffix, ops);
     AppendInsertOps(right_lines, right_begin, right_suffix, ops);
@@ -1249,24 +1297,14 @@ void AppendAnchoredFallbackOps(std::span<const std::string_view> left_lines,
   std::size_t segment_right_begin = right_begin;
   for (const auto& [anchor_left, anchor_right] : anchors) {
     AppendAnchoredFallbackOps(left_lines, segment_left_begin, anchor_left, right_lines,
-                              segment_right_begin, anchor_right, options, ops, depth + 1);
+                              segment_right_begin, anchor_right, options, scratch, ops, depth + 1);
     ops.push_back(DiffOp{DiffOpKind::Equal, left_lines[anchor_left], right_lines[anchor_right]});
     segment_left_begin = anchor_left + 1;
     segment_right_begin = anchor_right + 1;
   }
   AppendAnchoredFallbackOps(left_lines, segment_left_begin, left_suffix, right_lines,
-                            segment_right_begin, right_suffix, options, ops, depth + 1);
+                            segment_right_begin, right_suffix, options, scratch, ops, depth + 1);
   AppendEqualPairs(left_lines, left_suffix, left_end, right_lines, right_suffix, ops);
-}
-
-std::vector<DiffOp> BuildAnchoredFallbackOps(std::span<const std::string_view> left_lines,
-                                             std::span<const std::string_view> right_lines,
-                                             const CompareBuildOptions& options) {
-  std::vector<DiffOp> ops;
-  ops.reserve(left_lines.size() + right_lines.size());
-  AppendAnchoredFallbackOps(left_lines, 0, left_lines.size(), right_lines, 0, right_lines.size(),
-                            options, ops, 0);
-  return ops;
 }
 
 }  // namespace
@@ -1358,19 +1396,22 @@ std::vector<DiffOp> BuildLineDiffOps(std::span<const std::string_view> left_line
   if (!left_middle.empty() || !right_middle.empty()) {
     const std::size_t left_count = left_middle.size();
     const std::size_t right_count = right_middle.size();
-    std::vector<DiffOp> middle_ops;
+    // One scratch for the whole diff. Both aligners used to build (and free) a
+    // whole `middle_ops` vector here purely to copy it into `ops`, on top of the
+    // per-level buffers inside them.
+    DiffScratch scratch;
     if (ProductExceeds(left_count + 1, right_count + 1, kMaxLineLcsMatrixCells)) {
       if (stats != nullptr) {
         ++stats->anchored_alignment_calls;
       }
-      middle_ops = BuildAnchoredFallbackOps(left_middle, right_middle, options);
+      AppendAnchoredFallbackOps(left_middle, 0, left_middle.size(), right_middle, 0,
+                                right_middle.size(), options, scratch, ops, 0);
     } else {
       if (stats != nullptr) {
         ++stats->exact_alignment_calls;
       }
-      middle_ops = BuildExactLineOps(left_middle, right_middle, options);
+      AppendExactLineOps(left_middle, right_middle, options, scratch, ops);
     }
-    ops.insert(ops.end(), middle_ops.begin(), middle_ops.end());
   }
 
   // The matched suffix [left_suffix, end) <-> [right_suffix, end) has equal
