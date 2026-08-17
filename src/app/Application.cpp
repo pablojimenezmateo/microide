@@ -377,30 +377,6 @@ bool Application::Initialize() {
     SetWindowIconFromAssets(window_);
   }
 
-  {
-    util::StartupTrace::Scope create_renderer_scope("SDL_CreateRenderer");
-    renderer_ = SDL_CreateRenderer(window_, nullptr);
-  }
-  if (renderer_ == nullptr) {
-    SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
-    DestroySdlResources();  // release the already-created window before failing
-    return false;
-  }
-
-  SDL_SetRenderVSync(renderer_, 1);
-
-  // Record + report which SDL backend we actually got. The batched-text path is
-  // GPU-only (it regresses on the software renderer), so this gate is what makes
-  // that path safe to enable, and the log line confirms GPU vs software at
-  // runtime / in CI without a profiler.
-  {
-    const std::string_view driver = render::RendererDriverName(renderer_);
-    const bool is_gpu = render::RendererIsGpu(renderer_);
-    SDL_Log("microide render: SDL renderer driver='%.*s' (gpu=%s)",
-            static_cast<int>(driver.size()), driver.data(), is_gpu ? "yes" : "no");
-    workspace_shell_.SetRenderBackendInfo(std::string(driver), is_gpu);
-  }
-
   // Probe (read-only) whether the per-plugin kernel confinement layers are actually usable on this
   // host. The confinement in SubprocessSandbox is fail-open and applied in a forked child, so a
   // missing/old kernel silently degrades to just the in-process capability gate. Logging it here and
@@ -414,10 +390,26 @@ bool Application::Initialize() {
     workspace_shell_.SetSandboxSupport(sandbox);
   }
 
+  // The workspace comes up BEFORE the renderer, and the ordering is the point.
+  // `SDL_CreateRenderer` is 60-90 ms on a Wayland/Mesa session and almost none of
+  // it is our CPU: it is the dlopen chain for the GL stack (35 libraries, libLLVM
+  // and libicudata among them) plus DRM ioctls and display-server round trips. The
+  // shell thread is idle for all of it.
+  //
+  // `WorkspaceShell::Initialize` is ~4 ms of shell-thread work that STARTS the
+  // expensive background work of opening a project — the file-index/watcher tree
+  // walk, the git refreshes, plugin load. Running it first hands those threads the
+  // renderer-creation window to work in, so "the project is ready" arrives that
+  // much sooner. Nothing in it touches the renderer; the shell is only handed one
+  // at frame time (`PrepareFrameOnce`).
+  //
+  // What stays after the renderer: the control channel (its `status` query reports
+  // the render backend, so the handshake must not precede knowing it) and anything
+  // that answers for the window.
+  workspace::ControlSpec control_spec;
   {
     // Parse a cold-start control spec (if any) up front: its `project` selects
     // the project to open, overriding the positional path / cwd.
-    workspace::ControlSpec control_spec;
     if (startup_options_.control_spec_path.has_value()) {
       // Bound the slurp like the control-channel descriptor reads: a spec file is
       // operator-supplied, but capping it keeps the cold-start path from OOMing on a
@@ -501,18 +493,42 @@ bool Application::Initialize() {
     util::StartupTrace::Scope workspace_init_scope("WorkspaceShell::Initialize");
     if (!workspace_shell_.Initialize(initial_project)) {
       SDL_Log("Workspace initialization failed");
-      DestroySdlResources();  // release the window + renderer before failing
+      DestroySdlResources();  // release the window (the renderer does not exist yet)
       return false;
     }
+  }
 
-    // Force-start the channel first (so the `ready` handshake leads the JSONL
-    // stream), then apply transient `--set` overrides, then the cold-start spec.
-    workspace_shell_.ForceStartControlChannel();
-    workspace_shell_.ApplyStartupSettingOverrides();
-    if (control_spec.valid) {
-      util::StartupTrace::Scope apply_spec_scope("WorkspaceShell::ApplyControlSpec");
-      workspace_shell_.ApplyControlSpec(control_spec);
-    }
+  {
+    util::StartupTrace::Scope create_renderer_scope("SDL_CreateRenderer");
+    renderer_ = SDL_CreateRenderer(window_, nullptr);
+  }
+  if (renderer_ == nullptr) {
+    SDL_Log("SDL_CreateRenderer failed: %s", SDL_GetError());
+    DestroySdlResources();  // release the already-created window before failing
+    return false;
+  }
+
+  SDL_SetRenderVSync(renderer_, 1);
+
+  // Record + report which SDL backend we actually got. The batched-text path is
+  // GPU-only (it regresses on the software renderer), so this gate is what makes
+  // that path safe to enable, and the log line confirms GPU vs software at
+  // runtime / in CI without a profiler.
+  {
+    const std::string_view driver = render::RendererDriverName(renderer_);
+    const bool is_gpu = render::RendererIsGpu(renderer_);
+    SDL_Log("microide render: SDL renderer driver='%.*s' (gpu=%s)",
+            static_cast<int>(driver.size()), driver.data(), is_gpu ? "yes" : "no");
+    workspace_shell_.SetRenderBackendInfo(std::string(driver), is_gpu);
+  }
+
+  // Force-start the channel first (so the `ready` handshake leads the JSONL
+  // stream), then apply transient `--set` overrides, then the cold-start spec.
+  workspace_shell_.ForceStartControlChannel();
+  workspace_shell_.ApplyStartupSettingOverrides();
+  if (control_spec.valid) {
+    util::StartupTrace::Scope apply_spec_scope("WorkspaceShell::ApplyControlSpec");
+    workspace_shell_.ApplyControlSpec(control_spec);
   }
   workspace_shell_.SetDialogWindow(window_);
 
