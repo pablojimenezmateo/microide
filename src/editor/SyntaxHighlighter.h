@@ -11,7 +11,12 @@
 
 namespace microide::editor {
 
-enum class SyntaxTokenKind {
+// One byte, not the default `int`. There is a token entry PER BYTE of every
+// highlighted line — held per line in the editor's highlight cache and in each
+// compare/merge pane's token window — so the underlying type is a 4x multiplier
+// on the largest per-line buffer in the tree, and on the memset that fills it.
+// Nine enumerators; nothing converts this to or from a wider integer.
+enum class SyntaxTokenKind : std::uint8_t {
   Plain,
   Keyword,
   Type,

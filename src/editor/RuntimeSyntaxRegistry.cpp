@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <bit>
 #include <cctype>
 #include <cstdint>
 #include <mutex>
@@ -1541,6 +1542,17 @@ SyntaxState HighlightLineInto(std::string_view line,
   // overwrites existing entries, so the vector must be pre-sized to the line here.
   // `assign` on a vector the caller already owns reuses its buffer whenever the
   // capacity fits, which is the point of the Into form.
+  //
+  // Round the capacity up first. The Into form's hot callers recycle buffers
+  // through a pool (`SurfaceTokenWindow`, the editor's highlight cache), and a
+  // buffer sized EXACTLY to the line it last held fits the next line only when
+  // that line is no longer — so with exact sizing a pool of buffers reallocates
+  // on nearly every reuse. It was 81 % of `diff.next_hunk_burst`. Rounding to a
+  // power of two collapses the pool onto a handful of sizes, at a bounded ≤2x
+  // capacity cost on a now-one-byte element (TD-2026-08-17-261's sweep).
+  if (tokens->capacity() < line.size()) {
+    tokens->reserve(std::bit_ceil(std::max<std::size_t>(line.size(), 64)));
+  }
   tokens->assign(line.size(), SyntaxTokenKind::Plain);
 
   // Resume the previous line's open-region stack only when the definition still
