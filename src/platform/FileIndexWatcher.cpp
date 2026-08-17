@@ -282,13 +282,24 @@ bool CollectTrackedCreations(const std::filesystem::path& walk_root,
       continue;  // file budget spent; still walking so watches keep being registered
     }
     const std::filesystem::path& abs_path = util::NormalizedPathView(it->path(), normalize_scratch);
-    std::filesystem::path rel;
-    if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
+    // File-level ignore check (parity with the finder/tree) FIRST: an ignored file
+    // whose parent directory was not itself pruned is still excluded from the
+    // index, and most of what a walk sees is that case. On this repo the walk
+    // visits ~52,000 entries and keeps 8,000 — the other 44,000 are individually
+    // ignored files (fuzz corpora, generated fixtures) sitting in directories that
+    // are not themselves ignored, so they cannot be pruned.
+    //
+    // `Includes` derives its own relative view and allocates nothing.
+    // `TryBuildTrackedRelativePath` materializes a `std::filesystem::path`, which
+    // libstdc++ builds with an eager component list — two allocations. Running it
+    // before the rejection meant paying both for every ignored file. Both are pure
+    // predicates, so the order is free to change; every rejection either one made
+    // before, it still makes.
+    if (filter != nullptr && !filter->Includes(abs_path, platform::PathType::RegularFile)) {
       continue;
     }
-    // File-level ignore check (parity with the finder/tree): an ignored file whose
-    // parent directory was not itself pruned is still excluded from the index.
-    if (filter != nullptr && !filter->Includes(abs_path, platform::PathType::RegularFile)) {
+    std::filesystem::path rel;
+    if (!TryBuildTrackedRelativePath(abs_path, index_root, rel)) {
       continue;
     }
     if (changes->size() >= max_entries) {
@@ -391,6 +402,7 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
   project::ProjectTraversalFilter filter(root, exclude_globs);
   std::error_code error;
   constexpr auto opts = std::filesystem::directory_options::skip_permission_denied;
+  std::filesystem::path normalize_scratch;
   for (std::filesystem::recursive_directory_iterator it(root, opts, error), end;
        !error && it != end; it.increment(error)) {
     std::error_code status_error;
@@ -415,17 +427,22 @@ detail::FileIndexSnapshot BuildPollSnapshot(const std::filesystem::path& root,
     if (type != platform::PathType::RegularFile) {
       continue;
     }
-    const std::filesystem::path abs_path = util::NormalizedPath(it->path());
+    // Same shape as CollectTrackedCreations above, for the same reason and with
+    // more force: this loop runs every poll interval, forever, so an ignored file
+    // costs its two relative-path allocations again on every scan. Reject first,
+    // materialize after. The path view avoids the owning copy of an input that is
+    // already normal.
+    const std::filesystem::path& abs_path = util::NormalizedPathView(it->path(), normalize_scratch);
+    if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
+      continue;
+    }
     std::filesystem::path rel;
     if (!TryBuildTrackedRelativePath(abs_path, root, rel)) {
       continue;
     }
-    if (!filter.Includes(abs_path, platform::PathType::RegularFile)) {
-      continue;
-    }
     const std::optional<FileMetadata> metadata = ReadFileMetadata(abs_path);
-    result[rel] = {metadata ? metadata->mtime : std::filesystem::file_time_type{},
-                   metadata ? metadata->size : 0};
+    result[std::move(rel)] = {metadata ? metadata->mtime : std::filesystem::file_time_type{},
+                            metadata ? metadata->size : 0};
   }
   if (out_directory_signature != nullptr) {
     *out_directory_signature = directory_signature;
