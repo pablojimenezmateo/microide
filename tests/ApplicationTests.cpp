@@ -12,6 +12,7 @@
 #include "app/EventDrainBudget.h"
 #include "app/IdleWaitStrategy.h"
 #include "app/RedrawTraceAccumulator.h"
+#include "app/SceneTexturePresenter.h"
 
 namespace microide::tests {
 
@@ -269,6 +270,70 @@ void TestHeadlessRendersRetainedSceneFrame() {
          "Shutdown() after rendering should destroy the renderer and scene texture");
 }
 
+// The retained scene must survive a logical size that is not the pixel size.
+// That is the normal case on a HiDPI display (display scale 2.0) and on any
+// non-default UI scale, and `Ensure` used to compare the logical size against
+// `SDL_GetRenderOutputSize` and return false whenever they differed — so the
+// scene texture was never created, every frame took the direct-to-window
+// fallback, and the whole partial-redraw path was dead with nothing reporting
+// it. The dummy driver reports a display scale of 1.0, so this drives the
+// scaled case directly rather than through Application's presentation math.
+void TestSceneTextureSurvivesScaledLogicalPresentation() {
+  EnsureDummySdlVideoInitialized();
+  SDL_Window* window = SDL_CreateWindow("scene-texture-scale", 320, 200, SDL_WINDOW_HIDDEN);
+  Expect(window != nullptr, "the dummy driver should create a window");
+  SDL_Renderer* renderer = SDL_CreateRenderer(window, nullptr);
+  Expect(renderer != nullptr, "the dummy driver should create a renderer");
+
+  int output_width = 0;
+  int output_height = 0;
+  Expect(SDL_GetRenderOutputSize(renderer, &output_width, &output_height) && output_width > 0,
+         "the renderer should report a pixel output size");
+
+  // Half-size logical grid: the shape a 2.0 display scale produces.
+  const int logical_width = output_width / 2;
+  const int logical_height = output_height / 2;
+  Expect(SDL_SetRenderLogicalPresentation(renderer, logical_width, logical_height,
+                                          SDL_LOGICAL_PRESENTATION_STRETCH),
+         "the window view should accept a scaled logical presentation");
+
+  app::SceneTexturePresenter presenter;
+  Expect(presenter.Ensure(renderer, logical_width, logical_height),
+         "the scene texture must be created when the logical size is not the pixel size");
+  Expect(presenter.pixel_width() == output_width && presenter.pixel_height() == output_height,
+         "the scene texture must be sized in device pixels, not logical units");
+
+  // The target's own view starts with no logical presentation and keeps whatever
+  // it is given across unbind/rebind, so the shell's logical-coordinate drawing
+  // only lands correctly once that view has been mapped.
+  Expect(SDL_SetRenderTarget(renderer, presenter.texture()), "binding the scene target");
+  presenter.ApplyRenderTargetPresentation(renderer);
+  int target_logical_width = 0;
+  int target_logical_height = 0;
+  SDL_RendererLogicalPresentation mode = SDL_LOGICAL_PRESENTATION_DISABLED;
+  Expect(SDL_GetRenderLogicalPresentation(renderer, &target_logical_width, &target_logical_height,
+                                          &mode),
+         "the scene target should report its logical presentation");
+  Expect(target_logical_width == logical_width && target_logical_height == logical_height &&
+             mode == SDL_LOGICAL_PRESENTATION_STRETCH,
+         "the scene target must carry the window's logical presentation");
+  Expect(SDL_SetRenderTarget(renderer, nullptr), "unbinding the scene target");
+
+  // A UI-scale change moves the logical grid without moving the drawable, so the
+  // texture is remapped rather than reallocated — and what it holds is stale.
+  presenter.MarkValid();
+  SDL_Texture* before = presenter.texture();
+  Expect(presenter.Ensure(renderer, output_width, output_height),
+         "a logical-size change should keep the scene texture usable");
+  Expect(presenter.texture() == before,
+         "a logical-size change must not reallocate a correctly sized drawable");
+  Expect(!presenter.valid(), "a logical-size change must invalidate the retained content");
+
+  presenter.Destroy();
+  SDL_DestroyRenderer(renderer);
+  SDL_DestroyWindow(window);
+}
+
 void TestExposeRePresentsRetainedSceneInsteadOfRerendering() {
   EnsureDummySdlVideoInitialized();
   TemporaryDirectory temp_dir;
@@ -376,6 +441,8 @@ void RegisterApplicationTests(std::vector<TestCase>& tests) {
           TestHeadlessInitializeAndShutdownTearsDownCleanly);
   AddTest(tests, "Application/HeadlessRendersRetainedSceneFrame",
           TestHeadlessRendersRetainedSceneFrame);
+  AddTest(tests, "Application/SceneTextureSurvivesScaledLogicalPresentation",
+          TestSceneTextureSurvivesScaledLogicalPresentation);
   AddTest(tests, "Application/ExposeRePresentsRetainedSceneInsteadOfRerendering",
           TestExposeRePresentsRetainedSceneInsteadOfRerendering);
   AddTest(tests, "Application/HeadlessReinitializeAfterShutdown",

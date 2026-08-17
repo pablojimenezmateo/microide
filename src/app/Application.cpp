@@ -799,6 +799,10 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
       workspace_shell_.OnFramePresented();
       return;
     }
+    // The scene texture is a device-pixel target with its own view; give that
+    // view the window's logical presentation so everything below draws in the
+    // same coordinates it would on the window.
+    scene_texture_.ApplyRenderTargetPresentation(renderer_);
 
     if (full_redraw) {
       if (promote_partial_to_full && util::PerformanceTrace::Enabled()) {
