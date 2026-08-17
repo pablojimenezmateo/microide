@@ -196,7 +196,8 @@ std::vector<std::size_t> FindCodeLiteralOccurrences(std::string_view text,
   return offsets;
 }
 
-std::vector<std::filesystem::path> SourceFilesUnder(const std::filesystem::path& root) {
+std::vector<std::filesystem::path> SourceFilesUnder(const std::filesystem::path& root,
+                                                    std::span<const std::string_view> extensions) {
   std::vector<std::filesystem::path> files;
   std::error_code ec;
   std::filesystem::recursive_directory_iterator it(
@@ -209,8 +210,11 @@ std::vector<std::filesystem::path> SourceFilesUnder(const std::filesystem::path&
     const std::filesystem::directory_entry entry = *it;
     if (entry.is_directory(ec) && !ec && entry.path().filename() == "fixtures") {
       it.disable_recursion_pending();
-    } else if (entry.is_regular_file(ec) && !ec && entry.path().extension() == ".cpp") {
-      files.push_back(entry.path());
+    } else if (entry.is_regular_file(ec) && !ec) {
+      const std::string extension = entry.path().extension().string();
+      if (std::find(extensions.begin(), extensions.end(), extension) != extensions.end()) {
+        files.push_back(entry.path());
+      }
     }
     // The error_code increment is the point: a generated fixture tree can be
     // rewritten by a concurrent ctest setup test, and the throwing form takes the

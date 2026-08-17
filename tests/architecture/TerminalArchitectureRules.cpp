@@ -214,15 +214,20 @@ RuleResult CheckTerminalInternalHeadersStayInTerminalDir(const std::filesystem::
     if (!RequireRuleTarget(result, root)) {
       continue;
     }
-    for (const auto& entry : std::filesystem::recursive_directory_iterator(root)) {
-      if (!entry.is_regular_file()) {
-        continue;
-      }
-      const std::filesystem::path path = entry.path();
-      if (path.extension() != ".cpp" && path.extension() != ".h" &&
-          path.extension() != ".inc") {
-        continue;
-      }
+    // Through the shared scanner, not a raw recursive_directory_iterator: one of
+    // these roots is `tests`, and 15,211 of the 15,442 source-extension files
+    // under it are generated perf fixtures that no rule can match. The ctest
+    // fixture-setup tests rewrite those trees while the shards run, so an
+    // increment onto an entry another process just unlinked throws — and did,
+    // taking the whole architecture shard down with "cannot increment recursive
+    // directory iterator: No such file or directory" (TD-2026-08-17-260).
+    //
+    // The reason is the race, not the file count: skipping the 15,211 reads is
+    // not measurably faster (0.25 s either way, three runs each), because they
+    // are small and warm in the page cache. Wasted work that costs nothing is
+    // still not a reason to keep a throwing walk over a tree someone else writes.
+    static constexpr std::array<std::string_view, 3> kExtensions = {".cpp", ".h", ".inc"};
+    for (const std::filesystem::path& path : SourceFilesUnder(root, kExtensions)) {
       const std::string relative = path.lexically_relative(repo_root).generic_string();
       if (relative.rfind("src/terminal/", 0) == 0) {
         continue;
