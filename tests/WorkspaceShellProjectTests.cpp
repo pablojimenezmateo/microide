@@ -62,6 +62,22 @@ bool WaitForProjectReload(WorkspaceShell& shell, std::chrono::milliseconds timeo
       timeout, std::chrono::milliseconds(10));
 }
 
+// Poll the FORCED check instead of asserting on a single call.
+//
+// The forced path scans the tree and diffs it against the file index — and the
+// watcher thread is racing it. Its callback applies a batch to the index BEFORE
+// it ingests the change into the coalescer and before it raises the pending-work
+// flag, so a forced scan landing inside that window sees an index that already
+// holds the new file, diffs to nothing, and correctly reports "no batch to
+// apply" for a change that is a microsecond from arriving by the other route.
+// One call is not an answer to "was the change detected"; eventual delivery is.
+// Reproduced roughly one run in six under TSAN, where the window is widest.
+bool WaitForForcedProjectChange(WorkspaceShell& shell, std::chrono::milliseconds timeout) {
+  return WaitUntil(
+      [&shell]() { return WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true); },
+      timeout, std::chrono::milliseconds(10));
+}
+
 bool WaitForFileIndexPath(WorkspaceShell& shell,
                           const std::filesystem::path& relative_path,
                           bool expected_present,
@@ -4670,7 +4686,7 @@ void TestWorkspaceShellProjectWatcherIgnoresGitignoredDirectories() {
          "project watcher should ignore gitignored directory changes");
 
   WriteFile(root / "watched.txt", "changed\n");
-  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
+  Expect(WaitForForcedProjectChange(shell, std::chrono::seconds(2)),
          "project watcher should still detect visible project changes");
 }
 
