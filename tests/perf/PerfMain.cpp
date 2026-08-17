@@ -1278,6 +1278,113 @@ void RegisterBuiltInScenarios() {
             context.PumpFrames(5);
           },
   });
+  // The shell-thread cost of STARTING a project search when the file index has
+  // moved since the last one — which, in an editing session, is every search
+  // after every save.
+  //
+  // `search_first_result` next door cannot see this. It measures a steady state
+  // where the index has not changed, so `SnapshotPathsWithVersion` returns the
+  // cached list and the whole phase is 13 allocations. `FileIndex::ApplyBatch`
+  // marks both derived caches dirty on any change, and the next snapshot rebuilds
+  // the whole filtered path list — synchronously, on the shell thread, under the
+  // index's exclusive lock, at roughly two allocations per indexed file because a
+  // `std::filesystem::path` copy allocates its pathname AND its parsed component
+  // list. On this 10k-file fixture that is ~20,000 allocations between the
+  // keystroke and the first result, and until this scenario existed nothing
+  // measured it (TD-2026-08-17-259).
+  //
+  // Deterministic without a real watcher: SimulateExternalFileChange dispatches a
+  // synthetic FileIndexWatcher batch through the shell's own callback and drains
+  // it on this thread. It appends a byte because an Upsert whose mtime and size
+  // both match is not a change, and ApplyBatch returns early without invalidating
+  // anything — the fixture is restored by the harness afterwards.
+  PerfHarness::RegisterScenario(Scenario{
+      .name = "project_search_start_after_index_change",
+      .smoke = false,
+      // The index build settles over several passes, same as search_first_result.
+      .warmup_iterations = 4,
+      .tolerance_p95_percent = tolerance::kJitterWallP95,
+      .tolerance_max_percent = tolerance::kJitterWallMax,
+      .run =
+          [](ScenarioContext& context) {
+            const std::filesystem::path fixture =
+                std::filesystem::path("tests/perf/fixtures/file_finder_large");
+            if (!RequireFixture(context, fixture, "project_search_start_after_index_change")) {
+              return;
+            }
+            if (!context.Open(fixture)) {
+              throw std::runtime_error(
+                  "project_search_start_after_index_change: failed to open fixture");
+            }
+            if (!context.WaitForFileIndexPath("src_49/file_09999.cpp",
+                                              std::chrono::seconds(15))) {
+              throw std::runtime_error(
+                  "project_search_start_after_index_change: file index did not build in time");
+            }
+            // Warm the derived path cache, then DISMISS the overlay. An open
+            // project-search overlay re-runs itself when the project changes, so
+            // leaving it up meant the rebuild landed on the frame that delivered
+            // the change and the measured window found a warm cache — the phase
+            // read a cache hit while looking like it measured a rebuild.
+            // A DIFFERENT query from the measured one below. Re-running a search
+            // for the query already in the box is a no-op, so a warm-up that used
+            // the same string left the measured window doing nothing at all.
+            context.StartSearch("symbol_00001");
+            if (!context.WaitForProjectSearchFinished(std::chrono::seconds(15))) {
+              throw std::runtime_error(
+                  "project_search_start_after_index_change: warm-up search did not finish");
+            }
+            // The incremental watcher batch, not SimulateExternalFileChange: that
+            // helper also runs a forced project check, and the forced path calls
+            // FileIndex::EnsureFresh, which rebuilds the cache EAGERLY inside the
+            // rescan. A save takes the watcher path. Only mtime/size on the change
+            // record move, so the fixture stays byte-identical (TD-2026-08-06-155).
+            //
+            // The dispatch is INSIDE the measured window, and deliberately: the
+            // rebuild lands wherever the first reader after the invalidation is,
+            // and that reader turned out to be the frame that applies the batch
+            // rather than the search start. Measuring only the search start read a
+            // cache hit while looking like it measured a rebuild — which is the
+            // failure mode TD-2026-08-17-258 is about, caught here by the guard
+            // below before a baseline was ever recorded. So the phase is the whole
+            // shell-thread sequence a save-then-search costs.
+            platform::IndexUpdateBatch batch;
+            batch.is_initial = false;
+            platform::IndexUpdateBatch::Change change;
+            change.kind = platform::IndexUpdateBatch::Kind::CreatedOrModified;
+            change.entry.relative_path = "src_00/file_00000.cpp";
+            change.entry.size = 0;  // differs from the indexed size -> a real change
+            change.entry.mtime = std::filesystem::file_time_type::clock::now();
+            batch.changes.push_back(std::move(change));
+            const std::uint64_t rebuilds_before =
+                util::ReadPerformanceCounter(util::PerfCounterId::FileIndexRebuilds);
+            context.Measure("project_search.index_change_to_search_start", [&] {
+              if (!workspace::WorkspaceShell::TestAccess::DispatchFileIndexWatcherBatchForTesting(
+                      context.Shell(), std::move(batch))) {
+                throw std::runtime_error(
+                    "project_search_start_after_index_change: no live file-index watcher, so "
+                    "the index cannot be invalidated the way a save does");
+              }
+              context.PumpFrames(1);
+              context.StartSearch("symbol_09999");
+            });
+            // A gate reading a number is not evidence that the operation it names
+            // happened (TD-2026-08-17-258). The derived-path-cache rebuild is the
+            // subject, so assert it ran: with a warm cache this phase collapses to
+            // a handful of allocations and stays green forever.
+            if (util::ReadPerformanceCounter(util::PerfCounterId::FileIndexRebuilds) ==
+                rebuilds_before) {
+              throw std::runtime_error(
+                  "project_search_start_after_index_change: the change rebuilt no derived path "
+                  "cache, so this phase is measuring a cache hit and not the work it is named "
+                  "for");
+            }
+            if (!context.WaitForProjectSearchFinished(std::chrono::seconds(15))) {
+              throw std::runtime_error(
+                  "project_search_start_after_index_change: search did not finish in time");
+            }
+          },
+  });
   // Task 9.5: search_first_result — search for a symbol near end of 10k-file corpus.
   // Measures ~2.5 ms, which four consecutive runs of one unchanged binary
   // spread by +-23%. Allocations are byte-identical across those runs, so they
@@ -1286,8 +1393,14 @@ void RegisterBuiltInScenarios() {
       .name = "search_first_result",
       .smoke = false,
       // WHAT GATES THIS SCENARIO IS THE PHASE, NOT THE TOTAL. The scenario total
-      // is ~20,192 allocations and 20,047 of them are opening a 10k-file fixture
-      // and building its index; the search this scenario is named after is 145.
+      // is ~20,051 allocations and all but a handful of them are opening a 10k-file
+      // fixture and building its index; the search this scenario is named after is
+      // 13 on the shell thread (the counter is per-thread, so the worker's own work
+      // is charged to the worker — see AllocationCounter.cpp). That 13 is a
+      // STEADY-STATE reading: the index has not moved since the last search, so the
+      // derived path cache is warm. What a search costs after a save is a different
+      // number by three orders of magnitude, and it is
+      // `project_search_start_after_index_change` above that measures it.
       // The total is deterministic and tightly gated and it would not notice the
       // search doubling — a +0.7% move inside a +10% envelope. That claim used to
       // live here as "the authoritative, precise regression signal", which was a
