@@ -1,22 +1,37 @@
 #include "compare/ComparePresentationModel.h"
 
 #include <algorithm>
-#include <sstream>
+
+#include "util/StringUtil.h"
 
 namespace microide::compare {
 
 namespace {
 
-std::string BuildMetadataSummary(const CompareSemanticFileMetadata& semantic) {
-  std::ostringstream stream;
+// Appends into a caller-owned buffer rather than returning a string, and uses no
+// `std::ostringstream`: the old spelling constructed a stream (and called
+// `.str()` — a whole copy of the accumulated text — once per separator test) on
+// every presentation rebuild, which is every keystroke in an editable diff. It
+// is empty for the overwhelmingly common Text/unrenamed/unchanged-mode case, so
+// almost all of that work produced nothing.
+void AppendMetadataSummary(const CompareSemanticFileMetadata& semantic, std::string& out) {
+  const auto separate = [&out] {
+    if (!out.empty()) {
+      out += " · ";
+    }
+  };
   switch (semantic.file_kind) {
     case CompareSemanticFileKind::Binary:
-      stream << "Binary file";
+      out += "Binary file";
       break;
     case CompareSemanticFileKind::Submodule:
-      stream << "Submodule";
+      out += "Submodule";
       if (semantic.submodule_pointer_changed) {
-        stream << " (" << semantic.old_submodule_oid << " -> " << semantic.new_submodule_oid << ')';
+        out += " (";
+        out += semantic.old_submodule_oid;
+        out += " -> ";
+        out += semantic.new_submodule_oid;
+        out += ')';
       }
       break;
     case CompareSemanticFileKind::Text:
@@ -24,30 +39,66 @@ std::string BuildMetadataSummary(const CompareSemanticFileMetadata& semantic) {
       break;
   }
   if (semantic.renamed) {
-    if (!stream.str().empty()) {
-      stream << " · ";
-    }
-    stream << "Renamed " << semantic.old_path.generic_string() << " -> "
-           << semantic.new_path.generic_string();
+    separate();
+    out += "Renamed ";
+    out += semantic.old_path.generic_string();
+    out += " -> ";
+    out += semantic.new_path.generic_string();
   }
   if (semantic.mode_changed) {
-    if (!stream.str().empty()) {
-      stream << " · ";
-    }
-    stream << "Mode " << (semantic.old_executable ? "executable" : "non-executable") << " -> "
-           << (semantic.new_executable ? "executable" : "non-executable");
+    separate();
+    out += "Mode ";
+    out += semantic.old_executable ? "executable" : "non-executable";
+    out += " -> ";
+    out += semantic.new_executable ? "executable" : "non-executable";
   }
   if (semantic.line_ending_only) {
-    if (!stream.str().empty()) {
-      stream << " · ";
-    }
-    stream << "Line endings only";
+    separate();
+    out += "Line endings only";
   }
-  return stream.str();
 }
 
 bool RowIsChanged(const CompareRow& row) {
   return row.kind != CompareRowKind::Unchanged;
+}
+
+// Claim the next row of the slab, recycling the one already there.
+//
+// `rows` is written through a cursor rather than cleared and re-pushed, because
+// a rebuild fires on every keystroke in an editable diff and almost never
+// changes the row COUNT. Clearing freed three `std::string`s per row and the
+// rebuild allocated them straight back with, in the collapsed-run case, a count
+// that had not moved (TD-2026-08-17-261). Every field is reset here so a
+// recycled row carries nothing from its previous occupant.
+ComparePresentationRow& ClaimRow(ComparePresentationModel& presentation, std::size_t& cursor) {
+  if (cursor == presentation.rows.size()) {
+    presentation.rows.emplace_back();
+  }
+  ComparePresentationRow& row = presentation.rows[cursor];
+  ++cursor;
+  row.kind = ComparePresentationRowKind::Model;
+  row.model_row_index = 0;
+  row.summary_text.clear();
+  row.display_summary_text.clear();
+  row.hunk_index = -1;
+  row.collapsed_line_count = 0;
+  row.collapsed_run_start_model_row = 0;
+  row.collapsed_run_length = 0;
+  row.context_above = false;
+  row.previous_hunk_index = -1;
+  row.next_hunk_index = -1;
+  row.review_marker_label.clear();
+  row.has_review_note = false;
+  return row;
+}
+
+// Finish a rebuild: drop any rows the new model did not need, then compose the
+// render-ready summaries.
+void FinishPresentationRows(ComparePresentationModel& presentation, std::size_t cursor) {
+  presentation.rows.resize(cursor);
+  for (ComparePresentationRow& row : presentation.rows) {
+    ComposeComparePresentationDisplaySummary(row);
+  }
 }
 
 }  // namespace
@@ -84,25 +135,39 @@ ComparePresentationModel BuildComparePresentationModel(
     std::uint64_t model_generation) {
   ComparePresentationModel presentation;
   presentation.collapse_state = std::move(collapse_state);
-  const std::vector<ComparePresentationCollapsedRunState> previous_collapsed_runs =
-      presentation.collapse_state.collapsed_runs;
-  presentation.collapse_state.collapsed_runs.clear();
+  BuildComparePresentationModelInto(presentation, model, semantic, options, model_generation);
+  return presentation;
+}
 
-  const std::string metadata_summary = BuildMetadataSummary(semantic);
-  if (!metadata_summary.empty()) {
-    presentation.rows.push_back(ComparePresentationRow{
-        .kind = ComparePresentationRowKind::Metadata,
-        .summary_text = metadata_summary,
-        .review_marker_label = {},
-    });
+void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
+                                       const CompareModel& model,
+                                       const CompareSemanticFileMetadata& semantic,
+                                       const ComparePresentationOptions& options,
+                                       std::uint64_t model_generation) {
+  // Double-buffer the collapsed-run list: the previous build's entries have to
+  // stay readable (they carry the per-run expand state) while the new ones are
+  // written. A swap recycles both buffers; the old spelling COPIED the vector to
+  // keep it, on every rebuild, plus a second copy in the by-value parameter.
+  presentation.previous_collapsed_runs.swap(presentation.collapse_state.collapsed_runs);
+  presentation.collapse_state.collapsed_runs.clear();
+  const std::vector<ComparePresentationCollapsedRunState>& previous_collapsed_runs =
+      presentation.previous_collapsed_runs;
+
+  std::size_t cursor = 0;
+  {
+    ComparePresentationRow& metadata_row = ClaimRow(presentation, cursor);
+    AppendMetadataSummary(semantic, metadata_row.summary_text);
+    if (metadata_row.summary_text.empty()) {
+      --cursor;  // No metadata line for this file; give the slot straight back.
+    } else {
+      metadata_row.kind = ComparePresentationRowKind::Metadata;
+    }
   }
 
   if (semantic.file_kind == CompareSemanticFileKind::Binary) {
     RebuildCompareInlineDiffCache(&presentation, model, model_generation, true);
-    for (ComparePresentationRow& row : presentation.rows) {
-      ComposeComparePresentationDisplaySummary(row);
-    }
-    return presentation;
+    FinishPresentationRows(presentation, cursor);
+    return;
   }
 
   std::size_t row_index = 0;
@@ -144,36 +209,25 @@ ComparePresentationModel BuildComparePresentationModel(
               : 0;
 
       for (std::size_t i = 0; i < visible_prefix; ++i) {
-        presentation.rows.push_back(ComparePresentationRow{
-            .kind = ComparePresentationRowKind::Model,
-            .model_row_index = run_start + i,
-            .summary_text = {},
-            .review_marker_label = {},
-        });
+        ClaimRow(presentation, cursor).model_row_index = run_start + i;
       }
       if (collapsed_count >= options.collapse_threshold) {
-        presentation.rows.push_back(ComparePresentationRow{
-            .kind = ComparePresentationRowKind::CollapsedContext,
-            .summary_text = std::to_string(collapsed_count) + " unchanged lines hidden",
-            .collapsed_line_count = static_cast<int>(collapsed_count),
-            .collapsed_run_start_model_row = run_start,
-            .collapsed_run_length = run_length,
-            .context_above = visible_prefix > 0,
-            .previous_hunk_index = previous_hunk_index,
-            .next_hunk_index = next_hunk_index,
-            .review_marker_label = {},
-        });
+        ComparePresentationRow& summary = ClaimRow(presentation, cursor);
+        summary.kind = ComparePresentationRowKind::CollapsedContext;
+        util::AppendUnsigned(summary.summary_text, collapsed_count);
+        summary.summary_text += " unchanged lines hidden";
+        summary.collapsed_line_count = static_cast<int>(collapsed_count);
+        summary.collapsed_run_start_model_row = run_start;
+        summary.collapsed_run_length = run_length;
+        summary.context_above = visible_prefix > 0;
+        summary.previous_hunk_index = previous_hunk_index;
+        summary.next_hunk_index = next_hunk_index;
         if (expanded_above > 0 || expanded_below > 0) {
           presentation.collapse_state.collapsed_runs.push_back(collapsed_run_state);
         }
       } else {
         for (std::size_t i = visible_prefix; i < run_length - visible_suffix; ++i) {
-          presentation.rows.push_back(ComparePresentationRow{
-              .kind = ComparePresentationRowKind::Model,
-              .model_row_index = run_start + i,
-              .summary_text = {},
-            .review_marker_label = {},
-          });
+          ClaimRow(presentation, cursor).model_row_index = run_start + i;
         }
         if (run_length >= options.collapse_threshold &&
             (expanded_above > 0 || expanded_below > 0)) {
@@ -181,30 +235,17 @@ ComparePresentationModel BuildComparePresentationModel(
         }
       }
       for (std::size_t i = run_length - visible_suffix; i < run_length; ++i) {
-        presentation.rows.push_back(ComparePresentationRow{
-            .kind = ComparePresentationRowKind::Model,
-            .model_row_index = run_start + i,
-            .summary_text = {},
-            .review_marker_label = {},
-        });
+        ClaimRow(presentation, cursor).model_row_index = run_start + i;
       }
       continue;
     }
 
-    presentation.rows.push_back(ComparePresentationRow{
-        .kind = ComparePresentationRowKind::Model,
-        .model_row_index = row_index,
-        .summary_text = {},
-        .review_marker_label = {},
-    });
+    ClaimRow(presentation, cursor).model_row_index = row_index;
     ++row_index;
   }
 
   RebuildCompareInlineDiffCache(&presentation, model, model_generation, false);
-  for (ComparePresentationRow& row : presentation.rows) {
-    ComposeComparePresentationDisplaySummary(row);
-  }
-  return presentation;
+  FinishPresentationRows(presentation, cursor);
 }
 
 void ComposeComparePresentationDisplaySummary(ComparePresentationRow& row) {
@@ -304,8 +345,18 @@ void RebuildCompareInlineDiffCache(ComparePresentationModel* presentation,
     return;
   }
   presentation->inline_cache.model_generation = model_generation;
-  presentation->inline_cache.left_spans_by_row.assign(model.rows.size(), {});
-  presentation->inline_cache.right_spans_by_row.assign(model.rows.size(), {});
+  // `resize` + per-row `clear`, never `assign(n, {})`: growing an `assign` past
+  // capacity destroys every inner vector, where `resize` MOVES them, and a
+  // cleared inner vector keeps the buffer the copy below writes into. This runs
+  // on every keystroke in an editable diff, once per model row (TD-2026-08-17-261).
+  const auto reset_side = [&](std::vector<std::vector<CompareTextSpan>>& side) {
+    side.resize(model.rows.size());
+    for (std::vector<CompareTextSpan>& spans : side) {
+      spans.clear();
+    }
+  };
+  reset_side(presentation->inline_cache.left_spans_by_row);
+  reset_side(presentation->inline_cache.right_spans_by_row);
   if (defer_intraline) {
     return;
   }

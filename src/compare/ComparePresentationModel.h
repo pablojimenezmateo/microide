@@ -76,7 +76,26 @@ struct ComparePresentationModel {
   std::vector<ComparePresentationRow> rows;
   ComparePresentationCollapseState collapse_state;
   CompareInlineDiffCache inline_cache;
+  // Back buffer for `collapse_state.collapsed_runs`. A rebuild has to read the
+  // previous build's per-run expand state while writing the new list, and the
+  // two are swapped rather than copied. Not part of the model's value — nothing
+  // outside `BuildComparePresentationModelInto` should read it.
+  std::vector<ComparePresentationCollapsedRunState> previous_collapsed_runs;
 };
+
+// Rebuild `presentation` IN PLACE from `model`, recycling its row slab, its
+// summary strings, its inline-span vectors and its collapsed-run buffer. The
+// incoming `presentation.collapse_state` is read as the previous state.
+//
+// This is the form the product uses, because the rebuild fires on every
+// keystroke in an editable diff and almost never changes the row count. The
+// value-returning form below is an adapter over it for callers starting from
+// nothing (TD-2026-08-17-261).
+void BuildComparePresentationModelInto(ComparePresentationModel& presentation,
+                                       const CompareModel& model,
+                                       const CompareSemanticFileMetadata& semantic,
+                                       const ComparePresentationOptions& options,
+                                       std::uint64_t model_generation);
 
 ComparePresentationModel BuildComparePresentationModel(
     const CompareModel& model,
