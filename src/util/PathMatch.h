@@ -133,6 +133,20 @@ namespace microide::util {
   return text.substr(0, last_separator);
 }
 
+// The final component of an already-normalized path's text, as a view into it —
+// what `path::filename()` would yield, without constructing a path. The companion
+// to `NormalizedParentDirectoryView`, and the reason it exists: a traversal that
+// asks "is this name hidden?" per entry was spending a path plus a string on the
+// answer (`path.filename().string()[0] == '.'`).
+[[nodiscard]] inline std::string_view NormalizedFileNameView(std::string_view text) {
+#ifdef _WIN32
+  const std::size_t last_separator = text.find_last_of("\\/");
+#else
+  const std::size_t last_separator = text.find_last_of('/');
+#endif
+  return last_separator == std::string_view::npos ? text : text.substr(last_separator + 1);
+}
+
 // True when `text` — a path's own separator-separated spelling — is NOT already in
 // lexically-normal form, i.e. when `lexically_normal()` would produce something
 // different and therefore has to run.
