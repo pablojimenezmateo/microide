@@ -389,6 +389,83 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-17-263 — 49 allocation gates are loose after the compare/diff work, three of them by 70-82 %. [OPEN — the deterministic half wants re-recording; this is [261](#td-2026-08-17-261)'s closing note, now measured across the whole suite.]
+
+The 2026-08-17 full-gate run found **zero** allocation drift up across all 113
+scenarios and 49 metrics that had drifted DOWN — real improvements that nothing
+has re-recorded, so each one leaves an envelope spanning ground the code already
+gave up. The three worst are the compare surface 261 rewrote:
+
+| scenario | metric | baseline | measured | |
+| --- | --- | ---: | ---: | ---: |
+| `compare_type_in_wrapped_diff` | `p50_allocations` | 10,642 | 1,884 | -82 % |
+| `compare_type_in_wrapped_diff` | `p95_allocations` | 11,667 | 2,818 | -76 % |
+| `compare_type_in_wrapped_diff` | `max_allocations` | 12,439 | 3,551 | -71 % |
+| `diff_next_hunk_large_file` | `p50_allocations` | 10,614 | 7,866 | -26 % |
+| `merge_scroll_large_fixture` | `p50_allocations` | 1,147 | 983 | -14 % |
+
+A gate at -82 % is not gating: the code would have to allocate five times what it
+now does before anything said a word. This is the TD-2026-08-05-135 class, and the
+pre-check TD-2026-08-14-234 established applies — verify no allocation gate is
+NEAR its envelope before re-recording, or the rebaseline buries a regression
+instead of tightening a gate. The allocation half is deterministic, so unlike the
+timing half it does not need a quiet box; it does need `--iterations` at the
+committed count (10), since `--update-baseline` refuses fewer than 10 and a
+different count re-percentiles a differently-sized sample.
+
+Not to be re-recorded in the same pass: the ten advisory rows below.
+
+### TD-2026-08-17-262 — the drift reporter called ten switched-off metrics gate failures, on a run that passed. [RESOLVED 2026-08-17, same session it was found.]
+
+Checking the tree for regressions before the 2.10.0 cut produced a run whose own
+verdict was `PASS`, whose 113 allocation gates had drifted up nowhere — and whose
+drift report printed **ten red GATE FAILURES** underneath it, two of them at
++170 % and +200 %.
+
+Every one was a metric the harness had deliberately switched off. A baseline whose
+timing half was recorded away from the reference lane carries
+`timing_is_advisory` (19 of the 113 committed baselines do) and the harness
+unenforces its wall/cpu/rss metrics one at a time, with a note on each, while
+leaving `passed` as the raw comparison so the number stays readable.
+`gate_failures()` read `passed` and never looked at `enforced`.
+`envelope_pressure()` had the identical hole and reported seven gates under
+pressure where the harness's own headroom line reported one.
+
+**The two now agree, and that agreement is the thing that says the fix is right** —
+not the disappearance of the red, which a filter that silenced everything would
+also have produced.
+
+Three things worth carrying forward:
+
+- **The numbers were not dropped.** They print under ADVISORY, which states that
+  they cannot fail the run and that re-recording arms them. An unenforced metric
+  is the one place a real regression can hide with nothing to say so; deleting the
+  row would trade a false positive for a blind spot.
+- **The bucketing had no test, which is how it shipped blind.** `--selftest` runs
+  four synthetic metrics through it and carries the negative control as well as
+  the positive one — enforced-and-lost must STILL fail, because a test that only
+  checks the false positive is passed by a filter that suppresses everything. Plus
+  a legacy row with no `enforced` field, which must gate exactly as it used to.
+  Registered in the DEFAULT ctest lane: it is pure Python, and the perf harness
+  build is off by default, so gating it there would have gated it nowhere.
+- **Probed, not trusted.** Reverting `is_enforced` to `return True` reproduces the
+  old behaviour on all three checks and the selftest catches every one
+  ([lint-vacuity](#td-2026-08-17-260) technique, applied to a reporter).
+
+Fixed alongside: `perf-gate.sh` never read the drift comparison's exit status on a
+FIRST recorded run, because that path has no `previous` to compare against — so a
+page of findings could print under an exit status of 0, on exactly the run a fresh
+clone or a fresh drift directory produces.
+
+**A misread that is worth recording, because it nearly became a second "fix".**
+The release run reported `exit code 0` from its background wrapper while the push
+inside it had died on a broken pipe, and the first conclusion drawn was that
+`release.sh` swallows a failed push. It does not — it is `set -euo pipefail` and
+it exited **128**. The `0` belonged to the `tail` at the end of the wrapper
+command. This is the trap already recorded for the perf harness ("don't read the
+wrapper's status") in a second costume; the fix that was about to be written would
+have added error handling to a script that already had it.
+
 ### TD-2026-08-17-261 — the compare surface's own scratch is per-recursion-level, and three neighbours of it are not. [RESOLVED 2026-08-17 — all three, plus the two layers underneath them that the three were hiding. 19,276 → 1,967 allocations, -90 %.]
 
 The entry was filed as a note for the next pass, listing three costs the sweep
