@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include "util/PerformanceCounters.h"
 #include "workspace/registries/WorkspaceSettingsRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
@@ -218,6 +219,59 @@ void TestForceStartedControlChannelSurvivesSettingChange() {
 
 }  // namespace
 
+// Opening a project applies `project.files_exclude` and
+// `project.follow_out_of_root_symlinks` itself. `ApplyLiveSettings` then compares
+// the resolved settings against the last-applied memos to decide whether a live
+// EDIT happened — and those memos started empty, so for any user who has either
+// setting set, the FIRST prepared frame read the RESTORED CONFIGURATION as an
+// edit: a whole-tree index rescan, a directory-tree refresh, and a full re-arm of
+// the native watcher (a second tree walk plus one inotify_add_watch per
+// directory), on every launch. Measured on this repo before the fix, with the
+// setting present in the user config: two `watch::NativeSetupWalk` calls
+// totalling 214 ms and a 49 ms project scan, none of which changed anything.
+//
+// The setting has to arrive the way a launch delivers it — persisted, then
+// restored by a fresh shell's Initialize. Writing it through SetSettingValue on
+// a live shell cannot exhibit this: that path ends in ApplyLiveSettings, which
+// seeds the memo before the project is even open.
+void TestRestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass() {
+  TemporaryDirectory temp;
+  ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
+  const std::filesystem::path root = temp.path() / "project";
+  WriteFile(root / "README.md", "root\n");
+  WriteFile(root / "src" / "keep.cpp", "int keep() { return 1; }\n");
+  WriteFile(root / "vendor" / "skip.cpp", "int skip() { return 2; }\n");
+
+  {
+    WorkspaceShell writer;
+    writer.Initialize({});
+    Expect(WorkspaceShellTestAccess::SetSettingValue(writer, "project.files_exclude", "vendor/"),
+           "the exclude-glob setting should accept a value");
+    WorkspaceShellTestAccess::SaveUserConfig(writer);
+  }
+
+  WorkspaceShell shell;
+  Expect(shell.Initialize(root), "a fresh shell should restore the config and open the project");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "project.files_exclude") == "vendor/",
+         "the restored config should carry the exclude glob");
+
+  util::ResetPerformanceCounters();
+  WorkspaceShellTestAccess::ApplyLiveSettings(shell);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::FileIndexRefreshRequests) == 0,
+         "the first live-settings pass must not rescan for exclude globs the open already applied");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::FileIndexWatcherStarts) == 0,
+         "the first live-settings pass must not re-arm the file index watcher");
+
+  // Not vacuous: an actual edit still does both.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "project.files_exclude",
+                                                            "vendor/\nout/"),
+         "the exclude-glob setting should accept an edited value");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::FileIndexRefreshRequests) >= 1,
+         "an actual exclude-glob edit should still request a rescan");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::FileIndexWatcherStarts) >= 1,
+         "an actual exclude-glob edit should still re-arm the watcher");
+}
+
 void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShellControlSettings/ForceStartedControlChannelSurvivesSettingChange",
           TestForceStartedControlChannelSurvivesSettingChange);
@@ -231,6 +285,8 @@ void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
           TestStartupOverridesAreTransient);
   AddTest(tests, "WorkspaceShellControlSettings/ExplicitProjectWinsOverRestore",
           TestExplicitProjectWinsOverRestore);
+  AddTest(tests, "WorkspaceShellControlSettings/RestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass",
+          TestRestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass);
 }
 
 }  // namespace microide::tests

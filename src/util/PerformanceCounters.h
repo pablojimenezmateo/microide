@@ -348,6 +348,18 @@ namespace microide::util {
   /* the one place that cost still exists after the second watcher was retired, so a */         \
   /* non-zero value in an interactive session is worth explaining.                   */         \
   X(FileIndexForcedRescans, "watch.file_index_forced_rescans")                                  \
+  /* Whole-tree index rescans REQUESTED (the sidebar Refresh button, an exclude-glob */          \
+  /* or symlink-following edit). Counted at the request, not at the completion, so a  */         \
+  /* run that asks for one and never lands it is still visible — and so a test can    */         \
+  /* observe it without racing the background executor. A launch should read ZERO:    */         \
+  /* the project's own open already applied those settings, and reading them back as  */         \
+  /* a live edit on the first prepared frame is what used to cost every launch a      */         \
+  /* whole extra tree scan (plus the watcher re-arm below).                           */         \
+  X(FileIndexRefreshRequests, "watch.file_index_refresh_requests")                               \
+  /* Native file-index watcher arms. One per project open or switch; a SECOND one on  */         \
+  /* the same project means something re-armed it, which costs a full tree walk and   */         \
+  /* one inotify_add_watch per directory all over again.                              */         \
+  X(FileIndexWatcherStarts, "watch.file_index_watcher_starts")                                   \
   /* --- background work -------------------------------------------------- */                 \
   X(TaskExecutorTasksEnqueued, "task.enqueued")                                                 \
   X(TaskExecutorTasksRun, "task.run")                                                           \

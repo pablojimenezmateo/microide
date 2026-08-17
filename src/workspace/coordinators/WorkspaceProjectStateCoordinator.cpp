@@ -61,6 +61,7 @@ bool WorkspaceShell::StartFileIndexWatcherForCurrentProject() {
     return false;
   }
   StopFileIndexWatcher();
+  util::AddPerformanceCounter(util::PerfCounterId::FileIndexWatcherStarts);
   const std::uint64_t watcher_generation =
       file_index_watcher_generation_.fetch_add(1, std::memory_order_acq_rel) + 1;
 
@@ -191,6 +192,7 @@ void WorkspaceShell::RequestFileIndexRefresh() {
   if (root.empty()) {
     return;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::FileIndexRefreshRequests);
   // Capture the scan inputs by value so the background task never dereferences
   // the FileIndex (which a project switch may destroy while the scan is in
   // flight); ScanFiles touches only its arguments.
@@ -526,10 +528,20 @@ bool WorkspaceShell::SetProjectRoot(const std::filesystem::path& project_root) {
       follow_out_of_root_symlinks);
   context_.current_project_state.file_index.SetFollowOutOfRootSymlinks(
       follow_out_of_root_symlinks);
-  std::vector<std::string> exclude_globs =
-      ParseExcludeGlobs(GetSettingValue("project.files_exclude").value_or(std::string()));
+  std::string files_exclude = GetSettingValue("project.files_exclude").value_or(std::string());
+  std::vector<std::string> exclude_globs = ParseExcludeGlobs(files_exclude);
   context_.current_project_state.directory_tree.SetExcludeGlobs(exclude_globs);
   context_.current_project_state.file_index.SetExcludeGlobs(exclude_globs);
+  // Record what opening the project just applied. `ApplyLiveSettings` compares
+  // the resolved settings against these memos to decide whether a live EDIT
+  // happened, and they started empty — so for any user who has either setting
+  // set, the FIRST prepared frame read the restored configuration as an edit and
+  // paid for it: a whole-tree file-index rescan, a directory-tree refresh, and a
+  // full re-arm of the native watcher (a second tree walk plus one
+  // inotify_add_watch per directory), on every single launch. The values are
+  // already applied above; the memos have to say so.
+  last_applied_follow_out_of_root_symlinks_ = follow_out_of_root_symlinks;
+  last_applied_files_exclude_ = std::move(files_exclude);
   {
     util::StartupTrace::Scope tree_scope("DirectoryTree::SetRoot");
     if (!context_.current_project_state.directory_tree.SetRoot(context_.current_project_state.root)) {
