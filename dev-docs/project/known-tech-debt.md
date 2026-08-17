@@ -389,15 +389,10 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-17-261 — the compare surface's own scratch is per-recursion-level, and three neighbours of it are not. [OPEN — the measured part is done; this is what the same sweep looked at and left.]
+### TD-2026-08-17-261 — the compare surface's own scratch is per-recursion-level, and three neighbours of it are not. [RESOLVED 2026-08-17 — all three, plus the two layers underneath them that the three were hiding. 19,276 → 1,967 allocations, -90 %.]
 
-Recorded so the next pass starts where this one stopped rather than re-deriving it.
-
-`AppendAnchoredFallbackOps` now threads one `DiffScratch` through the whole
-recursion ([TD-2026-08-17-259](#td-2026-08-17-259)'s sibling commit), which took
-`compare.type_in_wrapped_diff` — the keystroke path in an editable diff — from
-13,874 to 9,576 allocations. What remains in that phase, from the phase-scoped
-allocation trace:
+The entry was filed as a note for the next pass, listing three costs the sweep
+had measured and left:
 
 | per keystroke | site |
 | ---: | --- |
@@ -405,25 +400,63 @@ allocation trace:
 | ~22 per frame | `TextLayout::BuildVisibleLineWindowInto`, once per visible row |
 | ~22 per frame | `PrepareCompareVisibleLayoutsForWindow` |
 
-The first is the clearest: `presentation.rows` is cleared and re-pushed on every
-keystroke, so every collapsed-run summary string is freed and rebuilt with a
-count that almost never changed. It is the shape
-[`model-rebuilt-not-overwritten`] names, and the fix is the same one
-`RebuildCacheLocked` just took — overwrite in place, trim the tail. It was left
-because the presentation rebuild is already gated behind
-`presentation_inputs_changed` and a keystroke legitimately changes the model
-revision, so the win is bounded by the collapsed-run count (~15 on the fixture)
-rather than by the row count.
+All three turned out to be the SAME defect wearing three names, and the entry's
+own framing had it backwards. It read the render-side pair as "a cost of work
+that has to happen" and proposed narrowing the invalidation with `LineEditSpan`
+so fewer rows are rebuilt. The rows were never the problem: **the storage was**.
+Every one of these sites recycled nothing, so the question "does this row have
+to be rebuilt?" was the wrong one — a rebuilt row costs nothing if it writes
+into the buffer the previous build left behind.
 
-The two render-side ones are per visible row per frame and are invalidated
-deliberately: `RefreshCompareTabDerivedState` clears `visible_layout_cache` on
-every content change, which a keystroke is. That is correct — the layout of a
-changed line IS stale — but it invalidates the whole window rather than the rows
-the edit touched, and `LineEditSpan` already exists as the edit-extent primitive
-for exactly that narrowing.
+Fixed in four commits, each measured with `tools/trace-perf-phases.py` on
+`compare.type_in_wrapped_diff` (16 keystrokes into a wrapped working-tree diff):
 
-Not filed as a defect. Every number above is a measured cost of work that has to
-happen; the question is whether it has to happen for every row.
+| | allocations | |
+| --- | ---: | --- |
+| session start | 19,276 | |
+| `CompareVisibleLayoutCache` is a slab; index is open-addressed | 8,077 | -43 % |
+| `BuildComparePresentationModelInto` rebuilds in place | 4,783 | |
+| `CompareModel::build_scratch` retains the diff's three big buffers | 2,447 | |
+| the anchor list is pooled by recursion depth | 1,967 | **-90 %** |
+
+What each was:
+
+- **the layout cache.** Invalidation `clear()`ed a `vector<LayoutLine>` and an
+  `unordered_map` index — three heap buffers per visible row plus a map node per
+  row, freed and re-allocated on the next frame. It keeps its slots now and
+  refills them through `TextLayout::BuildVisibleLineInto`, which existed for
+  exactly this; the index is a 4 KB open-addressed table reset by a `fill`.
+  Two pieces of dead state went with it (`CompareVisibleLayoutCacheEntry` stored
+  a copy of all five key fields that nothing read).
+- **the presentation model.** Assigned over wholesale: three `std::string`s per
+  row, two copies of the collapsed-run list, and two `vector<vector<span>>`
+  re-`assign`ed. Now written through a cursor with the tail trimmed, the run
+  list double-buffered and swapped, and the summary appended into the row's own
+  buffer. `BuildMetadataSummary`'s `std::ostringstream` (built, and `.str()`-ed
+  once per separator test, to produce an empty string for ordinary text files)
+  is gone.
+- **the diff builder.** Its three biggest buffers were locals: two
+  `SplitLineViews` results and the aligner's `ops` vector, on top of a
+  `DiffScratch` whose `dp` table reaches 2 MB. All are dead when the build
+  returns and identically shaped on the next one, so they live on the model as
+  `build_scratch` — with value semantics chosen for what they ARE (a copy starts
+  empty, a move transfers), not inherited from `unique_ptr`.
+- **the anchor list**, the entry's title. `DiffScratch` documented it as the one
+  buffer that could not be shared, because a level reads it while the levels
+  below it run. True — but no two live levels share a *depth*, so it is a pool
+  indexed by depth. The pool is sized to the depth cap on first use, which is
+  load-bearing rather than tidy: a pool that reallocated mid-recursion would
+  move a live level's list out from under the loop reading it.
+
+**The generalisable part is the entry's own error.** "Is this work necessary?"
+and "does this work have to allocate?" are different questions, and the second
+one has a cheaper answer far more often. Three of the four fixes above changed
+nothing about what is computed.
+
+Gate check after: all eleven compare/diff/merge scenarios PASS with every gated
+metric below 75 % of its envelope — which is itself the next thing to do, since
+a gate with that much slack has stopped gating (the deterministic half wants
+re-recording).
 
 ### TD-2026-08-17-260 — an architecture lint walked a tree the perf fixture generators rewrite underneath it. [RESOLVED 2026-08-17, same session it was found.]
 

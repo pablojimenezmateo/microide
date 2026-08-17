@@ -25,6 +25,59 @@ Updated on 2026-07-04 with a full measurement pass on perf-runner-v1: a plugin b
 subscriber gate shipped, two tempting micro-optimizations were measured and rejected, and the
 top interactive scenarios were confirmed render-bound (see "2026-07-04 measurement pass" below).
 
+## 2026-08-17 compare pass: "does this have to happen?" was the wrong question
+
+A follow-on to the interaction pass below, working the three sites it had
+measured and deliberately left ([TD-2026-08-17-261](../project/known-tech-debt.md#td-2026-08-17-261)).
+The entry framed them as costs of work that had to happen and proposed narrowing
+the invalidation so fewer rows are rebuilt. That framing is what kept them open.
+
+**None of the four fixes changed what is computed.** Every one of them changed
+where the bytes came from:
+
+| | `compare.type_in_wrapped_diff` allocations |
+| --- | ---: |
+| entry state | 19,276 |
+| layout cache is a slab; index open-addressed | 8,077 |
+| presentation model rebuilt in place | 4,783 |
+| diff builder's three big buffers retained on the model | 2,447 |
+| anchor list pooled by recursion depth | 1,967 |
+
+Same rows, same diff, same presentation — **-90 %**. The rule this pass produced:
+
+> "Is this work necessary?" and "does this work have to ALLOCATE?" are different
+> questions, and the second has a cheaper answer far more often. Reach for the
+> narrowing only after the recycling.
+
+Three notes worth carrying:
+
+- **`clear()` on a container of containers is the recurring shape.** It ran
+  every inner destructor, handing back exactly the buffers the next fill asks
+  for. Four independent instances in this pass alone: the layout slab, the
+  layout index (`unordered_map::clear` frees every node), the presentation rows,
+  and `assign(n, {})` on the inline-span cache — where `assign` past capacity
+  destroys the inner vectors and `resize` merely moves them.
+- **The anchor list was documented as un-poolable, and the documentation was
+  right about the reason and wrong about the conclusion.** A level reads its list
+  while the levels below it run, so it cannot share one buffer — but no two live
+  levels share a *depth*. The pool must be sized to the depth cap on first use,
+  not grown per level: growing it mid-recursion moves a live level's list out
+  from under the loop reading it. (Aliasing it into the shared scratch was tried
+  in the pass below and ran past a 300-second timeout; the depth pool has none of
+  that hazard, and `Compare/AnchoredFallbackMatchesEveryUniqueAnchor` still
+  passes in 0.26 s.)
+- **Retained scratch needs value semantics chosen for what it IS.**
+  `CompareModel::build_scratch` is not part of the model's value: a copied model
+  starts with none (a copy must not carry megabytes of dead buffers, and two
+  models must never share one), a moved model takes it. Inheriting `unique_ptr`'s
+  semantics would have made `CompareModel` move-only, and `BuildCompareModel`
+  returns by value.
+
+Afterwards, all eleven compare/diff/merge scenarios PASS with **every gated
+metric below 75 % of its envelope** — which is the standing trap, not a
+celebration: a gate with that much slack has stopped gating. The deterministic
+half was re-recorded in the same session.
+
 ## 2026-08-17 interaction pass: three shapes, and one of them was invisible to the suite
 
 Driven by the phase-scoped allocation tracer over all 122 phases
