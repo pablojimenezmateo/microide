@@ -276,6 +276,14 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
                               batch.changes.size());
   if (batch.is_initial) {
     util::PerformanceTrace::Scope initial_scope("FileIndex::ApplyBatch::InitialBulkLoad");
+    // Also a STARTUP scope, and the reason is its `ms total` column rather than
+    // its duration: this is the moment the project index exists, so the file
+    // finder, project search and every index-backed lookup start answering. The
+    // startup channel measures from the top of Application::Initialize, so the
+    // line reads as "the project was ready at T ms" — the launch number nothing
+    // else reported. The perf channel above measures the same region but has no
+    // origin, so it can only say how long the load took, not when it landed.
+    util::StartupTrace::Scope startup_scope("FileIndex::InitialIndexReady");
     // Poll the cancellation predicate periodically (not every iteration) so an
     // abandoned load bails promptly without per-entry overhead.
     constexpr std::size_t kCancelCheckStride = 4096;
