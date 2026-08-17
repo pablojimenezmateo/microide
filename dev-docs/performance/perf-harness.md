@@ -37,6 +37,31 @@ messages, PR descriptions, or release notes, use phrasing like "no regression on
 `<scenario>`" or "improves `<scenario>` p50 from X to Y on `perf-runner-v1`," not "fastest" or
 "X% faster than $other_editor."
 
+## The allocation gate is one-sided, so check its slack
+
+Every allocation gate fails on an increase and says nothing when the measurement
+COLLAPSES. Two different things hide behind that, and neither appears in a run's
+verdict lines:
+
+- a baseline recorded before an optimization, now green at some multiple of the
+  real number and gating nothing;
+- a scenario that stopped doing its work, reporting a smaller number forever.
+
+```bash
+./build/microide-perf-make/microide/microide_perf --report-json=/tmp/perf.json
+tools/perf-gate-slack.py /tmp/perf.json
+```
+
+Read the extremes, not the list. A gate loose by a small factor is a rebaseline
+(`--update-baseline=deterministic`). A gate loose by **orders of magnitude** is a
+scenario that stopped measuring, and rebaselining it enshrines that: on 2026-08-17
+`diff.next_hunk_burst` read 3 allocations against a baseline of 10,980 — 3,660x —
+and reported PASS, because its fixture's whole diff was one hunk and every "next
+hunk" jump clamped onto the hunk the caret was already on (TD-2026-08-17-258).
+That is the fourth instance of the collapse case, so treat a phase whose subject
+is an interaction as needing an assertion, in the phase, that the interaction had
+an effect. Run this after any pass that removes allocations.
+
 ## Gating Policy: Loose Wall, Exact Allocations
 
 The two gated metrics are deliberately asymmetric, and reading a result depends on

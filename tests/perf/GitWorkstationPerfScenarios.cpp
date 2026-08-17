@@ -113,8 +113,29 @@ void RunDiffNextHunkLargeFile(ScenarioContext& context) {
     context.PumpFrames(4);
   });
   auto& compare = TA::ActiveCompare(context.Shell());
-  if (compare.model.hunks.size() < 1) {
-    throw std::runtime_error("diff_next_hunk_large_file: expected compare hunks");
+  // At least two, not at least one. `JumpCompareHunk` clamps to the hunk list, so
+  // a single-hunk diff makes all 24 jumps land on the hunk the caret is already
+  // on — a burst that measures nothing, from a fixture that satisfies the check.
+  if (compare.model.hunks.size() < 2) {
+    throw std::runtime_error("diff_next_hunk_large_file: expected a multi-hunk diff, got " +
+                             std::to_string(compare.model.hunks.size()) + " hunk(s)");
+  }
+  // Walk back to the first hunk before measuring forward jumps. A working-tree
+  // comparison opens with its selection on the LAST hunk (TD-2026-08-17-258 — a
+  // product question, filed separately), so a forward burst from the opening
+  // position clamps on the first jump and moves nothing at all. Setup, outside the
+  // measured window, and its own guard: if the backward walk does not move either,
+  // hunk navigation is not reaching the compare tab and nothing below means
+  // anything.
+  const std::size_t opened_on_row = compare.selected_row;
+  for (int i = 0; i < 40; ++i) {
+    context.JumpCompareHunk(-1);
+  }
+  const std::size_t selected_row_before = TA::ActiveCompare(context.Shell()).selected_row;
+  if (selected_row_before == opened_on_row) {
+    throw std::runtime_error(
+        "diff_next_hunk_large_file: 40 previous-hunk jumps left the selection on row " +
+        std::to_string(opened_on_row) + "; hunk navigation is not reaching the compare tab");
   }
   context.Measure("diff.next_hunk_burst", [&] {
     for (int i = 0; i < 24; ++i) {
@@ -122,6 +143,20 @@ void RunDiffNextHunkLargeFile(ScenarioContext& context) {
       context.PumpFrames(1);
     }
   });
+  // Vacuity guard, and the reason this scenario needed one. The phase measured 3
+  // allocations against a 10,980 baseline — a 3,660x collapse that the gate
+  // reported as a PASS, because an allocation gate only fails on an increase. Two
+  // independent causes, both invisible to a count: the fixture's whole worktree
+  // diff was one appended block (so every jump clamped to the hunk the caret was
+  // already on), and the selection opens on the last hunk. A number is not
+  // evidence that the operation a phase is named for happened; this is.
+  if (TA::ActiveCompare(context.Shell()).selected_row == selected_row_before) {
+    throw std::runtime_error(
+        "diff_next_hunk_large_file: 24 next-hunk jumps left the selection on row " +
+        std::to_string(selected_row_before) + " of " +
+        std::to_string(TA::ActiveCompare(context.Shell()).presentation.rows.size()) +
+        " presentation rows; the burst navigated nowhere");
+  }
 }
 
 void RunDiffStageHunkLargePatch(ScenarioContext& context) {
@@ -470,12 +505,17 @@ REGISTER_GIT_WORKSTATION_SCENARIO(diff_open_1000_file_changes, RunDiffOpen1000Fi
 // by iteration 2 (87,251 then 86,15x flat), RSS growth by iteration 4
 // (12.7 MB / 3.7 / 2.0 / 2.6 / then zero apart from occasional sub-MB arena
 // top-ups). Without a warmup the ramp dominates `p50_rss_growth_bytes`.
+// revision 3 (2026-08-17): `git_large_diff_project`'s worktree diff is 30
+// scattered hunks instead of one appended block, so every scenario reading this
+// fixture measures a different input than its previous baseline described
+// (TD-2026-08-17-258).
 const ScenarioRegistration g_perf_git_workstation_diff_next_hunk_large_file({
     .name = "diff_next_hunk_large_file",
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
     .warmup_iterations = 5,
+    .measurement_revision = 3,
     .run = RunDiffNextHunkLargeFile,
 });
 // Not the macro: these three stage into the same large patch and share a resident
@@ -519,6 +559,7 @@ const ScenarioRegistration g_perf_git_workstation_diff_stage_hunk_large_patch({
     .baseline_gated = true,
     .run_by_default = true,
     .tolerance_rss_percent = 150.0,
+    .measurement_revision = 3,
     .run = RunDiffStageHunkLargePatch,
 });
 const ScenarioRegistration g_perf_git_workstation_diff_stage_selected_lines({
@@ -527,6 +568,7 @@ const ScenarioRegistration g_perf_git_workstation_diff_stage_selected_lines({
     .baseline_gated = true,
     .run_by_default = true,
     .tolerance_rss_percent = 150.0,
+    .measurement_revision = 3,
     .run = RunDiffStageSelectedLines,
 });
 // Not the macro: `measurement_revision` moved when the scenario started closing
@@ -588,6 +630,7 @@ const ScenarioRegistration g_perf_git_workstation_compare_type_in_wrapped_diff({
     .smoke = false,
     .baseline_gated = true,
     .run_by_default = true,
+    .measurement_revision = 3,
     .run = RunCompareTypeInWrappedDiff,
 });
 REGISTER_GIT_WORKSTATION_SCENARIO(commit_open_with_large_staged_set, RunCommitOpenWithLargeStagedSet);
@@ -603,7 +646,7 @@ const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_d
     .baseline_gated = true,
     .run_by_default = true,
     .tolerance_rss_percent = 150.0,
-    .measurement_revision = 2,
+    .measurement_revision = 3,
     .run = RunExternalChangeRefreshOpenDiff,
 });
 const ScenarioRegistration g_perf_git_workstation_external_change_refresh_open_merge({

@@ -185,6 +185,13 @@ def write_1000_changed_project(root: Path) -> None:
     append_worktree_delta(root, 1000, "changed", "working-tree delta", 1000)
 
 
+# Hunks the worktree diff of `large.cpp` must contain, and how far apart. The
+# file is 12,000 lines; edits every 400 lines are far enough apart that git never
+# coalesces two into one hunk (its default context is 3 lines).
+LARGE_DIFF_HUNK_COUNT = 29
+LARGE_DIFF_HUNK_STRIDE = 400
+
+
 def write_large_diff_project(root: Path) -> None:
     init_repo(root)
     (root / "src").mkdir(parents=True, exist_ok=True)
@@ -194,8 +201,20 @@ def write_large_diff_project(root: Path) -> None:
     large.write_text("\n".join(body) + "\n", encoding="utf-8")
     git(root, "add", "-A")
     git(root, "commit", "-q", "-m", "add large.cpp")
-    with large.open("a", encoding="utf-8") as out:
-        out.write("\n// worktree tail\nWORKTREE_DELTA=1337\n")
+    # Scattered edits plus the tail, NOT the tail alone. With one appended block
+    # the whole diff was a single hunk, so `diff_next_hunk_large_file`'s 24
+    # next-hunk jumps all clamped to the hunk the caret already sat on: the phase
+    # named for hunk navigation navigated nowhere and measured 3 allocations
+    # against a 10,980 baseline, and the one-sided gate called that a pass
+    # (TD-2026-08-17-258). A burst needs somewhere to go.
+    lines = large.read_text(encoding="utf-8").splitlines()
+    for hunk in range(LARGE_DIFF_HUNK_COUNT):
+        index = (hunk + 1) * LARGE_DIFF_HUNK_STRIDE
+        if index >= len(lines):
+            break
+        lines[index] = f"line_{index:05d} = {index * 3}; // worktree edit {hunk}"
+    lines += ["", "// worktree tail", "WORKTREE_DELTA=1337"]
+    large.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
 def write_large_staged_project(root: Path) -> None:

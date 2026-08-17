@@ -389,6 +389,73 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-17-258 — `diff.next_hunk_burst` measured 3 allocations against a 10,980 baseline and the suite called it a PASS. [RESOLVED for the gate 2026-08-17; the product question it exposed is OPEN, below.]
+
+Found by asking a question the suite cannot ask itself: *how much slack does every
+deterministic gate have against what it gates?* Across a full 95-scenario run on
+the canonical `microide-perf` lane, 182 of 225 allocation gates sit within 10 % of
+their measurement — and four do not:
+
+| gate | baseline | measured | slack |
+| --- | ---: | ---: | ---: |
+| `diff_next_hunk_large_file::diff.next_hunk_burst` | 10,980 | 3 | **3,660x** |
+| `merge_scroll_large_fixture::merge_large.scroll_burst` | 24,392 | 286 | 85x |
+| `merge_scroll_large_fixture::merge_large.open_to_first_paint` | 53,819 | 806 | 67x |
+| `diff_next_hunk_large_file` (scenario total) | 12,593 | 591 | 21x |
+
+An allocation gate is **one-sided**: it fails on an increase and says nothing when
+the measurement collapses. So a phase that stops doing its work reports a smaller
+number forever and stays green, which is the same failure mode as
+TD-2026-08-10-170 (`editor_moby_dick_workout` reading 7 against 138,599) and
+TD-2026-08-10-179 (`linter_on_save` gating a deadline loop that had never once
+succeeded). It keeps recurring because nothing in the harness looks for it. The
+merge rows are the benign case — real wins from the 2026-08-13/14 passes, never
+rebaselined. The diff row is not.
+
+**Two independent causes, neither visible to a count.**
+
+1. **The fixture's whole worktree diff was one hunk.** `write_large_diff_project`
+   committed a 12,000-line file and then *appended* a three-line tail, so
+   `git diff` produced exactly one hunk. `JumpCompareHunk` clamps to the hunk
+   list, so all 24 "next hunk" jumps landed on the hunk the caret was already on.
+   The scenario's own guard was `hunks.size() < 1`, which that fixture satisfies.
+   It is now 30 hunks scattered every 400 lines, and the guard is `< 2`.
+2. **A working-tree comparison opens with its selection on the LAST hunk.** Even
+   with 30 hunks, a forward burst from the opening position clamps on the first
+   jump. Measured at open: `selected_row=236` of 240 presentation rows,
+   `scroll_row=186`, `right_scroll_line=9598` of 12,005 — while
+   `right_cursor_line=0`. Backward jumps from there work, which is what proves the
+   selection really is at the end rather than the navigation being broken.
+
+**The product half is OPEN.** Opening a diff and landing on the last change is not
+what VS Code does (it reveals the first change) and not what the caret says
+(`right_cursor_line` is 0, so the caret and the selection disagree at open). This
+was found from a perf scenario and is not root-caused: `RefreshCompareTabDerivedState`
+only clamps and snaps to the first `Model`-kind row, so something else moves it.
+Whoever picks this up should start by asking who writes `selected_row` between
+`OpenWorkingTreeComparison` and the first frame. Two things were ruled out on the
+way and are worth not re-testing: the key is fine (a bare `]` navigates in the
+editable pane exactly as the `[ / ] hunks` hint advertises — an earlier hypothesis
+that the editable pane swallowed it was wrong and was measured wrong), and focus
+is fine (`PerfPrimeGitRepository` parks focus on the sidebar, but forcing it to
+the editor changed nothing).
+
+**What changed.** The fixture (30 hunks), the scenario (walks to the first hunk in
+setup, then bursts forward), and two vacuity guards that fail loudly by name: one
+on the backward walk, one on the burst. `measurement_revision` is 3 on all five
+scenarios that read `git_large_diff_project`, so a release diff refuses to compare
+across the fixture change. The deterministic half of thirteen loose baselines was
+re-recorded with `--update-baseline=deterministic`; the timing half of the five
+fixture consumers is marked `timing_is_advisory` rather than re-recorded, because
+this box is not idle and their old numbers describe the old fixture. **Those five
+need a reference-runner `--update-baseline` to be armed again.**
+
+The general rule this is the fourth instance of: *a gate reading a number is not
+evidence that the operation it is named for happened.* Every phase whose subject
+is an interaction should assert the interaction had an effect, in the phase, by
+name. Re-run the slack check after any pass that removes allocations — it is a
+few lines over `--report-json` and it is the only thing that sees a collapse.
+
 ### TD-2026-08-17-257 — the file-index walk is single-threaded and is now ~90 % of the time to a usable project. [LARGELY RESOLVED 2026-08-17 — but not by the fix this entry proposed, and the reason is that the entry ruled out the real cost on bad evidence. Parallelism remains open and is now the wrong next step.]
 
 **What this entry got wrong, and how.** It said "Not the ignore filter's decision
