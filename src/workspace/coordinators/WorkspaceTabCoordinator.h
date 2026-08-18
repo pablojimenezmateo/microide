@@ -185,6 +185,15 @@ class TabCoordinator {
   // deferred tab) the restored cursor/scroll/selection. Shared by Activate() and
   // Close()'s promote path so both honor deferred view state identically.
   bool LoadEditorTabForActivation(TabEntry& tab);
+  // Hydrate whatever tab is now active in `group`. Only a group's active tab is
+  // eagerly loaded on session restore, so any operation that PROMOTES a new tab
+  // to active in a group -- closing the active one, dragging it out into another
+  // group -- has to run the promoted neighbour through the loader or that group's
+  // pane renders the welcome surface instead of the buffer its own strip is
+  // highlighting. Shared by every such site rather than re-spelled per call,
+  // because the two that spelled it inline disagreed: MoveTabToGroup was missing
+  // it entirely.
+  void HydrateGroupActiveTab(EditorGroup& group);
   // The normalized buffer path a tab contributes to LSP open-view accounting, or
   // empty if the tab holds no editable buffer view. Mirrors OpenBufferViewPath so
   // the live per-close count and the whole-group count map agree on keys/kinds.

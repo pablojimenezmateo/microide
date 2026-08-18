@@ -2680,9 +2680,69 @@ void TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState() {
          "promoting a deferred tab on close must restore its persisted scroll position");
 }
 
+// Regression: dragging a group's ACTIVE tab into the other half of a split
+// promotes a neighbour in the group it left. That neighbour is deferred whenever
+// it came back from a restored session and was never activated, and an
+// unhydrated active tab resolves to the group's welcome surface -- so the half
+// you dragged out of went blank and showed the Welcome screen instead of the tab
+// its own strip was highlighting. The destination had this loader call from the
+// start; the source never got one.
+void TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.txt";
+  const std::filesystem::path file_b = root / "beta.txt";
+  WriteFile(file_a, "alpha\n");
+  WriteFile(file_b, "b1\nb2\nb3\nb4\nb5\nb6\nb7\nb8\nb9\nb10\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file_b);  // tab 0
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);  // tab 1 (active)
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "session restore should succeed");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  const auto& tabs = WorkspaceShellTestAccess::OpenTabs(restored);
+  Expect(tabs.size() == 2 && tabs[0].deferred_handle.has_value(),
+         "the never-activated neighbour must restore deferred for this fixture to bite");
+
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1600, 900);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(restored, EditorSplitOrientation::Vertical),
+         "the fixture needs a second editor group");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(restored), "focus returns to group 0");
+  Expect(WorkspaceShellTestAccess::GroupActiveTabIndex(restored, 0) == 1,
+         "group 0's active tab is the one the split cloned");
+
+  // Drag group 0's active tab into group 1 -- the deferred neighbour is promoted.
+  Expect(WorkspaceShellTestAccess::MoveTabToGroup(restored, 0, 1, 1, 1),
+         "the cross-group move should commit");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(restored, 0) == 1, "the tab left group 0");
+  const auto& survivor = WorkspaceShellTestAccess::GroupActiveViewport(restored, 0);
+  Expect(!survivor.is_placeholder(),
+         "the group the tab left must render its promoted buffer, not the welcome surface");
+  Expect(survivor.path() == file_b.lexically_normal(),
+         "the promoted neighbour is the buffer group 0's strip is highlighting");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/MoveTabToGroupHydratesSourceGroupNeighbor",
+          TestWorkspaceShellMoveTabToGroupHydratesSourceGroupNeighbor);
   AddTest(tests, "WorkspaceShell/ClosePromotesDeferredTabWithRestoredViewState",
           TestWorkspaceShellClosePromotesDeferredTabWithRestoredViewState);
   AddTest(tests, "WorkspaceShell/AfterDelayAutosaveSurvivesTabSwitch",

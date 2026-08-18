@@ -3,6 +3,7 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/render/CompareMergeRender.h"
 #include "workspace/services/CompareMergeService.h"
+#include "workspace/services/EditorTabService.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"

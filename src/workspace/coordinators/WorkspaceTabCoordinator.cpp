@@ -810,6 +810,34 @@ bool TabCoordinator::MoveActiveTo(std::size_t index) {
   return true;
 }
 
+namespace {
+
+// Take tab `index` out of `group` and re-home the group's active index across the
+// hole, exactly as a close would.
+TabEntry LiftTabFromGroup(EditorGroup& group, std::size_t index) {
+  TabEntry lifted = std::move(group.open_tabs[index]);
+  group.open_tabs.erase(group.open_tabs.begin() + static_cast<std::ptrdiff_t>(index));
+  if (group.active_tab_index > index) {
+    --group.active_tab_index;
+  } else if (!group.open_tabs.empty() && group.active_tab_index >= group.open_tabs.size()) {
+    group.active_tab_index = group.open_tabs.size() - 1;
+  }
+  return lifted;
+}
+
+}  // namespace
+
+void TabCoordinator::HydrateGroupActiveTab(EditorGroup& group) {
+  if (group.active_tab_index >= group.open_tabs.size()) {
+    return;
+  }
+  TabEntry& tab = group.open_tabs[group.active_tab_index];
+  if (tab.kind != TabEntry::Kind::Editor) {
+    return;
+  }
+  (void)LoadEditorTabForActivation(tab);
+}
+
 bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
                                     std::size_t from_index,
                                     std::size_t to_group,
@@ -833,17 +861,7 @@ bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
     SyncActiveEditorTabMetadata();
   }
 
-  TabEntry moved;
-  {
-    EditorGroup& from = state_.editor_groups[from_group];
-    moved = std::move(from.open_tabs[from_index]);
-    from.open_tabs.erase(from.open_tabs.begin() + static_cast<std::ptrdiff_t>(from_index));
-    if (from.active_tab_index > from_index) {
-      --from.active_tab_index;
-    } else if (!from.open_tabs.empty() && from.active_tab_index >= from.open_tabs.size()) {
-      from.active_tab_index = from.open_tabs.size() - 1;
-    }
-  }
+  TabEntry moved = LiftTabFromGroup(state_.editor_groups[from_group], from_index);
 
   std::size_t landed_index = 0;
   {
@@ -862,6 +880,13 @@ bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
   if (state_.editor_groups[from_group].open_tabs.empty()) {
     // VS Code drops a split whose last editor is dragged out.
     CollapseGroupAt(from_group);
+  } else {
+    // The tab that just left may have been the source group's ACTIVE one, which
+    // promotes a neighbour there. A never-activated (session-restored) neighbour
+    // is still deferred, and an unhydrated active tab resolves to the group's
+    // welcome surface -- so the half you dragged out of went blank and showed the
+    // Welcome screen instead of the tab its strip was highlighting.
+    HydrateGroupActiveTab(state_.editor_groups[from_group]);
   }
 
   // A tab that was never activated in its old group can still be deferred; it is
@@ -983,14 +1008,7 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
     CollapseGroupAt(group_index);
   } else {
     if (closing_active) {
-      // Promote the neighbor through the same loader Close()/Activate use so a
-      // deferred (session-restored, never-activated) tab in this non-focused
-      // group hydrates its cursor/scroll/selection instead of rendering empty
-      // (only a group's active tab is eagerly hydrated on restore).
-      auto& tab = group.open_tabs[group.active_tab_index];
-      if (tab.kind == TabEntry::Kind::Editor) {
-        (void)LoadEditorTabForActivation(tab);
-      }
+      HydrateGroupActiveTab(group);
     }
     operations_.invalidate_tab_strip_geometry();
   }

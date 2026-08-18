@@ -52,6 +52,19 @@ painted off its own hit target.
 
 Do not reintroduce a per-mode overlay rect.
 
+### A group's active tab is hydrated, or its pane paints the Welcome screen
+Only a group's ACTIVE tab is eagerly loaded on session restore; every other tab
+holds a deferred handle. `GroupActiveViewport` falls back to that group's welcome
+surface whenever its active tab has no editor state, so an unhydrated active tab
+paints Welcome over a strip that is highlighting a file. Every operation that
+PROMOTES a tab to active in a group — closing the active one, dragging it out
+into the other half of a split — therefore has to run the promoted neighbour
+through `TabCoordinator::HydrateGroupActiveTab`. Closing had it spelled inline
+and the cross-group move had nothing, so dragging a tab across a split blanked
+the half it came from until 2026-08-18.
+
+Guarded by `WorkspaceShell/MoveTabToGroupHydratesSourceGroupNeighbor`.
+
 ### Text that does not fit is truncated or wrapped, never sheared
 Toasts scale their width with the window and ellipsize through
 `TruncateToWidthEphemeralView`; narrow-rail empty states word-wrap through

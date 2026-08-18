@@ -669,6 +669,18 @@
   static microide::workspace::EditorSplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
     return shell.context_.current_project_state.group_split_orientation;
   }
+  // The model-level cross-group move the drag commits, callable without staging a
+  // pointer gesture.
+  static bool MoveTabToGroup(WorkspaceShell& shell,
+                             std::size_t from_group,
+                             std::size_t from_index,
+                             std::size_t to_group,
+                             std::size_t to_slot) {
+    return shell.MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group, to_slot);
+  }
+  static std::size_t GroupActiveTabIndex(WorkspaceShell& shell, std::size_t gi) {
+    return shell.context_.current_project_state.editor_groups[gi].active_tab_index;
+  }
   static std::size_t GroupTabCount(WorkspaceShell& shell, std::size_t gi) {
     return shell.context_.current_project_state.editor_groups[gi].open_tabs.size();
   }
