@@ -52,6 +52,13 @@ class TabMouseCoordinator {
     // a list, the source group collapses if the move emptied it, and the slot is
     // a raw insertion point rather than a post-removal target index.
     std::function<bool(std::size_t, std::size_t, std::size_t, std::size_t)> move_tab_to_group;
+    // Carves a NEW editor group out of `from_group` holding just its tab
+    // `from_index`, on the side the bool selects (true = ahead of the source
+    // group). Backs the drag-a-tab-onto-a-pane-edge split; a body drop in the
+    // CENTER of a pane goes through `move_tab_to_group` instead, because that is
+    // a move into an existing group and nothing about the split changes.
+    std::function<bool(std::size_t, std::size_t, EditorSplitOrientation, bool)>
+        move_tab_to_new_group;
     std::function<bool(std::size_t)> move_active_terminal_tab_to;
     std::function<bool(std::size_t)> move_active_output_tab_to;
     std::function<void()> save_workspace_session;
@@ -150,7 +157,20 @@ class TabMouseCoordinator {
   DragStrip ResolveBottomPanelDragStrip(const WorkspaceLayout& layout);
   // Which editor group's strip the live pointer is over, or the source group when
   // it is over neither (leaving the strips entirely must not retarget the drop).
-  std::size_t ResolvePointerEditorGroup(const WorkspaceLayout& layout) const;
+  // Takes the already-computed per-group rects: this and the body-drop probe below
+  // both run on every motion event of a drag, and recomputing the editor layout
+  // once each would triple the per-event layout cost.
+  std::size_t ResolvePointerEditorGroup(const WorkspaceLayout& layout,
+                                        const EditorGroupRectsLayout& rects) const;
+  // Resolves where a drop would land if the pointer were released over an editor
+  // pane BODY right now, writing `body_drop_zone` / `body_drop_group_index` /
+  // `body_drop_rect` on the drag state. Leaves the zone `None` when the pointer
+  // is over a strip (that is a strip drop) or when the drop would be a no-op, so
+  // "is a body drop live" is a single field read for the renderer and the commit.
+  void ResolveEditorBodyDrop(const EditorGroupRectsLayout& rects);
+  // Commits a drop onto a pane body: a move into that pane's group for the center
+  // zone, a new group carved out on that side for the four edge zones.
+  void FinishEditorBodyDrop(const WorkspaceLayout& layout);
   // Recomputes slot + slide targets for the current `pointer_x`, auto-scrolling
   // first if the pointer is parked at an edge with something hidden behind it.
   bool UpdateDragForPointer();

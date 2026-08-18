@@ -43,6 +43,20 @@ enum class TabDragKind {
   Terminal,
 };
 
+// Where an editor tab dragged over an editor PANE BODY (rather than over a tab
+// strip) would land, VS Code style. `Center` moves it into that pane's group;
+// the four edge zones carve a new group out of that pane on that side. `None`
+// means the pointer is not offering a body drop at all -- it is over a strip, or
+// over a pane where the drop would be a no-op.
+enum class EditorBodyDropZone : std::uint8_t {
+  None,
+  Center,
+  Left,
+  Right,
+  Top,
+  Bottom,
+};
+
 struct TabDragState {
   TabDragKind kind = TabDragKind::None;
   float press_x = 0.0f;
@@ -81,6 +95,17 @@ struct TabDragState {
   // rate-limited so it steps at a readable pace rather than per motion event.
   int autoscroll_direction = 0;
   Uint64 last_autoscroll_ms = 0;
+  // Drop-on-editor-body target (VS Code's drag-to-split). Resolved on every
+  // motion event while the pointer sits over a pane body instead of a strip; the
+  // commit and the translucent drop overlay both read it, and `body_drop_rect`
+  // is the exact region that overlay paints, kept here so neither the renderer
+  // nor the damage pass has to recompute the pane geometry.
+  EditorBodyDropZone body_drop_zone = EditorBodyDropZone::None;
+  std::size_t body_drop_group_index = 0;
+  SDL_FRect body_drop_rect{0.0f, 0.0f, 0.0f, 0.0f};
+  bool body_drop() const {
+    return kind == TabDragKind::Editor && body_drop_zone != EditorBodyDropZone::None;
+  }
 };
 
 // One animating tab strip's offsets. Indexed by model tab index; only the

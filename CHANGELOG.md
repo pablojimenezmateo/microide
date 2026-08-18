@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [Unreleased]
+
+### Added
+
+- **Drag an editor tab onto a pane to split, and back out of one to un-split.**
+  VS Code's drag-to-split, within microide's two-group cap: a tab dropped on the
+  left/right fifth of the editor pane carves a new group out on that side
+  (side-by-side), the top/bottom fifth stacks them, and the new group lands
+  *ahead* of the source one for a left/top drop so the tab arrives under the
+  pointer rather than jumping to the far side. A tab dropped in the MIDDLE of the
+  other half's pane moves into that group — the way back from a split without
+  having to hit its tab strip. A translucent accent overlay shows the exact region
+  the tab would take before the button comes up, and a drop that would change
+  nothing (the middle of the pane the tab already lives in, or the last tab of a
+  group, which would empty and collapse it) offers no target and paints nothing.
+
+### Fixed
+
+- **Dragging a tab out of one half of a split blanked that half.** The group the
+  tab left promotes a neighbour, and only a group's *active* tab is hydrated on
+  session restore — so the promoted tab was still a deferred handle, and a group
+  whose active tab has no editor state resolves to its welcome surface. The half
+  you dragged out of showed the Welcome screen while its own tab strip highlighted
+  the file that should have been in it. Closing the active tab already ran the
+  promoted neighbour through the loader; the cross-group move never did.
+
 ## [2.10.0] - 2026-08-17
 
 ### Performance

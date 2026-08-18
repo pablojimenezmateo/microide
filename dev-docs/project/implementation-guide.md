@@ -44,7 +44,9 @@ The current SDL shell already includes:
 - multi-project tabs with app-level workspace restore
 - normal editor tabs, compare tabs, and merge tabs
 - first-class editor groups with split-right/split-down (superseded the older nested in-tab
-  shared-buffer split model, collapsed in v2.1.0)
+  shared-buffer split model, collapsed in v2.1.0), reachable by dragging a tab onto a pane edge
+  and undone by dragging it back onto the other pane's body; capped at two groups
+  (`kMaxEditorGroups`, see TD-2026-08-18-264)
 - a shared decorated text-grid render path across editor, compare, and merge surfaces, so row
   fills, syntax runs, and underline semantics do not degrade just because a file or diff is large
 - checkpointed syntax-highlight state in `TextViewport`, so random jumps in large files reuse

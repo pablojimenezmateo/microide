@@ -137,6 +137,19 @@ the drag path's job to honour:
 - the cursor shape stays whatever the press resolved — a drag is logically still
   on its own surface wherever the pointer physically is.
 
+### A drop target is only shown for a drop that would change something
+The drag-to-split overlay paints exactly the region the tab would take, and
+paints nothing at all when the release would be a no-op — the middle of the pane
+the tab already lives in, the last tab of a group (carving it out empties the
+group, which collapses straight back), or an edge zone while the editor area is
+already at `kMaxEditorGroups`. A highlight promising a move that will not happen
+is worse than no highlight: the user reads the release as broken rather than as
+refused. Both halves are one field, `TabDragState::body_drop_zone`, so the
+renderer and the commit cannot disagree about whether a drop is live.
+
+Guarded by `WorkspaceShell/EditorTabDragOverOwnPaneCenterOffersNoDrop` and
+`WorkspaceShell/EditorTabDragToPaneEdgeRefusesLoneTab`.
+
 ### A drag does not survive losing the window, and Escape abandons it
 The focus-lost handler ends every in-flight gesture: the button-up goes to
 whoever took the focus, so a gesture left "in progress" is still in progress on

@@ -46,6 +46,14 @@
     return group_index < group_rects.groups.size() ? group_rects.groups[group_index].tab_strip
                                                     : SDL_FRect{};
   }
+  // The editor PANE of a group -- the buffer area under its strip, which is what
+  // the drag-to-split drop zones are carved out of.
+  static SDL_FRect GroupEditorSurfaceRect(WorkspaceShell& shell, std::size_t group_index) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto group_rects = shell.ComputeEditorGroupRectsForState(layout);
+    return group_index < group_rects.groups.size() ? group_rects.groups[group_index].editor_surface
+                                                   : SDL_FRect{};
+  }
   static SDL_FRect GroupEditorTabRect(WorkspaceShell& shell, std::size_t group_index,
                                       std::size_t tab_index) {
     const SDL_FRect strip = GroupTabStripRect(shell, group_index);

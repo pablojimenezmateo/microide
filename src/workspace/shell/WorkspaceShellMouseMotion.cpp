@@ -355,6 +355,11 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const bool was_dragging = context_.interaction_state.tab_drag.dragging;
     const std::optional<HoverTooltip> tooltip_before =
         was_dragging ? std::nullopt : HoveredTooltip(layout);
+    // Where the drag-to-split overlay was painted last frame. It is a pane-sized
+    // region rather than a strip, so it has to be damaged from BOTH sides of the
+    // update or the previous highlight stays on screen after the zone changes.
+    const bool body_drop_before = context_.interaction_state.tab_drag.body_drop();
+    const SDL_FRect body_drop_rect_before = context_.interaction_state.tab_drag.body_drop_rect;
     const bool handled = HandleTabMouseMotion(event, layout);
     if (handled) {
       EnsureRedraw([this]() {
@@ -380,6 +385,15 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
           damage_strip(drag.target_group_index);
         }
       });
+      // Unconditional, not EnsureRedraw-gated: the strip damage above is a
+      // different region, so "something is already queued" says nothing about
+      // whether the overlay's own pane region is covered.
+      if (body_drop_before) {
+        RequestRedrawRect(body_drop_rect_before);
+      }
+      if (context_.interaction_state.tab_drag.body_drop()) {
+        RequestRedrawRect(context_.interaction_state.tab_drag.body_drop_rect);
+      }
       if (!was_dragging && context_.interaction_state.tab_drag.dragging &&
           tooltip_before.has_value()) {
         const SDL_FRect& card = tooltip_before->rect;

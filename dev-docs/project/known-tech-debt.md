@@ -389,6 +389,33 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-18-264 — drag-to-split can only ever create the SECOND editor group, because the editor area is capped at two. [OPEN — a product limit, not a defect; recorded so the next person does not read the drop-zone code as broken.]
+
+`kMaxEditorGroups` is 2 (`src/workspace/WorkspaceLayout.h`), and
+`ComputeEditorGroupRects` is written to that number: it branches on
+`group_count < 2` and otherwise splits the editor area exactly once, with one
+divider, one `group_split_orientation` and one `group_split_fraction` on
+`ProjectWorkspaceState`. The drag-to-split gesture shipped 2026-08-18 therefore
+offers its four EDGE zones only while the editor area still holds one group; with
+a split already open, every pane-body drop resolves to `Center` (move into that
+group) and the edge zones are simply not offered. VS Code would give you a third
+group there.
+
+Lifting the cap is not a drop-zone change — it is a layout-model change:
+`EditorGroupRectsLayout::groups` is an `InlineVector<_, kMaxEditorGroups>` with a
+single `std::optional<SDL_FRect> divider`, `TabStripService` holds two
+`std::array<_, kMaxEditorGroups>` caches, `TabSlideState` is sized by
+`kMaxAnimatingTabStrips`, and the split state on the project is one orientation
+plus one fraction rather than a tree. A real N-group editor area wants a split
+TREE (rows of columns, each with its own fraction), which is also what would make
+`MoveTabToNewGroup`'s `insert_before` generalize from "ahead of / after the source
+group" to "on this side of this pane".
+
+Nothing is wrong today: the two-group product is coherent and the gesture is
+honest about it — no overlay is painted for a drop that cannot happen. Do not
+"fix" this by letting `MoveTabToNewGroup` push a third group into
+`editor_groups`; the layout would silently render only the first two.
+
 ### TD-2026-08-17-263 — 49 allocation gates are loose after the compare/diff work, three of them by 70-82 %. [OPEN — the deterministic half wants re-recording; this is [261](#td-2026-08-17-261)'s closing note, now measured across the whole suite.]
 
 The 2026-08-17 full-gate run found **zero** allocation drift up across all 113

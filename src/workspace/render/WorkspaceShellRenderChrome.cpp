@@ -199,6 +199,19 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   // global tab-strip band (filled in the frame pass); a stacked second group
   // synthesizes its strip inside the editor surface, filled here.
   const EditorGroupRectsLayout editor_group_rects = ComputeEditorGroupRectsForState(layout);
+
+  // Drag-to-split feedback (VS Code's drop overlay). Painted before the strips so
+  // the floating ghost and the tab strips stay on top of it, and after the editor
+  // panes (window chrome runs later in the frame) so it tints the buffer it will
+  // replace. The rect was resolved on the motion event that produced it; nothing
+  // is recomputed per frame.
+  if (tab_drag.body_drop() && tab_drag.dragging) {
+    const SDL_FRect& region = tab_drag.body_drop_rect;
+    DrawFilledRect(renderer, region,
+                   SDL_Color{theme_.accent.r, theme_.accent.g, theme_.accent.b, 64});
+    render::OutlineRect(renderer, region, theme_.accent);
+  }
+
   for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
     const SDL_FRect group_tab_strip = editor_group_rects.groups[gi].tab_strip;
     if (editor_group_rects.groups.size() > 1) {

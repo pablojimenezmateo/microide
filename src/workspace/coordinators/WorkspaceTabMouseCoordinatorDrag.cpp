@@ -142,17 +142,97 @@ TabMouseCoordinator::DragStrip TabMouseCoordinator::ResolveEditorDragStrip(
   return d;
 }
 
-std::size_t TabMouseCoordinator::ResolvePointerEditorGroup(const WorkspaceLayout& layout) const {
-  const EditorGroupTabStrips strips = ResolveEditorGroupTabStrips(layout);
-  for (std::size_t s = 0; s < strips.count; ++s) {
-    if (Contains(strips.entries[s].strip, tab_drag_state_.pointer_x, tab_drag_state_.pointer_y)) {
-      return strips.entries[s].group_index;
+std::size_t TabMouseCoordinator::ResolvePointerEditorGroup(
+    const WorkspaceLayout& layout,
+    const EditorGroupRectsLayout& rects) const {
+  const float x = tab_drag_state_.pointer_x;
+  const float y = tab_drag_state_.pointer_y;
+  for (std::size_t i = 0; i < rects.groups.size(); ++i) {
+    if (Contains(rects.groups[i].tab_strip, x, y)) {
+      return i;
     }
+  }
+  // Same fallback ResolveEditorGroupTabStrips carries for a host that cannot hand
+  // out per-group rects: one strip, the focused group's, over the global band.
+  if (rects.groups.empty() && Contains(layout.tab_strip, x, y)) {
+    return state_.focused_group_index;
   }
   // Off every strip — dragged down into the editor body, or out of the window.
   // VS Code keeps the last strip's insertion feedback in that state rather than
   // snapping the drop back to the source, so the target group is sticky.
   return tab_drag_state_.target_group_index;
+}
+
+// How much of a pane's width/height at each edge reads as "split here" rather
+// than "move into this group". VS Code uses roughly a fifth; below that the
+// center target gets hard to hit on a narrow pane.
+constexpr float kBodyDropEdgeFraction = 0.2f;
+
+void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& rects) {
+  tab_drag_state_.body_drop_zone = EditorBodyDropZone::None;
+  if (tab_drag_state_.kind != TabDragKind::Editor || !tab_drag_state_.dragging) {
+    return;
+  }
+  const float x = tab_drag_state_.pointer_x;
+  const float y = tab_drag_state_.pointer_y;
+  // A pointer still on a strip is a strip drop, which owns its own feedback; the
+  // body zones start below the strip the pane belongs to.
+  for (std::size_t gi = 0; gi < rects.groups.size(); ++gi) {
+    if (Contains(rects.groups[gi].tab_strip, x, y)) {
+      return;
+    }
+  }
+
+  for (std::size_t gi = 0; gi < rects.groups.size() && gi < state_.editor_groups.size(); ++gi) {
+    const SDL_FRect pane = rects.groups[gi].editor_surface;
+    if (pane.w <= 0.0f || pane.h <= 0.0f || !Contains(pane, x, y)) {
+      continue;
+    }
+    // Splitting can only ever ADD a group, so it is offered exactly while the
+    // editor area is under the cap -- which, with the cap at two, also means the
+    // pane under the pointer is the source group's. A group with a single tab has
+    // nothing to split off either: the carved group would be the old one renamed.
+    // (TD: raising `kMaxEditorGroups` past two is what would let an edge drop
+    // split a pane that is already half of a split.)
+    const bool can_split = state_.editor_groups.size() < kMaxEditorGroups &&
+                           gi == tab_drag_state_.source_group_index &&
+                           state_.editor_groups[gi].open_tabs.size() >= 2;
+    EditorBodyDropZone zone = EditorBodyDropZone::Center;
+    SDL_FRect region = pane;
+    if (can_split) {
+      const float left = (x - pane.x) / pane.w;
+      const float top = (y - pane.y) / pane.h;
+      const float right = 1.0f - left;
+      const float bottom = 1.0f - top;
+      const float nearest = std::min(std::min(left, right), std::min(top, bottom));
+      if (nearest < kBodyDropEdgeFraction) {
+        const float half_w = pane.w * 0.5f;
+        const float half_h = pane.h * 0.5f;
+        if (nearest == left) {
+          zone = EditorBodyDropZone::Left;
+          region = MakeRect(pane.x, pane.y, half_w, pane.h);
+        } else if (nearest == right) {
+          zone = EditorBodyDropZone::Right;
+          region = MakeRect(pane.x + pane.w - half_w, pane.y, half_w, pane.h);
+        } else if (nearest == top) {
+          zone = EditorBodyDropZone::Top;
+          region = MakeRect(pane.x, pane.y, pane.w, half_h);
+        } else {
+          zone = EditorBodyDropZone::Bottom;
+          region = MakeRect(pane.x, pane.y + pane.h - half_h, pane.w, half_h);
+        }
+      }
+    }
+    // Dropping a tab into the middle of the pane it already lives in changes
+    // nothing, so no target is offered and no overlay is painted.
+    if (zone == EditorBodyDropZone::Center && gi == tab_drag_state_.source_group_index) {
+      return;
+    }
+    tab_drag_state_.body_drop_zone = zone;
+    tab_drag_state_.body_drop_group_index = gi;
+    tab_drag_state_.body_drop_rect = region;
+    return;
+  }
 }
 
 TabMouseCoordinator::DragStrip TabMouseCoordinator::ResolveBottomPanelDragStrip(
@@ -271,9 +351,23 @@ bool TabMouseCoordinator::UpdateDragForPointer() {
   // auto-scrolls THAT strip, and opens its gap there while the source strip
   // closes the hole the lifted tab left (TD-2026-08-14-213).
   const std::size_t previous_target_group = tab_drag_state_.target_group_index;
+  const EditorBodyDropZone previous_zone = tab_drag_state_.body_drop_zone;
+  const std::size_t previous_zone_group = tab_drag_state_.body_drop_group_index;
   if (tab_drag_state_.kind == TabDragKind::Editor) {
-    tab_drag_state_.target_group_index = ResolvePointerEditorGroup(*layout_state);
+    // One editor-layout computation feeds both probes; they used to be two calls
+    // that each rebuilt it, on every motion event of every drag.
+    const EditorGroupRectsLayout rects = operations_.compute_editor_group_rects
+                                             ? operations_.compute_editor_group_rects(*layout_state)
+                                             : EditorGroupRectsLayout{};
+    ResolveEditorBodyDrop(rects);
+    // A live body drop owns the gesture: the destination is a pane, not the other
+    // group's strip, so the cross-group strip feedback stands down.
+    tab_drag_state_.target_group_index =
+        tab_drag_state_.body_drop() ? tab_drag_state_.source_group_index
+                                    : ResolvePointerEditorGroup(*layout_state, rects);
   }
+  const bool zone_changed = tab_drag_state_.body_drop_zone != previous_zone ||
+                            tab_drag_state_.body_drop_group_index != previous_zone_group;
   const bool group_changed = tab_drag_state_.target_group_index != previous_target_group;
   const bool cross_group = tab_drag_state_.cross_group();
 
@@ -293,6 +387,23 @@ bool TabMouseCoordinator::UpdateDragForPointer() {
       return false;
     }
   }
+  if (tab_drag_state_.body_drop()) {
+    // Nothing lands in a strip, so there is no insertion slot to compute and no
+    // gap to open: the source strip just closes ranks over the lifted tab while
+    // the pane overlay carries the feedback. Auto-scroll stands down too -- the
+    // pointer is nowhere near a strip edge.
+    tab_drag_state_.reordered = true;
+    tab_drag_state_.autoscroll_direction = 0;
+    ClearDestinationSlide();
+    if (zone_changed || group_changed || !tab_drag_state_.slide_seeded) {
+      SeedSlideTargets(d, kNoInsertionSlot, /*slide_slot=*/0, tab_drag_state_.source_index);
+      tab_drag_state_.slide_seeded = true;
+    } else {
+      AdvanceSlideOnInputThread();
+    }
+    return zone_changed || group_changed;
+  }
+
   bool scrolled = false;
   if (AutoScrollDragStrip(d)) {
     // Every tab just moved: the borrowed visible list and the slide bases below
@@ -322,7 +433,8 @@ bool TabMouseCoordinator::UpdateDragForPointer() {
   const std::size_t model_slot = StripInsertionSlot(d.strip, *d.tabs, probe_x, total_for_slot);
   const std::size_t clamped_model_slot = std::clamp(model_slot, d.model_offset, total_for_slot);
   const bool slot_changed = !tab_drag_state_.slide_seeded ||
-                            clamped_model_slot != tab_drag_state_.target_slot || group_changed;
+                            clamped_model_slot != tab_drag_state_.target_slot || group_changed ||
+                            zone_changed;
   tab_drag_state_.target_slot = clamped_model_slot;
   const std::size_t list_slot = clamped_model_slot - d.model_offset;
   if (cross_group) {
@@ -445,6 +557,13 @@ void TabMouseCoordinator::FinishDrag() {
   // A drop over the other group's strip is a different operation from a reorder,
   // not a reorder with an extra argument; it gets its own commit path. `reordered`
   // is what Escape/focus-loss clear to abandon a gesture, so it gates this too.
+  // A drop onto a pane BODY is a third commit shape: it either moves the tab into
+  // that pane's group or carves a new group out on the side that was highlighted.
+  // Gated on `reordered` like the others so Escape still abandons the gesture.
+  if (tab_drag_state_.body_drop() && tab_drag_state_.reordered) {
+    FinishEditorBodyDrop(*layout_state);
+    return;
+  }
   if (tab_drag_state_.cross_group() && tab_drag_state_.reordered) {
     FinishCrossGroupDrag(*layout_state);
     return;
@@ -531,6 +650,44 @@ void TabMouseCoordinator::FinishDrag() {
       }
       break;
     }
+  }
+}
+
+void TabMouseCoordinator::FinishEditorBodyDrop(const WorkspaceLayout& layout) {
+  const std::size_t source_group = tab_drag_state_.source_group_index;
+  const std::size_t target_group = tab_drag_state_.body_drop_group_index;
+  const EditorBodyDropZone zone = tab_drag_state_.body_drop_zone;
+  // The dropped tab lands in a different pane than the one it was lifted from, so
+  // there is no strip glide to carry: the whole editor area repaints anyway.
+  tab_slide_state_ = TabSlideState{};
+
+  // Same guard the two strip commits use: the press activated the dragged tab in
+  // its group, so if it is no longer that group's active tab the model moved under
+  // the gesture and committing would relocate a bystander.
+  const DragStrip source = ResolveEditorDragStrip(layout, source_group);
+  if (!source.valid || source.active != tab_drag_state_.source_index) {
+    return;
+  }
+
+  bool committed = false;
+  if (zone == EditorBodyDropZone::Center) {
+    if (operations_.move_tab_to_group && target_group < state_.editor_groups.size()) {
+      committed = operations_.move_tab_to_group(
+          source_group, tab_drag_state_.source_index, target_group,
+          state_.editor_groups[target_group].open_tabs.size());
+    }
+  } else if (operations_.move_tab_to_new_group) {
+    const bool side_by_side =
+        zone == EditorBodyDropZone::Left || zone == EditorBodyDropZone::Right;
+    const bool insert_before =
+        zone == EditorBodyDropZone::Left || zone == EditorBodyDropZone::Top;
+    committed = operations_.move_tab_to_new_group(
+        source_group, tab_drag_state_.source_index,
+        side_by_side ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal,
+        insert_before);
+  }
+  if (committed) {
+    PersistReorderedTabs(TabDragKind::Editor);
   }
 }
 
