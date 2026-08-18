@@ -389,6 +389,41 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-18-265 — at the pane cap, an edge drop that would keep the pane COUNT constant is still refused. [OPEN — narrow, and the refusal is honest (no overlay is painted); filed so the drop-zone rule is not read as arbitrary.]
+
+`ResolveEditorBodyDrop` offers the four edge zones only while
+`!state_.editor_split.full()`, because splitting normally ADDS a pane. But there
+is one edge drop that does not: dragging a pane's LAST tab onto another pane's
+edge collapses the source pane as the carved one appears, so eight panes stay
+eight. With the grid full that drop is refused, and the only way to rearrange the
+last pane of a full grid is to move its tab into another pane (a Center drop) and
+split from there — two gestures for what should be one.
+
+The fix is a cheaper predicate than it looks: the drop is legal when
+`!full() || (source != target && source pane has exactly one tab)`, and
+`MoveTabToNewGroup` would need the same relaxation plus a collapse-then-insert
+order (today it inserts first, then collapses, which momentarily needs a ninth
+leaf). Left alone because the cap is generous and the case is a corner of a
+corner — but it is the one place where the drop-zone rule is not simply "can this
+grid hold another pane".
+
+### TD-2026-08-18-266 — the n-way editor grid has no DIRECTIONAL pane focus or move; `focus-other-group` only cycles. [OPEN — a feature gap the split-tree work created, not a defect.]
+
+With two panes, "focus the other group" was unambiguous. With up to eight in a
+grid it is a cycle in layout order, which is VS Code's `focusNextGroup` — but VS
+Code also has `focusLeftGroup` / `focusRightGroup` / `focusAboveGroup` /
+`focusBelowGroup`, and `moveActiveEditorGroupLeft` and friends, and those are what
+people actually bind once a grid has more than two panes. Cycling through six
+panes to reach the one on your left is not a substitute.
+
+The geometry to answer it is already computed: `ComputeEditorGroupRects` hands
+back every pane's rect in visual order, so "the pane left of the focused one" is a
+scan for the nearest rect whose right edge is at or before the focused pane's left
+edge, tie-broken by vertical overlap — no new state, no tree walk. Moving a pane
+(rather than focusing it) is the larger half: it is a tree edit (detach the leaf,
+re-insert it beside the neighbour in that direction) and wants
+`EditorSplitTree::MoveLeaf` next to the existing insert/remove pair.
+
 ### TD-2026-08-18-264 — drag-to-split can only ever create the SECOND editor group, because the editor area is capped at two. [RESOLVED 2026-08-18 — the editor area is an n-way split TREE now, capped at eight panes.]
 
 `kMaxEditorGroups` is 2 (`src/workspace/WorkspaceLayout.h`), and

@@ -10,17 +10,30 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **An n-way split editor grid, up to eight panes.** The editor area was one
+  divider between two panes — one orientation and one fraction on the project
+  state — so a second split could only retarget that divider. It is a split TREE
+  now (`EditorSplitTree`), the shape VS Code's editor grid has: panes lay out in
+  rows and columns with per-pane weights, splitting a pane the way its row already
+  splits extends the row rather than nesting a pair inside it, and closing a pane
+  hands its room back to its neighbours. `split-right`/`split-down` add a pane
+  every time instead of stopping at two, `focus-other-group` cycles the panes in
+  layout order, each divider resizes only the two panes it separates (double-click
+  evens that pair), and a session restores the whole layout, not just the group
+  count.
 - **Drag an editor tab onto a pane to split, and back out of one to un-split.**
-  VS Code's drag-to-split, within microide's two-group cap: a tab dropped on the
-  left/right fifth of the editor pane carves a new group out on that side
-  (side-by-side), the top/bottom fifth stacks them, and the new group lands
-  *ahead* of the source one for a left/top drop so the tab arrives under the
-  pointer rather than jumping to the far side. A tab dropped in the MIDDLE of the
-  other half's pane moves into that group — the way back from a split without
+  VS Code's drag-to-split: a tab dropped on the left/right fifth of a pane carves
+  a new pane out on that side (side-by-side), the top/bottom fifth stacks them,
+  and the new pane lands on the side the drop was on so the tab arrives under the
+  pointer rather than jumping to the far side. The pane that gets split is the one
+  under the pointer — including a pane that is already half of a split, which is
+  how a third and fourth pane get made by dragging alone. A tab dropped in the
+  MIDDLE of another pane moves into that group — the way back from a split without
   having to hit its tab strip. A translucent accent overlay shows the exact region
   the tab would take before the button comes up, and a drop that would change
-  nothing (the middle of the pane the tab already lives in, or the last tab of a
-  group, which would empty and collapse it) offers no target and paints nothing.
+  nothing (the middle of the pane the tab already lives in, an edge of that pane
+  when the tab is its only one, or any edge once the grid is full) offers no
+  target and paints nothing.
 
 ### Fixed
 
