@@ -37,6 +37,13 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **The breadcrumb named the focused pane's file over every column.** The band was
+  painted once across the whole editor area from the focused pane's active tab, so
+  with a split open the left column's breadcrumb named whatever the right column
+  was showing — a label directly above a buffer, describing a different one. It is
+  per pane now: each pane at the top of the editor area gets the band over its own
+  column, and panes below one have no band of their own (their column's belongs to
+  the pane above). Contributed status items stay window-wide.
 - **Dragging a tab out of one half of a split blanked that half.** The group the
   tab left promotes a neighbour, and only a group's *active* tab is hydrated on
   session restore — so the promoted tab was still a deferred handle, and a group
