@@ -65,6 +65,25 @@ the half it came from until 2026-08-18.
 
 Guarded by `WorkspaceShell/MoveTabToGroupHydratesSourceGroupNeighbor`.
 
+### Chrome painted over a pane names THAT pane
+The editor area holds up to `kMaxEditorGroups` panes, and every band drawn inside
+it belongs to the pane it sits over — not to whichever pane happens to hold
+focus. The breadcrumb was the counter-example: one band across the whole editor
+area, filled from the focused pane's active tab, so with a split open the left
+column's band named the file the right column was showing. It reads as a stale or
+broken label, because a band directly above a buffer is read as describing that
+buffer.
+
+`ComputeEditorGroupRects` is what makes this cheap to honour: it returns each
+pane's own strip / breadcrumb / surface rects, with a zero-width breadcrumb for a
+pane that is not at the top of the editor area (its column's band belongs to the
+pane above it). Window chrome that genuinely IS global — the contributed status
+items — stays laid out across the whole band, and only pushes aside the text of
+the columns it actually overlaps. A single pane must come out byte-identical to
+the full-width band, which is what keeps the unsplit case honest.
+
+Guarded by `WorkspaceShell/BreadcrumbIsPerPane`.
+
 ### Text that does not fit is truncated or wrapped, never sheared
 Toasts scale their width with the window and ellipsize through
 `TruncateToWidthEphemeralView`; narrow-rail empty states word-wrap through
