@@ -11,46 +11,61 @@
 
 namespace microide::workspace {
 
+const std::string& WorkspaceShell::BreadcrumbLabel() const {
+  return BreadcrumbLabel(context_.current_project_state.clamped_focused_group_index());
+}
+
 // By reference, not by value: the memo below already avoids REBUILDING the label,
-// but returning it by value copied it on every hit — and the one caller is the
+// but returning it by value copied it on every hit — and the callers are the
 // window-chrome paint, so that was an allocation per painted frame for a string
 // that had not changed (and one more on a miss, since the builder's local was
 // copied into the cache and then returned).
-const std::string& WorkspaceShell::BreadcrumbLabel() const {
+//
+// Per GROUP, because the band is per pane: each top-row pane of a split carries
+// its own breadcrumb over its own column, and one shared memo would rebuild the
+// string every time the paint moved from one pane to the next. One slot per pane;
+// idle slots hold no string.
+const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) const {
+  static const std::filesystem::path kEmptyPath;
+  const std::vector<EditorGroup>& groups = context_.current_project_state.editor_groups;
+  const std::size_t slot = group_index < groups.size() && group_index < kMaxEditorGroups
+                               ? group_index
+                               : context_.current_project_state.clamped_focused_group_index();
+  BreadcrumbLabelCache& cache = breadcrumb_label_cache_[std::min(slot, kMaxEditorGroups - 1)];
   // Resolve the label inputs (mode, path, secondary labels) by reference so a cache
   // hit compares without allocating; only a genuine input change rebuilds the string.
-  static const std::filesystem::path kEmptyPath;
-  BreadcrumbLabelCache& cache = breadcrumb_label_cache_;
   int mode = 0;
   bool placeholder = false;
   const std::filesystem::path* path = &kEmptyPath;
   std::string_view left;
   std::string_view right;
-  if (ActiveTabIsCompare()) {
-    const CompareTabState* compare_tab = ActiveCompareTab();
-    if (compare_tab == nullptr) {
+  const EditorGroup& group = groups[std::min(slot, groups.size() - 1)];
+  const TabEntry* active = group.active_tab_index < group.open_tabs.size()
+                               ? &group.open_tabs[group.active_tab_index]
+                               : nullptr;
+  if (active != nullptr && active->kind == TabEntry::Kind::Compare) {
+    if (!active->compare.has_value()) {
       // No inputs to memo against, so mark the memo stale and lend the fallback.
       cache.valid = false;
       cache.label = "compare";
       return cache.label;
     }
     mode = 1;
-    path = &compare_tab->path;
-    left = compare_tab->left_label;
-    right = compare_tab->right_label;
-  } else if (ActiveTabIsMerge()) {
-    const MergeTabState* merge_tab = ActiveMergeTab();
-    if (merge_tab == nullptr) {
+    path = &active->compare->path;
+    left = active->compare->left_label;
+    right = active->compare->right_label;
+  } else if (active != nullptr && active->kind == TabEntry::Kind::Merge) {
+    if (!active->merge.has_value()) {
       cache.valid = false;
       cache.label = "merge";
       return cache.label;
     }
     mode = 2;
-    path = &merge_tab->output_path;
-    left = merge_tab->incoming_label;
-    right = merge_tab->current_label;
+    path = &active->merge->output_path;
+    left = active->merge->incoming_label;
+    right = active->merge->current_label;
   } else {
-    const editor::TextViewport* viewport = ActiveEditorViewport();
+    const editor::TextViewport* viewport = GroupActiveViewport(group);
     mode = 0;
     if (viewport != nullptr) {
       path = &viewport->path();

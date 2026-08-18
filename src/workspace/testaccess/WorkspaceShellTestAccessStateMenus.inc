@@ -448,6 +448,9 @@
     }
   }
   static std::string BreadcrumbLabel(WorkspaceShell& shell) { return shell.BreadcrumbLabel(); }
+  static std::string BreadcrumbLabelForGroup(WorkspaceShell& shell, std::size_t group_index) {
+    return shell.BreadcrumbLabel(group_index);
+  }
   static const std::vector<project::TreeEntry>& TreeEntries(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.directory_tree.entries();
   }

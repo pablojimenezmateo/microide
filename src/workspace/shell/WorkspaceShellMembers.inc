@@ -1828,9 +1828,13 @@
   // instead of filling a finder-sized modal.
   SDL_FRect ComputeCenteredMenuOverlayRect(const SDL_FRect& editor_area) const;
   const std::string& BreadcrumbLabel() const;
+  const std::string& BreadcrumbLabel(std::size_t group_index) const;
   // Cross-paint memo for BreadcrumbLabel (BreadcrumbLabelCache is namespace-scoped in
   // WorkspaceShell.h to keep this file within its size budget); TD-2026-07-17A-023.
-  mutable BreadcrumbLabelCache breadcrumb_label_cache_;
+  // One slot per editor pane: the breadcrumb band is per pane (each top-row pane
+  // of a split carries its own over its own column), so a single shared memo would
+  // thrash between panes on every painted frame.
+  mutable std::array<BreadcrumbLabelCache, kMaxEditorGroups> breadcrumb_label_cache_;
   std::string ProjectLabel() const;
   std::string ProjectLabelForRoot(const std::filesystem::path& root) const;
   std::string ProjectTabDisplayTitle(std::size_t index) const;

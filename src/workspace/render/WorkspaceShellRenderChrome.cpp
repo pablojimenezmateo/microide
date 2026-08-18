@@ -300,8 +300,6 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }
 
   const auto status_items = ComputeVisibleStatusItems(layout.breadcrumb);
-  float breadcrumb_text_x = layout.breadcrumb.x + 12.0f;
-  float breadcrumb_text_right = layout.breadcrumb.x + layout.breadcrumb.w - 12.0f;
   for (const VisibleStatusItem& item : status_items) {
     // Tone tints the item background even when not hovered (so a warning/error
     // status reads at a glance); hover still lifts it to row_highlight.
@@ -365,19 +363,40 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
         MakeRect(text_x, item.rect.y, std::max(0.0f, text_right - text_x), item.rect.h);
     DrawVCenteredTextOn(text_renderer_, renderer, text_rect, 0.0f, text_color, row_bg,
                         item.item.text);
-    if (item.item.alignment == StatusAlignment::Left) {
-      breadcrumb_text_x = std::max(breadcrumb_text_x, item.rect.x + item.rect.w + 8.0f);
-    } else {
-      breadcrumb_text_right = std::min(breadcrumb_text_right, item.rect.x - 8.0f);
-    }
   }
-  const float breadcrumb_text_width =
-      std::max(0.0f, breadcrumb_text_right - breadcrumb_text_x);
-  DrawVCenteredTextOn(
-      text_renderer_, renderer,
-      MakeRect(breadcrumb_text_x, layout.breadcrumb.y, breadcrumb_text_width, layout.breadcrumb.h),
-      0.0f, theme_.chrome_text, theme_.chrome_background,
-      TruncateLabelView(BreadcrumbLabel(), breadcrumb_text_width));
+
+  // The breadcrumb is per PANE, not per window: a pane at the top of the editor
+  // area owns the band above its own column, and the label there names THAT
+  // pane's file. Painting one band for the focused pane put the wrong file over
+  // every other column — with a split open, the left column's band named whatever
+  // the right column was showing. Panes below the top row have no band of their
+  // own (`breadcrumb.w == 0`); their column's band belongs to the pane it sits
+  // over. For a single pane this is byte-identical to the old full-width band.
+  for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
+    const SDL_FRect band = editor_group_rects.groups[gi].breadcrumb;
+    if (band.w <= 0.0f || band.h <= 0.0f) {
+      continue;
+    }
+    float breadcrumb_text_x = band.x + 12.0f;
+    float breadcrumb_text_right = band.x + band.w - 12.0f;
+    for (const VisibleStatusItem& item : status_items) {
+      // Contributed status items are window chrome, laid out across the whole
+      // band; only the ones actually overlapping this column push its text in.
+      if (item.rect.x + item.rect.w <= band.x || item.rect.x >= band.x + band.w) {
+        continue;
+      }
+      if (item.item.alignment == StatusAlignment::Left) {
+        breadcrumb_text_x = std::max(breadcrumb_text_x, item.rect.x + item.rect.w + 8.0f);
+      } else {
+        breadcrumb_text_right = std::min(breadcrumb_text_right, item.rect.x - 8.0f);
+      }
+    }
+    const float breadcrumb_text_width = std::max(0.0f, breadcrumb_text_right - breadcrumb_text_x);
+    DrawVCenteredTextOn(text_renderer_, renderer,
+                        MakeRect(breadcrumb_text_x, band.y, breadcrumb_text_width, band.h), 0.0f,
+                        theme_.chrome_text, theme_.chrome_background,
+                        TruncateLabelView(BreadcrumbLabel(gi), breadcrumb_text_width));
+  }
 }
 
 }  // namespace microide::workspace

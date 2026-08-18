@@ -1247,6 +1247,40 @@ void TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab() {
 
 // The editor area holds `kMaxEditorGroups` panes; the split action refuses past
 // that rather than silently rendering only the panes that fit.
+// The breadcrumb band belongs to the PANE it sits over, not to the window: with a
+// split open, the left column's band named whatever the focused pane was showing.
+void TestWorkspaceShellBreadcrumbIsPerPane() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  const std::filesystem::path beta = root / "beta.txt";
+  WriteFile(alpha, "a\n");
+  WriteFile(beta, "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split right");
+  WorkspaceShellTestAccess::OpenFile(shell, beta);
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the split pane is focused");
+
+  const std::string left = WorkspaceShellTestAccess::BreadcrumbLabelForGroup(shell, 0);
+  const std::string right = WorkspaceShellTestAccess::BreadcrumbLabelForGroup(shell, 1);
+  Expect(left.find("alpha.txt") != std::string::npos,
+         "the left pane's breadcrumb names the file that pane is showing");
+  Expect(right.find("beta.txt") != std::string::npos,
+         "the right pane's breadcrumb names its own file, not the other pane's");
+  Expect(WorkspaceShellTestAccess::BreadcrumbLabel(shell) == right,
+         "the unqualified breadcrumb still follows the focused pane");
+  // A pane index past the end falls back to the focused pane rather than reading
+  // out of range -- the render path asks per rect, and rects can outlive a close.
+  Expect(WorkspaceShellTestAccess::BreadcrumbLabelForGroup(shell, 99) == right,
+         "an out-of-range pane index resolves to the focused pane");
+}
+
 void TestWorkspaceShellSplitStopsAtTheGroupCap() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6108,6 +6142,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset);
   AddTest(tests, "WorkspaceShell/SplitDoesNotClobberAnotherGroupsDirtyTab",
           TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab);
+  AddTest(tests, "WorkspaceShell/BreadcrumbIsPerPane", TestWorkspaceShellBreadcrumbIsPerPane);
   AddTest(tests, "WorkspaceShell/SplitStopsAtTheGroupCap",
           TestWorkspaceShellSplitStopsAtTheGroupCap);
   AddTest(tests, "WorkspaceShell/WheelScrollsPaneUnderPointer",
