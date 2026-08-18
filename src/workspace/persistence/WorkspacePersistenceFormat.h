@@ -79,7 +79,8 @@ struct PersistedProjectConfigState {
 };
 
 // One editor group: its own tab list and the index of its active tab. The editor
-// area holds 1 or 2 of these (VS Code-style splits live above tabs).
+// area holds up to `kMaxEditorGroups` of these (VS Code-style splits live above
+// tabs); `PersistedProjectSessionState::split_tree` says how they are arranged.
 struct PersistedEditorGroupState {
   std::vector<PersistedEditorTabState> tabs;
   std::size_t active_tab_index = 0;
@@ -90,13 +91,13 @@ struct PersistedProjectSessionState {
   float sidebar_width = kWorkspaceDefaultSidebarWidth;
   float bottom_panel_height = kWorkspaceDefaultBottomPanelHeight;
   OutgoingBaseChoice outgoing_base_choice;
-  // Editor groups (1 or 2; decode caps at 2). `group_split_orientation` is an
-  // EditorSplitOrientation cast to u8; `group_split_fraction` is the first group's
-  // share of the editor area.
+  // Editor groups, in visual order; decode caps them at `kMaxEditorGroups`.
+  // `split_tree` is the pre-order encoding of how they are arranged (see
+  // EditorSplitTree::Flatten). An empty tree, or one whose leaf count does not
+  // match `groups`, restores as an even side-by-side row.
   std::vector<PersistedEditorGroupState> groups;
   std::size_t focused_group_index = 0;
-  std::uint8_t group_split_orientation = 0;
-  float group_split_fraction = 0.5f;
+  EditorSplitTreeRecord split_tree;
   // Right-side debug pane (visibility / width / active surface). Only restored
   // when `debug.enabled` is on. `right_pane_mode` is a DebugPaneMode cast to u8.
   bool right_pane_visible = false;

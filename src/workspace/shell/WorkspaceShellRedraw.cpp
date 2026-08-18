@@ -626,7 +626,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentFocusedEditorRedrawRect() const 
   if (const_cast<WorkspaceShell*>(this)->ActiveEditorTab() == nullptr) {
     return layout->editor_surface;
   }
-  const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(*layout);
   const auto active_pane =
       std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
   return active_pane != panes.end() ? std::optional<SDL_FRect>(active_pane->rect)
@@ -644,7 +644,7 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentEditorLineRangeRect(std::size_t 
     return std::nullopt;
   }
 
-  const auto panes = ComputeEditorPaneLayouts(layout->editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(*layout);
   const auto active_pane =
       std::find_if(panes.begin(), panes.end(), [](const EditorPaneLayout& pane) { return pane.active; });
   const SDL_FRect pane_rect =

@@ -193,7 +193,7 @@ std::optional<SDL_FRect> WorkspaceShell::ActiveEditorCaretRect(
     return visual.has_value() ? std::optional<SDL_FRect>(visual->area) : std::nullopt;
   }
 
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(layout);
   auto pane_it = std::find_if(panes.begin(), panes.end(),
                               [](const EditorPaneLayout& pane) { return pane.active; });
   if (pane_it == panes.end()) {

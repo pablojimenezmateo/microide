@@ -469,7 +469,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DiagnosticHover
     return std::nullopt;
   }
 
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(layout);
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     const auto* diagnostics = hover_targets_vm.diagnostics_store->FindByPath(active_viewport->path());
@@ -564,7 +564,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::PluginHoverTarg
     return std::nullopt;
   }
 
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(layout);
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return PluginHoverTargetForViewport(
@@ -723,7 +723,7 @@ std::optional<WorkspaceShell::EditorHoverTarget> WorkspaceShell::DebugValueHover
     return std::nullopt;
   }
   const WorkspaceLayout layout = *layout_state;
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(layout);
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return DebugValueHoverTargetForViewport(
@@ -802,7 +802,7 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::CodeLensAtPosition(flo
     return store.FindByPathKey(viewport.path_key());
   };
 
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(layout);
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr && !active_viewport->is_placeholder()) {
     return CodeLensForViewport(

@@ -59,6 +59,7 @@ class EditorTabService {
                       std::size_t to_slot);
   bool MoveTabToNewGroup(std::size_t from_group,
                          std::size_t from_index,
+                         std::size_t target_group,
                          EditorSplitOrientation orientation,
                          bool insert_before);
   std::optional<std::size_t> FindIndexBySpecifier(std::string_view specifier,

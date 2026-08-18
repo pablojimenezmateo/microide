@@ -55,7 +55,8 @@ for what is actually measured, and what is not.
 ## Highlights
 
 ### Editing
-- Multi-project tabs, file tabs, split editor groups, deferred-commit tab drag with ghost
+- Multi-project tabs, file tabs, an n-way split editor grid (drag a tab onto a pane edge
+  to split it, up to eight panes), deferred-commit tab drag with ghost
 - Drag and drop from the desktop: a file opens as a tab, a folder opens as the project
 - UTF-8 codepoint boundaries, IME preedit, line-ending detection and preservation
 - Multi-caret editing with position remap, region-stack highlighting, and copy-with-context

@@ -196,8 +196,8 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
   }  // project_tab_strip visible
 
   // Each editor group owns its own tab strip. For a single group this is the
-  // global tab-strip band (filled in the frame pass); a stacked second group
-  // synthesizes its strip inside the editor surface, filled here.
+  // global tab-strip band (filled in the frame pass); a pane stacked below
+  // another synthesizes its strip inside the editor area, filled here.
   const EditorGroupRectsLayout editor_group_rects = ComputeEditorGroupRectsForState(layout);
 
   // Drag-to-split feedback (VS Code's drop overlay). Painted before the strips so

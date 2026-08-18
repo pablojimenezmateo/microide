@@ -2584,6 +2584,57 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
          "group 0 should restore its independent scroll position");
 }
 
+// A three-pane grid (two columns, the second stacked) must come back with its
+// SHAPE, not just its group count: the split tree is what the session carries now.
+void TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  WriteFile(file_a, "only a\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1400, 900);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split right");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
+         "split the new column downward");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3, "three panes before saving");
+  const SDL_FRect pane_one_before = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
+  const SDL_FRect pane_two_before = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 2);
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  WorkspaceShellTestAccess::SetWindowSize(restored, 1400, 900);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored),
+         "restoring a three-pane session should succeed");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(restored) == 3,
+         "restore should rebuild all three editor groups");
+  Expect(WorkspaceShellTestAccess::EditorSplit(restored).leaf_count() == 3,
+         "the restored split tree should have one leaf per group");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(restored) ==
+             EditorSplitOrientation::Vertical,
+         "the outermost split should still be side-by-side");
+  Expect(microide::workspace::RectsEqual(
+             WorkspaceShellTestAccess::GroupEditorSurfaceRect(restored, 1), pane_one_before) &&
+             microide::workspace::RectsEqual(
+                 WorkspaceShellTestAccess::GroupEditorSurfaceRect(restored, 2), pane_two_before),
+         "the restored panes should land exactly where they were");
+}
+
 void TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2749,6 +2800,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesEditorGroupSplit",
           TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit);
+  AddTest(tests, "WorkspaceShell/RestoreSessionPreservesNestedEditorSplitShape",
+          TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesBranchCompareState",
           TestWorkspaceShellRestoreSessionPreservesBranchCompareState);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesRenamedWorkingTreeCompareState",

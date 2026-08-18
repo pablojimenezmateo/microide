@@ -116,8 +116,8 @@ enum class ProjectSessionTag : std::uint16_t {
   RightPaneVisible = 10,
   RightPaneWidth = 11,
   RightPaneMode = 12,
-  GroupSplitOrientation = 13,
-  GroupSplitFraction = 14,
+  // 13/14 were the single split's orientation + fraction, replaced by SplitTree.
+  SplitTree = 20,
   ExpandedTreePath = 15,    // repeated; one relative path per record
   CollapsedTreePath = 16,   // repeated; one relative path per record
   SelectedTreePath = 17,

@@ -666,8 +666,24 @@
   static std::size_t FocusedGroupIndex(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group_index;
   }
+  // Orientation of the editor area's OUTERMOST split (None when there is one
+  // pane). The split model is a tree now, so this is a summary, not the whole
+  // layout — reach for `EditorSplit` when a test cares about the shape.
   static microide::workspace::EditorSplitOrientation GroupSplitOrientation(WorkspaceShell& shell) {
-    return shell.context_.current_project_state.group_split_orientation;
+    const auto& tree = shell.context_.current_project_state.editor_split;
+    return tree.node(tree.root()).orientation;
+  }
+  static const microide::workspace::EditorSplitTree& EditorSplit(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.editor_split;
+  }
+  static bool MoveTabToNewGroup(WorkspaceShell& shell,
+                                std::size_t from_group,
+                                std::size_t from_index,
+                                std::size_t target_group,
+                                microide::workspace::EditorSplitOrientation orientation,
+                                bool insert_before) {
+    return shell.MakeEditorTabService().MoveTabToNewGroup(from_group, from_index, target_group,
+                                                          orientation, insert_before);
   }
   // The model-level cross-group move the drag commits, callable without staging a
   // pointer gesture.

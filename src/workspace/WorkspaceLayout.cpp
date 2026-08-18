@@ -112,128 +112,110 @@ WorkspaceLayout ComputeLayout(float window_width,
   return layout;
 }
 
-std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
-    const SDL_FRect& rect,
-    bool vertical,
-    std::span<const float> size_fractions) {
-  if (size_fractions.empty()) {
-    return std::nullopt;
-  }
+namespace {
 
-  EditorSplitAxisLayout layout;
-  layout.vertical = vertical;
-  layout.divider_thickness = kEditorSplitDividerThickness;
-  layout.extents.resize(size_fractions.size(), 0.0f);
-  layout.child_rects.reserve(size_fractions.size());
-  if (size_fractions.size() > 1) {
-    layout.divider_rects.reserve(size_fractions.size() - 1);
-  }
-
-  layout.total_extent = std::max(
-      0.0f, (vertical ? rect.w : rect.h) -
-                kEditorSplitDividerThickness * static_cast<float>(size_fractions.size() - 1));
-  layout.min_pane_extent = std::max(1.0f, std::floor(layout.total_extent * 0.12f));
-  std::vector<float> weights(size_fractions.size(), 0.0f);
-  float total_weight = 0.0f;
-  for (std::size_t i = 0; i < size_fractions.size(); ++i) {
-    weights[i] = std::max(0.0f, size_fractions[i]);
-    total_weight += weights[i];
-  }
-  if (total_weight <= 0.0f) {
-    std::fill(weights.begin(), weights.end(), 1.0f);
-    total_weight = static_cast<float>(weights.size());
-  }
-
-  float cursor = vertical ? rect.x : rect.y;
-  float remaining_extent = layout.total_extent;
-  float remaining_weight = total_weight;
-  for (std::size_t i = 0; i < weights.size(); ++i) {
-    const std::size_t remaining_children = weights.size() - i;
-    float child_extent = remaining_children == 1
-                             ? remaining_extent
-                             : std::floor(remaining_weight > 0.0f
-                                              ? remaining_extent * (weights[i] / remaining_weight)
-                                              : remaining_extent /
-                                                    static_cast<float>(remaining_children));
-    if (remaining_extent > layout.min_pane_extent * static_cast<float>(remaining_children)) {
-      child_extent = std::clamp(
-          child_extent, layout.min_pane_extent,
-          remaining_extent -
-              layout.min_pane_extent * static_cast<float>(remaining_children - 1));
-    }
-
-    layout.extents[i] = std::max(0.0f, child_extent);
-    layout.child_rects.push_back(vertical ? MakeRect(cursor, rect.y, layout.extents[i], rect.h)
-                                          : MakeRect(rect.x, cursor, rect.w, layout.extents[i]));
-
-    cursor += layout.extents[i];
-    remaining_extent = std::max(0.0f, remaining_extent - layout.extents[i]);
-    remaining_weight = std::max(0.0f, remaining_weight - weights[i]);
-
-    if (i + 1 < weights.size()) {
-      layout.divider_rects.push_back(
-          vertical ? MakeRect(cursor, rect.y, kEditorSplitDividerThickness, rect.h)
-                   : MakeRect(rect.x, cursor, rect.w, kEditorSplitDividerThickness));
-      cursor += kEditorSplitDividerThickness;
-    }
-  }
-
-  return layout;
-}
-
-EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
-                                               std::size_t group_count,
-                                               bool vertical_divider,
-                                               float first_fraction) {
-  EditorGroupRectsLayout result;
-  result.vertical_divider = vertical_divider;
+// Chrome for one leaf pane, given its region inside the editor area. A pane that
+// starts at the top of the area keeps the window's own tab-strip band and
+// breadcrumb (confined to its column); any pane below one synthesizes a strip at
+// the top of its own region and has no breadcrumb — the same two shapes the
+// two-group split always had, now decided per pane instead of per split.
+EditorGroupRects ChromeForRegion(const WorkspaceLayout& layout, const SDL_FRect& region) {
   const SDL_FRect ts = layout.tab_strip;
   const SDL_FRect bc = layout.breadcrumb;
   const SDL_FRect es = layout.editor_surface;
   const SDL_FRect ea = layout.editor_area;
-
-  if (group_count < 2) {
-    result.groups.push_back(EditorGroupRects{ts, bc, es});
-    return result;
+  const bool top_row = region.y <= ea.y + 0.5f;
+  if (top_row) {
+    const float band = std::max(0.0f, es.y - ea.y);
+    return EditorGroupRects{
+        MakeRect(region.x, ts.y, region.w, ts.h),
+        MakeRect(region.x, bc.y, region.w, bc.h),
+        MakeRect(region.x, es.y, region.w, std::max(0.0f, region.h - band))};
   }
-
-  const float fraction = std::clamp(first_fraction, 0.1f, 0.9f);
-  const float divider = kWorkspaceEditorSplitDividerThickness;
-
-  if (vertical_divider) {
-    // Side-by-side. Confine both groups' tab strips to the editor-area x-range so
-    // they sit above their own surfaces; the strip background fill (full width)
-    // is unchanged by the renderer.
-    const float avail = std::max(0.0f, ea.w - divider);
-    const float left_w = std::floor(avail * fraction);
-    const float right_w = std::max(0.0f, avail - left_w);
-    const float split_x = ea.x + left_w;
-    const float right_x = split_x + divider;
-    const auto col = [](const SDL_FRect& r, float x, float w) {
-      return MakeRect(x, r.y, w, r.h);
-    };
-    result.groups.push_back(EditorGroupRects{
-        col(ts, ea.x, left_w), col(bc, ea.x, left_w), col(es, ea.x, left_w)});
-    result.groups.push_back(EditorGroupRects{
-        col(ts, right_x, right_w), col(bc, right_x, right_w), col(es, right_x, right_w)});
-    result.divider = MakeRect(split_x, ea.y, divider, ea.h);
-    return result;
-  }
-
-  // Stacked. Group 0 keeps the top tab strip + breadcrumb and takes the top slice
-  // of the editor surface; group 1 synthesizes a tab strip at the top of its
-  // region with the remaining surface below.
-  const float avail = std::max(0.0f, es.h - divider);
-  const float top_h = std::floor(avail * fraction);
-  const float bottom_h = std::max(0.0f, avail - top_h);
-  result.groups.push_back(EditorGroupRects{ts, bc, MakeRect(es.x, es.y, es.w, top_h)});
-  const float region_y = es.y + top_h + divider;
-  const float strip_h = std::min(kTabStripHeight, bottom_h);
-  result.groups.push_back(EditorGroupRects{
-      MakeRect(es.x, region_y, es.w, strip_h),
+  const float strip_h = std::min(kTabStripHeight, region.h);
+  return EditorGroupRects{
+      MakeRect(region.x, region.y, region.w, strip_h),
       MakeRect(0.0f, 0.0f, 0.0f, 0.0f),
-      MakeRect(es.x, region_y + strip_h, es.w, std::max(0.0f, bottom_h - strip_h))});
-  result.divider = MakeRect(es.x, es.y + top_h, es.w, divider);
+      MakeRect(region.x, region.y + strip_h, region.w,
+               std::max(0.0f, region.h - strip_h))};
+}
+
+}  // namespace
+
+EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
+                                               const EditorSplitTree& split) {
+  EditorGroupRectsLayout result;
+  if (!split.is_split()) {
+    result.groups.push_back(
+        EditorGroupRects{layout.tab_strip, layout.breadcrumb, layout.editor_surface});
+    return result;
+  }
+
+  // Iterative depth-first walk, children left to right: the visit order of the
+  // leaves is the group order, and the whole walk is heap-free (the stack is
+  // bounded by the node budget, which the group cap bounds).
+  struct Frame {
+    std::uint8_t node = 0;
+    SDL_FRect rect{};
+  };
+  util::InlineVector<Frame, EditorSplitTree::kMaxNodes> stack;
+  stack.push_back(Frame{split.root(), layout.editor_area});
+  while (!stack.empty()) {
+    const Frame frame = stack.back();
+    stack.pop_back();
+    const EditorSplitTree::Node& node = split.node(frame.node);
+    if (node.leaf()) {
+      if (result.groups.size() < result.groups.capacity()) {
+        result.groups.push_back(ChromeForRegion(layout, frame.rect));
+      }
+      continue;
+    }
+
+    const bool vertical = node.orientation == EditorSplitOrientation::Vertical;
+    const std::size_t count = node.children.size();
+    const float span = vertical ? frame.rect.w : frame.rect.h;
+    const float avail = std::max(
+        0.0f, span - kEditorSplitDividerThickness * static_cast<float>(count - 1));
+    // Extents first: the divider between children i and i+1 needs both, and the
+    // last child absorbs the rounding so the panes always tile the span exactly.
+    util::InlineVector<float, kMaxEditorGroups> extents;
+    float remaining = avail;
+    for (std::size_t i = 0; i < count; ++i) {
+      const float extent = i + 1 == count
+                               ? remaining
+                               : std::clamp(std::floor(avail * node.weights[i]), 0.0f, remaining);
+      extents.push_back(extent);
+      remaining = std::max(0.0f, remaining - extent);
+    }
+
+    float cursor = vertical ? frame.rect.x : frame.rect.y;
+    util::InlineVector<Frame, kMaxEditorGroups> children;
+    for (std::size_t i = 0; i < count; ++i) {
+      const SDL_FRect child = vertical
+                                  ? MakeRect(cursor, frame.rect.y, extents[i], frame.rect.h)
+                                  : MakeRect(frame.rect.x, cursor, frame.rect.w, extents[i]);
+      children.push_back(Frame{node.children[i], child});
+      cursor += extents[i];
+      if (i + 1 < count && result.dividers.size() < result.dividers.capacity()) {
+        result.dividers.push_back(EditorSplitDividerRect{
+            .rect = vertical
+                        ? MakeRect(cursor, frame.rect.y, kEditorSplitDividerThickness,
+                                   frame.rect.h)
+                        : MakeRect(frame.rect.x, cursor, frame.rect.w,
+                                   kEditorSplitDividerThickness),
+            .node = frame.node,
+            .boundary = static_cast<std::uint8_t>(i),
+            .vertical = vertical,
+            .pair_start = cursor - extents[i],
+            .pair_extent = extents[i] + extents[i + 1],
+        });
+        cursor += kEditorSplitDividerThickness;
+      }
+    }
+    for (std::size_t i = children.size(); i > 0; --i) {
+      stack.push_back(children[i - 1]);
+    }
+  }
   return result;
 }
 

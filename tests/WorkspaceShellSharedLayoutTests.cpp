@@ -24,7 +24,6 @@ using microide::workspace::BuildCompareScrollbarRuns;
 using microide::workspace::ClassifyMergeHoverState;
 using microide::workspace::ComputeDirtyPromptButtonRects;
 using microide::workspace::ComputeDirtyPromptRect;
-using microide::workspace::ComputeEditorSplitAxisLayout;
 using microide::workspace::ClampBottomPanelHeight;
 using microide::workspace::ClampSidebarWidth;
 using microide::workspace::ComputeChromeButtonWidth;
@@ -590,48 +589,72 @@ void TestWorkspaceSharedChromeTabRenderItems() {
 }
 
 void TestWorkspaceSharedEditorSplitLayout() {
-  const auto even_vertical = ComputeEditorSplitAxisLayout(
-      MakeRect(10.0f, 20.0f, 300.0f, 120.0f), true, std::vector<float>{1.0f, 1.0f});
-  Expect(even_vertical.has_value(), "editor split layout should exist for non-empty child lists");
-  Expect(even_vertical->total_extent == 294.0f,
-         "editor split layout should reserve shared divider thickness from the axis extent");
-  Expect(even_vertical->child_rects.size() == 2 && even_vertical->divider_rects.size() == 1,
-         "editor split layout should produce one child rect per pane and one divider per gap");
-  Expect(even_vertical->child_rects[0].w == 147.0f && even_vertical->child_rects[1].w == 147.0f,
-         "editor split layout should split equal fractions evenly across the remaining extent");
-  Expect(even_vertical->divider_rects[0].x == 157.0f && even_vertical->divider_rects[0].w == 6.0f,
-         "editor split layout should place the divider after the leading child extent");
+  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::EditorSplitTree;
 
-  const auto clamped_vertical = ComputeEditorSplitAxisLayout(
-      MakeRect(0.0f, 0.0f, 600.0f, 80.0f), true, std::vector<float>{0.9f, 0.05f, 0.05f});
-  Expect(clamped_vertical.has_value(), "editor split layout should handle skewed fractions");
-  Expect(clamped_vertical->extents[0] > clamped_vertical->extents[1] &&
-             clamped_vertical->extents[1] >= clamped_vertical->min_pane_extent - 1.0f &&
-             clamped_vertical->extents[2] >= clamped_vertical->min_pane_extent - 1.0f,
-         "editor split layout should cap an oversized leading pane and keep later panes near the derived minimum extent");
+  EditorSplitTree tree;
+  Expect(tree.leaf_count() == 1 && !tree.is_split() && tree.node(tree.root()).leaf(),
+         "a fresh split tree should be a single pane");
 
-  const auto even_horizontal = ComputeEditorSplitAxisLayout(
-      MakeRect(0.0f, 0.0f, 120.0f, 240.0f), false, std::vector<float>{0.0f, 0.0f, 0.0f});
-  Expect(even_horizontal.has_value(), "editor split layout should normalize zero weights");
-  Expect(even_horizontal->child_rects[0].h == 76.0f && even_horizontal->child_rects[1].h == 76.0f &&
-             even_horizontal->child_rects[2].h == 76.0f,
-         "editor split layout should evenly distribute zero-weight panes");
-  Expect(even_horizontal->divider_rects[0].y == 76.0f && even_horizontal->divider_rects[1].y == 158.0f,
-         "editor split layout should advance divider positions by child extent plus divider thickness");
+  // Splitting the same way twice in a row keeps ONE flat row (VS Code's grid),
+  // not a nest of pairs, and every new pane takes half of the one it split.
+  Expect(tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == 1,
+         "splitting the only pane to the right should seat the new pane after it");
+  Expect(tree.InsertLeaf(1, EditorSplitOrientation::Vertical, false) == 2 &&
+             tree.leaf_count() == 3 && tree.node(tree.root()).children.size() == 3,
+         "a same-axis split should extend the row rather than nest");
+  Expect(std::fabs(tree.node(tree.root()).weights[0] - 0.5f) < 0.001f &&
+             std::fabs(tree.node(tree.root()).weights[1] - 0.25f) < 0.001f,
+         "a new pane should take half of the pane it split");
 
-  Expect(!ComputeEditorSplitAxisLayout(MakeRect(0.0f, 0.0f, 100.0f, 100.0f), true, {})
-              .has_value(),
-         "editor split layout should be absent for empty split-node children");
+  // A cross-axis split nests, and dropping that pane again flattens the row back.
+  Expect(tree.InsertLeaf(0, EditorSplitOrientation::Horizontal, true) == 0 &&
+             tree.leaf_count() == 4 && tree.node(tree.root()).children.size() == 3,
+         "a cross-axis split should nest inside the pane it splits");
+  tree.RemoveLeaf(0);
+  Expect(tree.leaf_count() == 3 && tree.node(tree.root()).children.size() == 3,
+         "dropping the nested pane should collapse its branch back into the row");
+
+  // Divider resize moves only the pair it separates.
+  const float untouched = tree.node(tree.root()).weights[2];
+  Expect(tree.ResizeDivider(tree.root(), 0, 0.25f) &&
+             std::fabs(tree.node(tree.root()).weights[2] - untouched) < 0.0001f,
+         "resizing a divider should leave the panes it does not touch alone");
+  Expect(!tree.ResizeDivider(tree.root(), 7, 0.5f),
+         "resizing a divider that does not exist should fail");
+
+  // The cap is a hard one, and the tree stays consistent at it.
+  while (!tree.full()) {
+    Expect(tree.InsertLeaf(tree.leaf_count() - 1, EditorSplitOrientation::Vertical, false) !=
+               EditorSplitTree::kNoLeaf,
+           "splitting below the cap should succeed");
+  }
+  Expect(tree.leaf_count() == microide::workspace::kMaxEditorGroups &&
+             tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == EditorSplitTree::kNoLeaf,
+         "the split tree should refuse to grow past the editor group cap");
+
+  // Round-trip through the persisted pre-order form, and reject a malformed one.
+  EditorSplitTree restored;
+  Expect(restored.Load(tree.Flatten()) && restored == tree,
+         "a split tree should survive its flat pre-order form");
+  microide::workspace::EditorSplitTreeRecord malformed;
+  malformed.push_back(microide::workspace::EditorSplitNodeRecord{
+      .orientation = EditorSplitOrientation::Vertical, .weights = {}});
+  Expect(!restored.Load(malformed) && restored.leaf_count() == 1,
+         "a branch with no children should be rejected and leave a single pane");
 }
 
 void TestWorkspaceEditorGroupRects() {
+  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::EditorSplitTree;
   // A reference single-window layout: sidebar hidden, no bottom panel.
   const auto layout = microide::workspace::ComputeLayout(1000.0f, 700.0f, /*sidebar_visible=*/false,
                                                          /*bottom_panel_visible=*/false, 0.0f, 0.0f);
 
   // Single group reproduces the base layout rects byte-for-byte.
-  const auto one = microide::workspace::ComputeEditorGroupRects(layout, 1, true, 0.5f);
-  Expect(one.groups.size() == 1 && !one.divider.has_value(),
+  EditorSplitTree tree;
+  const auto one = microide::workspace::ComputeEditorGroupRects(layout, tree);
+  Expect(one.groups.size() == 1 && one.dividers.empty(),
          "single editor group should produce one rect and no divider");
   Expect(microide::workspace::RectsEqual(one.groups[0].tab_strip, layout.tab_strip) &&
              microide::workspace::RectsEqual(one.groups[0].breadcrumb, layout.breadcrumb) &&
@@ -640,8 +663,11 @@ void TestWorkspaceEditorGroupRects() {
 
   // Side-by-side split: surfaces partition the editor-area width with a divider
   // between them; both groups keep their own breadcrumb band.
-  const auto vertical = microide::workspace::ComputeEditorGroupRects(layout, 2, true, 0.5f);
-  Expect(vertical.groups.size() == 2 && vertical.divider.has_value() && vertical.vertical_divider,
+  EditorSplitTree side_by_side;
+  side_by_side.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
+  const auto vertical = microide::workspace::ComputeEditorGroupRects(layout, side_by_side);
+  Expect(vertical.groups.size() == 2 && vertical.dividers.size() == 1 &&
+             vertical.dividers[0].vertical,
          "side-by-side split should produce two groups and a vertical divider");
   Expect(vertical.groups[0].editor_surface.x == layout.editor_surface.x,
          "left group surface should start at the editor area left edge");
@@ -654,12 +680,17 @@ void TestWorkspaceEditorGroupRects() {
          "side-by-side surfaces should keep the full editor-surface height");
   Expect(vertical.groups[1].breadcrumb.w > 0.0f,
          "side-by-side second group should keep its own breadcrumb band");
+  Expect(vertical.dividers[0].pair_extent ==
+             vertical.groups[0].editor_surface.w + vertical.groups[1].editor_surface.w,
+         "a divider should span the two panes it can resize");
 
   // Stacked split: group 0 keeps the top tab strip; group 1 synthesizes a tab
-  // strip inside the editor surface, with no breadcrumb of its own.
-  const auto horizontal = microide::workspace::ComputeEditorGroupRects(layout, 2, false, 0.5f);
-  Expect(horizontal.groups.size() == 2 && horizontal.divider.has_value() &&
-             !horizontal.vertical_divider,
+  // strip inside its own region, with no breadcrumb of its own.
+  EditorSplitTree stacked;
+  stacked.InsertLeaf(0, EditorSplitOrientation::Horizontal, false);
+  const auto horizontal = microide::workspace::ComputeEditorGroupRects(layout, stacked);
+  Expect(horizontal.groups.size() == 2 && horizontal.dividers.size() == 1 &&
+             !horizontal.dividers[0].vertical,
          "stacked split should produce two groups and a horizontal divider");
   Expect(microide::workspace::RectsEqual(horizontal.groups[0].tab_strip, layout.tab_strip),
          "stacked first group should keep the global top tab strip");
@@ -671,6 +702,25 @@ void TestWorkspaceEditorGroupRects() {
   Expect(horizontal.groups[1].editor_surface.y >=
              horizontal.groups[1].tab_strip.y + horizontal.groups[1].tab_strip.h,
          "stacked second group surface should sit below its synthesized tab strip");
+
+  // Three panes in a row, then the middle one split downward: the rects tile the
+  // editor area with one divider per gap, and the nested pair stays inside the
+  // column it was carved from.
+  EditorSplitTree grid;
+  grid.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
+  grid.InsertLeaf(1, EditorSplitOrientation::Vertical, false);
+  grid.InsertLeaf(1, EditorSplitOrientation::Horizontal, false);
+  const auto four = microide::workspace::ComputeEditorGroupRects(layout, grid);
+  Expect(four.groups.size() == 4 && four.dividers.size() == 3,
+         "four panes should produce four rect sets and three dividers");
+  Expect(four.groups[1].editor_surface.x == four.groups[2].editor_surface.x &&
+             four.groups[2].editor_surface.y > four.groups[1].editor_surface.y,
+         "a pane split downward should stack inside its own column");
+  Expect(four.groups[3].editor_surface.x + four.groups[3].editor_surface.w ==
+             layout.editor_area.x + layout.editor_area.w,
+         "the last column should reach the editor area's right edge");
+  Expect(four.groups[2].breadcrumb.w == 0.0f && four.groups[1].breadcrumb.w > 0.0f,
+         "only panes at the top of the editor area should carry a breadcrumb");
 }
 
 void TestWorkspaceSharedMergeInteractionGeometry() {

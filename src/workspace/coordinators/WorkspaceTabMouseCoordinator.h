@@ -53,11 +53,12 @@ class TabMouseCoordinator {
     // a raw insertion point rather than a post-removal target index.
     std::function<bool(std::size_t, std::size_t, std::size_t, std::size_t)> move_tab_to_group;
     // Carves a NEW editor group out of `from_group` holding just its tab
-    // `from_index`, on the side the bool selects (true = ahead of the source
-    // group). Backs the drag-a-tab-onto-a-pane-edge split; a body drop in the
-    // CENTER of a pane goes through `move_tab_to_group` instead, because that is
-    // a move into an existing group and nothing about the split changes.
-    std::function<bool(std::size_t, std::size_t, EditorSplitOrientation, bool)>
+    // `from_index` and splits the TARGET group's pane to seat it, on the side the
+    // bool selects (true = the target's leading edge). Backs the
+    // drag-a-tab-onto-a-pane-edge split; a body drop in the CENTER of a pane goes
+    // through `move_tab_to_group` instead, because that is a move into an existing
+    // group and nothing about the split changes.
+    std::function<bool(std::size_t, std::size_t, std::size_t, EditorSplitOrientation, bool)>
         move_tab_to_new_group;
     std::function<bool(std::size_t)> move_active_terminal_tab_to;
     std::function<bool(std::size_t)> move_active_output_tab_to;

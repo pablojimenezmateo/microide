@@ -33,6 +33,54 @@ OutgoingBaseChoice::Kind ParseOutgoingBaseChoiceKind(std::string_view value) {
   return OutgoingBaseChoice::Kind::Auto;
 }
 
+// The split tree, pre-order: one entry per node as (orientation, child count,
+// child weights). Children follow their parent, so the shape needs no explicit
+// links — see EditorSplitTree::Flatten / ::Load, which own the validation.
+bool WriteSplitTree(PrimitiveWriter& w, const EditorSplitTreeRecord& record) {
+  if (!w.WriteU8(static_cast<std::uint8_t>(record.size()))) {
+    return false;
+  }
+  for (const EditorSplitNodeRecord& node : record) {
+    if (!w.WriteU8(static_cast<std::uint8_t>(node.orientation)) ||
+        !w.WriteU8(static_cast<std::uint8_t>(node.weights.size()))) {
+      return false;
+    }
+    for (const float weight : node.weights) {
+      if (!w.WriteF32(weight)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+bool ReadSplitTree(PrimitiveReader& reader, EditorSplitTreeRecord* out) {
+  std::uint8_t node_count = 0;
+  if (!reader.ReadU8(&node_count) || node_count > kMaxEditorSplitNodes) {
+    return false;
+  }
+  for (std::uint8_t i = 0; i < node_count; ++i) {
+    std::uint8_t orientation = 0;
+    std::uint8_t weight_count = 0;
+    if (!reader.ReadU8(&orientation) || !reader.ReadU8(&weight_count) ||
+        orientation > static_cast<std::uint8_t>(EditorSplitOrientation::Horizontal) ||
+        weight_count > kMaxEditorGroups) {
+      return false;
+    }
+    EditorSplitNodeRecord node;
+    node.orientation = static_cast<EditorSplitOrientation>(orientation);
+    for (std::uint8_t w = 0; w < weight_count; ++w) {
+      float weight = 0.0f;
+      if (!reader.ReadF32(&weight)) {
+        return false;
+      }
+      node.weights.push_back(weight);
+    }
+    out->push_back(node);
+  }
+  return true;
+}
+
 }  // namespace
 
 bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
@@ -62,10 +110,8 @@ bool EncodeProjectSessionRecord(const PersistedProjectSessionState& state,
                     out) ||
       !AppendRecord(ProjectSessionTag::FocusedGroupIndex,
                     [&](PrimitiveWriter& w) { return WriteSize(w, state.focused_group_index); }, out) ||
-      !AppendRecord(ProjectSessionTag::GroupSplitOrientation,
-                    [&](PrimitiveWriter& w) { return w.WriteU8(state.group_split_orientation); }, out) ||
-      !AppendRecord(ProjectSessionTag::GroupSplitFraction,
-                    [&](PrimitiveWriter& w) { return w.WriteF32(state.group_split_fraction); }, out) ||
+      !AppendRecord(ProjectSessionTag::SplitTree,
+                    [&](PrimitiveWriter& w) { return WriteSplitTree(w, state.split_tree); }, out) ||
       !AppendRecord(ProjectSessionTag::RightPaneVisible,
                     [&](PrimitiveWriter& w) { return w.WriteBool(state.right_pane_visible); }, out) ||
       !AppendRecord(ProjectSessionTag::RightPaneWidth,
@@ -148,10 +194,8 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                           reader.remaining() == 0;
                  case ProjectSessionTag::FocusedGroupIndex:
                    return ReadSize(reader, &state->focused_group_index) && reader.remaining() == 0;
-                 case ProjectSessionTag::GroupSplitOrientation:
-                   return reader.ReadU8(&state->group_split_orientation) && reader.remaining() == 0;
-                 case ProjectSessionTag::GroupSplitFraction:
-                   return reader.ReadF32(&state->group_split_fraction) && reader.remaining() == 0;
+                 case ProjectSessionTag::SplitTree:
+                   return ReadSplitTree(reader, &state->split_tree) && reader.remaining() == 0;
                  case ProjectSessionTag::RightPaneVisible:
                    return reader.ReadBool(&state->right_pane_visible) && reader.remaining() == 0;
                  case ProjectSessionTag::RightPaneWidth:
@@ -201,9 +245,9 @@ bool DecodeProjectSessionRecord(std::span<const std::byte> input,
                    // session byte budget; a forged session could list oversized third-and-
                    // later groups purely to make startup materialize nested payloads that are
                    // then discarded. Skip over-cap groups without decoding their nested tabs
-                   // (TD-2026-07-17A-059). Editor groups are capped at 2.
-                   if (state->groups.size() >= 2) {
-                     return true;  // tolerate extra groups; keep only the first two
+                   // (TD-2026-07-17A-059).
+                   if (state->groups.size() >= kMaxEditorGroups) {
+                     return true;  // tolerate extra groups; keep only what fits
                    }
                    PersistedEditorGroupState group;
                    if (!DecodeEditorGroup(payload, &group)) {

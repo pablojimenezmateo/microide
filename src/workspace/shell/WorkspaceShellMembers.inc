@@ -415,17 +415,10 @@
     bool active = false;
   };
 
-  struct EditorSplitDividerLayout {
-    std::size_t divider_index = 0;
-    SDL_FRect rect{};
-  };
-
-  // At most one divider today (a single split), and at most one pane per editor
-  // group. Both are heap-free for the same reason `EditorGroupRectsLayout::groups`
-  // is: every hit-test and redraw-rect query rebuilds them.
+  // One pane per editor group. Heap-free for the same reason
+  // `EditorGroupRectsLayout::groups` is: every hit-test and redraw-rect query
+  // rebuilds them. Dividers come straight off `EditorGroupRectsLayout::dividers`.
   using EditorPaneLayouts = util::InlineVector<EditorPaneLayout, kMaxEditorGroups>;
-  using EditorSplitDividerLayouts =
-      util::InlineVector<EditorSplitDividerLayout, kMaxEditorGroups - 1>;
 
   using BottomPanelTabKind = workspace::BottomPanelTabKind;
   using BottomPanelTabModel = workspace::BottomPanelTabModel;
@@ -823,16 +816,11 @@
   editor::TextViewport* ActiveNavigableViewport();
   const editor::TextViewport* ActiveNavigableViewport() const;
   std::filesystem::path ActiveTabPath() const;
-  EditorPaneLayouts ComputeEditorPaneLayouts(const SDL_FRect& editor_surface) const;
-  EditorSplitDividerLayouts ComputeEditorSplitDividerLayouts(
-      const SDL_FRect& editor_surface) const;
-  // Derive pane / divider layouts from already-computed group rects, so a render
-  // pass that needs both does not recompute the surface split twice per frame.
+  EditorPaneLayouts ComputeEditorPaneLayouts(const WorkspaceLayout& layout) const;
+  // Derive pane layouts from already-computed group rects, so a render pass that
+  // needs panes and dividers does not walk the split tree twice per frame.
   EditorPaneLayouts EditorPaneLayoutsFromGroupRects(
       const EditorGroupRectsLayout& group_rects) const;
-  EditorSplitDividerLayouts EditorSplitDividerLayoutsFromGroupRects(
-      const EditorGroupRectsLayout& group_rects) const;
-  EditorGroupRectsLayout ComputeEditorSurfaceGroupRects(const SDL_FRect& editor_surface) const;
   // Per-group chrome rects (tab strip / breadcrumb / surface) for the current
   // editor-group state, carved from `layout`. Single source of truth shared by
   // the render, cursor, and mouse paths so they cannot drift apart.

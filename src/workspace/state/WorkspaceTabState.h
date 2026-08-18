@@ -32,12 +32,6 @@
 
 namespace microide::workspace {
 
-enum class EditorSplitOrientation {
-  None,
-  Vertical,
-  Horizontal,
-};
-
 enum class CompareHoverKind {
   CollapsedContextPreviousAction,
   CollapsedContextAllAction,

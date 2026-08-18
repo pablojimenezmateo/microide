@@ -188,15 +188,14 @@ void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& re
     if (pane.w <= 0.0f || pane.h <= 0.0f || !Contains(pane, x, y)) {
       continue;
     }
-    // Splitting can only ever ADD a group, so it is offered exactly while the
-    // editor area is under the cap -- which, with the cap at two, also means the
-    // pane under the pointer is the source group's. A group with a single tab has
-    // nothing to split off either: the carved group would be the old one renamed.
-    // (TD: raising `kMaxEditorGroups` past two is what would let an edge drop
-    // split a pane that is already half of a split.)
-    const bool can_split = state_.editor_groups.size() < kMaxEditorGroups &&
-                           gi == tab_drag_state_.source_group_index &&
-                           state_.editor_groups[gi].open_tabs.size() >= 2;
+    // Splitting ADDS a pane, so it is offered exactly while the editor area is
+    // under the cap. Splitting the source pane with its own only tab is the one
+    // no-op: the carved group would be that group renamed, and the emptied source
+    // would collapse straight back. Dropping another pane's last tab on an edge is
+    // a real move -- that pane goes away and this one gains a neighbour.
+    const bool can_split = !state_.editor_split.full() &&
+                           (gi != tab_drag_state_.source_group_index ||
+                            state_.editor_groups[gi].open_tabs.size() >= 2);
     EditorBodyDropZone zone = EditorBodyDropZone::Center;
     SDL_FRect region = pane;
     if (can_split) {
@@ -681,8 +680,10 @@ void TabMouseCoordinator::FinishEditorBodyDrop(const WorkspaceLayout& layout) {
         zone == EditorBodyDropZone::Left || zone == EditorBodyDropZone::Right;
     const bool insert_before =
         zone == EditorBodyDropZone::Left || zone == EditorBodyDropZone::Top;
+    // The pane under the pointer is the one that gets split, which is what lets an
+    // edge drop land beside a pane that is already half of a split.
     committed = operations_.move_tab_to_new_group(
-        source_group, tab_drag_state_.source_index,
+        source_group, tab_drag_state_.source_index, target_group,
         side_by_side ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal,
         insert_before);
   }

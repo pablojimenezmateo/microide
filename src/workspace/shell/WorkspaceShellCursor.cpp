@@ -902,14 +902,13 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
     }
   }
 
-  for (const EditorSplitDividerLayout& divider :
-       ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
+  for (const EditorSplitDividerRect& divider : ComputeEditorGroupRectsForState(layout).dividers) {
     if (Contains(divider.rect, x, y)) {
-      return divider.rect.h > divider.rect.w ? CursorKind::EwResize : CursorKind::NsResize;
+      return divider.vertical ? CursorKind::EwResize : CursorKind::NsResize;
     }
   }
 
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(layout);
   const auto pane_it =
       std::find_if(panes.begin(), panes.end(),
                    [&](const EditorPaneLayout& pane) { return Contains(pane.rect, x, y); });

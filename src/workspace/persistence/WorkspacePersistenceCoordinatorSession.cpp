@@ -220,8 +220,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
     state.editor_groups.clear();
     state.editor_groups.emplace_back();
     state.focused_group_index = 0;
-    state.group_split_orientation = EditorSplitOrientation::None;
-    state.group_split_fraction = 0.5f;
+    state.editor_split.Reset();
     state.overlay.visible = false;
     state.overlay.workflow.compare_picker.matches.clear();
     state.overlay.workflow.compare_picker.items.clear();
@@ -465,8 +464,8 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
     state.editor_groups.clear();
     for (const PersistedEditorGroupState& persisted_group : persisted_session.groups) {
-      if (state.editor_groups.size() >= 2) {
-        break;  // Editor groups are capped at 2.
+      if (state.editor_groups.size() >= kMaxEditorGroups) {
+        break;
       }
       EditorGroup group;
       std::size_t restored_active = 0;
@@ -501,19 +500,15 @@ bool PersistenceCoordinator::RestoreSessionState() {
     if (state.editor_groups.empty()) {
       state.editor_groups.emplace_back();
     }
-    if (state.editor_groups.size() >= 2) {
-      EditorSplitOrientation orientation =
-          persisted_session.group_split_orientation <=
-                  static_cast<std::uint8_t>(EditorSplitOrientation::Horizontal)
-              ? static_cast<EditorSplitOrientation>(persisted_session.group_split_orientation)
-              : EditorSplitOrientation::Vertical;
-      // Two groups always imply a visible divider; never leave the orientation None.
-      state.group_split_orientation =
-          orientation == EditorSplitOrientation::None ? EditorSplitOrientation::Vertical : orientation;
-    } else {
-      state.group_split_orientation = EditorSplitOrientation::None;
+    // The tree's leaves ARE the groups, so a record that does not describe exactly
+    // the groups that survived the restore (missing, corrupt, or written before a
+    // group was dropped for an unreadable path) is replaced by an even row rather
+    // than left to disagree with them.
+    if (!state.editor_split.Load(persisted_session.split_tree) ||
+        state.editor_split.leaf_count() != state.editor_groups.size()) {
+      state.editor_split.ResetToEvenSplit(state.editor_groups.size(),
+                                          EditorSplitOrientation::Vertical);
     }
-    state.group_split_fraction = std::clamp(persisted_session.group_split_fraction, 0.1f, 0.9f);
     state.focused_group_index =
         std::min(persisted_session.focused_group_index, state.editor_groups.size() - 1);
   }
@@ -601,9 +596,7 @@ void PersistenceCoordinator::SaveSessionState() {
   persisted_session.bottom_panel_height = state.panel.height;
   persisted_session.outgoing_base_choice = state.sidebar.git.outgoing_base_choice;
   persisted_session.focused_group_index = state.focused_group_index;
-  persisted_session.group_split_orientation =
-      static_cast<std::uint8_t>(state.group_split_orientation);
-  persisted_session.group_split_fraction = state.group_split_fraction;
+  persisted_session.split_tree = state.editor_split.Flatten();
   persisted_session.right_pane_visible = state.debug_pane.visible;
   persisted_session.right_pane_width = state.debug_pane.width;
   persisted_session.right_pane_mode = static_cast<std::uint8_t>(state.debug_pane.mode);

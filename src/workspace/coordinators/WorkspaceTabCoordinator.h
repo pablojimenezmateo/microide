@@ -167,14 +167,17 @@ class TabCoordinator {
   // destination list rather than a post-removal target index. Returns false when
   // either index is out of range, the groups are the same, or the destination is
   // at its per-group tab cap.
-  // Carve a NEW editor group out of `from_group` holding just its tab
-  // `from_index` -- the model behind VS Code's drag-a-tab-onto-a-pane-edge
-  // split. `insert_before` puts the new group ahead of the source one (a drop on
-  // the left/top edge), otherwise after it. Refuses when the split cap is already
-  // reached or the source group would empty itself, both of which are no-ops the
-  // caller should have rendered as "no drop here".
+  // Carve a NEW editor group holding just tab `from_index` of `from_group`, and
+  // split `target_group`'s pane to make room for it -- the model behind VS Code's
+  // drag-a-tab-onto-a-pane-edge split. `insert_before` puts the new pane on the
+  // leading side of the target (a drop on its left/top edge), otherwise the
+  // trailing side; the target may be any pane, including one that is already half
+  // of a split. Refuses when the group cap is reached, or when the source and
+  // target are the same pane and it holds a single tab -- both no-ops the caller
+  // should have rendered as "no drop here".
   bool MoveTabToNewGroup(std::size_t from_group,
                          std::size_t from_index,
+                         std::size_t target_group,
                          EditorSplitOrientation orientation,
                          bool insert_before);
   bool MoveTabToGroup(std::size_t from_group,

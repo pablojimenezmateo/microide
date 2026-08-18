@@ -483,14 +483,14 @@ TabMouseCoordinator WorkspaceShell::MakeTabMouseCoordinator() {
                                                              to_slot);
               },
           .move_tab_to_new_group =
-              [this](std::size_t from_group, std::size_t from_index,
+              [this](std::size_t from_group, std::size_t from_index, std::size_t target_group,
                      EditorSplitOrientation orientation, bool insert_before) {
                 // Same geometry drop as the cross-group move, and for the same
                 // reason: both strips change length and the per-group title/width
                 // cache keys only on (tab_count, window_width).
                 tab_strip_service_.InvalidateTabStripGeometry();
-                return MakeEditorTabService().MoveTabToNewGroup(from_group, from_index,
-                                                                orientation, insert_before);
+                return MakeEditorTabService().MoveTabToNewGroup(
+                    from_group, from_index, target_group, orientation, insert_before);
               },
           .move_active_terminal_tab_to =
               [this](std::size_t index) {

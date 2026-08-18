@@ -111,17 +111,19 @@ bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
 
 bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
                                        std::size_t from_index,
+                                       std::size_t target_group,
                                        EditorSplitOrientation orientation,
                                        bool insert_before) {
-  if (orientation == EditorSplitOrientation::None ||
-      state_.editor_groups.size() >= kMaxEditorGroups ||
-      from_group >= state_.editor_groups.size() ||
+  if (orientation == EditorSplitOrientation::None || state_.editor_split.full() ||
+      from_group >= state_.editor_groups.size() || target_group >= state_.editor_groups.size() ||
       from_index >= state_.editor_groups[from_group].open_tabs.size()) {
     return false;
   }
-  // A group with one tab has nothing to give: the carved group would BE the old
-  // one under a new index, and the emptied source would collapse straight back.
-  if (state_.editor_groups[from_group].open_tabs.size() < 2) {
+  // Splitting a pane with the pane's own only tab has nothing to give: the carved
+  // group would BE the old one under a new index, and the emptied source would
+  // collapse straight back. Dropping the last tab of ANOTHER pane onto this one is
+  // fine -- that pane goes away and this one gains a neighbour.
+  if (from_group == target_group && state_.editor_groups[from_group].open_tabs.size() < 2) {
     return false;
   }
   // Flush live caret/scroll before the tab leaves, for the same reason the
@@ -132,23 +134,31 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
     SyncActiveEditorTabMetadata();
   }
 
+  const std::size_t carved_index =
+      state_.editor_split.InsertLeaf(target_group, orientation, insert_before);
+  if (carved_index == EditorSplitTree::kNoLeaf) {
+    return false;
+  }
+
   EditorGroup carved;
   carved.open_tabs.push_back(LiftTabFromGroup(state_.editor_groups[from_group], from_index));
   carved.active_tab_index = 0;
-
-  // A drop on the left/top edge puts the carved group AHEAD of the one it came
-  // from, so the tab lands under the pointer rather than jumping to the far side.
-  const std::size_t carved_index = insert_before ? from_group : from_group + 1;
   state_.editor_groups.insert(
       state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(carved_index), std::move(carved));
-  const std::size_t source_index = insert_before ? from_group + 1 : from_group;
-  state_.group_split_orientation = orientation;
-  state_.group_split_fraction = 0.5f;
+  // Every group at or past the insertion point shifted right.
+  const std::size_t source_index = from_group >= carved_index ? from_group + 1 : from_group;
   state_.focused_group_index = carved_index;
   state_.surface.focus = FocusTarget::Editor;
 
-  HydrateGroupActiveTab(state_.editor_groups[carved_index]);
-  HydrateGroupActiveTab(state_.editor_groups[source_index]);
+  if (state_.editor_groups[source_index].open_tabs.empty()) {
+    // VS Code drops a split whose last editor is dragged out. CollapseGroupAt
+    // re-homes the focused index across the erase, so the carved group keeps
+    // focus wherever it landed.
+    CollapseGroupAt(source_index);
+  } else {
+    HydrateGroupActiveTab(state_.editor_groups[source_index]);
+  }
+  HydrateGroupActiveTab(state_.editor_groups[state_.clamped_focused_group_index()]);
   operations_.invalidate_tab_strip_geometry();
   RefreshFocusedGroupActiveTab(true);
   return true;
@@ -180,26 +190,18 @@ TabEntry TabCoordinator::CloneEditorTabForSplit(const TabEntry& tab) {
 }
 
 bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
-  if (orientation == EditorSplitOrientation::None || state_.editor_groups.empty()) {
+  if (orientation == EditorSplitOrientation::None || state_.editor_groups.empty() ||
+      state_.editor_split.full()) {
     return false;
   }
 
-  // With two groups already open, just retarget the divider orientation and move
-  // focus to the other group (capped at two groups).
-  if (state_.editor_groups.size() >= 2) {
-    state_.group_split_orientation = orientation;
-    state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
-    state_.surface.focus = FocusTarget::Editor;
-    RefreshFocusedGroupActiveTab(true);
-    return true;
-  }
-
-  EditorGroup& source = state_.focused_group();
+  const std::size_t focused = state_.clamped_focused_group_index();
+  const EditorGroup& source = state_.editor_groups[focused];
   if (source.active_tab_index >= source.open_tabs.size()) {
     return false;
   }
-  const TabEntry& active = source.open_tabs[source.active_tab_index];
-  if (active.kind != TabEntry::Kind::Editor || !active.editor_state.has_value()) {
+  if (const TabEntry& active = source.open_tabs[source.active_tab_index];
+      active.kind != TabEntry::Kind::Editor || !active.editor_state.has_value()) {
     return false;
   }
   // Capture fresh scroll/cursor into the source tab before cloning so the new
@@ -207,13 +209,20 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
   SyncActiveEditorTabMetadata();
 
   EditorGroup new_group;
-  new_group.open_tabs.push_back(CloneEditorTabForSplit(active));
+  new_group.open_tabs.push_back(CloneEditorTabForSplit(source.open_tabs[source.active_tab_index]));
   new_group.active_tab_index = 0;
-  state_.editor_groups.push_back(std::move(new_group));
-  state_.group_split_orientation = orientation;
-  state_.group_split_fraction = 0.5f;
-  state_.focused_group_index = state_.editor_groups.size() - 1;
+
+  // VS Code's "Split Right"/"Split Down" put the new pane after the active one.
+  const std::size_t carved_index = state_.editor_split.InsertLeaf(focused, orientation, false);
+  if (carved_index == EditorSplitTree::kNoLeaf) {
+    return false;
+  }
+  state_.editor_groups.insert(
+      state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(carved_index),
+      std::move(new_group));
+  state_.focused_group_index = carved_index;
   state_.surface.focus = FocusTarget::Editor;
+  operations_.invalidate_tab_strip_geometry();
   RefreshFocusedGroupActiveTab(true);
   return true;
 }
@@ -222,7 +231,9 @@ bool TabCoordinator::FocusOtherGroup() {
   if (state_.editor_groups.size() < 2) {
     return false;
   }
-  state_.focused_group_index = state_.focused_group_index == 0 ? 1 : 0;
+  // VS Code's "Focus Next Editor Group": walk the panes in layout order and wrap.
+  state_.focused_group_index =
+      (state_.clamped_focused_group_index() + 1) % state_.editor_groups.size();
   state_.surface.focus = FocusTarget::Editor;
   RefreshFocusedGroupActiveTab(true);
   return true;
@@ -270,8 +281,12 @@ void TabCoordinator::CollapseGroupAt(std::size_t gi) {
     return;
   }
   state_.editor_groups.erase(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(gi));
+  // The tree's leaves ARE the groups, in order: dropping the pane hands its room
+  // back to its siblings and collapses any branch left with one child.
+  state_.editor_split.RemoveLeaf(gi);
   if (state_.editor_groups.empty()) {
     state_.editor_groups.emplace_back();
+    state_.editor_split.Reset();
   }
   // Re-home the focused index across the erase: unchanged if it preceded gi, decremented
   // if it followed, and clamped into range if it was gi itself or now past the end.
@@ -281,30 +296,16 @@ void TabCoordinator::CollapseGroupAt(std::size_t gi) {
   if (state_.focused_group_index >= state_.editor_groups.size()) {
     state_.focused_group_index = state_.editor_groups.size() - 1;
   }
-  if (state_.editor_groups.size() < 2) {
-    state_.group_split_orientation = EditorSplitOrientation::None;
-    state_.group_split_fraction = 0.5f;
-  }
+  // Erasing a group reindexes the survivors; the per-group tab-strip geometry
+  // cache keys only on (tab_count, window_width) and is indexed by group slot, so
+  // without this drop a survivor could render the destroyed group's cached tab
+  // titles/widths whenever their tab_count and the window width happen to match.
   operations_.invalidate_tab_strip_geometry();
 }
 
 void TabCoordinator::CollapseFocusedGroup() {
-  const std::size_t removed =
-      state_.focused_group_index < state_.editor_groups.size() ? state_.focused_group_index : 0;
-  state_.editor_groups.erase(state_.editor_groups.begin() +
-                             static_cast<std::ptrdiff_t>(removed));
-  if (state_.editor_groups.empty()) {
-    state_.editor_groups.emplace_back();
-  }
-  state_.focused_group_index = 0;
-  state_.group_split_orientation = EditorSplitOrientation::None;
-  state_.group_split_fraction = 0.5f;
+  CollapseGroupAt(state_.clamped_focused_group_index());
   state_.surface.focus = FocusTarget::Editor;
-  // Erasing a group reindexes the survivors; the per-group tab-strip geometry
-  // cache keys only on (tab_count, window_width) and is indexed by group slot, so
-  // without this drop the survivor could render the destroyed group's cached tab
-  // titles/widths whenever their tab_count and the window width happen to match.
-  operations_.invalidate_tab_strip_geometry();
 }
 
 bool TabCoordinator::CloseEditorGroup() {

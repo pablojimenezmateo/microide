@@ -102,6 +102,41 @@ class InlineVector {
     return storage_[size_++];
   }
 
+  // Shifting inserts/erases. Present because the containers this backs are
+  // *ordered* structures (editor panes left-to-right, a split branch's children)
+  // where a new pane lands between two existing ones; `N` is small enough that the
+  // shift is a few register moves.
+  constexpr void insert(size_type index, const T& value) {
+    assert(size_ < N && "InlineVector capacity exceeded");
+    assert(index <= size_ && "InlineVector insert out of range");
+    if (size_ >= N || index > size_) {
+      return;
+    }
+    for (size_type i = size_; i > index; --i) {
+      storage_[i] = std::move(storage_[i - 1]);
+    }
+    storage_[index] = value;
+    ++size_;
+  }
+
+  constexpr void erase(size_type index) {
+    assert(index < size_ && "InlineVector erase out of range");
+    if (index >= size_) {
+      return;
+    }
+    for (size_type i = index + 1; i < size_; ++i) {
+      storage_[i - 1] = std::move(storage_[i]);
+    }
+    storage_[--size_] = T{};
+  }
+
+  constexpr void pop_back() {
+    assert(size_ > 0 && "InlineVector pop_back on empty");
+    if (size_ > 0) {
+      storage_[--size_] = T{};
+    }
+  }
+
   friend constexpr bool operator==(const InlineVector& lhs, const InlineVector& rhs) {
     if (lhs.size_ != rhs.size_) {
       return false;

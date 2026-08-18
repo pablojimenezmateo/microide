@@ -361,11 +361,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::Search:
     case ActionId::SplitEditorRight:
     case ActionId::SplitEditorDown:
-      // Available only with an editor to split from AND no split yet (the editor
-      // area caps at two groups, so a second split would be a confusing retarget
-      // no-op). Gates the tab/tree context menus and the split-right/split-down
-      // palette entries alike.
-      return operations_.active_tab_is_editor() && operations_.editor_group_count() <= 1;
+      // Available with an editor to split from, until the editor area is full.
+      // Gates the tab/tree context menus and the split-right/split-down palette
+      // entries alike.
+      return operations_.active_tab_is_editor() &&
+             operations_.editor_group_count() < kMaxEditorGroups;
     case ActionId::FocusOtherGroup:
     case ActionId::CloseGroup:
       // Group focus/close only make sense once a second group exists.

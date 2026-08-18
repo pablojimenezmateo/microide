@@ -389,7 +389,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-18-264 — drag-to-split can only ever create the SECOND editor group, because the editor area is capped at two. [OPEN — a product limit, not a defect; recorded so the next person does not read the drop-zone code as broken.]
+### TD-2026-08-18-264 — drag-to-split can only ever create the SECOND editor group, because the editor area is capped at two. [RESOLVED 2026-08-18 — the editor area is an n-way split TREE now, capped at eight panes.]
 
 `kMaxEditorGroups` is 2 (`src/workspace/WorkspaceLayout.h`), and
 `ComputeEditorGroupRects` is written to that number: it branches on
@@ -411,10 +411,43 @@ TREE (rows of columns, each with its own fraction), which is also what would mak
 `MoveTabToNewGroup`'s `insert_before` generalize from "ahead of / after the source
 group" to "on this side of this pane".
 
-Nothing is wrong today: the two-group product is coherent and the gesture is
-honest about it — no overlay is painted for a drop that cannot happen. Do not
-"fix" this by letting `MoveTabToNewGroup` push a third group into
-`editor_groups`; the layout would silently render only the first two.
+Nothing was wrong: the two-group product was coherent and the gesture was honest
+about it — no overlay was painted for a drop that could not happen.
+
+**Resolved by replacing the split MODEL, not by lifting a number.**
+`ProjectWorkspaceState::editor_split` is now an `EditorSplitTree`
+(`src/workspace/EditorSplitTree.h`): an n-ary tree whose LEAVES ARE
+`editor_groups`, in order, so every group-indexed cache, focus index and
+tab-strip slot kept its meaning and only the geometry gained a shape. A branch
+lays its children out along one axis with per-child weights; the canonical form
+flattens a same-orientation child into its parent, so three side-by-side panes
+are one row of three rather than a nest of pairs — VS Code's grid.
+
+What that bought, in the same shapes VS Code has:
+
+- an edge drop splits the pane UNDER THE POINTER, including one that is already
+  half of a split (`MoveTabToNewGroup` gained a `target_group`), so "on this side
+  of this pane" generalized as the entry predicted it would need to;
+- `split-right`/`split-down` add a pane every time instead of retargeting the
+  divider and refocusing at two, which also deleted the "opening a path into an
+  existing second group must not clobber its dirty tab" special case in
+  `WorkspaceActionContext::SplitEditorGroup` — a fresh pane always clones the
+  source tab, so replacing that clone's view is always safe;
+- `focus-other-group` cycles through the panes in layout order;
+- each divider resizes only the pair it separates (`EditorSplitDividerRect`
+  carries the node/boundary address plus the pair's own span, so the drag needs no
+  state beyond that address), and double-click evens that pair;
+- the session carries the tree's pre-order form (`ProjectSessionTag::SplitTree`,
+  replacing the single orientation+fraction pair), validated on load: a record
+  whose leaf count does not match the groups that survived restore is replaced by
+  an even row rather than left to disagree with them.
+
+The cap is `kMaxEditorGroups = 8` — a product limit chosen so every layout
+container stays heap-free (node budget 2N-1 = 15, all `InlineVector`), not a
+structural one. The dead N-way helper `ComputeEditorSplitAxisLayout` (production
+callers: none; heap vectors) went with it, as did the surface-only fake-layout
+path — `ComputeEditorGroupRects(layout, tree)` is now the single walk that
+produces strips, breadcrumbs, surfaces and dividers together.
 
 ### TD-2026-08-17-263 — 49 allocation gates are loose after the compare/diff work, three of them by 70-82 %. [OPEN — the deterministic half wants re-recording; this is [261](#td-2026-08-17-261)'s closing note, now measured across the whole suite.]
 

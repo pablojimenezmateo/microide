@@ -54,6 +54,12 @@
     return group_index < group_rects.groups.size() ? group_rects.groups[group_index].editor_surface
                                                    : SDL_FRect{};
   }
+  // Every split divider the editor area currently shows, in visual order.
+  static microide::util::InlineVector<microide::workspace::EditorSplitDividerRect,
+                                      microide::workspace::kMaxEditorGroups - 1>
+  EditorSplitDividerRects(WorkspaceShell& shell) {
+    return shell.ComputeEditorGroupRectsForState(CurrentLayout(shell)).dividers;
+  }
   static SDL_FRect GroupEditorTabRect(WorkspaceShell& shell, std::size_t group_index,
                                       std::size_t tab_index) {
     const SDL_FRect strip = GroupTabStripRect(shell, group_index);
@@ -171,7 +177,7 @@
     if (editor_tab == nullptr) {
       return {};
     }
-    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout);
     for (const auto& pane : panes) {
       if (pane.active) {
         return pane.rect;
@@ -189,7 +195,7 @@
     if (editor_tab == nullptr) {
       return {};
     }
-    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout);
     for (const auto& pane : panes) {
       if (!pane.active) {
         return pane.rect;
@@ -208,7 +214,7 @@
   // test can assert the inactive pane resolves its own group, not the focused one.
   static std::vector<std::string> PaneViewportPaths(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout);
     std::vector<std::string> paths;
     paths.reserve(panes.size());
     for (const auto& pane : panes) {
@@ -219,7 +225,7 @@
   }
   static microide::editor::TextViewport* InactiveEditorPaneViewport(WorkspaceShell& shell) {
     const WorkspaceLayout layout = CurrentLayout(shell);
-    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout);
     for (const auto& pane : panes) {
       if (!pane.active) {
         return shell.ViewportForPane(pane);
@@ -300,7 +306,7 @@
     if (viewport == nullptr) {
       return std::nullopt;
     }
-    const auto panes = shell.ComputeEditorPaneLayouts(layout.editor_surface);
+    const auto panes = shell.ComputeEditorPaneLayouts(layout);
     for (const auto& pane : panes) {
       if (pane.active) {
         return shell.editor_blame_overlay_service_.BuildEditorOverlay(

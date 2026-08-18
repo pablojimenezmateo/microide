@@ -8,11 +8,12 @@
 
 namespace microide::workspace {
 
-// Editor splits are modelled as editor *groups* above the tab level (Phase B+).
-// The editor area hosts 1 or 2 groups; each group's active tab renders into its
-// own surface rect. Here we carve the editor surface into per-group panes; the
-// matching per-group tab strips are produced from the full layout in the chrome
-// pass (see ComputeEditorGroupRects).
+// Editor splits are modelled as editor *groups* above the tab level, arranged by
+// `ProjectWorkspaceState::editor_split` (see EditorSplitTree). Every geometry
+// query here goes through the one tree walk in ComputeEditorGroupRects, which
+// produces each group's tab strip, breadcrumb and surface together — the panes
+// below are just that walk's surface rects, with the focused group's external-
+// change banner trimmed off.
 
 SDL_FRect WorkspaceShell::EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const {
   if (ActiveEditorBannerForTab(context_.current_project_state) == nullptr) {
@@ -24,23 +25,6 @@ SDL_FRect WorkspaceShell::EditorSurfaceBelowBanner(const SDL_FRect& editor_surfa
   content.h = std::max(0.0f, content.h - strip.h);
   return content;
 }
-
-namespace {
-
-// Build the minimal WorkspaceLayout the geometry helper needs to split a surface
-// rect into per-group editor-surface rects. Only `editor_surface` / `editor_area`
-// participate in the surface split (tab strip / breadcrumb are chrome-only), and
-// editor_surface shares the editor_area x/width, so this reproduces the chrome
-// pass's split exactly.
-WorkspaceLayout SurfaceOnlyLayout(const SDL_FRect& editor_surface) {
-  WorkspaceLayout tmp{};
-  tmp.editor_surface = editor_surface;
-  tmp.editor_area =
-      MakeRect(editor_surface.x, editor_surface.y, editor_surface.w, editor_surface.h);
-  return tmp;
-}
-
-}  // namespace
 
 std::size_t WorkspaceShell::FocusedEditorGroupIndex() const {
   return context_.current_project_state.focused_group_index;
@@ -64,19 +48,7 @@ const editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayo
 
 EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
     const WorkspaceLayout& layout) const {
-  const ProjectWorkspaceState& state = context_.current_project_state;
-  const std::size_t group_count =
-      std::min<std::size_t>(state.editor_groups.size(), kMaxEditorGroups);
-  const bool split = group_count >= 2 &&
-                     state.group_split_orientation != EditorSplitOrientation::None;
-  const bool vertical = state.group_split_orientation == EditorSplitOrientation::Vertical;
-  return ComputeEditorGroupRects(layout, split ? group_count : 1, vertical,
-                                 state.group_split_fraction);
-}
-
-EditorGroupRectsLayout WorkspaceShell::ComputeEditorSurfaceGroupRects(
-    const SDL_FRect& editor_surface) const {
-  return ComputeEditorGroupRectsForState(SurfaceOnlyLayout(editor_surface));
+  return ComputeEditorGroupRects(layout, context_.current_project_state.editor_split);
 }
 
 WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRects(
@@ -100,28 +72,12 @@ WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRect
   return panes;
 }
 
-WorkspaceShell::EditorSplitDividerLayouts
-WorkspaceShell::EditorSplitDividerLayoutsFromGroupRects(
-    const EditorGroupRectsLayout& group_rects) const {
-  EditorSplitDividerLayouts dividers;
-  if (group_rects.divider.has_value()) {
-    dividers.push_back(EditorSplitDividerLayout{.divider_index = 0,
-                                                .rect = *group_rects.divider});
-  }
-  return dividers;
-}
-
 WorkspaceShell::EditorPaneLayouts WorkspaceShell::ComputeEditorPaneLayouts(
-    const SDL_FRect& editor_surface) const {
+    const WorkspaceLayout& layout) const {
   if (context_.current_project_state.editor_groups.empty()) {
     return {};
   }
-  return EditorPaneLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
-}
-
-WorkspaceShell::EditorSplitDividerLayouts
-WorkspaceShell::ComputeEditorSplitDividerLayouts(const SDL_FRect& editor_surface) const {
-  return EditorSplitDividerLayoutsFromGroupRects(ComputeEditorSurfaceGroupRects(editor_surface));
+  return EditorPaneLayoutsFromGroupRects(ComputeEditorGroupRectsForState(layout));
 }
 
 }  // namespace microide::workspace

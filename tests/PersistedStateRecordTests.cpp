@@ -225,9 +225,13 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
   group_one.tabs = {second_group_tab};
   session.groups = {group_zero, group_one};
   session.focused_group_index = 1;
-  session.group_split_orientation =
-      static_cast<std::uint8_t>(microide::workspace::EditorSplitOrientation::Horizontal);
-  session.group_split_fraction = 0.4f;
+  // A stacked pair, weighted 0.4/0.6 — the tree shape the session must carry now.
+  {
+    microide::workspace::EditorSplitTree tree;
+    tree.InsertLeaf(0, microide::workspace::EditorSplitOrientation::Horizontal, false);
+    tree.ResizeDivider(tree.root(), 0, 0.4f);
+    session.split_tree = tree.Flatten();
+  }
   session.right_pane_visible = true;
   session.right_pane_width = 312.0f;
   session.right_pane_mode = static_cast<std::uint8_t>(microide::workspace::DebugPaneMode::Watch);
@@ -248,16 +252,17 @@ PersistedProjectSessionState BuildProjectSessionFixture() {
 // over-cap group's payload was never materialized/validated.
 void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
   PersistedProjectSessionState session;
-  PersistedEditorGroupState group_zero;
-  PersistedEditorGroupState group_one;
-  for (PersistedEditorGroupState* g : {&group_zero, &group_one}) {
+  for (std::size_t i = 0; i < microide::workspace::kMaxEditorGroups; ++i) {
+    PersistedEditorGroupState group;
     PersistedEditorTabState tab;
     tab.kind = "editor";
     tab.path = "/tmp/keep.txt";
-    g->tabs.push_back(std::move(tab));
+    group.tabs.push_back(std::move(tab));
+    session.groups.push_back(std::move(group));
   }
-  // A third group whose payload would FAIL to decode (over the 4096 per-group tab cap):
-  // if the decoder reached and validated it, the whole record would fail closed.
+  // One group past the cap, whose payload would FAIL to decode (over the 4096
+  // per-group tab cap): if the decoder reached and validated it, the whole record
+  // would fail closed.
   PersistedEditorGroupState over_cap_group;
   for (std::size_t i = 0; i < 4097; ++i) {
     PersistedEditorTabState tab;
@@ -265,15 +270,16 @@ void TestPersistedStateProjectSessionSkipsOverCapGroupsBeforeDecoding() {
     tab.path = "/tmp/x" + std::to_string(i) + ".txt";
     over_cap_group.tabs.push_back(std::move(tab));
   }
-  session.groups = {std::move(group_zero), std::move(group_one), std::move(over_cap_group)};
+  session.groups.push_back(std::move(over_cap_group));
 
   std::vector<std::byte> record;
   Expect(EncodeProjectSessionRecord(session, &record),
-         "encoding a three-group session should write bytes");
+         "encoding an over-cap group count should write bytes");
   PersistedProjectSessionState decoded;
   Expect(DecodeProjectSessionRecord(record, &decoded),
-         "an over-cap third group must be skipped before decoding, not fail the whole record");
-  Expect(decoded.groups.size() == 2, "only the first two editor groups are kept");
+         "a group past the cap must be skipped before decoding, not fail the whole record");
+  Expect(decoded.groups.size() == microide::workspace::kMaxEditorGroups,
+         "only as many editor groups as the editor area can hold are kept");
 }
 
 void TestPersistedStateProjectSessionDecodeHonorsTabCap() {
@@ -312,9 +318,11 @@ void TestPersistedStateProjectSessionRoundTripOmitsChatRegistry() {
              microide::workspace::OutgoingBaseChoice::Kind::SpecificRef &&
              decoded_session.outgoing_base_choice.custom_ref == "release/2.0",
          "project session outgoing base choice should round-trip");
-  Expect(decoded_session.group_split_orientation ==
-             static_cast<std::uint8_t>(microide::workspace::EditorSplitOrientation::Horizontal) &&
-             std::fabs(decoded_session.group_split_fraction - 0.4f) < 0.0001f,
+  microide::workspace::EditorSplitTree decoded_tree;
+  Expect(decoded_tree.Load(decoded_session.split_tree) && decoded_tree.leaf_count() == 2 &&
+             decoded_tree.node(decoded_tree.root()).orientation ==
+                 microide::workspace::EditorSplitOrientation::Horizontal &&
+             std::fabs(decoded_tree.node(decoded_tree.root()).weights[0] - 0.4f) < 0.0001f,
          "project session group split layout should round-trip");
   Expect(decoded_session.groups.size() == 2 &&
              decoded_session.groups[0].tabs.size() == 2 &&

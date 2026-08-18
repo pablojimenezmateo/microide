@@ -11,7 +11,7 @@ namespace microide::workspace {
 class EditorMouseCoordinator {
  public:
   struct Operations {
-    std::function<WorkspaceShell::EditorPaneLayouts(const SDL_FRect&)>
+    std::function<WorkspaceShell::EditorPaneLayouts(const WorkspaceLayout&)>
         compute_editor_pane_layouts;
     std::function<editor::TextViewport*()> active_editor_viewport;
     // Resolves the viewport backing a specific split pane (by group), without

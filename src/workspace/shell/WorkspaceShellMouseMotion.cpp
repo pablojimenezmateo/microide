@@ -261,17 +261,24 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     }
 
     if (context_.interaction_state.drag_target == DragTarget::EditorSplitDivider) {
-      const SDL_FRect es = drag_layout.editor_surface;
-      ProjectWorkspaceState& ps = context_.current_project_state;
-      float fraction = ps.group_split_fraction;
-      if (ps.group_split_orientation == EditorSplitOrientation::Horizontal && es.h > 0.0f) {
-        fraction = (static_cast<float>(event.motion.y) - es.y) / es.h;
-      } else if (es.w > 0.0f) {
-        fraction = (static_cast<float>(event.motion.x) - es.x) / es.w;
+      // Re-walk the tree for the divider being dragged: `pair_start`/`pair_extent`
+      // are the span the two panes share, so the pointer converts straight into
+      // that pair's share and no other pane in the row moves.
+      const std::uint8_t node = context_.interaction_state.drag_editor_split_node;
+      const std::uint8_t boundary = context_.interaction_state.drag_editor_split_boundary;
+      for (const EditorSplitDividerRect& divider :
+           ComputeEditorGroupRectsForState(drag_layout).dividers) {
+        if (divider.node != node || divider.boundary != boundary || divider.pair_extent <= 0.0f) {
+          continue;
+        }
+        const float pointer = divider.vertical ? static_cast<float>(event.motion.x)
+                                               : static_cast<float>(event.motion.y);
+        context_.current_project_state.editor_split.ResizeDivider(
+            node, boundary, (pointer - divider.pair_start) / divider.pair_extent);
+        MarkLayoutDirty();
+        EnsureRedraw([this]() { RequestWindowRedraw(); });
+        break;
       }
-      ps.group_split_fraction = std::clamp(fraction, 0.1f, 0.9f);
-      MarkLayoutDirty();
-      EnsureRedraw([this]() { RequestWindowRedraw(); });
       return true;
     }
 

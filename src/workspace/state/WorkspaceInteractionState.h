@@ -125,9 +125,9 @@ struct TabStripSlide {
 
 // Two, because an editor tab dragged across a split animates BOTH strips at once
 // — the source closes the hole the lifted tab left while the destination opens a
-// gap at the insertion slot — and `kMaxEditorGroups` (WorkspaceLayout.h) caps a
-// split at two groups. Spelled here rather than included so this header keeps no
-// layout dependency.
+// gap at the insertion slot — and a drag has exactly one source strip and one
+// strip under the pointer however many groups the editor area holds. Unrelated to
+// `kMaxEditorGroups`, which bounds the panes, not the animating strips.
 inline constexpr std::size_t kMaxAnimatingTabStrips = 2;
 
 // Chrome-like sliding reorder animation. While a tab drag is live, neighbor tabs
@@ -171,7 +171,11 @@ struct InteractionState {
   bool mouse_selecting = false;
   DragTarget drag_target = DragTarget::None;
   float drag_scrollbar_offset = 0.0f;
-  std::size_t drag_editor_split_divider_index = 0;
+  // The split divider being dragged, addressed in the split tree rather than by
+  // position: a live drag re-walks the tree every motion event, and a node +
+  // boundary pair still names the same two panes after the resize moves them.
+  std::uint8_t drag_editor_split_node = 0;
+  std::uint8_t drag_editor_split_boundary = 0;
   TabDragState tab_drag;
   TabSlideState tab_slide;
   // Sub-tick wheel accumulators. High-resolution trackpads and touchpads emit

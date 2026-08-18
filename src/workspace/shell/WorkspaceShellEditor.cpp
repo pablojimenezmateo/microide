@@ -545,7 +545,7 @@ std::size_t WorkspaceShell::CountOpenBufferViews(const std::filesystem::path& pa
   }
   const std::filesystem::path normalized = path.lexically_normal();
   std::size_t count = 0;
-  // Count across every editor group: a buffer shared by both groups in a split
+  // Count across every editor group: a buffer shared by several panes of a split
   // must not be reported as closed until the last view in either group is gone.
   for (const EditorGroup& group : context_.current_project_state.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {

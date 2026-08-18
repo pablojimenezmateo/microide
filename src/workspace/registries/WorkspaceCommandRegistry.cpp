@@ -223,8 +223,11 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
                  "Split Editor Right", ""},
       ActionSpec{ActionId::SplitEditorDown, "split-down", "split-down [path]",
                  "Split Editor Down", ""},
+      // Cycles through the editor panes in layout order (VS Code's "Focus Next
+      // Group"); the command name predates the n-way editor area and is kept so
+      // existing keybindings and scripts still resolve.
       ActionSpec{ActionId::FocusOtherGroup, "focus-other-group", "focus-other-group",
-                 "Focus Other Editor Group", ""},
+                 "Focus Next Editor Group", ""},
       ActionSpec{ActionId::CloseGroup, "close-group", "close-group", "Close Editor Group", ""},
       ActionSpec{ActionId::CloseActiveTab, "", "", "Close Tab", "Ctrl+W"},
       ActionSpec{ActionId::CloseAllTabs, "", "", "Close All Tabs", ""},

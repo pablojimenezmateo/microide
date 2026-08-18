@@ -13,14 +13,9 @@
 #include "compare/ComparePresentationModel.h"
 #include "compare/MergeModel.h"
 #include "util/InlineVector.h"
+#include "workspace/EditorSplitTree.h"
 
 namespace microide::workspace {
-
-// The editor area hosts at most this many groups (one split, two panes). This is
-// the single definition of that cap: the surface split, the per-group tab-strip
-// caches, and the session decoder all read it, and it is the capacity of every
-// per-group inline container, so raising it cannot leave one of them behind.
-inline constexpr std::size_t kMaxEditorGroups = 2;
 
 enum class LayoutMode : std::uint8_t {
   Regular = 0,
@@ -194,36 +189,40 @@ struct ScrollSurfaceLayout {
   std::size_t max_horizontal_scroll = 0;
 };
 
-struct EditorSplitAxisLayout {
-  bool vertical = true;
-  float total_extent = 0.0f;
-  float divider_thickness = 0.0f;
-  float min_pane_extent = 0.0f;
-  std::vector<float> extents;
-  std::vector<SDL_FRect> child_rects;
-  std::vector<SDL_FRect> divider_rects;
-};
 
 // Rects for one editor group's chrome. `breadcrumb` has w==0 when the group has
-// no breadcrumb band (the stacked second group, which synthesizes only a tab
-// strip above its surface).
+// no breadcrumb band (any pane that does not start at the top of the editor
+// area, which synthesizes only a tab strip above its surface).
 struct EditorGroupRects {
   SDL_FRect tab_strip{};
   SDL_FRect breadcrumb{};
   SDL_FRect editor_surface{};
 };
 
-// Layout of 1 or 2 editor groups carved from the editor column. For a single
-// group the rects are byte-identical to `layout.tab_strip` / `.breadcrumb` /
-// `.editor_surface`. For two groups they are split side-by-side (vertical
-// divider) or stacked (horizontal divider) at `first_fraction`.
+// One divider between two adjacent panes of a split branch. `node`/`boundary`
+// address it in the tree (stable across a resize, which is what a live drag
+// needs); `pair_start`/`pair_extent` are the axis span the two panes SHARE, so a
+// drag converts a pointer position into that pair's share without re-walking the
+// tree or knowing where the branch sits.
+struct EditorSplitDividerRect {
+  SDL_FRect rect{};
+  std::uint8_t node = 0;
+  std::uint8_t boundary = 0;
+  bool vertical = true;  // true: separates side-by-side panes
+  float pair_start = 0.0f;
+  float pair_extent = 0.0f;
+};
+
+// Rects for every editor group carved out of the editor column, in visual order
+// (== editor group order). For a single group the rects are byte-identical to
+// `layout.tab_strip` / `.breadcrumb` / `.editor_surface`.
 struct EditorGroupRectsLayout {
   // Heap-free: this is rebuilt on hit-test, cursor-shape, redraw-rect and render
   // paths (three times per mouse-motion event during a selection drag), and it
-  // carries one or two 48-byte structs — see TD-2026-08-06-145.
+  // carries at most `kMaxEditorGroups` 48-byte structs — see TD-2026-08-06-145.
   util::InlineVector<EditorGroupRects, kMaxEditorGroups> groups;
-  std::optional<SDL_FRect> divider;  // present iff two groups
-  bool vertical_divider = true;      // true: side-by-side; false: stacked
+  // One per adjacent pane pair, in the same visual order.
+  util::InlineVector<EditorSplitDividerRect, kMaxEditorGroups - 1> dividers;
 };
 
 inline constexpr float kWorkspaceHeaderHeight = 26.0f;
@@ -316,17 +315,12 @@ WorkspaceLayout ComputeLayout(float window_width,
                               bool right_pane_visible = false,
                               float right_pane_width = 0.0f,
                               bool project_tab_strip_visible = true);
-std::optional<EditorSplitAxisLayout> ComputeEditorSplitAxisLayout(
-    const SDL_FRect& rect,
-    bool vertical,
-    std::span<const float> size_fractions);
-// Carve the editor column into `group_count` (1 or 2) editor-group rects.
-// `vertical_divider` selects side-by-side (true) vs stacked (false); ignored for
-// a single group. `first_fraction` is the first group's share of the split axis.
+// Carve the editor column into one rect set per leaf of `split`, in visual order.
+// A single-leaf tree hands back the layout's own strip/breadcrumb/surface rects
+// unchanged; every deeper tree lays its branches out along their axis with the
+// per-child weights and reports the dividers between them.
 EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
-                                               std::size_t group_count,
-                                               bool vertical_divider,
-                                               float first_fraction);
+                                               const EditorSplitTree& split);
 bool Contains(const SDL_FRect& rect, float x, float y);
 // Exact four-float equality for SDL_FRect.
 inline bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {

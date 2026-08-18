@@ -238,7 +238,7 @@ bool EditorMouseCoordinator::HandleGutterContextMenu(const SDL_Event& event,
   if (!SettingFlagEnabled(debug_setting)) {
     return false;
   }
-  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
+  const auto panes = operations_.compute_editor_pane_layouts(layout);
   const auto pane_it = std::find_if(panes.begin(), panes.end(),
                                     [&](const WorkspaceShell::EditorPaneLayout& pane) {
                                       return Contains(pane.rect, event.button.x, event.button.y);
@@ -306,7 +306,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
+  const auto panes = operations_.compute_editor_pane_layouts(layout);
   const auto pane_it =
       std::find_if(panes.begin(), panes.end(),
                    [&](const WorkspaceShell::EditorPaneLayout& pane) {
@@ -582,7 +582,7 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
     return false;
   }
 
-  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
+  const auto panes = operations_.compute_editor_pane_layouts(layout);
   const auto active_pane =
       std::find_if(panes.begin(), panes.end(),
                    [](const WorkspaceShell::EditorPaneLayout& pane) { return pane.active; });
@@ -624,7 +624,7 @@ bool EditorMouseCoordinator::HandleDrag(const SDL_Event& event,
 bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
                                                    const WorkspaceLayout& layout) {
   util::PerformanceTrace::Scope perf_scope("EditorMouseCoordinator::HandleSelectionMotion");
-  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
+  const auto panes = operations_.compute_editor_pane_layouts(layout);
   const auto active_pane =
       std::find_if(panes.begin(), panes.end(),
                    [](const WorkspaceShell::EditorPaneLayout& pane) { return pane.active; });
@@ -800,7 +800,7 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
   // editors). Fall back to the active viewport when the pointer is not over any
   // pane rect (e.g. in a divider gap). Focus is intentionally left unchanged.
   editor::TextViewport* viewport = nullptr;
-  const auto panes = operations_.compute_editor_pane_layouts(layout.editor_surface);
+  const auto panes = operations_.compute_editor_pane_layouts(layout);
   const auto pane_it =
       std::find_if(panes.begin(), panes.end(),
                    [&](const WorkspaceShell::EditorPaneLayout& pane) {
@@ -839,7 +839,7 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
       text_renderer_,
       EditorMouseCoordinator::Operations{
           .compute_editor_pane_layouts =
-              [this](const SDL_FRect& rect) { return ComputeEditorPaneLayouts(rect); },
+              [this](const WorkspaceLayout& layout) { return ComputeEditorPaneLayouts(layout); },
           .active_editor_viewport = [this]() { return ActiveEditorViewport(); },
           .viewport_for_pane =
               [this](const EditorPaneLayout& pane) { return ViewportForPane(pane); },

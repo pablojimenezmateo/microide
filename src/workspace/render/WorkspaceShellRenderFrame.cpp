@@ -655,8 +655,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
   // Carve the editor surface into per-group rects once; both the pane layouts and
   // the split divider below are derived from this single split.
   const EditorGroupRectsLayout editor_surface_group_rects =
-      render_editor_surface ? ComputeEditorSurfaceGroupRects(layout.editor_surface)
-                            : EditorGroupRectsLayout{};
+      render_editor_surface ? ComputeEditorGroupRectsForState(layout) : EditorGroupRectsLayout{};
   const EditorPaneLayouts editor_panes =
       render_editor_surface ? EditorPaneLayoutsFromGroupRects(editor_surface_group_rects)
                             : EditorPaneLayouts{};
@@ -775,7 +774,7 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
     tls_pane_scroll_metrics.resize(panes.size());
     tls_pane_scroll_metrics_valid.assign(panes.size(), 0);
     // Per-group editor render: each pane resolves its own group's active viewport
-    // and folding model, so the two groups in a split scroll/fold independently.
+    // and folding model, so every pane in a split scrolls/folds independently.
     for (std::size_t pane_index = 0; pane_index < panes.size(); ++pane_index) {
       const EditorPaneLayout& pane = panes[pane_index];
       if (pane.group_index >= project_state.editor_groups.size()) {
@@ -992,11 +991,11 @@ void WorkspaceShell::RenderActiveWorkspaceSurface(
                          context_.interaction_state.drag_target == DragTarget::EditorHorizontalScrollbar);
       }
     }
-    for (const EditorSplitDividerLayout& divider :
-         EditorSplitDividerLayoutsFromGroupRects(editor_surface_group_rects)) {
+    for (const EditorSplitDividerRect& divider : editor_surface_group_rects.dividers) {
       const bool divider_active =
           context_.interaction_state.drag_target == DragTarget::EditorSplitDivider &&
-          divider.divider_index == context_.interaction_state.drag_editor_split_divider_index;
+          divider.node == context_.interaction_state.drag_editor_split_node &&
+          divider.boundary == context_.interaction_state.drag_editor_split_boundary;
       DrawFilledRect(renderer, divider.rect, divider_active ? theme_.accent : theme_.border);
     }
   }

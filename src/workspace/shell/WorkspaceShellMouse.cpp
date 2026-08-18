@@ -324,24 +324,25 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
     return true;
   }
 
-  // Editor-group split divider: grab it to resize the two groups.
+  // Editor-group split divider: grab it to resize the two panes it separates.
   if (event.button.button == SDL_BUTTON_LEFT) {
-    for (const EditorSplitDividerLayout& divider :
-         ComputeEditorSplitDividerLayouts(layout.editor_surface)) {
+    for (const EditorSplitDividerRect& divider :
+         ComputeEditorGroupRectsForState(layout).dividers) {
       // Grab region == cursor region: the resize cursor is shown over divider.rect
       // exactly (see CursorKindForPosition), so the drag starts in the same span and
       // does not extend past where the cursor changes.
       if (Contains(divider.rect, event.button.x, event.button.y)) {
         if (divider_reset_click) {
-          context_.current_project_state.group_split_fraction =
-              kWorkspaceDefaultEditorSplitFraction;
+          context_.current_project_state.editor_split.ResetDivider(divider.node,
+                                                                   divider.boundary);
           ClearDragState();
           MarkLayoutDirty();
           EnsureRedraw([this]() { RequestWindowRedraw(); });
           return true;
         }
         context_.interaction_state.drag_target = DragTarget::EditorSplitDivider;
-        context_.interaction_state.drag_editor_split_divider_index = divider.divider_index;
+        context_.interaction_state.drag_editor_split_node = divider.node;
+        context_.interaction_state.drag_editor_split_boundary = divider.boundary;
         return true;
       }
     }
@@ -400,7 +401,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
         return false;
       }
 
-      const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+      const auto panes = ComputeEditorPaneLayouts(layout);
       const auto pane_it = std::find_if(
           panes.begin(), panes.end(),
           [&](const EditorPaneLayout& pane) {
@@ -770,7 +771,7 @@ std::optional<editor::CodeLensDecoration> WorkspaceShell::AboveLensAtPosition(fl
     return std::nullopt;
   };
 
-  const auto panes = ComputeEditorPaneLayouts(layout.editor_surface);
+  const auto panes = ComputeEditorPaneLayouts(layout);
   const editor::TextViewport* active_viewport = ActiveEditorViewport();
   if (panes.empty() && active_viewport != nullptr) {
     return resolve(*active_viewport, layout.editor_surface);

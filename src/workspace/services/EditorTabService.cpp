@@ -152,9 +152,11 @@ bool EditorTabService::MoveTabToGroup(std::size_t from_group,
 
 bool EditorTabService::MoveTabToNewGroup(std::size_t from_group,
                                          std::size_t from_index,
+                                         std::size_t target_group,
                                          EditorSplitOrientation orientation,
                                          bool insert_before) {
-  return coordinator_.MoveTabToNewGroup(from_group, from_index, orientation, insert_before);
+  return coordinator_.MoveTabToNewGroup(from_group, from_index, target_group, orientation,
+                                        insert_before);
 }
 
 std::optional<std::size_t> EditorTabService::FindIndexBySpecifier(

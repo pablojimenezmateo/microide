@@ -525,6 +525,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/coordinators/WorkspacePathMutationCoordinatorDirty.cpp
   src/workspace/coordinators/WorkspacePathMutationCoordinatorTabs.cpp
   src/workspace/coordinators/WorkspaceLifecycleCoordinator.cpp
+  src/workspace/EditorSplitTree.cpp
   src/workspace/WorkspaceLayout.cpp
   src/workspace/render/OverviewRuler.cpp
   src/workspace/WorkspaceLayoutMergeAndChrome.cpp

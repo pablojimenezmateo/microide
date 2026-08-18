@@ -678,7 +678,6 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](EditorSplitOrientation orientation) {
                 return SplitEditorGroup(orientation);
               },
-          .editor_group_count = [this]() { return EditorGroupCount(); },
           .focus_other_group = [this]() { return FocusOtherEditorGroup(); },
           .close_editor_group = [this]() { return CloseEditorGroup(); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },

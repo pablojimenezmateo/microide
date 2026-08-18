@@ -571,8 +571,8 @@ struct FileIconRenderCache {
 inline constexpr std::size_t kMaxOpenTabsPerGroup = 512;
 
 // A single editor group: its own tab strip (open_tabs + active index + scroll)
-// and its own home/placeholder surface. The editor area holds 1 or 2 groups
-// arranged side-by-side or stacked (see `ProjectWorkspaceState::editor_groups`).
+// and its own home/placeholder surface. The editor area holds 1..kMaxEditorGroups
+// of them, arranged by `ProjectWorkspaceState::editor_split`.
 struct EditorGroup {
   WelcomeSurfaceState welcome_surface;
   std::vector<TabEntry> open_tabs;
@@ -634,15 +634,17 @@ struct ProjectWorkspaceState {
   // cache behind it, so ApplyEditorPreferences (const, and called for every tab in
   // every group on any settings change) does no filesystem work once warm.
   project::EditorConfigResolver editor_config;
-  // Editor groups: always 1 or 2. Group 0 is the primary. `focused_group_index`
-  // selects which group owns keyboard focus / receives newly opened files.
+  // Editor groups: 1..kMaxEditorGroups, in visual order. `focused_group_index`
+  // selects which group owns keyboard focus / receives newly opened files, and
+  // `editor_split` says where each one sits — its leaves ARE these groups, in
+  // this order, so the two are only ever mutated together (TabCoordinator's group
+  // half owns both).
   std::vector<EditorGroup> editor_groups = std::vector<EditorGroup>(1);
   std::size_t focused_group_index = 0;
   // Monotonic source of TabEntry::stable_id (never reused within a project session).
   // Only advanced when a dirty prompt first stamps a tab (TD-2026-07-17-024).
   std::uint64_t next_tab_stable_id = 1;
-  EditorSplitOrientation group_split_orientation = EditorSplitOrientation::None;
-  float group_split_fraction = 0.5f;
+  EditorSplitTree editor_split;
 
   // Side-effect-free accessors. `editor_groups` is invariantly non-empty (the
   // mutation sites that erase/clear a group always restore at least one), and

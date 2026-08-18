@@ -1197,7 +1197,7 @@ void TestWorkspaceShellWheelScrollsPaneUnderPointer() {
 // the file as a new tab in the target group — never overwrite that group's active
 // tab in place, which silently discarded its unsaved edits (VS Code "open to the
 // side").
-void TestWorkspaceShellSplitIntoExistingGroupDoesNotClobberDirtyTab() {
+void TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path alpha = root / "alpha.txt";
@@ -1220,23 +1220,56 @@ void TestWorkspaceShellSplitIntoExistingGroupDoesNotClobberDirtyTab() {
   Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "EDIT "), "typing should dirty beta");
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(), "beta should be dirty");
 
-  // Focus back to group 0, then split gamma. Two groups already exist, so this must
-  // open gamma as a NEW tab in the other group (group 1), preserving beta's dirty tab.
-  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should return to group 0");
+  // Focus back to group 0 and split gamma. The editor area is n-way now, so this
+  // carves a THIRD pane; nothing may touch the dirty tab in the pane next door.
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell),
+         "focus should wrap from the last pane back to group 0");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
          "group 0 should be focused before the second split");
   Expect(RunCommandLine(shell, "split-right gamma.txt"), "split-right gamma should succeed");
 
-  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "the group cap stays at two");
-  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 1) == 2,
-         "gamma must open as a new tab in the target group, not replace the dirty tab");
-  const auto group1_paths = WorkspaceShellTestAccess::GroupTabPaths(shell, 1);
-  Expect(std::find(group1_paths.begin(), group1_paths.end(), beta.lexically_normal()) !=
-             group1_paths.end(),
-         "beta's dirty tab must survive the split into its group");
-  Expect(std::find(group1_paths.begin(), group1_paths.end(), gamma.lexically_normal()) !=
-             group1_paths.end(),
-         "gamma must be present in the target group");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3,
+         "splitting again should add a third pane rather than reuse an existing one");
+  Expect(WorkspaceShellTestAccess::GroupTabPaths(shell,
+                                                 WorkspaceShellTestAccess::FocusedGroupIndex(shell))
+                 .front() == gamma.lexically_normal(),
+         "gamma should be showing in the pane the split created");
+  // beta's group shifted right by the insertion; find it by content.
+  bool beta_survives = false;
+  for (std::size_t gi = 0; gi < WorkspaceShellTestAccess::EditorGroupCount(shell); ++gi) {
+    const auto paths = WorkspaceShellTestAccess::GroupTabPaths(shell, gi);
+    if (std::find(paths.begin(), paths.end(), beta.lexically_normal()) != paths.end()) {
+      beta_survives = paths.size() == 1 && WorkspaceShellTestAccess::GroupActiveViewport(shell, gi).dirty();
+    }
+  }
+  Expect(beta_survives, "beta's dirty tab must survive a split elsewhere, untouched");
+}
+
+// The editor area holds `kMaxEditorGroups` panes; the split action refuses past
+// that rather than silently rendering only the panes that fit.
+void TestWorkspaceShellSplitStopsAtTheGroupCap() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  WriteFile(alpha, "alpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open");
+
+  while (WorkspaceShellTestAccess::EditorGroupCount(shell) < microide::workspace::kMaxEditorGroups) {
+    Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+               shell, microide::workspace::EditorSplitOrientation::Vertical),
+           "splitting below the cap should succeed");
+  }
+  Expect(!WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "splitting at the cap should fail");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == microide::workspace::kMaxEditorGroups,
+         "the group count should stay at the cap");
+  Expect(WorkspaceShellTestAccess::EditorSplit(shell).leaf_count() ==
+             WorkspaceShellTestAccess::EditorGroupCount(shell),
+         "the split tree's leaves should stay in step with the editor groups");
 }
 
 void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
@@ -4558,6 +4591,149 @@ void TestWorkspaceShellEditorTabDragOverOwnPaneCenterOffersNoDrop() {
 
 // The last tab of a group has nothing to split off: carving it out would empty
 // the source group, which collapses straight back to where it started.
+// The editor area is n-way: an edge drop on a pane that is ALREADY half of a
+// split carves a third pane beside it, rather than being refused because "a split
+// exists". The new pane lands next to the pane that was dropped on, not next to
+// the one the tab came from.
+void TestWorkspaceShellEditorTabDragToPaneEdgeSplitsAnAlreadySplitPane() {
+  using microide::workspace::EditorBodyDropZone;
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  const std::filesystem::path file_c = root / "gamma.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+  WriteFile(file_c, "c\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_c), "tab c opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the fixture needs a second editor group");
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus returns to group 0");
+
+  // Drop group 0's tab on the BOTTOM edge of group 1's pane: a third pane stacked
+  // under group 1, inside its column.
+  const SDL_FRect other_pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
+  const float drop_x = other_pane.x + other_pane.w * 0.5f;
+  const float drop_y = other_pane.y + other_pane.h - 8.0f;
+  DragEditorTabTo(shell, 0, 0, drop_x, drop_y);
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == EditorBodyDropZone::Bottom,
+         "the bottom fifth of an already-split pane still offers a split drop");
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_group_index == 1,
+         "the drop targets the pane under the pointer");
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT), "release commits the split");
+
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3,
+         "dropping on a split pane's edge adds a third pane");
+  Expect(WorkspaceShellTestAccess::EditorSplit(shell).leaf_count() == 3,
+         "the split tree gains a leaf with the group");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::Vertical,
+         "the outermost split stays side-by-side");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 2,
+         "focus follows the tab into the pane it carved out, after the target pane");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 2).path() == file_a.lexically_normal(),
+         "the new pane holds the dragged tab");
+
+  // Geometry: the new pane sits under the pane it was dropped on, in the same
+  // column, and the two share that column's width.
+  const SDL_FRect target = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
+  const SDL_FRect carved = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 2);
+  Expect(carved.x == target.x && carved.w == target.w,
+         "the carved pane shares the column it was dropped into");
+  Expect(carved.y > target.y, "a bottom-edge drop stacks the new pane below the target");
+}
+
+// The last tab of ANOTHER pane is a real edge drop: that pane collapses and the
+// target pane gains a neighbour. Only splitting a pane with its own only tab is
+// the no-op.
+void TestWorkspaceShellEditorTabDragToPaneEdgeMovesAcrossPanes() {
+  using microide::workspace::EditorBodyDropZone;
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  const std::filesystem::path file_b = root / "beta.cpp";
+  WriteFile(file_a, "a\n");
+  WriteFile(file_b, "b\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_b), "tab b opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the fixture needs a second editor group");
+  // Group 1 holds a single (cloned) tab; drag it onto group 0's top edge.
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 1) == 1, "group 1 has one tab");
+
+  const SDL_FRect target_pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 0);
+  const float drop_x = target_pane.x + target_pane.w * 0.5f;
+  const float drop_y = target_pane.y + 8.0f;
+  DragEditorTabTo(shell, 1, 0, drop_x, drop_y);
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == EditorBodyDropZone::Top,
+         "another pane's lone tab may still be dropped on an edge");
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT), "release commits the drop");
+
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "the emptied source pane collapses as the new one appears");
+  Expect(WorkspaceShellTestAccess::EditorSplit(shell).leaf_count() == 2,
+         "the split tree tracks the collapse");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::Horizontal,
+         "the surviving split is the stacked one the drop created");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "a top-edge drop seats the pane ahead of the target, and focus follows it");
+}
+
+// Dragging one divider of a three-pane row resizes only the two panes it
+// separates; the third keeps its width (VS Code's grid sash behaviour).
+void TestWorkspaceShellEditorSplitDividerDragMovesOnlyItsPair() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  WriteFile(file_a, "a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split once");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split again for a three-pane row");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3, "three panes");
+
+  const auto dividers = WorkspaceShellTestAccess::EditorSplitDividerRects(shell);
+  Expect(dividers.size() == 2, "a three-pane row has two dividers");
+  const float width_zero_before = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 0).w;
+  const float width_one_before = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1).w;
+  const float width_two_before = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 2).w;
+  const SDL_FRect first = dividers[0].rect;
+
+  Expect(SendMouseDown(shell, first.x + first.w * 0.5f, first.y + first.h * 0.5f, SDL_BUTTON_LEFT),
+         "pressing the first divider starts a resize");
+  Expect(SendMouseMotion(shell, first.x - 120.0f, first.y + first.h * 0.5f, SDL_BUTTON_LMASK),
+         "dragging it left narrows the pane to its left");
+  Expect(SendMouseUp(shell, first.x - 120.0f, first.y + first.h * 0.5f, SDL_BUTTON_LEFT),
+         "release ends the resize");
+
+  const float width_zero_after = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 0).w;
+  const float width_one_after = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1).w;
+  const float width_two_after = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 2).w;
+  Expect(std::fabs(width_zero_after - (width_zero_before - 120.0f)) < 2.0f,
+         "the pane left of the divider gives up exactly the distance dragged");
+  Expect(std::fabs(width_one_after - (width_one_before + 120.0f)) < 2.0f,
+         "its right-hand neighbour takes exactly that width");
+  Expect(std::fabs(width_two_after - width_two_before) < 2.0f,
+         "the pane the divider does not touch keeps its width");
+}
+
 void TestWorkspaceShellEditorTabDragToPaneEdgeRefusesLoneTab() {
   using microide::workspace::EditorBodyDropZone;
   TemporaryDirectory temp_dir;
@@ -5576,17 +5752,27 @@ void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).scroll_line() == 40,
          "group 0 scroll should survive a focus switch (guards the original scroll-reset bug)");
 
-  // Splitting again is capped at two groups.
+  // Splitting the focused pane again stacks a third one inside its column: the
+  // outermost split stays side-by-side, and the new pane lands right after the
+  // pane it came from.
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
-         "splitting with two groups should still report success (retarget + refocus)");
-  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
-         "editor groups should be capped at two");
+         "splitting a pane of an existing split should succeed");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3,
+         "splitting a second time should add a third editor group");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "the pane carved below group 0 should be focused");
+  Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::Vertical,
+         "a nested split should not change the outermost orientation");
 
-  // Closing the focused group collapses back to a single full-area group.
+  // Closing the focused groups collapses back to a single full-area group.
+  Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
+         "close-group should succeed while more than one group exists");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2,
+         "closing a group should drop exactly that pane");
   Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell),
          "close-group should succeed while a second group exists");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1,
-         "closing a group should collapse back to one group");
+         "closing the last extra group should collapse back to one group");
   Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
          "the surviving group should become focused");
   Expect(WorkspaceShellTestAccess::GroupSplitOrientation(shell) == EditorSplitOrientation::None,
@@ -5637,11 +5823,21 @@ void TestWorkspaceShellSplitContextMenuAvailabilityAndTreeOpen() {
   Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).path() == file_a.lexically_normal(),
          "the original group should keep its own file");
 
-  // With a split now present, both items are greyed out (cap = 2 groups).
+  // A split already open is no reason to grey the items out — the editor area is
+  // n-way. They stay enabled right up to the pane cap.
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
+         "split-right should stay enabled while the editor area is below its cap");
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
+         "split-down should stay enabled while the editor area is below its cap");
+  while (WorkspaceShellTestAccess::EditorGroupCount(shell) < microide::workspace::kMaxEditorGroups) {
+    Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+               shell, microide::workspace::EditorSplitOrientation::Vertical),
+           "splitting below the cap should succeed");
+  }
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorRight),
-         "split-right should be disabled once a split exists");
+         "split-right should be disabled at the pane cap");
   Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell, ActionId::SplitEditorDown),
-         "split-down should be disabled once a split exists");
+         "split-down should be disabled at the pane cap");
 }
 
 // Right-clicking an editor tab and choosing "Reveal in File Tree" performs a full
@@ -5910,8 +6106,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeOffsets);
   AddTest(tests, "WorkspaceShell/TabMoveCommandSupportsRelativeForwardOffset",
           TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset);
-  AddTest(tests, "WorkspaceShell/SplitIntoExistingGroupDoesNotClobberDirtyTab",
-          TestWorkspaceShellSplitIntoExistingGroupDoesNotClobberDirtyTab);
+  AddTest(tests, "WorkspaceShell/SplitDoesNotClobberAnotherGroupsDirtyTab",
+          TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab);
+  AddTest(tests, "WorkspaceShell/SplitStopsAtTheGroupCap",
+          TestWorkspaceShellSplitStopsAtTheGroupCap);
   AddTest(tests, "WorkspaceShell/WheelScrollsPaneUnderPointer",
           TestWorkspaceShellWheelScrollsPaneUnderPointer);
   AddTest(tests, "WorkspaceShell/GotoAndJumpCommandsUseTypedNavigationRequests",
@@ -6099,6 +6297,12 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDragOverOwnPaneCenterOffersNoDrop);
   AddTest(tests, "WorkspaceShell/EditorTabDragToPaneEdgeRefusesLoneTab",
           TestWorkspaceShellEditorTabDragToPaneEdgeRefusesLoneTab);
+  AddTest(tests, "WorkspaceShell/EditorTabDragToPaneEdgeSplitsAnAlreadySplitPane",
+          TestWorkspaceShellEditorTabDragToPaneEdgeSplitsAnAlreadySplitPane);
+  AddTest(tests, "WorkspaceShell/EditorTabDragToPaneEdgeMovesAcrossPanes",
+          TestWorkspaceShellEditorTabDragToPaneEdgeMovesAcrossPanes);
+  AddTest(tests, "WorkspaceShell/EditorSplitDividerDragMovesOnlyItsPair",
+          TestWorkspaceShellEditorSplitDividerDragMovesOnlyItsPair);
   AddTest(tests, "WorkspaceShell/CrossGroupDragAnimatesBothStrips",
           TestWorkspaceShellCrossGroupDragAnimatesBothStrips);
   AddTest(tests, "WorkspaceShell/EditorTabDragAutoScrollsOverflowingStrip",
