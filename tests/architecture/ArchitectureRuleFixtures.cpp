@@ -570,6 +570,68 @@ void RunPerfCounterProducerRuleFixtures() {
          "perf-counter rule must fail loudly when it finds no counter declarations");
 }
 
+void RunEditorGroupsSplitTreeRuleFixtures() {
+  // The rule's claim is "a TU that reshapes the editor group vector also names the
+  // split tree", so both halves need pinning: a rule that flagged every mutation
+  // would break the two TUs that legitimately own them, and one whose code mask or
+  // method list was wrong would report green over the exact desync it exists to
+  // catch.
+  TemporaryDirectory groups_dir;
+  const std::filesystem::path& root = groups_dir.path();
+  std::filesystem::create_directories(root / "src/workspace/coordinators");
+
+  // Negative control: a group is erased and the tree is never told.
+  WriteFile(root / "src/workspace/coordinators/Groups.cpp",
+            "void Collapse(std::size_t gi) {\n"
+            "  state_.editor_groups.erase(state_.editor_groups.begin() + gi);\n"
+            "}\n");
+  Expect(CheckEditorGroupsMutateWithTheSplitTree(root).violations.size() == 1,
+         "editor-groups rule must flag a group erase in a TU that never names editor_split");
+
+  // Positive control: the same erase, with the tree kept in step.
+  WriteFile(root / "src/workspace/coordinators/Groups.cpp",
+            "void Collapse(std::size_t gi) {\n"
+            "  state_.editor_groups.erase(state_.editor_groups.begin() + gi);\n"
+            "  state_.editor_split.RemoveLeaf(gi);\n"
+            "}\n");
+  Expect(CheckEditorGroupsMutateWithTheSplitTree(root).violations.empty(),
+         "editor-groups rule must accept a mutation whose TU moves the split tree too");
+
+  // A mention in a comment or a string is not a mutation site.
+  WriteFile(root / "src/workspace/coordinators/Groups.cpp",
+            "// editor_groups.erase(it) used to live here.\n"
+            "const char* kDoc = \"editor_groups.push_back(group)\";\n"
+            "std::size_t Count() { return state_.editor_groups.size(); }\n");
+  const RuleResult commented = CheckEditorGroupsMutateWithTheSplitTree(root);
+  Expect(commented.violations.size() == 1 &&
+             commented.violations.front().message.find("vacuous") != std::string::npos,
+         "editor-groups rule must not match comments or string literals, and must say so loudly "
+         "when that leaves it scanning nothing");
+
+  // Reading the TREE is not moving it: a TU that only asks the split for geometry
+  // and then reshapes the vector is the desync the rule exists for.
+  WriteFile(root / "src/workspace/coordinators/Groups.cpp",
+            "void Collapse(std::size_t gi) {\n"
+            "  const auto rects = ComputeEditorGroupRects(layout, state_.editor_split);\n"
+            "  state_.editor_groups.erase(state_.editor_groups.begin() + gi);\n"
+            "}\n");
+  Expect(CheckEditorGroupsMutateWithTheSplitTree(root).violations.size() == 1,
+         "editor-groups rule must flag a TU that only reads the tree it fails to update");
+
+  // Reading the vector is not mutating it: `size()` and indexing stay legal in
+  // every TU, which is what keeps the rule from becoming a ban on the field.
+  WriteFile(root / "src/workspace/coordinators/Reader.cpp",
+            "auto& Group(std::size_t gi) { return state_.editor_groups[gi]; }\n"
+            "std::size_t Count() { return state_.editor_groups.size(); }\n");
+  WriteFile(root / "src/workspace/coordinators/Groups.cpp",
+            "void Add() {\n"
+            "  state_.editor_groups.push_back(EditorGroup{});\n"
+            "  state_.editor_split.InsertLeaf(0, orientation, false);\n"
+            "}\n");
+  Expect(CheckEditorGroupsMutateWithTheSplitTree(root).violations.empty(),
+         "editor-groups rule must leave read-only group access alone");
+}
+
 void RunViewportFiletypeMemoRuleFixtures() {
   // The rule's whole job is to distinguish two overloads of one name by arity, so
   // both halves have to be pinned: a rule that flagged every DetectFiletype call
@@ -838,6 +900,7 @@ void RunAllRuleFixtures() {
   RunWheelFocusRuleFixtures();
   RunMissingRuleTargetFixtures();
   RunPerfCounterProducerRuleFixtures();
+  RunEditorGroupsSplitTreeRuleFixtures();
   RunViewportFiletypeMemoRuleFixtures();
   RunPerfHarnessIsolationOrderRuleFixtures();
   RunPerfMeasureBodyRuleFixtures();

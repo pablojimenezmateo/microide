@@ -332,6 +332,85 @@ RuleResult CheckOverlayDismissalIsCentralized(const std::filesystem::path& repo_
   return result;
 }
 
+RuleResult CheckEditorGroupsMutateWithTheSplitTree(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "editor group mutations must carry the split tree with them";
+  result.hard_fail = true;
+  // `ProjectWorkspaceState::editor_split`'s leaves ARE `editor_groups`, in order:
+  // the pane rects, the per-group tab-strip caches and the focused index all read
+  // that correspondence. A site that inserts or erases a group without telling the
+  // tree leaves a pane with no rect, or a rect with no pane — and nothing notices,
+  // because a group past the last leaf is simply never drawn. So every mutation of
+  // the vector has to live in a TU that also names `editor_split`; today that is
+  // the tab coordinator's group half and the session restore, and a third one
+  // should have to think about the tree before it joins them.
+  const std::regex mutation_pattern(
+      R"(editor_groups\s*\.\s*(?:insert|erase|clear|push_back|emplace_back|emplace|resize|pop_back|assign)\s*\()");
+  // A STRUCTURAL tree call, not a bare mention: a TU that only reads the tree for
+  // geometry and reshapes the vector is exactly the desync this exists to catch.
+  const std::regex tree_pattern(
+      R"(editor_split\s*\.\s*(?:InsertLeaf|RemoveLeaf|Reset|ResetToEvenSplit|Load)\s*\()");
+  std::size_t scanned_mutations = 0;
+  for (const auto& entry :
+       std::filesystem::recursive_directory_iterator(repo_root / "src/workspace")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".inc") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    const auto in_code = [&is_code](std::size_t begin, std::size_t end) {
+      for (std::size_t i = begin; i < end && i < is_code.size(); ++i) {
+        if (!is_code[i]) {
+          return false;
+        }
+      }
+      return true;
+    };
+    bool names_tree = false;
+    for (std::sregex_iterator it(text.begin(), text.end(), tree_pattern), last; it != last; ++it) {
+      const std::size_t begin = static_cast<std::size_t>(it->position());
+      if (in_code(begin, begin + static_cast<std::size_t>(it->length()))) {
+        names_tree = true;
+        break;
+      }
+    }
+    for (std::sregex_iterator it(text.begin(), text.end(), mutation_pattern), last; it != last;
+         ++it) {
+      const std::size_t begin = static_cast<std::size_t>(it->position());
+      if (!in_code(begin, begin + static_cast<std::size_t>(it->length()))) {
+        continue;  // a mention in a comment or a string literal is not a mutation
+      }
+      ++scanned_mutations;
+      if (names_tree) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, begin),
+          .message = "this changes `editor_groups` in a TU that never calls a structural "
+                     "`editor_split` method (InsertLeaf/RemoveLeaf/Reset/ResetToEvenSplit/Load) "
+                     "— the split tree's leaves ARE the groups, so a group added or dropped here "
+                     "leaves the tree disagreeing about how many panes exist, and the extra group "
+                     "is silently never drawn. The check is per-TU: pairing each individual "
+                     "mutation with its tree call stays a reviewer's job",
+      });
+    }
+  }
+  if (scanned_mutations == 0) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "found no editor_groups mutation sites to check; this lint's scan broke and it "
+                   "has gone vacuous",
+    });
+  }
+  return result;
+}
+
 RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& repo_root) {
   RuleResult result;
   result.label = "direct GitRepository construction in workspace";

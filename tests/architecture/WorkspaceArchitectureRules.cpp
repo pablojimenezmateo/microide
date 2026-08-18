@@ -56,6 +56,7 @@ const std::vector<NamedRule>& WorkspaceArchitectureRuleList() {
       {"CheckNoSynchronousSubprocessInWorkspace", CheckNoSynchronousSubprocessInWorkspace},
       {"CheckNoDirectGitRepositoryInWorkspace", CheckNoDirectGitRepositoryInWorkspace},
       {"CheckOverlayDismissalIsCentralized", CheckOverlayDismissalIsCentralized},
+      {"CheckEditorGroupsMutateWithTheSplitTree", CheckEditorGroupsMutateWithTheSplitTree},
       {"CheckReactivationDoesNotReloadPlugins", CheckReactivationDoesNotReloadPlugins},
       {"CheckNoFallbackEditorViewportSymbols", CheckNoFallbackEditorViewportSymbols},
       {"CheckCoordinatorOperationsAreCalled", CheckCoordinatorOperationsAreCalled},

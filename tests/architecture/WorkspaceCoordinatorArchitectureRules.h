@@ -14,6 +14,7 @@ RuleResult CheckNoExecutorPostThenFutureGetInWorkspace(const std::filesystem::pa
 RuleResult CheckNoSynchronousSubprocessInWorkspace(const std::filesystem::path& repo_root);
 RuleResult CheckNoDirectGitRepositoryInWorkspace(const std::filesystem::path& repo_root);
 RuleResult CheckOverlayDismissalIsCentralized(const std::filesystem::path& repo_root);
+RuleResult CheckEditorGroupsMutateWithTheSplitTree(const std::filesystem::path& repo_root);
 RuleResult CheckReactivationDoesNotReloadPlugins(const std::filesystem::path& repo_root);
 RuleResult CheckNoFallbackEditorViewportSymbols(const std::filesystem::path& repo_root);
 RuleResult CheckCoordinatorOperationsAreCalled(const std::filesystem::path& repo_root);

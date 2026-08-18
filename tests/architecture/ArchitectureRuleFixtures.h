@@ -55,6 +55,10 @@ void RunPerfCounterProducerRuleFixtures();
 // Negative + positive control for CheckViewportFiletypeGoesThroughTheViewportMemo:
 // the two-argument (content-reading) overload must be flagged outside the memo and
 // the one-argument (path-only) overload must not be.
+// Editor groups and the split tree are one structure in two containers; the rule
+// keeps a TU from moving one without the other (see
+// RunEditorGroupsSplitTreeRuleFixtures).
+void RunEditorGroupsSplitTreeRuleFixtures();
 void RunViewportFiletypeMemoRuleFixtures();
 
 // Runs every fixture above.
