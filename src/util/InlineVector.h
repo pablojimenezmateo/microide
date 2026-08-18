@@ -106,7 +106,11 @@ class InlineVector {
   // *ordered* structures (editor panes left-to-right, a split branch's children)
   // where a new pane lands between two existing ones; `N` is small enough that the
   // shift is a few register moves.
-  constexpr void insert(size_type index, const T& value) {
+  // By value, not by const&: the shift below would clobber an argument that
+  // aliases a slot of this same vector (`v.insert(0, v[2])`), and every caller of
+  // an insert-shifting container eventually writes that line. `T` here is a
+  // small POD-ish type, so the copy is free.
+  constexpr void insert(size_type index, T value) {
     assert(size_ < N && "InlineVector capacity exceeded");
     assert(index <= size_ && "InlineVector insert out of range");
     if (size_ >= N || index > size_) {
@@ -115,7 +119,7 @@ class InlineVector {
     for (size_type i = size_; i > index; --i) {
       storage_[i] = std::move(storage_[i - 1]);
     }
-    storage_[index] = value;
+    storage_[index] = std::move(value);
     ++size_;
   }
 

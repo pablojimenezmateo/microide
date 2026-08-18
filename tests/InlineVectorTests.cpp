@@ -83,6 +83,35 @@ void TestInlineVectorHoldsNonTrivialElements() {
          "non-trivial elements survive both push_back overloads");
 }
 
+void TestInlineVectorInsertAndEraseShiftLiveElements() {
+  InlineVector<int, 5> values{1, 2, 4};
+  values.insert(2, 3);
+  Expect(values.size() == 4 && values[0] == 1 && values[1] == 2 && values[2] == 3 &&
+             values[3] == 4,
+         "insert shifts the tail right and lands the value at the index");
+  values.insert(0, 0);
+  Expect(values.size() == 5 && values[0] == 0 && values[4] == 4,
+         "insert at the front shifts everything");
+  values.erase(0);
+  Expect(values.size() == 4 && values[0] == 1 && values[3] == 4,
+         "erase closes the hole it leaves");
+  values.erase(values.size() - 1);
+  Expect(values.size() == 3 && values[2] == 3, "erasing the last element just shrinks");
+  values.pop_back();
+  Expect(values.size() == 2 && values[1] == 2, "pop_back drops the tail element");
+}
+
+// The shift inside insert() walks over the slots, so an argument that ALIASES one
+// of them would be read after it was overwritten if the parameter were a
+// reference. Splitting a pane's weight in half writes exactly this line.
+void TestInlineVectorInsertAcceptsAnAliasingValue() {
+  InlineVector<int, 4> values{10, 20, 30};
+  values.insert(0, values[2]);
+  Expect(values.size() == 4 && values[0] == 30 && values[1] == 10 && values[2] == 20 &&
+             values[3] == 30,
+         "inserting an element of the same vector copies it before the shift");
+}
+
 void TestInlineVectorDropsPushesPastCapacityInsteadOfCorrupting() {
   // Debug builds assert; release builds must still keep `size() <= capacity()`
   // so an over-push cannot walk off the backing array. Only exercised where
@@ -108,6 +137,10 @@ void RegisterInlineVectorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "InlineVector/EqualityComparesOnlyLiveElements",
           TestInlineVectorEqualityComparesOnlyLiveElements);
   AddTest(tests, "InlineVector/HoldsNonTrivialElements", TestInlineVectorHoldsNonTrivialElements);
+  AddTest(tests, "InlineVector/InsertAndEraseShiftLiveElements",
+          TestInlineVectorInsertAndEraseShiftLiveElements);
+  AddTest(tests, "InlineVector/InsertAcceptsAnAliasingValue",
+          TestInlineVectorInsertAcceptsAnAliasingValue);
   AddTest(tests, "InlineVector/DropsPushesPastCapacityInsteadOfCorrupting",
           TestInlineVectorDropsPushesPastCapacityInsteadOfCorrupting);
 }
