@@ -55,12 +55,17 @@ class TabCoordinator {
     std::function<void()> reveal_active_compare_selection;
     std::function<void()> reveal_active_merge_selection;
     std::function<void()> ensure_active_tab_visible;
+    // Every pane's strip, not just the focused one. Adding, removing or
+    // reindexing a group resizes EVERY pane's strip (two half-width strips where
+    // there was one full-width one), so a pane nobody touched can end up with its
+    // active tab scrolled out of view.
+    std::function<void()> ensure_all_active_tabs_visible;
     std::function<void()> reset_caret_blink;
     std::function<void(bool)> request_active_tab_redraw;
     std::function<void()> request_tab_strip_redraw;
     // Drop TabStripService's per-group label/width geometry cache. Required when a
     // group is added/removed/reindexed, since that cache keys only on
-    // (tab_count, window_width) and is indexed by group slot — a collapse that
+    // (tab_count, strip_width) and is indexed by group slot — a collapse that
     // shifts a group into another slot with the same tab_count/width would
     // otherwise render the destroyed group's cached titles for the survivor.
     std::function<void()> invalidate_tab_strip_geometry;
@@ -224,6 +229,7 @@ class TabCoordinator {
   // Shared tail for group split/focus/close: scroll the (new) focused group's
   // active tab into view and request the matching redraw.
   void RefreshFocusedGroupActiveTab(bool editor_redraw);
+  void EnsureEveryGroupActiveTabVisible();
   // Clone an editor tab for a split: copies the viewport (sharing the underlying
   // DocumentState for a live shared buffer) with a fresh folding model.
   static TabEntry CloneEditorTabForSplit(const TabEntry& tab);

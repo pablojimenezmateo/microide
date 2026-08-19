@@ -102,9 +102,10 @@ bool TabCoordinator::MoveTabToGroup(std::size_t from_group,
     (void)LoadEditorTabForActivation(landed.open_tabs[landed_index]);
   }
   // Both strips changed length, and the per-group geometry cache keys only on
-  // (tab_count, window_width) — without this drop the destination can render the
+  // (tab_count, strip_width) — without this drop the destination can render the
   // source's cached widths whenever the two happen to agree.
   operations_.invalidate_tab_strip_geometry();
+  EnsureEveryGroupActiveTabVisible();
   RefreshFocusedGroupActiveTab(true);
   return true;
 }
@@ -160,6 +161,7 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
   }
   HydrateGroupActiveTab(state_.editor_groups[state_.clamped_focused_group_index()]);
   operations_.invalidate_tab_strip_geometry();
+  EnsureEveryGroupActiveTabVisible();
   RefreshFocusedGroupActiveTab(true);
   return true;
 }
@@ -223,6 +225,7 @@ bool TabCoordinator::SplitEditorGroup(EditorSplitOrientation orientation) {
   state_.focused_group_index = carved_index;
   state_.surface.focus = FocusTarget::Editor;
   operations_.invalidate_tab_strip_geometry();
+  EnsureEveryGroupActiveTabVisible();
   RefreshFocusedGroupActiveTab(true);
   return true;
 }
@@ -237,6 +240,17 @@ bool TabCoordinator::FocusOtherGroup() {
   state_.surface.focus = FocusTarget::Editor;
   RefreshFocusedGroupActiveTab(true);
   return true;
+}
+
+// Called wherever a group is added, removed or reindexed: every pane's strip
+// changes width at that moment, so revealing only the focused pane's active tab
+// leaves the others scrolled wherever the previous, wider strip had put them.
+void TabCoordinator::EnsureEveryGroupActiveTabVisible() {
+  if (operations_.ensure_all_active_tabs_visible) {
+    operations_.ensure_all_active_tabs_visible();
+  } else if (operations_.ensure_active_tab_visible) {
+    operations_.ensure_active_tab_visible();
+  }
 }
 
 void TabCoordinator::RefreshFocusedGroupActiveTab(bool editor_redraw) {
@@ -273,6 +287,7 @@ void TabCoordinator::CloseGroupTab(std::size_t group_index, std::size_t index) {
       HydrateGroupActiveTab(group);
     }
     operations_.invalidate_tab_strip_geometry();
+    EnsureEveryGroupActiveTabVisible();
   }
 }
 
@@ -297,10 +312,11 @@ void TabCoordinator::CollapseGroupAt(std::size_t gi) {
     state_.focused_group_index = state_.editor_groups.size() - 1;
   }
   // Erasing a group reindexes the survivors; the per-group tab-strip geometry
-  // cache keys only on (tab_count, window_width) and is indexed by group slot, so
+  // cache keys only on (tab_count, strip_width) and is indexed by group slot, so
   // without this drop a survivor could render the destroyed group's cached tab
   // titles/widths whenever their tab_count and the window width happen to match.
   operations_.invalidate_tab_strip_geometry();
+  EnsureEveryGroupActiveTabVisible();
 }
 
 void TabCoordinator::CollapseFocusedGroup() {

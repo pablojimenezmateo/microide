@@ -93,7 +93,7 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
     // anchored in view.
     if (window_presentation_.logical_width != previous_width) {
       tab_strip_chrome_.EnsureActiveProjectVisible();
-      tab_strip_chrome_.EnsureActiveTabVisible();
+      tab_strip_chrome_.EnsureActiveTabVisibleForAllGroups();
       tab_strip_service_.InvalidateTabStripGeometry();
     }
   }

@@ -79,6 +79,8 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .reveal_active_compare_selection = [this]() { RevealActiveCompareSelection(); },
           .reveal_active_merge_selection = [this]() { RevealActiveMergeSelection(); },
           .ensure_active_tab_visible = [this]() { tab_strip_chrome_.EnsureActiveTabVisible(); },
+          .ensure_all_active_tabs_visible =
+              [this]() { tab_strip_chrome_.EnsureActiveTabVisibleForAllGroups(); },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .request_active_tab_redraw =
               [this](bool include_tree_sidebar) { RequestActiveTabRedraw(include_tree_sidebar); },
@@ -519,7 +521,7 @@ bool WorkspaceShell::OpenFileInNewTab(const std::filesystem::path& path) {
 bool WorkspaceShell::MoveActiveTabTo(std::size_t index) {
   // Reordering the open_tabs vector invalidates the cached display_titles /
   // tooltip_labels / widths in TabStripService, which only key on
-  // (tab_count, window_width). Without this drop, the next ComputeVisibleTabs
+  // (tab_count, strip_width). Without this drop, the next ComputeVisibleTabs
   // call hits a stale cache and the rendered tab labels stay in the
   // pre-reorder positions even though the underlying tabs have moved — so
   // the tab strip shows the wrong labels while the active editor content

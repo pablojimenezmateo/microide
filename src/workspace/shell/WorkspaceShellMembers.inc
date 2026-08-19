@@ -825,6 +825,11 @@
   // editor-group state, carved from `layout`. Single source of truth shared by
   // the render, cursor, and mouse paths so they cannot drift apart.
   EditorGroupRectsLayout ComputeEditorGroupRectsForState(const WorkspaceLayout& layout) const;
+  // Width of one pane's editor tab strip. With a split open a pane's strip is a
+  // fraction of the window, so the tab-scroll math has to size against THAT, not
+  // the window (which fits far more tabs and so never scrolled the active one
+  // into view). Falls back to the window width before the first layout exists.
+  float EditorGroupTabStripWidth(std::size_t group_index) const;
   std::size_t FocusedEditorGroupIndex() const;
   SDL_FRect EditorSurfaceBelowBanner(const SDL_FRect& editor_surface) const;
   ScrollSurfaceLayout ComputeEditorScrollLayout(const SDL_FRect& rect,

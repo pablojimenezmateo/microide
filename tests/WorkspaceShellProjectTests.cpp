@@ -1281,6 +1281,72 @@ void TestWorkspaceShellBreadcrumbIsPerPane() {
          "an out-of-range pane index resolves to the focused pane");
 }
 
+// The file finder (Ctrl+P) opens into the FOCUSED pane. With a split open it
+// opened into the left pane no matter which pane the user was in.
+void TestWorkspaceShellFileFinderOpensIntoTheFocusedPane() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "alpha.txt", "a\n");
+  WriteFile(root / "beta.txt", "b\n");
+  WriteFile(root / "gamma.txt", "g\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "file finder split fixture should open the project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  WorkspaceShellTestAccess::OpenFile(shell, root / "alpha.txt");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split right");
+  WorkspaceShellTestAccess::OpenFile(shell, root / "beta.txt");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the split pane is focused");
+
+  Expect(WorkspaceShellTestAccess::ExecuteFilesFromShortcut(shell), "Ctrl+P opens the file finder");
+  WorkspaceShellTestAccess::SetFileFinderQuery(shell, "gamma");
+  Expect(WorkspaceShellTestAccess::FileFinderResultCount(shell) >= 1, "gamma.txt should match");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter opens the selected file");
+
+  const auto right = WorkspaceShellTestAccess::GroupTabPaths(shell, 1);
+  const auto left = WorkspaceShellTestAccess::GroupTabPaths(shell, 0);
+  const std::filesystem::path gamma = (root / "gamma.txt").lexically_normal();
+  Expect(std::find(right.begin(), right.end(), gamma) != right.end(),
+         "the file finder must open into the focused pane");
+  Expect(std::find(left.begin(), left.end(), gamma) == left.end(),
+         "the unfocused pane must not receive the opened file");
+}
+
+// A pane's tab strip is a fraction of the window once the editor area is split.
+// The reveal math sized against the WINDOW, so it believed every tab fit and
+// never scrolled -- a file opened into a split pane landed on a tab parked off
+// the right edge of that pane's own strip, with only the overflow chip to hint
+// at it.
+void TestWorkspaceShellSplitPaneRevealsItsNewTab() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::vector<std::filesystem::path> files;
+  for (int i = 0; i < 8; ++i) {
+    files.push_back(root / ("a-source-file-" + std::to_string(i) + ".txt"));
+    WriteFile(files.back(), "x\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+  WorkspaceShellTestAccess::OpenFile(shell, files[0]);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split right");
+  const std::size_t focused = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+
+  for (std::size_t i = 1; i < files.size(); ++i) {
+    WorkspaceShellTestAccess::OpenFile(shell, files[i]);
+    const std::size_t active = WorkspaceShellTestAccess::GroupActiveTabIndex(shell, focused);
+    const SDL_FRect rect = WorkspaceShellTestAccess::GroupEditorTabRect(shell, focused, active);
+    Expect(rect.w > 0.0f,
+           "the tab just opened into the split pane must be visible in that pane's strip");
+  }
+}
+
 void TestWorkspaceShellSplitStopsAtTheGroupCap() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6143,6 +6209,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SplitDoesNotClobberAnotherGroupsDirtyTab",
           TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab);
   AddTest(tests, "WorkspaceShell/BreadcrumbIsPerPane", TestWorkspaceShellBreadcrumbIsPerPane);
+  AddTest(tests, "WorkspaceShell/SplitPaneRevealsItsNewTab",
+          TestWorkspaceShellSplitPaneRevealsItsNewTab);
+  AddTest(tests, "WorkspaceShell/FileFinderOpensIntoTheFocusedPane",
+          TestWorkspaceShellFileFinderOpensIntoTheFocusedPane);
   AddTest(tests, "WorkspaceShell/SplitStopsAtTheGroupCap",
           TestWorkspaceShellSplitStopsAtTheGroupCap);
   AddTest(tests, "WorkspaceShell/WheelScrollsPaneUnderPointer",

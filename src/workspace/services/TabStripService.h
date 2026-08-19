@@ -153,13 +153,15 @@ class TabStripService {
  private:
   struct TabStripGeometryCache {
     std::size_t tab_count = 0;
-    float window_width = 0.0f;
+    // The width of the strip these widths were laid out for. With a split open
+    // that is the PANE's strip, not the window.
+    float strip_width = 0.0f;
     std::vector<float> widths;
     std::vector<std::string> display_titles;
     std::vector<std::string> tooltip_labels;
     // Fingerprint of the per-tab dirty state at the last rebuild. The display
     // titles carry a leading "*" for dirty buffers, so a dirty flip changes the
-    // rendered strip even when tab_count/window_width are unchanged; folding it
+    // rendered strip even when tab_count/strip_width are unchanged; folding it
     // into the cache key rebuilds the titles/widths when a buffer is saved/edited.
     std::uint64_t dirty_fingerprint = 0;
     std::uint64_t version = 0;

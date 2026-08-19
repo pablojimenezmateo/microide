@@ -27,7 +27,9 @@ SDL_FRect WorkspaceShell::EditorSurfaceBelowBanner(const SDL_FRect& editor_surfa
 }
 
 std::size_t WorkspaceShell::FocusedEditorGroupIndex() const {
-  return context_.current_project_state.focused_group_index;
+  // Clamped: the stored index outlives a group collapse by one call, and every
+  // caller here indexes groups or compares against a pane ordinal with it.
+  return context_.current_project_state.clamped_focused_group_index();
 }
 
 editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayout& pane) {
@@ -70,6 +72,21 @@ WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRect
     panes.push_back(EditorPaneLayout{.group_index = i, .rect = surface, .active = active});
   }
   return panes;
+}
+
+float WorkspaceShell::EditorGroupTabStripWidth(std::size_t group_index) const {
+  const auto window_rect = CurrentWindowRect();
+  const float window_width = window_rect.has_value() ? window_rect->w : 1440.0f;
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    return window_width;
+  }
+  const EditorGroupRectsLayout rects = ComputeEditorGroupRectsForState(*layout);
+  if (group_index >= rects.groups.size()) {
+    return layout->tab_strip.w > 0.0f ? layout->tab_strip.w : window_width;
+  }
+  const float width = rects.groups[group_index].tab_strip.w;
+  return width > 0.0f ? width : window_width;
 }
 
 WorkspaceShell::EditorPaneLayouts WorkspaceShell::ComputeEditorPaneLayouts(

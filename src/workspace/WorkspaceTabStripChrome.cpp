@@ -214,14 +214,25 @@ void WorkspaceTabStripChrome::EnsureActiveTabVisible() {
   EnsureActiveTabVisibleForGroup(context_->current_project_state.focused_group_index);
 }
 
+void WorkspaceTabStripChrome::EnsureActiveTabVisibleForAllGroups() {
+  const std::size_t group_count = context_->current_project_state.editor_groups.size();
+  for (std::size_t i = 0; i < group_count; ++i) {
+    EnsureActiveTabVisibleForGroup(i);
+  }
+}
+
 void WorkspaceTabStripChrome::EnsureActiveTabVisibleForGroup(std::size_t group_index) {
   ProjectWorkspaceState& state = context_->current_project_state;
   group_index = ClampGroupIndex(state, group_index);
   if (group_index >= state.editor_groups.size()) {
     return;
   }
-  const auto window_rect = operations_.current_window_rect();
-  const float tab_strip_width = window_rect.has_value() ? window_rect->w : 1440.0f;
+  // The PANE's strip width, not the window's: with a split open the window fits
+  // several times as many tabs as the pane does, so sizing against it left the
+  // freshly-opened tab scrolled off the right edge of its own strip.
+  const float tab_strip_width = operations_.editor_group_tab_strip_width
+                                    ? operations_.editor_group_tab_strip_width(group_index)
+                                    : 1440.0f;
   tab_strip_service_->EnsureActiveEditorTabVisible(
       state.editor_groups[group_index], group_index, tab_strip_width, operations_.measure_width,
       [this, group_index](std::size_t i) { return operations_.editor_tab_display_title(group_index, i); },

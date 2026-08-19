@@ -40,6 +40,10 @@ class WorkspaceTabStripChrome {
     std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_display_title;
     std::function<std::string(std::size_t group_index, std::size_t index)> editor_tab_tooltip_label;
     std::function<std::optional<SDL_FRect>()> current_window_rect;
+    // Width of one editor group's tab strip. The project strip spans the window,
+    // but a split pane's editor strip does not — the reveal math must size
+    // against the pane it scrolls, not the window.
+    std::function<float(std::size_t group_index)> editor_group_tab_strip_width;
     std::function<float(std::string_view)> measure_width;
     std::function<void(std::string_view)> ensure_output_channel_tab_open;
     std::function<void(std::string_view)> close_output_channel_tab;
@@ -69,6 +73,10 @@ class WorkspaceTabStripChrome {
   // the render/mouse/cursor paths can drive both strips in a split.
   void EnsureActiveTabVisible();
   void EnsureActiveTabVisibleForGroup(std::size_t group_index);
+  // Every pane, not just the focused one: a window resize (or a layout change)
+  // narrows all the strips at once, and an unfocused pane's active tab is just
+  // as capable of ending up scrolled out of its own strip.
+  void EnsureActiveTabVisibleForAllGroups();
   const std::vector<VisibleStripTab>& ComputeVisibleTabs(const SDL_FRect& tab_strip) const;
   const std::vector<VisibleStripTab>& ComputeVisibleTabsForGroup(
       std::size_t group_index,

@@ -186,14 +186,14 @@ void TabStripService::RefreshEditorGeometryCache(const EditorGroup& group,
   TabStripGeometryCache& geometry = editor_tab_geometry_cache_[group_index];
   const std::size_t tab_count = group.open_tabs.size();
   const bool cache_hit = geometry.valid && geometry.tab_count == tab_count &&
-                         geometry.window_width == strip_width &&
+                         geometry.strip_width == strip_width &&
                          geometry.dirty_fingerprint == dirty_fingerprint;
   if (cache_hit) {
     return;
   }
 
   geometry.tab_count = tab_count;
-  geometry.window_width = strip_width;
+  geometry.strip_width = strip_width;
   geometry.dirty_fingerprint = dirty_fingerprint;
   geometry.widths.clear();
   geometry.display_titles.clear();
@@ -297,7 +297,7 @@ const std::vector<VisibleStripTab>& TabStripService::ComputeVisibleEditorTabs(
 
   // Memoize the built VisibleStripTab vector keyed by geometry-cache version
   // plus the inputs the BuildVisibleStripTabs loop varies on. The geometry
-  // cache itself only refreshes on (tab_count, window_width) changes, so the
+  // cache itself only refreshes on (tab_count, strip_width) changes, so the
   // version bumps capture genuine source-data turnover; this avoids rebuilding
   // ChromeTabRenderItem / VisibleStripTab vectors per mouse-motion frame when
   // nothing has actually changed.

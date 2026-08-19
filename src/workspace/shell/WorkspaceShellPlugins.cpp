@@ -169,6 +169,8 @@ WorkspaceShell::WorkspaceShell() {
                 return TabTooltipLabel(group_index, index);
               },
           .current_window_rect = [this]() { return CurrentWindowRect(); },
+          .editor_group_tab_strip_width =
+              [this](std::size_t group_index) { return EditorGroupTabStripWidth(group_index); },
           .measure_width =
               [this](std::string_view text) { return text_renderer_.MeasureWidth(text); },
           .ensure_output_channel_tab_open =
