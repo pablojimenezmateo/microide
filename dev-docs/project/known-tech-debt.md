@@ -389,6 +389,25 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-19-267 — splitting the editor empties the tab-strip band above the sidebar. [OPEN — cosmetic, but it is a visible layout discontinuity produced by an unrelated action.]
+
+`ComputeLayout` gives the unsplit editor its tab strip as a WINDOW-wide band
+(`MakeRect(0, …, window_width, kTabStripHeight)`), so with one pane the strip runs
+across the sidebar column too. `ComputeEditorGroupRects` carves the split panes'
+strips out of `layout.editor_area` instead, which starts to the right of the
+sidebar — so the moment you split, the ~290px of strip above the sidebar goes
+blank, and un-splitting fills it back in. Nothing is misdrawn; the band simply has
+no owner in the split case.
+
+Either shape is defensible (VS Code's tab strips never cross the side bar), but
+the two shapes should not depend on whether a split happens to be open. Picking
+"editor-area-wide, always" is the smaller change and the one that matches the
+split case — it means `layout.tab_strip` starts at `editor_area.x`, and the
+callers that assume a window-wide strip (the unsplit `ComputeEditorGroupRects`
+early return, the tab-strip hit tests, the redraw rects) all read the same field,
+so they follow it. Left alone here because it is a layout-contract change with a
+pixel-test blast radius well beyond the two focus/reveal bugs this session fixed.
+
 ### TD-2026-08-18-265 — at the pane cap, an edge drop that would keep the pane COUNT constant is still refused. [OPEN — narrow, and the refusal is honest (no overlay is painted); filed so the drop-zone rule is not read as arbitrary.]
 
 `ResolveEditorBodyDrop` offers the four edge zones only while
