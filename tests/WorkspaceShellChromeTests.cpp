@@ -3420,6 +3420,62 @@ void TestWorkspaceShellEditorClickOnWrappedContinuationRow() {
          "right-click retargeting resolves the continuation row the same way");
 }
 
+
+// Every pane in a split paints its own active tab, so before this they were
+// pixel-identical and nothing on screen said which pane the next Ctrl+P would
+// open into. VS Code's tab.unfocusedActiveBorderTop: the unfocused pane's accent
+// is dimmed toward the chrome behind it.
+void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  WriteFile(alpha, "alpha\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the dimming fixture needs a project tab so the editor strip paints");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the dimming fixture needs two panes");
+  const std::size_t focused = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+  const std::size_t unfocused = focused == 0 ? 1 : 0;
+
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+
+  const auto accent_pixel = [&](std::size_t group_index) {
+    const std::size_t active = WorkspaceShellTestAccess::GroupActiveTabIndex(shell, group_index);
+    const SDL_FRect rect = WorkspaceShellTestAccess::GroupEditorTabRect(shell, group_index, active);
+    Expect(rect.w > 0.0f, "both panes must show their active tab for this comparison");
+    return canvas.PixelAt(static_cast<int>(rect.x + rect.w * 0.5f),
+                          static_cast<int>(rect.y) + 1);
+  };
+  const SDL_Color focused_accent = accent_pixel(focused);
+  const SDL_Color unfocused_accent = accent_pixel(unfocused);
+  // Sampled against the live theme rather than MakeDefaultTheme(): the shell
+  // applies the user colorscheme, so the literal accent value is not knowable
+  // here. The contract is the RELATION between the two panes.
+  Expect(!(unfocused_accent.r == focused_accent.r && unfocused_accent.g == focused_accent.g &&
+           unfocused_accent.b == focused_accent.b),
+         "the unfocused pane's active tab must not paint the same accent as the focused one; both " +
+             std::to_string(focused_accent.r) + "," + std::to_string(focused_accent.g) + "," +
+             std::to_string(focused_accent.b));
+  const auto luminance = [](SDL_Color c) {
+    return 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  };
+  Expect(luminance(unfocused_accent) < luminance(focused_accent),
+         "the unfocused pane's accent is the dimmer of the two");
+  // ...but still an accent: dimmed toward the chrome, not erased into it.
+  const SDL_FRect strip = WorkspaceShellTestAccess::GroupTabStripRect(shell, unfocused);
+  const SDL_Color strip_background =
+      canvas.PixelAt(static_cast<int>(strip.x + strip.w) - 3, static_cast<int>(strip.y) + 1);
+  Expect(!(unfocused_accent.r == strip_background.r && unfocused_accent.g == strip_background.g &&
+           unfocused_accent.b == strip_background.b),
+         "the unfocused pane's accent must stay visible against its strip");
+}
+
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TabSwitchDefersLspHydration",
           TestWorkspaceShellTabSwitchDefersLspHydration);
@@ -3580,6 +3636,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",
           TestWorkspaceShellSettingsAndHelpDimTheEditorBehindThem);
+  AddTest(tests, "WorkspaceShell/UnfocusedSplitPaneTabIsDimmed",
+          TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed);
 }
 
 }  // namespace microide::tests

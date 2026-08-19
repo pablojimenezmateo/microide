@@ -59,6 +59,10 @@ struct StripTabPalette {
   SDL_Color inactive_text{};
   SDL_Color active_glyph{};
   SDL_Color inactive_glyph{};
+  // Accent edge drawn along an active tab. Zero alpha (the default) means
+  // `theme.accent`; the editor strips of UNFOCUSED split panes pass a dimmed one
+  // so the focused pane's active tab is the only fully-lit tab on screen.
+  SDL_Color active_accent{};
 };
 
 struct StripTabStyle {
@@ -967,7 +971,8 @@ inline void DrawStripTab(const render::TextRenderer& text_renderer,
         style.accent_edge == StripAccentEdge::Top
             ? SDL_FRect{rect.x, rect.y, rect.w, 2.0f}
             : SDL_FRect{rect.x, rect.y + rect.h - 2.0f, rect.w, 2.0f};
-    FillRect(renderer, accent, theme.accent);
+    FillRect(renderer, accent,
+             palette.active_accent.a != 0 ? palette.active_accent : theme.accent);
   }
   float text_left_padding = style.text_left_padding;
   if (show_badge && style.badge_size > 0.0f && !badge_text.empty()) {

@@ -212,8 +212,28 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
     render::OutlineRect(renderer, region, theme_.accent);
   }
 
+  // VS Code's tab.unfocusedActive* colours: with a split open, EVERY pane paints
+  // its own active tab, so an identically-lit tab in each pane leaves nothing on
+  // screen saying which pane the next Ctrl+P / Ctrl+W / keystroke will act on.
+  // Dim the accent, fill and label of a pane that does not hold focus.
+  const StripTabPalette unfocused_group_tab_palette{
+      .active_fill = render::BlendColors(theme_.chrome_active, theme_.chrome_background, 0.55f),
+      .inactive_fill = chrome_tab_palette.inactive_fill,
+      .hover_fill = chrome_tab_palette.hover_fill,
+      .active_text = render::BlendColors(theme_.chrome_active_text, theme_.text_muted, 0.55f),
+      .inactive_text = chrome_tab_palette.inactive_text,
+      .active_glyph = chrome_tab_palette.active_glyph,
+      .inactive_glyph = chrome_tab_palette.inactive_glyph,
+      .active_accent = render::BlendColors(theme_.accent, theme_.chrome_background, 0.6f),
+  };
+  const std::size_t focused_group_index = FocusedEditorGroupIndex();
   for (std::size_t gi = 0; gi < editor_group_rects.groups.size(); ++gi) {
     const SDL_FRect group_tab_strip = editor_group_rects.groups[gi].tab_strip;
+    // A single pane is always the focused one; only a split can hold a stale tab.
+    const StripTabPalette& group_tab_palette =
+        (editor_group_rects.groups.size() > 1 && gi != focused_group_index)
+            ? unfocused_group_tab_palette
+            : chrome_tab_palette;
     if (editor_group_rects.groups.size() > 1) {
       DrawFilledRect(renderer, group_tab_strip, theme_.chrome_background);
       DrawFilledRect(renderer,
@@ -234,7 +254,7 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                        .close_right_reserve = 0.0f,
                        .accent_edge = StripAccentEdge::Top,
                    },
-                   chrome_tab_palette);
+                   group_tab_palette);
     } else if (HasActiveProjectCatalogEntry()) {
       for (const VisibleStripTab& tab : visible_tabs) {
         if (tab_lifted(TabDragKind::Editor, gi, tab.index)) {
@@ -252,12 +272,12 @@ void WorkspaceShell::RenderWindowChrome(SDL_Renderer* renderer,
                          .close_right_reserve = 46.0f,
                          .accent_edge = StripAccentEdge::Top,
                      },
-                     chrome_tab_palette, tab_hovered(rect));
+                     group_tab_palette, tab_hovered(rect));
         draw_tab_close_button(close_rect,
-                              tab.active ? chrome_tab_palette.active_glyph
-                                         : chrome_tab_palette.inactive_glyph,
-                              tab.active ? chrome_tab_palette.active_text
-                                         : chrome_tab_palette.inactive_text);
+                              tab.active ? group_tab_palette.active_glyph
+                                         : group_tab_palette.inactive_glyph,
+                              tab.active ? group_tab_palette.active_text
+                                         : group_tab_palette.inactive_text);
       }
       const auto tab_overflow =
           tab_strip_chrome_.ComputeTabOverflowControlsForGroup(gi, group_tab_strip, visible_tabs);
