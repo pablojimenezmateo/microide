@@ -37,6 +37,20 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **A file opened into a split pane landed on a tab you could not see.** The
+  tab-scroll reveal sized the strip it was scrolling by the WINDOW width, not the
+  pane's. With the editor area split that is two to eight times too wide, so the
+  math concluded every tab already fit and never scrolled: the pane's buffer and
+  breadcrumb showed the file you had just opened while its tab sat past the right
+  edge of its own strip, with only the overflow chip to hint at it. Every pane's
+  strip is also re-revealed when a pane is added, removed or resized — those
+  change every strip's width at once, not just the focused one's.
+- **Every pane in a split painted a fully-lit active tab.** Each pane draws its
+  own active tab, and they were pixel-identical, so nothing on screen said which
+  pane owned focus — and the next Ctrl+P opened into whichever pane you had last
+  clicked, not the one you were reading. The unfocused pane's active tab is dimmed
+  now (accent, fill and label), the way VS Code's `tab.unfocusedActive*` colours
+  do it.
 - **The breadcrumb named the focused pane's file over every column.** The band was
   painted once across the whole editor area from the focused pane's active tab, so
   with a split open the left column's breadcrumb named whatever the right column
