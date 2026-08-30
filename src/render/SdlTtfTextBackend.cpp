@@ -471,17 +471,22 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
   const int total_width_px =
       std::max(1, static_cast<int>(std::ceil(static_cast<float>(text.size()) * cell_width_px)));
 
-  SDL_Surface* composite = SDL_CreateSurface(total_width_px, font_height_px, texture_format_);
-  if (composite == nullptr) {
-    return nullptr;
-  }
-  // Start transparent. Atlas blits supply the visible pixels at exact cell
-  // positions; spaces and outside-cell gaps remain alpha=0.
-  if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
-    SDL_DestroySurface(composite);
-    return nullptr;
+  SDL_Surface* composite = nullptr;
+  {
+    util::PerformanceTrace::Scope alloc_scope("render::TextBackend::CompositeAllocate");
+    composite = SDL_CreateSurface(total_width_px, font_height_px, texture_format_);
+    if (composite == nullptr) {
+      return nullptr;
+    }
+    // Start transparent. Atlas blits supply the visible pixels at exact cell
+    // positions; spaces and outside-cell gaps remain alpha=0.
+    if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
+      SDL_DestroySurface(composite);
+      return nullptr;
+    }
   }
 
+  util::PerformanceTrace::Scope blit_scope("render::TextBackend::CompositeGlyphBlits");
   for (std::size_t index = 0; index < text.size(); ++index) {
     const char ch = text[index];
     if (ch == ' ') {

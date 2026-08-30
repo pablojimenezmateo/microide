@@ -389,6 +389,56 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-276 — compositing a row string was 200 SDL blitter dispatches, and 93 % of the cost of rasterizing it. [RESOLVED 2026-08-30, same session it was found.]
+
+After [272](#td-2026-08-30-272) took line numbers out of the string-texture cache,
+`render::TextBackend::RasterizeString` became the largest app-side cost in the
+scroll scenarios — 84.5 ms over 2,052 calls in `editor_soft_wrap_long_line_scroll`,
+40 us per string.
+
+A cache miss on a string does three things: allocate a composite surface, clear it,
+and blit one glyph per character into it. Which of those it was is not something to
+guess, so the scope was split first:
+
+| | |
+| --- | ---: |
+| `render::TextBackend::CompositeGlyphBlits` | **78.8 ms** |
+| `render::TextBackend::CompositeAllocate` | 5.1 ms |
+
+The blits, by 15x. And not because of pixel count — each glyph is about 8x17 — but
+because of CALL count: a 200-column row is 200 `SDL_BlitSurface` dispatches back to
+back, each with its own setup and blitter selection, on rectangles far too small to
+amortize any of it.
+
+`AsciiGlyphAtlas::BlitInto` now has a direct path. What makes it safe to substitute
+is that the arithmetic is an identity, not an approximation: the atlas stores white
+coverage (RGB = 255, A = the glyph's alpha), and modulating that by an opaque colour
+is `255 * c / 255 == c` in every channel — so the destination pixel is a CONSTANT
+rgb word carrying the source's alpha byte, and there is nothing to multiply. The
+loop writes exactly that, clipping to the destination the way SDL's own blit
+clipping would, and returns false (touching nothing) for any shape it cannot serve
+exactly — mismatched formats, a non-32-bit format, no alpha channel, a surface that
+must be locked — so the SDL path remains the fallback rather than the dead branch.
+
+| | before | after |
+| --- | ---: | ---: |
+| `CompositeGlyphBlits` (soft-wrap scroll, 3 iterations) | 78.8 ms | **24.5 ms** |
+| `RasterizeString` total | 84.5 ms | **30.2 ms** |
+| `EditorViewRenderer::Render::Rows` total | 132.3 ms | **83.4 ms** |
+
+Bit-exactness is not argued, it is tested: `AsciiGlyphAtlas tinted blit matches
+direct per-color rendering` already compared the tinted blit against
+`TTF_RenderText_Blended` and demanded **zero** differing pixels, across five colours
+and 24 characters. It passes unchanged, and probing it — dropping one bit of the
+alpha channel in the new loop — fails it.
+
+**Left open:** `CompositeAllocate` is now comparable to the blits it used to be 15x
+smaller than (10.3 ms vs 10.7 ms on `editor_scroll_fresh_content_large`). It is a
+surface allocation plus a full clear per cache miss. Reusing one scratch surface
+across misses is the obvious shape and does not fit: the surface is handed to
+`SDL_CreateTextureFromSurface` and its size is the string's, so reuse needs the
+texture upload to take a sub-rect of an oversized surface.
+
 ### TD-2026-08-30-275 — one keystroke inside a soft-wrapped line re-wrapped the whole line, and on a two-megabyte line that was 3.9 ms per keystroke. [RESOLVED 2026-08-30, same session it was found.]
 
 `TextViewport::UpdateWrappedRowsAfterEdit` was **369.6 ms of the ~510 ms**
