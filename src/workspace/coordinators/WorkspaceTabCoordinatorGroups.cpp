@@ -147,23 +147,7 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
   if (pane_count_preserving) {
     // The pane is RELOCATED, not carved: `MoveLeaf` removes before it inserts, so
     // the grid never has to hold a ninth leaf and a full grid can take this drop.
-    const std::size_t landed =
-        state_.editor_split.MoveLeaf(from_group, target_group, orientation, insert_before);
-    if (landed == EditorSplitTree::kNoLeaf) {
-      return false;
-    }
-    EditorGroup moved = std::move(state_.editor_groups[from_group]);
-    state_.editor_groups.erase(state_.editor_groups.begin() +
-                               static_cast<std::ptrdiff_t>(from_group));
-    state_.editor_groups.insert(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(landed),
-                                std::move(moved));
-    state_.focused_group_index = landed;
-    state_.surface.focus = FocusTarget::Editor;
-    HydrateGroupActiveTab(state_.editor_groups[landed]);
-    operations_.invalidate_tab_strip_geometry();
-    EnsureEveryGroupActiveTabVisible();
-    RefreshFocusedGroupActiveTab(true);
-    return true;
+    return RelocateEditorGroup(from_group, target_group, orientation, insert_before);
   }
 
   const std::size_t carved_index =
@@ -303,20 +287,33 @@ bool TabCoordinator::MoveEditorGroupInDirection(EditorGroupDirection direction) 
   // walks the pane to the front rather than swapping it back and forth.
   const bool before =
       direction == EditorGroupDirection::Left || direction == EditorGroupDirection::Up;
-  const std::size_t landed = state_.editor_split.MoveLeaf(
+  return RelocateEditorGroup(
       focused, target,
       horizontal ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal, before);
+}
+
+// The one place a pane changes position. Both callers -- the directional move
+// above and the count-preserving edge drop in `MoveTabToNewGroup` -- have to keep
+// `editor_groups` in step with the tree's leaves and drop the same three caches;
+// they were byte-identical when written separately, which is how the group-indexed
+// caches drift apart.
+bool TabCoordinator::RelocateEditorGroup(std::size_t from,
+                                         std::size_t target,
+                                         EditorSplitOrientation orientation,
+                                         bool before) {
+  const std::size_t landed = state_.editor_split.MoveLeaf(from, target, orientation, before);
   if (landed == EditorSplitTree::kNoLeaf) {
     return false;
   }
   // The tree's leaves ARE the groups, in order: the vector has to make the same
   // move or every group-indexed cache reads the wrong pane.
-  EditorGroup moved = std::move(state_.editor_groups[focused]);
-  state_.editor_groups.erase(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(focused));
+  EditorGroup moved = std::move(state_.editor_groups[from]);
+  state_.editor_groups.erase(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(from));
   state_.editor_groups.insert(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(landed),
                               std::move(moved));
   state_.focused_group_index = landed;
   state_.surface.focus = FocusTarget::Editor;
+  HydrateGroupActiveTab(state_.editor_groups[landed]);
   operations_.invalidate_tab_strip_geometry();
   EnsureEveryGroupActiveTabVisible();
   RefreshFocusedGroupActiveTab(true);

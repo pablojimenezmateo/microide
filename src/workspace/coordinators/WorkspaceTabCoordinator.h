@@ -241,6 +241,12 @@ class TabCoordinator {
   // Group index of the pane next to the focused one in `direction`, or
   // `kNoEditorGroup`.
   std::size_t AdjacentGroupInDirection(EditorGroupDirection direction) const;
+  // Move pane `from` next to pane `target`, keeping `editor_groups` in step with
+  // the tree's leaves. Never changes the pane count, so it is legal at the cap.
+  bool RelocateEditorGroup(std::size_t from,
+                           std::size_t target,
+                           EditorSplitOrientation orientation,
+                           bool before);
   // Shared tail for group split/focus/close: scroll the (new) focused group's
   // active tab into view and request the matching redraw.
   void RefreshFocusedGroupActiveTab(bool editor_redraw);
