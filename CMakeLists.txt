@@ -600,7 +600,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/lsp/LspWorkspaceEditOps.cpp
   src/workspace/lsp/WorkspaceLspClient.cpp
   src/workspace/lsp/WorkspaceLspClientRequests.cpp
-  src/workspace/lsp/WorkspaceLspClientTransport.cpp
   src/workspace/lsp/WorkspaceLspClientDispatch.cpp
   src/workspace/lsp/WorkspaceLspClientLifecycle.cpp
   src/workspace/lsp/WorkspaceLspManager.cpp

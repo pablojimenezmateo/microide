@@ -4,6 +4,7 @@
 #include "workspace/lsp/LspFileWatchRegistry.h"
 #include "workspace/lsp/LspProtocol.h"
 #include "workspace/StdioClientQueue.h"
+#include "workspace/StdioJsonRpcClientTransport.h"
 #include "util/MainThreadMailbox.h"
 #include "util/WakePipe.h"
 
@@ -39,33 +40,30 @@ namespace microide::workspace {
 // ---------------------------------------------------------------------------
 // Impl
 // ---------------------------------------------------------------------------
-struct LspClient::Impl {
-  using QueuedMessage = StdioQueuedMessage;
+// The transport half (I/O thread, outbound queues, framing, caps) lives in the
+// shared StdioJsonRpcClientTransport mixin — one implementation for the LSP and
+// DAP clients, which used to carry drifting copies of it. Impl supplies the
+// protocol half the mixin calls back into: DispatchMessage, FailPendingRequests,
+// SetLastError, TraceSend, WakeMainThread.
+struct LspClient::Impl : StdioJsonRpcClientTransport<LspClient::Impl> {
+  Impl()
+      : StdioJsonRpcClientTransport(StdioTransportConfig{
+            .messages_sent = util::PerfCounterId::LspMessagesSent,
+            .bytes_sent = util::PerfCounterId::LspBytesSent,
+            .bytes_received = util::PerfCounterId::LspBytesReceived,
+            .max_message_bytes = kMaxLspMessageBytes,
+            .max_read_buffer_bytes = kMaxLspReadBufferBytes,
+            .max_queued_messages = kMaxQueuedMessages,
+            .max_queued_bytes = kMaxQueuedBytes,
+            .peer_label = "lsp",
+            .send_error = "failed to send message to language server",
+        }) {}
 
-  platform::AsyncSubprocess proc;
+  // No per-message send trace; LSP tracing is lifecycle-level (LspClientTrace).
+  void TraceSend(const util::JsonValue&) const {}
+  void WakeMainThread() { main_mailbox.PushWake(); }
+
   std::mutex mutex;
-  std::mutex send_mutex;   // guards the outbound/deferred queues
-  // Serializes every proc.Write so stdin is never written by two threads. The
-  // shutdown path bounds its acquisition (see SendMessageImmediate): the io_thread
-  // can hold this across a proc.Write that blocks indefinitely on a wedged-but-alive
-  // server, and the shutdown's force-kill (which unblocks that write) must not be
-  // gated behind acquiring this lock. A plain std::mutex with a try_lock poll rather
-  // than std::timed_mutex::try_lock_for, which ThreadSanitizer mis-models (spurious
-  // "unlock of an unlocked mutex"). Mirrors the DAP client.
-  std::mutex write_mutex;
-
-  // Single I/O thread state. One thread per server reads stdout and writes stdin;
-  // it blocks in poll() over stdout + a self-pipe wakeup, so it makes no
-  // fixed-cadence idle wakeups and reacts immediately to data or new outbound.
-  // framer_ is filled first by the initialize handshake and then handed to the I/O
-  // thread; keeping it a member preserves any bytes the server pushed right after
-  // the initialize response (e.g. clangd's early registerCapability / progress /
-  // configuration requests) across that handoff, along with any partial frame.
-  JsonRpcMessageFramer framer_{.max_message_bytes = kMaxLspMessageBytes};
-  std::thread io_thread;
-  std::atomic<bool> stop_io{false};
-  util::WakePipe wake_pipe_;  // self-pipe that breaks the I/O thread's poll() on demand
-  int cached_stdout_fd_ = -1;
 
   // Initialization thread state
   std::thread init_thread;
@@ -74,8 +72,6 @@ struct LspClient::Impl {
   std::thread shutdown_thread;
   std::atomic<bool> shutdown_started{false};
   std::atomic<bool> shutdown_complete{false};
-  std::atomic<bool> shutting_down{false};
-  std::atomic<bool> process_shutdown_started{false};
   std::condition_variable shutdown_cv;
   bool shutdown_response_received = false;
   int shutdown_request_id = 0;
@@ -107,8 +103,6 @@ struct LspClient::Impl {
   // post while holding `mutex`, and DrainCallbacks() never takes `mutex`.
   util::MainThreadMailbox main_mailbox;
 
-  // When true, the client behaves as a connected server for unit tests (no subprocess).
-  std::atomic<bool> test_stub_mode{false};
   // Grouped so teardown is a single Reset() and setters/clearers cannot drift out of
   // sync with the teardown list (a stale hand-maintained list once forgot one).
   struct TestHandlers {
@@ -189,16 +183,6 @@ struct LspClient::Impl {
   // session has opened and closed; a document that is still open lives in
   // document_versions.
   std::unordered_map<std::string, int> retired_document_versions;
-  std::deque<QueuedMessage> deferred_messages;
-  std::deque<QueuedMessage> outbound_messages;
-  // Aggregate approximate bytes across deferred_messages + outbound_messages, guarded
-  // by send_mutex. Charged at enqueue, released when a batch drains / the queues are
-  // cleared. Bounds retained payload under the message-count cap (TD-2026-07-17A-071).
-  std::size_t outbound_queued_bytes_ = 0;
-  // Effective byte budget (kMaxQueuedBytes in production; lowered in tests).
-  std::size_t max_queued_bytes_ = kMaxQueuedBytes;
-  // One-shot guard so the wedged-server overflow warning logs once, not per message.
-  bool outbound_overflow_logged_ = false;
   int next_id = 1;
   std::string root_uri;
   // root_uri decoded once at Start(), so the didChangeWatchedFiles registration
@@ -210,7 +194,6 @@ struct LspClient::Impl {
   std::string last_error;
   std::string last_error_snapshot;
   LspClient::ReadinessSnapshot readiness_snapshot;
-  std::atomic<bool> initialized{false};
   std::atomic<bool> supports_incremental_sync{false};
 
   void SetLastError(std::string message) {
@@ -260,61 +243,6 @@ struct LspClient::Impl {
     return JsonValue(std::move(msg));
   }
 
-  std::string SerializeMessage(const util::JsonValue& msg) const {
-    const std::string json = util::SerializeJson(msg);
-    std::string rfc;
-    rfc.reserve(32 + json.size());
-    rfc += "Content-Length: ";
-    rfc += std::to_string(json.size());
-    rfc += "\r\n\r\n";
-    rfc += json;
-    return rfc;
-  }
-
-  // Self-pipe wakeup: the I/O thread blocks in poll() over stdout + wake_pipe_.read_fd();
-  // enqueuing outbound work calls Wake() to break the poll immediately. See util::WakePipe.
-  void OpenWakePipe() { wake_pipe_.Open(); }
-  void CloseWakePipe() { wake_pipe_.Close(); }
-  void Wake() { wake_pipe_.Wake(); }
-
-  // Flush every queued outbound message. Runs only on the I/O thread; holds
-  // write_mutex across the proc.Write calls so it never races a shutdown-time
-  // SendMessageImmediate on stdin. Defined in WorkspaceLspClientTransport.cpp.
-  void DrainOutbound();
-
-  // lock_timeout > 0 bounds how long we wait for write_mutex before giving up:
-  // used only by the shutdown path so a stuck io_thread write cannot wedge
-  // teardown. Returns false on lock timeout (as well as on a failed write); the
-  // shutdown caller treats both as "graceful send failed" and force-kills.
-  // Defined in WorkspaceLspClientTransport.cpp (SendMessageImmediate keeps this
-  // exact qualified name — tsan.supp targets it by mangled symbol).
-  bool SendMessageImmediate(const util::JsonValue& msg, bool allow_during_shutdown = false,
-                            std::chrono::milliseconds lock_timeout = std::chrono::milliseconds::zero());
-
-  // Defer serialization to the I/O thread: move the message into the outbound
-  // builder so SerializeMessage (const, no shared state) runs during DrainOutbound
-  // rather than on the calling (often UI) thread. Ordering is fixed at enqueue time
-  // under send_mutex, so lazy serialization never reorders. The shutdown/initialize
-  // paths use SendMessageImmediate instead and stay eager.
-  bool SendMessageAfterInitialize(util::JsonValue msg) {
-    return SendMessageBuilderAfterInitialize(
-        [this, msg = std::move(msg)]() { return SerializeMessage(msg); });
-  }
-
-  // Queue a message for the I/O thread (deferred until initialized). Refuses on a
-  // wedged/dead server rather than growing unbounded. `approx_bytes` is the payload's
-  // approximate size, charged against the aggregate outbound byte budget (0 for small
-  // control frames). Defined in WorkspaceLspClientTransport.cpp.
-  bool SendMessageBuilderAfterInitialize(std::function<std::string()> build_serialized,
-                                         std::size_t approx_bytes = 0);
-
-  void ClearDeferredMessages() {
-    std::lock_guard lock(send_mutex);
-    deferred_messages.clear();
-    outbound_messages.clear();
-    outbound_queued_bytes_ = 0;
-  }
-
   void ResetProtocolState() {
     std::lock_guard lock(mutex);
     pending_requests.clear();
@@ -354,43 +282,6 @@ struct LspClient::Impl {
   // Update the readiness snapshot from a $/progress notification's value. Defined
   // in WorkspaceLspClientLifecycle.cpp.
   void SetProgressReadiness(const util::JsonValue& value);
-
-  void ShutdownProcessOnce(int timeout_ms = 3000) {
-    bool expected = false;
-    if (!process_shutdown_started.compare_exchange_strong(
-            expected, true, std::memory_order_acq_rel)) {
-      return;
-    }
-    proc.Shutdown(timeout_ms);
-  }
-
-  // Wait until stdout has data/EOF or an outbound wake arrives. Returns true when
-  // stdout should be read. On POSIX this is a single poll() over stdout + the wake
-  // pipe, so an idle server makes no fixed-cadence wakeups; elsewhere it degrades
-  // to a short read timeout. Defined in WorkspaceLspClientTransport.cpp.
-  bool WaitStdoutReadable(int timeout_ms);
-
-  void ParseBufferedMessages() {
-    while (true) {
-      const std::size_t buffered_before = framer_.BufferedBytes();
-      auto msg_opt = framer_.Next();
-      if (msg_opt) {
-        DispatchMessage(std::move(*msg_opt));
-        continue;
-      }
-      // nullopt is overloaded: either the framer consumed a frame it could not
-      // surface (malformed header / oversized / invalid JSON) — in which case any
-      // well-formed frames already buffered behind it must still be drained now,
-      // not ~1s later on the next poll — or no complete frame is available yet, in
-      // which case the buffer is unchanged and we wait for more bytes.
-      if (framer_.BufferedBytes() == buffered_before) break;
-    }
-  }
-
-  // The single I/O thread body: parse buffered frames, drain outbound, sweep
-  // timed-out requests, then poll stdout. Defined in
-  // WorkspaceLspClientTransport.cpp.
-  void IoMain();
 
   // Reply to a server-initiated request. `id` is echoed verbatim (it may be an
   // int or a string per JSON-RPC). Defined in WorkspaceLspClientDispatch.cpp.
