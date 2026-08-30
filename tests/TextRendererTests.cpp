@@ -177,15 +177,6 @@ const CountingTextBackend::DrawCall* FindDrawCall(const std::vector<CountingText
   return it == calls.end() ? nullptr : &*it;
 }
 
-std::size_t CountDrawCalls(const std::vector<CountingTextBackend::DrawCall>& calls,
-                           std::string_view text,
-                           bool with_background) {
-  return static_cast<std::size_t>(std::count_if(
-      calls.begin(), calls.end(), [&](const CountingTextBackend::DrawCall& call) {
-        return call.text == text && call.with_background == with_background;
-      }));
-}
-
 // Gutter line numbers reach a backend through whichever entry point the renderer
 // judges cheapest for text that never repeats, so `with_background` is a property
 // of that choice and not of the gutter. These two ask what the gutter contract
