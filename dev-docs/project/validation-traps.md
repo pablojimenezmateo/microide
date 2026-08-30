@@ -52,6 +52,33 @@ announces itself.
 - The same applies to `/tmp/microide-perf-*.log`, `--report-json` output paths, and
   any other fixed-path artifact reused across sessions.
 
+### Two builds in the same directory clobber each other, and ctest says the binary is missing
+
+`cmake --build build` is not safe to run twice concurrently against the same build
+directory. The second invocation's link overwrites the first's output while it is
+still being written, and the window where the file exists at zero bytes — or not at
+all — is long enough for a `ctest` in the other pipeline to fail with
+`Could not find executable .../microide_tests`, followed by twenty-four
+`(Not Run)` lines.
+
+Hit repeatedly on 2026-08-30. It is easy to walk into when builds are backgrounded
+to keep working during them: a `run_in_background` build plus one started in the
+foreground "just to check the errors" is two builds. The failure does not look like
+a race — it looks like the build never produced a binary — and re-running it
+usually succeeds, which makes it read as a transient.
+
+Worse than the noise: the two builds interleave object files from *different source
+states* if a source was edited between them, which is the same ODR-mismatch shape as
+editing source mid-run (§ "Editing source while a build or sanitizer run is in flight").
+
+- One build at a time, per build directory. Wait for it before starting another,
+  and before starting `ctest`.
+- If a build ends with a missing or zero-byte binary, check for a second builder
+  (`pgrep -c cc1plus`) before believing the error.
+- Separate build directories (`build/`, `build/microide-asan`, a worktree) are
+  independent and may run in parallel; `tools/run-checks.sh` lanes each use their
+  own, which is why they compose.
+
 ### Piping `run-checks.sh` into `tail` throws away the exit code that says whether it ran
 
 `tools/run-checks.sh <lane> 2>&1 | tail -8` is the natural way to read a long lane's
