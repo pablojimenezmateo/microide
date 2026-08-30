@@ -80,7 +80,23 @@ def build_config(binary: pathlib.Path) -> str | None:
 OVERFLOW_MARKER = "WARNING"
 
 SITE_RE = re.compile(r"^\[alloctrace\] #(\d+): (\d+) allocations, (\d+) bytes")
-OFFSET_RE = re.compile(r"\+0x([0-9a-f]+)\)")
+
+# One `backtrace_symbols_fd` line. glibc emits three shapes, and the difference
+# between them is the whole reason this regex exists rather than a bare offset
+# grab (TD-2026-08-30-270):
+#
+#   /path/to/microide_perf(+0x3dfb2a)[0x5b88...]          module-relative offset
+#   /lib/.../libstdc++.so.6(_ZNSt10..._+0x13d)[0x761c...] SYMBOL-relative offset
+#   /lib/.../libstdc++.so.6(+0x1ae8d5)[0x761c...]         a DIFFERENT module
+#
+# The tool used to take `\+0x([0-9a-f]+)\)` from every line and hand all of them
+# to `addr2line -e <the traced binary>`. Both of the last two shapes then resolved
+# against the wrong base: `libstdc++.so.6(+0x1ae8d5)` landed inside whatever
+# microide function happened to live at 0x1ae8d5 of the binary. That is how
+# `microide::editor::ApplyChoiceForTab` — a static helper in the snippet engine —
+# came to be reported as the #1 allocator of six unrelated phases, and why the
+# report's own header blamed identical-code folding for names ICF never touched.
+FRAME_RE = re.compile(r"^(?P<module>[^(]+)\((?P<symbol>[^)+]*)\+0x(?P<offset>[0-9a-f]+)\)")
 
 
 def phases_from_baselines(scenario_filter: str | None) -> list[tuple[str, str, float]]:
@@ -107,9 +123,17 @@ def phases_from_baselines(scenario_filter: str | None) -> list[tuple[str, str, f
 _RESOLVE_CACHE: dict[str, list[str]] = {}
 
 
-def resolve(binary: pathlib.Path, offsets: list[str]) -> list[str]:
-    if not offsets:
+def demangle(names: list[str]) -> list[str]:
+    if not names:
         return []
+    proc = subprocess.run(["c++filt"], input="\n".join(names), capture_output=True,
+                          text=True, check=False)
+    out = proc.stdout.splitlines()
+    return out if len(out) == len(names) else names
+
+
+def resolve_offsets(binary: pathlib.Path, offsets: list[str]) -> dict[str, list[str]]:
+    """addr2line every module-relative offset INTO `binary`, memoized across phases."""
     unknown = [o for o in offsets if o not in _RESOLVE_CACHE]
     if unknown:
         proc = subprocess.run(
@@ -133,24 +157,68 @@ def resolve(binary: pathlib.Path, offsets: list[str]) -> list[str]:
             _RESOLVE_CACHE[unknown[index]] = current
         for offset in unknown:
             _RESOLVE_CACHE.setdefault(offset, [])
+    return {offset: _RESOLVE_CACHE.get(offset, []) for offset in offsets}
+
+
+def shorten(line: str) -> str:
+    line = re.sub(r"\(.*?\)", "()", line)
+    line = re.sub(r"<[^<>]{40,}>", "<...>", line)
+    return line[:200]
+
+
+def frames_for_site(binary: pathlib.Path, raw_frames: list[str]) -> list[str]:
+    """Resolve one site's raw `backtrace_symbols_fd` lines, in stack order.
+
+    Each frame is resolved through the mechanism its OWN shape allows, which is
+    the correction described at FRAME_RE. Frames from the traced binary go to
+    addr2line; a frame that already carries a mangled symbol is demangled as-is;
+    a frame in another module with neither is reported as `module+0xoffset`
+    rather than resolved against a binary it does not belong to.
+    """
+    binary_name = binary.name
+    kinds: list[tuple[str, str]] = []  # (kind, payload) in stack order
+    offsets: list[str] = []
+    mangled: list[str] = []
+    for frame in raw_frames:
+        hit = FRAME_RE.match(frame.strip())
+        if not hit:
+            continue
+        module = pathlib.PurePath(hit.group("module")).name
+        symbol = hit.group("symbol")
+        if symbol:
+            kinds.append(("symbol", f"{module}\x00{symbol}"))
+            mangled.append(symbol)
+        elif module == binary_name:
+            offset = "0x" + hit.group("offset")
+            kinds.append(("offset", offset))
+            offsets.append(offset)
+        else:
+            kinds.append(("foreign", f"{module}+0x{hit.group('offset')}"))
+
+    resolved = resolve_offsets(binary, offsets)
+    demangled = dict(zip(mangled, demangle(mangled)))
 
     lines: list[str] = []
-    for offset in offsets:
-        lines.extend(_RESOLVE_CACHE.get(offset, []))
-    # Keep the frames a reader can act on. An inlined libstdc++ stack resolves into
-    # pages of variant/vtable mangling that bury the one `microide::` frame naming
-    # the call site, so project frames come first and the rest are a fallback for a
-    # stack that has none.
-    def shorten(line: str) -> str:
-        line = re.sub(r"\(.*?\)", "()", line)
-        line = re.sub(r"<[^<>]{40,}>", "<...>", line)
-        return line[:200]
+    for kind, payload in kinds:
+        if kind == "offset":
+            lines.extend(resolved.get(payload, []) or [f"{binary_name}+{payload}"])
+        elif kind == "symbol":
+            module, symbol = payload.split("\x00", 1)
+            lines.append(f"{module}: {demangled.get(symbol, symbol)}")
+        else:
+            lines.append(payload)
 
+    # Keep the frames a reader can act on. An inlined libstdc++ stack resolves
+    # into pages of variant/vtable mangling that bury the one `microide::` frame
+    # naming the call site, so project frames come first -- but the non-project
+    # ones are the fallback rather than being dropped, because a site whose whole
+    # stack is inside libstdc++ (a `std::filesystem::path` operator, say) still
+    # has to be nameable.
     project = [shorten(l) for l in lines
                if "microide::" in l and "/usr/include" not in l and not l.startswith("??")]
     if project:
-        return project
-    return [shorten(l) for l in lines if not l.startswith("??") and "_start" not in l]
+        return project[:4]
+    return [shorten(l) for l in lines if not l.startswith("??") and "_start" not in l][:4]
 
 
 def trace_phase(binary: pathlib.Path, scenario: str, phase: str, iterations: int,
@@ -180,16 +248,11 @@ def trace_phase(binary: pathlib.Path, scenario: str, phase: str, iterations: int
         match = SITE_RE.match(line)
         if not match:
             continue
-        offsets = []
-        for frame in lines[index + 1: index + 9]:
-            hit = OFFSET_RE.search(frame)
-            if hit:
-                offsets.append("0x" + hit.group(1))
         sites.append({
             "rank": int(match.group(1)),
             "allocations": int(match.group(2)),
             "bytes": int(match.group(3)),
-            "frames": resolve(binary, offsets[:4]),
+            "frames": frames_for_site(binary, lines[index + 1: index + 9]),
         })
         if len(sites) >= 3:
             break
