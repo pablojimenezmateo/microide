@@ -1395,6 +1395,7 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     tests/perf/DebugPerfScenarios.cpp
     tests/perf/LspPerfScenarios.cpp
     tests/perf/TechDebtCoveragePerfScenarios.cpp
+    tests/perf/EditorSplitPerfScenarios.cpp
     tests/perf/SyntaxHighlightPerfScenarios.cpp
     tests/perf/PluginCapPerfScenarios.cpp
     tests/perf/PerfGateCanaryScenario.cpp

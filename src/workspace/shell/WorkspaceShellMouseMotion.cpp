@@ -276,7 +276,31 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
         context_.current_project_state.editor_split.ResizeDivider(
             node, boundary, (pointer - divider.pair_start) / divider.pair_extent);
         MarkLayoutDirty();
-        EnsureRedraw([this]() { RequestWindowRedraw(); });
+        // Only the two panes sharing this divider move, and their COMBINED span
+        // is what `pair_start`/`pair_extent` name -- an invariant of the resize,
+        // so one rect covers the layout before and after it. This used to repaint
+        // the whole window on every motion event: on a 1920x1080 window that is
+        // 2.1 Mpx of sidebar, menu bar, bottom panel, status bar and debug pane
+        // restated per event to move a divider inside the editor column.
+        //
+        // A vertical divider also changes the width of the two panes' tab strips,
+        // which live in the global band ABOVE the editor area (`layout.tab_strip`
+        // sits at content_top - kTabStripHeight), so the damage is extended up to
+        // cover that band's matching slice. A horizontal divider only restacks
+        // panes inside one column, whose strips do not move.
+        const SDL_FRect editor_area = drag_layout.editor_area;
+        SDL_FRect damage =
+            divider.vertical
+                ? MakeRect(divider.pair_start, editor_area.y, divider.pair_extent,
+                           editor_area.h)
+                : MakeRect(divider.rect.x, divider.pair_start, divider.rect.w,
+                           divider.pair_extent);
+        if (divider.vertical) {
+          const SDL_FRect& strip = drag_layout.tab_strip;
+          const float top = std::min(damage.y, strip.y);
+          damage = MakeRect(damage.x, top, damage.w, damage.y + damage.h - top);
+        }
+        EnsureRedraw([this, damage]() { RequestRedrawRect(damage); });
         break;
       }
       return true;

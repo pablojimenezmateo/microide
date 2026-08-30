@@ -336,7 +336,10 @@ class ScenarioContext {
   // measure a re-show instead of the open they are named for
   // (TD-2026-08-12-190). No-op when no tab is open.
   void CloseActiveTab();
-  void Type(std::string_view text);
+  // Returns the shell's damage for the keystroke, so a scenario can measure
+  // repaint SCOPE the same way the pointer drivers below let a drag do it. Most
+  // callers ignore it.
+  workspace::WorkspaceShell::RenderInvalidation Type(std::string_view text);
   void Scroll(int vertical_ticks);
   void KeyDown(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE);
   bool ExecuteCommand(std::string_view command_line);
@@ -428,6 +431,14 @@ class ScenarioContext {
   // aim at real geometry instead of guessed coordinates.
   SDL_FRect EditorTabRect(std::size_t tab_index);
   SDL_FRect EditorGroupTabStripRect(std::size_t group_index);
+  // The n-way editor grid: how many panes are live, one pane's buffer area, and
+  // the rect of a divider between two of them. A split scenario cannot aim at a
+  // divider it cannot locate, and guessing the coordinate from two strip rects
+  // silently stops naming a divider the moment the layout constants move.
+  std::size_t EditorGroupCount();
+  SDL_FRect EditorGroupSurfaceRect(std::size_t group_index);
+  std::size_t EditorSplitDividerCount();
+  SDL_FRect EditorSplitDividerRect(std::size_t divider_index);
 
   void SetSetting(std::string_view id, std::string value);
   void ApplyEditorPreferencesToAllTabs();

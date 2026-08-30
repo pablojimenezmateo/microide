@@ -414,12 +414,12 @@ void ScenarioContext::CloseActiveTab() {
       shell_, workspace::WorkspaceShell::TestAccess::ActiveTabIndex(shell_));
 }
 
-void ScenarioContext::Type(std::string_view text) {
+workspace::WorkspaceShell::RenderInvalidation ScenarioContext::Type(std::string_view text) {
   SDL_Event event{};
   event.type = SDL_EVENT_TEXT_INPUT;
   std::string storage(text);
   event.text.text = storage.c_str();
-  (void)shell_.HandleEvent(event);
+  return shell_.HandleEvent(event).redraw;
 }
 
 void ScenarioContext::Scroll(int vertical_ticks) {
@@ -856,6 +856,23 @@ SDL_FRect ScenarioContext::EditorTabRect(std::size_t tab_index) {
 
 SDL_FRect ScenarioContext::EditorGroupTabStripRect(std::size_t group_index) {
   return workspace::WorkspaceShell::TestAccess::GroupTabStripRect(shell_, group_index);
+}
+
+std::size_t ScenarioContext::EditorGroupCount() {
+  return workspace::WorkspaceShell::TestAccess::EditorGroupCount(shell_);
+}
+
+SDL_FRect ScenarioContext::EditorGroupSurfaceRect(std::size_t group_index) {
+  return workspace::WorkspaceShell::TestAccess::GroupEditorSurfaceRect(shell_, group_index);
+}
+
+std::size_t ScenarioContext::EditorSplitDividerCount() {
+  return workspace::WorkspaceShell::TestAccess::EditorSplitDividerRects(shell_).size();
+}
+
+SDL_FRect ScenarioContext::EditorSplitDividerRect(std::size_t divider_index) {
+  const auto dividers = workspace::WorkspaceShell::TestAccess::EditorSplitDividerRects(shell_);
+  return divider_index < dividers.size() ? dividers[divider_index].rect : SDL_FRect{};
 }
 
 void ScenarioContext::ResizeWindow(int width, int height) {
