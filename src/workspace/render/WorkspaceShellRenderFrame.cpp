@@ -329,6 +329,10 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     RefreshEditorFoldingModels();
   }
   prepare_cached_text_input_vm_.emplace(view_models.BuildTextInputSurface());
+  // `ComputeLayout` applies these same clamps to whatever it is handed, so the
+  // geometry is already correct without this block. What this does is PERSIST the
+  // corrected value back onto the project state, so the session, the divider drag
+  // and the settings surface all agree with the layout the window is showing.
   const float clamped_sidebar_width =
       ClampSidebarWidth(project_state.sidebar.width, static_cast<float>(width));
   const float clamped_panel_height =

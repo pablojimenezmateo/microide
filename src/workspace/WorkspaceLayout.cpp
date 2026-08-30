@@ -56,14 +56,25 @@ WorkspaceLayout ComputeLayout(float window_width,
                               float right_pane_width,
                               bool project_tab_strip_visible) {
   const LayoutMode layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
-  const float resolved_bottom_panel_height = bottom_panel_visible ? bottom_panel_height : 0.0f;
-  const float resolved_sidebar_width = sidebar_visible ? sidebar_width : 0.0f;
+  // Clamp HERE, not only in frame prep. The stored pane sizes outlive the window
+  // they were set in, so after a shrink the raw sidebar width can leave the editor
+  // column at a few dozen pixels -- or nothing. Frame prep used to be the only
+  // place that noticed, which meant every consumer that reads a layout WITHOUT
+  // painting (hit tests, cursor shape, redraw rects, and every test) worked off a
+  // geometry the next painted frame would disagree with. The clamps are pure and
+  // idempotent, so frame prep still runs them to persist the corrected value.
+  const float resolved_bottom_panel_height =
+      bottom_panel_visible ? ClampBottomPanelHeight(bottom_panel_height, window_height) : 0.0f;
+  const float resolved_sidebar_width =
+      sidebar_visible ? ClampSidebarWidth(sidebar_width, window_width) : 0.0f;
   // The right debug pane is suppressed in compact layouts so the sidebar + pane
   // can't starve the editor below its minimum width.
   const bool right_pane_effective_visible =
       right_pane_visible && layout_mode != LayoutMode::Compact;
   const float resolved_right_pane_width =
-      right_pane_effective_visible ? right_pane_width : 0.0f;
+      right_pane_effective_visible
+          ? ClampRightPaneWidth(right_pane_width, window_width, resolved_sidebar_width)
+          : 0.0f;
   const float status_bar_height =
       reserve_status_bar ? kWorkspaceStatusBarHeight : 0.0f;
 
