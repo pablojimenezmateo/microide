@@ -389,6 +389,65 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-279 — two structurally identical split trees compared UNEQUAL, because the comparison read the storage rather than the shape. [RESOLVED 2026-08-30, same session it was found.]
+
+`EditorSplitTree::operator==` walked `nodes_` index by index. `AddNode` APPENDS,
+so a tree that has been edited (an insert after a remove, which is what
+[265](#td-2026-08-18-265) and [266](#td-2026-08-18-266) both do) carries the same
+shape under a different node numbering than the identical tree `Load` builds from
+the persisted pre-order stream. Comparing the arrays called those two unequal.
+
+It surfaced as its own round-trip test failing: `restored.Load(tree.Flatten()) &&
+restored == tree` went red on a tree that had just been moved, and the flat form
+it round-tripped through was byte-identical. Nothing in production compared trees
+yet, which is the only reason this had not already produced a spurious "the layout
+changed" repaint.
+
+The flat pre-order form IS the canonical shape — that is what it is for — so
+`operator==` is now `leaf_count` plus `Flatten() == Flatten()`. Heap-free (both
+sides are `InlineVector`), and it can no longer disagree with the persistence
+round trip, because it is defined in terms of it.
+
+### TD-2026-08-30-278 — a tab going dirty in a pane below the top row repainted nothing. [RESOLVED 2026-08-30, same session it was found.]
+
+`RequestTabStripRedraw` dirtied `layout.tab_strip`, which is the TOP row's strip.
+A pane that does not start at the top of the editor area synthesizes its own strip
+inside its region (`ChromeForRegion`), and that rect was never in the damage list —
+so with a stacked split, every caller of `request_tab_strip_redraw` (a save
+clearing the dirty dot, a rename, a tab activation) left the lower pane's strip
+painting the previous frame's titles until something else happened to dirty it.
+
+It now unions every pane's strip from `ComputeEditorGroupRects`, and only in the
+split case — the single-pane path still takes the one-rect fast path with no tree
+walk, which is the overwhelmingly common one.
+
+### TD-2026-08-30-277 — the pane-size clamps ran only at PAINT time, so every consumer that reads a layout without painting worked off a geometry the next frame disagreed with. [RESOLVED 2026-08-30, same session it was found.]
+
+`ComputeLayout` took the stored sidebar width, bottom-panel height and right-pane
+width and used them RAW. The clamps that keep the editor column viable
+(`ClampSidebarWidth` and friends) lived in `PrepareFrameOnce` — the render path —
+which then wrote the corrected values back onto the project state.
+
+The stored sizes outlive the window they were set in. Shrink the window and the
+raw sidebar width can leave the editor column at a few dozen pixels, or at
+nothing: at a 420 px window with the default 288 px sidebar the editor column
+computes as 131 px, against a `kWorkspaceMinEditorAreaWidth` of 280. Everything
+that reads `CurrentWorkspaceLayout()` without painting — hit tests, cursor shape,
+redraw rects, the control channel, and every test — saw that geometry, and the
+first painted frame afterwards silently disagreed with it.
+
+The clamps are pure and idempotent, so they moved INTO `ComputeLayout`, where the
+layout is now self-consistent by construction for every consumer. Frame prep still
+runs them, but for one remaining reason: persisting the corrected value back onto
+the project state so the session, the divider drag and the settings surface agree
+with what the window is showing.
+
+It was found by a fixture: a tooltip test that opened a 420 px window and hovered
+the one editor tab started failing the moment the tab strip became editor-column-
+wide ([267](#td-2026-08-19-267)), because in the layout that test could see the
+column was 131 px and no tab fitted in it. The window the app would actually have
+drawn had a 280 px column and the tab fitted fine.
+
 ### TD-2026-08-30-276 — compositing a row string was 200 SDL blitter dispatches, and 93 % of the cost of rasterizing it. [RESOLVED 2026-08-30, same session it was found.]
 
 After [272](#td-2026-08-30-272) took line numbers out of the string-texture cache,
@@ -681,7 +740,7 @@ i.e. *which entry point* delivered them, which no backend in the tree distinguis
 (`DrawStringOn` forwards to `DrawString` on both). They assert the contract now:
 the logical line number was drawn, once, at that position.
 
-### TD-2026-08-19-267 — splitting the editor empties the tab-strip band above the sidebar. [OPEN — cosmetic, but it is a visible layout discontinuity produced by an unrelated action.]
+### TD-2026-08-19-267 — splitting the editor empties the tab-strip band above the sidebar. [RESOLVED 2026-08-30 — "editor-area-wide, always", as the entry proposed.]
 
 `ComputeLayout` gives the unsplit editor its tab strip as a WINDOW-wide band
 (`MakeRect(0, …, window_width, kTabStripHeight)`), so with one pane the strip runs
@@ -700,7 +759,25 @@ early return, the tab-strip hit tests, the redraw rects) all read the same field
 so they follow it. Left alone here because it is a layout-contract change with a
 pixel-test blast radius well beyond the two focus/reveal bugs this session fixed.
 
-### TD-2026-08-18-265 — at the pane cap, an edge drop that would keep the pane COUNT constant is still refused. [OPEN — narrow, and the refusal is honest (no overlay is painted); filed so the drop-zone rule is not read as arbitrary.]
+**Resolved as written.** `layout.tab_strip` starts at `editor_area.x` and carries
+`editor_area.w`, computed before the strip rather than after it, and every caller
+followed the field: the unsplit `ComputeEditorGroupRects` early return, the strip
+hit tests, the tooltip resolver, `RequestTabStripRedraw` (which narrows, so it
+damages less). The visible change is that the editor tabs no longer start ABOVE
+THE SIDEBAR in the unsplit case — which is what the split case always did, and
+what VS Code does.
+
+The chrome BAND is painted separately, window-wide, in `RenderWindowChrome`: the
+strip's rect is the editor column, but the row it sits in is chrome the whole way
+across, like the menu bar and project strip above it. Without that the ~290 px
+above the sidebar would have gone from "a strip with no tabs in it" to a hole.
+
+Two fixtures moved with the contract, both because they had been using the WINDOW
+width as a proxy for the strip width: the overflow-recompute test needed a window
+wide enough for eight tabs beside the sidebar, and the tooltip test turned out to
+be failing for a different reason entirely — see [277](#td-2026-08-30-277).
+
+### TD-2026-08-18-265 — at the pane cap, an edge drop that would keep the pane COUNT constant is still refused. [RESOLVED 2026-08-30 — the predicate the entry wrote, and the reorder it asked for came out as a new tree primitive.]
 
 `ResolveEditorBodyDrop` offers the four edge zones only while
 `!state_.editor_split.full()`, because splitting normally ADDS a pane. But there
@@ -718,7 +795,23 @@ leaf). Left alone because the cap is generous and the case is a corner of a
 corner — but it is the one place where the drop-zone rule is not simply "can this
 grid hold another pane".
 
-### TD-2026-08-18-266 — the n-way editor grid has no DIRECTIONAL pane focus or move; `focus-other-group` only cycles. [OPEN — a feature gap the split-tree work created, not a defect.]
+**Resolved with the entry's predicate**, in both places that have to agree on it:
+`ResolveEditorBodyDrop` offers the edge zones when the grid is under the cap OR
+the source is a DIFFERENT pane holding exactly one tab, and
+`MoveTabToNewGroup` enforces the same rule before it commits — a mismatch there
+would paint an overlay for a drop that is then refused, so the two carry a comment
+pointing at each other.
+
+The collapse-then-insert order the entry predicted turned out to be worth naming:
+it is `EditorSplitTree::MoveLeaf(from, target, orientation, before)`, a remove
+followed by an insert, which by construction never needs the ninth leaf and
+therefore is the one structural edit a full grid can take. The count-preserving
+drop is a pane RELOCATION expressed through it — the group is moved in the vector
+rather than lifted, carved and collapsed — and the same primitive is what
+[266](#td-2026-08-18-266) moves a pane with. It also exposed
+[279](#td-2026-08-30-279).
+
+### TD-2026-08-18-266 — the n-way editor grid has no DIRECTIONAL pane focus or move; `focus-other-group` only cycles. [RESOLVED 2026-08-30 — both halves, geometry-first as the entry specified.]
 
 With two panes, "focus the other group" was unambiguous. With up to eight in a
 grid it is a cycle in layout order, which is VS Code's `focusNextGroup` — but VS
@@ -734,6 +827,27 @@ edge, tie-broken by vertical overlap — no new state, no tree walk. Moving a pa
 (rather than focusing it) is the larger half: it is a tree edit (detach the leaf,
 re-insert it beside the neighbour in that direction) and wants
 `EditorSplitTree::MoveLeaf` next to the existing insert/remove pair.
+
+**Resolved as written, including `MoveLeaf`** — which [265](#td-2026-08-18-265)
+turned out to need for its own reason, so it is one primitive serving both.
+
+The neighbour scan is `AdjacentEditorGroup(rects, from, direction)` in
+`WorkspaceLayout.cpp`: pure, no state, no tree walk. Among the panes wholly on
+that side it takes the nearest, tie-broken by how much of the CROSS axis it shares
+with the focused pane and then by centre distance — so from the right-hand column
+of a grid, "left" lands on the pane actually beside you rather than on whichever
+one happens to come first in layout order. Being a pure function of the rects, the
+answer is by construction the one the user is looking at.
+
+Eight commands, VS Code's names and VS Code's chords:
+`focus-group-left/right/up/down` on Ctrl+K Ctrl+←/→/↑/↓ and
+`move-group-left/right/up/down` on Ctrl+K Ctrl+Shift+←/→/↑/↓, all reachable from
+the palette and the control channel. None of them wrap: `focus-other-group` is
+still the cycling verb, which is the split VS Code draws too.
+
+A move is `MoveLeaf` plus the matching move in `editor_groups`, so the leaves stay
+exactly the groups in order and every group-indexed cache keeps its meaning; the
+pane count cannot change, which is asserted rather than assumed.
 
 ### TD-2026-08-18-264 — drag-to-split can only ever create the SECOND editor group, because the editor area is capped at two. [RESOLVED 2026-08-18 — the editor area is an n-way split TREE now, capped at eight panes.]
 
@@ -795,7 +909,7 @@ callers: none; heap vectors) went with it, as did the surface-only fake-layout
 path — `ComputeEditorGroupRects(layout, tree)` is now the single walk that
 produces strips, breadcrumbs, surfaces and dividers together.
 
-### TD-2026-08-17-263 — 49 allocation gates are loose after the compare/diff work, three of them by 70-82 %. [OPEN — the deterministic half wants re-recording; this is [261](#td-2026-08-17-261)'s closing note, now measured across the whole suite.]
+### TD-2026-08-17-263 — 49 allocation gates are loose after the compare/diff work, three of them by 70-82 %. [RESOLVED 2026-08-30 by commit 43dfde74, with the pre-check this entry asked for.]
 
 The 2026-08-17 full-gate run found **zero** allocation drift up across all 113
 scenarios and 49 metrics that had drifted DOWN — real improvements that nothing
@@ -820,6 +934,14 @@ committed count (10), since `--update-baseline` refuses fewer than 10 and a
 different count re-percentiles a differently-sized sample.
 
 Not to be re-recorded in the same pass: the ten advisory rows below.
+
+**Re-recorded 2026-08-30** (`--update-baseline=deterministic`, allocations, phase
+allocations and net heap only; wall/CPU/resident untouched because this box was
+not certified idle). The pre-check ran first and is why it is safe: the full run
+before the rewrite reported every gated metric below 75 % of its envelope, so no
+allocation gate was near its limit and none of the rewrites can be burying a
+regression. The three worst rows in the table above now read 1,776 / 7,866 / 983
+against measurements of the same — the gates are gates again.
 
 ### TD-2026-08-17-262 — the drift reporter called ten switched-off metrics gate failures, on a run that passed. [RESOLVED 2026-08-17, same session it was found.]
 
