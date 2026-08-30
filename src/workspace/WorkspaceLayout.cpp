@@ -88,8 +88,18 @@ WorkspaceLayout ComputeLayout(float window_width,
       project_tab_strip_visible ? kProjectTabStripHeight : 0.0f;
   layout.project_tab_strip =
       MakeRect(0.0f, kMenuBarHeight, window_width, project_tab_strip_height);
-  layout.tab_strip =
-      MakeRect(0.0f, kMenuBarHeight + project_tab_strip_height, window_width, kTabStripHeight);
+  // The editor column is fixed before the tab strip because the strip belongs to
+  // it: VS Code's editor tabs never cross the side bar, and a WINDOW-wide strip
+  // made the band above the sidebar change owner the moment a split opened
+  // (TD-2026-08-19-267). One shape, split or not -- every hit test, redraw rect
+  // and the unsplit `ComputeEditorGroupRects` early return read this same field.
+  const float editor_area_x = resolved_sidebar_width + (sidebar_visible ? kDivider : 0.0f);
+  const float right_pane_reserve =
+      resolved_right_pane_width + (right_pane_effective_visible ? kDivider : 0.0f);
+  const float editor_area_width =
+      std::max(0.0f, window_width - editor_area_x - right_pane_reserve);
+  layout.tab_strip = MakeRect(editor_area_x, kMenuBarHeight + project_tab_strip_height,
+                              editor_area_width, kTabStripHeight);
   const float content_top = kMenuBarHeight + project_tab_strip_height + kTabStripHeight;
   const float content_bottom_reserved = resolved_bottom_panel_height + status_bar_height;
   layout.bottom_panel =
@@ -103,11 +113,6 @@ WorkspaceLayout ComputeLayout(float window_width,
       MakeRect(0.0f, content_top, window_width,
                std::max(0.0f, window_height - content_top - content_bottom_reserved));
   layout.sidebar = MakeRect(0.0f, layout.content.y, resolved_sidebar_width, layout.content.h);
-  const float editor_area_x = resolved_sidebar_width + (sidebar_visible ? kDivider : 0.0f);
-  const float right_pane_reserve =
-      resolved_right_pane_width + (right_pane_effective_visible ? kDivider : 0.0f);
-  const float editor_area_width =
-      std::max(0.0f, window_width - editor_area_x - right_pane_reserve);
   layout.editor_area = MakeRect(editor_area_x, layout.content.y, editor_area_width,
                                 layout.content.h);
   layout.right_pane =

@@ -584,11 +584,19 @@ void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
                             layout.project_tab_strip.w, kWorkspaceDividerThickness),
                    theme_.border);
   }
-  DrawFilledRect(renderer, layout.tab_strip, theme_.chrome_background);
+  // `layout.tab_strip` is the EDITOR column only (VS Code's tabs never cross the
+  // side bar), but the chrome BAND it sits in runs the width of the window, the
+  // way the menu bar and project strip above it do -- otherwise the ~290px above
+  // the sidebar would be a hole in the chrome. Painting the band here and the
+  // tabs inside `layout.tab_strip` is what makes the strip look the same split or
+  // not (TD-2026-08-19-267).
+  const SDL_FRect tab_strip_band =
+      MakeRect(layout.full.x, layout.tab_strip.y, layout.full.w, layout.tab_strip.h);
+  DrawFilledRect(renderer, tab_strip_band, theme_.chrome_background);
   DrawFilledRect(renderer,
-                 MakeRect(layout.tab_strip.x,
-                          layout.tab_strip.y + layout.tab_strip.h - kWorkspaceDividerThickness,
-                          layout.tab_strip.w, kWorkspaceDividerThickness),
+                 MakeRect(tab_strip_band.x,
+                          tab_strip_band.y + tab_strip_band.h - kWorkspaceDividerThickness,
+                          tab_strip_band.w, kWorkspaceDividerThickness),
                  theme_.border);
   DrawFilledRect(renderer, layout.breadcrumb, theme_.chrome_background);
   DrawFilledRect(renderer,

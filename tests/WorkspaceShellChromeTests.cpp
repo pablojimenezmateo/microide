@@ -3137,7 +3137,11 @@ void TestClosingTabsWhileScrolledRecomputesOverflowImmediately() {
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
-  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // The strip is the EDITOR COLUMN's width, not the window's (TD-2026-08-19-267),
+  // so the window has to be wide enough that eight tabs fit BESIDE the sidebar --
+  // otherwise this asserts the overflow controls clear on a strip that genuinely
+  // still overflows.
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 720);
   for (int i = 0; i < 16; ++i) {
     const std::filesystem::path file = root / ("c" + std::to_string(i) + ".txt");
     WriteFile(file, "close\n");
