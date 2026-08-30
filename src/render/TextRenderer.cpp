@@ -247,8 +247,12 @@ void TextRenderer::DrawRuns(SDL_Renderer* renderer, const TextRun* runs,
   backend_->DrawRuns(renderer, runs, count);
 }
 
-bool TextRenderer::BatchesRuns() const {
-  return backend_ != nullptr && backend_->BatchesRuns();
+void TextRenderer::DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs,
+                                     std::size_t count) const {
+  if (backend_ == nullptr || renderer == nullptr || runs == nullptr || count == 0) {
+    return;
+  }
+  backend_->DrawEphemeralRuns(renderer, runs, count);
 }
 
 void TextRenderer::DrawStringOn(SDL_Renderer* renderer,

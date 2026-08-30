@@ -156,12 +156,25 @@ void RunDiffNextHunkLargeFile(ScenarioContext& context) {
   // cause was the fixture: its whole worktree diff was one appended block, so every
   // jump clamped to the hunk the caret was already on. A number is not evidence
   // that the operation a phase is named for happened; this is.
-  if (TA::ActiveCompare(context.Shell()).selected_row == selected_row_before) {
+  //
+  // The guard is on the DESTINATION, for the same reason the walk-back guard above
+  // is: "the selection moved" is satisfied by one jump out of twenty-four, so a
+  // burst that clamps after its first step still passes it. 24 forward jumps from
+  // hunk 0 must land on hunk 24.
+  const std::vector<compare::CompareHunk>& hunks = TA::ActiveCompare(context.Shell()).model.hunks;
+  const std::size_t expected_hunk = std::min<std::size_t>(24, hunks.size() - 1);
+  const auto expected_row =
+      workspace::CompareTabPresentationRowForHunk(TA::ActiveCompare(context.Shell()),
+                                                  hunks[expected_hunk].index);
+  const std::size_t landed_row = TA::ActiveCompare(context.Shell()).selected_row;
+  if (!expected_row.has_value() || landed_row != *expected_row) {
     throw std::runtime_error(
-        "diff_next_hunk_large_file: 24 next-hunk jumps left the selection on row " +
-        std::to_string(selected_row_before) + " of " +
+        "diff_next_hunk_large_file: 24 next-hunk jumps from hunk 0 landed on row " +
+        std::to_string(landed_row) + ", not hunk " + std::to_string(expected_hunk) +
+        "'s row " + (expected_row.has_value() ? std::to_string(*expected_row) : "<none>") +
+        " (of " + std::to_string(hunks.size()) + " hunks, " +
         std::to_string(TA::ActiveCompare(context.Shell()).presentation.rows.size()) +
-        " presentation rows; the burst navigated nowhere");
+        " presentation rows); the burst did not navigate");
   }
 }
 

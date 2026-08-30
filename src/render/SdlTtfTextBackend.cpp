@@ -411,11 +411,11 @@ void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
 
 void SdlTtfTextBackend::ClearCache() {
   ascii_atlas_.reset();
-  if (gpu_atlas_texture_ != nullptr) {
-    SDL_DestroyTexture(gpu_atlas_texture_);
-    gpu_atlas_texture_ = nullptr;
-    gpu_atlas_width_ = 0;
-    gpu_atlas_height_ = 0;
+  if (atlas_texture_ != nullptr) {
+    SDL_DestroyTexture(atlas_texture_);
+    atlas_texture_ = nullptr;
+    atlas_texture_width_ = 0;
+    atlas_texture_height_ = 0;
   }
   for (auto& [_, entry] : cache_) {
     if (entry.texture != nullptr) {
@@ -1082,8 +1082,8 @@ bool SdlTtfTextBackend::CacheKeyEqual::operator()(const CacheKeyView& lhs,
          lhs.color.b == rhs.color.b && lhs.color.a == rhs.color.a;
 }
 
-bool SdlTtfTextBackend::EnsureGpuAtlas() {
-  if (gpu_atlas_texture_ != nullptr) {
+bool SdlTtfTextBackend::EnsureAtlasTexture() {
+  if (atlas_texture_ != nullptr) {
     return true;
   }
   if (renderer_ == nullptr) {
@@ -1106,10 +1106,31 @@ bool SdlTtfTextBackend::EnsureGpuAtlas() {
   // 1:1 with its rasterized coverage, matching the composite path.
   SDL_SetTextureBlendMode(texture, SDL_BLENDMODE_BLEND);
   SDL_SetTextureScaleMode(texture, SDL_SCALEMODE_NEAREST);
-  gpu_atlas_texture_ = texture;
-  gpu_atlas_width_ = ascii_atlas_->SurfaceWidth();
-  gpu_atlas_height_ = ascii_atlas_->SurfaceHeight();
+  atlas_texture_ = texture;
+  atlas_texture_width_ = ascii_atlas_->SurfaceWidth();
+  atlas_texture_height_ = ascii_atlas_->SurfaceHeight();
   return true;
+}
+
+// Width of an ASCII run's composite surface, and therefore the right edge both
+// atlas paths must clip their glyphs against. BuildAsciiCompositeSurface sizes the
+// surface to this and blits each glyph at lround(index * cell_width_px), so a
+// glyph whose rendered extent overhangs that edge -- any glyph whose bitmap is
+// wider than the font's advance, which is the same overhang `clip_padding_` exists
+// for -- is CLIPPED there. An atlas path that draws the full slot instead paints
+// pixels the composite never had, and the same string then renders differently
+// depending on which renderer is in use. Keep the composite authoritative: it is
+// the path every backend falls back to.
+//
+// Not exercised by the bundled font: no printable ASCII glyph in JetBrains Mono
+// overhangs its cell, so removing this min() leaves every test green here. It is
+// kept because the agreement should hold by construction rather than by a property
+// of one font, and the pixel test sweeps the whole printable range, so it becomes
+// live coverage on any font where the case is real.
+int SdlTtfTextBackend::AsciiRunSurfaceWidthPx(std::size_t char_count) const {
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const float cell_width_px = char_width_ * scale_x;
+  return std::max(1, static_cast<int>(std::ceil(static_cast<float>(char_count) * cell_width_px)));
 }
 
 bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color,
@@ -1123,8 +1144,9 @@ bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color
   // positions so ASCII typography is identical to the non-atlas path.
   const float origin_x_dev = DeviceAlignedOrigin(x, scale_x) * scale_x;
   const float origin_y_dev = DeviceAlignedOrigin(y, scale_y) * scale_y;
-  const float atlas_w = static_cast<float>(gpu_atlas_width_);
-  const float atlas_h = static_cast<float>(gpu_atlas_height_);
+  const float atlas_w = static_cast<float>(atlas_texture_width_);
+  const float atlas_h = static_cast<float>(atlas_texture_height_);
+  const int run_width_px = AsciiRunSurfaceWidthPx(text.size());
   const SDL_FColor fcolor{
       static_cast<float>(color.r) / 255.0f,
       static_cast<float>(color.g) / 255.0f,
@@ -1145,11 +1167,12 @@ bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color
       // the composite path for this whole run so output stays faithful.
       return false;
     }
+    const int cell_left_px = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
+    sw = std::min(sw, run_width_px - cell_left_px);
     if (sw <= 0 || sh <= 0) {
       continue;
     }
-    const float glyph_left_dev =
-        origin_x_dev + std::round(static_cast<float>(index) * cell_width_px);
+    const float glyph_left_dev = origin_x_dev + static_cast<float>(cell_left_px);
     const float left = glyph_left_dev / scale_x;
     const float top = origin_y_dev / scale_y;
     const float right = left + static_cast<float>(sw) / scale_x;
@@ -1175,10 +1198,98 @@ bool SdlTtfTextBackend::AppendAsciiRunGeometry(float x, float y, SDL_Color color
   return true;
 }
 
+bool SdlTtfTextBackend::DrawAsciiRunFromAtlas(float x, float y, SDL_Color color,
+                                              std::string_view text) {
+  if (ascii_atlas_ == nullptr || atlas_texture_ == nullptr) {
+    return false;  // EnsureAtlasTexture keeps these in lockstep; do not trust it blind
+  }
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const float scale_y = std::max(kMinPresentationScale, presentation_scale_y_);
+  const float cell_width_px = char_width_ * scale_x;
+  // Same origin snap and same integer cell offsets as DrawString + the composite
+  // surface (lround(index * cell_width_px)), so a glyph lands on the pixel it
+  // would have landed on inside a composite drawn at this origin.
+  const float origin_x_dev = DeviceAlignedOrigin(x, scale_x) * scale_x;
+  const float top = DeviceAlignedOrigin(y, scale_y);
+  const int run_width_px = AsciiRunSurfaceWidthPx(text.size());
+
+  // The atlas is white coverage (RGB=255, A=coverage); modulating by an opaque
+  // colour yields (colour.rgb, coverage) -- exactly what AsciiGlyphAtlas::BlitInto
+  // writes into a composite, and 255 * c / 255 == c makes that an identity.
+  SDL_SetTextureColorMod(atlas_texture_, color.r, color.g, color.b);
+  SDL_SetTextureAlphaMod(atlas_texture_, 255);
+
+  std::size_t drawn = 0;
+  for (std::size_t index = 0; index < text.size(); ++index) {
+    const char ch = text[index];
+    if (ch == ' ') {
+      continue;  // spaces contribute no coverage; advance only
+    }
+    int sx = 0;
+    int sw = 0;
+    int sh = 0;
+    if (!ascii_atlas_->SlotRect(ch, &sx, &sw, &sh)) {
+      return false;  // caller composites the whole run so output stays faithful
+    }
+    const int cell_left_px = static_cast<int>(std::lround(static_cast<float>(index) * cell_width_px));
+    sw = std::min(sw, run_width_px - cell_left_px);
+    if (sw <= 0 || sh <= 0) {
+      continue;
+    }
+    const SDL_FRect source{static_cast<float>(sx), 0.0f, static_cast<float>(sw),
+                           static_cast<float>(sh)};
+    const SDL_FRect destination{
+        (origin_x_dev + static_cast<float>(cell_left_px)) / scale_x,
+        top,
+        static_cast<float>(sw) / scale_x,
+        static_cast<float>(sh) / scale_y,
+    };
+    if (!SDL_RenderTexture(renderer_, atlas_texture_, &source, &destination)) {
+      util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasFallbacks);
+      return false;
+    }
+    ++drawn;
+  }
+  util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasGlyphs, drawn);
+  return true;
+}
+
+void SdlTtfTextBackend::DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs,
+                                          std::size_t count) {
+  // The GPU renderer has a strictly better path for these than per-glyph blits,
+  // and it is the same one DrawRuns uses: one submit for the whole set.
+  if (is_gpu_renderer_) {
+    DrawRuns(renderer, runs, count);
+    return;
+  }
+  if (renderer == nullptr || renderer != renderer_ || !glyph_atlas_enabled_ ||
+      !EnsureAtlasTexture() || atlas_texture_width_ <= 0 || atlas_texture_height_ <= 0) {
+    TextRendererBackend::DrawRuns(renderer, runs, count);
+    return;
+  }
+
+  std::size_t atlas_runs = 0;
+  for (std::size_t i = 0; i < count; ++i) {
+    const TextRun& run = runs[i];
+    if (run.text.empty()) {
+      continue;
+    }
+    if (run.color.a == 255 && CanUseFastAscii(run.text) &&
+        DrawAsciiRunFromAtlas(run.x, run.y, run.color, run.text)) {
+      ++atlas_runs;
+      continue;
+    }
+    // Translucent, non-ASCII, or a glyph the atlas does not cover: the cached
+    // composite is the only faithful path, and it is what this run used to take.
+    DrawString(renderer, run.x, run.y, run.color, run.text);
+  }
+  util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasRuns, atlas_runs);
+}
+
 void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) {
   // Fall back to the per-run composite path unless the GPU batched path is armed.
   if (renderer == nullptr || renderer != renderer_ || !glyph_atlas_enabled_ ||
-      !is_gpu_renderer_ || !EnsureGpuAtlas() || gpu_atlas_width_ <= 0 || gpu_atlas_height_ <= 0) {
+      !is_gpu_renderer_ || !EnsureAtlasTexture() || atlas_texture_width_ <= 0 || atlas_texture_height_ <= 0) {
     TextRendererBackend::DrawRuns(renderer, runs, count);
     return;
   }
@@ -1214,7 +1325,7 @@ void SdlTtfTextBackend::DrawRuns(SDL_Renderer* renderer, const TextRun* runs, st
     util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasRuns, batched_runs);
     util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasGlyphs,
                                 geom_vertices_.size() / 4);
-    if (!SDL_RenderGeometry(renderer, gpu_atlas_texture_, geom_vertices_.data(),
+    if (!SDL_RenderGeometry(renderer, atlas_texture_, geom_vertices_.data(),
                             static_cast<int>(geom_vertices_.size()), geom_indices_.data(),
                             static_cast<int>(geom_indices_.size()))) {
       util::AddPerformanceCounter(util::PerfCounterId::RenderGlyphAtlasFallbacks);

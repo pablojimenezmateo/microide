@@ -93,9 +93,10 @@ class TextRenderer {
   // Draw a row's worth of positioned runs, batched into a single GPU submission
   // when the backend supports it (else one DrawString per run).
   void DrawRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) const;
-  // True when DrawRuns actually batches (GPU atlas backend). Callers use it to
-  // skip run-collection overhead on backends that draw inline anyway.
-  bool BatchesRuns() const;
+  // DrawRuns for text that will not repeat (line numbers). See
+  // TextRendererBackend::DrawEphemeralRuns for why the distinction is worth an
+  // entry point rather than a heuristic inside the cache.
+  void DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) const;
   void DrawStringOn(SDL_Renderer* renderer,
                     float x,
                     float y,

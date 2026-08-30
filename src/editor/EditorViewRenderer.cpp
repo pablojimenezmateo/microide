@@ -612,10 +612,6 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const EditorRowYLayout row_y_layout(
       metrics.first_line_y, metrics.line_height, static_cast<std::uint32_t>(scroll_line),
       view_model != nullptr ? view_model->row_gaps : std::span<const RowGap>{});
-  // Only collect gutter numbers for a batched flush when the backend actually
-  // batches (GPU atlas); otherwise draw them inline to avoid any collection cost
-  // on the software/debug path (keeps it byte-for-byte the prior behaviour).
-  const bool batch_gutter_numbers = text_renderer.BatchesRuns();
   gutter_number_scratch_.clear();
   // Resolve the caret's visual row once per frame; the soft-wrap layout only
   // needs it to flag the caret row, and recomputing it per visible row is an
@@ -1105,24 +1101,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     if (IsLogicalLineHead(soft_wrap, row_meta.visual_start)) {
       const auto [end, _] = std::to_chars(line_number_buf, line_number_buf + sizeof(line_number_buf),
                                           line_index + 1);
-      const float number_x = gutter.x + kGutterLineNumberInset;
-      const SDL_Color number_color = selected ? theme.current_line_number : theme.line_number;
-      if (batch_gutter_numbers) {
-        // Defer to a single batched DrawRuns after the loop (see flush below). The
-        // gutter background is a separate fill, and the atlas backend's DrawStringOn
-        // ignores its background arg, so deferring the foreground digits is exact.
-        GutterNumber& number = gutter_number_scratch_.emplace_back();
-        number.x = number_x;
-        number.y = y;
-        number.color = number_color;
-        number.text.assign(line_number_buf, end);
-      } else {
-        // Non-batching backend: draw inline exactly as before, no collection cost.
-        util::PerformanceTrace::Scope gutter_scope("EditorViewRenderer::Render::GutterNumber");
-        text_renderer.DrawStringOn(renderer, number_x, y, number_color,
-                                   selected ? theme.row_highlight : theme.gutter_background,
-                                   std::string_view{line_number_buf, end});
-      }
+      // Always deferred to the single DrawEphemeralRuns flush below. The gutter
+      // background is a separate fill and no backend here paints a glyph
+      // background (DrawStringOn forwards to DrawString), so deferring the
+      // foreground digits is exact. `text` is a short digit string: SSO, no heap.
+      GutterNumber& number = gutter_number_scratch_.emplace_back();
+      number.x = gutter.x + kGutterLineNumberInset;
+      number.y = y;
+      number.color = selected ? theme.current_line_number : theme.line_number;
+      number.text.assign(line_number_buf, end);
     }
 
     if (draw_caret && selected && row_caret.visible) {
@@ -1228,12 +1215,15 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
     }
   }
 
-  // Flush the deferred gutter line numbers in one batched DrawRuns. On the GPU
-  // atlas backend this collapses every visible line number into a single submit
-  // (digits come from the shared glyph atlas, so scrolling no longer rebuilds and
-  // uploads a composite texture per line number); on other backends it is one
-  // DrawString per number, identical to the prior inline draw.
+  // Flush the deferred gutter line numbers in one DrawEphemeralRuns. A line
+  // number is a distinct string per row, so the whole-string texture cache can
+  // never hit on one: it paid a surface build plus a texture upload per scrolled
+  // row, and each of those misses evicted a row-text entry that would have been
+  // reused. Both atlas paths draw the digits from the shared coverage atlas
+  // instead -- one submit on the GPU renderer, one small blit per digit on the
+  // software one -- and neither touches the cache.
   if (!gutter_number_scratch_.empty()) {
+    util::PerformanceTrace::Scope gutter_scope("EditorViewRenderer::Render::GutterNumbers");
     gutter_number_run_scratch_.clear();
     gutter_number_run_scratch_.reserve(gutter_number_scratch_.size());
     for (const GutterNumber& number : gutter_number_scratch_) {
@@ -1244,8 +1234,8 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
           .text = number.text,
       });
     }
-    text_renderer.DrawRuns(renderer, gutter_number_run_scratch_.data(),
-                           gutter_number_run_scratch_.size());
+    text_renderer.DrawEphemeralRuns(renderer, gutter_number_run_scratch_.data(),
+                                    gutter_number_run_scratch_.size());
   }
 }
 

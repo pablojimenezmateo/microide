@@ -5,6 +5,7 @@
 
 #include "editor/WordBoundary.h"
 #include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
 
 namespace microide::editor {
 namespace {
@@ -612,6 +613,7 @@ void TextViewport::PlacePrimaryCaret(std::size_t line,
 }
 
 void TextViewport::EnsureCursorVisible() {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::EnsureCursorVisible");
   const std::size_t cursor_visual_row = CursorVisualRow();
   if (cursor_visual_row < scroll_line_) {
     scroll_line_ = cursor_visual_row;

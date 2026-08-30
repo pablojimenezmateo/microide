@@ -85,11 +85,6 @@ class TextRendererBackend {
     (void) background;
     DrawString(renderer, x, y, color, text);
   }
-  // True when DrawRuns actually coalesces runs into a batched submission (the GPU
-  // atlas path). Callers use this to decide whether collecting runs for a batched
-  // flush is worthwhile; on a non-batching backend they keep the cheaper inline
-  // draw and avoid the collection overhead.
-  virtual bool BatchesRuns() const { return false; }
   // Draw a sequence of positioned runs. The default is one DrawString per run;
   // backends may override to batch them into a single GPU submission. Runs are
   // co-planar and non-overlapping, so batching does not change visible output.
@@ -99,6 +94,21 @@ class TextRendererBackend {
         DrawString(renderer, runs[i].x, runs[i].y, runs[i].color, runs[i].text);
       }
     }
+  }
+  // Same contract as DrawRuns, plus a promise from the caller: this text is
+  // EPHEMERAL — a distinct string per row that will not be drawn again (line
+  // numbers are the case this exists for). A whole-string texture cache is worse
+  // than useless for those. Every draw is a miss, so it pays a surface build and
+  // a texture upload per row; and each miss then evicts a row-text entry that
+  // WOULD have been reused, so the cost lands twice. Measured on the software
+  // renderer, gutter line numbers were 74% of all text-texture work in the scroll
+  // scenarios and 91% of misses evicted something.
+  //
+  // A backend that can position glyphs individually should draw these straight
+  // from its coverage atlas and touch no cache. The default forwards to DrawRuns,
+  // which is correct for any backend that cannot.
+  virtual void DrawEphemeralRuns(SDL_Renderer* renderer, const TextRun* runs, std::size_t count) {
+    DrawRuns(renderer, runs, count);
   }
 };
 

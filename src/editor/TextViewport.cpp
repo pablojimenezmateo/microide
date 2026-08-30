@@ -1179,6 +1179,11 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason) {
 
 void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_t start_line,
                                            std::optional<ContentSplice> splice) {
+  // Traced because the three post-edit steps of `ApplyHistoryEntry` -- this, the
+  // width-table splice and the wrapped-row splice -- were collectively 60 % of
+  // that function's self time with no scope of their own, so the profile could
+  // say "the edit apply is slow" and nothing more.
+  util::PerformanceTrace::Scope perf_scope("TextViewport::InvalidateDerivedCaches");
   EnsureDocument();
   // Tier fan-out: each reason bumps exactly the tiers it implies. Every
   // reason bumps presentation_revision because any cause of invalidation
@@ -1363,6 +1368,7 @@ void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
                                                     std::size_t removed_count,
                                                     std::size_t inserted_count,
                                                     InlineLineSplice splice) {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::UpdateVisualColumnCacheAfterEdit");
   layout_cache_.UpdateVisualColumnCacheAfterEdit(start_line, removed_count, inserted_count,
                                                   document_->lines, tab_size_,
                                                   document_->content_revision, splice);
@@ -1371,6 +1377,7 @@ void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
 void TextViewport::UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                               std::size_t removed_count,
                                               std::size_t inserted_count) {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::UpdateWrappedRowsAfterEdit");
   // Fast path for the pure soft-wrap case: splice only the edited rows. Any
   // unsupported shape returns false and the content_revision guard rebuilds.
   layout_cache_.UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_count,

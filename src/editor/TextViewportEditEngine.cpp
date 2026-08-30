@@ -576,6 +576,7 @@ TextViewport::ViewState TextViewport::CaptureViewStateForGroupedEntry() const {
 }
 
 void TextViewport::RestoreViewState(const ViewState& state) {
+  util::PerformanceTrace::Scope perf_scope("TextViewport::RestoreViewState");
   cursor_line_ = state.cursor_line;
   cursor_column_ = state.cursor_column;
   preferred_column_ = state.preferred_column;

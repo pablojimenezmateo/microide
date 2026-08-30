@@ -389,6 +389,80 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-272 — every scrolled line number was a whole-string texture build, an upload, and an eviction. [RESOLVED 2026-08-30, same session it was found.]
+
+Found by ranking the software-renderer scroll scenarios by self time. The two
+halves of a text-texture cache miss led the table in every one of them, and the
+`GutterNumber` scope's *total* said where the misses came from:
+
+| scope | `editor_scroll_fresh_content_large`, 3 iterations |
+| --- | ---: |
+| `UploadStringTexture` | 288.6 ms over 62,566 calls |
+| `RasterizeString` | 146.9 ms over 62,566 calls |
+| `Render::GutterNumber` (total) | 353.4 ms of those 434 ms |
+
+So **74 % of all text-texture work was drawing line numbers**, and the counters
+said why it never got better: 62,566 misses produced 58,509 evictions. A line
+number is a distinct string per row, so the whole-string cache cannot hit on one
+— every draw paid a surface build plus a texture upload, and then each of those
+misses evicted a row-text entry that *would* have been reused. The cost landed
+twice, and the second half was invisible: it showed up as row text missing.
+
+A batched path already existed and was gated on `BatchesRuns()`, which is
+`glyph_atlas_enabled_ && is_gpu_renderer_`. The gutter therefore took it only on
+a GPU renderer; the software renderer — the harness's gated lane, and what a VM
+or a remote session gets — kept the per-number inline draw.
+
+**What changed.** `TextRendererBackend::DrawEphemeralRuns`: same contract as
+`DrawRuns` plus a promise from the caller that this text will not repeat. The
+gutter always defers to it now (the `BatchesRuns()` branch and its duplicated
+inline draw site are gone; `BatchesRuns` had no other caller). On the GPU renderer
+it is the existing one-submit geometry path. On the software renderer it blits
+each glyph straight from the coverage atlas texture — no surface build, no upload,
+no cache entry. `gpu_atlas_texture_` is renamed `atlas_texture_`, because it never
+was GPU-only; only the *geometry* path was.
+
+| | before | after |
+| --- | ---: | ---: |
+| `Render::Rows` (total, 1,956 frames) | 835.9 ms | **518.4 ms** |
+| texture-cache misses | 62,566 | **15,179** |
+| `Render::GutterNumber(s)` | 353.4 ms | **19.5 ms** |
+
+Eighteen allocation gates improved across the suite (`editor_render_whitespace_paint`
+832 → 536, `editor_fold_viewport_refresh` 866 → 620). Three moved +2, which is the
+two scratch vectors the gutter now always uses growing once per renderer.
+
+**The correctness half is the more useful record.** The new pixel test compares the
+same string drawn both ways through the real backend on a real software renderer,
+and it failed three times before it passed, each time on something worth knowing:
+
+1. **The two paths cannot be bit-equal.** The composite path modulates colour into
+   a *surface* and then blends; the atlas path modulates and blends in one step,
+   and SDL's integer pipelines round those differently — a couple of dozen pixels
+   of a digit land exactly 1 unit apart. Equality was asserting something SDL does
+   not promise, and the pre-existing GPU geometry path could not have met it
+   either. The gate is a per-channel bound of 1, which every real failure clears by
+   two orders of magnitude: a wrong cell offset shifts a whole glyph body, an
+   alpha-less atlas paints a solid rectangle.
+2. **An ink-footprint comparison needs a threshold above that spread.** Two
+   attempts (>1, then >3) each classified one faint antialiasing pixel as ink on
+   one side and background on the other, and reported a structural difference that
+   was not there. The footprint check added nothing the delta bound did not already
+   cover, so it is gone; only the vacuity guard ("this drew something") uses a
+   threshold, at >8.
+3. **The composite clips glyph overhang at the run's right edge and neither atlas
+   path did.** Both clip now. This one is *not exercised by the bundled font* — no
+   printable ASCII glyph in JetBrains Mono overhangs its cell, and removing the
+   `min()` leaves every test green here. Probed and confirmed dead, kept anyway,
+   and said so in the code: the three paths should agree by construction rather
+   than by a property of one font. The test sweeps the whole printable range, so it
+   becomes live coverage on any font where the case is real.
+
+Two test assertions were pinning `with_background == true` on gutter numbers —
+i.e. *which entry point* delivered them, which no backend in the tree distinguishes
+(`DrawStringOn` forwards to `DrawString` on both). They assert the contract now:
+the logical line number was drawn, once, at that position.
+
 ### TD-2026-08-19-267 — splitting the editor empties the tab-strip band above the sidebar. [OPEN — cosmetic, but it is a visible layout discontinuity produced by an unrelated action.]
 
 `ComputeLayout` gives the unsplit editor its tab strip as a WINDOW-wide band

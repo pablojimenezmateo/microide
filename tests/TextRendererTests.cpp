@@ -25,6 +25,8 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <array>
+#include <cstdlib>
 #include <cmath>
 #include <filesystem>
 #include <memory>
@@ -184,6 +186,25 @@ std::size_t CountDrawCalls(const std::vector<CountingTextBackend::DrawCall>& cal
       }));
 }
 
+// Gutter line numbers reach a backend through whichever entry point the renderer
+// judges cheapest for text that never repeats, so `with_background` is a property
+// of that choice and not of the gutter. These two ask what the gutter contract
+// actually is: the logical line number was drawn, once, at this position.
+std::size_t CountDrawCallsWithText(const std::vector<CountingTextBackend::DrawCall>& calls,
+                                   std::string_view text) {
+  return static_cast<std::size_t>(
+      std::count_if(calls.begin(), calls.end(),
+                    [&](const CountingTextBackend::DrawCall& call) { return call.text == text; }));
+}
+
+const CountingTextBackend::DrawCall* FindDrawCallWithText(
+    const std::vector<CountingTextBackend::DrawCall>& calls, std::string_view text) {
+  const auto it = std::find_if(
+      calls.begin(), calls.end(),
+      [&](const CountingTextBackend::DrawCall& call) { return call.text == text; });
+  return it == calls.end() ? nullptr : &*it;
+}
+
 std::string SummarizeDrawCalls(const std::vector<CountingTextBackend::DrawCall>& calls) {
   std::string summary;
   for (const auto& call : calls) {
@@ -281,6 +302,65 @@ std::size_t CountPixelDifferences(SDL_Surface* lhs, SDL_Surface* rhs) {
     }
   }
   return differences;
+}
+
+struct PixelFootprintComparison {
+  std::size_t inked_pixels = 0;  // pixels `lhs` painted over the background
+  int max_channel_delta = 0;     // largest per-channel difference between lhs and rhs
+};
+
+// Compare two renderings of the same text, plus the background they were drawn
+// over so "something was actually drawn" can be checked rather than assumed.
+//
+// The comparison is a bound on the per-channel difference rather than equality.
+// The composite path modulates colour into a SURFACE and then blends the result;
+// the atlas paths modulate and blend in one step, and SDL's integer pipelines
+// round those differently -- a couple of dozen pixels of a digit land exactly 1
+// unit apart. Equality would be asserting something SDL does not promise, and the
+// GPU geometry path (float modulation in the renderer) could not meet it either.
+//
+// A bound of 1 is still a strong statement, because every way this can actually
+// break is enormous: a wrong cell offset shifts a glyph body by a full column, a
+// clipped or unclipped overhang adds or removes one, a dropped glyph removes all
+// of it, and an alpha-less atlas paints a solid rectangle. Those move pixels by
+// tens to hundreds of units, not one.
+PixelFootprintComparison CompareInkFootprints(SDL_Surface* lhs, SDL_Surface* rhs,
+                                              SDL_Surface* background) {
+  Expect(lhs != nullptr && rhs != nullptr && background != nullptr,
+         "footprint comparisons should receive readable surfaces");
+  Expect(lhs->w == rhs->w && lhs->h == rhs->h && lhs->w == background->w &&
+             lhs->h == background->h,
+         "footprint comparisons should use canvases with matching dimensions");
+
+  const auto read = [](SDL_Surface* surface, int x, int y) {
+    std::array<Uint8, 4> channels{};
+    Expect(SDL_ReadSurfacePixel(surface, x, y, &channels[0], &channels[1], &channels[2],
+                                &channels[3]),
+           "footprint comparisons should read actual pixels");
+    return channels;
+  };
+  const auto delta = [](const std::array<Uint8, 4>& a, const std::array<Uint8, 4>& b) {
+    int worst = 0;
+    for (std::size_t i = 0; i < a.size(); ++i) {
+      worst = std::max(worst, std::abs(static_cast<int>(a[i]) - static_cast<int>(b[i])));
+    }
+    return worst;
+  };
+
+  PixelFootprintComparison result;
+  for (int y = 0; y < lhs->h; ++y) {
+    for (int x = 0; x < lhs->w; ++x) {
+      const auto lhs_pixel = read(lhs, x, y);
+      const auto rhs_pixel = read(rhs, x, y);
+      // Well clear of the one-unit rounding spread, so a glyph's faintest fringe
+      // cannot be counted as ink on one reading and background on the other.
+      if (delta(lhs_pixel, read(background, x, y)) > 8) {
+        ++result.inked_pixels;
+      }
+      result.max_channel_delta = std::max(result.max_channel_delta, delta(lhs_pixel, rhs_pixel));
+    }
+  }
+  return result;
 }
 
 std::size_t CountPixelDifferencesInRect(SDL_Surface* lhs,
@@ -455,6 +535,83 @@ void TestAsciiGlyphAtlasMatchesPerColorRendering() {
   SDL_DestroySurface(translucent_target);
 
   TTF_CloseFont(font);
+}
+
+// The gutter draws line numbers through DrawEphemeralRuns, which on the software
+// renderer skips the whole-string texture cache and blits each digit straight from
+// the coverage atlas. That is a performance choice, and a performance choice that
+// moves a pixel is a bug: this renders the same string both ways through the real
+// backend on a real software renderer and demands they be identical.
+//
+// It is aimed at the failure this codebase has already had once. Coverage lives in
+// the alpha channel, so any path that loses alpha paints text as solid blocks
+// rather than as nothing -- a difference no allocation count or draw-call count
+// would report, and one the atlas's own unit tests missed by passing a format that
+// happened to have alpha.
+void TestEphemeralRunsMatchTheCachedCompositePath() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(160, 40);
+
+  auto backend = microide::render::SdlTtfTextBackend::Create(canvas.renderer());
+  Expect(backend != nullptr, "ephemeral-run test should build the real SDL_ttf backend");
+
+  const SDL_Color color{0x9c, 0xdc, 0xfe, 0xff};
+  // Multi-cell digit strings of every width the gutter produces, so a rounding
+  // error in the per-glyph cell offset shows up as a shifted glyph...
+  std::vector<std::string> samples = {"1", "42", "12345", "1000000", "0189"};
+  // ...then every printable ASCII glyph on its own. A one-cell run puts the glyph
+  // hard against the run's right edge, which is where the composite surface clips
+  // a bitmap wider than the font's advance. Whether any glyph in the font actually
+  // overhangs is a property of the font -- JetBrains Mono's ASCII does not, so
+  // naming a few likely characters would have proved nothing. Sweeping the range
+  // means the case is covered on whichever font this runs against.
+  // From 0x21: a space is deliberately no coverage at all on every path, so it
+  // would only trip the "did this draw anything" guard below.
+  for (char ch = 0x21; ch < 0x7f; ++ch) {
+    samples.emplace_back(1, ch);
+  }
+
+  for (const std::string& sample_string : samples) {
+    const char* sample = sample_string.c_str();
+    const std::string_view text{sample_string};
+
+    auto paint = [&](bool ephemeral) {
+      Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0x1e, 0x1e, 0x1e, 0xff),
+             "ephemeral-run test should set the canvas background");
+      Expect(SDL_RenderClear(canvas.renderer()), "ephemeral-run test should clear the canvas");
+      if (ephemeral) {
+        const microide::render::TextRun run{
+            .x = 6.0f, .y = 5.0f, .color = color, .text = text};
+        backend->DrawEphemeralRuns(canvas.renderer(), &run, 1);
+      } else {
+        backend->DrawString(canvas.renderer(), 6.0f, 5.0f, color, text);
+      }
+      SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+      Expect(pixels != nullptr, "ephemeral-run test should read back software pixels");
+      return pixels;
+    };
+
+    SDL_Surface* cached = paint(/*ephemeral=*/false);
+    SDL_Surface* atlas_drawn = paint(/*ephemeral=*/true);
+    Expect(SDL_SetRenderDrawColor(canvas.renderer(), 0x1e, 0x1e, 0x1e, 0xff),
+           "ephemeral-run test should set the canvas background");
+    Expect(SDL_RenderClear(canvas.renderer()), "ephemeral-run test should clear the canvas");
+    SDL_Surface* blank = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    Expect(blank != nullptr, "ephemeral-run test should read back the blank canvas");
+
+    const PixelFootprintComparison footprint = CompareInkFootprints(atlas_drawn, cached, blank);
+    // Without this the comparison below is vacuous: two blank canvases match.
+    Expect(footprint.inked_pixels > 0,
+           std::string("the per-glyph atlas draw must put glyph pixels on the canvas for \"") +
+               sample + "\", not nothing");
+    Expect(footprint.max_channel_delta <= 1,
+           std::string("per-glyph atlas draw must match the cached composite to within SDL's own "
+                       "blend rounding for \"") + sample + "\"");
+
+    SDL_DestroySurface(blank);
+    SDL_DestroySurface(atlas_drawn);
+    SDL_DestroySurface(cached);
+  }
 }
 
 // Regression: the atlas is allocated in the renderer's preferred texture format,
@@ -1118,11 +1275,9 @@ void TestEditorViewRendererUsesWrappedRowsAndSuppressesContinuationGutterNumbers
   Expect(FindDrawCall(calls, "qrst", false) != nullptr, draw_summary);
   Expect(FindDrawCall(calls, "xy", false) != nullptr, draw_summary);
 
-  // The counting backend does not batch runs, so gutter numbers take the inline
-  // DrawStringOn path (with background), exactly as before the atlas change.
-  Expect(CountDrawCalls(calls, "1", true) == 1,
+  Expect(CountDrawCallsWithText(calls, "1") == 1,
          "the gutter should draw the logical line number only on the first wrapped row");
-  Expect(CountDrawCalls(calls, "2", true) == 1,
+  Expect(CountDrawCallsWithText(calls, "2") == 1,
          "the gutter should still draw later logical line numbers once each");
 }
 
@@ -1249,7 +1404,7 @@ void TestEditorViewRendererAdvancesPastWrappedEmptyLines() {
   renderer.Render(canvas.renderer(), text_renderer, theme, viewport, rect, false);
 
   const auto& calls = backend_ptr->draw_calls();
-  const auto* line_two_gutter = FindDrawCall(calls, "2", true);
+  const auto* line_two_gutter = FindDrawCallWithText(calls, "2");
   const auto* wrapped_text = FindDrawCall(calls, "abcdefgh", false);
   const auto* wrapped_tail = FindDrawCall(calls, "ijk", false);
   Expect(line_two_gutter != nullptr,
@@ -2923,6 +3078,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "AsciiGlyphAtlas tinted blit matches direct per-color rendering",
           TestAsciiGlyphAtlasMatchesPerColorRendering);
+  AddTest(tests,
+          "TextRenderer ephemeral runs match the cached composite path",
+          TestEphemeralRunsMatchTheCachedCompositePath);
   AddTest(tests,
           "AsciiGlyphAtlas covers the printable ASCII range",
           TestAsciiGlyphAtlasCoversPrintableRange);

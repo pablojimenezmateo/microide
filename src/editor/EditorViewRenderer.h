@@ -249,10 +249,10 @@ class EditorViewRenderer {
   mutable std::string lowered_line_scratch_;
 
   // Deferred gutter line numbers: collected during the row loop and flushed once
-  // through TextRenderer::DrawRuns after it, so on the GPU atlas backend the whole
-  // gutter is one batched submit instead of one composite (build+upload) per
-  // scrolled line number. `text` is a short digit string (SSO -> no heap). Drawn
-  // last in the gutter, preserving the prior numbers-over-markers z-order.
+  // through TextRenderer::DrawEphemeralRuns after it, so neither renderer builds
+  // and uploads a composite texture per scrolled line number. `text` is a short
+  // digit string (SSO -> no heap). Drawn last in the gutter, preserving the prior
+  // numbers-over-markers z-order.
   struct GutterNumber {
     float x = 0.0f;
     float y = 0.0f;
