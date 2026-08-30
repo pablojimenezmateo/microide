@@ -389,6 +389,37 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-280 — the whole window layout is rebuilt ~475 times in one grid scenario, and until now nothing counted it. [OPEN — instrumented, not fixed; filed with the number rather than a guess.]
+
+`ComputeLayout` and `ComputeEditorGroupRects` are pure and cheap, so nothing
+hesitates to call them. `CurrentWorkspaceLayout()` recomputes the entire window
+geometry on every call, and the hit test, the cursor-kind resolve, the redraw-rect
+helpers and the render each ask independently — the pane walk even carries a
+comment claiming "three times per mouse-motion event" that nothing had measured.
+This is the shape [149](#td-2026-08-06-149) found in the menu bar, one layer out.
+
+Now counted (`workspace.layout_computes`, `workspace.editor_group_rect_builds`,
+`workspace.editor_group_rect_tree_walks`). `editor_split_grid_workout` reports
+**475 / 491 / 478** against 441 queued damage rects — about one full layout and
+one full pane walk per damage event — and reproduces to the unit on every
+iteration, so it is a measurement rather than a sample.
+
+Deliberately NOT fixed here, and the reason is the interesting half. The machinery
+for a memo already exists: `prepared_frame_layout_` plus `layout_dirty_`, which
+the render path uses. Serving `CurrentWorkspaceLayout()` from that cache would
+remove essentially all of these — but only if `layout_dirty_` is raised on every
+input the layout reads (window size, sidebar visible/width, bottom panel, status
+bar, project tab strip, debug pane visible/width). One missed site turns a
+recompute that is always right into a hit test against a stale geometry, and hit
+tests are where a wrong rect is least visible and most damaging. Correctness
+outranks CPU; the recompute is ~40 float operations and a heap-free tree walk.
+
+So the next step is not the memo — it is establishing that the dirty flag is
+complete (an audit, or better, a debug-build assertion that recomputes and
+compares), and only then reading the memo off it. Until then this entry exists so
+the cost is a number somebody can decide about rather than a comment nobody
+checked.
+
 ### TD-2026-08-30-279 — two structurally identical split trees compared UNEQUAL, because the comparison read the storage rather than the shape. [RESOLVED 2026-08-30, same session it was found.]
 
 `EditorSplitTree::operator==` walked `nodes_` index by index. `AddNode` APPENDS,
