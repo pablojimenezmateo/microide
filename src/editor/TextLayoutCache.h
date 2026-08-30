@@ -534,6 +534,20 @@ class TextLayoutCache {
   // WrappedRowAt rather than baked at build time (so a horizontal scroll does
   // not stale the cached spans nor force an O(lines) rebuild).
   mutable bool wrapped_row_layouts_fold_no_wrap_ = false;
+  // Scratch for the incremental splice in UpdateWrappedRowsAfterEdit, held so the
+  // buffers keep their capacity across keystrokes instead of being rebuilt from
+  // nothing per edit.
+  //
+  // `new_rows` used to be a local reserved to `inserted_count` -- the LINE count,
+  // not the ROW count -- so re-wrapping one long soft-wrapped line grew it from a
+  // reserve of 1 by doubling, every keystroke. It was the #1 allocator of both
+  // `editor_soft_wrap_long_line_typing` phases at 448 allocations and 33.5 MB
+  // moved per phase (TD-2026-08-30-268). `new_offsets` is SWAPPED with
+  // `wrapped_line_row_offsets_` rather than moved into it, so the scratch keeps
+  // the old table's buffer for the next edit.
+  mutable std::vector<WrappedRow> wrapped_row_edit_scratch_;
+  mutable std::vector<std::size_t> wrapped_row_edit_offsets_scratch_;
+  mutable std::vector<std::size_t> wrapped_line_row_offsets_scratch_;
 #ifndef NDEBUG
   mutable std::size_t wrapped_row_layout_build_count_ = 0;
   mutable std::size_t wrapped_row_incremental_inplace_count_ = 0;

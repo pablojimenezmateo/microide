@@ -452,10 +452,21 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
     return false;
   }
 
-  // Re-wrap only the inserted lines (read from the live buffer).
-  std::vector<WrappedRow> new_rows;
-  new_rows.reserve(inserted_count);
-  std::vector<std::size_t> inserted_offsets;  // row offset (relative to first_row) per inserted line
+  // Re-wrap only the inserted lines (read from the live buffer), into scratch
+  // that keeps its capacity across edits.
+  //
+  // The reserve is a ROW count, not a line count: one soft-wrapped long line
+  // becomes thousands of rows, so reserving `inserted_count` (== 1 for the
+  // dominant keystroke) grew the vector by doubling from 1 on every single edit.
+  // `removed_rows_end - first_row` is what that region wrapped to a keystroke
+  // ago, which is the right estimate by construction — an insert or delete moves
+  // it by at most a row or two.
+  std::vector<WrappedRow>& new_rows = wrapped_row_edit_scratch_;
+  new_rows.clear();
+  new_rows.reserve(std::max(inserted_count, removed_rows_end - first_row));
+  // Row offset (relative to first_row) per inserted line.
+  std::vector<std::size_t>& inserted_offsets = wrapped_row_edit_offsets_scratch_;
+  inserted_offsets.clear();
   inserted_offsets.reserve(inserted_count);
   for (std::size_t i = 0; i < inserted_count; ++i) {
     inserted_offsets.push_back(new_rows.size());
@@ -513,7 +524,8 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
   const std::ptrdiff_t row_delta = static_cast<std::ptrdiff_t>(new_rows.size()) -
                                    static_cast<std::ptrdiff_t>(removed_rows_end - first_row);
   const std::size_t new_line_count = lines.size();  // == old_line_count + line_delta
-  std::vector<std::size_t> new_offsets;
+  std::vector<std::size_t>& new_offsets = wrapped_line_row_offsets_scratch_;
+  new_offsets.clear();
   new_offsets.reserve(new_line_count);
   for (std::size_t l = 0; l < start_line; ++l) {
     new_offsets.push_back(wrapped_line_row_offsets_[l]);
@@ -529,7 +541,9 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
     // Shape mismatch (should not happen); fall back to a full rebuild.
     return false;
   }
-  wrapped_line_row_offsets_ = std::move(new_offsets);
+  // Swap, not move: the scratch keeps the outgoing table's buffer, so the next
+  // edit's `reserve(new_line_count)` is already satisfied.
+  wrapped_line_row_offsets_.swap(new_offsets);
   wrapped_row_layouts_content_revision_ = content_revision;
   return true;
 }
