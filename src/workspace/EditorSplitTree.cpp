@@ -388,18 +388,13 @@ bool EditorSplitTree::Load(const EditorSplitTreeRecord& record) {
 }
 
 bool operator==(const EditorSplitTree& lhs, const EditorSplitTree& rhs) {
-  if (lhs.root_ != rhs.root_ || lhs.nodes_.size() != rhs.nodes_.size()) {
-    return false;
-  }
-  for (std::size_t i = 0; i < lhs.nodes_.size(); ++i) {
-    const EditorSplitTree::Node& a = lhs.nodes_[i];
-    const EditorSplitTree::Node& b = rhs.nodes_[i];
-    if (a.orientation != b.orientation || a.parent != b.parent || a.children != b.children ||
-        a.weights != b.weights) {
-      return false;
-    }
-  }
-  return true;
+  // STRUCTURAL, not index-by-index. `AddNode` appends, so a tree that has been
+  // edited (insert after a remove, say) carries the same shape under a different
+  // node numbering than the identical tree built by `Load`. Comparing the storage
+  // called those two unequal -- a trap for anything using this for "did the layout
+  // change", and it made a correct structure fail its own round-trip test. The
+  // flat pre-order form IS the canonical shape, so comparing it is the definition.
+  return lhs.leaf_count_ == rhs.leaf_count_ && lhs.Flatten() == rhs.Flatten();
 }
 
 }  // namespace microide::workspace
