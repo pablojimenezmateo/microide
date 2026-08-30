@@ -36,6 +36,33 @@ std::string HashToHex(std::uint64_t value) {
 }  // namespace
 
 std::string ProjectStateDirectoryName(const std::filesystem::path& project_root) {
+  // Memoized because it is a PURE function of `project_root` and an expensive
+  // one: `lexically_normal()` alone is ~12 allocations (it walks the path into a
+  // component list and rebuilds it), on top of `filename()`, two `.string()`
+  // materializations, the sanitize buffer and the two concatenation temporaries.
+  //
+  // It sits under `ProjectStateDirectory`, which every config/session save
+  // resolves from scratch, so a settings change paid the whole thing per save --
+  // 288 allocations across the two `settings_change_many_tabs` phases, the
+  // largest single site in both (TD-2026-08-30-271).
+  //
+  // A ring rather than one slot: multi-project sessions alternate between roots
+  // (and `ControlChannelService` asks about a second one), so a single slot would
+  // thrash. `thread_local` rather than a mutex — the callers are the shell thread
+  // and the control thread, and the answer is small enough to compute twice.
+  struct Memo {
+    std::filesystem::path root;
+    std::string name;
+  };
+  static constexpr std::size_t kMemoSlots = 4;
+  thread_local std::array<Memo, kMemoSlots> memo;
+  thread_local std::size_t memo_next = 0;
+  for (const Memo& entry : memo) {
+    if (!entry.name.empty() && entry.root == project_root) {
+      return entry.name;
+    }
+  }
+
   const std::string label =
       project_root.filename().empty() ? "project" : project_root.filename().string();
   std::string sanitized;
@@ -50,7 +77,11 @@ std::string ProjectStateDirectoryName(const std::filesystem::path& project_root)
   if (sanitized.empty()) {
     sanitized = "project";
   }
-  return sanitized + "-" + HashToHex(StablePathHash(project_root.lexically_normal().string()));
+  std::string name =
+      sanitized + "-" + HashToHex(StablePathHash(project_root.lexically_normal().string()));
+  memo[memo_next] = Memo{project_root, name};
+  memo_next = (memo_next + 1) % kMemoSlots;
+  return name;
 }
 
 std::filesystem::path ProjectStateDirectory(const std::filesystem::path& project_root) {
