@@ -692,8 +692,12 @@ void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
                              .valid = true}
           : InlineLineSplice{});
   // Keep the wrapped-row table in sync incrementally so soft-wrap editing does
-  // not force a full O(document) re-wrap per keystroke.
-  UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_count);
+  // not force a full O(document) re-wrap per keystroke. A column-scoped entry
+  // also names the byte the edit began at, which lets the re-wrap resume at the
+  // affected row instead of at the line's first byte.
+  UpdateWrappedRowsAfterEdit(start_line, removed_count, inserted_count,
+                             entry.is_inline ? entry.start_column
+                                             : TextLayoutCache::kNoEditColumn);
   EnsureCursorVisible();
 }
 

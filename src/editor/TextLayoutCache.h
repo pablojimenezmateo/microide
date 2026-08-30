@@ -123,6 +123,11 @@ class TextLayoutCache {
   // `inserted_count` is a COUNT, not the lines themselves: the new rows are
   // re-wrapped from the live buffer regardless, and an in-line edit's undo entry
   // no longer carries a materialized copy of the line it changed.
+  // `edit_column` is the byte column within `start_line` that the edit began at,
+  // for a single-line in-place edit; `kNoEditColumn` when the caller does not know
+  // one (a multi-line splice, or a multi-range undo part). It is what lets the
+  // re-wrap resume mid-line instead of restarting at the line's first byte.
+  static constexpr std::size_t kNoEditColumn = static_cast<std::size_t>(-1);
   bool UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                   std::size_t removed_count,
                                   std::size_t inserted_count,
@@ -132,7 +137,8 @@ class TextLayoutCache {
                                   bool soft_wrap,
                                   const FoldingModel* folding_model,
                                   std::uint64_t layout_shape_revision,
-                                  std::uint64_t content_revision) const;
+                                  std::uint64_t content_revision,
+                                  std::size_t edit_column = kNoEditColumn) const;
 
   // Trivial-mode-aware accessors. EnsureWrappedRowLayouts() must have been
   // called for the current input set before any of these are used. The
@@ -531,6 +537,18 @@ class TextLayoutCache {
     std::size_t first_non_plain = 0;
     bool valid = false;
   };
+#ifndef NDEBUG
+  // The incremental splice is an optimization whose failure mode is silent: a
+  // wrong row table mis-lays glyphs, it does not crash. So in debug builds every
+  // splice re-wraps the edited line from scratch and asserts the table matches --
+  // the cache-free oracle, not a second incremental implementation. Bounded by
+  // line length for the same reason the width table's cross-check is: the
+  // pathological lines this path exists for must not make a debug run unusable.
+  void VerifyWrappedRowsAgainstFullRewrap(LineSpan lines,
+                                          std::size_t line_index,
+                                          std::size_t tab_size,
+                                          std::size_t wrap_columns) const;
+#endif
   // Shared implementation of the two public prefix queries; `scratch` is the
   // caller's own read buffer (see `column_scan_scratch_`).
   std::size_t PlainAsciiPrefixEndInto(LineSpan lines,
@@ -547,6 +565,10 @@ class TextLayoutCache {
   // own buffer rather than sharing one whose contents another caller may be
   // looking at.
   mutable std::string column_scan_scratch_;
+  // Read buffer for the resumed re-wrap's line-tail and leading-indent windows.
+  // Its own, for the same reason `column_scan_scratch_` is: the two windows are
+  // read at different points and must not alias another caller's live view.
+  mutable std::string wrapped_row_tail_scratch_;
 
   // Wrapped-row table
   mutable std::vector<WrappedRow> wrapped_row_layouts_;

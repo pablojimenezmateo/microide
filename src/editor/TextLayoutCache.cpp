@@ -429,12 +429,44 @@ void TextLayoutCache::EnsureWrappedRowLayouts(LineSpan lines,
 #endif
 }
 
+#ifndef NDEBUG
+void TextLayoutCache::VerifyWrappedRowsAgainstFullRewrap(LineSpan lines,
+                                                         std::size_t line_index,
+                                                         std::size_t tab_size,
+                                                         std::size_t wrap_columns) const {
+  if (line_index + 1 >= wrapped_line_row_offsets_.size() ||
+      lines.LineLength(line_index) > 64u * 1024u) {
+    return;
+  }
+  const std::size_t begin = wrapped_line_row_offsets_[line_index];
+  const std::size_t end = wrapped_line_row_offsets_[line_index + 1];
+  assert(begin <= end && end <= wrapped_row_layouts_.size() &&
+         "spliced row range must stay inside the table");
+  std::size_t index = begin;
+  bool matched = true;
+  TextLayout::WrapLineSegments(lines[line_index], tab_size, wrap_columns,
+                               [&](std::size_t visual_start, std::size_t visual_end,
+                                   std::size_t indent) {
+                                 if (index >= end) {
+                                   matched = false;
+                                   return;
+                                 }
+                                 const WrappedRow& row = wrapped_row_layouts_[index++];
+                                 matched = matched && row.line_index == line_index &&
+                                           row.visual_start == visual_start &&
+                                           row.visual_end == visual_end && row.indent == indent;
+                               });
+  assert(matched && index == end &&
+         "incrementally spliced wrapped rows disagree with a full re-wrap of the line");
+}
+#endif
+
 bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
     std::size_t start_line, std::size_t removed_count, std::size_t inserted_count,
     LineSpan lines,
     std::size_t tab_size, std::size_t visible_columns, bool soft_wrap,
     const FoldingModel* folding_model, std::uint64_t layout_shape_revision,
-    std::uint64_t content_revision) const {
+    std::uint64_t content_revision, std::size_t edit_column) const {
   // Only the pure soft-wrap path (no collapsed folds) is spliced incrementally.
   // Every other mode bails so the content_revision guard forces a full rebuild.
   const bool has_any_collapsed_fold =
@@ -464,6 +496,7 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
 
   const std::size_t wrap_columns = std::max<std::size_t>(1, visible_columns);
   const std::size_t total_rows = wrapped_row_layouts_.size();
+  (void)edit_column;
   // A pure append at end-of-document has start_line == old_line_count, which is
   // one past the last valid offset entry. Treat it as "starts after the last
   // row" (mirrors the removed_rows_end guard below) instead of reading OOB.
@@ -485,21 +518,94 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
   // `removed_rows_end - first_row` is what that region wrapped to a keystroke
   // ago, which is the right estimate by construction — an insert or delete moves
   // it by at most a row or two.
+  // Resume point for the re-wrap. Wrapping is a left-to-right greedy pass whose
+  // only carried state resets at a row boundary, and a row starting at visual
+  // column S examines at most S + wrap_columns columns before it must break. So a
+  // row with `S + wrap_columns < edit_visual` cannot have looked at the edited
+  // byte, and every such row is still correct: re-wrap from the first row that
+  // could have.
+  //
+  // Without this, one keystroke inside a line re-wraps THE WHOLE LINE. On a
+  // two-megabyte line with no newlines in it that measured 3.9 ms per keystroke
+  // and 72% of `editor_soft_wrap_long_line_typing` (TD-2026-08-30-275).
+  std::size_t splice_first_row = first_row;
+  std::size_t resume_visual = 0;
+  std::size_t resume_byte = 0;
+  std::size_t hanging_indent = 0;
+  bool resumed = false;
+  if (inserted_count == 1 && removed_count == 1 && edit_column != kNoEditColumn &&
+      first_row < removed_rows_end &&
+      // The row table is in VISUAL columns and the edit arrives as a BYTE column.
+      // Requiring the line to be plain single-cell ASCII through the edit makes
+      // the two the same number -- and it is the cheap incremental question, not a
+      // whole-line measure (see PlainAsciiThroughColumn).
+      PlainAsciiThroughColumn(lines, start_line, edit_column, content_revision)) {
+    const std::size_t edit_visual = edit_column;
+    // First row that could have examined the edit; everything before it is kept.
+    std::size_t lo = first_row;
+    std::size_t hi = removed_rows_end;
+    while (lo < hi) {
+      const std::size_t mid = lo + (hi - lo) / 2;
+      if (wrapped_row_layouts_[mid].visual_start + wrap_columns < edit_visual) {
+        lo = mid + 1;
+      } else {
+        hi = mid;
+      }
+    }
+    if (lo > first_row) {
+      splice_first_row = lo;
+      resume_visual = wrapped_row_layouts_[lo].visual_start;
+      // Rows are at most `wrap_columns` wide, so the kept row before `lo` starts
+      // below `edit_visual - wrap_columns`; `resume_visual` is therefore strictly
+      // below `edit_visual` and inside the prefix just proven single-cell ASCII,
+      // which is what makes visual == byte here.
+      resume_byte = resume_visual;
+      resumed = true;
+    }
+  }
+
   std::vector<WrappedRow>& new_rows = wrapped_row_edit_scratch_;
   new_rows.clear();
-  new_rows.reserve(std::max(inserted_count, removed_rows_end - first_row));
+  new_rows.reserve(std::max(inserted_count, removed_rows_end - splice_first_row));
   // Row offset (relative to first_row) per inserted line.
   std::vector<std::size_t>& inserted_offsets = wrapped_row_edit_offsets_scratch_;
   inserted_offsets.clear();
   inserted_offsets.reserve(inserted_count);
-  for (std::size_t i = 0; i < inserted_count; ++i) {
-    inserted_offsets.push_back(new_rows.size());
-    WrapSingleLine(lines[start_line + i], start_line + i, tab_size, wrap_columns, new_rows);
+  if (resumed) {
+    const std::size_t line_length = lines.LineLength(start_line);
+    // The hanging indent is a property of the line's LEADING whitespace, which a
+    // tail does not contain. It is clamped to wrap_columns / 2, so this window is
+    // always enough to compute it, and it is read before the tail so the two uses
+    // of the scratch never overlap.
+    hanging_indent = TextLayout::HangingIndentFor(
+        lines.LineWindow(start_line, 0, std::min(line_length, wrap_columns + 1),
+                         wrapped_row_tail_scratch_),
+        tab_size, wrap_columns);
+    inserted_offsets.push_back(0);
+    TextLayout::WrapLineSegmentsFrom(
+        lines.LineWindow(start_line, resume_byte, line_length - resume_byte,
+                         wrapped_row_tail_scratch_),
+        tab_size, wrap_columns, resume_visual, hanging_indent,
+        [&new_rows, start_line](std::size_t visual_start, std::size_t visual_end,
+                                std::size_t indent) {
+          new_rows.push_back(WrappedRow{start_line, visual_start, visual_end, indent});
+        });
+  } else {
+    for (std::size_t i = 0; i < inserted_count; ++i) {
+      inserted_offsets.push_back(new_rows.size());
+      WrapSingleLine(lines[start_line + i], start_line + i, tab_size, wrap_columns, new_rows);
+    }
   }
 
   const std::ptrdiff_t line_delta =
       static_cast<std::ptrdiff_t>(inserted_count) - static_cast<std::ptrdiff_t>(removed_count);
-  const std::size_t removed_rows = removed_rows_end - first_row;
+  const std::size_t removed_rows = removed_rows_end - splice_first_row;
+  // Where each inserted line's rows START, absolutely. Identical to
+  // `first_row + inserted_offsets[i]` on the whole-line path; on the resumed path
+  // the line's rows still begin at `first_row` even though the splice does not.
+  const auto absolute_line_offset = [&](std::size_t i) {
+    return resumed ? first_row : first_row + inserted_offsets[i];
+  };
 
   // In-place fast path: the edit changed neither the logical-line count
   // (line_delta == 0) nor the wrapped-row count of the affected region
@@ -511,13 +617,14 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
   // themselves) and touch nothing in the O(document) suffix.
   if (line_delta == 0 && new_rows.size() == removed_rows) {
     std::copy(new_rows.begin(), new_rows.end(),
-              wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(first_row));
+              wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(splice_first_row));
     for (std::size_t i = 0; i < inserted_count; ++i) {
-      wrapped_line_row_offsets_[start_line + i] = first_row + inserted_offsets[i];
+      wrapped_line_row_offsets_[start_line + i] = absolute_line_offset(i);
     }
     wrapped_row_layouts_content_revision_ = content_revision;
 #ifndef NDEBUG
     ++wrapped_row_incremental_inplace_count_;
+    VerifyWrappedRowsAgainstFullRewrap(lines, start_line, tab_size, wrap_columns);
 #endif
     return true;
   }
@@ -536,17 +643,17 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
   ++wrapped_row_incremental_splice_count_;
 #endif
   wrapped_row_layouts_.erase(
-      wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(first_row),
+      wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(splice_first_row),
       wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(removed_rows_end));
   wrapped_row_layouts_.insert(
-      wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(first_row),
+      wrapped_row_layouts_.begin() + static_cast<std::ptrdiff_t>(splice_first_row),
       new_rows.begin(), new_rows.end());
 
   // Rebuild the line->row offset table for the new line count. Prefix offsets
   // are unchanged; inserted lines use first_row + their relative offset; the
   // suffix shifts by the row-count delta.
   const std::ptrdiff_t row_delta = static_cast<std::ptrdiff_t>(new_rows.size()) -
-                                   static_cast<std::ptrdiff_t>(removed_rows_end - first_row);
+                                   static_cast<std::ptrdiff_t>(removed_rows);
   const std::size_t new_line_count = lines.size();  // == old_line_count + line_delta
   std::vector<std::size_t>& new_offsets = wrapped_line_row_offsets_scratch_;
   new_offsets.clear();
@@ -555,7 +662,7 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
     new_offsets.push_back(wrapped_line_row_offsets_[l]);
   }
   for (std::size_t i = 0; i < inserted_count; ++i) {
-    new_offsets.push_back(first_row + inserted_offsets[i]);
+    new_offsets.push_back(absolute_line_offset(i));
   }
   for (std::size_t l = removed_end_line; l < old_line_count; ++l) {
     new_offsets.push_back(static_cast<std::size_t>(
@@ -569,6 +676,9 @@ bool TextLayoutCache::UpdateWrappedRowsAfterEdit(
   // edit's `reserve(new_line_count)` is already satisfied.
   wrapped_line_row_offsets_.swap(new_offsets);
   wrapped_row_layouts_content_revision_ = content_revision;
+#ifndef NDEBUG
+  VerifyWrappedRowsAgainstFullRewrap(lines, start_line, tab_size, wrap_columns);
+#endif
   return true;
 }
 

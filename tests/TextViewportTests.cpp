@@ -3836,6 +3836,70 @@ void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
 // because the existing test primed the table by hand (TD-2026-08-30-274).
 //
 // So: no priming here. That absence is the test.
+// The wrapped-row table is spliced incrementally on every edit, and since
+// TD-2026-08-30-275 the re-wrap also RESUMES mid-line: rows that provably could
+// not have examined the edited byte are kept, and only the rest is re-wrapped.
+// Both are optimizations whose failure mode is silent -- a wrong row table lays
+// glyphs in the wrong place, it does not crash.
+//
+// So compare against the cache-free oracle: the same content loaded fresh into a
+// second viewport, whose table is built in one pass with no splice at all. Debug
+// builds also assert this inside the splice itself, but `cmake -S . -B build` is
+// Release, where that assert compiles to nothing -- this is the half that runs in
+// the default lane.
+void TestTextViewportSoftWrapIncrementalRowsMatchAFullRewrap() {
+  // Words and spaces, so the break decisions are real word-wrap choices rather
+  // than uniform hard breaks, and a resume point one row off changes the answer.
+  std::string line;
+  while (line.size() < 4000) {
+    line += "alpha beta gamma delta epsilon zeta eta theta ";
+  }
+  const std::string content = line + "\n";
+
+  // Edit columns spanning the interesting cases: the very start (nothing can be
+  // kept), inside the first row, a row boundary deep in, mid-line, and the tail.
+  for (const std::size_t column : {std::size_t{0}, std::size_t{5}, std::size_t{79},
+                                   std::size_t{80}, std::size_t{81}, line.size() / 2,
+                                   line.size() - 3, line.size()}) {
+    for (const char* inserted : {"x", " ", "longword"}) {
+      microide::editor::TextViewport incremental;
+      incremental.LoadContent(content, "/tmp/wrap-incremental.txt");
+      incremental.SetViewportSize(20, 80);
+      incremental.SetSoftWrap(true);
+      // Build the table BEFORE the edit, so the edit takes the splice path rather
+      // than a cold build.
+      (void)incremental.visual_line_count();
+      incremental.MoveCursorTo(0, column, false);
+      incremental.InsertText(inserted);
+
+      microide::editor::TextViewport oracle;
+      oracle.LoadContent(std::string(incremental.lines().LineView(0)) + "\n",
+                         "/tmp/wrap-oracle.txt");
+      oracle.SetViewportSize(20, 80);
+      oracle.SetSoftWrap(true);
+
+      const std::string where =
+          " (column " + std::to_string(column) + ", inserted \"" + inserted + "\")";
+      Expect(incremental.visual_line_count() == oracle.visual_line_count(),
+             "an incrementally spliced wrap must produce the same row count as a full "
+             "re-wrap" + where + ": " + std::to_string(incremental.visual_line_count()) +
+                 " vs " + std::to_string(oracle.visual_line_count()));
+      for (std::size_t row = 0; row < oracle.visual_line_count(); ++row) {
+        const auto spliced = incremental.WrappedVisualRowLayout(row);
+        const auto fresh = oracle.WrappedVisualRowLayout(row);
+        Expect(spliced.line_index == fresh.line_index &&
+                   spliced.visual_start == fresh.visual_start &&
+                   spliced.visual_end == fresh.visual_end && spliced.indent == fresh.indent,
+               "spliced row " + std::to_string(row) + " must match the full re-wrap" + where +
+                   ": [" + std::to_string(spliced.visual_start) + "," +
+                   std::to_string(spliced.visual_end) + ") vs [" +
+                   std::to_string(fresh.visual_start) + "," + std::to_string(fresh.visual_end) +
+                   ")");
+      }
+    }
+  }
+}
+
 void TestTextViewportSoftWrappedLongLineDoesNotWalkItForCaretColumns() {
   constexpr std::size_t kLineBytes = 256u * 1024u;
   microide::editor::TextViewport viewport;
@@ -5922,6 +5986,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportCaretColumnConversionsMatchTheDirectWalk);
   AddTest(tests, "TextViewport/TypingInALongLineDoesNotWalkItForCaretColumns",
           TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns);
+  AddTest(tests, "TextViewport/SoftWrapIncrementalRowsMatchAFullRewrap",
+          TestTextViewportSoftWrapIncrementalRowsMatchAFullRewrap);
   AddTest(tests, "TextViewport/SoftWrappedLongLineDoesNotWalkItForCaretColumns",
           TestTextViewportSoftWrappedLongLineDoesNotWalkItForCaretColumns);
   AddTest(tests, "TextViewport/TypingInALongLineCopiesNothing",

@@ -389,6 +389,69 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-275 — one keystroke inside a soft-wrapped line re-wrapped the whole line, and on a two-megabyte line that was 3.9 ms per keystroke. [RESOLVED 2026-08-30, same session it was found.]
+
+`TextViewport::UpdateWrappedRowsAfterEdit` was **369.6 ms of the ~510 ms**
+`editor_soft_wrap_long_line_typing` spends — 72 % of the scenario, 3.85 ms per
+keystroke — and it is on the typing path, which is the most latency-sensitive path
+in the product. The allocation tracer named the second half of it: 32 allocations
+of 2,097,241 bytes each, one per keystroke, from
+`PieceTree::LineView` under `UpdateWrappedRowsAfterEdit`, materializing the whole
+line to hand it to `WrapSingleLine`.
+
+The splice was already incremental in the ROW table (it rewrites only the edited
+line's rows, not the O(document) suffix). What was not incremental is the wrap
+itself: it re-wrapped the line from byte 0 to learn what the edited line's rows
+now are.
+
+**Wrapping can resume.** It is a left-to-right greedy pass whose only carried state
+— the current row's start, the last break opportunity inside it, the running visual
+column — is reset at every row boundary. And a row starting at visual column S
+examines at most S + wrap_columns columns before it must break, so a row with
+`S + wrap_columns < edit_column` provably never looked at the edited byte and is
+still correct. `WrapLineSegmentsFrom` takes a tail plus its `visual_base` and the
+line's `hanging_indent` (a tail contains neither); threading `visual_base` through
+the visual arithmetic is what keeps a tab in the tail expanding against its
+ABSOLUTE column, which a naive "wrap the substring" gets wrong.
+
+The row table is in visual columns and the edit arrives as a byte column, so the
+resume is taken only when the line is plain single-cell ASCII through the edit —
+`PlainAsciiThroughColumn`, the incremental prefix query added by
+[274](#td-2026-08-30-274), not a whole-line measure.
+
+| `editor_soft_wrap_long_line_typing` | before | after |
+| --- | ---: | ---: |
+| `UpdateWrappedRowsAfterEdit` self, 3 iterations | 369.6 ms | **249.0 ms** |
+| per keystroke | 3.85 ms | **2.59 ms** |
+| `editor.line_materialized_bytes`, 10 iterations | 671,116,800 | **20,972,320** |
+| phase allocations (type / backspace) | 154 / 150 | **122 / 118** |
+
+**Two oracles, because the failure mode is silent** — a wrong row table lays glyphs
+in the wrong place, it does not crash:
+
+- debug builds re-wrap the edited line from scratch inside the splice and assert
+  the table matches (`VerifyWrappedRowsAgainstFullRewrap`), bounded by line length
+  the way the width table's existing cross-check is;
+- and because `cmake -S . -B build` is Release, where that assert compiles to
+  nothing, a Release test compares an incrementally spliced viewport against the
+  same content loaded fresh into a second viewport, over eight edit columns
+  (line start, inside the first row, both sides of a row boundary, mid-line, tail,
+  end) crossed with three inserted strings.
+
+Both were probed by making the resume one row too late: the debug assert fires, and
+the Release test fails with `spliced row 0 ... [0,77) vs [0,78)`.
+
+**The remaining cost is the tail.** The resume keeps the rows before the edit and
+re-wraps everything after it, so an edit at the caret position this scenario uses —
+the middle of the line — still re-wraps half a megabyte. Making it O(1) needs
+RESYNCHRONIZATION: re-wrap forward only until a produced row's boundary matches an
+old row's, shifted by the edit delta, then shift the tail's visual columns and
+stop. The blocker is worth recording because it is not obvious and it is not
+self-validating: a tab anywhere after the edit expands against its absolute column,
+so shifting the tail by a delta genuinely changes its wrap, and no comparison of
+row boundaries can detect that after the fact. Resync therefore needs "the line has
+no tab after the edit" as a maintained fact, not a check.
+
 ### TD-2026-08-30-274 — under soft wrap nothing builds the per-line width table, so the O(1) column conversion was unreachable on exactly the longest lines. [RESOLVED 2026-08-30, same session it was found.]
 
 `editor.visual_column_walk_bytes` read 32.8 M on `editor_soft_wrap_long_line_scroll`

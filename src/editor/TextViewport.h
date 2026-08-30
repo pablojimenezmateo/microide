@@ -890,9 +890,12 @@ class TextViewport {
                                         std::size_t removed_count,
                                         std::size_t inserted_count,
                                         InlineLineSplice splice = {});
+  // `edit_column` lets the wrapped-row splice resume mid-line instead of
+  // re-wrapping the whole line; see TextLayoutCache::kNoEditColumn.
   void UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                   std::size_t removed_count,
-                                  std::size_t inserted_count);
+                                  std::size_t inserted_count,
+                                  std::size_t edit_column = TextLayoutCache::kNoEditColumn);
   std::size_t MaxVisualColumns() const;
   void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();

@@ -1376,7 +1376,8 @@ void TextViewport::UpdateVisualColumnCacheAfterEdit(std::size_t start_line,
 
 void TextViewport::UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                               std::size_t removed_count,
-                                              std::size_t inserted_count) {
+                                              std::size_t inserted_count,
+                                              std::size_t edit_column) {
   util::PerformanceTrace::Scope perf_scope("TextViewport::UpdateWrappedRowsAfterEdit");
   // Fast path for the pure soft-wrap case: splice only the edited rows. Any
   // unsupported shape returns false and the content_revision guard rebuilds.
@@ -1384,7 +1385,7 @@ void TextViewport::UpdateWrappedRowsAfterEdit(std::size_t start_line,
                                            document_->lines, tab_size_, visible_columns_,
                                            soft_wrap_, folding_model_,
                                            document_->layout_shape_revision,
-                                           document_->content_revision);
+                                           document_->content_revision, edit_column);
 }
 
 std::size_t TextViewport::MaxVisualColumns() const {

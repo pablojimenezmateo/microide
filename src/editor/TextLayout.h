@@ -1,5 +1,6 @@
 #pragma once
 
+#include <utility>
 #include <algorithm>
 #include <cstddef>
 #include <string>
@@ -226,21 +227,55 @@ class TextLayout {
       emit(std::size_t{0}, std::size_t{0}, std::size_t{0});
       return;
     }
+    WrapLineSegmentsFrom(line_text, tab_size, wrap_columns, /*visual_base=*/0,
+                         HangingIndentFor(line_text, tab_size, wrap_columns),
+                         std::forward<EmitFn>(emit));
+  }
 
-    // Hanging indent: continuation rows of this line render aligned under the
-    // line's leading whitespace. Compute that indent once, clamped so a deep
-    // indent never collapses continuation rows to a degenerate width.
-    std::size_t hanging_indent = 0;
-    {
-      std::size_t indent_visual = 0;
-      for (std::size_t k = 0; k < line_text.size(); ++k) {
-        const char ch = line_text[k];
-        if (ch != ' ' && ch != '\t') {
-          break;
-        }
-        indent_visual = AdvanceVisualColumn(indent_visual, ch, tab_size);
+  // Hanging indent: continuation rows of a line render aligned under the line's
+  // leading whitespace, clamped so a deep indent never collapses continuation
+  // rows to a degenerate width. Exposed because the resume form below cannot
+  // derive it -- a tail does not contain the line's leading whitespace.
+  static std::size_t HangingIndentFor(std::string_view line_text,
+                                      std::size_t tab_size,
+                                      std::size_t wrap_columns) {
+    std::size_t indent_visual = 0;
+    for (std::size_t k = 0; k < line_text.size(); ++k) {
+      const char ch = line_text[k];
+      if (ch != ' ' && ch != '\t') {
+        break;
       }
-      hanging_indent = std::min(indent_visual, wrap_columns / 2);
+      indent_visual = AdvanceVisualColumn(indent_visual, ch, tab_size);
+    }
+    return std::min(indent_visual, wrap_columns / 2);
+  }
+
+  // Resume form: wrap `tail`, which is the part of a line beginning at visual
+  // column `visual_base`, for a line whose hanging indent is `hanging_indent`.
+  //
+  // Restarting here reproduces exactly the rows the whole-line wrap would emit
+  // from this point, PROVIDED `visual_base` is a row boundary: the wrap is a
+  // left-to-right greedy pass whose only carried state is the current row's start
+  // (visual and text), the last break opportunity within it, and the running
+  // visual column -- all of which are reset at a row boundary. `visual_base` is
+  // threaded through the visual arithmetic rather than assumed zero so a tab in
+  // the tail still expands against its ABSOLUTE column, which is the one thing a
+  // naive "wrap the substring" would get wrong.
+  //
+  // Callers must supply a real row boundary. The incremental splice in
+  // TextLayoutCache cross-checks the whole table against a full re-wrap under
+  // NDEBUG-off builds, which is what makes that a checked claim.
+  template <typename EmitFn>
+  static void WrapLineSegmentsFrom(std::string_view tail,
+                                   std::size_t tab_size,
+                                   std::size_t wrap_columns,
+                                   std::size_t visual_base,
+                                   std::size_t hanging_indent,
+                                   EmitFn&& emit) {
+    const std::string_view line_text = tail;
+    if (line_text.empty()) {
+      emit(visual_base, visual_base, visual_base == 0 ? std::size_t{0} : hanging_indent);
+      return;
     }
 
     // Single pass: walk the line tracking the visual column, the last whitespace
@@ -250,11 +285,11 @@ class TextLayout {
     // current row. Hard-break inside a long word only when no whitespace fits.
     // Continuation rows (row_start_visual > 0) lose `hanging_indent` columns of
     // width to the rendered indent.
-    std::size_t row_start_visual = 0;
+    std::size_t row_start_visual = visual_base;
     std::size_t row_start_text = 0;
-    std::size_t last_break_visual = 0;
+    std::size_t last_break_visual = visual_base;
     std::size_t last_break_text = 0;
-    std::size_t visual = 0;
+    std::size_t visual = visual_base;
     std::size_t i = 0;
     const std::size_t line_size = line_text.size();
     while (i < line_size) {
