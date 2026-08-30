@@ -7,6 +7,7 @@
 
 #include "editor/RuntimeSyntaxRegistry.h"
 #include "util/PerformanceCounters.h"
+#include "util/StringUtil.h"
 
 namespace microide::workspace {
 
@@ -152,9 +153,17 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       editor_segments_cache_.viewport = viewport;
       editor_segments_cache_.cursor_line = viewport->cursor_line();
       editor_segments_cache_.cursor_column = viewport->cursor_column();
-      editor_segments_cache_.line_column_text =
-          "Ln " + std::to_string(viewport->cursor_line() + 1) + ", Col " +
-          std::to_string(viewport->cursor_column() + 1);
+      // Composed in place, like the tooltip below: the `+` chain built three
+      // temporaries and assigned the last one, so a caret move past column 15
+      // (where SSO stops covering "Ln N, Col M") allocated twice per keystroke on
+      // the shell thread. Appending into the memo's own buffer reuses a capacity
+      // the previous caret position already paid for.
+      std::string& line_column_text = editor_segments_cache_.line_column_text;
+      line_column_text.clear();
+      line_column_text.append("Ln ");
+      util::AppendUnsigned(line_column_text, viewport->cursor_line() + 1);
+      line_column_text.append(", Col ");
+      util::AppendUnsigned(line_column_text, viewport->cursor_column() + 1);
     }
     StatusBarService::StatusBarSegmentUpdate line_col;
     line_col.text = editor_segments_cache_.line_column_text;
@@ -169,8 +178,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       editor_segments_cache_.viewport = viewport;
       editor_segments_cache_.soft_tabs = viewport->soft_tabs();
       editor_segments_cache_.tab_size = viewport->tab_size();
-      editor_segments_cache_.indent_text =
-          (viewport->soft_tabs() ? "Spaces: " : "Tabs: ") + std::to_string(viewport->tab_size());
+      std::string& indent_text = editor_segments_cache_.indent_text;
+      indent_text.clear();
+      indent_text.append(viewport->soft_tabs() ? "Spaces: " : "Tabs: ");
+      util::AppendUnsigned(indent_text, viewport->tab_size());
     }
     StatusBarService::StatusBarSegmentUpdate indent;
     indent.text = editor_segments_cache_.indent_text;
