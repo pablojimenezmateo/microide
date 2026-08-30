@@ -389,6 +389,58 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-281 — hovering along an open menu queues ~7 near-full-window damage rects per motion event, because the chrome redraw rect is a bounding-box UNION of a window-wide bar and a 700px popup. [OPEN — measured end to end; filed with the analysis because every obvious fix has a trap.]
+
+`menu_hover_switch` (160 File↔Edit hover switches) queues 1,120 damage rects
+totalling **1.06 billion pixels** — `workspace.redraw_rect_pixels` says each
+averages a full window. Traced with a temporary backtrace on
+`RequestRedrawRect`: every one arrives through `RequestChromeRedraw()`, ~7 times
+per motion event (`OpenMenuBarMenu` fires it on entry and exit, `CloseSubmenu`
+twice inside that, `HandleMenuMotion` once more). `CurrentChromeRedrawRect()`
+unions `layout.menu_bar` — full window width by definition — with the open
+popup, ~300px wide but ~700px tall for the File menu, so the union's bounding
+box is ~1920×727 on a 1920-wide window: 1.4M px standing for ~260K px of real
+damage, 5x over.
+
+Where the cost actually lands (and does NOT land) — this is the half worth
+keeping:
+
+- It is NOT a naive full repaint. The rects all overlap, so
+  `AnalyzeDirtyRegions` merges them into ONE clip — under the promotion
+  thresholds (`kPromoteFragmentedMergedClipThreshold` 6,
+  wide-coverage 3 clips + 45%) — and `RenderClip`'s chrome-union containment
+  check then skips the editor/sidebar/panel renders entirely. What remains is
+  `FrameBase` fill + chrome/menu paint across a 1.4M px clip instead of 260K,
+  and the full-scene present that happens regardless.
+- Splitting `RequestChromeRedraw` into component rects (bar band + popup) is
+  DEFEATED downstream: the popup starts ≤1px below the bar, so
+  `kDirtyRegionMergeGapPixels` re-merges them into the same bounding box. A fix
+  has to touch the merge policy, e.g. refuse a merge whose bounding box is ≫
+  the sum of the merged areas (a merge-waste guard). That keeps them as two
+  clips — still under the 3-clip promotion threshold — but changes coalescing
+  for every partial frame in the app, which is exactly the "preserve the redraw
+  architecture, tune policy only with profiling" territory.
+- Independently, `workspace.menu_bar_layouts` reads 1,610 for those 160 events —
+  **10 menu-bar layouts per hover switch**, the TD-2026-08-06-149 shape again a
+  layer up: each of the ~7 redraw requests plus the hit-test recompute the
+  menu-bar layout (label widths are cached; the layout walk is not).
+- The 7 requests per event are redundant with each other (entry/exit pairs of
+  three nested state changes). A dedup guard in `RequestRedrawRect` (skip when
+  identical to the last queued rect) would collapse them to ~2, but the push is
+  a heap-free InlineVector append, so this buys instrument fidelity more than
+  time.
+
+Why filed rather than fixed: on the GPU renderer the oversized clip's fill cost
+is small, the present is whole-scene either way, and the containment check
+already protects the expensive surfaces — so the measured waste is real but
+modest, while the candidate fixes (merge-waste guard, promotion-threshold
+interplay) change redraw policy for every surface in the app. That trade needs
+profiling of the real fill cost, not just this counter. What this entry pins:
+the counter's 5x inflation on menu hover is the union's fault, not evidence of
+a full-repaint regression — do not "fix" it by rebaselining a menu scenario or
+by splitting the request without touching the coalescer, which changes nothing.
+
+
 ### TD-2026-08-30-280 — the whole window layout is rebuilt ~475 times in one grid scenario, and until now nothing counted it. [RESOLVED 2026-08-30 — but NOT by the dirty-flag audit the entry proposed: the memo is keyed on the inputs themselves, so there is no flag to audit.]
 
 `ComputeLayout` and `ComputeEditorGroupRects` are pure and cheap, so nothing
