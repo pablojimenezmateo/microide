@@ -3,6 +3,7 @@
 #include <SDL3/SDL_log.h>
 
 #include <algorithm>
+#include <optional>
 #include <vector>
 
 #include "render/DebugTextBackend.h"
@@ -120,6 +121,24 @@ float TextRenderer::MeasureWidth(std::string_view text) const {
         text.substr(0, util::Utf8ByteBudgetPrefixLength(text, kMaxMeasureBytes));
     return backend_ != nullptr ? backend_->MeasureWidth(clipped)
                                : static_cast<float>(clipped.size()) * 8.0f;
+  }
+
+  // Measurements the backend answers arithmetically are not memoized at all: the
+  // memo would cost a heap copy of the string and an LRU slot to save one
+  // multiply, and the strings arriving here are not only chrome labels — the
+  // merge and compare surfaces measure every visible ROW of the document, so the
+  // cache was being filled with document text and evicting the labels whose
+  // measurement actually shapes (TD-2026-08-30-269). Counted as a hit so the
+  // hit-rate statistic keeps meaning "measurements that did not shape".
+  if (backend_ != nullptr) {
+    if (const std::optional<float> cheap = backend_->MeasureWidthIfCheap(text);
+        cheap.has_value()) {
+      ++width_cache_queries_;
+      ++width_cache_hits_;
+      util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheQueries);
+      util::AddPerformanceCounter(util::PerfCounterId::RenderTextWidthCacheHits);
+      return *cheap;
+    }
   }
 
   ++width_cache_queries_;

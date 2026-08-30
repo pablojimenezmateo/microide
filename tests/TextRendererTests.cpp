@@ -12,6 +12,7 @@
 #include "util/PerformanceCounters.h"
 #include <cstdint>
 #include <cstring>
+#include <optional>
 
 #include "render/AsciiGlyphAtlas.h"
 #include "render/GlyphSurfaceFormat.h"
@@ -27,6 +28,7 @@
 #include <cmath>
 #include <filesystem>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1952,6 +1954,68 @@ void TestMeasureWidthCacheStatsTrackQueriesAndHits() {
          "width cache stats should count repeated lookups as cache hits");
 }
 
+// The real monospaced backend answers a run of ASCII arithmetically and only
+// shapes the rest; this mirrors that split so the memo policy can be tested.
+class MonospacedishTextBackend final : public microide::render::TextRendererBackend {
+ public:
+  const char* Name() const override { return "monospacedish"; }
+  float CharWidth() const override { return 7.0f; }
+  float LineHeight() const override { return 14.0f; }
+  float MeasureWidth(std::string_view text) const override {
+    ++measure_width_calls_;
+    return static_cast<float>(text.size()) * 7.0f;
+  }
+  std::optional<float> MeasureWidthIfCheap(std::string_view text) const override {
+    for (const unsigned char ch : text) {
+      if (ch < 0x20 || ch > 0x7E) {
+        return std::nullopt;
+      }
+    }
+    return static_cast<float>(text.size()) * 7.0f;
+  }
+  void DrawString(SDL_Renderer*, float, float, SDL_Color, std::string_view) override {}
+
+  std::size_t measure_width_calls() const { return measure_width_calls_; }
+
+ private:
+  mutable std::size_t measure_width_calls_ = 0;
+};
+
+// Scrolling a large diff measures every visible ROW of the document, and those
+// rows are ASCII -- one multiply each. Memoizing them cost a heap copy per row
+// and, because the memo is a bounded LRU, evicted the chrome labels it exists
+// for. A cheap measurement must therefore not enter the cache at all.
+void TestCheapMeasurementsDoNotEvictShapedEntries() {
+  microide::render::TextRenderer renderer;
+  auto backend = std::make_unique<MonospacedishTextBackend>();
+  auto* backend_ptr = backend.get();
+  TextRendererTestAccess::SetBackend(renderer, std::move(backend));
+
+  // A label the backend has to shape: it goes in the memo.
+  const std::string shaped_label = "Branch \xE2\x80\xA6 main";
+  (void)renderer.MeasureWidth(shaped_label);
+  const std::size_t after_shaped = backend_ptr->measure_width_calls();
+
+  // Far more distinct ASCII rows than the memo could hold, the way a scroll
+  // through a large file arrives.
+  for (int row = 0; row < 20000; ++row) {
+    const std::string line = "    const auto value_" + std::to_string(row) + " = compute(row);";
+    (void)renderer.MeasureWidth(line);
+  }
+  Expect(backend_ptr->measure_width_calls() == after_shaped,
+         "an arithmetically-measurable string must not reach the shaping backend");
+
+  renderer.ResetCacheStats();
+  (void)renderer.MeasureWidth(shaped_label);
+  Expect(renderer.CacheStats().width_cache_hits == 1,
+         "20k measured document rows must not evict a shaped label from the width cache");
+
+  renderer.ResetCacheStats();
+  (void)renderer.MeasureWidth("    const auto value_0 = compute(row);");
+  Expect(renderer.CacheStats().width_cache_queries == 1,
+         "a cheap measurement still counts as a width query");
+}
+
 void TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements() {
   microide::render::TextRenderer renderer;
   auto backend = std::make_unique<CountingTextBackend>();
@@ -2813,6 +2877,9 @@ void RegisterTextRendererTests(std::vector<TestCase>& tests) {
   AddTest(tests,
           "TextRenderer cache stats track width queries and hits",
           TestMeasureWidthCacheStatsTrackQueriesAndHits);
+  AddTest(tests,
+          "TextRenderer cheap measurements never evict shaped width-cache entries",
+          TestCheapMeasurementsDoNotEvictShapedEntries);
   AddTest(tests,
           "TextRenderer truncation uses bounded width probes",
           TestTruncateToWidthUsesUtf8BoundariesAndFewMeasurements);

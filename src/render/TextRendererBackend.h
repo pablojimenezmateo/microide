@@ -53,6 +53,24 @@ class TextRendererBackend {
   virtual float LineHeight() const = 0;
   virtual TextClipPadding ClipPadding() const { return {}; }
   virtual float MeasureWidth(std::string_view text) const = 0;
+  // The width, when this backend can answer arithmetically rather than by
+  // shaping — a monospaced backend answers a run of ASCII with one multiply.
+  // `std::nullopt` means "shape it", which is what the caller memoizes.
+  //
+  // `TextRenderer` memoizes every measurement it makes, and a memo entry costs a
+  // heap copy of the string plus a slot in a 4,096-entry LRU. Paying that to save
+  // one multiply is a loss on its own; what makes it a bug is what arrives here.
+  // The merge and compare surfaces measure every visible ROW through
+  // `BuildDecoratedRow`, so scrolling a large diff inserted thousands of distinct
+  // document rows into a cache sized for chrome labels and evicted every one of
+  // them — 1,647 string copies in a single `merge_next_conflict_large_file`
+  // phase. Returning the width here keeps document text out of the cache
+  // entirely, and one call answers both "is it cheap" and "what is it" so the
+  // string is scanned once.
+  virtual std::optional<float> MeasureWidthIfCheap(std::string_view text) const {
+    (void) text;
+    return std::nullopt;
+  }
   virtual void DrawString(SDL_Renderer* renderer,
                           float x,
                           float y,

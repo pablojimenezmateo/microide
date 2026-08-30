@@ -39,6 +39,14 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   float LineHeight() const override { return line_height_; }
   TextClipPadding ClipPadding() const override { return clip_padding_; }
   float MeasureWidth(std::string_view text) const override;
+  // Monospaced: a run of printable ASCII measures as `size * char_width_`, which
+  // is exactly the condition MeasureWidth's own fast path tests.
+  std::optional<float> MeasureWidthIfCheap(std::string_view text) const override {
+    if (font_ == nullptr || !CanUseFastAscii(text)) {
+      return std::nullopt;
+    }
+    return static_cast<float>(text.size()) * char_width_;
+  }
   void DrawString(SDL_Renderer* renderer,
                   float x,
                   float y,
