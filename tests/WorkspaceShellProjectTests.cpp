@@ -4965,6 +4965,21 @@ void TestWorkspaceShellDirectionalEditorGroupFocusAndMove() {
   const SDL_FRect moved = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 0);
   const SDL_FRect neighbour = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
   Expect(moved.x < neighbour.x, "the moved pane is now the leftmost column");
+
+  // The advertised chords have to actually dispatch. Ctrl+K Ctrl+O shipped in the
+  // registry for a while doing nothing at all because the leader handler knew only
+  // the two fold sequences, so a keybinding label is not evidence of a binding.
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL), "Ctrl+K arms the editor chord");
+  Expect(SendKeyDown(shell, SDLK_RIGHT, SDL_KMOD_CTRL),
+         "Ctrl+K Ctrl+Right is handled as focus-group-right");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "Ctrl+K Ctrl+Right focuses the pane to the right");
+  Expect(SendKeyDown(shell, SDLK_K, SDL_KMOD_CTRL), "Ctrl+K arms the editor chord again");
+  Expect(SendKeyDown(shell, SDLK_LEFT, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+K Ctrl+Shift+Left is handled as move-group-left");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0 &&
+             WorkspaceShellTestAccess::EditorGroupCount(shell) == 3,
+         "Ctrl+K Ctrl+Shift+Left moves the focused pane left without changing the count");
 }
 
 // A cross-group drag animates two strips: the source closes the hole its lifted
