@@ -10,6 +10,7 @@
 
 #include <cmath>
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace microide::tests {
@@ -671,6 +672,137 @@ void TestWorkspaceSharedEditorSplitLayout() {
       .orientation = EditorSplitOrientation::Vertical, .weights = {}});
   Expect(!restored.Load(malformed) && restored.leaf_count() == 1,
          "a branch with no children should be rejected and leave a single pane");
+}
+
+// Every mutation of the split tree stamps a fresh revision, a copy carries its
+// source's, and a refused edit leaves it alone. The shell's pane-rect memo is
+// keyed on this (TD-2026-08-30-280), so a mutator that forgot to stamp would
+// serve the previous grid's rects for the new one -- and nothing else would say.
+void TestWorkspaceSharedEditorSplitTreeRevision() {
+  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::EditorSplitTree;
+
+  EditorSplitTree tree;
+  std::uint64_t seen = tree.revision();
+  auto expect_stamped = [&](const char* what) {
+    Expect(tree.revision() != seen, std::string(what) + " should stamp a new tree revision");
+    seen = tree.revision();
+  };
+
+  Expect(tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == 1, "first split");
+  expect_stamped("InsertLeaf (leaf becomes a branch)");
+  Expect(tree.InsertLeaf(1, EditorSplitOrientation::Vertical, false) == 2, "second split");
+  expect_stamped("InsertLeaf (sibling in an existing branch)");
+  Expect(tree.ResizeDivider(tree.root(), 0, 0.3f), "divider move");
+  expect_stamped("ResizeDivider");
+  Expect(!tree.ResizeDivider(tree.root(), 7, 0.3f) && tree.revision() == seen,
+         "a refused divider move should leave the revision alone");
+  Expect(tree.ResetDivider(tree.root(), 0), "divider reset");
+  expect_stamped("ResetDivider");
+
+  const EditorSplitTree copy = tree;
+  Expect(copy.revision() == tree.revision() && copy == tree,
+         "a copy should carry its source's revision, and be equal to it");
+
+  Expect(tree.MoveLeaf(0, 2, EditorSplitOrientation::Vertical, false) != EditorSplitTree::kNoLeaf,
+         "move pane");
+  expect_stamped("MoveLeaf");
+  Expect(copy.revision() != tree.revision(),
+         "mutating the source must not move the copy's revision");
+  tree.RemoveLeaf(0);
+  expect_stamped("RemoveLeaf");
+
+  EditorSplitTree loaded;
+  const std::uint64_t before_load = loaded.revision();
+  Expect(loaded.Load(copy.Flatten()) && loaded == copy, "Load should round-trip the copy");
+  Expect(loaded.revision() != before_load, "Load should stamp a new revision");
+  Expect(loaded.revision() != copy.revision(),
+         "two trees of identical shape built independently do not share a revision; "
+         "equal revisions imply equal shape, never the converse");
+
+  seen = tree.revision();
+  tree.ResetToEvenSplit(3, EditorSplitOrientation::Horizontal);
+  expect_stamped("ResetToEvenSplit");
+  tree.Reset();
+  expect_stamped("Reset");
+}
+
+// The struct form of `ComputeLayout` is the one the shell memoizes on; the
+// positional form must be exactly the same function, and the key's `==` must
+// notice every field -- a field the comparison skipped would be an input the memo
+// ignores, which is the stale-hit-test failure the memo exists to rule out.
+void TestWorkspaceLayoutInputsStructMatchesPositionalForm() {
+  using microide::workspace::ComputeLayout;
+  using microide::workspace::LayoutMode;
+  using microide::workspace::LayoutModeInputs;
+  using microide::workspace::WorkspaceLayoutInputs;
+
+  const LayoutModeInputs mode{.user_override = LayoutModeInputs::Override::Auto,
+                              .compact_breakpoint_px = 900.0f,
+                              .previous_mode = LayoutMode::Regular};
+  const WorkspaceLayoutInputs inputs{
+      .window_width = 1280.0f,
+      .window_height = 720.0f,
+      .sidebar_visible = true,
+      .bottom_panel_visible = true,
+      .sidebar_width = 260.0f,
+      .bottom_panel_height = 180.0f,
+      .layout_mode = mode,
+      .reserve_status_bar = true,
+      .right_pane_visible = true,
+      .right_pane_width = 300.0f,
+      .project_tab_strip_visible = false,
+  };
+  Expect(ComputeLayout(inputs) ==
+             ComputeLayout(1280.0f, 720.0f, true, true, 260.0f, 180.0f, mode, true, true, 300.0f,
+                           false),
+         "the positional ComputeLayout must be the struct form, field for field");
+
+  // Each field, changed alone, must make the key unequal AND move the layout: a
+  // field that does not move the layout would be dead weight in the key, and one
+  // the key ignored would be a stale memo.
+  const microide::workspace::WorkspaceLayout base = ComputeLayout(inputs);
+  auto expect_field = [&](const char* name, WorkspaceLayoutInputs changed) {
+    Expect(!(changed == inputs), std::string(name) + " should make the key unequal");
+    Expect(ComputeLayout(changed) != base, std::string(name) + " should move the layout");
+  };
+  WorkspaceLayoutInputs v = inputs;
+  v.window_width = 1400.0f;
+  expect_field("window_width", v);
+  v = inputs;
+  v.window_height = 900.0f;
+  expect_field("window_height", v);
+  v = inputs;
+  v.sidebar_visible = false;
+  expect_field("sidebar_visible", v);
+  v = inputs;
+  v.bottom_panel_visible = false;
+  expect_field("bottom_panel_visible", v);
+  v = inputs;
+  v.sidebar_width = 320.0f;
+  expect_field("sidebar_width", v);
+  v = inputs;
+  v.bottom_panel_height = 240.0f;
+  expect_field("bottom_panel_height", v);
+  v = inputs;
+  v.layout_mode.user_override = LayoutModeInputs::Override::Compact;
+  expect_field("layout_mode.user_override", v);
+  v = inputs;
+  v.layout_mode.previous_mode = LayoutMode::Compact;
+  v.layout_mode.compact_breakpoint_px = 1300.0f;  // inside the hysteresis band at 1280
+  expect_field("layout_mode.previous_mode+breakpoint", v);
+  v = inputs;
+  v.reserve_status_bar = false;
+  expect_field("reserve_status_bar", v);
+  v = inputs;
+  v.right_pane_visible = false;
+  expect_field("right_pane_visible", v);
+  v = inputs;
+  v.right_pane_width = 360.0f;
+  expect_field("right_pane_width", v);
+  v = inputs;
+  v.project_tab_strip_visible = true;
+  expect_field("project_tab_strip_visible", v);
 }
 
 void TestWorkspaceEditorGroupRects() {
@@ -1378,6 +1510,10 @@ void TestWorkspaceSharedProjectTabStripVisibility() {
 }  // namespace
 
 void RegisterWorkspaceShellSharedLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShared/EditorSplitTreeRevision",
+          TestWorkspaceSharedEditorSplitTreeRevision);
+  AddTest(tests, "WorkspaceShared/LayoutInputsStructMatchesPositionalForm",
+          TestWorkspaceLayoutInputsStructMatchesPositionalForm);
   AddTest(tests, "WorkspaceShared/LayoutHelpers", TestWorkspaceSharedLayoutHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarHelpers", TestWorkspaceSharedScrollbarHelpers);
   AddTest(tests, "WorkspaceShared/ScrollbarReserveGeometry",

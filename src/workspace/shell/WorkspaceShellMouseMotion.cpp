@@ -255,7 +255,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
       // The pane hugs the right edge, so its width grows as the divider moves left.
       context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
           window_width - static_cast<float>(event.motion.x), window_width, resolved_sidebar_width);
-      MarkLayoutDirty();
+      NoteLayoutInputsChanged();
       EnsureRedraw([this]() { RequestWindowRedraw(); });
       return true;
     }
@@ -275,7 +275,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
                                                : static_cast<float>(event.motion.y);
         context_.current_project_state.editor_split.ResizeDivider(
             node, boundary, (pointer - divider.pair_start) / divider.pair_extent);
-        MarkLayoutDirty();
+        NoteLayoutInputsChanged();
         // Only the two panes sharing this divider move, and their COMBINED span
         // is what `pair_start`/`pair_extent` name -- an invariant of the resize,
         // so one rect covers the layout before and after it. This used to repaint

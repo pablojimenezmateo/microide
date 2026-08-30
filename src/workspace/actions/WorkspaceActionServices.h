@@ -211,7 +211,7 @@ class WorkspaceActionContext {
     // Post a transient host notification toast (and schedule a redraw).
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void(float)> apply_ui_scale;
-    std::function<void()> mark_layout_dirty;
+    std::function<void()> note_layout_inputs_changed;
     std::function<void()> request_window_redraw;
     // Queue the host-level full-screen toggle. The window itself is owned by
     // Application, which polls WorkspaceShell::ConsumeWindowAction each frame;

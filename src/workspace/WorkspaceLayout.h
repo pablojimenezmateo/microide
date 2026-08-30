@@ -27,6 +27,31 @@ struct LayoutModeInputs {
   Override user_override = Override::Auto;
   float compact_breakpoint_px = 720.0f;
   LayoutMode previous_mode = LayoutMode::Regular;
+
+  friend bool operator==(const LayoutModeInputs&, const LayoutModeInputs&) = default;
+};
+
+// Every value `ComputeLayout` reads, as one struct. The layout is a pure function
+// of this and nothing else, which is what lets the shell memoize it by comparing
+// INPUTS rather than by trusting a dirty flag (TD-2026-08-30-280): a flag has to
+// be raised at every site that changes any of these fields, and one missed site
+// turns a hit test stale in the place a wrong rect is least visible; a key cannot
+// be wrong, only unequal. Memberwise `==`, so a NaN never matches and simply
+// recomputes.
+struct WorkspaceLayoutInputs {
+  float window_width = 0.0f;
+  float window_height = 0.0f;
+  bool sidebar_visible = false;
+  bool bottom_panel_visible = false;
+  float sidebar_width = 0.0f;
+  float bottom_panel_height = 0.0f;
+  LayoutModeInputs layout_mode{};
+  bool reserve_status_bar = false;
+  bool right_pane_visible = false;
+  float right_pane_width = 0.0f;
+  bool project_tab_strip_visible = true;
+
+  friend bool operator==(const WorkspaceLayoutInputs&, const WorkspaceLayoutInputs&) = default;
 };
 
 struct WorkspaceLayout {
@@ -304,17 +329,34 @@ SDL_FRect MakeRect(float x, float y, float w, float h);
 inline SDL_FRect DirtyRectWithHalo(const SDL_FRect& content) {
   return SDL_FRect{content.x - 1.0f, content.y - 1.0f, content.w + 2.0f, content.h + 2.0f};
 }
-WorkspaceLayout ComputeLayout(float window_width,
-                              float window_height,
-                              bool sidebar_visible,
-                              bool bottom_panel_visible,
-                              float sidebar_width,
-                              float bottom_panel_height,
-                              LayoutModeInputs layout_mode_inputs = {},
-                              bool reserve_status_bar = false,
-                              bool right_pane_visible = false,
-                              float right_pane_width = 0.0f,
-                              bool project_tab_strip_visible = true);
+WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs);
+// Positional form of the same function, for call sites that build the inputs
+// inline (tests, mostly). Same result, by construction: it only packs the struct.
+inline WorkspaceLayout ComputeLayout(float window_width,
+                                     float window_height,
+                                     bool sidebar_visible,
+                                     bool bottom_panel_visible,
+                                     float sidebar_width,
+                                     float bottom_panel_height,
+                                     LayoutModeInputs layout_mode_inputs = {},
+                                     bool reserve_status_bar = false,
+                                     bool right_pane_visible = false,
+                                     float right_pane_width = 0.0f,
+                                     bool project_tab_strip_visible = true) {
+  return ComputeLayout(WorkspaceLayoutInputs{
+      .window_width = window_width,
+      .window_height = window_height,
+      .sidebar_visible = sidebar_visible,
+      .bottom_panel_visible = bottom_panel_visible,
+      .sidebar_width = sidebar_width,
+      .bottom_panel_height = bottom_panel_height,
+      .layout_mode = layout_mode_inputs,
+      .reserve_status_bar = reserve_status_bar,
+      .right_pane_visible = right_pane_visible,
+      .right_pane_width = right_pane_width,
+      .project_tab_strip_visible = project_tab_strip_visible,
+  });
+}
 // Carve the editor column into one rect set per leaf of `split`, in visual order.
 // A single-leaf tree hands back the layout's own strip/breadcrumb/surface rects
 // unchanged; every deeper tree lays its branches out along their axis with the

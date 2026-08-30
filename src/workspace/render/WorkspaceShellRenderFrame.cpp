@@ -340,32 +340,25 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
   const float resolved_sidebar_width = sidebar_vm.visible ? clamped_sidebar_width : 0.0f;
   const float clamped_right_pane_width = ClampRightPaneWidth(
       project_state.debug_pane.width, static_cast<float>(width), resolved_sidebar_width);
-  if (clamped_sidebar_width != project_state.sidebar.width ||
-      clamped_panel_height != project_state.panel.height ||
-      clamped_right_pane_width != project_state.debug_pane.width) {
-    layout_dirty_ = true;
-  }
   project_state.sidebar.width = clamped_sidebar_width;
   project_state.panel.height = clamped_panel_height;
   project_state.debug_pane.width = clamped_right_pane_width;
 
+  // One layout, one memo: this is the same `CurrentWorkspaceLayout()` every hit
+  // test reads, so a frame can never paint a geometry the input paths disagree
+  // with. The window size was written into `window_presentation_` above, so the
+  // key sees this frame's size. A miss here is the only place the resolved
+  // layout mode is committed back to the service (its hysteresis input).
+  const std::uint64_t layout_generation_before = layout_memo_generation_;
   WorkspaceLayout layout;
-  bool workspace_layout_recomputed = false;
-  if (layout_dirty_ || !prepared_frame_layout_.has_value()) {
+  {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::ComputeLayout");
-    layout = ComputeLayout(static_cast<float>(width), static_cast<float>(height), sidebar_vm.visible,
-                           panel_vm.content != PanelContentKind::None,
-                           project_state.sidebar.width, project_state.panel.height,
-                           layout_mode_service_.SnapshotInputs(),
-                           layout_mode_service_.StatusBarVisible(),
-                           project_state.debug_pane.visible, project_state.debug_pane.width,
-                           ProjectTabStripVisible());
+    layout = *CurrentWorkspaceLayout();
+  }
+  const bool workspace_layout_recomputed = layout_memo_generation_ != layout_generation_before;
+  if (workspace_layout_recomputed) {
     layout_mode_service_.SetCurrentMode(layout.layout_mode);
     ++prepare_frame_layout_compute_count_;
-    layout_dirty_ = false;
-    workspace_layout_recomputed = true;
-  } else {
-    layout = *prepared_frame_layout_;
   }
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshStatusBar");

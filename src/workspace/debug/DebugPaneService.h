@@ -15,7 +15,7 @@ class DebugPaneService {
  public:
   struct Operations {
     std::function<void()> request_redraw;
-    std::function<void()> mark_layout_dirty;
+    std::function<void()> note_layout_inputs_changed;
   };
 
   DebugPaneService(ProjectWorkspaceState& state, Operations operations);

@@ -1,6 +1,7 @@
 #include "workspace/EditorSplitTree.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 
 namespace microide::workspace {
@@ -36,11 +37,20 @@ void WalkDepthFirst(std::span<const EditorSplitTree::Node> nodes,
 
 }  // namespace
 
+void EditorSplitTree::Touch() {
+  // Process-wide so that two DIFFERENT trees can never share a stamp: a
+  // per-instance counter would let project A's tree at edit #5 collide with
+  // project B's at edit #5 the moment the shell switched between them.
+  static std::atomic<std::uint64_t> next_revision{0};
+  revision_ = next_revision.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
 void EditorSplitTree::Reset() {
   nodes_.clear();
   nodes_.push_back(Node{});
   root_ = 0;
   leaf_count_ = 1;
+  Touch();
 }
 
 void EditorSplitTree::ResetToEvenSplit(std::size_t leaves, EditorSplitOrientation orientation) {
@@ -56,6 +66,7 @@ void EditorSplitTree::ResetToEvenSplit(std::size_t leaves, EditorSplitOrientatio
     nodes_[0].weights.push_back(1.0f / static_cast<float>(wanted));
   }
   leaf_count_ = wanted;
+  Touch();
 }
 
 std::uint8_t EditorSplitTree::AddNode(EditorSplitOrientation orientation, std::uint8_t parent) {
@@ -176,6 +187,7 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
     reloaded.weights.insert(at, half);
     Normalise(reloaded);
     ++leaf_count_;
+    Touch();
     return LeafOrdinal(fresh);
   }
 
@@ -196,6 +208,7 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
   branch.weights.push_back(0.5f);
   branch.weights.push_back(0.5f);
   ++leaf_count_;
+  Touch();
   return LeafOrdinal(fresh);
 }
 
@@ -309,6 +322,7 @@ void EditorSplitTree::Rebuild() {
     return;
   }
   leaf_count_ = CountLeaves();
+  Touch();
 }
 
 bool EditorSplitTree::ResizeDivider(std::uint8_t node, std::size_t boundary, float first_share) {
@@ -321,6 +335,7 @@ bool EditorSplitTree::ResizeDivider(std::uint8_t node, std::size_t boundary, flo
   const float share = std::clamp(first_share, kMinDividerShare, 1.0f - kMinDividerShare);
   branch.weights[boundary] = pair * share;
   branch.weights[boundary + 1] = pair * (1.0f - share);
+  Touch();
   return true;
 }
 
@@ -400,6 +415,7 @@ bool EditorSplitTree::Load(const EditorSplitTreeRecord& record) {
       Normalise(nodes_[i]);
     }
   }
+  Touch();
   return true;
 }
 

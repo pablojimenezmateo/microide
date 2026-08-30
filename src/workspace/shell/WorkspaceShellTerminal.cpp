@@ -242,7 +242,7 @@ void WorkspaceShell::ApplyTerminalFontPreferences() {
     // resize guard in PrepareFrameOnce re-run ResizeTerminalToPanel off the new
     // metrics; the extra full redraws cover the reflow.
     last_terminal_panel_rect_.reset();
-    MarkLayoutDirty();
+    NoteLayoutInputsChanged();
     post_render_redraws_remaining_ = std::max(post_render_redraws_remaining_, 2);
   }
 }

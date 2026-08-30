@@ -485,7 +485,7 @@
   static void SetWindowSize(WorkspaceShell& shell, int width, int height) {
     shell.window_presentation_.logical_width = width;
     shell.window_presentation_.logical_height = height;
-    shell.MarkLayoutDirty();
+    shell.NoteLayoutInputsChanged();
   }
   static std::size_t PrepareFrameLayoutComputeCount(const WorkspaceShell& shell) {
     return shell.prepare_frame_layout_compute_count_;
@@ -683,6 +683,13 @@
   }
   static const microide::workspace::EditorSplitTree& EditorSplit(WorkspaceShell& shell) {
     return shell.context_.current_project_state.editor_split;
+  }
+  // Move divider `boundary` of the root branch to `first_share` directly on the
+  // tree, the way the divider drag does once it has resolved the pointer.
+  static bool ResizeRootSplitDivider(WorkspaceShell& shell, std::size_t boundary,
+                                     float first_share) {
+    auto& split = shell.context_.current_project_state.editor_split;
+    return split.ResizeDivider(split.root(), boundary, first_share);
   }
   static bool MoveTabToNewGroup(WorkspaceShell& shell,
                                 std::size_t from_group,

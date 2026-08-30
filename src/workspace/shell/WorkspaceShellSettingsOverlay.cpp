@@ -325,7 +325,7 @@ bool WorkspaceShell::WriteSettingValue(std::string_view id, std::string value,
     }
   }
   ApplyLiveSettings();
-  MarkLayoutDirty();
+  NoteLayoutInputsChanged();
   RequestWindowRedraw();
   return true;
 }
@@ -385,7 +385,7 @@ void WorkspaceShell::ApplyLiveSettings() {
   // the typeface actually changed (SetFontFamily returns false when unchanged).
   if (const auto family = GetSettingValue("editor.font_family"); family.has_value()) {
     if (text_renderer_.SetFontFamily(*family)) {
-      MarkLayoutDirty();
+      NoteLayoutInputsChanged();
     }
   }
   // Push terminal scrollback to live sessions only when the resolved cap changes
@@ -543,7 +543,7 @@ bool WorkspaceShell::ResetSettingInScope(std::string_view id, SettingScope scope
     MakePersistenceCoordinator().SaveConfigState();
   }
   ApplyLiveSettings();
-  MarkLayoutDirty();
+  NoteLayoutInputsChanged();
   RequestWindowRedraw();
   return true;
 }

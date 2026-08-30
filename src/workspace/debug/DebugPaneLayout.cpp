@@ -263,7 +263,7 @@ DebugPaneService WorkspaceShell::MakeDebugPaneService() {
   return DebugPaneService(context_.current_project_state,
                           DebugPaneService::Operations{
                               .request_redraw = [this]() { RequestWindowRedraw(); },
-                              .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
+                              .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
                           });
 }
 

@@ -50,7 +50,22 @@ const editor::TextViewport* WorkspaceShell::ViewportForPane(const EditorPaneLayo
 
 EditorGroupRectsLayout WorkspaceShell::ComputeEditorGroupRectsForState(
     const WorkspaceLayout& layout) const {
-  return ComputeEditorGroupRects(layout, context_.current_project_state.editor_split);
+  // Memoized on (layout value, tree revision). The layout compare is ~50 float
+  // equalities with early exit; the walk it replaces builds a chrome rect set per
+  // leaf and ran ~490 times in one grid scenario, once per damage event
+  // (TD-2026-08-30-280). Returned by value on purpose: a reference into a mutable
+  // memo would silently change under a caller that asks again mid-loop.
+  const EditorSplitTree& split = context_.current_project_state.editor_split;
+  if (editor_group_rects_memo_layout_.has_value() &&
+      editor_group_rects_memo_tree_revision_ == split.revision() &&
+      *editor_group_rects_memo_layout_ == layout) {
+    util::AddPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectMemoHits);
+    return editor_group_rects_memo_;
+  }
+  editor_group_rects_memo_ = ComputeEditorGroupRects(layout, split);
+  editor_group_rects_memo_layout_ = layout;
+  editor_group_rects_memo_tree_revision_ = split.revision();
+  return editor_group_rects_memo_;
 }
 
 WorkspaceShell::EditorPaneLayouts WorkspaceShell::EditorPaneLayoutsFromGroupRects(

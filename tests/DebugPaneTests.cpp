@@ -33,7 +33,7 @@ using microide::workspace::WorkspaceShell;
 DebugPaneService MakeService(ProjectWorkspaceState& state) {
   return DebugPaneService(state, DebugPaneService::Operations{
                                      .request_redraw = []() {},
-                                     .mark_layout_dirty = []() {},
+                                     .note_layout_inputs_changed = []() {},
                                  });
 }
 

@@ -2677,6 +2677,173 @@ void TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize() {
          "PrepareFrameOnce should recompute layout once on the frame after a resize");
 }
 
+// The layout memo is keyed on its inputs, not on a dirty flag (TD-2026-08-30-280).
+// This walks every live input the shell feeds the key, changes it through the
+// same state the product mutates, and checks two things each time: the memo
+// answers exactly what a from-scratch compute of the current state answers (no
+// stale hit-test geometry), and the layout actually moved (so the case is not
+// vacuous). Ten unchanged queries must cost zero computes.
+void TestWorkspaceShellLayoutMemoTracksEveryInput() {
+  using microide::workspace::ComputeLayout;
+  using microide::workspace::LayoutModeInputs;
+  using microide::workspace::WorkspaceLayout;
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path first = temp_dir.path() / "first";
+  const std::filesystem::path second = temp_dir.path() / "second";
+  std::filesystem::create_directories(first);
+  std::filesystem::create_directories(second);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, first, false, false),
+         "the memo fixture needs a project so the project tab strip has a state to flip");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetSidebarVisible(shell, true);
+  WorkspaceShellTestAccess::SetStatusBarVisible(shell, true);
+
+  WorkspaceLayout previous = WorkspaceShellTestAccess::CurrentLayout(shell);
+  auto expect_moved = [&](const char* what) {
+    const WorkspaceLayout memo = WorkspaceShellTestAccess::CurrentLayout(shell);
+    const WorkspaceLayout fresh = ComputeLayout(WorkspaceShellTestAccess::CurrentLayoutInputs(shell));
+    Expect(memo == fresh, std::string("after ") + what +
+                              " the memo should answer what a fresh compute of the state answers");
+    Expect(memo != previous, std::string(what) + " should move the layout, or this case proves nothing");
+    previous = memo;
+  };
+
+  util::ResetPerformanceCounters();
+  for (int i = 0; i < 10; ++i) {
+    (void)WorkspaceShellTestAccess::CurrentLayout(shell);
+  }
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceLayoutComputes) == 0,
+         "ten queries against unchanged state should compute nothing");
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceLayoutMemoHits) == 10,
+         "ten queries against unchanged state should be ten memo hits");
+
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1400, 900);
+  expect_moved("a window resize");
+  WorkspaceShellTestAccess::SetSidebarWidth(shell, 320.0f);
+  expect_moved("a sidebar width change");
+  WorkspaceShellTestAccess::SetSidebarVisible(shell, false);
+  expect_moved("hiding the sidebar");
+  if (WorkspaceShellTestAccess::BottomPanelVisible(shell)) {
+    WorkspaceShellTestAccess::HideBottomPanel(shell);
+    expect_moved("hiding the bottom panel");
+  }
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  expect_moved("showing the bottom panel");
+  WorkspaceShellTestAccess::SetBottomPanelHeight(shell,
+                                                 WorkspaceShellTestAccess::BottomPanelHeight(shell) + 40.0f);
+  expect_moved("a bottom panel height change");
+  WorkspaceShellTestAccess::SetStatusBarVisible(shell, false);
+  expect_moved("hiding the status bar");
+  WorkspaceShellTestAccess::SetDebugPaneVisible(shell, true);
+  expect_moved("showing the debug pane");
+  WorkspaceShellTestAccess::SetDebugPaneWidth(shell, 400.0f);
+  expect_moved("a debug pane width change");
+  WorkspaceShellTestAccess::SetLayoutModeOverride(shell, LayoutModeInputs::Override::Compact);
+  expect_moved("forcing the compact layout mode");
+  WorkspaceShellTestAccess::SetLayoutModeOverride(shell, LayoutModeInputs::Override::Auto);
+  expect_moved("releasing the layout mode override");
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, second, false, false),
+         "the second project should open");
+  expect_moved("a second project tab (the project tab strip appears)");
+
+  // The frame path reads the same memo the query path fills. First let a frame
+  // settle whatever the project open still applies (live settings, clamps), then
+  // mutate an input, ask through the QUERY path, and prove the next frame
+  // computes nothing -- the query already did.
+  SoftwareCanvas canvas(1400, 900);
+  shell.Render(canvas.renderer(), 1400, 900);
+  WorkspaceShellTestAccess::SetSidebarVisible(shell, true);
+  (void)WorkspaceShellTestAccess::CurrentLayout(shell);
+  util::ResetPerformanceCounters();
+  shell.Render(canvas.renderer(), 1400, 900);
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceLayoutComputes) == 0,
+         "frame prep should serve its layout from the memo the hit-test query just filled");
+}
+
+// The pane-rect memo follows the split tree's revision and the layout VALUE it
+// was asked about: a split, a divider move, and a different layout each miss;
+// the same question twice hits and answers identically.
+void TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree() {
+  using microide::workspace::EditorGroupRectsLayout;
+  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::WorkspaceLayout;
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  WriteFile(alpha, "alpha\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the pane-rect memo fixture needs a project");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, alpha);
+
+  const WorkspaceLayout layout = WorkspaceShellTestAccess::CurrentLayout(shell);
+  auto rects_equal = [](const SDL_FRect& a, const SDL_FRect& b) {
+    return a.x == b.x && a.y == b.y && a.w == b.w && a.h == b.h;
+  };
+  // Two asks about the same (layout, tree): the second is always a memo hit. The
+  // first must be a walk after a mutation or a layout change (`require_miss`);
+  // on the very first ask the memo may already be warm from the project open.
+  auto rects_after = [&](const WorkspaceLayout& for_layout, bool require_miss, const char* what) {
+    util::ResetPerformanceCounters();
+    const EditorGroupRectsLayout first = WorkspaceShellTestAccess::EditorGroupRectsFor(shell, for_layout);
+    const EditorGroupRectsLayout again = WorkspaceShellTestAccess::EditorGroupRectsFor(shell, for_layout);
+    const std::uint64_t builds =
+        util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectBuilds);
+    const std::uint64_t hits =
+        util::ReadPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectMemoHits);
+    if (require_miss) {
+      Expect(builds == 1, std::string(what) + ": the first ask should be exactly one walk");
+    }
+    Expect(builds + hits == 2 && hits >= 1,
+           std::string(what) + ": the second identical ask should be a memo hit");
+    Expect(first.groups.size() == again.groups.size() && first.dividers.size() == again.dividers.size(),
+           std::string(what) + ": the memo answer should match the walk it replaced");
+    for (std::size_t i = 0; i < first.groups.size(); ++i) {
+      Expect(rects_equal(first.groups[i].editor_surface, again.groups[i].editor_surface),
+             std::string(what) + ": memoized pane rects should be byte-identical to the walk");
+    }
+    return first;
+  };
+
+  const EditorGroupRectsLayout single = rects_after(layout, false, "single pane, first ask");
+  Expect(single.groups.size() == 1, "one pane before the split");
+
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the fixture needs a split");
+  // `SplitEditorGroup` queries the rects itself (redraw placement), so the memo
+  // may already be warm here; what matters is that the ANSWER follows the tree.
+  const EditorGroupRectsLayout split = rects_after(layout, false, "after the split");
+  Expect(split.groups.size() == 2 && split.dividers.size() == 1,
+         "after the split the memo must report two panes and a divider");
+
+  // Same tree, a different layout value: miss, and the panes follow the new width.
+  WorkspaceLayout wider = layout;
+  wider.editor_area.w += 200.0f;
+  const EditorGroupRectsLayout for_wider = rects_after(wider, true, "a different layout value");
+  Expect(for_wider.groups[1].editor_surface.x + for_wider.groups[1].editor_surface.w >
+             split.groups[1].editor_surface.x + split.groups[1].editor_surface.w,
+         "a wider editor area should push the right pane's edge out");
+
+  // Back to the original layout: the single-entry memo now holds the wider one, so
+  // this misses too -- and must answer the ORIGINAL rects, not the wider ones.
+  const EditorGroupRectsLayout back = rects_after(layout, true, "back to the first layout");
+  Expect(rects_equal(back.groups[1].editor_surface, split.groups[1].editor_surface),
+         "returning to a layout should recompute it, not serve the other layout's rects");
+
+  // A divider move stamps the tree, so the next ask walks again and sees the move.
+  Expect(WorkspaceShellTestAccess::ResizeRootSplitDivider(shell, 0, 0.3f),
+         "the fixture needs a divider move");
+  const EditorGroupRectsLayout moved = rects_after(layout, true, "after a divider move");
+  Expect(moved.groups[0].editor_surface.w < back.groups[0].editor_surface.w,
+         "a divider moved left should shrink the left pane in the memo's next answer");
+}
+
 void TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(1280, 720);
@@ -3619,6 +3786,10 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellPrepareFrameSkipsLayoutWhenNotDirty);
   AddTest(tests, "WorkspaceShell/PrepareFrameRecomputesLayoutAfterResize",
           TestWorkspaceShellPrepareFrameRecomputesLayoutAfterResize);
+  AddTest(tests, "WorkspaceShell/LayoutMemoTracksEveryInput",
+          TestWorkspaceShellLayoutMemoTracksEveryInput);
+  AddTest(tests, "WorkspaceShell/EditorGroupRectsMemoFollowsTheTree",
+          TestWorkspaceShellEditorGroupRectsMemoFollowsTheTree);
   AddTest(tests, "WorkspaceShell/RenderBuildsEditorViewModelOncePerSimplePaneFrame",
           TestWorkspaceShellRenderBuildsEditorViewModelOncePerSimplePaneFrame);
   AddTest(tests, "WorkspaceShell/FoldingRefreshRunsOncePerPreparedFrame",

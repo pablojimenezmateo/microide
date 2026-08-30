@@ -46,18 +46,19 @@ SDL_FRect MakeRect(float x, float y, float w, float h) {
   return SDL_FRect{x, y, w, h};
 }
 
-WorkspaceLayout ComputeLayout(float window_width,
-                              float window_height,
-                              bool sidebar_visible,
-                              bool bottom_panel_visible,
-                              float sidebar_width,
-                              float bottom_panel_height,
-                              LayoutModeInputs layout_mode_inputs,
-                              bool reserve_status_bar,
-                              bool right_pane_visible,
-                              float right_pane_width,
-                              bool project_tab_strip_visible) {
+WorkspaceLayout ComputeLayout(const WorkspaceLayoutInputs& inputs) {
   util::AddPerformanceCounter(util::PerfCounterId::WorkspaceLayoutComputes);
+  const float window_width = inputs.window_width;
+  const float window_height = inputs.window_height;
+  const bool sidebar_visible = inputs.sidebar_visible;
+  const bool bottom_panel_visible = inputs.bottom_panel_visible;
+  const float sidebar_width = inputs.sidebar_width;
+  const float bottom_panel_height = inputs.bottom_panel_height;
+  const LayoutModeInputs& layout_mode_inputs = inputs.layout_mode;
+  const bool reserve_status_bar = inputs.reserve_status_bar;
+  const bool right_pane_visible = inputs.right_pane_visible;
+  const float right_pane_width = inputs.right_pane_width;
+  const bool project_tab_strip_visible = inputs.project_tab_strip_visible;
   const LayoutMode layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
   // Clamp HERE, not only in frame prep. The stored pane sizes outlive the window
   // they were set in, so after a shrink the raw sidebar width can leave the editor

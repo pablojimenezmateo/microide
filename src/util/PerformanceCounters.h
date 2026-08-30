@@ -304,6 +304,11 @@ namespace microide::util {
   X(WorkspaceLayoutComputes, "workspace.layout_computes")                                       \
   X(WorkspaceEditorGroupRectBuilds, "workspace.editor_group_rect_builds")                       \
   X(WorkspaceEditorGroupRectTreeWalks, "workspace.editor_group_rect_tree_walks")                \
+  /* The memo on top of those two (TD-2026-08-30-280). Hits are the queries the   */            \
+  /* shell answered from the cache; computes/builds above are now only the        */            \
+  /* misses, so hits+computes is the old rate and computes alone is the new one.  */            \
+  X(WorkspaceLayoutMemoHits, "workspace.layout_memo_hits")                                      \
+  X(WorkspaceEditorGroupRectMemoHits, "workspace.editor_group_rect_memo_hits")                  \
   X(WorkspaceWakeReasonPluginReload, "workspace.wake_reason_plugin_reload")                     \
   X(WorkspaceWakeReasonCaretBlink, "workspace.wake_reason_caret_blink")                         \
   X(WorkspaceWakeReasonNone, "workspace.wake_reason_none")                                      \

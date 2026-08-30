@@ -114,7 +114,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
     if (ProjectCatalogRoot(i) == normalized_root) {
       const bool switched = SwitchProject(i, log_feedback);
       if (switched) {
-        MarkLayoutDirty();
+        NoteLayoutInputsChanged();
       }
       return switched;
     }
@@ -124,7 +124,7 @@ bool WorkspaceShell::OpenProjectTab(const std::filesystem::path& project_root,
       MakeProjectCatalogService().Open(normalized_root, restore_persistence, log_feedback);
   if (opened) {
     recents_service_.RecordProjectOpen(normalized_root);
-    MarkLayoutDirty();
+    NoteLayoutInputsChanged();
   }
   return opened;
 }
@@ -141,7 +141,7 @@ bool WorkspaceShell::SwitchProject(std::size_t index, bool log_feedback) {
   }
   const bool switched = MakeProjectCatalogService().Switch(index);
   if (switched) {
-    MarkLayoutDirty();
+    NoteLayoutInputsChanged();
   }
   return switched;
 }
@@ -171,7 +171,7 @@ void WorkspaceShell::CloseProject(std::size_t index) {
   // Closing may drop the open-project count to <= 1, which can re-hide the strip when
   // "chrome.project_tabs.hide_when_single" is on; the coordinator only requests a redraw,
   // so mark layout dirty here to force a recompute (Open/Switch already do this).
-  MarkLayoutDirty();
+  NoteLayoutInputsChanged();
 }
 
 bool WorkspaceShell::ProjectTabStripVisible() const {

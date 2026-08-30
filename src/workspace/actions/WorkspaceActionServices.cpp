@@ -1078,8 +1078,8 @@ void WorkspaceActionContext::RefreshAvailableColorschemeNames() {
 }
 
 void WorkspaceActionContext::RequestLiveConfigRedraw() {
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
+  if (operations_.note_layout_inputs_changed) {
+    operations_.note_layout_inputs_changed();
   }
   if (operations_.request_window_redraw) {
     operations_.request_window_redraw();

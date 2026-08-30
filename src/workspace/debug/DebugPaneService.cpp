@@ -13,8 +13,8 @@ void DebugPaneService::Activate(DebugPaneMode mode) {
   pane.visible = true;
   pane.mode = mode;
   state_.surface.focus = FocusTarget::DebugPane;
-  if (!was_visible && operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
+  if (!was_visible && operations_.note_layout_inputs_changed) {
+    operations_.note_layout_inputs_changed();
   }
   if (operations_.request_redraw) {
     operations_.request_redraw();
@@ -33,8 +33,8 @@ void DebugPaneService::Close() {
   if (state_.surface.focus == FocusTarget::DebugPane) {
     state_.surface.focus = FocusTarget::Editor;
   }
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
+  if (operations_.note_layout_inputs_changed) {
+    operations_.note_layout_inputs_changed();
   }
   if (operations_.request_redraw) {
     operations_.request_redraw();

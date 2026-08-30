@@ -60,6 +60,33 @@
   EditorSplitDividerRects(WorkspaceShell& shell) {
     return shell.ComputeEditorGroupRectsForState(CurrentLayout(shell)).dividers;
   }
+  // The layout memo's key, read fresh from state -- so a test can prove the memo
+  // answers what a from-scratch compute of the CURRENT state would.
+  static microide::workspace::WorkspaceLayoutInputs CurrentLayoutInputs(const WorkspaceShell& shell) {
+    return shell.CurrentLayoutInputs(static_cast<float>(shell.window_presentation_.logical_width),
+                                     static_cast<float>(shell.window_presentation_.logical_height));
+  }
+  static microide::workspace::EditorGroupRectsLayout EditorGroupRectsFor(
+      WorkspaceShell& shell, const WorkspaceLayout& layout) {
+    return shell.ComputeEditorGroupRectsForState(layout);
+  }
+  static void SetSidebarVisible(WorkspaceShell& shell, bool visible) {
+    shell.context_.current_project_state.sidebar.visible = visible;
+  }
+  static bool BottomPanelVisible(const WorkspaceShell& shell) { return shell.BottomPanelVisible(); }
+  static void HideBottomPanel(WorkspaceShell& shell) {
+    shell.context_.current_project_state.panel.content = WorkspaceShell::PanelContentKind::None;
+  }
+  static void SetStatusBarVisible(WorkspaceShell& shell, bool visible) {
+    shell.layout_mode_service_.SetStatusBarVisible(visible);
+  }
+  static void SetLayoutModeOverride(WorkspaceShell& shell,
+                                    microide::workspace::LayoutModeInputs::Override override) {
+    shell.layout_mode_service_.SetUserOverride(override);
+  }
+  static void SetDebugPaneWidth(WorkspaceShell& shell, float width) {
+    shell.context_.current_project_state.debug_pane.width = width;
+  }
   static SDL_FRect GroupEditorTabRect(WorkspaceShell& shell, std::size_t group_index,
                                       std::size_t tab_index) {
     const SDL_FRect strip = GroupTabStripRect(shell, group_index);
@@ -583,7 +610,7 @@
   static void CloseTerminalTab(WorkspaceShell& shell, std::size_t index) {
     shell.CloseTerminalTab(index);
   }
-  static void MarkLayoutDirty(WorkspaceShell& shell) { shell.MarkLayoutDirty(); }
+  static void NoteLayoutInputsChanged(WorkspaceShell& shell) { shell.NoteLayoutInputsChanged(); }
   static SDL_FRect TerminalTabRect(WorkspaceShell& shell, std::size_t index) {
     const WorkspaceLayout layout = CurrentLayout(shell);
     const SDL_FRect panel_header =

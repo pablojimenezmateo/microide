@@ -61,8 +61,10 @@ void WorkspaceShell::SeedPointerPosition(float render_x, float render_y) {
   InvalidateCursorKindFingerprint();
 }
 
-void WorkspaceShell::MarkLayoutDirty() {
-  layout_dirty_ = true;
+void WorkspaceShell::NoteLayoutInputsChanged() {
+  // The layout memo needs no notice -- it is keyed on the inputs themselves. The
+  // cursor-kind fingerprint is not, and the geometry under a still pointer may
+  // just have moved, so the next frame's cursor resolve must not short-circuit.
   InvalidateCursorKindFingerprint();
 }
 
@@ -84,7 +86,7 @@ void WorkspaceShell::SetWindowPresentationState(WindowPresentationState state) {
   window_presentation_ = std::move(state);
   if (window_presentation_.logical_width != previous_width ||
       window_presentation_.logical_height != previous_height) {
-    MarkLayoutDirty();
+    NoteLayoutInputsChanged();
     // Tab-strip scroll uses the current window width to decide how many tabs
     // fit; the fallback width (1440) is wider than typical windows, so the
     // initial post-session-restore call may leave the active tab/project
@@ -120,20 +122,44 @@ std::optional<SDL_FRect> WorkspaceShell::CurrentWindowRect() const {
                   static_cast<float>(window_presentation_.logical_height));
 }
 
+WorkspaceLayoutInputs WorkspaceShell::CurrentLayoutInputs(float window_width,
+                                                          float window_height) const {
+  const ProjectWorkspaceState& state = context_.current_project_state;
+  return WorkspaceLayoutInputs{
+      .window_width = window_width,
+      .window_height = window_height,
+      .sidebar_visible = state.sidebar.visible,
+      .bottom_panel_visible = BottomPanelVisible(),
+      .sidebar_width = state.sidebar.width,
+      .bottom_panel_height = state.panel.height,
+      .layout_mode = layout_mode_service_.SnapshotInputs(),
+      .reserve_status_bar = layout_mode_service_.StatusBarVisible(),
+      .right_pane_visible = state.debug_pane.visible,
+      .right_pane_width = state.debug_pane.width,
+      .project_tab_strip_visible = ProjectTabStripVisible(),
+  };
+}
+
 std::optional<WorkspaceLayout> WorkspaceShell::CurrentWorkspaceLayout() const {
   const auto window_rect = CurrentWindowRect();
   if (!window_rect.has_value()) {
     return std::nullopt;
   }
-
-  return ComputeLayout(window_rect->w, window_rect->h, context_.current_project_state.sidebar.visible,
-                       BottomPanelVisible(), context_.current_project_state.sidebar.width,
-                       context_.current_project_state.panel.height,
-                       layout_mode_service_.SnapshotInputs(),
-                       layout_mode_service_.StatusBarVisible(),
-                       context_.current_project_state.debug_pane.visible,
-                       context_.current_project_state.debug_pane.width,
-                       ProjectTabStripVisible());
+  // Input-keyed, not flag-keyed (TD-2026-08-30-280): one grid scenario asked for
+  // this ~475 times -- about once per damage event -- and each answer was a full
+  // recompute. Gathering the key IS what the old call did before computing, so a
+  // hit costs the reads plus a dozen compares and nothing else. There is no way
+  // to serve a stale answer: anything that changes what `ComputeLayout` reads
+  // changes the key.
+  const WorkspaceLayoutInputs inputs = CurrentLayoutInputs(window_rect->w, window_rect->h);
+  if (layout_memo_inputs_.has_value() && *layout_memo_inputs_ == inputs) {
+    util::AddPerformanceCounter(util::PerfCounterId::WorkspaceLayoutMemoHits);
+    return layout_memo_;
+  }
+  layout_memo_ = ComputeLayout(inputs);
+  layout_memo_inputs_ = inputs;
+  ++layout_memo_generation_;
+  return layout_memo_;
 }
 
 const WorkspaceShell::WindowChromeState& WorkspaceShell::CurrentWindowChromeState() const {
@@ -218,7 +244,7 @@ void WorkspaceShell::RequestSidebarRedraw() {
 void WorkspaceShell::RequestOuterLayoutChangeRedraw(const WorkspaceLayout& previous_layout,
                                                     SDL_FRect WorkspaceLayout::*first,
                                                     SDL_FRect WorkspaceLayout::*second) {
-  MarkLayoutDirty();
+  NoteLayoutInputsChanged();
   const auto current_layout = CurrentWorkspaceLayout();
   if (!current_layout.has_value()) {
     RequestWindowRedraw();

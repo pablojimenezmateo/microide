@@ -1849,8 +1849,9 @@
   std::string_view TruncateLabelView(std::string_view text, float max_width) const;
   std::optional<SDL_FRect> CurrentWindowRect() const;
   std::optional<WorkspaceLayout> CurrentWorkspaceLayout() const;
+  WorkspaceLayoutInputs CurrentLayoutInputs(float window_width, float window_height) const;
   const WindowChromeState& CurrentWindowChromeState() const;
-  void MarkLayoutDirty();
+  void NoteLayoutInputsChanged();
   void RequestFullRedraw();
   // Post a transient notification toast and schedule a full redraw so it paints.
   // The single host-owned entry point for toasts (plugins + built-in callers).
@@ -2106,7 +2107,19 @@
   std::size_t render_compare_surface_invocation_count_ = 0;
   std::optional<WorkspaceLayout> prepared_frame_layout_;
   mutable TabStripService tab_strip_service_;
-  bool layout_dirty_ = true;
+  // `CurrentWorkspaceLayout()` memo, keyed on every input the layout reads, so it
+  // cannot go stale (TD-2026-08-30-280). `mutable`: the query is const and every
+  // hit test, cursor-kind resolve and redraw-rect helper asks through it. The
+  // generation counts recomputes; frame prep reads it to learn the layout moved.
+  mutable std::optional<WorkspaceLayoutInputs> layout_memo_inputs_;
+  mutable WorkspaceLayout layout_memo_{};
+  mutable std::uint64_t layout_memo_generation_ = 0;
+  // `ComputeEditorGroupRectsForState()` memo, valid for one (layout VALUE, split
+  // tree revision) pair -- the value rather than the generation above because the
+  // divider drag hands in a preview layout that is not the current one.
+  mutable std::optional<WorkspaceLayout> editor_group_rects_memo_layout_;
+  mutable std::uint64_t editor_group_rects_memo_tree_revision_ = 0;
+  mutable EditorGroupRectsLayout editor_group_rects_memo_{};
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
   std::uint64_t prepared_frame_id_ = 0;
@@ -2284,7 +2297,7 @@
   // The cursor only needs recomputing when (a) the pointer moved, or (b) something
   // that affects cursor geometry/state changed. Proxy for (b): a redraw was
   // requested. EVERY redraw path bumps cursor_hit_generation_ — partial redraws
-  // through RequestRedrawRect/RequestFullRedraw/MarkLayoutDirty, and full-redraw
+  // through RequestRedrawRect/RequestFullRedraw/NoteLayoutInputsChanged, and full-redraw
   // EventResult literals via the Application apply choke point (which calls
   // InvalidateCursorKindFingerprint when applying redraw.full). The lone exception
   // is the idle caret-blink partial redraw, which deliberately does NOT bump the

@@ -27,7 +27,7 @@ class SidebarCoordinator {
     std::function<void()> stop_project_search;
     std::function<void()> request_window_redraw;
     std::function<void()> request_sidebar_redraw;
-    std::function<void()> mark_layout_dirty;
+    std::function<void()> note_layout_inputs_changed;
     std::function<void()> request_git_refresh;
     std::function<bool(GitSidebarState::RefreshSnapshot*)> consume_git_refresh_snapshot;
     std::function<void()> refresh_project_search;

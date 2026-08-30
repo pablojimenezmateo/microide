@@ -70,8 +70,8 @@ void SidebarCoordinator::ShowMode(SidebarMode mode, bool temporary) {
     }
   }
   state_.sidebar.temporary = temporary;
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
+  if (operations_.note_layout_inputs_changed) {
+    operations_.note_layout_inputs_changed();
   }
   state_.sidebar.visible = true;
   state_.surface.focus = FocusTarget::Sidebar;
@@ -162,8 +162,8 @@ void SidebarCoordinator::Close() {
   }
 
   state_.sidebar.visible = false;
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
+  if (operations_.note_layout_inputs_changed) {
+    operations_.note_layout_inputs_changed();
   }
   state_.sidebar.temporary = false;
   state_.sidebar.prev_view_id.clear();
@@ -186,8 +186,8 @@ void SidebarCoordinator::Toggle() {
     state_.sidebar.view_id = "tree";
   }
   state_.sidebar.visible = true;
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
+  if (operations_.note_layout_inputs_changed) {
+    operations_.note_layout_inputs_changed();
   }
   state_.sidebar.temporary = false;
   state_.sidebar.prev_view_id.clear();
@@ -215,8 +215,8 @@ void SidebarCoordinator::RestorePrevious() {
   state_.sidebar.prev_view_id.clear();
   state_.sidebar.temporary = false;
   state_.sidebar.visible = true;
-  if (operations_.mark_layout_dirty) {
-    operations_.mark_layout_dirty();
+  if (operations_.note_layout_inputs_changed) {
+    operations_.note_layout_inputs_changed();
   }
   state_.surface.focus = FocusTarget::Sidebar;
   state_.sidebar.scroll_row = 0;
@@ -268,7 +268,7 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .stop_project_search = [this]() { StopProjectSearch(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .request_sidebar_redraw = [this]() { RequestSidebarRedraw(); },
-          .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
+          .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_git_refresh = [this]() { RequestGitSidebarRefresh(); },
           .consume_git_refresh_snapshot =
               [this](GitSidebarState::RefreshSnapshot* snapshot) {

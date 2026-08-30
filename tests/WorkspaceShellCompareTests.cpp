@@ -2196,7 +2196,7 @@ void TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity() {
   Expect(WorkspaceShellTestAccess::OpenBranchHeadComparison(shell, source, history[1].hash, "base",
                                                             history[0].hash, "head"),
          "branch comparison should open");
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
@@ -2255,7 +2255,7 @@ void TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge autoscroll fixture should open");
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const auto interaction = WorkspaceShellTestAccess::ActiveMergeInteractionLayout(shell);

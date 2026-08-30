@@ -316,7 +316,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
       context_.current_project_state.debug_pane.width = ClampRightPaneWidth(
           kWorkspaceDefaultRightPaneWidth, window_width, resolved_sidebar_width);
       ClearDragState();
-      MarkLayoutDirty();
+      NoteLayoutInputsChanged();
       EnsureRedraw([this]() { RequestWindowRedraw(); });
       return true;
     }
@@ -336,7 +336,7 @@ bool WorkspaceShell::HandleMouseButtonDown(const SDL_Event& event) {
           context_.current_project_state.editor_split.ResetDivider(divider.node,
                                                                    divider.boundary);
           ClearDragState();
-          MarkLayoutDirty();
+          NoteLayoutInputsChanged();
           EnsureRedraw([this]() { RequestWindowRedraw(); });
           return true;
         }

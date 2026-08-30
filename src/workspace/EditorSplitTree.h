@@ -159,7 +159,18 @@ class EditorSplitTree {
 
   friend bool operator==(const EditorSplitTree& lhs, const EditorSplitTree& rhs);
 
+  // Identity of this tree's SHAPE, for memo keys. Every structural edit and every
+  // divider move stamps a fresh process-unique value, and a copy carries the value
+  // of what it copied, so: equal revisions imply identical shape (the converse does
+  // not hold -- two trees built the same way independently differ here, and a memo
+  // keyed on it simply recomputes once). This is what lets the per-frame pane-rect
+  // walk be served from a cache without a comparison walk of its own
+  // (TD-2026-08-30-280). Not part of `operator==`, which stays structural.
+  std::uint64_t revision() const { return revision_; }
+
  private:
+  void Touch();
+
   std::uint8_t AddNode(EditorSplitOrientation orientation, std::uint8_t parent);
   // Drop every node no longer reachable from the root and renumber what is left,
   // so index fixups never have to be threaded through the structural edits.
@@ -170,6 +181,7 @@ class EditorSplitTree {
   util::InlineVector<Node, kMaxNodes> nodes_;
   std::uint8_t root_ = 0;
   std::size_t leaf_count_ = 1;
+  std::uint64_t revision_ = 0;
 };
 
 }  // namespace microide::workspace

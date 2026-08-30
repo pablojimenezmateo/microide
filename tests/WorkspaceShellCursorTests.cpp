@@ -47,7 +47,7 @@ void TestWorkspaceShellCursorUpdatesWhenBottomPanelHidesWithoutMotion() {
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const SDL_FRect panel_visual = BottomPanelResizeHandleRect(layout);
@@ -87,7 +87,7 @@ void TestWorkspaceShellCursorRestoresAfterMouseLeave() {
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
   const SDL_FRect panel_visual = BottomPanelResizeHandleRect(layout);
@@ -158,7 +158,7 @@ void TestWorkspaceShellResizeCursorFallsBackOutsideVisibleSeams() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const auto layout = WorkspaceShellTestAccess::CurrentLayout(shell);
 
@@ -233,7 +233,7 @@ void TestWorkspaceShellCustomFrameResizeCursorsMatchHitTest() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const auto expect_cursor = [&](float x,
                                  float y,
@@ -555,7 +555,7 @@ void TestWorkspaceShellEditorDragSelectionSurvivesLeavingTheEditorArea() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
@@ -612,7 +612,7 @@ void TestWorkspaceShellEditorDragAutoscrollsPastTheEdge() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
@@ -670,7 +670,7 @@ void TestWorkspaceShellEditorDragSelectionMovesText() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
@@ -721,7 +721,7 @@ void TestWorkspaceShellClickInsideSelectionStillCollapsesCaret() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
@@ -766,7 +766,7 @@ void TestWorkspaceShellEditorDragAutoscrollStopsOnFocusLoss() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const SDL_FRect pane = WorkspaceShellTestAccess::ActiveEditorPaneRect(shell);
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
@@ -806,7 +806,7 @@ void TestWorkspaceShellEditorMultiClickDragKeepsItsGranularity() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
   const float row0 = metrics.first_line_y + metrics.line_height * 0.5f;
@@ -874,7 +874,7 @@ void TestWorkspaceShellCursorChangeRequestsPresent() {
   WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
   WorkspaceShellTestAccess::SetWindowChromeEnabled(shell, true);
   WorkspaceShellTestAccess::OpenFile(shell, source);
-  WorkspaceShellTestAccess::MarkLayoutDirty(shell);
+  WorkspaceShellTestAccess::NoteLayoutInputsChanged(shell);
 
   // The left window-frame border reliably resolves to a non-default (resize)
   // cursor with custom chrome, so moving onto it from the default cursor is a

@@ -45,7 +45,7 @@ void WorkspaceShell::OpenTerminal(std::string command, bool focus_terminal, bool
     context_.current_project_state.surface.focus = FocusTarget::Panel;
   }
 
-  MarkLayoutDirty();
+  NoteLayoutInputsChanged();
   if (BottomPanelVisible() != bottom_panel_was_visible) {
     RequestWindowRedraw();
   } else {
@@ -130,7 +130,7 @@ void WorkspaceShell::CloseTerminalTab(std::size_t index) {
       context_.current_project_state.surface.focus = FocusTarget::Editor;
     }
     if (BottomPanelVisible() != panel_visible_before) {
-      MarkLayoutDirty();
+      NoteLayoutInputsChanged();
       RequestWindowRedraw();
     }
     return;
@@ -192,7 +192,7 @@ void WorkspaceShell::ConsumeTerminalSessionUpdates() {
   }
   if (BottomPanelVisible() != panel_visible_before || context_.current_project_state.terminal_tabs.size() != tab_count_before) {
     if (BottomPanelVisible() != panel_visible_before) {
-      MarkLayoutDirty();
+      NoteLayoutInputsChanged();
     }
     RequestWindowRedraw();
   } else if (panel_visible_before) {

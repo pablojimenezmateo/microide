@@ -780,7 +780,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               },
           .apply_ui_scale =
               [this](float scale) { MakePersistenceCoordinator().ApplyUiScale(scale, true, true); },
-          .mark_layout_dirty = [this]() { MarkLayoutDirty(); },
+          .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
           .request_toggle_fullscreen =
               [this]() { pending_window_action_ = WindowAction::ToggleFullscreen; },
