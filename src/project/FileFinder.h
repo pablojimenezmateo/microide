@@ -116,6 +116,14 @@ class FileFinder {
     std::uint64_t lower_filename_mask = 0;
   };
 
+  // A candidate that matched, as an index into `cached_entries_` plus its score.
+  // Ranking works on these rather than on materialized rows: only the visible,
+  // capped prefix is ever deep-copied into `results_storage_`.
+  struct RankedRef {
+    std::size_t index;
+    int score;
+  };
+
   std::string_view PathView(const CachedFileEntry& entry) const {
     return std::string_view(path_blob_).substr(entry.path_offset, entry.path_size);
   }
@@ -186,6 +194,21 @@ class FileFinder {
   std::uint64_t last_match_version_ = 0;
   bool has_last_match_ = false;
   std::vector<std::size_t> last_matched_indices_;
+
+  // Per-refresh scratch, held so a keystroke reuses the capacity the last one
+  // grew instead of doubling its way back to it. On a 10,000-file project a
+  // one-character query matches nearly everything, so these were rebuilt to
+  // ~10,000 elements from empty on EVERY keystroke, on the shell thread: ~1.9 MB
+  // of allocation and the same again in memcpy per keystroke burst, all of it
+  // freed at the end of the call that grew it.
+  //
+  // `matched_indices_scratch_` is SWAPPED with `last_matched_indices_` at the end
+  // of a refresh rather than moved into it -- a move would hand the buffer away
+  // and leave the scratch empty again, which is the thing this is here to stop.
+  // The swap also keeps the two distinct objects, which the narrowing path needs:
+  // it reads `last_matched_indices_` while filling the scratch.
+  std::vector<RankedRef> ranked_refs_scratch_;
+  std::vector<std::size_t> matched_indices_scratch_;
 };
 
 }  // namespace microide::project

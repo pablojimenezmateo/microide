@@ -389,6 +389,43 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-273 — the file finder rebuilt two 10,000-element vectors from empty on every keystroke. [RESOLVED 2026-08-30, same session it was found.]
+
+`file_finder_type_query` is 20,277 allocations, and almost all of that is opening a
+10,000-file project, so the scenario total says nothing about typing. The phase
+allocation counts are small — 78 and 104 — and the useful signal was in the
+allocation tracer's BYTE column rather than its count:
+
+```
+#1: 12 allocations, 1,920,000 bytes   FileFinder::Refresh()
+#2:  6 allocations,   960,000 bytes   FileFinder::Refresh()
+#3:  4 allocations,   786,432 bytes   FileFinder::Refresh()::{lambda(unsigned long)}
+```
+
+`ranked_refs` and `matched_indices` were function-local `std::vector`s. A
+one-character query over 10,000 files matches nearly all of them, so both were
+grown from empty to ~10,000 elements — by doubling, so every element is memcpy'd
+several times — and freed again, on the shell thread, per keystroke. ~1.9 MB of
+allocation and the same again in copying, per burst, for buffers that are exactly
+the same size on the next keystroke.
+
+Both are members now, `clear()`ed rather than reconstructed. The match set is
+**swapped** with `last_matched_indices_` instead of moved into it: a move hands
+the buffer away and leaves the scratch empty, which is the thing being fixed. The
+swap also keeps them distinct objects, which the narrowing path requires — it
+reads `last_matched_indices_` while filling the scratch.
+
+| phase | before | after |
+| --- | ---: | ---: |
+| `type_and_rank` | 78 | **30** |
+| `backspace_rescan` (full rescan, the worst-case keystroke) | 104 | **12** |
+
+Both `clear()` calls were probed by removing them: `SplitsQueryAtTheLastSeparator`
+and `IncrementalTypingMatchesFreshQuery` fail respectively, so stale-scratch
+leakage is already covered and needed no new test. What is NOT covered by a unit
+test is the reuse itself — that is the phase allocation gate's job, and it only
+becomes a guard once these two phases are rebaselined down from 78/104.
+
 ### TD-2026-08-30-272 — every scrolled line number was a whole-string texture build, an upload, and an eviction. [RESOLVED 2026-08-30, same session it was found.]
 
 Found by ranking the software-renderer scroll scenarios by self time. The two

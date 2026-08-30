@@ -212,12 +212,12 @@ void FileFinder::Refresh() {
   // string per match) and full-sorted them every keystroke on the UI thread, even
   // though only a handful of rows are ever shown. VSCode's quick-open caps its
   // picker the same way.
-  struct RankedRef {
-    std::size_t index;
-    int score;
-  };
-  std::vector<RankedRef> ranked_refs;
-  std::vector<std::size_t> matched_indices;
+  // Cleared, not reconstructed: both keep the capacity the previous keystroke
+  // grew. See the members' declaration for what that was costing.
+  std::vector<RankedRef>& ranked_refs = ranked_refs_scratch_;
+  std::vector<std::size_t>& matched_indices = matched_indices_scratch_;
+  ranked_refs.clear();
+  matched_indices.clear();
   // The match set is only kept as a narrowing base for the NEXT keystroke, and an
   // empty query is never a valid base (its result excludes recents, and
   // has_last_match_ below stays false for it). Recording it anyway meant opening
@@ -297,7 +297,10 @@ void FileFinder::Refresh() {
   last_lower_query_ = lower_query;
   last_match_version_ = cached_index_version_;
   has_last_match_ = !lower_query.empty();
-  last_matched_indices_ = std::move(matched_indices);
+  // Swap rather than move: this hands the scratch's buffer to the narrowing base
+  // and takes the previous base's buffer back as next keystroke's scratch, so
+  // both capacities survive. A move would leave the scratch empty every time.
+  last_matched_indices_.swap(matched_indices);
 }
 
 void FileFinder::AppendResult(std::string_view path, int score) {
