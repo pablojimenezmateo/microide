@@ -293,6 +293,17 @@ namespace microide::util {
   /* is holding, and should stay at zero after the first frame.                   */             \
   X(WorkspaceMenuBarLayouts, "workspace.menu_bar_layouts")                                      \
   X(WorkspaceMenuBarLabelMeasures, "workspace.menu_bar_label_measures")                         \
+  /* The same blind spot the menu-bar counters above were added for, one layer    */            \
+  /* out. `ComputeLayout` and `ComputeEditorGroupRects` are pure and cheap, so     */            \
+  /* nothing hesitates to call them -- the hit test, the cursor kind, the redraw   */            \
+  /* rect and the render each rebuild the whole geometry, and the pane walk        */            \
+  /* carries a comment claiming "three times per mouse-motion event" that nothing  */            \
+  /* measured. layout_computes is the outer rate; group_rect_builds is every pane  */            \
+  /* query and group_rect_tree_walks only the ones that actually walked the split  */            \
+  /* tree, so a single-pane session (the common one) stays visibly free.           */            \
+  X(WorkspaceLayoutComputes, "workspace.layout_computes")                                       \
+  X(WorkspaceEditorGroupRectBuilds, "workspace.editor_group_rect_builds")                       \
+  X(WorkspaceEditorGroupRectTreeWalks, "workspace.editor_group_rect_tree_walks")                \
   X(WorkspaceWakeReasonPluginReload, "workspace.wake_reason_plugin_reload")                     \
   X(WorkspaceWakeReasonCaretBlink, "workspace.wake_reason_caret_blink")                         \
   X(WorkspaceWakeReasonNone, "workspace.wake_reason_none")                                      \

@@ -4,6 +4,8 @@
 #include <cmath>
 #include <utility>
 
+#include "util/PerformanceCounters.h"
+
 namespace microide::workspace {
 
 namespace {
@@ -55,6 +57,7 @@ WorkspaceLayout ComputeLayout(float window_width,
                               bool right_pane_visible,
                               float right_pane_width,
                               bool project_tab_strip_visible) {
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceLayoutComputes);
   const LayoutMode layout_mode = ResolveLayoutMode(window_width, layout_mode_inputs);
   // Clamp HERE, not only in frame prep. The stored pane sizes outlive the window
   // they were set in, so after a shrink the raw sidebar width can leave the editor
@@ -160,12 +163,14 @@ EditorGroupRects ChromeForRegion(const WorkspaceLayout& layout, const SDL_FRect&
 
 EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
                                                const EditorSplitTree& split) {
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectBuilds);
   EditorGroupRectsLayout result;
   if (!split.is_split()) {
     result.groups.push_back(
         EditorGroupRects{layout.tab_strip, layout.breadcrumb, layout.editor_surface});
     return result;
   }
+  util::AddPerformanceCounter(util::PerfCounterId::WorkspaceEditorGroupRectTreeWalks);
 
   // Iterative depth-first walk, children left to right: the visit order of the
   // leaves is the group order, and the whole walk is heap-free (the stack is
