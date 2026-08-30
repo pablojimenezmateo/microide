@@ -4913,6 +4913,60 @@ void TestWorkspaceShellEditorTabDragToPaneEdgeRefusesLoneTab() {
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1, "nothing split");
 }
 
+// Directional pane focus and move: VS Code's focusLeft/RightGroup and
+// moveActiveEditorGroupLeft, answered off the pane rects (TD-2026-08-18-266).
+void TestWorkspaceShellDirectionalEditorGroupFocusAndMove() {
+  using microide::workspace::EditorGroupDirection;
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  WriteFile(file_a, "a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 1000);
+
+  Expect(!WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Right),
+         "a single pane has nowhere to go");
+
+  // Two columns, then split the right one downward: 0 | (1 over 2).
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "the fixture needs a second column");
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Horizontal),
+         "the fixture needs the right column stacked");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3, "three panes");
+
+  Expect(WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Left) &&
+             WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "focus-left from the right column lands on the left one");
+  Expect(!WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Left),
+         "focus-left from the leftmost column is refused, it does not wrap");
+  Expect(WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Right) &&
+             WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1,
+         "focus-right lands on the top pane of the right column");
+  Expect(WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Down) &&
+             WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 2,
+         "focus-down lands on the pane below");
+  Expect(!WorkspaceShellTestAccess::FocusEditorGroupInDirection(shell, EditorGroupDirection::Down),
+         "there is nothing below the bottom pane");
+
+  // Moving the focused pane left takes it out of the stacked column and seats it
+  // before the left one; the pane count never changes.
+  Expect(WorkspaceShellTestAccess::MoveEditorGroupInDirection(shell, EditorGroupDirection::Left),
+         "the bottom-right pane can move left");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3,
+         "a move must not add or drop a pane");
+  Expect(WorkspaceShellTestAccess::EditorSplit(shell).leaf_count() == 3,
+         "the tree keeps one leaf per group across the move");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0,
+         "the moved pane keeps focus at its new ordinal");
+  const SDL_FRect moved = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 0);
+  const SDL_FRect neighbour = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, 1);
+  Expect(moved.x < neighbour.x, "the moved pane is now the leftmost column");
+}
+
 // A cross-group drag animates two strips: the source closes the hole its lifted
 // tab left, the destination opens a gap. One TabSlideState could only express one
 // of those, which is why the state grew a second slot.
@@ -6468,6 +6522,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDragToPaneEdgeMovesAcrossPanes);
   AddTest(tests, "WorkspaceShell/EditorSplitDividerDragMovesOnlyItsPair",
           TestWorkspaceShellEditorSplitDividerDragMovesOnlyItsPair);
+  AddTest(tests, "WorkspaceShell/DirectionalEditorGroupFocusAndMove",
+          TestWorkspaceShellDirectionalEditorGroupFocusAndMove);
   AddTest(tests, "WorkspaceShell/CrossGroupDragAnimatesBothStrips",
           TestWorkspaceShellCrossGroupDragAnimatesBothStrips);
   AddTest(tests, "WorkspaceShell/EditorTabDragAutoScrollsOverflowingStrip",

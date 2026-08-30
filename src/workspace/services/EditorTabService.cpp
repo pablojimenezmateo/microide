@@ -131,6 +131,14 @@ bool EditorTabService::FocusOtherGroup() {
   return coordinator_.FocusOtherGroup();
 }
 
+bool EditorTabService::FocusEditorGroupInDirection(EditorGroupDirection direction) {
+  return coordinator_.FocusEditorGroupInDirection(direction);
+}
+
+bool EditorTabService::MoveEditorGroupInDirection(EditorGroupDirection direction) {
+  return coordinator_.MoveEditorGroupInDirection(direction);
+}
+
 bool EditorTabService::CloseEditorGroup() {
   return coordinator_.CloseEditorGroup();
 }

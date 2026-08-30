@@ -763,6 +763,14 @@ bool WorkspaceActionContext::FocusOtherGroup() {
   return operations_.focus_other_group();
 }
 
+bool WorkspaceActionContext::FocusEditorGroupInDirection(EditorGroupDirection direction) {
+  return operations_.focus_editor_group_in_direction(direction);
+}
+
+bool WorkspaceActionContext::MoveEditorGroupInDirection(EditorGroupDirection direction) {
+  return operations_.move_editor_group_in_direction(direction);
+}
+
 bool WorkspaceActionContext::CloseEditorGroup() {
   return operations_.close_editor_group();
 }

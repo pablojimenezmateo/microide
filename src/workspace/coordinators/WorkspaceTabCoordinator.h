@@ -9,6 +9,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceProjectState.h"
 
 namespace microide::workspace {
@@ -70,6 +71,11 @@ class TabCoordinator {
     // otherwise render the destroyed group's cached titles for the survivor.
     std::function<void()> invalidate_tab_strip_geometry;
     std::function<void()> request_editor_surface_redraw;
+    // Every pane's rect, in group order. Directional pane focus/move answer
+    // "which pane is to my left" from the geometry that is actually on screen
+    // rather than from the tree, which is what makes the answer match what the
+    // user is looking at. Empty when the host has no window yet.
+    std::function<EditorGroupRectsLayout()> editor_group_rects;
     std::function<void()> request_automatic_git_sidebar_refresh;
     // Raised when a save is refused because the file changed on disk since the
     // buffer was loaded/last saved. The host surfaces the external-change banner
@@ -152,12 +158,18 @@ class TabCoordinator {
   // group if it empties. Used by rename/delete propagation so a split view of the
   // affected file in a non-focused group is not stranded on a defunct path.
   void CloseGroupTab(std::size_t group_index, std::size_t index);
-  // Editor groups (max 2). Splitting clones the focused group's active editor tab
-  // into a new group (shared buffer, independent view) and focuses it; if two
-  // groups already exist it just sets the orientation and focuses the other.
-  // Returns false when there is no active editor tab to clone.
+  // Splitting clones the focused group's active editor tab into a NEW pane
+  // (shared buffer, independent view) beside it and focuses that pane -- every
+  // time, up to `kMaxEditorGroups`. Returns false when there is no active editor
+  // tab to clone, or the editor area is already full.
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
+  // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroupLeft/...
+  // Both resolve the neighbour with `AdjacentEditorGroup`; the move then relocates
+  // the pane beside it (`EditorSplitTree::MoveLeaf`), keeping the group vector in
+  // step. Return false when no pane lies that way.
+  bool FocusEditorGroupInDirection(EditorGroupDirection direction);
+  bool MoveEditorGroupInDirection(EditorGroupDirection direction);
   bool CloseEditorGroup();
   std::size_t EditorGroupCount() const { return state_.editor_groups.size(); }
   bool MoveActiveTo(std::size_t index);
@@ -226,6 +238,9 @@ class TabCoordinator {
   // Erase group `gi` (a non-focused split group that just emptied), re-home the focused
   // index across the shift, and drop the split orientation when one group remains.
   void CollapseGroupAt(std::size_t gi);
+  // Group index of the pane next to the focused one in `direction`, or
+  // `kNoEditorGroup`.
+  std::size_t AdjacentGroupInDirection(EditorGroupDirection direction) const;
   // Shared tail for group split/focus/close: scroll the (new) focused group's
   // active tab into view and request the matching redraw.
   void RefreshFocusedGroupActiveTab(bool editor_redraw);

@@ -235,6 +235,69 @@ EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
   return result;
 }
 
+std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
+                                std::size_t from,
+                                EditorGroupDirection direction) {
+  if (from >= rects.groups.size() || rects.groups.size() < 2) {
+    return kNoEditorGroup;
+  }
+  // Panes tile the editor area exactly, so a neighbour's near edge sits ON the
+  // focused pane's far edge; the tolerance only absorbs the divider and the
+  // per-child rounding the tiling walk pushes into the last pane.
+  constexpr float kEdgeSlack = kEditorSplitDividerThickness + 1.0f;
+  const SDL_FRect& self = rects.groups[from].editor_surface;
+  const bool horizontal =
+      direction == EditorGroupDirection::Left || direction == EditorGroupDirection::Right;
+
+  std::size_t best = kNoEditorGroup;
+  float best_gap = 0.0f;
+  float best_overlap = 0.0f;
+  for (std::size_t i = 0; i < rects.groups.size(); ++i) {
+    if (i == from) {
+      continue;
+    }
+    const SDL_FRect& other = rects.groups[i].editor_surface;
+    if (other.w <= 0.0f || other.h <= 0.0f) {
+      continue;
+    }
+    float gap = 0.0f;
+    switch (direction) {
+      case EditorGroupDirection::Left:
+        gap = self.x - (other.x + other.w);
+        break;
+      case EditorGroupDirection::Right:
+        gap = other.x - (self.x + self.w);
+        break;
+      case EditorGroupDirection::Up:
+        gap = self.y - (other.y + other.h);
+        break;
+      case EditorGroupDirection::Down:
+        gap = other.y - (self.y + self.h);
+        break;
+    }
+    if (gap < -kEdgeSlack) {
+      continue;  // Overlaps or sits the other way; not on that side.
+    }
+    // How much of the CROSS axis the two share. A pane directly beside this one
+    // beats one that merely starts further along the same row.
+    const float overlap =
+        horizontal ? std::max(0.0f, std::min(self.y + self.h, other.y + other.h) -
+                                        std::max(self.y, other.y))
+                   : std::max(0.0f, std::min(self.x + self.w, other.x + other.w) -
+                                        std::max(self.x, other.x));
+    if (overlap <= 0.0f) {
+      continue;
+    }
+    if (best == kNoEditorGroup || gap < best_gap - kEdgeSlack ||
+        (gap < best_gap + kEdgeSlack && overlap > best_overlap)) {
+      best = i;
+      best_gap = gap;
+      best_overlap = overlap;
+    }
+  }
+  return best;
+}
+
 bool Contains(const SDL_FRect& rect, float x, float y) {
   return x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h;
 }

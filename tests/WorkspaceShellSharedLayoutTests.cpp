@@ -750,6 +750,32 @@ void TestWorkspaceEditorGroupRects() {
          "the last column should reach the editor area's right edge");
   Expect(four.groups[2].breadcrumb.w == 0.0f && four.groups[1].breadcrumb.w > 0.0f,
          "only panes at the top of the editor area should carry a breadcrumb");
+
+  // Directional neighbours read straight off those rects: pane 0 is the left
+  // column, 1/2 are the top/bottom of the middle column, 3 is the right column.
+  using microide::workspace::AdjacentEditorGroup;
+  using microide::workspace::EditorGroupDirection;
+  using microide::workspace::kNoEditorGroup;
+  Expect(AdjacentEditorGroup(four, 0, EditorGroupDirection::Right) == 1,
+         "right of the left column is the top pane of the middle column");
+  Expect(AdjacentEditorGroup(four, 0, EditorGroupDirection::Left) == kNoEditorGroup &&
+             AdjacentEditorGroup(four, 0, EditorGroupDirection::Up) == kNoEditorGroup &&
+             AdjacentEditorGroup(four, 0, EditorGroupDirection::Down) == kNoEditorGroup,
+         "a full-height leftmost column has no neighbour left, above or below it");
+  Expect(AdjacentEditorGroup(four, 1, EditorGroupDirection::Down) == 2 &&
+             AdjacentEditorGroup(four, 2, EditorGroupDirection::Up) == 1,
+         "the stacked pair should be each other's vertical neighbours");
+  Expect(AdjacentEditorGroup(four, 1, EditorGroupDirection::Left) == 0 &&
+             AdjacentEditorGroup(four, 2, EditorGroupDirection::Left) == 0,
+         "both halves of the middle column see the left column beside them");
+  Expect(AdjacentEditorGroup(four, 3, EditorGroupDirection::Right) == kNoEditorGroup,
+         "nothing lies right of the rightmost column");
+  Expect(AdjacentEditorGroup(four, 3, EditorGroupDirection::Left) == 1,
+         "the pane left of the right column is the nearer of the stacked pair");
+  Expect(AdjacentEditorGroup(one, 0, EditorGroupDirection::Right) == kNoEditorGroup,
+         "a single pane has no neighbour in any direction");
+  Expect(AdjacentEditorGroup(four, 9, EditorGroupDirection::Right) == kNoEditorGroup,
+         "an out-of-range origin resolves to no neighbour");
 }
 
 void TestWorkspaceSharedMergeInteractionGeometry() {

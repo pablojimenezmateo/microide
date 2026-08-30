@@ -50,6 +50,8 @@ class EditorTabService {
   void CloseGroupTab(std::size_t group_index, std::size_t index);
   bool SplitEditorGroup(EditorSplitOrientation orientation);
   bool FocusOtherGroup();
+  bool FocusEditorGroupInDirection(EditorGroupDirection direction);
+  bool MoveEditorGroupInDirection(EditorGroupDirection direction);
   bool CloseEditorGroup();
   std::size_t EditorGroupCount() const;
   bool MoveActiveTo(std::size_t index);

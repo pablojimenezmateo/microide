@@ -655,6 +655,14 @@
     return shell.FocusOtherEditorGroup();
   }
   static bool CloseEditorGroup(WorkspaceShell& shell) { return shell.CloseEditorGroup(); }
+  static bool FocusEditorGroupInDirection(WorkspaceShell& shell,
+                                          microide::workspace::EditorGroupDirection direction) {
+    return shell.MakeEditorTabService().FocusEditorGroupInDirection(direction);
+  }
+  static bool MoveEditorGroupInDirection(WorkspaceShell& shell,
+                                         microide::workspace::EditorGroupDirection direction) {
+    return shell.MakeEditorTabService().MoveEditorGroupInDirection(direction);
+  }
   static std::size_t EditorGroupCount(WorkspaceShell& shell) { return shell.EditorGroupCount(); }
   static std::size_t CountOpenBufferViews(WorkspaceShell& shell,
                                           const std::filesystem::path& path) {

@@ -367,6 +367,14 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       return operations_.active_tab_is_editor() &&
              operations_.editor_group_count() < kMaxEditorGroups;
     case ActionId::FocusOtherGroup:
+    case ActionId::FocusEditorGroupLeft:
+    case ActionId::FocusEditorGroupRight:
+    case ActionId::FocusEditorGroupUp:
+    case ActionId::FocusEditorGroupDown:
+    case ActionId::MoveEditorGroupLeft:
+    case ActionId::MoveEditorGroupRight:
+    case ActionId::MoveEditorGroupUp:
+    case ActionId::MoveEditorGroupDown:
     case ActionId::CloseGroup:
       // Group focus/close only make sense once a second group exists.
       return operations_.editor_group_count() > 1;

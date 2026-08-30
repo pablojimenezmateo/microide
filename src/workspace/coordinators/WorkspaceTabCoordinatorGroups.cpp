@@ -267,6 +267,62 @@ bool TabCoordinator::FocusOtherGroup() {
   return true;
 }
 
+std::size_t TabCoordinator::AdjacentGroupInDirection(EditorGroupDirection direction) const {
+  if (state_.editor_groups.size() < 2 || !operations_.editor_group_rects) {
+    return kNoEditorGroup;
+  }
+  const EditorGroupRectsLayout rects = operations_.editor_group_rects();
+  // The rects are a view of the same tree the groups are leaves of; a host with
+  // no window yet hands back nothing, and there is no geometry to answer from.
+  if (rects.groups.size() != state_.editor_groups.size()) {
+    return kNoEditorGroup;
+  }
+  return AdjacentEditorGroup(rects, state_.clamped_focused_group_index(), direction);
+}
+
+bool TabCoordinator::FocusEditorGroupInDirection(EditorGroupDirection direction) {
+  const std::size_t target = AdjacentGroupInDirection(direction);
+  if (target == kNoEditorGroup) {
+    return false;
+  }
+  state_.focused_group_index = target;
+  state_.surface.focus = FocusTarget::Editor;
+  RefreshFocusedGroupActiveTab(true);
+  return true;
+}
+
+bool TabCoordinator::MoveEditorGroupInDirection(EditorGroupDirection direction) {
+  const std::size_t focused = state_.clamped_focused_group_index();
+  const std::size_t target = AdjacentGroupInDirection(direction);
+  if (target == kNoEditorGroup) {
+    return false;
+  }
+  const bool horizontal =
+      direction == EditorGroupDirection::Left || direction == EditorGroupDirection::Right;
+  // Land on the far side of the neighbour, so moving left through a row of three
+  // walks the pane to the front rather than swapping it back and forth.
+  const bool before =
+      direction == EditorGroupDirection::Left || direction == EditorGroupDirection::Up;
+  const std::size_t landed = state_.editor_split.MoveLeaf(
+      focused, target,
+      horizontal ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal, before);
+  if (landed == EditorSplitTree::kNoLeaf) {
+    return false;
+  }
+  // The tree's leaves ARE the groups, in order: the vector has to make the same
+  // move or every group-indexed cache reads the wrong pane.
+  EditorGroup moved = std::move(state_.editor_groups[focused]);
+  state_.editor_groups.erase(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(focused));
+  state_.editor_groups.insert(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(landed),
+                              std::move(moved));
+  state_.focused_group_index = landed;
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.invalidate_tab_strip_geometry();
+  EnsureEveryGroupActiveTabVisible();
+  RefreshFocusedGroupActiveTab(true);
+  return true;
+}
+
 // Called wherever a group is added, removed or reindexed: every pane's strip
 // changes width at that moment, so revealing only the focused pane's active tab
 // leaves the others scrolled wherever the previous, wider strip had put them.

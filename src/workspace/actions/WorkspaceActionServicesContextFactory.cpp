@@ -15,6 +15,7 @@
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
+#include "workspace/services/EditorTabService.h"
 
 namespace microide::workspace {
 
@@ -679,6 +680,14 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
                 return SplitEditorGroup(orientation);
               },
           .focus_other_group = [this]() { return FocusOtherEditorGroup(); },
+          .focus_editor_group_in_direction =
+              [this](EditorGroupDirection direction) {
+                return MakeEditorTabService().FocusEditorGroupInDirection(direction);
+              },
+          .move_editor_group_in_direction =
+              [this](EditorGroupDirection direction) {
+                return MakeEditorTabService().MoveEditorGroupInDirection(direction);
+              },
           .close_editor_group = [this]() { return CloseEditorGroup(); },
           .request_close_tab = [this](std::size_t index) { RequestCloseTab(index); },
           .request_close_tabs =

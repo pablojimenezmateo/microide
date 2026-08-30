@@ -121,6 +121,17 @@ enum class ActionId {
   SplitEditorRight,
   SplitEditorDown,
   FocusOtherGroup,
+  // Directional pane focus/move across the editor grid (VS Code's
+  // focusLeftGroup / moveActiveEditorGroupLeft family). `FocusOtherGroup`
+  // cycles; these go where you point.
+  FocusEditorGroupLeft,
+  FocusEditorGroupRight,
+  FocusEditorGroupUp,
+  FocusEditorGroupDown,
+  MoveEditorGroupLeft,
+  MoveEditorGroupRight,
+  MoveEditorGroupUp,
+  MoveEditorGroupDown,
   CloseGroup,
   CloseActiveTab,
   CloseAllTabs,

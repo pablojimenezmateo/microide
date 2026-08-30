@@ -161,6 +161,9 @@ class WorkspaceActionContext {
     std::function<void()> clear_active_snippet_session_after_undo;
     std::function<bool(EditorSplitOrientation)> split_editor_group;
     std::function<bool()> focus_other_group;
+    // VS Code's focusLeft/Right/Above/BelowGroup and moveActiveEditorGroup*.
+    std::function<bool(EditorGroupDirection)> focus_editor_group_in_direction;
+    std::function<bool(EditorGroupDirection)> move_editor_group_in_direction;
     std::function<bool()> close_editor_group;
     std::function<void(std::size_t)> request_close_tab;
     std::function<void(std::vector<std::size_t>)> request_close_tabs;
@@ -438,6 +441,8 @@ class WorkspaceActionContext {
                         const std::filesystem::path& path,
                         std::string* error_message);
   bool FocusOtherGroup();
+  bool FocusEditorGroupInDirection(EditorGroupDirection direction);
+  bool MoveEditorGroupInDirection(EditorGroupDirection direction);
   bool CloseEditorGroup();
   void RequestCloseTab(std::size_t index);
   void RequestCloseTabs(std::vector<std::size_t> indices);

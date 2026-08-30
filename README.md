@@ -742,6 +742,14 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `split-right [path]`
 - `split-down [path]`
 - `focus-other-group`
+- `focus-group-left`
+- `focus-group-right`
+- `focus-group-up`
+- `focus-group-down`
+- `move-group-left`
+- `move-group-right`
+- `move-group-up`
+- `move-group-down`
 - `close-group`
 - `copy`
 - `cut`

@@ -321,6 +321,22 @@ WorkspaceLayout ComputeLayout(float window_width,
 // per-child weights and reports the dividers between them.
 EditorGroupRectsLayout ComputeEditorGroupRects(const WorkspaceLayout& layout,
                                                const EditorSplitTree& split);
+
+// Which way a directional pane verb points. `focus-other-group` cycles; these are
+// VS Code's `focusLeftGroup` / `moveActiveEditorGroupLeft` family, which is what a
+// grid of more than two panes actually needs (TD-2026-08-18-266).
+enum class EditorGroupDirection : std::uint8_t { Left, Right, Up, Down };
+
+// No pane lies that way.
+inline constexpr std::size_t kNoEditorGroup = static_cast<std::size_t>(-1);
+
+// The pane adjacent to `from` in `direction`, by the geometry already computed for
+// the frame: among the panes wholly on that side, the nearest one, tie-broken by
+// how much of the cross axis it shares with `from` and then by centre distance.
+// Pure: no state, no tree walk, and the answer is exactly what is on screen.
+std::size_t AdjacentEditorGroup(const EditorGroupRectsLayout& rects,
+                                std::size_t from,
+                                EditorGroupDirection direction);
 bool Contains(const SDL_FRect& rect, float x, float y);
 // Exact four-float equality for SDL_FRect.
 inline bool RectsEqual(const SDL_FRect& lhs, const SDL_FRect& rhs) {

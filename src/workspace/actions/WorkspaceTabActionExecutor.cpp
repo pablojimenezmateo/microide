@@ -197,6 +197,30 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     case ActionId::FocusOtherGroup:
       context_.FocusOtherGroup();
       return DispatchResult::Handled;
+    case ActionId::FocusEditorGroupLeft:
+      context_.FocusEditorGroupInDirection(EditorGroupDirection::Left);
+      return DispatchResult::Handled;
+    case ActionId::FocusEditorGroupRight:
+      context_.FocusEditorGroupInDirection(EditorGroupDirection::Right);
+      return DispatchResult::Handled;
+    case ActionId::FocusEditorGroupUp:
+      context_.FocusEditorGroupInDirection(EditorGroupDirection::Up);
+      return DispatchResult::Handled;
+    case ActionId::FocusEditorGroupDown:
+      context_.FocusEditorGroupInDirection(EditorGroupDirection::Down);
+      return DispatchResult::Handled;
+    case ActionId::MoveEditorGroupLeft:
+      context_.MoveEditorGroupInDirection(EditorGroupDirection::Left);
+      return DispatchResult::Handled;
+    case ActionId::MoveEditorGroupRight:
+      context_.MoveEditorGroupInDirection(EditorGroupDirection::Right);
+      return DispatchResult::Handled;
+    case ActionId::MoveEditorGroupUp:
+      context_.MoveEditorGroupInDirection(EditorGroupDirection::Up);
+      return DispatchResult::Handled;
+    case ActionId::MoveEditorGroupDown:
+      context_.MoveEditorGroupInDirection(EditorGroupDirection::Down);
+      return DispatchResult::Handled;
     case ActionId::CloseGroup:
       context_.CloseEditorGroup();
       return DispatchResult::Handled;

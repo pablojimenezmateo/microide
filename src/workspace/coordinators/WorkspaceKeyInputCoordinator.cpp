@@ -241,6 +241,32 @@ bool KeyInputCoordinator::HandleGlobalKeyDown(const SDL_KeyboardEvent& event,
           return operations_.execute_action(ActionId::ProjectOpen, {}, ActionSource::Shortcut);
         }
       }
+      // VS Code's editor-grid chords: Ctrl+K Ctrl+<arrow> focuses the pane that
+      // way, Ctrl+K Ctrl+Shift+<arrow> moves the focused pane there. Both are
+      // no-ops with one pane, or when nothing lies in that direction.
+      if (const bool move_pane = chord_mod == (SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+          move_pane || chord_mod == SDL_KMOD_CTRL) {
+        switch (event.key) {
+          case SDLK_LEFT:
+            return operations_.execute_action(
+                move_pane ? ActionId::MoveEditorGroupLeft : ActionId::FocusEditorGroupLeft, {},
+                ActionSource::Shortcut);
+          case SDLK_RIGHT:
+            return operations_.execute_action(
+                move_pane ? ActionId::MoveEditorGroupRight : ActionId::FocusEditorGroupRight, {},
+                ActionSource::Shortcut);
+          case SDLK_UP:
+            return operations_.execute_action(
+                move_pane ? ActionId::MoveEditorGroupUp : ActionId::FocusEditorGroupUp, {},
+                ActionSource::Shortcut);
+          case SDLK_DOWN:
+            return operations_.execute_action(
+                move_pane ? ActionId::MoveEditorGroupDown : ActionId::FocusEditorGroupDown, {},
+                ActionSource::Shortcut);
+          default:
+            break;
+        }
+      }
     }
   } else if (editor_chord_allowed && event.key == SDLK_K &&
              NormalizedKeyModifiers(modifiers) == SDL_KMOD_CTRL) {

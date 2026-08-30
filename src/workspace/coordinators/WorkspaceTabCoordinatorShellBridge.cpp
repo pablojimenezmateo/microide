@@ -88,6 +88,12 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
           .invalidate_tab_strip_geometry =
               [this]() { tab_strip_service_.InvalidateTabStripGeometry(); },
           .request_editor_surface_redraw = [this]() { RequestEditorSurfaceRedraw(); },
+          .editor_group_rects =
+              [this]() {
+                const auto layout = CurrentWorkspaceLayout();
+                return layout.has_value() ? ComputeEditorGroupRectsForState(*layout)
+                                          : EditorGroupRectsLayout{};
+              },
           .request_automatic_git_sidebar_refresh =
               [this]() { RequestAutomaticGitSidebarRefresh(); },
           .request_external_change_banner =
