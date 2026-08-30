@@ -76,7 +76,19 @@ SyntaxState DetectState(const std::filesystem::path& path, std::string_view text
 // Filetype detection only inspects the path and a bounded head of the document
 // (signature/shebang scan). Pass a LineSpan over the live buffer; only the head
 // is read, so no whole-document materialization happens on per-frame callers.
-std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines);
+// How many head lines a content-sensitive detection may read, and how many bytes
+// of each. A caller memoizing a detection result needs the first number to know
+// which edits can change it: an edit at or below `kFiletypeDetectHeadLines`
+// cannot.
+inline constexpr std::size_t kFiletypeDetectHeadLines = 64;
+
+// `content_consulted`, when non-null, reports whether the answer depended on the
+// buffer at all. It is false for the overwhelming majority of files: an
+// unambiguous extension (`.cpp`, `.py`, `.rs`, …) resolves to exactly one
+// definition and the head is never read. A caller that memoizes the result can
+// then hold it across content edits instead of re-detecting per keystroke.
+std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines,
+                           bool* content_consulted = nullptr);
 // Path-only detection for callers with no content available.
 std::string DetectFiletype(const std::filesystem::path& path);
 

@@ -3869,6 +3869,89 @@ void TestTextViewportLanguageIdMemoInvalidatesOnContentChange() {
          "a content change must re-detect; a path-keyed cache would pin the first answer");
 }
 
+// A `.cpp` path resolves to exactly one definition without the detector reading a
+// byte of the buffer, so the answer cannot change when the buffer does. The memo
+// used to key on the whole content revision anyway, which meant every keystroke
+// re-ran the detector: a fresh candidate vector, a linear scan of the definition
+// table, and a filetype string returned by value, per character typed.
+void TestTextViewportLanguageIdMemoSurvivesEditsWhenTheExtensionDecides() {
+  namespace perf = microide::tests::perf;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent("int main() { return 0; }\n", "/tmp/memo-typing.cpp");
+  Expect(viewport.language_id() == "c++", "cold resolve should detect the C++ definition");
+
+  const std::uint64_t scans_before =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorFiletypeSignatureScans);
+  // Measured around the QUERY only: the edit itself legitimately allocates, so
+  // wrapping the pair would hide the very thing under test behind that noise.
+  std::size_t query_allocations = 0;
+  for (int i = 0; i < 64; ++i) {
+    viewport.MoveCursorTo(0, 0);
+    viewport.InsertText("x");
+    const auto before = perf::Allocations::Snapshot();
+    Expect(viewport.language_id() == "c++", "an edit cannot change a filetype the path decided");
+    query_allocations += perf::Allocations::DeltaSince(before).allocations;
+  }
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorFiletypeSignatureScans) ==
+             scans_before,
+         "typing must not run a filetype signature scan on an unambiguous extension");
+  Expect(query_allocations == 0,
+         "a language query after a keystroke must be a memo hit, not a re-detection (" +
+             std::to_string(query_allocations) + " allocations)");
+}
+
+// When the extension does NOT decide, detection reads a bounded head window --
+// so an edit below that window cannot change the answer either, and re-running
+// four signature regexes over 64 lines per keystroke at line 5,000 of a header
+// is work nothing can consume.
+void TestTextViewportLanguageIdMemoRedetectsOnlyForHeadEdits() {
+  namespace perf = microide::tests::perf;
+  using microide::editor::runtime_syntax::DetectFiletype;
+  using microide::editor::runtime_syntax::kFiletypeDetectHeadLines;
+  const std::filesystem::path path = "/tmp/memo-head-scope";
+  std::string content = "#!/bin/sh\n";
+  for (std::size_t i = 0; i < kFiletypeDetectHeadLines * 4; ++i) {
+    content += "echo line\n";
+  }
+  const std::vector<std::string> shell_lines = {"#!/bin/sh", "echo hi"};
+  const std::vector<std::string> python_lines = {"#!/usr/bin/env python3", "print('hi')"};
+  const std::string shell_id = DetectFiletype(path, shell_lines);
+  const std::string python_id = DetectFiletype(path, python_lines);
+  Expect(!shell_id.empty() && shell_id != python_id,
+         "the two shebangs must detect as different languages for this test to mean anything");
+
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(content, path);
+  Expect(viewport.language_id() == shell_id, "shebang should drive the initial detection");
+
+  // Deep edit: below the head window, so the memo must hold. Measured around the
+  // QUERY only -- the edit allocates on its own and would drown the signal.
+  //
+  // Allocations, not the signature-scan counter: this path's ambiguity is
+  // resolved by the header regex rather than by a multi-candidate signature scan,
+  // so that counter stays at zero whether the memo holds or not. It was probed
+  // with the head tier disarmed and did not move, which is exactly the vacuous
+  // check validation-traps.md warns about.
+  std::size_t query_allocations = 0;
+  for (int i = 0; i < 32; ++i) {
+    viewport.MoveCursorTo(kFiletypeDetectHeadLines * 2, 0);
+    viewport.InsertText("x");
+    const auto before = perf::Allocations::Snapshot();
+    Expect(viewport.language_id() == shell_id, "a deep edit must not change the detected language");
+    query_allocations += perf::Allocations::DeltaSince(before).allocations;
+  }
+  Expect(query_allocations == 0,
+         "an edit below the detector's head window must not re-detect (" +
+             std::to_string(query_allocations) + " allocations)");
+
+  // Head edit: the shebang itself, which genuinely decides the answer.
+  viewport.MoveCursorTo(0, 0);
+  viewport.SelectLineAtCursor();
+  viewport.InsertText("#!/usr/bin/env python3\n");
+  Expect(viewport.language_id() == python_id,
+         "rewriting the shebang must re-detect; the head tier is what makes that possible");
+}
+
 void TestTextViewportLanguageIdMemoInvalidatesOnPathChange() {
   using microide::editor::runtime_syntax::DetectFiletype;
   const std::vector<std::string> lines = {"value = 1"};
@@ -5800,6 +5883,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportLanguageIdMemoInvalidatesOnContentChange);
   AddTest(tests, "TextViewport/LanguageIdMemoInvalidatesOnPathChange",
           TestTextViewportLanguageIdMemoInvalidatesOnPathChange);
+  AddTest(tests, "TextViewport/LanguageIdMemoSurvivesEditsWhenTheExtensionDecides",
+          TestTextViewportLanguageIdMemoSurvivesEditsWhenTheExtensionDecides);
+  AddTest(tests, "TextViewport/LanguageIdMemoRedetectsOnlyForHeadEdits",
+          TestTextViewportLanguageIdMemoRedetectsOnlyForHeadEdits);
   AddTest(tests, "TextViewport/RuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent",
           TestRuntimeSyntaxInitialStateAllocationIsDocumentSizeIndependent);
   AddTest(tests, "TextViewport/LoadsRuntimeSyntaxDefinitionsFromPluginDataDirectories",

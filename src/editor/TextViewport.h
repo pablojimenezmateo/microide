@@ -652,6 +652,13 @@ class TextViewport {
     // highlight cache, and so on. See
     // openspec/changes/split-layout-revision-tiers/ for the full contract.
     std::uint64_t content_revision = 0;
+    // Bumped by the subset of content edits that touch the document's HEAD --
+    // the first `runtime_syntax::kFiletypeDetectHeadLines` lines, which is all a
+    // content-sensitive filetype detection ever reads. A memo over such a
+    // detection keys on this instead of `content_revision`, so typing at line
+    // 5,000 of a `.h` file does not re-run four signature regexes over 64 lines
+    // on every keystroke.
+    std::uint64_t head_content_revision = 0;
     std::uint64_t syntax_revision = 0;
     std::uint64_t layout_shape_revision = 0;
     std::uint64_t presentation_revision = 0;
@@ -1002,6 +1009,11 @@ class TextViewport {
   mutable std::uint64_t language_id_content_revision_ = 0;
   mutable std::size_t language_id_registry_revision_ = 0;
   mutable bool language_id_valid_ = false;
+  // Whether the cached answer depended on the buffer's bytes at all. False for an
+  // unambiguous extension, which is nearly every file: the memo then survives
+  // every content edit. True only for `.h`-style ambiguous extensions and files
+  // with no fast candidate set, where it is keyed on `head_content_revision`.
+  mutable bool language_id_content_sensitive_ = false;
   std::vector<SecondaryCaret> secondary_carets_;
   ColumnSelectionState column_selection_;
   // Cache for secondary_caret_positions(): mirrors `secondary_carets_.position` and is rebuilt

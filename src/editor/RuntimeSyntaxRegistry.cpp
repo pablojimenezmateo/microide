@@ -18,6 +18,7 @@
 
 #include "editor/HighlightPrefetch.h"
 #include "editor/RuntimeSyntaxData.h"
+#include "util/PerformanceCounters.h"
 #include "util/PerformanceTrace.h"
 #include "util/RegexUtil.h"
 #include "util/StringUtil.h"
@@ -26,7 +27,7 @@ namespace microide::editor::runtime_syntax {
 
 namespace {
 
-constexpr std::size_t kSignatureDetectLineLimit = 64;
+constexpr std::size_t kSignatureDetectLineLimit = kFiletypeDetectHeadLines;
 // PCRE2_MATCH_INVALID_UTF (PCRE2 >= 10.34) makes a subject containing invalid
 // UTF-8 matchable: PCRE2 treats each bad byte as an unmatchable barrier instead
 // of failing the whole call. Without it every pcre2_match against such a line
@@ -1102,7 +1103,15 @@ void HighlightLineScoped(const Registry& registry,
 std::uint32_t DetectDefinitionId(const Registry& registry,
                                  const std::filesystem::path& path,
                                  const LineSpan* lines,
-                                 std::string_view first_line) {
+                                 std::string_view first_line,
+                                 bool* content_consulted = nullptr) {
+  // Set on every path that reads a byte of `lines`. Callers memoizing the result
+  // key on the buffer only when this comes back true.
+  const auto mark_content_consulted = [content_consulted]() {
+    if (content_consulted != nullptr) {
+      *content_consulted = true;
+    }
+  };
   static constexpr std::array<std::string_view, 1> kCCandidates = {"c"};
   static constexpr std::array<std::string_view, 1> kCMakeCandidates = {"cmake"};
   static constexpr std::array<std::string_view, 1> kCPlusPlusCandidates = {"c++"};
@@ -1153,6 +1162,8 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
     }
 
     const std::size_t line_limit = std::min(lines->size(), kSignatureDetectLineLimit);
+    mark_content_consulted();
+    util::AddPerformanceCounter(util::PerfCounterId::EditorFiletypeSignatureScans);
     util::PerformanceTrace::Scope signature_scope(signature_scope_label);
     // One buffer for the whole scan. LineWindow only writes into it when the
     // source cannot serve the window contiguously (an edited piece-tree line), so
@@ -1318,6 +1329,12 @@ std::uint32_t DetectDefinitionId(const Registry& registry,
   // looks at an opening marker, and the "first line" of a minified bundle is the
   // whole file. `header_window` must outlive `header_line`, which may view into it.
   std::string header_window;
+  if (lines != nullptr && !lines->empty()) {
+    // The generic path runs every definition's header regex against the buffer's
+    // first line, so reaching it makes the answer content-dependent regardless of
+    // whether the signature scan below also runs.
+    mark_content_consulted();
+  }
   const std::string_view header_line =
       lines != nullptr && !lines->empty()
           ? lines->LineWindow(0, 0, kSignatureDetectLineBytes, header_window)
@@ -1473,9 +1490,14 @@ SyntaxState DetectState(const std::filesystem::path& path, std::string_view text
   return DetectState(path, LineSpan(head));
 }
 
-std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines) {
+std::string DetectFiletype(const std::filesystem::path& path, LineSpan lines,
+                           bool* content_consulted) {
+  if (content_consulted != nullptr) {
+    *content_consulted = false;
+  }
   const Registry& registry = GetRegistry();
-  const std::uint32_t definition_id = DetectDefinitionId(registry, path, &lines, {});
+  const std::uint32_t definition_id =
+      DetectDefinitionId(registry, path, &lines, {}, content_consulted);
   const Definition* definition = DefinitionById(registry, definition_id);
   return definition == nullptr ? std::string{} : definition->filetype;
 }

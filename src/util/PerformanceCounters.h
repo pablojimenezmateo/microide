@@ -141,6 +141,13 @@ namespace microide::util {
   X(EditorLineWidthMeasureBytes, "editor.line_width_measure_bytes")                              \
   X(EditorFiletypeMemoQueries, "editor.filetype_memo_queries")                                  \
   X(EditorFiletypeMemoHits, "editor.filetype_memo_hits")                                        \
+  /* Detections that had to READ the buffer: an ambiguous extension (`.h` names   */      \
+  /* four candidates) or no fast candidate set at all, so up to 64 head lines are */      \
+  /* run through each candidate's signature regex. A memo keyed on the whole      */      \
+  /* content revision re-ran this per keystroke; the memo now holds until an edit */      \
+  /* actually touches the head, so a nonzero rate here during a typing burst is   */      \
+  /* the regression.                                                              */      \
+  X(EditorFiletypeSignatureScans, "editor.filetype_signature_scans")                            \
   X(LanguageContractViewQueries, "language_contract.view_queries")                              \
   X(LanguageContractViewBuilds, "language_contract.view_builds")                                \
   X(TerminalSnapshotLineRangeIfChangedCalls, "terminal.snapshot_line_range_if_changed_calls")   \

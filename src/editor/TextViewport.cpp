@@ -57,6 +57,7 @@ TextViewport::TextViewport(const TextViewport& other)
       language_id_content_revision_(other.language_id_content_revision_),
       language_id_registry_revision_(other.language_id_registry_revision_),
       language_id_valid_(other.language_id_valid_),
+      language_id_content_sensitive_(other.language_id_content_sensitive_),
       secondary_carets_(other.secondary_carets_),
       column_selection_(other.column_selection_),
       secondary_caret_positions_cache_(other.secondary_caret_positions_cache_),
@@ -140,6 +141,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       language_id_content_revision_(other.language_id_content_revision_),
       language_id_registry_revision_(other.language_id_registry_revision_),
       language_id_valid_(other.language_id_valid_),
+      language_id_content_sensitive_(other.language_id_content_sensitive_),
       secondary_carets_(std::move(other.secondary_carets_)),
       column_selection_(other.column_selection_),
       secondary_caret_positions_cache_(std::move(other.secondary_caret_positions_cache_)),
@@ -207,6 +209,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   language_id_content_revision_ = other.language_id_content_revision_;
   language_id_registry_revision_ = other.language_id_registry_revision_;
   language_id_valid_ = other.language_id_valid_;
+  language_id_content_sensitive_ = other.language_id_content_sensitive_;
   secondary_carets_ = std::move(other.secondary_carets_);
   column_selection_ = other.column_selection_;
   secondary_caret_positions_cache_ = std::move(other.secondary_caret_positions_cache_);
@@ -246,8 +249,19 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
 const std::string& TextViewport::language_id() const {
   util::AddPerformanceCounter(util::PerfCounterId::EditorFiletypeMemoQueries);
   const void* document = document_.get();
-  const std::uint64_t revision = content_revision();
   const std::size_t registry_revision = runtime_syntax::RegistryRevision();
+  // Which revision this memo keys on depends on whether the last detection read
+  // the buffer. It usually did not: an unambiguous extension resolves to one
+  // definition without a byte of content, and keying such an answer on
+  // `content_revision` re-detected it on EVERY keystroke -- a fresh
+  // `std::vector<std::uint32_t>`, a linear scan of the definition table and a
+  // returned-by-value filetype string, per character typed. When content WAS
+  // read, only the head can change the answer, so `head_content_revision` is the
+  // key and an edit below line `kFiletypeDetectHeadLines` keeps the memo warm.
+  const std::uint64_t revision =
+      document == nullptr ? 0
+      : language_id_content_sensitive_ ? document_->head_content_revision
+                                       : 0;
   if (language_id_valid_ && language_id_document_ == document &&
       language_id_content_revision_ == revision &&
       language_id_registry_revision_ == registry_revision &&
@@ -255,16 +269,20 @@ const std::string& TextViewport::language_id() const {
     util::AddPerformanceCounter(util::PerfCounterId::EditorFiletypeMemoHits);
     return language_id_;
   }
+  bool content_consulted = false;
   if (document == nullptr) {
     language_id_.clear();
   } else {
     // Bounded head scan only -- LineSpan reads through the live buffer, so this
     // never materializes the document.
-    language_id_ = runtime_syntax::DetectFiletype(document_->path, LineSpan(document_->lines));
+    language_id_ = runtime_syntax::DetectFiletype(document_->path, LineSpan(document_->lines),
+                                                  &content_consulted);
     language_id_path_ = document_->path;
   }
   language_id_document_ = document;
-  language_id_content_revision_ = revision;
+  language_id_content_sensitive_ = content_consulted;
+  language_id_content_revision_ =
+      content_consulted && document != nullptr ? document_->head_content_revision : 0;
   language_id_registry_revision_ = registry_revision;
   language_id_valid_ = true;
   return language_id_;
@@ -1170,6 +1188,12 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   util::AddPerformanceCounter(util::PerfCounterId::EditorPresentationRevisionBumps);
   if (reason == InvalidationReason::ContentEdit) {
     ++document_->content_revision;
+    // The head tier moves only when the edit could have changed what a filetype
+    // signature scan reads. `start_line` is the first affected line, so an edit
+    // strictly below the head window leaves it alone.
+    if (start_line < runtime_syntax::kFiletypeDetectHeadLines) {
+      ++document_->head_content_revision;
+    }
     util::AddPerformanceCounter(util::PerfCounterId::EditorContentRevisionBumps);
   } else if (reason == InvalidationReason::SyntaxConfig) {
     ++document_->syntax_revision;
