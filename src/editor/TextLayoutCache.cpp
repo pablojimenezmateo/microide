@@ -54,6 +54,26 @@ std::size_t TextLayoutCache::PlainAsciiPrefixEnd(LineSpan lines,
                                                  std::size_t line_index,
                                                  std::size_t probe,
                                                  std::uint64_t content_revision) const {
+  return PlainAsciiPrefixEndInto(lines, line_index, probe, content_revision, line_window_scratch_);
+}
+
+bool TextLayoutCache::PlainAsciiThroughColumn(LineSpan lines,
+                                              std::size_t line_index,
+                                              std::size_t column,
+                                              std::uint64_t content_revision) const {
+  if (line_index >= lines.size()) {
+    return false;
+  }
+  const std::size_t probe = std::min(column, lines.LineLength(line_index));
+  return PlainAsciiPrefixEndInto(lines, line_index, probe, content_revision,
+                                 column_scan_scratch_) >= probe;
+}
+
+std::size_t TextLayoutCache::PlainAsciiPrefixEndInto(LineSpan lines,
+                                                     std::size_t line_index,
+                                                     std::size_t probe,
+                                                     std::uint64_t content_revision,
+                                                     std::string& scratch) const {
   if (probe == 0) {
     return 0;
   }
@@ -70,14 +90,17 @@ std::size_t TextLayoutCache::PlainAsciiPrefixEnd(LineSpan lines,
     if (memo.first_non_plain < memo.scanned_through) {
       // Already found the line's first offending byte; every larger probe has the
       // same answer, clipped.
+      util::AddPerformanceCounter(util::PerfCounterId::EditorPlainPrefixMemoHits);
       return std::min(memo.first_non_plain, probe);
     }
     if (probe <= memo.scanned_through) {
+      util::AddPerformanceCounter(util::PerfCounterId::EditorPlainPrefixMemoHits);
       return probe;  // known clean this far
     }
+    util::AddPerformanceCounter(util::PerfCounterId::EditorPlainPrefixMemoExtends);
     // Extend the scan, reading only the bytes nobody has read yet.
     const std::size_t hit = FirstNonPlainAsciiByteInRange(lines, line_index, memo.scanned_through,
-                                                          probe, line_window_scratch_);
+                                                          probe, scratch);
     util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
                                 std::min(hit, probe) - memo.scanned_through);
     memo.scanned_through = probe;
@@ -85,8 +108,9 @@ std::size_t TextLayoutCache::PlainAsciiPrefixEnd(LineSpan lines,
     return std::min(hit, probe);
   }
 
+  util::AddPerformanceCounter(util::PerfCounterId::EditorPlainPrefixMemoCold);
   const std::size_t hit =
-      FirstNonPlainAsciiByteInRange(lines, line_index, 0, probe, line_window_scratch_);
+      FirstNonPlainAsciiByteInRange(lines, line_index, 0, probe, scratch);
   util::AddPerformanceCounter(util::PerfCounterId::EditorVisibleLineLayoutPrefixBytesScanned,
                               std::min(hit, probe));
   PlainPrefixMemo& slot = plain_prefix_memo_[plain_prefix_memo_next_];

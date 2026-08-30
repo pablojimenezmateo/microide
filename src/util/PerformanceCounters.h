@@ -55,6 +55,24 @@ namespace microide::util {
   X(EditorVisibleLineLayoutPrefixBytesScanned,                                                   \
     "editor.visible_line_layout_prefix_bytes_scanned")                                           \
   X(EditorVisualColumnWalkBytes, "editor.visual_column_walk_bytes")                              \
+  /* Why a visual<->text column conversion had to WALK instead of taking the O(1)     */          \
+  /* identity path. The bytes counter above says a walk happened; on a plain-ASCII    */          \
+  /* file it cannot say whether that is because the line genuinely needs one (a tab   */          \
+  /* or a multi-byte code point) or because the per-line width table was not current  */          \
+  /* at the time -- which is a cache problem, not a text problem, and the two want    */          \
+  /* opposite fixes. Split so a fast path that has silently stopped firing is         */          \
+  /* audible: `unknown` should be near zero on a warm viewport.                       */          \
+  /* Outcomes of the plain-ASCII prefix memo, which is what keeps the long-line     */          \
+  /* paths from re-reading a prefix they have already read. The bytes counter above  */          \
+  /* cannot distinguish "read a lot once" from "read a little, repeatedly": both     */          \
+  /* show up as a large total. A healthy long-line scroll is nearly all HITS with a  */          \
+  /* handful of EXTENDS; a COLD count that tracks the frame count means the memo is  */          \
+  /* being evicted or re-keyed every frame and is buying nothing.                    */          \
+  X(EditorPlainPrefixMemoHits, "editor.plain_prefix_memo_hits")                                  \
+  X(EditorPlainPrefixMemoExtends, "editor.plain_prefix_memo_extends")                            \
+  X(EditorPlainPrefixMemoCold, "editor.plain_prefix_memo_cold")                                  \
+  X(EditorVisualColumnWalkFactsUnknown, "editor.visual_column_walk_facts_unknown")               \
+  X(EditorVisualColumnWalkNotPlainAscii, "editor.visual_column_walk_not_plain_ascii")            \
   /* Bytes the render-whitespace marker walk visits, summed over visible rows, by    */          \
   /* BOTH producers (RenderViewModelBuilder's CSR run builder and EditorViewRenderer's*/         \
   /* text-iteration fallback). Each walks one logical line per visible row, so under  */         \

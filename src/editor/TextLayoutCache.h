@@ -495,6 +495,26 @@ class TextLayoutCache {
                                   std::size_t probe,
                                   std::uint64_t content_revision) const;
 
+  // True when byte offsets [0, column) of `line_index` are all plain single-cell
+  // ASCII -- i.e. visual column equals byte column there, so a visual<->text
+  // conversion at `column` is the identity and needs no walk.
+  //
+  // This exists because the width table is the only other thing that knows a
+  // line's encoding, and NOTHING BUILDS IT UNDER SOFT WRAP: soft wrap has no
+  // horizontal scrollbar, so the scrollbar geometry skips MaxVisualColumns, and
+  // ClampScrollState returns early at horizontal_scroll == 0. Two separate,
+  // individually correct optimizations, and between them the O(1) conversion path
+  // was unreachable in exactly the mode where lines are longest
+  // (TD-2026-08-30-274).
+  //
+  // It answers from the same incremental memo as PlainAsciiPrefixEnd -- reading
+  // only bytes nobody has read yet -- rather than measuring the whole line, which
+  // on a file with no line breaks in it is the multi-megabyte walk being avoided.
+  bool PlainAsciiThroughColumn(LineSpan lines,
+                               std::size_t line_index,
+                               std::size_t column,
+                               std::uint64_t content_revision) const;
+
  private:
   // One slot per line the memo is tracking. Rows of a line arrive consecutively,
   // so a single slot already collapses a frame's per-row scans into one; the four
@@ -511,9 +531,22 @@ class TextLayoutCache {
     std::size_t first_non_plain = 0;
     bool valid = false;
   };
+  // Shared implementation of the two public prefix queries; `scratch` is the
+  // caller's own read buffer (see `column_scan_scratch_`).
+  std::size_t PlainAsciiPrefixEndInto(LineSpan lines,
+                                      std::size_t line_index,
+                                      std::size_t probe,
+                                      std::uint64_t content_revision,
+                                      std::string& scratch) const;
   static constexpr std::size_t kPlainPrefixMemoSlots = 4;
   mutable std::array<PlainPrefixMemo, kPlainPrefixMemoSlots> plain_prefix_memo_{};
   mutable std::size_t plain_prefix_memo_next_ = 0;
+  // The prefix scan reads through a caller-supplied scratch buffer, and the
+  // layout path holds a LineWindow VIEW into `line_window_scratch_` across its own
+  // call to the scan. Column conversion can be asked at any time, so it gets its
+  // own buffer rather than sharing one whose contents another caller may be
+  // looking at.
+  mutable std::string column_scan_scratch_;
 
   // Wrapped-row table
   mutable std::vector<WrappedRow> wrapped_row_layouts_;

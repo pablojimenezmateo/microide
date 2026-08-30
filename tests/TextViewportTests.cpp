@@ -3825,6 +3825,53 @@ void TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns() {
          "a line that is no longer plain ASCII must fall back to the walk");
 }
 
+// The soft-wrap counterpart of the test above, and the reason it is a separate
+// test rather than a second loop inside it: that one calls `max_visual_columns()`
+// to "warm the width table the way a rendered frame does", and under soft wrap NO
+// frame does. Soft wrap has no horizontal scrollbar, so the scrollbar geometry
+// skips MaxVisualColumns and ClampScrollState returns early at horizontal_scroll
+// == 0. Nothing else builds the table, `LineFactsIfCurrent` therefore always
+// answers "unknown", and the O(1) conversion path was unreachable in exactly the
+// mode where lines are longest -- 2.2 GB of walking in one perf scenario, invisible
+// because the existing test primed the table by hand (TD-2026-08-30-274).
+//
+// So: no priming here. That absence is the test.
+void TestTextViewportSoftWrappedLongLineDoesNotWalkItForCaretColumns() {
+  constexpr std::size_t kLineBytes = 256u * 1024u;
+  microide::editor::TextViewport viewport;
+  viewport.LoadContent(std::string(kLineBytes, 'x') + "\n", "/tmp/long-line-wrapped.txt");
+  viewport.SetViewportSize(40, 120);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, kLineBytes / 2, false);
+
+  util::ResetPerformanceCounters();
+  for (int i = 0; i < 8; ++i) {
+    viewport.InsertText("y");
+    (void)viewport.CaretForLine(0);
+    (void)viewport.cursor_visual_column();
+  }
+  const std::uint64_t walked =
+      util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes);
+  Expect(walked == 0,
+         "a soft-wrapped long plain-ASCII line must not be walked for caret columns (walked " +
+             std::to_string(walked) + " bytes)");
+  // The width table is genuinely absent here -- otherwise this would be passing
+  // for the same reason the non-wrapped test does, and would not cover the hole.
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkFactsUnknown) == 0,
+         "no conversion should have fallen through to a walk at all");
+
+  // Reachability control: a counter that cannot move is not evidence. A tab makes
+  // the prefix non-plain, and the next conversion past it walks.
+  viewport.MoveCursorTo(0, 16, false);
+  viewport.InsertText("\t");
+  viewport.MoveCursorTo(0, kLineBytes / 2, false);
+  util::ResetPerformanceCounters();
+  (void)viewport.cursor_visual_column();
+  Expect(util::ReadPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes) > 0,
+         "a line whose prefix is no longer plain ASCII must fall back to the walk (control)");
+  util::ResetPerformanceCounters();
+}
+
 void TestTextViewportLanguageIdMemoIsAllocationFreeOnASettledBuffer() {
   namespace perf = microide::tests::perf;
   microide::editor::TextViewport viewport;
@@ -5875,6 +5922,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportCaretColumnConversionsMatchTheDirectWalk);
   AddTest(tests, "TextViewport/TypingInALongLineDoesNotWalkItForCaretColumns",
           TestTextViewportTypingInALongLineDoesNotWalkItForCaretColumns);
+  AddTest(tests, "TextViewport/SoftWrappedLongLineDoesNotWalkItForCaretColumns",
+          TestTextViewportSoftWrappedLongLineDoesNotWalkItForCaretColumns);
   AddTest(tests, "TextViewport/TypingInALongLineCopiesNothing",
           TestTextViewportTypingInALongLineCopiesNothing);
   AddTest(tests, "TextViewport/LanguageIdMemoIsAllocationFreeOnASettledBuffer",

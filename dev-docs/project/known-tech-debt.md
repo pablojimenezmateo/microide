@@ -389,6 +389,74 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-08-30-274 — under soft wrap nothing builds the per-line width table, so the O(1) column conversion was unreachable on exactly the longest lines. [RESOLVED 2026-08-30, same session it was found.]
+
+`editor.visual_column_walk_bytes` read 32.8 M on `editor_soft_wrap_long_line_scroll`
+and **2.23 GB** on `editor_soft_wrap_long_line_typing`, against a fixture that is
+2 MB of pure ASCII with no tabs and no multi-byte bytes — the exact shape the O(1)
+identity path exists to serve.
+
+The counter could not say why, so it was split first. The answer was unambiguous:
+`editor.visual_column_walk_facts_unknown` accounted for **all** of them and
+`..._not_plain_ascii` for none. Not a text problem; a cache problem.
+
+`VisualColumnAt` / `TextColumnAtVisualColumn` take the identity path when
+`CachedLineFacts(line).plain_ascii`, and those facts come from the per-line width
+table. Two separate, individually correct optimizations closed every door to it:
+
+- soft wrap has no horizontal scrollbar, so the scrollbar geometry collapses
+  `total_columns` to the visible width and never calls `MaxVisualColumns`
+  (the table's only builder);
+- `ClampScrollState` returns early at `horizontal_scroll == 0` rather than
+  building a whole-document table to learn that zero clamps to zero
+  (TD-2026-08-06-138, and correct).
+
+So under soft wrap `LineFactsIfCurrent` always answered "unknown", and every
+conversion walked to its column — per row, per frame, on a line with no newlines
+in it.
+
+**The fix is not to build the table.** That is O(document) and soft wrap does not
+want the max. The conversion only needs the identity to hold *at that column*,
+which is a question about the PREFIX, and `PlainAsciiPrefixEnd` already answers it
+incrementally and memoized — reading only bytes nobody has read yet. It is now
+exposed as `PlainAsciiThroughColumn` and used as the fallback when the width table
+is not current. The prefix scan reads through a caller-supplied scratch buffer,
+and the layout path holds a `LineWindow` view into `line_window_scratch_` across
+its own call, so the column path gets its own buffer rather than sharing one whose
+contents another caller may be looking at.
+
+| `editor_soft_wrap_long_line_typing`, 10 iterations | before | after |
+| --- | ---: | ---: |
+| `visual_column_walk_bytes` | 2,233,506,790 | **0** |
+| `visual_column_walk_facts_unknown` | 2,130 | **0** |
+| wall | 204.7 ms | **158.1 ms** |
+
+`editor_soft_wrap_long_line_scroll` goes 32.8 M → 0 walked bytes, entirely on memo
+hits (17,330 hits, 0 cold, 0 extends, 0 bytes scanned in the measured window).
+Allocations unchanged on both.
+
+**Why the existing test missed it, which is the transferable part.**
+`TypingInALongLineDoesNotWalkItForCaretColumns` covers this exact assertion and
+passes — because it calls `max_visual_columns()` first, commented "warm the width
+table the way a rendered frame does". Under soft wrap no frame does. The test
+primed by hand the one thing the broken mode never primes, so it was structurally
+incapable of seeing the hole. Its soft-wrap counterpart deliberately primes
+nothing, and that absence is the test; probed against the old code it fails,
+reporting 4,194,440 bytes walked.
+
+**Instrumentation added, since none of this was visible.** `walk_facts_unknown` /
+`walk_not_plain_ascii` (a walk's REASON — the two want opposite fixes), and
+`plain_prefix_memo_` hits / extends / cold, because a byte total cannot distinguish
+"read a lot once" from "read a little, repeatedly".
+
+**Left open:** `editor.visible_line_layout_prefix_bytes_scanned` is 335 MB per 10
+iterations of the typing scenario, and the A/B confirms that is PRE-EXISTING and
+untouched by this change. The memo is keyed on `content_revision`, so every
+keystroke drops it and the prefix is rescanned from 0 — while an edit at column C
+cannot change any byte before C. Keying the memo on the edit extent
+(`LineEditSpan` is the primitive) would keep the clean prefix across a keystroke.
+Roughly 7 % of that scenario, so it is a follow-up rather than part of this.
+
 ### TD-2026-08-30-273 — the file finder rebuilt two 10,000-element vectors from empty on every keystroke. [RESOLVED 2026-08-30, same session it was found.]
 
 `file_finder_type_query` is 20,277 allocations, and almost all of that is opening a

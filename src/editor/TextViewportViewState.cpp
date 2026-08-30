@@ -472,6 +472,18 @@ void TextViewport::Page(int direction, bool extend_selection) {
   MoveCursorVertical(static_cast<int>(step) * direction, extend_selection);
 }
 
+// Only the PREFIX matters: the conversion is the identity at `column` as long as
+// every byte before it is single-cell. That is a much weaker question than "is
+// this whole line plain ASCII", and on a two-megabyte line it is the difference
+// between reading up to the column once and reading to the column on every call.
+bool TextViewport::PlainAsciiThroughColumn(std::size_t line, std::size_t column) const {
+  if (document_ == nullptr) {
+    return false;
+  }
+  return layout_cache_.PlainAsciiThroughColumn(document_->lines, line, column,
+                                               document_->content_revision);
+}
+
 LineLayoutFacts TextViewport::CachedLineFacts(std::size_t line) const {
   if (document_ == nullptr) {
     return LineLayoutFacts{};
@@ -504,12 +516,14 @@ std::size_t TextViewport::VisualColumnAt(std::size_t line, std::size_t column) c
   // megabyte scanned per keystroke by EnsureCursorVisible and again by the
   // preferred-column update (TD-2026-08-05-132).
   const LineLayoutFacts facts = CachedLineFacts(line);
-  if (facts.known && facts.plain_ascii) {
+  if (facts.known ? facts.plain_ascii : PlainAsciiThroughColumn(line, column)) {
     return std::min(column, document_->lines.LineLength(line));
   }
   const std::string_view text = document_->lines.LineView(line);
   util::AddPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes,
                               std::min(column, text.size()));
+  util::AddPerformanceCounter(facts.known ? util::PerfCounterId::EditorVisualColumnWalkNotPlainAscii
+                                          : util::PerfCounterId::EditorVisualColumnWalkFactsUnknown);
   return TextLayout::VisualColumnForTextColumn(text, column, tab_size_);
 }
 
@@ -520,7 +534,7 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
   }
   // The inverse of the above, and exact for the same reason.
   const LineLayoutFacts facts = CachedLineFacts(line);
-  if (facts.known && facts.plain_ascii) {
+  if (facts.known ? facts.plain_ascii : PlainAsciiThroughColumn(line, visual_column)) {
     return std::min(visual_column, document_->lines.LineLength(line));
   }
   const std::string_view text = document_->lines.LineView(line);
@@ -528,6 +542,8 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
   // a line of single-cell characters is the same bound as the forward one.
   util::AddPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes,
                               std::min(visual_column, text.size()));
+  util::AddPerformanceCounter(facts.known ? util::PerfCounterId::EditorVisualColumnWalkNotPlainAscii
+                                          : util::PerfCounterId::EditorVisualColumnWalkFactsUnknown);
   return TextLayout::TextColumnForVisualColumn(text, visual_column, tab_size_);
 }
 

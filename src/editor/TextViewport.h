@@ -344,6 +344,10 @@ class TextViewport {
   // What the layout cache currently knows about `line`, or an unknown value when
   // its width table does not describe this document.
   LineLayoutFacts CachedLineFacts(std::size_t line) const;
+  // Fallback for the visual<->text column conversions when the per-line width
+  // table is not current -- which under soft wrap it never is, because nothing
+  // builds it there. See TextLayoutCache::PlainAsciiThroughColumn.
+  bool PlainAsciiThroughColumn(std::size_t line, std::size_t column) const;
   // First byte of `line` that is not plain single-cell ASCII, searched in
   // [0, probe) and returning `probe` when there is none — so byte offset IS
   // visual column everywhere below the result. Memoized per line and content
