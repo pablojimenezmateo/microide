@@ -249,11 +249,22 @@ void WorkspaceShell::RequestBreadcrumbRedraw() {
 }
 
 void WorkspaceShell::RequestTabStripRedraw() {
-  if (const auto layout = CurrentWorkspaceLayout(); layout.has_value()) {
+  const auto layout = CurrentWorkspaceLayout();
+  if (!layout.has_value()) {
+    RequestWindowRedraw();
+    return;
+  }
+  // `layout.tab_strip` is the TOP row's strip only. A pane below the top row
+  // synthesizes its own strip inside the editor area, so dirtying the top band
+  // alone left a lower pane's titles painting stale -- a tab going dirty down
+  // there repainted nothing. Only the split case pays for the tree walk.
+  if (!context_.current_project_state.editor_split.is_split()) {
     RequestRedrawRect(layout->tab_strip);
     return;
   }
-  RequestWindowRedraw();
+  for (const EditorGroupRects& group : ComputeEditorGroupRectsForState(*layout).groups) {
+    RequestRedrawRect(group.tab_strip);
+  }
 }
 
 void WorkspaceShell::RequestEditorSurfaceRedraw() {
