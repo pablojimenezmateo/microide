@@ -199,6 +199,22 @@ std::size_t EditorSplitTree::InsertLeaf(std::size_t leaf,
   return LeafOrdinal(fresh);
 }
 
+std::size_t EditorSplitTree::MoveLeaf(std::size_t from,
+                                      std::size_t target,
+                                      EditorSplitOrientation orientation,
+                                      bool before) {
+  if (orientation == EditorSplitOrientation::None || from == target || from >= leaf_count_ ||
+      target >= leaf_count_ || leaf_count_ < 2) {
+    return kNoLeaf;
+  }
+  // Remove first: the grid may already be FULL, and inserting before removing
+  // would momentarily need a leaf the node budget cannot hold. Nothing below can
+  // fail once the removal has happened -- the tree is provably not full, and the
+  // adjusted target is a live ordinal -- so this never leaves a half-applied move.
+  RemoveLeaf(from);
+  return InsertLeaf(target > from ? target - 1 : target, orientation, before);
+}
+
 void EditorSplitTree::RemoveLeaf(std::size_t leaf) {
   if (leaf_count_ <= 1) {
     return;

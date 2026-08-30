@@ -633,6 +633,35 @@ void TestWorkspaceSharedEditorSplitLayout() {
              tree.InsertLeaf(0, EditorSplitOrientation::Vertical, false) == EditorSplitTree::kNoLeaf,
          "the split tree should refuse to grow past the editor group cap");
 
+  // MoveLeaf relocates without ever growing: it is the one structural edit a FULL
+  // grid can still take, which is what lets a pane be moved directionally and what
+  // lets another pane's last tab be dropped on an edge at the cap.
+  Expect(tree.full(), "the cap fixture should still be full here");
+  const std::size_t moved_at_cap = tree.MoveLeaf(microide::workspace::kMaxEditorGroups - 1, 0,
+                                                 EditorSplitOrientation::Vertical, true);
+  Expect(moved_at_cap != EditorSplitTree::kNoLeaf &&
+             tree.leaf_count() == microide::workspace::kMaxEditorGroups,
+         "moving a pane at the cap should succeed and keep the pane count");
+  Expect(!tree.node(tree.root()).leaf() && tree.NodeForLeaf(moved_at_cap) != EditorSplitTree::kNoNode,
+         "the moved pane should still be addressable");
+  Expect(tree.MoveLeaf(0, 0, EditorSplitOrientation::Vertical, true) == EditorSplitTree::kNoLeaf &&
+             tree.MoveLeaf(0, 99, EditorSplitOrientation::Vertical, true) ==
+                 EditorSplitTree::kNoLeaf &&
+             tree.MoveLeaf(0, 1, EditorSplitOrientation::None, true) == EditorSplitTree::kNoLeaf,
+         "a move onto itself, past the end, or with no orientation should be refused");
+
+  // A row of three: moving the last pane to the front reorders the row.
+  EditorSplitTree row;
+  row.InsertLeaf(0, EditorSplitOrientation::Vertical, false);
+  row.InsertLeaf(1, EditorSplitOrientation::Vertical, false);
+  Expect(row.leaf_count() == 3 && row.MoveLeaf(2, 0, EditorSplitOrientation::Vertical, true) == 0,
+         "moving the trailing pane before the leading one should land it at ordinal 0");
+  Expect(row.leaf_count() == 3 && row.node(row.root()).children.size() == 3,
+         "the row should stay one flat branch of three across the move");
+  Expect(row.MoveLeaf(0, 1, EditorSplitOrientation::Vertical, true) == EditorSplitTree::kNoLeaf ||
+             row.leaf_count() == 3,
+         "a same-axis move should never change the pane count");
+
   // Round-trip through the persisted pre-order form, and reject a malformed one.
   EditorSplitTree restored;
   Expect(restored.Load(tree.Flatten()) && restored == tree,

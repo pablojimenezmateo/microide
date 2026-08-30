@@ -115,7 +115,7 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
                                        std::size_t target_group,
                                        EditorSplitOrientation orientation,
                                        bool insert_before) {
-  if (orientation == EditorSplitOrientation::None || state_.editor_split.full() ||
+  if (orientation == EditorSplitOrientation::None ||
       from_group >= state_.editor_groups.size() || target_group >= state_.editor_groups.size() ||
       from_index >= state_.editor_groups[from_group].open_tabs.size()) {
     return false;
@@ -127,12 +127,43 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
   if (from_group == target_group && state_.editor_groups[from_group].open_tabs.size() < 2) {
     return false;
   }
+  // That same case is the one edge drop a FULL grid can still take: the source
+  // pane collapses as the carved one appears, so the pane COUNT is unchanged and
+  // this is a move of a pane rather than an addition (TD-2026-08-18-265). Every
+  // other carve adds a pane and is refused at the cap.
+  const bool pane_count_preserving =
+      state_.editor_groups[from_group].open_tabs.size() == 1;
+  if (state_.editor_split.full() && !pane_count_preserving) {
+    return false;
+  }
   // Flush live caret/scroll before the tab leaves, for the same reason the
   // cross-group move does: the metadata sync only ever writes the focused group's
   // active tab, which this tab stops being.
   if (from_group == state_.focused_group_index &&
       from_index == state_.editor_groups[from_group].active_tab_index) {
     SyncActiveEditorTabMetadata();
+  }
+
+  if (pane_count_preserving) {
+    // The pane is RELOCATED, not carved: `MoveLeaf` removes before it inserts, so
+    // the grid never has to hold a ninth leaf and a full grid can take this drop.
+    const std::size_t landed =
+        state_.editor_split.MoveLeaf(from_group, target_group, orientation, insert_before);
+    if (landed == EditorSplitTree::kNoLeaf) {
+      return false;
+    }
+    EditorGroup moved = std::move(state_.editor_groups[from_group]);
+    state_.editor_groups.erase(state_.editor_groups.begin() +
+                               static_cast<std::ptrdiff_t>(from_group));
+    state_.editor_groups.insert(state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(landed),
+                                std::move(moved));
+    state_.focused_group_index = landed;
+    state_.surface.focus = FocusTarget::Editor;
+    HydrateGroupActiveTab(state_.editor_groups[landed]);
+    operations_.invalidate_tab_strip_geometry();
+    EnsureEveryGroupActiveTabVisible();
+    RefreshFocusedGroupActiveTab(true);
+    return true;
   }
 
   const std::size_t carved_index =
@@ -146,19 +177,13 @@ bool TabCoordinator::MoveTabToNewGroup(std::size_t from_group,
   carved.active_tab_index = 0;
   state_.editor_groups.insert(
       state_.editor_groups.begin() + static_cast<std::ptrdiff_t>(carved_index), std::move(carved));
-  // Every group at or past the insertion point shifted right.
+  // Every group at or past the insertion point shifted right. The source kept at
+  // least one tab (the single-tab case took the relocation path above), so it
+  // never collapses here.
   const std::size_t source_index = from_group >= carved_index ? from_group + 1 : from_group;
   state_.focused_group_index = carved_index;
   state_.surface.focus = FocusTarget::Editor;
-
-  if (state_.editor_groups[source_index].open_tabs.empty()) {
-    // VS Code drops a split whose last editor is dragged out. CollapseGroupAt
-    // re-homes the focused index across the erase, so the carved group keeps
-    // focus wherever it landed.
-    CollapseGroupAt(source_index);
-  } else {
-    HydrateGroupActiveTab(state_.editor_groups[source_index]);
-  }
+  HydrateGroupActiveTab(state_.editor_groups[source_index]);
   HydrateGroupActiveTab(state_.editor_groups[state_.clamped_focused_group_index()]);
   operations_.invalidate_tab_strip_geometry();
   EnsureEveryGroupActiveTabVisible();

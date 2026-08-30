@@ -188,12 +188,19 @@ void TabMouseCoordinator::ResolveEditorBodyDrop(const EditorGroupRectsLayout& re
     if (pane.w <= 0.0f || pane.h <= 0.0f || !Contains(pane, x, y)) {
       continue;
     }
-    // Splitting ADDS a pane, so it is offered exactly while the editor area is
-    // under the cap. Splitting the source pane with its own only tab is the one
-    // no-op: the carved group would be that group renamed, and the emptied source
-    // would collapse straight back. Dropping another pane's last tab on an edge is
-    // a real move -- that pane goes away and this one gains a neighbour.
-    const bool can_split = !state_.editor_split.full() &&
+    // Splitting the source pane with its own only tab is the one no-op: the carved
+    // group would be that group renamed, and the emptied source would collapse
+    // straight back. Dropping ANOTHER pane's last tab on an edge is a real move --
+    // that pane goes away and this one gains a neighbour, so the pane COUNT is
+    // unchanged and it stays legal at the cap, which every other carve does not
+    // (TD-2026-08-18-265). Keep this predicate in step with the one
+    // `TabCoordinator::MoveTabToNewGroup` enforces, or an overlay is painted for a
+    // drop that is then refused.
+    const bool source_gives_up_its_pane =
+        gi != tab_drag_state_.source_group_index &&
+        tab_drag_state_.source_group_index < state_.editor_groups.size() &&
+        state_.editor_groups[tab_drag_state_.source_group_index].open_tabs.size() == 1;
+    const bool can_split = (!state_.editor_split.full() || source_gives_up_its_pane) &&
                            (gi != tab_drag_state_.source_group_index ||
                             state_.editor_groups[gi].open_tabs.size() >= 2);
     EditorBodyDropZone zone = EditorBodyDropZone::Center;

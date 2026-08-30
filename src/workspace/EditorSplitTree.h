@@ -122,6 +122,22 @@ class EditorSplitTree {
   // always has at least one group.
   void RemoveLeaf(std::size_t leaf);
 
+  // Relocate an existing pane next to `target`, on its leading (`before`) or
+  // trailing side along `orientation`. Returns the moved pane's ordinal in the
+  // NEW numbering, or `kNoLeaf` (tree untouched) when the addresses do not name
+  // two distinct live leaves.
+  //
+  // Remove-then-insert, deliberately: the pane count never rises, so this is the
+  // one structural edit a FULL grid can still take -- both the directional
+  // "move pane left/right/up/down" verbs and the drop that hands another pane's
+  // last tab to an edge go through it (TD-2026-08-18-265, TD-2026-08-18-266).
+  // The caller must reorder its parallel `editor_groups` the same way: erase at
+  // `from`, re-insert at the returned ordinal.
+  std::size_t MoveLeaf(std::size_t from,
+                       std::size_t target,
+                       EditorSplitOrientation orientation,
+                       bool before);
+
   // Move the divider between `boundary` and `boundary + 1` of branch `node`, as
   // a share of the two panes' COMBINED extent (VS Code moves only the pair the
   // divider touches; everything else keeps its size). Returns false when the

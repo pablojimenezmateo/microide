@@ -4834,6 +4834,64 @@ void TestWorkspaceShellEditorSplitDividerDragMovesOnlyItsPair() {
          "the pane the divider does not touch keeps its width");
 }
 
+// At the pane cap an edge drop is still legal when it keeps the pane COUNT
+// constant: the source pane hands over its LAST tab, so it collapses as the
+// carved one appears (TD-2026-08-18-265). Without that, rearranging the last pane
+// of a full grid took two gestures.
+void TestWorkspaceShellEditorTabDragToPaneEdgeAtCapMovesThePane() {
+  using microide::workspace::EditorBodyDropZone;
+  using microide::workspace::EditorSplitOrientation;
+  using microide::workspace::kMaxEditorGroups;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "alpha.cpp";
+  WriteFile(file_a, "a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, file_a), "tab a opens");
+  // Eight panes side by side still need a strip wide enough to lay a tab out in,
+  // or the drag has no geometry to start from.
+  WorkspaceShellTestAccess::SetWindowSize(shell, 3000, 1000);
+  // Fill the grid BREADTH-first. A split takes half of the pane it splits, so
+  // splitting the newly focused pane eight times running leaves the last one at
+  // 1/128 of the column -- too narrow to lay a tab out in. Splitting every pane of
+  // one generation before starting the next keeps them even.
+  const auto focus_group = [&](std::size_t index) {
+    while (WorkspaceShellTestAccess::FocusedGroupIndex(shell) != index) {
+      Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "cycling reaches every pane");
+    }
+  };
+  while (WorkspaceShellTestAccess::EditorGroupCount(shell) < kMaxEditorGroups) {
+    const std::size_t generation = WorkspaceShellTestAccess::EditorGroupCount(shell);
+    for (std::size_t i = 0; i < generation; ++i) {
+      focus_group(i * 2);
+      Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+             "splitting below the cap should succeed");
+    }
+  }
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == kMaxEditorGroups,
+         "the fixture should be at the pane cap");
+  Expect(!WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "a further split should be refused at the cap");
+
+  const std::size_t source = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+  const std::size_t target = source == 0 ? 1 : 0;
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, source) == 1,
+         "the source pane should hold exactly one tab");
+  const SDL_FRect pane = WorkspaceShellTestAccess::GroupEditorSurfaceRect(shell, target);
+  const float drop_x = pane.x + pane.w - 4.0f;
+  const float drop_y = pane.y + pane.h * 0.5f;
+  DragEditorTabTo(shell, source, 0, drop_x, drop_y);
+  Expect(WorkspaceShellTestAccess::TabDrag(shell).body_drop_zone == EditorBodyDropZone::Right,
+         "a count-preserving edge drop should still be offered at the cap");
+  Expect(SendMouseUp(shell, drop_x, drop_y, SDL_BUTTON_LEFT), "release commits the drop");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == kMaxEditorGroups,
+         "the pane count should be unchanged by a relocation");
+  Expect(WorkspaceShellTestAccess::EditorSplit(shell).leaf_count() == kMaxEditorGroups,
+         "the split tree should hold one leaf per group after the move");
+}
+
 void TestWorkspaceShellEditorTabDragToPaneEdgeRefusesLoneTab() {
   using microide::workspace::EditorBodyDropZone;
   TemporaryDirectory temp_dir;
@@ -6400,6 +6458,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorTabDragToOtherPaneBodyMovesIntoThatGroup);
   AddTest(tests, "WorkspaceShell/EditorTabDragOverOwnPaneCenterOffersNoDrop",
           TestWorkspaceShellEditorTabDragOverOwnPaneCenterOffersNoDrop);
+  AddTest(tests, "WorkspaceShell/EditorTabDragToPaneEdgeAtCapMovesThePane",
+          TestWorkspaceShellEditorTabDragToPaneEdgeAtCapMovesThePane);
   AddTest(tests, "WorkspaceShell/EditorTabDragToPaneEdgeRefusesLoneTab",
           TestWorkspaceShellEditorTabDragToPaneEdgeRefusesLoneTab);
   AddTest(tests, "WorkspaceShell/EditorTabDragToPaneEdgeSplitsAnAlreadySplitPane",
