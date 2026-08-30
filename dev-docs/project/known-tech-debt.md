@@ -389,7 +389,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-08-30-280 — the whole window layout is rebuilt ~475 times in one grid scenario, and until now nothing counted it. [OPEN — instrumented, not fixed; filed with the number rather than a guess.]
+### TD-2026-08-30-280 — the whole window layout is rebuilt ~475 times in one grid scenario, and until now nothing counted it. [RESOLVED 2026-08-30 — but NOT by the dirty-flag audit the entry proposed: the memo is keyed on the inputs themselves, so there is no flag to audit.]
 
 `ComputeLayout` and `ComputeEditorGroupRects` are pure and cheap, so nothing
 hesitates to call them. `CurrentWorkspaceLayout()` recomputes the entire window
@@ -419,6 +419,35 @@ complete (an audit, or better, a debug-build assertion that recomputes and
 compares), and only then reading the memo off it. Until then this entry exists so
 the cost is a number somebody can decide about rather than a comment nobody
 checked.
+
+**Resolution.** The entry's own framing contained the answer: the flag was the
+problem, so the fix removes the flag rather than auditing it. `ComputeLayout` is a
+pure function of ~12 scalars, so those scalars became the memo key —
+`WorkspaceLayoutInputs`, one struct both `CurrentWorkspaceLayout()` and frame prep
+now feed through one `ComputeLayout(inputs)` (the two previously spelled the same
+11-argument call twice). A query gathers the key (the same reads the uncached call
+did), compares, and recomputes only on mismatch; there is no way to serve a stale
+answer because anything that changes what the layout reads changes the key.
+`layout_dirty_` is deleted; `MarkLayoutDirty()` became `NoteLayoutInputsChanged()`
+and keeps only its other job (invalidating the cursor-kind fingerprint, which IS
+flag-shaped and stays).
+
+The pane walk got the same treatment one level down: `EditorSplitTree` stamps a
+process-unique `revision()` on every mutation (copies share their source's stamp,
+so equal revisions imply equal shape by construction), and
+`ComputeEditorGroupRectsForState` memoizes on (layout value, tree revision).
+
+`editor_split_grid_workout`, same 3-iteration run shape as the numbers above:
+`layout_computes` 475 → **0** inside the measured window (509 memo hits);
+`editor_group_rect_builds` 491 → **246**, and the 245 remaining misses are the
+240 divider-drag motion events — each a real `ResizeDivider` — plus grid setup,
+i.e. one walk per actual geometry change and none for the hit-test/cursor/redraw
+re-asks. The audit the entry asked for exists as tests instead of an assertion:
+`WorkspaceShell/LayoutMemoTracksEveryInput` mutates every live input and compares
+the memo against a from-scratch compute (plus non-vacuity: each mutation must
+move the layout), and `WorkspaceShared/EditorSplitTreeRevision` +
+`WorkspaceShell/EditorGroupRectsMemoFollowsTheTree` pin the revision stamping and
+the pane-rect memo's miss/hit behaviour.
 
 ### TD-2026-08-30-279 — two structurally identical split trees compared UNEQUAL, because the comparison read the storage rather than the shape. [RESOLVED 2026-08-30, same session it was found.]
 
