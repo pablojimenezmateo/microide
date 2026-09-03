@@ -313,6 +313,39 @@ void RunMenuHoverSwitch(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
+// The painted counterpart of the typing scenarios: each keystroke is followed
+// by one partial frame carrying exactly the damage that keystroke produced, so
+// the measured phase is the app's real steady-state edit loop and the painted
+// clip SIZE is under a gate. Every other typing scenario paints full frames,
+// which means a keystroke whose damage rect silently grew from a line band to
+// the whole editor surface would change nothing any gate could see — repaint
+// scope is the regression class with the largest real-world typing-latency
+// effect and, until this scenario, zero paint-time coverage.
+void RunEditorTypingPaint(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!RequireFixture(context, cpp_50k, "editor_typing_paint")) {
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  if (vp.lines().size() <= 10000) {
+    throw std::runtime_error("editor_typing_paint: file too short");
+  }
+  vp.MoveCursorTo(10000, 0, false);
+  context.PumpFrames(2);
+  // Drain the setup's own damage so every measured frame is one keystroke's.
+  context.PumpPartialFrames(1);
+
+  context.Measure("typing_paint.160_keystrokes", [&] {
+    for (int i = 0; i < 160; ++i) {
+      context.PumpPartialFrame(context.Type("x"));
+    }
+  });
+  context.PumpFrames(1);
+}
+
 // menu_hover_switch measures the EVENT cost of hovering along the bar; every
 // frame the damage those events queue would cause is left unpainted until one
 // trailing full pump. This scenario is the painted half: each hover switch is
@@ -1306,6 +1339,17 @@ const ScenarioRegistration g_perf_menu_hover_switch({Scenario{
     // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunMenuHoverSwitch,
+}});
+const ScenarioRegistration g_perf_editor_typing_paint({Scenario{
+    .name = "editor_typing_paint",
+    .smoke = false,
+    // Iteration 0 pays the cold open (file-index build, first frame's
+    // process-lifetime allocations) and, uniquely here, the iteration whose
+    // inserts have not yet pushed the edited line past the pane's right edge —
+    // from iteration 1 on the damage clip is saturated at pane width and the
+    // iterations are uniform.
+    .warmup_iterations = 1,
+    .run = RunEditorTypingPaint,
 }});
 const ScenarioRegistration g_perf_menu_hover_paint({Scenario{
     .name = "menu_hover_paint",
