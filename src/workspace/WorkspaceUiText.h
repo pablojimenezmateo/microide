@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <initializer_list>
 #include <string>
 #include <string_view>
@@ -33,6 +34,18 @@ inline std::string_view ScanIncompleteNote(const project::ProjectFileScanStatus&
 // into a 20-byte buffer and SILENTLY APPENDED NOTHING on overflow; the util one
 // sizes its buffer for the widest std::size_t so there is no failure case.
 using util::AppendUnsigned;
+
+// The display label for a project root: its directory name, the normalized path
+// when the name is empty (a filesystem root), "Welcome" for no root. One
+// definition — the tab-strip chrome and the shell each carried a byte-identical
+// private copy (the AppendHintSegment shape below, again).
+inline std::string ProjectLabelForRoot(const std::filesystem::path& root) {
+  if (root.empty()) {
+    return "Welcome";
+  }
+  const std::string filename = root.filename().string();
+  return filename.empty() ? root.lexically_normal().string() : filename;
+}
 
 // The one separator for key-hint lists, matching the overlay hint ("↑↓ select ·
 // Enter choose · Esc cancel"). Not for joining unrelated fields — the breadcrumb's

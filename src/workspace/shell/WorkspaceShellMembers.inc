@@ -1841,7 +1841,6 @@
   // thrash between panes on every painted frame.
   mutable std::array<BreadcrumbLabelCache, kMaxEditorGroups> breadcrumb_label_cache_;
   std::string ProjectLabel() const;
-  std::string ProjectLabelForRoot(const std::filesystem::path& root) const;
   std::string ProjectTabDisplayTitle(std::size_t index) const;
   std::string ProjectTabTooltipLabel(std::size_t index) const;
   // Allocation-free truncate for render hot paths; see

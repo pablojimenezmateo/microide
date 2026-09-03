@@ -5,6 +5,7 @@
 #include "workspace/services/EditorTabService.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/services/PromptSurfaceService.h"
 #include "workspace/coordinators/WorkspaceDirtyPromptCoordinator.h"
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"

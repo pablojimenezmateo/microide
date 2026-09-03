@@ -8,6 +8,7 @@
 #include "util/PathMatch.h"
 #include "workspace/git/GitRepositoryService.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "workspace/WorkspaceUiText.h"
 
 namespace microide::workspace {
 
@@ -103,14 +104,6 @@ const std::string& WorkspaceShell::BreadcrumbLabel(std::size_t group_index) cons
 
 std::string WorkspaceShell::ProjectLabel() const {
   return context_.current_project_state.root.empty() ? "microide" : ProjectLabelForRoot(context_.current_project_state.root);
-}
-
-std::string WorkspaceShell::ProjectLabelForRoot(const std::filesystem::path& root) const {
-  if (root.empty()) {
-    return "Welcome";
-  }
-  const std::string filename = root.filename().string();
-  return filename.empty() ? root.lexically_normal().string() : filename;
 }
 
 std::string WorkspaceShell::ProjectTabDisplayTitle(std::size_t index) const {

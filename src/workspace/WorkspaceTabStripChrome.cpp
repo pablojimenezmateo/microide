@@ -8,6 +8,7 @@
 #include "workspace/services/LayoutModeService.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/WorkspaceProjectPresentation.h"
+#include "workspace/WorkspaceUiText.h"
 #include "workspace/coordinators/WorkspaceTabCoordinator.h"
 
 namespace {
@@ -30,16 +31,6 @@ std::uint64_t EditorTabsDirtyFingerprint(
 namespace microide::workspace {
 
 namespace {
-
-// Mirrors WorkspaceShell::ProjectLabelForRoot. Inlined here to keep the
-// adapter free of a shell callback when the logic is trivial filename math.
-std::string ProjectLabelForRoot(const std::filesystem::path& root) {
-  if (root.empty()) {
-    return "Welcome";
-  }
-  const std::string filename = root.filename().string();
-  return filename.empty() ? root.lexically_normal().string() : filename;
-}
 
 SDL_Color ProjectTabBadgeColor(const ProjectWorkspaceState& state,
                                const std::filesystem::path& root) {
