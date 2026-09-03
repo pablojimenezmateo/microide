@@ -919,7 +919,6 @@
   // True only if the async request `generation` still owns the visible commit
   // picker (not closed, not superseded by a newer open or a project switch).
   bool ComparePickerRequestCurrent(std::uint64_t generation) const;
-  SidebarMode SidebarModeForViewId(std::string_view view_id) const;
   SidebarMode ActiveSidebarMode() const;
   std::optional<TabEntry> BuildCompareTabEntry(const std::filesystem::path& path,
                                                const project::GitCommitEntry& commit,

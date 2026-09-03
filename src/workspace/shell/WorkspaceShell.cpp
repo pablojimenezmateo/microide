@@ -68,16 +68,9 @@ WorkspaceShell::~WorkspaceShell() {
   persistence_service_.FlushPendingWrites();
 }
 
-WorkspaceShell::SidebarMode WorkspaceShell::SidebarModeForViewId(std::string_view view_id) const {
-  if (view_id.empty()) {
-    return SidebarMode::None;
-  }
-  const auto view = FindSidebarView(view_id, plugin_runtime_.Host());
-  return view.has_value() ? view->mode : SidebarMode::None;
-}
-
 WorkspaceShell::SidebarMode WorkspaceShell::ActiveSidebarMode() const {
-  return SidebarModeForViewId(context_.current_project_state.sidebar.view_id);
+  return SidebarModeForViewId(context_.current_project_state.sidebar.view_id,
+                              plugin_runtime_.Host());
 }
 
 const WorkspaceShell::ActionSpec* WorkspaceShell::FindActionSpec(ActionId id) {

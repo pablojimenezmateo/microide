@@ -37,6 +37,18 @@ const SidebarViewSpec* FindBuiltinSidebarView(SidebarMode mode);
 std::vector<SidebarViewInfo> SidebarViews(const plugin::PluginHost& plugin_host);
 std::optional<SidebarViewInfo> FindSidebarView(std::string_view id,
                                                const plugin::PluginHost& plugin_host);
+
+// The mode a view id resolves to, or None for an empty/unknown id. One
+// definition — the shell and the sidebar coordinator each carried an identical
+// private spelling of this lookup.
+inline SidebarMode SidebarModeForViewId(std::string_view view_id,
+                                        const plugin::PluginHost& plugin_host) {
+  if (view_id.empty()) {
+    return SidebarMode::None;
+  }
+  const auto view = FindSidebarView(view_id, plugin_host);
+  return view.has_value() ? view->mode : SidebarMode::None;
+}
 std::vector<std::string> SidebarViewIds(const plugin::PluginHost& plugin_host);
 SidebarViewRequest ParseSidebarViewRequest(const std::vector<std::string>& args,
                                           const plugin::PluginHost& plugin_host);

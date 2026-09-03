@@ -31,16 +31,8 @@ SidebarCoordinator::SidebarCoordinator(ProjectWorkspaceState& state,
       plugin_runtime_(plugin_runtime),
       operations_(std::move(operations)) {}
 
-SidebarMode SidebarCoordinator::SidebarModeForViewId(std::string_view view_id) const {
-  if (view_id.empty()) {
-    return SidebarMode::None;
-  }
-  const auto view = FindSidebarView(view_id, plugin_runtime_.Host());
-  return view.has_value() ? view->mode : SidebarMode::None;
-}
-
 SidebarMode SidebarCoordinator::ActiveSidebarMode() const {
-  return SidebarModeForViewId(state_.sidebar.view_id);
+  return SidebarModeForViewId(state_.sidebar.view_id, plugin_runtime_.Host());
 }
 
 void SidebarCoordinator::ShowMode(SidebarMode mode, bool temporary) {
@@ -199,7 +191,7 @@ void SidebarCoordinator::Toggle() {
 
 void SidebarCoordinator::RestorePrevious() {
   if (ActiveSidebarMode() == SidebarMode::Search &&
-      SidebarModeForViewId(state_.sidebar.prev_view_id) != SidebarMode::Search) {
+      SidebarModeForViewId(state_.sidebar.prev_view_id, plugin_runtime_.Host()) != SidebarMode::Search) {
     operations_.stop_project_search();
   }
 
@@ -209,7 +201,7 @@ void SidebarCoordinator::RestorePrevious() {
   }
 
   state_.sidebar.view_id = state_.sidebar.prev_view_id;
-  if (SidebarModeForViewId(state_.sidebar.view_id) == SidebarMode::None) {
+  if (SidebarModeForViewId(state_.sidebar.view_id, plugin_runtime_.Host()) == SidebarMode::None) {
     state_.sidebar.view_id = "tree";
   }
   state_.sidebar.prev_view_id.clear();

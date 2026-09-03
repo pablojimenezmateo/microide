@@ -173,7 +173,6 @@ class SidebarCoordinator {
   const GitSidebarEntry* GitEntry(std::size_t entry_index) const;
   void ReportDisabledGitAction(GitSidebarActionId action, std::size_t entry_index) const;
   void ReportGitOperationFailure(std::string_view verb, const GitSidebarEntry& entry) const;
-  SidebarMode SidebarModeForViewId(std::string_view view_id) const;
   SidebarMode ActiveSidebarMode() const;
   // Rebuilds the prebuilt plugin/outline placeholder text from the current
   // items/error so the render TU never materializes it per frame. Call after any
