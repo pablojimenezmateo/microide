@@ -956,7 +956,12 @@ build as timing bugs worth chasing, not instrumentation noise.
 normalized non-trivial lines finds byte-identical blocks across files. Every hit
 was a real drift risk, several security-relevant: duplicated subprocess sandbox
 options, duplicated auth-session decoding, and four copies of a CLOEXEC pipe
-helper where one had a fork race and two did not compile on macOS.
+helper where one had a fork race and two did not compile on macOS. The sweep is
+committed now — `python3 tools/clone-scan.py` (exit 1 on any cross-file clone) —
+and the 2026-09-03 rerun found three more live-path copies (`FileModificationTick`
+×2, `ProjectLabelForRoot` ×2, `SidebarModeForViewId` ×2), all deduplicated. The
+only remaining hits are the `#ifdef _WIN32` platform trio, deliberately left per
+the platform WON'T-DO policy.
 
 **N-of-N syscall-flag audit.** Enumerate every instance of a syscall family
 (`socket|accept4|open|openat|pipe2|inotify_init1`) and check each for its

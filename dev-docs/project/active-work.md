@@ -1,6 +1,7 @@
 # MicroIDE Active Work
 
-Reviewed 2026-08-03. Shipped baseline: **v2.8.0**.
+Reviewed 2026-09-03. Shipped baseline: **v2.10.0** (plus the unreleased n-way
+editor split grid and drag-to-split — see `CHANGELOG.md` § Unreleased).
 
 This file answers one question: **what should be worked on next, and what is
 deliberately not being built.**
