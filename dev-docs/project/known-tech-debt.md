@@ -419,7 +419,7 @@ same session:
   (both cap-guarded end to end) and the shared
   `StdioJsonRpcClientTransport` reviewed clean.
 
-### TD-2026-08-30-281 — hovering along an open menu queues ~7 near-full-window damage rects per motion event, because the chrome redraw rect is a bounding-box UNION of a window-wide bar and a 700px popup. [OPEN — measured end to end; filed with the analysis because every obvious fix has a trap.]
+### TD-2026-08-30-281 — hovering along an open menu queues ~7 near-full-window damage rects per motion event, because the chrome redraw rect is a bounding-box UNION of a window-wide bar and a 700px popup. [RESOLVED 2026-09-03 — by measurement, not by a fix: the fill the union wastes costs ~5 µs a frame, and the profiling this entry was blocked on is now a permanent gated scenario.]
 
 `menu_hover_switch` (160 File↔Edit hover switches) queues 1,120 damage rects
 totalling **1.06 billion pixels** — `workspace.redraw_rect_pixels` says each
@@ -469,6 +469,33 @@ profiling of the real fill cost, not just this counter. What this entry pins:
 the counter's 5x inflation on menu hover is the union's fault, not evidence of
 a full-repaint regression — do not "fix" it by rebaselining a menu scenario or
 by splitting the request without touching the coalescer, which changes nothing.
+
+**Resolution (2026-09-03).** The fill-cost profiling this entry was blocked on
+existed nowhere because NO scenario exercised the partial-redraw pipeline:
+`ScenarioContext::PumpFrames` paints every frame full, so the coalesce → promote
+→ per-clip-paint sequence the app runs all day was outside every gate. That is
+the actual fix here — `PumpPartialFrame` mirrors `Application::Render`'s
+decision sequence (same `DirtyRegionPolicy` objects), `menu_hover_paint` drives
+160 hover switches each followed by one partial frame, and three output-side
+counters (`render.partial_clips`, `render.partial_clip_pixels`,
+`render.promoted_full_frames`) report what a frame PAINTED next to what events
+ASKED for.
+
+The verdict on the union, measured on the software renderer (the worst case —
+the GPU path fills cheaper and presents whole-scene either way): the entry's 5x
+is real and lands exactly as predicted — one merged clip per frame, 1,397,760 px
+painted against ~264K of real damage, zero promotion misfires — and it does not
+matter. The whole partial paint is **26.7 µs per frame** (menu paint 17 µs,
+`FrameBase` fill over the oversized clip **0.6 µs**), while the harness's own
+whole-surface present is 650 µs of the 680 µs frame. The merge-waste guard would
+change coalescing policy for every surface in the app to save single-digit
+microseconds; the request-dedup and menu-bar-layout-memo sub-items chase the
+same order of magnitude (all 16 menu-bar layouts of a hover event live inside
+`HandleMenuMotion`'s 7 µs self time). All three are WON'T DO, now with the
+number that says why. What stays armed: the scenario's allocation gate and the
+painted-pixel counter, so a coalescer regression that actually matters — a clip
+explosion, a promotion misfire, partial frames silently going full — fails a
+gate instead of needing another one-off investigation.
 
 
 ### TD-2026-08-30-280 — the whole window layout is rebuilt ~475 times in one grid scenario, and until now nothing counted it. [RESOLVED 2026-08-30 — but NOT by the dirty-flag audit the entry proposed: the memo is keyed on the inputs themselves, so there is no flag to audit.]
