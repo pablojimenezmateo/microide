@@ -134,13 +134,16 @@ The emulator covers the full-screen and shell workflows exercised so far.
   the reason on the verdict line — so "no idle box available" no longer means "no
   gate at all", which is what had left two soft-wrap scenarios gating on nothing
   (TD-2026-08-12-186)
-- **four `p50_net_heap_bytes` gates are red and were red before 2026-08-12**
-  (TD-2026-08-12-191). Do not rebaseline them; that would enshrine the thing worth
-  finding. And the metric is **build-configuration dependent**: the same four
-  scenarios at the same commit PASS under `Release` without LTO and FAIL by 3-10x
-  under the `microide-perf` preset (RelWithDebInfo + LTO). "Deterministic to the
-  byte" holds WITHIN one configuration; nothing in a baseline records which one it
-  was captured in
+- **`p50_net_heap_bytes` is a retention measure only for allocations freed on
+  the same thread inside the same window** (TD-2026-08-12-191, resolved — the
+  four red gates were an in-window RSS-probe allocation, a scenario measuring
+  its own fixture, and three scenarios whose frees land on the writer thread;
+  the last three carry `gate_net_heap_metrics = false` with the reason at the
+  registration). The metric is also **build-configuration dependent**: baselines
+  record `build_config` now, and a mismatch unenforces exactly the metrics that
+  move with it (wall, cpu, `mean_rss_growth_bytes`, `p50_net_heap_bytes`) with
+  both names on the verdict line. `rss_growth_bytes` is the cross-check that
+  tells a real retention from a thread-accounting artifact
 - **the wall gate is normalised against the machine clock as of 2026-08-12**
   (TD-2026-08-06-140, step one), weighted by each iteration's own cpu/wall ratio —
   full correction where wall is work, none where wall is sleep. Cutting the
