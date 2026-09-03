@@ -6,7 +6,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
-## [Unreleased]
+## [2.11.0] - 2026-09-03
 
 ### Added
 
@@ -34,6 +34,84 @@ project (see [README](README.md)); versions track meaningful shipped work.
   nothing (the middle of the pane the tab already lives in, an edge of that pane
   when the tab is its only one, or any edge once the grid is full) offers no
   target and paints nothing.
+
+- **Directional pane focus and movement across the editor grid.** Focus or move
+  the active tab to the pane left, right, above or below the current one, rather
+  than only cycling. A count-preserving edge drop stays legal once the grid is
+  full, so a drag that rearranges panes without adding one is not refused at the
+  cap.
+
+### Performance
+
+Numbers below are each change's own A/B, measured on the gated perf scenarios.
+No suite-wide aggregate against v2.10.0 is quoted: scenarios were added and
+several were redefined this cycle, and differencing recorded baselines across two
+tags reports differences that are bookkeeping rather than product.
+
+- **A keystroke in a soft-wrapped line no longer re-wraps the whole line.**
+  `UpdateWrappedRowsAfterEdit` was 369.6 ms of the ~510 ms
+  `editor_soft_wrap_long_line_typing` spends — 72% of the scenario and 3.85 ms
+  per keystroke, on the most latency-sensitive path in the product — and the
+  allocation tracer named the rest: one 2,097,241-byte allocation per keystroke
+  from materializing the whole line to hand it to `WrapSingleLine`. The row table
+  was already incremental; the wrap was not, restarting at byte 0 every time.
+  Wrapping can resume, because it is a left-to-right greedy pass whose carried
+  state resets at a row boundary: a row starting at visual column S examines at
+  most S + `wrap_columns` columns before it must break, so a row with
+  S + `wrap_columns` < `edit_column` provably never looked at the edited byte.
+  369.6 ms → 249.0 ms, 3.85 ms → 2.59 ms per keystroke, and
+  `editor.line_materialized_bytes` 671,116,800 → 20,972,320 over 10 iterations.
+- **Compositing a row string was 200 SDL blitter dispatches.** A cache miss
+  allocates a composite surface and blits one glyph per character into it; split
+  by scope, that was 78.8 ms of blits against 5.1 ms of allocation. The cost was
+  call count, not pixels — a 200-column row is 200 `SDL_BlitSurface` dispatches
+  back to back, each with its own setup and blitter selection, on rectangles far
+  too small to amortize any of it. `AsciiGlyphAtlas::BlitInto` has a direct path
+  now, safe because the arithmetic is an identity rather than an approximation:
+  the atlas stores white coverage, so modulating by an opaque colour is
+  255 × c / 255 == c in every channel. It returns false touching nothing for any
+  shape it cannot serve exactly, so the SDL path stays a live fallback rather than
+  a dead branch. Glyph blits 78.8 → 24.5 ms, `RasterizeString` 84.5 → 30.2 ms,
+  `Render::Rows` 132.3 → 83.4 ms.
+- **Every scrolled line number was a texture build, an upload and an eviction.**
+  Gutter numbers went through the same string-texture cache as chrome labels and
+  churned it. `Render::GutterNumber(s)` 353.4 → 19.5 ms, texture-cache misses
+  62,566 → 15,179, and `Render::Rows` over 1,956 frames 835.9 → 518.4 ms.
+- **The width cache filled with document text and evicted its labels.**
+  `MeasureWidth` memoized every measurement — a heap copy of the string plus a
+  slot in a 4,096-entry LRU, a fine trade for a label the backend must shape and a
+  pure loss for a run of ASCII the monospaced backend answers with one multiply.
+  The merge and compare surfaces measure every visible row, so scrolling a large
+  diff poured thousands of distinct document lines into a cache sized for labels:
+  1,647 string copies in a single `merge_next_conflict_large_file` phase came from
+  this one call. The cache was not warming, it was churning. Backends now answer
+  `MeasureWidthIfCheap`, returning the width when they can compute rather than
+  shape it, and those are served directly and never memoized.
+- **A keystroke in the file finder rebuilt two 10,000-element vectors from empty.**
+  Ranking was already allocation-free, but a one-character query over 10,000 files
+  matches nearly all of them, so both scratch vectors grew from empty by doubling
+  and were freed again, on the shell thread, per keystroke — 1.9 MB of allocation
+  and as much again in copying per burst. They are members now, cleared rather
+  than reconstructed, and the match set is *swapped* with its previous buffer
+  rather than moved into it, since a move hands the buffer away and leaves the
+  scratch empty, which is the thing being fixed. `type_and_rank` 78 → 30
+  allocations, `backspace_rescan` 104 → 12.
+- **The filetype memo re-detected the language on every keystroke** — memo hits
+  140/204 → 204/204, and both minified-line bursts 162 → 114 allocations (−30%).
+- **The window layout and pane rects are served from input-keyed memos.** On
+  `editor_split_grid_workout`, layout computations 475 → 0 in the measured window
+  (509 memo hits) and pane-rect builds 491 → 246.
+- **A divider drag repainted the whole window per motion event** — 6.53 → 4.49
+  pane areas repainted per motion event on the scenario's grid.
+- **The line/column readout allocated twice per caret move** — word-motion bursts
+  24 → 0 allocations, end/home jumps 8 → 0.
+- **Every config save recomputed the project state directory** —
+  `apply_cheap_family_all_tabs` 3,772 → 3,364 allocations (−11%),
+  `apply_contract_family_all_tabs` 3,960 → 3,552 (−10%).
+- **Reopening a file handed the document over instead of deep-copying it.**
+  `ReopenActive` read four scroll/caret values off the freshly opened viewport
+  *after* assigning it into the tab by copy — a whole-document line copy on a
+  large buffer, thrown away one statement later.
 
 ### Fixed
 
@@ -65,6 +143,31 @@ project (see [README](README.md)); versions track meaningful shipped work.
   you dragged out of showed the Welcome screen while its own tab strip highlighted
   the file that should have been in it. Closing the active tab already ran the
   promoted neighbour through the loader; the cross-group move never did.
+
+- Merge: the divider-fraction clamps inverted their range at degenerate widths,
+  so a clamp intended to keep the divider on screen could push it off.
+- Split: two identical split trees compared unequal, because `==` read the
+  storage rather than the structure.
+- Layout: splitting the editor emptied the tab-strip band above the sidebar.
+- Layout: the pane-size clamps ran only at paint time.
+- Render: a tab going dirty in a pane below the top row repainted nothing.
+- `InlineVector::insert` took its value by reference, over a shifting array — an
+  insert of an element from the same vector could read a slot that had already
+  moved.
+
+### Internal
+
+- `_GLIBCXX_ASSERTIONS` is a build lane (`run-checks.sh hardened`) rather than
+  something to remember, and it runs in CI.
+- The partial-redraw path is painted by two gated scenarios; previously no
+  scenario painted it, so event damage that never reached the clip looked
+  plausible.
+- The deterministic half of the perf baselines was re-recorded, closing 18 loose
+  gates.
+- `tools/clone-scan.py` is committed, and its exit code means something now that
+  it can go green.
+- Layout and pane-rect rebuilds are counted, which nothing did before.
+- The allocation trace resolved libstdc++ offsets against the microide binary.
 
 ## [2.10.0] - 2026-08-17
 
