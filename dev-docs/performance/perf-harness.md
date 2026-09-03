@@ -916,6 +916,21 @@ When adding a scenario:
 4. pump frames intentionally (`PumpFrames`) so rendering work is included consistently
 5. decide whether the scenario belongs in smoke (`.smoke = true`) or gate-only (`.smoke = false`)
 
+`PumpFrames` paints every frame FULL. For a scenario about the app's
+steady-state interactive loop, pump with `PumpPartialFrame(event_damage)`
+instead: it mirrors `Application::Render`'s decision sequence (coalesce via
+`AnalyzeDirtyRegions`, promote-or-partial, paint per merged clip) and is the
+only way the dirty-region pipeline gets exercised at all. Hand it the damage
+from the event's own result (`MouseMoveHover(...)`, `Type(...)` return it) —
+`HandleEvent` drains the shell's queue into its `EventResult`, so the no-args
+`PumpPartialFrames(count)` form only sees damage queued outside event handling
+and paints full when there is none. Read `render.partial_clips` /
+`render.partial_clip_pixels` / `render.promoted_full_frames` next to
+`workspace.redraw_rect_pixels` in the report: asked-for vs painted is the
+coalescer's waste, and a promotion count that moves means partial frames are
+quietly going full. `menu_hover_paint` and `editor_typing_paint` are the
+worked examples.
+
 ## Hotspot Audit Matrix
 
 Use this matrix for repository-wide hotspot passes so each critical workflow has deterministic
