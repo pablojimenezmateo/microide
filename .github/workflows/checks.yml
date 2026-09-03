@@ -87,6 +87,14 @@ jobs:
       - name: Prove the perf gate is not vacuous
         run: tools/run-checks.sh perf-canary
 
+      # Library-precondition UB (an inverted std::clamp range, an out-of-bounds
+      # operator[]) is invisible to all three sanitizers — it is library UB, not
+      # language UB — and _GLIBCXX_ASSERTIONS turns it into an abort at near
+      # release speed. Its first run as a lane caught four merge divider clamps
+      # under a test that had covered the failing sizes all along (2026-09-03).
+      - name: Run the suite with hardened libstdc++
+        run: tools/run-checks.sh hardened
+
       - name: Upload logs
         if: always()
         uses: actions/upload-artifact@v4

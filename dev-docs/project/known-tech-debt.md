@@ -389,6 +389,44 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-03-283 — what the second 2026-09-03 assessment pass found, fixed, and deliberately left. [RESOLVED same session — open remainder zero again; recorded so the dispositions are not re-derived.]
+
+A same-day follow-up to [282](#td-2026-09-03-282), deliberately aimed at what
+that sweep had NOT covered. Everything actionable was fixed and committed:
+
+- **[281](#td-2026-08-30-281) closed by measurement.** The blocked fill-cost
+  question could not be answered because NO scenario exercised the partial
+  dirty-region pipeline — `PumpFrames` paints every frame full. Landed
+  `ScenarioContext::PumpPartialFrame` (mirrors `Application::Render`'s decision
+  sequence), three painted-side counters (`render.partial_clips` /
+  `partial_clip_pixels` / `promoted_full_frames`), and two gated scenarios:
+  `menu_hover_paint` (confirms the 5.3x union at paint time — and its total cost
+  at ~5 µs/frame, hence WON'T-FIX) and `editor_typing_paint` (pins a keystroke's
+  repaint at ~2 line-band clips, byte-deterministic — the repaint-scope
+  regression class had zero paint-time coverage).
+- **The hardened-stdlib rerun found real UB the sanitizers were green over**:
+  all four merge divider-fraction clamps invert their float range by one ulp at
+  degenerate pane widths (`1.0f - min_fraction*2.0f` < a `min_fraction`
+  saturated at the unrepresentable 1/3), i.e. `std::clamp` precondition UB,
+  aborted by `_GLIBCXX_ASSERTIONS` inside
+  `TestMergeSurfacePaintsAtDegenerateWindowSizes` — a test that had covered the
+  failing sizes all along. Fixed by ordering each bound pair explicitly; the
+  compare surface's siblings cap at the float-exact 0.5f and are safe. The sweep
+  is a lane now (`tools/run-checks.sh hardened`, in `all` and CI) so it stops
+  depending on somebody remembering the last manual run (2026-07-27).
+- **`tools/clone-scan.py` could never exit 0** — the deliberately-kept `_WIN32`
+  trio tripped it every run, making a NEW clone indistinguishable from the
+  accepted state. It carries an `ACCEPTED_CLONES` allowlist now, with the
+  stale-entry-fails-loudly rule, probed in both directions.
+- **Two stale claims in `active-work.md` corrected**: the `WaitFor*` audit
+  (resolved and linted 2026-08-10, still described as "unaudited") and the four
+  net-heap gates (green since 2026-08-12, still described as red with a
+  do-not-rebaseline order).
+- Reviewed clean: `WorkspaceTabCoordinatorGroups.cpp` and the drag-to-split
+  coordinator (the LSP didClose view-count key forms match end to end;
+  the one gap is drop feedback at the 512-tab cap, pathological and left), the
+  glyph-atlas ephemeral-run path, counter reachability (all 197 referenced).
+
 ### TD-2026-09-03-282 — what the 2026-09-03 assessment sweep found, fixed, and deliberately left. [RESOLVED same session — the sweep's open remainder is zero; recorded so the dispositions are not re-derived.]
 
 A whole-tree assessment pass (clone scan, second compiler, fuzz-target smoke,
