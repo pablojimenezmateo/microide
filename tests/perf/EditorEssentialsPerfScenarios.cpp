@@ -313,6 +313,54 @@ void RunMenuHoverSwitch(ScenarioContext& context) {
   context.PumpFrames(1);
 }
 
+// menu_hover_switch measures the EVENT cost of hovering along the bar; every
+// frame the damage those events queue would cause is left unpainted until one
+// trailing full pump. This scenario is the painted half: each hover switch is
+// followed by one PumpPartialFrames frame, so the measured phase is the app's
+// real steady-state loop — event, coalesce, partial paint — and its wall/cpu
+// carry the FILL cost of whatever clip the coalescer produced. It is the only
+// scenario that exercises the dirty-region partial-redraw pipeline at all
+// (TD-2026-08-30-281): PumpFrames-based scenarios paint every frame full.
+void RunMenuHoverPaint(ScenarioContext& context) {
+  context.ResizeWindow(1280, 720);
+  context.PumpFrames(1);
+
+  const auto file_rect =
+      workspace::WorkspaceShell::TestAccess::MenuBarItemRect(context.Shell(), "File");
+  const auto edit_rect =
+      workspace::WorkspaceShell::TestAccess::MenuBarItemRect(context.Shell(), "Edit");
+  if (!file_rect.has_value() || !edit_rect.has_value()) {
+    throw std::runtime_error("menu_hover_paint: missing File/Edit menu bar items");
+  }
+  const float file_x = file_rect->x + file_rect->w * 0.5f;
+  const float file_y = file_rect->y + file_rect->h * 0.5f;
+  if (!workspace::WorkspaceShell::TestAccess::FileMenuOpen(context.Shell())) {
+    if (!SendMouseDown(context.Shell(), file_x, file_y, SDL_BUTTON_LEFT)) {
+      throw std::runtime_error("menu_hover_paint: failed to open File menu");
+    }
+  }
+  if (!workspace::WorkspaceShell::TestAccess::FileMenuOpen(context.Shell())) {
+    throw std::runtime_error("menu_hover_paint: File menu did not stay open");
+  }
+  // Drain the open's own damage so the measured loop starts from a clean queue
+  // and every measured frame is one hover switch's damage, nothing else's.
+  context.PumpPartialFrames(1);
+
+  context.Measure("menu_hover_paint.160_hover_frames", [&] {
+    for (int i = 0; i < 160; ++i) {
+      const SDL_FRect& target = (i & 1) == 0 ? *edit_rect : *file_rect;
+      const float x = target.x + target.w * 0.5f;
+      const float y = target.y + target.h * 0.5f;
+      const auto result = context.MouseMoveHover(x, y);
+      if (!result.handled) {
+        throw std::runtime_error("menu_hover_paint: hover motion was not handled");
+      }
+      context.PumpPartialFrame(result.redraw);
+    }
+  });
+  context.PumpFrames(1);
+}
+
 void RunMenuPopupHoverRows(ScenarioContext& context) {
   context.ResizeWindow(1280, 720);
   context.PumpFrames(1);
@@ -1258,6 +1306,15 @@ const ScenarioRegistration g_perf_menu_hover_switch({Scenario{
     // index the cold pass landed on.
     .warmup_iterations = 1,
     .run = RunMenuHoverSwitch,
+}});
+const ScenarioRegistration g_perf_menu_hover_paint({Scenario{
+    .name = "menu_hover_paint",
+    .smoke = false,
+    // Iteration 0 does one-time cold work every later iteration reuses (font and
+    // glyph-atlas fill, the first full frame's process-lifetime allocations);
+    // discard it so the percentiles describe the steady-state hover loop.
+    .warmup_iterations = 1,
+    .run = RunMenuHoverPaint,
 }});
 const ScenarioRegistration g_perf_menu_popup_hover_rows({Scenario{
     .name = "menu_popup_hover_rows",

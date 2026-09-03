@@ -26,6 +26,7 @@
 #include <malloc.h>
 #endif
 
+#include "app/DirtyRegionPolicy.h"
 #include "perf/AllocationCounter.h"
 #include "perf/PerfHarnessIsolation.h"
 #include "TerminalSessionTestAccess.h"
@@ -376,6 +377,60 @@ void ScenarioContext::PumpFrames(std::size_t count) {
       util::PerformanceTrace::Scope scope("PerfHarness::PumpFrames::Present");
       SDL_RenderPresent(renderer_);
     }
+  }
+}
+
+void ScenarioContext::PumpPartialFrame(
+    const workspace::WorkspaceShell::RenderInvalidation& event_damage) {
+  BumpHarnessCounter(HarnessCounter::kFramesPumped);
+  // Mirror Application::Render's frame decision exactly: gather the frame's
+  // damage (the event's own plus anything queued outside event handling),
+  // coalesce, promote-or-partial, paint. The harness has no retained scene
+  // texture, so the one branch Application adds for an invalid texture
+  // (always-full) has no analogue here; everything else is the same policy
+  // objects (DirtyRegionPolicy.cpp is linked into microide_perf for this).
+  const workspace::WorkspaceShell::RenderInvalidation pending =
+      shell_.ConsumePendingRenderInvalidation();
+  partial_dirty_rects_.assign(event_damage.rects.begin(), event_damage.rects.end());
+  partial_dirty_rects_.insert(partial_dirty_rects_.end(), pending.rects.begin(),
+                              pending.rects.end());
+  const app::DirtyRegionAnalysis analysis = app::AnalyzeDirtyRegions(
+      partial_dirty_rects_, shell_.PartialRedrawClipPadding(), 1920, 1080);
+  const bool promoted = app::ShouldPromotePartialFrameToFull(analysis);
+  const bool full_frame = event_damage.full || pending.full ||
+                          analysis.merged_clip_rects.empty() || promoted;
+  const workspace::WorkspaceShell::FrameToken frame_token =
+      shell_.PrepareFrameOnce(renderer_, 1920, 1080);
+  if (full_frame) {
+    if (promoted) {
+      util::AddPerformanceCounter(util::PerfCounterId::RenderPromotedFullFrames);
+    }
+    util::PerformanceTrace::Scope scope("PerfHarness::PumpPartialFrames::ShellRender(full)");
+    shell_.RenderClip(frame_token, renderer_, 1920, 1080);
+  } else {
+    util::PerformanceTrace::Scope scope("PerfHarness::PumpPartialFrames::ShellRender(partial)");
+    for (const SDL_Rect& clip_rect : analysis.merged_clip_rects) {
+      SDL_SetRenderClipRect(renderer_, &clip_rect);
+      const SDL_FRect dirty_rect_hint{
+          static_cast<float>(clip_rect.x), static_cast<float>(clip_rect.y),
+          static_cast<float>(clip_rect.w), static_cast<float>(clip_rect.h)};
+      shell_.RenderClip(frame_token, renderer_, 1920, 1080, dirty_rect_hint);
+      util::AddPerformanceCounter(util::PerfCounterId::RenderPartialClips);
+      util::AddPerformanceCounter(
+          util::PerfCounterId::RenderPartialClipPixels,
+          static_cast<std::uint64_t>(clip_rect.w) * static_cast<std::uint64_t>(clip_rect.h));
+    }
+    SDL_SetRenderClipRect(renderer_, nullptr);
+  }
+  {
+    util::PerformanceTrace::Scope scope("PerfHarness::PumpPartialFrames::Present");
+    SDL_RenderPresent(renderer_);
+  }
+}
+
+void ScenarioContext::PumpPartialFrames(std::size_t count) {
+  for (std::size_t i = 0; i < count; ++i) {
+    PumpPartialFrame(workspace::WorkspaceShell::RenderInvalidation{});
   }
 }
 
@@ -839,6 +894,15 @@ workspace::WorkspaceShell::RenderInvalidation ScenarioContext::MouseMoveDragging
   event.motion.y = y;
   event.motion.state = SDL_BUTTON_LMASK;
   return shell_.HandleEvent(event).redraw;
+}
+
+workspace::WorkspaceShell::EventResult ScenarioContext::MouseMoveHover(float x, float y) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_MOUSE_MOTION;
+  event.motion.x = x;
+  event.motion.y = y;
+  event.motion.state = 0;
+  return shell_.HandleEvent(event);
 }
 
 workspace::WorkspaceShell::RenderInvalidation ScenarioContext::MouseRelease(float x, float y) {

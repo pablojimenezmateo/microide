@@ -328,6 +328,20 @@ class ScenarioContext {
   ScenarioContext(workspace::WorkspaceShell& shell, SDL_Window* window, SDL_Renderer* renderer);
 
   void PumpFrames(std::size_t count);
+  // The app's real steady-state frame: drain the shell's queued damage, coalesce
+  // it through AnalyzeDirtyRegions, and paint per merged clip (or full, when the
+  // damage or the promotion policy says so) — the exact decision sequence of
+  // Application::Render. PumpFrames paints every frame FULL, so before this
+  // existed no scenario exercised the partial-redraw pipeline at all and a
+  // coalescer regression (an oversized union, a wrong promotion) was invisible
+  // to the whole suite (TD-2026-08-30-281).
+  //
+  // HandleEvent drains the shell's queued damage into its EventResult, so an
+  // event-driven scenario must hand that result's damage to the pump — the
+  // count form only sees damage queued OUTSIDE event handling (render-path
+  // re-requests, wake work) and paints a full frame when there is none.
+  void PumpPartialFrame(const workspace::WorkspaceShell::RenderInvalidation& event_damage);
+  void PumpPartialFrames(std::size_t count);
   void PumpEvents();
   bool Open(const std::filesystem::path& project_root);
   void OpenTab(const std::filesystem::path& path);
@@ -426,6 +440,10 @@ class ScenarioContext {
   // blind to (TD-2026-08-14-212).
   workspace::WorkspaceShell::RenderInvalidation MousePress(float x, float y);
   workspace::WorkspaceShell::RenderInvalidation MouseMoveDragging(float x, float y);
+  // Buttonless pointer motion (a hover), returning the whole EventResult so the
+  // caller can both assert the event was handled and pump exactly the damage it
+  // produced (PumpPartialFrame).
+  workspace::WorkspaceShell::EventResult MouseMoveHover(float x, float y);
   workspace::WorkspaceShell::RenderInvalidation MouseRelease(float x, float y);
   // The rect of one editor tab / one group's tab strip, so a drag scenario can
   // aim at real geometry instead of guessed coordinates.
@@ -474,6 +492,10 @@ class ScenarioContext {
   SDL_Renderer* renderer_ = nullptr;
   std::mt19937_64 rng_;
   std::vector<Iteration::PhaseMetrics> phase_metrics_;
+  // Reused by PumpPartialFrames so the per-frame damage handoff settles into
+  // zero allocations once its capacity is warm (the analysis itself still
+  // allocates its merged list per frame, exactly as the app does).
+  std::vector<SDL_FRect> partial_dirty_rects_;
   // (path, size before this iteration's first append) for every fixture file
   // SimulateExternalFileChange touched. See RestoreExternalFileChanges.
   std::vector<std::pair<std::filesystem::path, std::uintmax_t>> external_file_restores_;

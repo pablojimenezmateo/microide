@@ -814,10 +814,13 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
     scene_texture_.ApplyRenderTargetPresentation(renderer_);
 
     if (full_redraw) {
-      if (promote_partial_to_full && util::PerformanceTrace::Enabled()) {
-        SDL_Log(
-            "microide perf: promoting partial frame to full redraw (%zu dirty rects, %zu coalesced clip rects, %.1f%% coalesced coverage)",
-            dirty_rect_count, merged_clip_count, dirty_coverage * 100.0f);
+      if (promote_partial_to_full) {
+        util::AddPerformanceCounter(util::PerfCounterId::RenderPromotedFullFrames);
+        if (util::PerformanceTrace::Enabled()) {
+          SDL_Log(
+              "microide perf: promoting partial frame to full redraw (%zu dirty rects, %zu coalesced clip rects, %.1f%% coalesced coverage)",
+              dirty_rect_count, merged_clip_count, dirty_coverage * 100.0f);
+        }
       }
       util::PerformanceTrace::Scope workspace_scope("Application::WorkspaceRender(full)");
       workspace_shell_.RenderClip(frame_token, renderer_, width, height);
@@ -838,6 +841,10 @@ void Application::Render(std::vector<SDL_FRect> dirty_rects, const char* reason)
             static_cast<float>(clip_rect.x), static_cast<float>(clip_rect.y),
             static_cast<float>(clip_rect.w), static_cast<float>(clip_rect.h)};
         workspace_shell_.RenderClip(frame_token, renderer_, width, height, dirty_rect_hint);
+        util::AddPerformanceCounter(util::PerfCounterId::RenderPartialClips);
+        util::AddPerformanceCounter(
+            util::PerfCounterId::RenderPartialClipPixels,
+            static_cast<std::uint64_t>(clip_rect.w) * static_cast<std::uint64_t>(clip_rect.h));
         rendered_partial = true;
         ++rendered_clip_count;
       }

@@ -263,6 +263,17 @@ namespace microide::util {
   /* outside a resize drag means partial frames are not happening.                */           \
   X(RenderSceneFallbackFrames, "render.scene_fallback_frames")                                  \
   X(RenderFramesRetained, "render.frames_retained")                                             \
+  /* The partial-frame path's OUTPUT side: clips actually painted after the       */            \
+  /* coalescer merged the queued damage, the pixels those clips cover, and how    */            \
+  /* often the promotion policy abandoned partial for a full frame.               */            \
+  /* workspace.redraw_rect_pixels counts what events ASKED for;                   */            \
+  /* render.partial_clip_pixels counts what the frame PAINTED. The gap between    */            \
+  /* them is the coalescer's bounding-box waste, which no other counter sees --   */            \
+  /* the menu-hover union standing 5x over its real damage (TD-2026-08-30-281)    */            \
+  /* read as "many pixels queued" with nothing saying what was actually filled.   */            \
+  X(RenderPartialClips, "render.partial_clips")                                                 \
+  X(RenderPartialClipPixels, "render.partial_clip_pixels")                                      \
+  X(RenderPromotedFullFrames, "render.promoted_full_frames")                                    \
   X(WorkspaceScheduledWakes, "workspace.scheduled_wakes")                                       \
   /* Damage rects queued per event, and how often the per-event list outgrew its  */             \
   /* inline capacity (kInlineRedrawRects). rects_queued is the input-path work    */             \
