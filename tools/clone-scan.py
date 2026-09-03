@@ -10,10 +10,16 @@ dev-docs/project/validation-traps.md § Mechanical Sweeps).
 
 Usage:  python3 tools/clone-scan.py [root=src] [--min-lines=N]
 
-Prints clone groups (largest first) and exits 1 if any cross-file clone is
-found, 0 otherwise — so it can gate a CI lane if promoted. Windows-only
-`#ifdef` clones in src/platform are reported too; judge those against the
-platform WON'T-DO policy before acting.
+Prints clone groups (largest first) and exits 1 if any UNACCEPTED cross-file
+clone is found, 0 otherwise — so it can gate a CI lane if promoted. The
+deliberately-kept clones live in ACCEPTED_CLONES below with the reason;
+without that list the tool exited 1 on the standing tree, which makes the exit
+code useless as a gate (a new clone is indistinguishable from the accepted
+state) — the validation-traps failure shape, inverted: a check that can never
+go green is as blind as one that can never go red. A stale ACCEPTED_CLONES
+entry (its signature no longer occurs as a clone) also fails the run, so the
+list cannot rot into silently accepting future clones (the RequireRuleTarget
+rule, applied here).
 """
 
 import collections
@@ -73,13 +79,40 @@ for path in sorted(root.rglob("*.cpp")):
         else:
             i += 1
 
+# Clone groups that are ACCEPTED, keyed by the signature line every occurrence
+# in the group must carry. Each entry is a decision with a reason, not a mute
+# button: the `#ifdef _WIN32` subprocess trio is never compiled on the supported
+# host, and deduplicating untestable code risks breaking it invisibly (the
+# platform WON'T-DO policy, TD-2026-09-03-282).
+ACCEPTED_CLONES = {
+    "std::wstring ToWide(std::string_view text) {",
+    "std::wstring QuoteWindowsArgument(std::string_view arg) {",
+    "std::wstring BuildCommandLine(const std::vector<std::string>& argv) {",
+}
+
 found = False
+accepted_seen = set()
 for digest, occurrences in sorted(bodies.items(), key=lambda kv: -kv[1][0][2]):
     files = {occ[0] for occ in occurrences}
-    if len(files) > 1:
-        found = True
-        print(f"--- {occurrences[0][2]} normalized lines, {len(occurrences)} copies:")
+    if len(files) <= 1:
+        continue
+    signatures = {occ[3] for occ in occurrences}
+    if signatures <= ACCEPTED_CLONES:
+        accepted_seen |= signatures
+        print(f"--- accepted ({occurrences[0][2]} normalized lines, {len(occurrences)} copies — see ACCEPTED_CLONES):")
         for file, line, _, signature in occurrences:
             print(f"    {file}:{line}  {signature}")
+        continue
+    found = True
+    print(f"--- {occurrences[0][2]} normalized lines, {len(occurrences)} copies:")
+    for file, line, _, signature in occurrences:
+        print(f"    {file}:{line}  {signature}")
+
+stale = ACCEPTED_CLONES - accepted_seen
+if stale and root == pathlib.Path("src"):
+    found = True
+    print("stale ACCEPTED_CLONES entries (no longer occur as clones — remove them):")
+    for signature in sorted(stale):
+        print(f"    {signature}")
 
 sys.exit(1 if found else 0)
