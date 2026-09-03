@@ -139,10 +139,18 @@ WorkspaceShell::MergeSurfaceLayout WorkspaceShell::ComputeMergeSurfaceLayout(
             16.0f);
     const float min_fraction =
         std::min(1.0f / 3.0f, min_pane_width / std::max(content_width, 1.0f));
+    // Each bound pair is ordered explicitly: at the degenerate width where
+    // min_fraction saturates to 1/3, `1 - min_fraction * 2` computes one float
+    // ulp BELOW min_fraction (1/3 is not representable), and std::clamp with an
+    // inverted range is UB — caught as a real abort by the _GLIBCXX_ASSERTIONS
+    // sweep at exactly the window sizes the degenerate-size render test drives.
+    const float left_hi = std::max(min_fraction, 1.0f - min_fraction * 2.0f);
     const float left_fraction =
-        std::clamp(merge_tab.left_divider_fraction, min_fraction, 1.0f - min_fraction * 2.0f);
-    const float right_fraction = std::clamp(merge_tab.right_divider_fraction,
-                                            left_fraction + min_fraction, 1.0f - min_fraction);
+        std::clamp(merge_tab.left_divider_fraction, min_fraction, left_hi);
+    const float right_lo = left_fraction + min_fraction;
+    const float right_hi = std::max(right_lo, 1.0f - min_fraction);
+    const float right_fraction =
+        std::clamp(merge_tab.right_divider_fraction, right_lo, right_hi);
     layout.min_divider_fraction = min_fraction;
     layout.left_width = std::floor(content_width * left_fraction);
     layout.center_width = std::floor(content_width * (right_fraction - left_fraction));

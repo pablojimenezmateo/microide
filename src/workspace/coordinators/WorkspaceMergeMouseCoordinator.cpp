@@ -356,19 +356,26 @@ bool MergeMouseCoordinator::HandleDrag(const SDL_Event& event,
           surface_layout.divider_width * 0.5f;
       const float raw_fraction =
           (static_cast<float>(event.motion.x) - divider_center_x) / content_width;
+      // Ordered explicitly: at degenerate pane widths the live right fraction
+      // minus the minimum can land a float ulp below the minimum itself, and
+      // std::clamp with an inverted range is UB (same shape as the layout's
+      // fraction clamps in WorkspaceShellMerge.cpp).
+      const float left_hi =
+          std::max(surface_layout.min_divider_fraction,
+                   current_right_fraction - surface_layout.min_divider_fraction);
       merge_tab->left_divider_fraction =
-          std::clamp(raw_fraction, surface_layout.min_divider_fraction,
-                     current_right_fraction - surface_layout.min_divider_fraction);
+          std::clamp(raw_fraction, surface_layout.min_divider_fraction, left_hi);
     } else {
       const float divider_center_x =
           layout.editor_surface.x + 8.0f + surface_layout.gutter_width * 2.0f +
           surface_layout.divider_width * 1.5f;
       const float raw_fraction =
           (static_cast<float>(event.motion.x) - divider_center_x) / content_width;
-      merge_tab->right_divider_fraction =
-          std::clamp(raw_fraction,
-                     current_left_fraction + surface_layout.min_divider_fraction,
-                     1.0f - surface_layout.min_divider_fraction);
+      const float right_lo =
+          current_left_fraction + surface_layout.min_divider_fraction;
+      const float right_hi =
+          std::max(right_lo, 1.0f - surface_layout.min_divider_fraction);
+      merge_tab->right_divider_fraction = std::clamp(raw_fraction, right_lo, right_hi);
     }
     state_.surface.focus = FocusTarget::Editor;
     return true;
