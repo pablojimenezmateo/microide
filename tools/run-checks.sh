@@ -11,6 +11,7 @@
 #   tools/run-checks.sh tsan    # ThreadSanitizer build + ctest  -> /tmp/microide-tsan.log
 #   tools/run-checks.sh perf-tests # tests with allocation counting -> /tmp/microide-perf-tests.log
 #   tools/run-checks.sh perf-gate  # full gate + dated drift record -> /tmp/microide-perf-gate.log
+#   tools/run-checks.sh hardened # _GLIBCXX_ASSERTIONS build + ctest -> /tmp/microide-hardened.log
 #   tools/run-checks.sh all     # tests, asan, ubsan, tsan in sequence
 #
 # The full console output (build + test) is tee'd to the log file; the script's
@@ -433,6 +434,35 @@ check_coverage() {
   return $rc
 }
 
+# Hardened-libstdc++ gate: the whole suite with _GLIBCXX_ASSERTIONS armed.
+#
+# Cheap library preconditions (std::clamp's hi >= lo, operator[] bounds, iterator
+# validity in the common containers) become aborts instead of silent UB, at near
+# release speed. Each manual run of this sweep has found a real defect the three
+# sanitizers missed — most recently four merge divider clamps whose float range
+# inverts by one ulp at degenerate pane widths, sitting under a test that had
+# covered those exact sizes all along (2026-09-03; earlier finds in
+# dev-docs/project/validation-traps.md § Mechanical Sweeps). UBSan does not check
+# these: an inverted std::clamp is library UB, not language UB, so this lane and
+# the sanitizers are complements, not substitutes. The heavier _GLIBCXX_DEBUG
+# (checked iterators, O(n) invariants) stays a manual deep-audit tool; this one is
+# cheap enough to be routine.
+check_hardened() {
+  local build_dir="build/microide-hardened"
+  local log="${LOG_DIR}/microide-hardened.log"
+  run_logged "$log" bash -c '
+    set -e
+    cmake -S . -B '"$build_dir"' \
+      -DCMAKE_BUILD_TYPE=Release \
+      -DCMAKE_CXX_FLAGS="-D_GLIBCXX_ASSERTIONS"
+    cmake --build '"$build_dir"' --target microide_tests -j'"$JOBS"'
+    ctest --test-dir '"$build_dir"' --output-on-failure -j'"$CTEST_JOBS"'
+  '
+  local rc=$?
+  echo "run-checks: hardened finished (exit $rc); log at $log"
+  return $rc
+}
+
 # The full perf gate, recorded into the dated drift series.
 #
 # Delegates to tools/perf-gate.sh, which owns the record: this lane exists so the
@@ -449,7 +479,8 @@ check_perf_gate() {
 }
 
 usage() {
-  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|all}" >&2
+  echo "usage: tools/run-checks.sh {tests|asan|ubsan|tsan|release|fuzz|perf-tests|perf-canary|perf-gate|clang-build|coverage|hardened|all}" >&2
+  echo "       tools/run-checks.sh hardened      # whole suite with _GLIBCXX_ASSERTIONS armed" >&2
   echo "       tools/run-checks.sh clang-build   # whole tree, clang, warnings-as-errors" >&2
   echo "       tools/run-checks.sh perf-canary   # prove the perf gate can still fail" >&2
   echo "       tools/run-checks.sh perf-gate     # run the gate, record it, report drift" >&2
@@ -475,6 +506,7 @@ main() {
     perf-gate) shift; check_perf_gate "$@" ;;
     clang-build) check_clang_build ;;
     coverage) check_coverage "${2:-}" ;;
+    hardened) check_hardened ;;
     all)
       local overall=0
       check_tests            || overall=1
@@ -483,6 +515,9 @@ main() {
       # sanitizer builds.
       check_clang_build      || overall=1
       check_perf_canary      || overall=1
+      # Near release speed and it catches the library-precondition UB the
+      # sanitizers cannot (an inverted std::clamp is library UB, not language UB).
+      check_hardened         || overall=1
       check_sanitizer asan   || overall=1
       check_sanitizer ubsan  || overall=1
       check_sanitizer tsan   || overall=1

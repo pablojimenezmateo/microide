@@ -944,13 +944,23 @@ struct to namespace scope. Gate GCC-only flags on
 error under `-Werror`, and the sanitizer presets use clang.
 
 **Hardened stdlib.** `-D_GLIBCXX_ASSERTIONS` bounds-checks every container/string
-access; `-D_GLIBCXX_DEBUG` additionally catches iterator invalidation and invalid
-ranges. Both came back clean (a real confidence signal, cheap to repeat). Budget
-~5× wall clock for `_GLIBCXX_DEBUG`; two shards will hit a 300 s ctest timeout,
-and one such timeout was a safe-iterator artifact rather than a perf bug. Note the
-debug run surfaced a genuine **load-sensitive test race** because the slowdown
-changed thread interleaving — treat unexplained failures under a slow instrumented
-build as timing bugs worth chasing, not instrumentation noise.
+access and asserts library preconditions; `-D_GLIBCXX_DEBUG` additionally catches
+iterator invalidation and invalid ranges. Both came back clean on the first
+sweep (2026-07-27) — and the 2026-09-03 rerun, after a month of merge/compare/
+split work, aborted on a real find: all four merge divider-fraction clamps call
+`std::clamp` with a range that inverts by one float ulp at degenerate pane widths
+(`1.0f - min_fraction * 2.0f` computes BELOW a `min_fraction` saturated at 1/3,
+which is not representable). Library UB, not language UB — **UBSan does not check
+it**, all three sanitizer lanes were green over it, and the degenerate-size render
+test had covered those exact sizes all along; only the hardened build could turn
+the latent UB into a failure. The ASSERTIONS half is a routine lane now
+(`tools/run-checks.sh hardened`, also part of `all`); `_GLIBCXX_DEBUG` stays a
+manual deep-audit tool. Budget ~5× wall clock for `_GLIBCXX_DEBUG`; two shards
+will hit a 300 s ctest timeout, and one such timeout was a safe-iterator artifact
+rather than a perf bug. Note the debug run surfaced a genuine **load-sensitive
+test race** because the slowdown changed thread interleaving — treat unexplained
+failures under a slow instrumented build as timing bugs worth chasing, not
+instrumentation noise.
 
 **Token-normalized clone detector.** A ~40-line script hashing sliding windows of
 normalized non-trivial lines finds byte-identical blocks across files. Every hit

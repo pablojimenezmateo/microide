@@ -120,6 +120,7 @@ tools/run-checks.sh tsan    # -> /tmp/microide-tsan.log  (no sudo needed; see be
 tools/run-checks.sh perf-tests  # -> /tmp/microide-perf-tests.log (allocation counting armed)
 tools/run-checks.sh perf-canary # -> /tmp/microide-perf-canary.log (proves the perf gate can fail)
 tools/run-checks.sh clang-build # -> /tmp/microide-clang-build.log (2nd compiler, warnings-as-errors)
+tools/run-checks.sh hardened    # -> /tmp/microide-hardened.log (_GLIBCXX_ASSERTIONS; catches library-precondition UB the sanitizers cannot)
 tools/run-checks.sh all     # all four in sequence
 ```
 
