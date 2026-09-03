@@ -189,8 +189,11 @@ The emulator covers the full-screen and shell workflows exercised so far.
   binary, against a 2,745 baseline, gated at 10 %. Worse, the wait had **never
   once succeeded**: nothing here lints JavaScript, so it always timed out and the
   poll loop WAS the measurement (TD-2026-08-10-179). Drive the path instead of
-  waiting for it, and `SkipScenario()` when the setup does not land. The other two
-  `WaitFor*` helpers are unaudited (TD-2026-08-10-180)
+  waiting for it, and `SkipScenario()` when the setup does not land. The other
+  `WaitFor*` helpers were audited clean the same day and the check is a lint now;
+  a wait that belongs inside a measured window declares itself with a
+  `perf-measure-waits-on-clock:` comment and the three-run determinism evidence
+  (TD-2026-08-10-180, resolved)
 - **`p50_net_heap_bytes` can move 260x with retention completely unchanged, and
   `mean_rss_growth_bytes` is what adjudicates.** The metric counts
   `operator new` bytes inside the measurement window, so moving an allocation's
