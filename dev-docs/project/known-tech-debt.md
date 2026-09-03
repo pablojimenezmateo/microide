@@ -389,6 +389,36 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-03-282 — what the 2026-09-03 assessment sweep found, fixed, and deliberately left. [RESOLVED same session — the sweep's open remainder is zero; recorded so the dispositions are not re-derived.]
+
+A whole-tree assessment pass (clone scan, second compiler, fuzz-target smoke,
+open-item review). Everything actionable it found was fixed and committed the
+same session:
+
+- **Three live-path clone groups deduplicated** (`FileModificationTick` ×2 —
+  which also paid a redundant `exists()` stat per call on the git
+  change-sampling poll; `ProjectLabelForRoot` ×2; `SidebarModeForViewId` ×2).
+  The detector is committed now as `tools/clone-scan.py` (exit 1 on any
+  cross-file clone) instead of being rewritten each sweep.
+- **The clang lane caught a transitive-include latent break** the dedup itself
+  introduced: `WorkspaceShellPresentation.cpp` / `WorkspaceShellPrompts.cpp`
+  reached the relocated `ProjectLabelForRoot` only through an include chain GCC
+  resolved and clang did not — and the GCC "green" that preceded it was the
+  documented stale-binary pipe trap (`cmake --build … | tail` masking the exit
+  status), walked into despite the doc. The lane order that catches this:
+  clang-build after any TU/header move, exit statuses read unpiped.
+- **`ReopenActive` deep-copied the reopened document** into the tab (a
+  whole-file line copy on a large buffer) to read four scroll/caret values it
+  could have read first; now a move.
+- Deliberately left: the `#ifdef _WIN32` platform trio
+  (`ToWide`/`QuoteWindowsArgument`/`BuildCommandLine`, cloned across three
+  TUs) — never compiled on the supported host, and deduplicating untestable
+  code risks breaking it invisibly (platform WON'T-DO policy);
+  [281](#td-2026-08-30-281)'s analysis re-read and left standing (its fixes
+  still need fill-cost profiling); the split tree, its persistence decoder
+  (both cap-guarded end to end) and the shared
+  `StdioJsonRpcClientTransport` reviewed clean.
+
 ### TD-2026-08-30-281 — hovering along an open menu queues ~7 near-full-window damage rects per motion event, because the chrome redraw rect is a bounding-box UNION of a window-wide bar and a 700px popup. [OPEN — measured end to end; filed with the analysis because every obvious fix has a trap.]
 
 `menu_hover_switch` (160 File↔Edit hover switches) queues 1,120 damage rects
