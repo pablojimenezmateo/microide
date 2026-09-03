@@ -226,12 +226,14 @@ bool TabCoordinator::ReopenActive() {
   operations_.apply_editor_preferences(reopened_view);
   operations_.apply_detected_indent_on_open(reopened_view);
 
-  editor_state.viewport = reopened_view;
+  // Read the restore metadata before the move — then hand the document over
+  // rather than deep-copying it (a whole-file line copy on a large buffer).
   editor_state.restored_path = reopen_path;
   editor_state.restored_cursor_line = reopened_view.cursor_line();
   editor_state.restored_cursor_column = reopened_view.cursor_column();
   editor_state.restored_scroll_line = reopened_view.scroll_line();
   editor_state.restored_horizontal_scroll = reopened_view.horizontal_scroll();
+  editor_state.viewport = std::move(reopened_view);
   editor_state.needs_restore = false;
   editor_state.folding_model->Clear();
 
