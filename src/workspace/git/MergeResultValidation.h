@@ -1,12 +1,11 @@
 #pragma once
 
 #include <cstdint>
-#include <span>
 #include <filesystem>
+#include <span>
 #include <optional>
 #include <string>
 #include <string_view>
-#include <vector>
 
 #include "compare/MergeConflictKind.h"
 #include "workspace/state/WorkspaceTabState.h"
@@ -62,10 +61,10 @@ MergeResultState ComputeMergeResultState(const MergeTabState& merge_tab,
 std::size_t CountRemainingMergeConflicts(std::span<const MergeTrackedConflict> conflicts);
 MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request);
 
-// The file's last-write tick, or nullopt if it does not exist / cannot be read.
-// ValidateMergeResult's external-modification check reads this; callers that write
-// the result file (e.g. Mark Resolved's save) must refresh merge_tab.disk_result_tick
-// with the SAME function so their own write is not mistaken for an external change.
-std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path);
+// ValidateMergeResult's external-modification check reads the result file's
+// last-write tick via util::FileModificationTick (util/TextFileIO.h); callers that
+// write the result file (e.g. Mark Resolved's save) must refresh
+// merge_tab.disk_result_tick with the SAME function so their own write is not
+// mistaken for an external change.
 
 }  // namespace microide::workspace

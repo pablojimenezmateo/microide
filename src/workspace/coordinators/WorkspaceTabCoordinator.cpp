@@ -119,7 +119,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
     // clear any prior external-stale flag so the async file-change event does not
     // misread this save as an external modification. Without this, saving the merge
     // result would permanently lock out "Mark Resolved" for the tab.
-    merge_tab.disk_result_tick = FileModificationTick(merge_tab.result_viewport.path());
+    merge_tab.disk_result_tick = util::FileModificationTick(merge_tab.result_viewport.path());
     merge_tab.external_result_stale = false;
     refresh_directory_tree();
     operations_.notify_plugin_buffer_save(merge_tab.result_viewport.path());

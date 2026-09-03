@@ -787,7 +787,7 @@ void CompareInteractionCoordinator::MarkMergeResolved() {
   // reads) so our own write is not misread as an external modification, which would
   // otherwise reject every Mark Resolved and never stage the file.
   if (!merge_tab->output_path.empty()) {
-    merge_tab->disk_result_tick = FileModificationTick(merge_tab->output_path);
+    merge_tab->disk_result_tick = util::FileModificationTick(merge_tab->output_path);
     // We have just reconciled disk_result_tick to our own write, so any prior
     // "changed on disk" flag is stale — clearing it is required, otherwise the
     // boolean guard in ValidateMergeResult short-circuits before the (now matching)

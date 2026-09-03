@@ -5,21 +5,10 @@
 #include <system_error>
 
 #include "util/StringUtil.h"
+#include "util/TextFileIO.h"
 
 namespace microide::project {
 namespace {
-
-std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path) {
-  std::error_code error;
-  if (!std::filesystem::exists(path, error)) {
-    return std::nullopt;
-  }
-  const auto tick = std::filesystem::last_write_time(path, error);
-  if (error) {
-    return std::nullopt;
-  }
-  return static_cast<std::uint64_t>(tick.time_since_epoch().count());
-}
 
 // Read the first line of a tiny git metadata file, refusing non-regular nodes
 // (FIFO/device/socket) before opening. Opening/reading a FIFO named `.git`,
@@ -214,10 +203,10 @@ GitRepositoryMetadataTracker::ReadCurrentTicks() const {
   const std::filesystem::path& git_dir = *git_dir_opt;
 
   MetadataTick tick;
-  if (const auto head_tick = FileModificationTick(git_dir / "HEAD"); head_tick.has_value()) {
+  if (const auto head_tick = util::FileModificationTick(git_dir / "HEAD"); head_tick.has_value()) {
     tick.head = *head_tick;
   }
-  if (const auto index_tick = FileModificationTick(git_dir / "index"); index_tick.has_value()) {
+  if (const auto index_tick = util::FileModificationTick(git_dir / "index"); index_tick.has_value()) {
     tick.index = *index_tick;
   }
 
@@ -227,12 +216,12 @@ GitRepositoryMetadataTracker::ReadCurrentTicks() const {
   const std::filesystem::path common_dir = ResolveCommonDir(git_dir);
   if (const std::optional<std::string> ref = ReadSymbolicHeadRef(git_dir / "HEAD");
       ref.has_value()) {
-    if (const auto ref_tick = FileModificationTick(common_dir / *ref); ref_tick.has_value()) {
+    if (const auto ref_tick = util::FileModificationTick(common_dir / *ref); ref_tick.has_value()) {
       tick.branch_ref = *ref_tick;
     }
   }
   // packed-refs fallback: a branch ref stored packed (no loose file) still bumps this.
-  if (const auto packed_tick = FileModificationTick(common_dir / "packed-refs");
+  if (const auto packed_tick = util::FileModificationTick(common_dir / "packed-refs");
       packed_tick.has_value()) {
     tick.packed_refs = *packed_tick;
   }

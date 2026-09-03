@@ -6,18 +6,6 @@
 
 namespace microide::workspace {
 
-std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path) {
-  std::error_code error;
-  if (!std::filesystem::exists(path, error)) {
-    return std::nullopt;
-  }
-  const auto tick = std::filesystem::last_write_time(path, error);
-  if (error) {
-    return std::nullopt;
-  }
-  return static_cast<std::uint64_t>(tick.time_since_epoch().count());
-}
-
 bool MergeResultContainsConflictMarkers(std::string_view text) {
   return util::ContainsCompleteConflictMarkers(text);
 }
@@ -138,7 +126,7 @@ MergeValidationResult ValidateMergeResult(const MergeValidationRequest& request)
   }
 
   if (!merge_tab.output_path.empty()) {
-    if (const auto disk_tick = FileModificationTick(merge_tab.output_path);
+    if (const auto disk_tick = util::FileModificationTick(merge_tab.output_path);
         disk_tick.has_value() && merge_tab.disk_result_tick.has_value() &&
         *disk_tick != *merge_tab.disk_result_tick) {
       return MergeValidationResult{

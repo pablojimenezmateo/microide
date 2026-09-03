@@ -289,6 +289,15 @@ FileSignature StatFileSignature(const std::filesystem::path& path) {
   return signature;
 }
 
+std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path) {
+  std::error_code error;
+  const auto tick = std::filesystem::last_write_time(path, error);
+  if (error) {
+    return std::nullopt;  // absent or unstattable — either way there is no tick
+  }
+  return static_cast<std::uint64_t>(tick.time_since_epoch().count());
+}
+
 // If `path` is a symlink, resolve it to the real file we should overwrite. An atomic
 // temp+rename against the link path itself replaces the *link* with a regular file and
 // never touches the intended target; resolving here means the rename lands on the target

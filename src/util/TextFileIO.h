@@ -108,6 +108,14 @@ struct FileSignature {
 
 FileSignature StatFileSignature(const std::filesystem::path& path);
 
+// Modification time alone, as raw filesystem ticks. nullopt for an absent path or
+// a failed stat. One stat call — callers polling for "did this file change on
+// disk since I wrote it" (git metadata sampling, merge-result freshness) compare
+// the tick they recorded against the current one. Prefer StatFileSignature when
+// size is also available cheaply; this exists for stores that persist a single
+// tick value.
+std::optional<std::uint64_t> FileModificationTick(const std::filesystem::path& path);
+
 // Reads the whole file at `path` into `out`, reusing `out`'s capacity so callers
 // in hot loops (project search, replace-all) avoid per-file allocation. Returns
 // false if the file cannot be opened/read, if it contains a NUL byte (treated as

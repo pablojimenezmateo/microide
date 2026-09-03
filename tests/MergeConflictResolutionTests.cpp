@@ -4,6 +4,7 @@
 #include "compare/MergeConflictKind.h"
 #include "compare/MergeModel.h"
 #include "util/GitConflictMarkers.h"
+#include "util/TextFileIO.h"
 #include "workspace/git/MergeResultValidation.h"
 #include "workspace/coordinators/WorkspaceCompareInteractionCoordinator.h"
 
@@ -462,7 +463,7 @@ void TestMarkResolvedRefreshesDiskTick() {
          "a disk tick disagreeing with the file mtime flags external modification");
 
   // Refresh the tick to the file's current mtime (what Mark Resolved now does).
-  merge_tab.disk_result_tick = microide::workspace::FileModificationTick(result_path);
+  merge_tab.disk_result_tick = microide::util::FileModificationTick(result_path);
   const MergeValidationResult refreshed = ValidateMergeResult(MergeValidationRequest{
       .merge_tab = merge_tab,
       .project_root = {},
@@ -525,7 +526,7 @@ void TestExternalStaleClearedAfterSelfSave() {
   merge_tab.result_viewport.LoadContent("clean\n", {}, merge_tab.result_line_ending);
   merge_tab.result_viewport.SetDirty(false);
   merge_tab.output_path = result_path;
-  merge_tab.disk_result_tick = microide::workspace::FileModificationTick(result_path);
+  merge_tab.disk_result_tick = microide::util::FileModificationTick(result_path);
   merge_tab.external_result_stale = true;  // as the watcher would set after our own save
 
   const MergeValidationResult stale = ValidateMergeResult(MergeValidationRequest{
