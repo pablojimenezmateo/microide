@@ -402,6 +402,14 @@ namespace microide::util {
   /* mean something is bumping the index version without changing it.             */            \
   X(FileIndexScanSupersededByBatch, "watch.file_index_scan_superseded_by_batch")                \
   X(FileIndexRebuilds, "watch.file_index_rebuilds")                                             \
+  /* Recursive (directory) removals applied to the index, and the entries they      */          \
+  /* dropped. A single `rm -rf` arrives as one recursive change per removed         */          \
+  /* directory, so the ratio of the two is the shape of the work: many removals     */          \
+  /* dropping zero entries means the watcher is re-reporting the same subtree from  */          \
+  /* both the parent watch and the directory's own, which is the cost the           */          \
+  /* range-bounded erase in RemoveProjectSubtreesLocked exists to keep cheap.        */          \
+  X(FileIndexSubtreeRemovals, "watch.file_index_subtree_removals")                              \
+  X(FileIndexSubtreeEntriesRemoved, "watch.file_index_subtree_entries_removed")                 \
   /* Batches carrying tree_structure_changed: a directory created/removed/moved, a  */          \
   /* non-regular entry appearing, or a post-overflow resync. Each one costs a whole  */         \
   /* sidebar-tree refresh + finder cache invalidation, so this is the number that    */         \

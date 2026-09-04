@@ -3,6 +3,7 @@
 #include "util/PathMatch.h"
 
 #include <algorithm>
+#include <cstdint>
 #include <mutex>
 #include <optional>
 #include <shared_mutex>
@@ -47,6 +48,49 @@ ProjectFile BuildProjectFile(const std::filesystem::path& absolute_root,
     file.mtime = metadata->mtime;
   }
   return file;
+}
+
+// `files` is sorted by `relative_path.native()`, so a directory's subtree is a
+// CONTIGUOUS run: the entries beneath `dir` are exactly those with the byte prefix
+// "dir/", and every string carrying that prefix sorts into [dir/, dir<sep+1>).
+// Two binary searches bound it instead of a scan of the whole index.
+//
+// A directory covers at most TWO runs, not one: its own path (should a batch ever
+// have indexed the directory itself as a file) sorts before the prefix run but is
+// not adjacent to it -- "sub.txt" sorts between "sub" and "sub/a.cpp", because '.'
+// (0x2E) precedes '/' (0x2F). Both are appended.
+void AppendSubtreeRanges(const std::vector<ProjectFile>& files,
+                         const std::filesystem::path& relative_dir,
+                         std::vector<std::pair<std::size_t, std::size_t>>& out) {
+  using Text = std::filesystem::path::string_type;
+  const Text& dir_text = relative_dir.native();
+  if (dir_text.empty()) {
+    return;
+  }
+  const auto less_text = [](const ProjectFile& lhs, const Text& rhs) {
+    return lhs.relative_path.native() < rhs;
+  };
+  const auto index_of = [&files](std::vector<ProjectFile>::const_iterator it) {
+    return static_cast<std::size_t>(it - files.begin());
+  };
+
+  Text prefix;
+  prefix.reserve(dir_text.size() + 1);
+  prefix.assign(dir_text);
+  prefix.push_back(static_cast<Text::value_type>(std::filesystem::path::preferred_separator));
+  Text prefix_end = prefix;
+  ++prefix_end.back();  // '/' -> '0': the first string past every "dir/" prefix.
+
+  const auto subtree_first = std::lower_bound(files.begin(), files.end(), prefix, less_text);
+  const auto subtree_last = std::lower_bound(subtree_first, files.end(), prefix_end, less_text);
+  if (subtree_first != subtree_last) {
+    out.emplace_back(index_of(subtree_first), index_of(subtree_last));
+  }
+
+  const auto exact = std::lower_bound(files.begin(), subtree_first, dir_text, less_text);
+  if (exact != subtree_first && exact->relative_path.native() == dir_text) {
+    out.emplace_back(index_of(exact), index_of(exact) + 1);
+  }
 }
 
 }  // namespace
@@ -337,17 +381,46 @@ bool FileIndex::ApplyBatch(const platform::IndexUpdateBatch& batch,
   std::unique_lock lock(files_mutex_);
   bool changed = false;
   std::filesystem::path normalize_scratch;
-  for (const auto& change : batch.changes) {
+  std::vector<std::filesystem::path> subtree_run;
+  const auto accepted_path = [](const std::filesystem::path& relative_path) {
+    return !relative_path.empty() && !IsGitMetadataRelativePath(relative_path) &&
+           !BatchPathEscapesRoot(relative_path);
+  };
+  for (std::size_t i = 0; i < batch.changes.size(); ++i) {
+    const platform::IndexUpdateBatch::Change& change = batch.changes[i];
     const std::filesystem::path& relative_path =
         util::NormalizedPathView(change.entry.relative_path, normalize_scratch);
-    if (relative_path.empty() || IsGitMetadataRelativePath(relative_path) ||
-        BatchPathEscapesRoot(relative_path)) {
+    if (!accepted_path(relative_path)) {
       continue;
     }
     if (change.kind == platform::IndexUpdateBatch::Kind::Deleted) {
-      changed = (change.recursive ? RemoveProjectSubtreeLocked(relative_path)
-                                  : RemoveProjectFileLocked(relative_path)) ||
-                changed;
+      if (!change.recursive) {
+        changed = RemoveProjectFileLocked(relative_path) || changed;
+        continue;
+      }
+      // Consume the whole consecutive run of recursive deletions and drop it in
+      // one compaction. A `rm -rf`, a branch switch, or a build cleaning its
+      // output arrives as exactly such a run -- one change per removed directory,
+      // doubled because the parent watch and the directory's own watch each
+      // report it -- and applying them one at a time shifts the tail of the index
+      // vector once per change. They are idempotent and commute, so the run is
+      // just the union of their ranges.
+      subtree_run.clear();
+      subtree_run.push_back(relative_path);
+      while (i + 1 < batch.changes.size()) {
+        const platform::IndexUpdateBatch::Change& next = batch.changes[i + 1];
+        if (next.kind != platform::IndexUpdateBatch::Kind::Deleted || !next.recursive) {
+          break;
+        }
+        ++i;
+        // The scratch may be rewritten here, which is why the run holds copies.
+        const std::filesystem::path& next_path =
+            util::NormalizedPathView(next.entry.relative_path, normalize_scratch);
+        if (accepted_path(next_path)) {
+          subtree_run.push_back(next_path);
+        }
+      }
+      changed = RemoveProjectSubtreesLocked(subtree_run) || changed;
       continue;
     }
     changed = UpsertProjectFileLocked(ToProjectFile(change.entry, relative_path)) || changed;
@@ -509,16 +582,76 @@ bool FileIndex::RemoveProjectFileLocked(const std::filesystem::path& relative_pa
   return false;
 }
 
-bool FileIndex::RemoveProjectSubtreeLocked(const std::filesystem::path& relative_dir) {
+bool FileIndex::RemoveProjectSubtreesLocked(
+    const std::vector<std::filesystem::path>& relative_dirs) {
+  if (relative_dirs.empty()) {
+    return false;
+  }
+  // "." denotes the project root spelled as a relative path: every entry is within
+  // it, and no byte prefix expresses that (util::NormalizedPathEqualsOrWithin
+  // special-cases it for the same reason). One such entry subsumes the whole run.
+  for (const std::filesystem::path& relative_dir : relative_dirs) {
+    const std::filesystem::path::string_type& text = relative_dir.native();
+    if (text.size() == 1 && text[0] == '.') {
+      const std::size_t removed = files_.size();
+      files_.clear();
+      util::AddPerformanceCounter(util::PerfCounterId::FileIndexSubtreeRemovals,
+                                  static_cast<std::uint64_t>(relative_dirs.size()));
+      util::AddPerformanceCounter(util::PerfCounterId::FileIndexSubtreeEntriesRemoved,
+                                  static_cast<std::uint64_t>(removed));
+      return removed != 0;
+    }
+  }
+
+  // Every range is computed against the UNMODIFIED vector, so they are all valid
+  // together; the single compaction below applies their union.
+  std::vector<std::pair<std::size_t, std::size_t>> ranges;
+  ranges.reserve(relative_dirs.size() * 2);
+  for (const std::filesystem::path& relative_dir : relative_dirs) {
+    AppendSubtreeRanges(files_, relative_dir, ranges);
+  }
   const std::size_t before = files_.size();
-  std::erase_if(files_, [&relative_dir](const ProjectFile& file) {
-    // Both sides are already-normalized project-relative paths, so "at or below" is
-    // a string-prefix question. The previous lexically_relative form answered the
-    // same question but built a temporary path for EVERY indexed file on every
-    // directory removal; the shared helper is allocation-free.
-    return util::NormalizedPathEqualsOrWithin(file.relative_path, relative_dir);
-  });
-  return files_.size() != before;
+  const bool changed = EraseIndexRangesLocked(ranges);
+  util::AddPerformanceCounter(util::PerfCounterId::FileIndexSubtreeRemovals,
+                              static_cast<std::uint64_t>(relative_dirs.size()));
+  util::AddPerformanceCounter(util::PerfCounterId::FileIndexSubtreeEntriesRemoved,
+                              static_cast<std::uint64_t>(before - files_.size()));
+  return changed;
+}
+
+bool FileIndex::EraseIndexRangesLocked(std::vector<std::pair<std::size_t, std::size_t>>& ranges) {
+  if (ranges.empty()) {
+    return false;
+  }
+  std::sort(ranges.begin(), ranges.end());
+  // One left-to-right sweep: move each surviving block down over the gap the
+  // ranges before it opened, then truncate. Erasing the ranges one at a time
+  // would shift the vector's tail once per range instead of once in total.
+  std::size_t write = ranges.front().first;
+  std::size_t read = write;
+  for (const std::pair<std::size_t, std::size_t>& range : ranges) {
+    // A range that ends at or before the cursor is already erased -- ranges are
+    // sorted, so this is an enclosed one. Skipping it is load-bearing, not a
+    // shortcut: assigning `read` from it would rewind the cursor into ground the
+    // enclosing range covered, and the tail copy would resurrect those entries.
+    if (range.second <= read) {
+      continue;
+    }
+    // No clamp needed on the low end: `range.first` may sit before the cursor when
+    // two ranges overlap, and this loop is already bounded below by `read`.
+    for (std::size_t i = read; i < range.first; ++i) {
+      files_[write++] = std::move(files_[i]);
+    }
+    read = range.second;
+  }
+  for (std::size_t i = read; i < files_.size(); ++i) {
+    files_[write++] = std::move(files_[i]);
+  }
+  if (write == files_.size()) {
+    return false;
+  }
+  files_.resize(write);
+  return true;
 }
 
 void FileIndex::RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const {

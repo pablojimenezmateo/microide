@@ -2,6 +2,7 @@
 
 #include "project/FileIndex.h"
 #include "util/DurableFile.h"
+#include "util/PathMatch.h"
 
 #include <algorithm>
 #include <filesystem>
@@ -266,6 +267,200 @@ void TestFileIndexRecursiveDeleteRemovesSubtree() {
   Expect(!has_sub_file, "no file under the deleted directory should remain");
 }
 
+// The range-bounded recursive delete (two binary searches over the sorted index)
+// has to agree with the containment predicate it replaced on EVERY input, and the
+// interesting inputs are the byte neighbours of the separator: '.' (0x2E) and '-'
+// (0x2D) sort before '/' (0x2F), digits and letters sort after, so a name like
+// "sub.txt" lands between "sub" and "sub/a.cpp" in the index while "sub0" lands
+// past the whole run. A scan could not get those wrong; a bounded erase can.
+//
+// Stated as a differential test against the predicate itself rather than a list
+// of hand-computed survivors: the oracle is the definition of "at or below", so
+// this stays honest if the ordering or the separator handling ever moves.
+void TestFileIndexRecursiveDeleteMatchesContainmentOracle() {
+  const std::vector<std::filesystem::path> corpus = {
+      "keep.txt",      "sub",           "sub-dash.txt",  "sub.txt",
+      "sub/a.cpp",     "sub/nested/b.cpp",               "sub/z",
+      "sub0.txt",      "subtly/kept.cpp",                "subZ/x.cpp",
+      "zz/sub/deep.c",
+  };
+
+  for (const std::filesystem::path& target : {std::filesystem::path("sub"),
+                                              std::filesystem::path("subtly"),
+                                              std::filesystem::path("zz/sub"),
+                                              std::filesystem::path("missing")}) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "workspace";
+    WriteFile(root / "README.md", "root\n");
+
+    FileIndex index;
+    Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred),
+           "oracle fixture root initializes");
+    IndexUpdateBatch initial;
+    initial.is_initial = true;
+    for (const std::filesystem::path& relative_path : corpus) {
+      initial.changes.push_back(MakeCreateChange(relative_path));
+    }
+    Expect(index.ApplyBatch(initial), "oracle fixture populates");
+
+    std::vector<std::filesystem::path> expected;
+    for (const std::filesystem::path& relative_path : corpus) {
+      if (!microide::util::NormalizedPathEqualsOrWithin(relative_path, target)) {
+        expected.push_back(relative_path);
+      }
+    }
+    std::sort(expected.begin(), expected.end());
+
+    IndexUpdateBatch remove;
+    IndexUpdateBatch::Change dir_delete = MakeDeleteChange(target);
+    dir_delete.recursive = true;
+    remove.changes.push_back(dir_delete);
+    index.ApplyBatch(remove);
+
+    std::vector<std::filesystem::path> actual;
+    for (const auto& file : index.Snapshot()) {
+      actual.push_back(file.relative_path);
+    }
+    std::sort(actual.begin(), actual.end());
+    Expect(actual == expected,
+           "removing '" + target.generic_string() +
+               "' must drop exactly what the containment predicate says (kept " +
+               std::to_string(actual.size()) + ", expected " + std::to_string(expected.size()) +
+               ")");
+  }
+}
+
+// A run of recursive deletions in one batch is applied as a single compaction
+// pass over the index, so the union of overlapping and NESTED ranges has to come
+// out identical to applying them one at a time. Nested is the interesting case:
+// deleting "sub" and "sub/nested" together produces two ranges where one encloses
+// the other, and a sweep that does not notice would double-count the overlap and
+// drop surviving entries with it.
+void TestFileIndexRecursiveDeleteRunMatchesSequentialApplication() {
+  const std::vector<std::filesystem::path> corpus = {
+      "keep.txt",       "a/1.cpp",        "a/deep/2.cpp",   "a/deep/deeper/3.cpp",
+      // Sorts AFTER the whole "a/deep" run but still inside "a", so deleting both
+      // gives a range STRICTLY enclosed by another -- the one shape a left-to-right
+      // sweep can get wrong, by rewinding its read cursor into ground it already
+      // erased and resurrecting the entries in between.
+      "a/zzz.cpp",
+      "ab/4.cpp",       "b/5.cpp",        "b/6.cpp",        "c/7.cpp",
+      "cc/8.cpp",       "z/9.cpp",
+  };
+  const std::vector<std::filesystem::path> targets = {"a", "a/deep", "b", "a", "c"};
+
+  const auto populate = [&corpus](FileIndex& index) {
+    IndexUpdateBatch initial;
+    initial.is_initial = true;
+    for (const std::filesystem::path& relative_path : corpus) {
+      initial.changes.push_back(MakeCreateChange(relative_path));
+    }
+    Expect(index.ApplyBatch(initial), "run fixture populates");
+  };
+  const auto sorted_paths = [](const FileIndex& index) {
+    std::vector<std::filesystem::path> paths;
+    for (const auto& file : index.Snapshot()) {
+      paths.push_back(file.relative_path);
+    }
+    std::sort(paths.begin(), paths.end());
+    return paths;
+  };
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  // One batch carrying the whole run: the coalesced path.
+  FileIndex coalesced;
+  Expect(coalesced.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "coalesced root");
+  populate(coalesced);
+  IndexUpdateBatch run;
+  for (const std::filesystem::path& target : targets) {
+    IndexUpdateBatch::Change change = MakeDeleteChange(target);
+    change.recursive = true;
+    run.changes.push_back(change);
+  }
+  Expect(coalesced.ApplyBatch(run), "a run of recursive deletes should mutate the index");
+
+  // The same deletions, one batch each: the sequential reference.
+  FileIndex sequential;
+  Expect(sequential.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "sequential root");
+  populate(sequential);
+  for (const std::filesystem::path& target : targets) {
+    IndexUpdateBatch single;
+    IndexUpdateBatch::Change change = MakeDeleteChange(target);
+    change.recursive = true;
+    single.changes.push_back(change);
+    sequential.ApplyBatch(single);
+  }
+
+  Expect(sorted_paths(coalesced) == sorted_paths(sequential),
+         "a coalesced run must leave exactly what applying the deletions one at a time does");
+  Expect(sorted_paths(coalesced).size() == 4,
+         "only keep.txt, ab/4.cpp, cc/8.cpp and z/9.cpp survive the run");
+}
+
+// A recursive delete followed by a create UNDER the deleted directory is how a
+// directory move-in reaches the index, so the run must not be hoisted past the
+// creates that follow it.
+void TestFileIndexRecursiveDeleteRunStopsAtTheNextCreate() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "index root initializes");
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  initial.changes.push_back(MakeCreateChange("sub/old.cpp"));
+  initial.changes.push_back(MakeCreateChange("other/x.cpp"));
+  Expect(index.ApplyBatch(initial), "move-in fixture populates");
+
+  IndexUpdateBatch batch;
+  IndexUpdateBatch::Change drop_sub = MakeDeleteChange("sub");
+  drop_sub.recursive = true;
+  IndexUpdateBatch::Change drop_other = MakeDeleteChange("other");
+  drop_other.recursive = true;
+  batch.changes.push_back(drop_sub);
+  batch.changes.push_back(drop_other);
+  batch.changes.push_back(MakeCreateChange("sub/moved-in.cpp"));
+  Expect(index.ApplyBatch(batch), "the move-in batch should mutate the index");
+
+  const auto files = index.Snapshot();
+  Expect(files.size() == 1, "only the moved-in file survives");
+  Expect(files.front().relative_path == std::filesystem::path("sub/moved-in.cpp"),
+         "a create after a recursive delete of its parent must survive the run");
+}
+
+// "." is the project root spelled as a relative path: the containment predicate
+// says every entry is within it, and no byte prefix can express that, so the
+// bounded erase has to special-case it. A batch that recursively deletes "."
+// empties the index.
+void TestFileIndexRecursiveDeleteOfDotClearsTheIndex() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "index root initializes");
+  IndexUpdateBatch initial;
+  initial.is_initial = true;
+  initial.changes.push_back(MakeCreateChange("keep.txt"));
+  initial.changes.push_back(MakeCreateChange("sub/a.cpp"));
+  Expect(index.ApplyBatch(initial), "dot-delete fixture populates");
+
+  IndexUpdateBatch remove;
+  IndexUpdateBatch::Change dir_delete = MakeDeleteChange(".");
+  dir_delete.recursive = true;
+  remove.changes.push_back(dir_delete);
+  Expect(index.ApplyBatch(remove), "a recursive delete of '.' should mutate the index");
+  Expect(index.Snapshot().empty(), "a recursive delete of '.' removes every entry");
+
+  // ...and reports "no change" the second time, so it cannot spin the index
+  // version (and every cache keyed on it) on a repeat.
+  Expect(!index.ApplyBatch(remove), "a repeated recursive delete of '.' is not a change");
+}
+
 }  // namespace
 
 // Regression: the hand-rolled FileIndex move ctor/assignment (required by the
@@ -362,6 +557,14 @@ void RegisterFileIndexTests(std::vector<TestCase>& tests) {
           TestFileIndexMovePreservesFollowSymlinksFlag);
   AddTest(tests, "FileIndex/RecursiveDeleteRemovesSubtree",
           TestFileIndexRecursiveDeleteRemovesSubtree);
+  AddTest(tests, "FileIndex/RecursiveDeleteMatchesContainmentOracle",
+          TestFileIndexRecursiveDeleteMatchesContainmentOracle);
+  AddTest(tests, "FileIndex/RecursiveDeleteRunMatchesSequentialApplication",
+          TestFileIndexRecursiveDeleteRunMatchesSequentialApplication);
+  AddTest(tests, "FileIndex/RecursiveDeleteRunStopsAtTheNextCreate",
+          TestFileIndexRecursiveDeleteRunStopsAtTheNextCreate);
+  AddTest(tests, "FileIndex/RecursiveDeleteOfDotClearsTheIndex",
+          TestFileIndexRecursiveDeleteOfDotClearsTheIndex);
   AddTest(tests, "FileIndex/InitialBatchPopulatesSortedUniqueFilesAndVersion",
           TestFileIndexInitialBatchPopulatesSortedUniqueFilesAndVersion);
   AddTest(tests, "FileIndex/IncrementalBatchVersionChangesOnlyOnRealMutations",

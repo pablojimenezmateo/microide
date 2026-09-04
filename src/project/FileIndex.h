@@ -8,6 +8,7 @@
 #include <optional>
 #include <shared_mutex>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "platform/FileIndexWatcher.h"
@@ -168,9 +169,21 @@ class FileIndex {
   void EnsureFresh(ProjectFileScanMode mode) const;
   bool UpsertProjectFileLocked(const ProjectFile& file);
   bool RemoveProjectFileLocked(const std::filesystem::path& relative_path);
-  // Remove the directory `relative_dir` and every indexed file beneath it. Used for
-  // recursive deletions (a watched/nested directory removed or moved out).
-  bool RemoveProjectSubtreeLocked(const std::filesystem::path& relative_dir);
+  // Remove every directory in `relative_dirs`, and every indexed file beneath
+  // them, in ONE compaction pass. Used for recursive deletions (a watched/nested
+  // directory removed or moved out).
+  //
+  // The run, rather than one call per directory, is the point: a single `rm -rf`
+  // reaches the index as one recursive change per removed directory -- doubled,
+  // because the parent watch's IN_DELETE and the directory's own IN_DELETE_SELF
+  // each report it -- and every separate erase shifts the tail of a vector that is
+  // routinely tens of thousands of entries. Recursive deletions are idempotent and
+  // commute with each other, so a consecutive run is exactly the union of its
+  // ranges.
+  bool RemoveProjectSubtreesLocked(const std::vector<std::filesystem::path>& relative_dirs);
+  // Compact `files_`, dropping the (possibly overlapping) half-open index ranges.
+  // Sorts `ranges` in place. Returns whether anything was dropped.
+  bool EraseIndexRangesLocked(std::vector<std::pair<std::size_t, std::size_t>>& ranges);
   void RebuildCacheLocked(ProjectFileScanMode mode, CacheBucket& cache) const;
 
   std::filesystem::path root_;
