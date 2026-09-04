@@ -48,6 +48,8 @@ void TestSnippetMultiOccurrenceLinkedTab() {
          "multi-tab1 expansion");
   Expect(viewport.lines()[0] == "x y", "both placeholders expand in place of trigger");
   Expect(session.ranges_by_tab[1].size() == 2u, "tab 1 should track both ranges");
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(0, 1);
   Expect(SnippetTryInsertText(viewport, session, "!"),
          "insert should mirror across linked placeholders");
   Expect(viewport.lines()[0] == "x! y!",
@@ -68,6 +70,8 @@ void TestSnippetMultiOccurrenceLinkedTabMultiKeystroke() {
   // Three successive mirrored keystrokes. After the first edit the right-hand
   // placeholder shifts right; if its recorded range is not advanced, the second
   // and third edits land at the wrong column.
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(0, 1);
   Expect(SnippetTryInsertText(viewport, session, "!"), "first mirrored keystroke");
   Expect(SnippetTryInsertText(viewport, session, "?"), "second mirrored keystroke");
   Expect(SnippetTryInsertText(viewport, session, "."), "third mirrored keystroke");
@@ -166,6 +170,48 @@ void TestSnippetEngineIgnoresInsertWhenSessionInactive() {
          "workspace toggle / no session)");
 }
 
+// Focusing a placeholder selects its default text, and a keystroke REPLACES the
+// selection — VS Code's behaviour, and the whole point of a default: `foo(${1:int
+// x})` is typed over, not appended to. The engine used to insert at the caret
+// (the selection's end) and then re-select the whole field after every keystroke,
+// so "int x" became "int xy" and the field stayed selected as you typed.
+void TestSnippetTypingReplacesSelectedDefault() {
+  TextViewport viewport;
+  viewport.LoadContent("", "/tmp/snippet.cpp");
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  SelectionRange trigger{{0, 0}, {0, 0}};
+  Expect(ExpandSnippetAtSelection(viewport, session, trigger, "${1:foo} and ${1:foo}$0"),
+         "expands");
+  Expect(viewport.has_selection(), "the focused placeholder's default is selected");
+  Expect(SnippetTryInsertText(viewport, session, "x"), "typing routes through the session");
+  Expect(viewport.lines()[0] == "x and x", "the keystroke replaces the default in every mirror");
+  Expect(!viewport.has_selection(), "the caret is collapsed after the keystroke");
+  Expect(viewport.cursor_column() == 1u, "the caret sits after the typed text");
+  Expect(SnippetTryInsertText(viewport, session, "y"), "a second keystroke appends");
+  Expect(viewport.lines()[0] == "xy and xy", "the second keystroke extends what was typed");
+  Expect(session.ranges_by_tab[1][1].start.column == 7u &&
+             session.ranges_by_tab[1][1].end.column == 9u,
+         "the second mirror's range follows the replacement and the append");
+
+  // A selection inside the field is replaced too; Backspace and Delete remove it.
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(0, 2, true);
+  Expect(SnippetTryBackspace(viewport, session), "backspace over a field selection");
+  Expect(viewport.lines()[0] == " and ", "backspace removes the selected field text everywhere");
+  Expect(SnippetTryInsertText(viewport, session, "ab"), "retype");
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(0, 1, true);
+  Expect(SnippetTryDeleteForward(viewport, session), "delete over a field selection");
+  Expect(viewport.lines()[0] == "b and b", "delete removes the selected field text everywhere");
+  Expect(viewport.cursor_column() == 0u, "the caret lands at the removed span's start");
+  Expect(session.active, "the session survives the edits");
+
+  // Backspace with the caret at the field's start is not a field edit.
+  Expect(!SnippetTryBackspace(viewport, session),
+         "backspace at the field's start falls back to an ordinary backspace");
+}
+
 void TestSnippetParseFallbackLeavesDollarLiteral() {
   const auto parsed = ParseSnippetBody("$}");
   Expect(parsed.expanded == "$}", "non-placeholder `$` sequences stay literal");
@@ -190,6 +236,10 @@ void TestSnippetCrossTabShiftOnInsert() {
              session.ranges_by_tab[2][0].start.column == 2u,
          "tab 2 starts at column 2 before tab 1 is edited");
 
+  // Collapse the focus selection onto the field's end so the keystroke appends
+  // (a keystroke over the selected default replaces it).
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(0, 1);
   Expect(SnippetTryInsertText(viewport, session, "ndex"), "grow $1 from 'i' to 'index'");
   Expect(viewport.lines()[0] == "index n", "typing into $1 grows it in place: 'index n'");
   Expect(session.ranges_by_tab[2][0].start.column == 6u,
@@ -209,7 +259,9 @@ void TestSnippetCrossTabShiftOnBackspace() {
   Expect(viewport.lines()[0] == "index n", "placeholders expand to 'index n'");
   Expect(session.ranges_by_tab[2][0].start.column == 6u, "tab 2 starts at column 6");
 
-  // Caret sits at the end of $1 ('index'); backspace removes the trailing 'x'.
+  // Caret collapsed at the end of $1 ('index'); backspace removes the trailing 'x'.
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(0, 5);
   Expect(SnippetTryBackspace(viewport, session), "backspace inside $1 should delete one char");
   Expect(viewport.lines()[0] == "inde n", "backspace shrinks $1 to 'inde'");
   Expect(session.ranges_by_tab[2][0].start.column == 5u,
@@ -471,32 +523,35 @@ void TestSnippetManyMirrorBatchedShift() {
   Expect(session.ranges_by_tab[2][0].start.column == static_cast<std::size_t>(kMirrors),
          "tab 2 starts right after the N single-char mirrors");
 
-  // Caret is on tab 1's first occurrence (column 0, rel 0). Insert "bb" before the
-  // 'a' in every mirror; each mirror grows by 2 and tab 2 shifts by 2*N.
+  // Tab 1's first occurrence is focused with its default 'a' selected. Typing
+  // "bb" replaces the 'a' in every mirror; each mirror grows by 1 and tab 2
+  // shifts by N.
   Expect(SnippetTryInsertText(viewport, session, "bb"),
          "typing into the linked tab should edit every mirror");
 
   bool mirrors_ok = true;
   for (int i = 0; i < kMirrors; ++i) {
-    // Mirror i now occupies [3i, 3i+3] holding "bba".
+    // Mirror i now occupies [2i, 2i+2] holding "bb".
     const SelectionRange& r = session.ranges_by_tab[1][static_cast<std::size_t>(i)];
-    if (r.start.column != static_cast<std::size_t>(3 * i) ||
-        r.end.column != static_cast<std::size_t>(3 * i + 3)) {
+    if (r.start.column != static_cast<std::size_t>(2 * i) ||
+        r.end.column != static_cast<std::size_t>(2 * i + 2)) {
       mirrors_ok = false;
       break;
     }
   }
-  Expect(mirrors_ok, "every mirror must grow in place to [3i, 3i+3] after the batched shift");
-  Expect(session.ranges_by_tab[2][0].start.column == static_cast<std::size_t>(3 * kMirrors),
-         "tab 2's recorded start must shift by the aggregate of all mirror insertions "
-         "(N -> N + 2N = 3N), not a stale column");
-  Expect(viewport.lines()[0].size() == static_cast<std::size_t>(3 * kMirrors + 1),
-         "the line holds N 'bba' mirrors plus the single-char tab 2");
+  Expect(mirrors_ok, "every mirror must grow in place to [2i, 2i+2] after the batched shift");
+  Expect(session.ranges_by_tab[2][0].start.column == static_cast<std::size_t>(2 * kMirrors),
+         "tab 2's recorded start must shift by the aggregate of all mirror edits "
+         "(N -> 2N), not a stale column");
+  Expect(viewport.lines()[0].size() == static_cast<std::size_t>(2 * kMirrors + 1),
+         "the line holds N 'bb' mirrors plus the single-char tab 2");
 }
 
 }  // namespace
 
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorSnippet/TypingReplacesSelectedDefault",
+          TestSnippetTypingReplacesSelectedDefault);
   AddTest(tests, "EditorSnippet/ManyMirrorBatchedShift", TestSnippetManyMirrorBatchedShift);
   AddTest(tests, "EditorSnippet/ParseHonorsEscapedDelimiters",
           TestSnippetParseHonorsEscapedDelimiters);

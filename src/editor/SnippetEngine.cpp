@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <optional>
 #include <set>
 #include <utility>
 
@@ -270,13 +271,6 @@ static const SelectionRange* RangeContaining(const std::vector<SelectionRange>& 
     }
   }
   return nullptr;
-}
-
-static std::size_t RelativeColumnInRange(const SelectionRange& r, const TextPosition& p) {
-  if (p.line != r.start.line) {
-    return 0;
-  }
-  return p.column - r.start.column;
 }
 
 // One applied mirror edit of the currently-edited tab: `range_index` names its
@@ -599,6 +593,114 @@ bool SnippetHandleEscape(TextViewport& viewport, SnippetSessionState& session) {
   return true;
 }
 
+// The span of the focused tab's mirror that a keystroke acts on. A selection
+// that lies inside one mirror is the span (typing replaces it, exactly as it
+// replaces the default text VS Code selects when a placeholder is focused);
+// otherwise the caret is a zero-width span. `mirror_index` is the mirror the
+// caret is in, which is where the caret is put back after the edit. A selection
+// that reaches outside the field is not a linked edit.
+struct MirrorEditTarget {
+  std::size_t mirror_index = 0;
+  std::size_t rel_start = 0;
+  std::size_t rel_end = 0;
+};
+
+static std::optional<MirrorEditTarget> FocusedMirrorTarget(const TextViewport& viewport,
+                                                           const std::vector<SelectionRange>& ranges) {
+  if (const std::optional<SelectionRange> selection = viewport.selection_range()) {
+    if (selection->start.line != selection->end.line) {
+      return std::nullopt;
+    }
+    for (std::size_t i = 0; i < ranges.size(); ++i) {
+      const SelectionRange& r = ranges[i];
+      if (r.start.line != r.end.line || selection->start.line != r.start.line) {
+        continue;
+      }
+      if (selection->start.column >= r.start.column && selection->end.column <= r.end.column) {
+        return MirrorEditTarget{i, selection->start.column - r.start.column,
+                                selection->end.column - r.start.column};
+      }
+    }
+    return std::nullopt;
+  }
+  const TextPosition caret{viewport.cursor_line(), viewport.cursor_column()};
+  for (std::size_t i = 0; i < ranges.size(); ++i) {
+    const SelectionRange& r = ranges[i];
+    if (r.start.line != r.end.line || caret.line != r.start.line) {
+      continue;
+    }
+    if (caret.column >= r.start.column && caret.column <= r.end.column) {
+      const std::size_t rel = caret.column - r.start.column;
+      return MirrorEditTarget{i, rel, rel};
+    }
+  }
+  return std::nullopt;
+}
+
+// Replace [rel_start, rel_end) of every mirror of `tab` with `text`. Mirrors are
+// edited high-to-low so the lower ones' recorded columns stay valid, every
+// recorded range is then shifted in one batched pass, and the caret ends up
+// collapsed just after the new text in the mirror the user was editing. (It
+// used to re-select the whole first mirror after every keystroke, which is why
+// a keystroke could not be allowed to replace the selection: the next one would
+// have replaced what was just typed.)
+static void ReplaceInMirrors(TextViewport& viewport, SnippetSessionState& session, int tab,
+                             const MirrorEditTarget& target, std::string_view text) {
+  auto& ranges = session.ranges_by_tab[tab];
+  std::vector<std::size_t> order(ranges.size());
+  for (std::size_t i = 0; i < order.size(); ++i) {
+    order[i] = i;
+  }
+  std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
+    const auto& ra = ranges[a];
+    const auto& rb = ranges[b];
+    if (ra.start.line != rb.start.line) {
+      return ra.start.line > rb.start.line;
+    }
+    return ra.start.column > rb.start.column;
+  });
+  std::vector<AppliedMirrorEdit> edits;
+  edits.reserve(order.size());
+  for (std::size_t idx : order) {
+    const SelectionRange r = ranges[idx];
+    // Every mirror holds the same bytes, so the relative span maps onto the
+    // same code points; the clamp only guards a mirror that somehow does not.
+    const std::size_t start_col = std::min(r.start.column + target.rel_start, r.end.column);
+    const std::size_t end_col = std::min(r.start.column + target.rel_end, r.end.column);
+    if (start_col == end_col && text.empty()) {
+      continue;
+    }
+    viewport.ReplaceRange(
+        SelectionRange{TextPosition{r.start.line, start_col}, TextPosition{r.start.line, end_col}},
+        text, false);
+    const std::ptrdiff_t delta = static_cast<std::ptrdiff_t>(text.size()) -
+                                 static_cast<std::ptrdiff_t>(end_col - start_col);
+    // The shift origin is the pre-edit END of the replaced span: a range that
+    // starts at or after it moves by the delta, one that ends before it does not.
+    edits.push_back(AppliedMirrorEdit{idx, r.start.line, end_col, delta});
+  }
+  ApplyBatchedMirrorShifts(session, tab, edits);
+  const SelectionRange& edited = ranges[target.mirror_index];
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(edited.start.line,
+                        std::min(edited.start.column + target.rel_start + text.size(),
+                                 edited.end.column),
+                        false);
+}
+
+static std::vector<SelectionRange>* FocusedTabRanges(SnippetSessionState& session, int* tab_out) {
+  if (!session.active || session.navigate_index >= session.navigate_order.size()) {
+    return nullptr;
+  }
+  const int tab = session.navigate_order[session.navigate_index];
+  const auto it = session.ranges_by_tab.find(tab);
+  if (it == session.ranges_by_tab.end() || it->second.empty()) {
+    return nullptr;
+  }
+  *tab_out = tab;
+  return &it->second;
+}
+
 bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, std::string_view text) {
   if (!session.active || text.empty()) {
     return false;
@@ -620,191 +722,71 @@ bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, 
     CommitSnippetSession(viewport, session);
     return false;
   }
-  if (session.navigate_index >= session.navigate_order.size()) {
+  int tab = 0;
+  const std::vector<SelectionRange>* ranges = FocusedTabRanges(session, &tab);
+  if (ranges == nullptr) {
     return false;
   }
-  const int tab = session.navigate_order[session.navigate_index];
-  const auto it = session.ranges_by_tab.find(tab);
-  if (it == session.ranges_by_tab.end() || it->second.empty()) {
+  const std::optional<MirrorEditTarget> target = FocusedMirrorTarget(viewport, *ranges);
+  if (!target.has_value()) {
     return false;
   }
-  const TextPosition p{viewport.cursor_line(), viewport.cursor_column()};
-  const SelectionRange* ref = RangeContaining(it->second, p);
-  if (ref == nullptr) {
-    return false;
-  }
-  const std::size_t rel = RelativeColumnInRange(*ref, p);
-
-  std::vector<std::size_t> order(it->second.size());
-  for (std::size_t i = 0; i < order.size(); ++i) {
-    order[i] = i;
-  }
-  auto& ranges = it->second;
-  std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-    const auto& ra = ranges[a];
-    const auto& rb = ranges[b];
-    if (ra.start.line != rb.start.line) {
-      return ra.start.line > rb.start.line;
-    }
-    return ra.start.column + rel > rb.start.column + rel;
-  });
-
-  // Insert into each mirror high-to-low (so lower mirrors' recorded columns stay
-  // valid), collecting each edit. One batched pass then advances every recorded
-  // range at/after each insertion instead of rescanning all tab stops per mirror.
-  std::vector<AppliedMirrorEdit> edits;
-  edits.reserve(order.size());
-  for (std::size_t idx : order) {
-    const TextPosition ins{ranges[idx].start.line, ranges[idx].start.column + rel};
-    viewport.ReplaceRange(SelectionRange{ins, ins}, text, false);
-    edits.push_back(
-        AppliedMirrorEdit{idx, ins.line, ins.column, static_cast<std::ptrdiff_t>(text.size())});
-  }
-  ApplyBatchedMirrorShifts(session, tab, edits);
-  FocusTabStop(viewport, session, tab);
+  ReplaceInMirrors(viewport, session, tab, *target, text);
   return true;
 }
 
 bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session) {
-  if (!session.active) {
+  int tab = 0;
+  const std::vector<SelectionRange>* ranges = FocusedTabRanges(session, &tab);
+  if (ranges == nullptr) {
     return false;
   }
-  if (session.navigate_index >= session.navigate_order.size()) {
+  std::optional<MirrorEditTarget> target = FocusedMirrorTarget(viewport, *ranges);
+  if (!target.has_value()) {
     return false;
   }
-  const int tab = session.navigate_order[session.navigate_index];
-  auto it = session.ranges_by_tab.find(tab);
-  if (it == session.ranges_by_tab.end() || it->second.empty()) {
-    return false;
-  }
-  const TextPosition p{viewport.cursor_line(), viewport.cursor_column()};
-  if (p.column == 0) {
-    return false;
-  }
-  // Backspace removes the whole UTF-8 code point ENDING at the caret. Scan back
-  // to its start so multi-byte code points (é, emoji) are never split mid-byte.
-  // The caret line is always a valid buffer line (cursor_line() is bounded).
-  const std::string& caret_line = viewport.lines()[p.line];
-  const std::size_t cp_start = util::PreviousUtf8Boundary(caret_line, p.column);
-  const TextPosition prev{p.line, cp_start};
-  const SelectionRange* ref = RangeContaining(it->second, prev);
-  if (ref == nullptr) {
-    return false;
-  }
-  // Relative byte offset of the code point's START within the placeholder; every
-  // linked mirror holds identical bytes, so this maps onto the same code point.
-  const std::size_t rel_del = RelativeColumnInRange(*ref, prev);
-
-  auto& ranges = it->second;
-  std::vector<std::size_t> order(ranges.size());
-  for (std::size_t i = 0; i < order.size(); ++i) {
-    order[i] = i;
-  }
-  std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-    const auto& ra = ranges[a];
-    const auto& rb = ranges[b];
-    if (ra.start.line != rb.start.line) {
-      return ra.start.line > rb.start.line;
+  if (target->rel_start == target->rel_end) {
+    // No selection: remove the whole UTF-8 code point ENDING at the caret. Scan
+    // back to its start so multi-byte code points (é, emoji) are never split
+    // mid-byte. A caret at the field's start has nothing of the field to remove;
+    // that is an ordinary backspace, which the caller performs.
+    if (target->rel_start == 0) {
+      return false;
     }
-    return ra.start.column + rel_del > rb.start.column + rel_del;
-  });
-
-  // Delete from each mirror high-to-low (so lower mirrors' recorded columns stay
-  // valid), collecting each edit. One batched pass then pulls every recorded range
-  // at/after each deletion left, instead of rescanning all tab stops per mirror.
-  std::vector<AppliedMirrorEdit> edits;
-  edits.reserve(order.size());
-  for (std::size_t idx : order) {
-    const auto& r = ranges[idx];
-    const TextPosition del{r.start.line, r.start.column + rel_del};
-    if (del.column >= r.end.column) {
-      continue;
-    }
-    // Delete the FULL code point starting at `del` in this mirror. Mirrors hold
-    // identical bytes, so its width matches the reference code point; recompute it
-    // per mirror from that mirror's own line so nothing is split mid-byte. Clamp
-    // to the placeholder end so the span never spills past the mirror.
-    const std::string& mirror_line = viewport.lines()[del.line];
-    std::size_t width = util::NextUtf8Boundary(mirror_line, del.column) - del.column;
-    if (width < 1) {
-      width = 1;
-    }
-    if (del.column + width > r.end.column) {
-      width = r.end.column - del.column;
-    }
-    viewport.ReplaceRange(
-        SelectionRange{del, TextPosition{del.line, del.column + width}}, "", false);
-    edits.push_back(
-        AppliedMirrorEdit{idx, del.line, del.column, -static_cast<std::ptrdiff_t>(width)});
+    const SelectionRange& r = (*ranges)[target->mirror_index];
+    // The caret line is always a valid buffer line (cursor_line() is bounded).
+    const std::string& caret_line = viewport.lines()[r.start.line];
+    target->rel_start =
+        util::PreviousUtf8Boundary(caret_line, r.start.column + target->rel_end) - r.start.column;
   }
-  ApplyBatchedMirrorShifts(session, tab, edits);
-  FocusTabStop(viewport, session, tab);
+  ReplaceInMirrors(viewport, session, tab, *target, std::string_view{});
   return true;
 }
 
 bool SnippetTryDeleteForward(TextViewport& viewport, SnippetSessionState& session) {
-  if (!session.active) {
+  int tab = 0;
+  const std::vector<SelectionRange>* ranges = FocusedTabRanges(session, &tab);
+  if (ranges == nullptr) {
     return false;
   }
-  if (session.navigate_index >= session.navigate_order.size()) {
+  std::optional<MirrorEditTarget> target = FocusedMirrorTarget(viewport, *ranges);
+  if (!target.has_value()) {
     return false;
   }
-  const int tab = session.navigate_order[session.navigate_index];
-  auto it = session.ranges_by_tab.find(tab);
-  if (it == session.ranges_by_tab.end() || it->second.empty()) {
-    return false;
-  }
-  const TextPosition p{viewport.cursor_line(), viewport.cursor_column()};
-  const SelectionRange* ref = RangeContaining(it->second, p);
-  if (ref == nullptr) {
-    return false;
-  }
-  if (p.column >= ref->end.column) {
-    return false;
-  }
-  const std::size_t rel_del = RelativeColumnInRange(*ref, p);
-  auto& ranges = it->second;
-  std::vector<std::size_t> order(ranges.size());
-  for (std::size_t i = 0; i < order.size(); ++i) {
-    order[i] = i;
-  }
-  std::sort(order.begin(), order.end(), [&](std::size_t a, std::size_t b) {
-    const auto& ra = ranges[a];
-    const auto& rb = ranges[b];
-    if (ra.start.line != rb.start.line) {
-      return ra.start.line > rb.start.line;
+  if (target->rel_start == target->rel_end) {
+    // No selection: remove the whole UTF-8 code point STARTING at the caret,
+    // clamped to the field so it never spills past the mirror. A caret at the
+    // field's end has nothing of the field to remove.
+    const SelectionRange& r = (*ranges)[target->mirror_index];
+    if (r.start.column + target->rel_start >= r.end.column) {
+      return false;
     }
-    return ra.start.column + rel_del > rb.start.column + rel_del;
-  });
-  // Delete-forward from each mirror high-to-low, collecting each edit, then fold
-  // all deletions into every recorded range in one batched pass (see
-  // SnippetTryBackspace) instead of rescanning all tab stops per mirror.
-  std::vector<AppliedMirrorEdit> edits;
-  edits.reserve(order.size());
-  for (std::size_t idx : order) {
-    const auto& r = ranges[idx];
-    const TextPosition del{r.start.line, r.start.column + rel_del};
-    if (del.column >= r.end.column) {
-      continue;
-    }
-    // Delete-forward removes the whole UTF-8 code point STARTING at `del`. Compute
-    // its byte width from this mirror's own line and clamp to the placeholder end
-    // so a multi-byte code point is deleted whole, never split mid-byte.
-    const std::string& mirror_line = viewport.lines()[del.line];
-    std::size_t width = util::NextUtf8Boundary(mirror_line, del.column) - del.column;
-    if (width < 1) {
-      width = 1;
-    }
-    if (del.column + width > r.end.column) {
-      width = r.end.column - del.column;
-    }
-    viewport.ReplaceRange(
-        SelectionRange{del, TextPosition{del.line, del.column + width}}, "", false);
-    edits.push_back(
-        AppliedMirrorEdit{idx, del.line, del.column, -static_cast<std::ptrdiff_t>(width)});
+    const std::string& caret_line = viewport.lines()[r.start.line];
+    target->rel_end = std::min(util::NextUtf8Boundary(caret_line, r.start.column + target->rel_start),
+                               r.end.column) -
+                      r.start.column;
   }
-  ApplyBatchedMirrorShifts(session, tab, edits);
-  FocusTabStop(viewport, session, tab);
+  ReplaceInMirrors(viewport, session, tab, *target, std::string_view{});
   return true;
 }
 
