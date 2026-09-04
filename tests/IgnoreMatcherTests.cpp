@@ -170,6 +170,10 @@ void TestIgnoreMatcherDoubleStarCrossesDirectories() {
   Expect(matcher.Ignored("build", true), "**/build should match build at the repo root");
   Expect(matcher.Ignored("a/build", true), "**/build should match a depth-1 build");
   Expect(matcher.Ignored("a/b/build", true), "**/build should match a deeply nested build");
+  Expect(!matcher.Ignored("prebuild", true), "**/build must not match 'prebuild'");
+  Expect(!matcher.Ignored("a/rebuild", true), "**/build must not match a nested 'rebuild'");
+  Expect(!matcher.Ignored("src/xgenerated", true),
+         "a/**/b must not let '**' end inside a segment");
 
   Expect(matcher.Ignored("src/generated", true), "a/**/b should match with zero directories");
   Expect(matcher.Ignored("src/x/generated", true), "a/**/b should match one directory");

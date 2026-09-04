@@ -3,6 +3,7 @@
 #include "project/GlobMatch.h"
 
 #include <string>
+#include <string_view>
 #include <vector>
 
 namespace microide::tests {
@@ -148,10 +149,136 @@ void TestGlobMatchesDoubleStarConventions() {
          "a single '*' must not cross '/' under either convention");
 }
 
+// A segment-anchored '**' stands for WHOLE directories. The matcher's "**/"
+// restart used to step one byte at a time, so the wildcard could end inside a
+// segment: "a/**/b" matched "a/ab", "**/build" matched "prebuild", and the
+// floating scope entry "tests" ("**/tests/**") caught "mytests/x".
+void TestGlobMatchesDoubleStarConsumesWholeSegments() {
+  Expect(!GlobMatches("a/**/b", "a/ab"), "'a/**/b' must not match 'a/ab'");
+  Expect(!GlobMatches("a/**/b", "a/xb"), "'a/**/b' must not match 'a/xb'");
+  Expect(!GlobMatches("a/**/b", "a/x/yb"), "'a/**/b' must not end '**' mid-segment");
+  Expect(GlobMatches("a/**/b", "a/b"), "'a/**/b' matches zero directories");
+  Expect(GlobMatches("a/**/b", "a/x/b"), "'a/**/b' matches one directory");
+  Expect(GlobMatches("a/**/b", "a/x/y/b"), "'a/**/b' matches many directories");
+  Expect(!GlobMatches("**/build", "prebuild"), "'**/build' must not match 'prebuild'");
+  Expect(!GlobMatches("**/build", "a/rebuild"), "'**/build' must not match 'a/rebuild'");
+  Expect(GlobMatches("**/build", "a/b/build"), "'**/build' matches a nested build");
+  Expect(GlobMatches("logs/**", "logs/a/b.txt"), "a trailing '**' still takes the subtree");
+  Expect(!GlobMatches("logs/**", "logs"), "'logs/**' does not name the directory itself");
+  Expect(GlobMatches("**", "a/b/c"), "a lone '**' matches everything");
+  // A later single '*' must not smuggle the '**' restart back to a byte step:
+  // this is the '**/' -> '*' -> literal shape the search scope uses.
+  Expect(!GlobMatches("**/*/b", "ab"), "'**/*/b' needs a real segment before b");
+  Expect(GlobMatches("**/*/b", "x/a/b"), "'**/*/b' matches with a directory in between");
+  Expect(GlobMatches("**/x*/b", "q/xa/b"), "'**/x*/b' resumes on a segment boundary");
+  Expect(!GlobMatches("**/x*/b", "q/axa/b"), "'**/x*/b' must not start x mid-segment");
+  // EditorConfig's convention is unchanged: '**' is any string of characters.
+  using microide::project::GlobDoubleStar;
+  Expect(GlobMatches("a/**b", "a/x/yb", GlobDoubleStar::Always),
+         "EditorConfig's '**' still ends anywhere");
+
+  const GlobSet scope = GlobSet::Parse("tests");
+  Expect(scope.Matches("tests/a.cpp"), "'tests' scopes its own subtree");
+  Expect(scope.Matches("src/tests/a.cpp"), "'tests' floats to any depth");
+  Expect(!scope.Matches("mytests/a.cpp"), "'tests' must not match 'mytests'");
+  Expect(!scope.Matches("src/mytests"), "'tests' must not match a 'mytests' leaf");
+}
+
+// Exhaustive differential check against a plain recursive matcher over a tiny
+// alphabet: every pattern up to 5 bytes of {a, b, /, *, ?} against every
+// root-relative path up to 5 bytes of {a, b, /}. The greedy single-restart
+// matcher is the fast path; the recursion is the definition. Patterns ending in
+// '/', texts ending in '/' and the empty text are excluded: every caller strips a
+// trailing separator before matching and a root-relative path names something,
+// so none of them is a real input.
+void TestGlobMatchesAgreesWithRecursiveReference() {
+  struct Reference {
+    static bool Match(std::string_view p, std::string_view t, bool segment_start) {
+      if (p.empty()) {
+        return t.empty();
+      }
+      if (p[0] == '*') {
+        std::size_t stars = 0;
+        while (stars < p.size() && p[stars] == '*') {
+          ++stars;
+        }
+        const std::string_view rest = p.substr(stars);
+        const bool after_ok = rest.empty() || rest[0] == '/';
+        if (stars >= 2 && segment_start && after_ok) {
+          if (rest.empty()) {
+            return true;
+          }
+          const std::string_view after_slash = rest.substr(1);
+          if (Match(after_slash, t, true)) {
+            return true;
+          }
+          for (std::size_t k = 1; k <= t.size(); ++k) {
+            if (t[k - 1] == '/' && Match(after_slash, t.substr(k), true)) {
+              return true;
+            }
+          }
+          return false;
+        }
+        for (std::size_t k = 0; k <= t.size(); ++k) {
+          if (Match(rest, t.substr(k), false)) {
+            return true;
+          }
+          if (k < t.size() && t[k] == '/') {
+            break;
+          }
+        }
+        return false;
+      }
+      if (t.empty()) {
+        return false;
+      }
+      if (p[0] == '?') {
+        return t[0] != '/' && Match(p.substr(1), t.substr(1), false);
+      }
+      return p[0] == t[0] && Match(p.substr(1), t.substr(1), p[0] == '/');
+    }
+  };
+  std::vector<std::string> patterns;
+  std::vector<std::string> texts;
+  const auto enumerate = [](std::string_view alphabet, std::size_t max_length,
+                            std::vector<std::string>& out) {
+    out.emplace_back();
+    for (std::size_t begin = 0; begin < out.size(); ++begin) {
+      if (out[begin].size() >= max_length) {
+        continue;
+      }
+      for (const char c : alphabet) {
+        out.push_back(out[begin] + c);
+      }
+    }
+  };
+  enumerate("ab/*?", 5, patterns);
+  enumerate("ab/", 5, texts);
+  std::size_t mismatches = 0;
+  for (const std::string& pattern : patterns) {
+    if (pattern.ends_with('/')) {
+      continue;
+    }
+    for (const std::string& text : texts) {
+      if (text.empty() || text.ends_with('/')) {
+        continue;
+      }
+      if (GlobMatches(pattern, text) != Reference::Match(pattern, text, true)) {
+        ++mismatches;
+      }
+    }
+  }
+  Expect(mismatches == 0, "GlobMatches must agree with the recursive reference everywhere");
+}
+
 }  // namespace
 
 void RegisterGlobMatchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "GlobMatch/DoubleStarConventions", TestGlobMatchesDoubleStarConventions);
+  AddTest(tests, "GlobMatch/DoubleStarConsumesWholeSegments",
+          TestGlobMatchesDoubleStarConsumesWholeSegments);
+  AddTest(tests, "GlobMatch/AgreesWithRecursiveReference",
+          TestGlobMatchesAgreesWithRecursiveReference);
   AddTest(tests, "GlobMatch/PathnameSemantics", TestGlobMatchesPathnameSemantics);
   AddTest(tests, "GlobSet/FloatsBareNamesAndAnchorsPaths",
           TestGlobSetFloatsBareNamesAndAnchorsPaths);

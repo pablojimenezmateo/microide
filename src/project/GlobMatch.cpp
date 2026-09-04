@@ -5,6 +5,38 @@
 
 namespace microide::project {
 
+namespace {
+
+// Advance a cross-slash '**' restart by one step. `consumed_end` is the text
+// index just past what the wildcard has swallowed so far; on success it moves to
+// the next legal restart and the caller resumes the pattern there.
+//
+// Under the segment-anchored rule a '**' stands for WHOLE directories only —
+// git's "a/**/b" matches "a/b", "a/x/b", "a/x/y/b" and nothing else — so the only
+// restarts are just past a '/'. Stepping one byte at a time let the folded
+// "**/" end inside a segment: "a/**/b" matched "a/ab", "**/build" matched
+// "prebuild", and every floating scope entry ("tests" → "**/tests/**") caught
+// "mytests/x". EditorConfig's '**' is "any string of characters", so that mode
+// keeps the byte step.
+bool ExtendSegmentDoubleStar(std::string_view text, std::size_t& consumed_end,
+                             bool double_star_always_crosses) {
+  if (double_star_always_crosses) {
+    if (consumed_end >= text.size()) {
+      return false;
+    }
+    ++consumed_end;
+    return true;
+  }
+  const std::size_t separator = text.find('/', consumed_end);
+  if (separator == std::string_view::npos) {
+    return false;
+  }
+  consumed_end = separator + 1;
+  return true;
+}
+
+}  // namespace
+
 bool GlobMatches(std::string_view pattern, std::string_view text,
                  GlobDoubleStar double_star) {
   const bool double_star_always_crosses = double_star == GlobDoubleStar::Always;
@@ -38,6 +70,11 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
         const bool after_ok = pi == plen || pattern[pi] == '/';
         const bool segment_doublestar =
             star_count >= 2 && (double_star_always_crosses || (before_ok && after_ok));
+        if (segment_doublestar && pi == plen) {
+          // A trailing '**' ("logs/**") swallows whatever is left, whole
+          // segments or not; there is nothing after it to resume.
+          return true;
+        }
         if (segment_doublestar && pi < plen && pattern[pi] == '/') {
           // '**/' can match zero directories: fold the following '/' into the
           // wildcard so the pattern can resume with nothing consumed from text.
@@ -128,10 +165,18 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
         }
       }
     }
-    if (star_pi != std::string_view::npos && (star_cross_slash || text[star_ti] != '/')) {
-      pi = star_pi;
-      ti = ++star_ti;
-      continue;
+    if (star_pi != std::string_view::npos) {
+      if (star_cross_slash) {
+        if (ExtendSegmentDoubleStar(text, star_ti, double_star_always_crosses)) {
+          pi = star_pi;
+          ti = star_ti;
+          continue;
+        }
+      } else if (text[star_ti] != '/') {
+        pi = star_pi;
+        ti = ++star_ti;
+        continue;
+      }
     }
     // The most-recent '*' is exhausted or blocked by a '/'. Fall back to the
     // most-recent cross-slash '**', which is allowed to consume the '/' — this is
@@ -139,9 +184,10 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
     // stale '*' backtrack (which sits AFTER '**' in the pattern) is invalidated so a
     // later literal mismatch cannot wrongly jump forward into it while we are
     // re-extending the '**'; it is freshly re-armed when the '*' is reached again.
-    if (dstar_pi != std::string_view::npos && dstar_ti < tlen) {
+    if (dstar_pi != std::string_view::npos &&
+        ExtendSegmentDoubleStar(text, dstar_ti, double_star_always_crosses)) {
       pi = dstar_pi;
-      ti = ++dstar_ti;
+      ti = dstar_ti;
       star_pi = std::string_view::npos;
       continue;
     }
