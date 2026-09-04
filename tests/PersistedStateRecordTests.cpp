@@ -9,6 +9,7 @@
 #include "workspace/state/WorkspaceProjectState.h"
 
 #include <cmath>
+#include <limits>
 #include <cstddef>
 #include <cstdint>
 #include <filesystem>
@@ -578,6 +579,226 @@ void TestPersistedStateProjectSessionRoundTripsTreeState() {
              decoded_legacy.sidebar_scroll_row == 0 &&
              decoded_legacy.sidebar_view_id.empty(),
          "absent tree/sidebar tags decode to defaults");
+}
+
+// Every field of the project session record round-trips over random content:
+// hostile paths and strings (blanks, quotes, control bytes, NUL, non-ASCII, 3 KB
+// runs), extreme counters, every tab kind, both line endings, several groups and
+// a real split tree. The literal fixtures above check one value per field; this
+// checks the encoding of each field, not the fixture.
+void TestPersistedStateProjectSessionRoundTripsRandomContent() {
+  std::uint64_t state = 0x9e3779b97f4a7c15ULL;
+  const auto next = [&](std::size_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kAtoms[] = {"a", "Z", "0", " ", "\n", "\t", "\r", "=", ":", "\"",
+                                           "\\", "é", "中", "😀", "\x01", "\x7f", "x.y", "/", ""};
+  const auto random_string = [&](std::size_t max_atoms) {
+    std::string out;
+    const std::size_t atoms = next(max_atoms + 1);
+    for (std::size_t i = 0; i < atoms; ++i) {
+      out += kAtoms[next(std::size(kAtoms))];
+    }
+    if (next(8) == 0) {
+      out.push_back('\0');
+      out += "after";
+    }
+    if (next(16) == 0) {
+      out.append(3000, 'w');
+    }
+    return out;
+  };
+  // Counters are stored as u32 (WriteSize refuses larger, deliberately: a
+  // 4-billion-line cursor is not a session, it is corruption).
+  const auto random_size = [&]() -> std::size_t {
+    switch (next(4)) {
+      case 0: return 0;
+      case 1: return next(100);
+      case 2: return next(1u << 20);
+      default: return std::numeric_limits<std::uint32_t>::max() - next(3);
+    }
+  };
+  const auto random_float = [&]() { return static_cast<float>(next(100000)) / 7.0f; };
+  const auto random_lines = [&](std::size_t max_lines) {
+    std::vector<std::string> lines;
+    const std::size_t count = next(max_lines + 1);
+    for (std::size_t i = 0; i < count; ++i) {
+      lines.push_back(random_string(5));
+    }
+    return lines;
+  };
+  const auto same_tab = [](const PersistedEditorTabState& a, const PersistedEditorTabState& b) {
+    return a.kind == b.kind && a.path == b.path && a.cursor_line == b.cursor_line &&
+           a.cursor_column == b.cursor_column && a.scroll_line == b.scroll_line &&
+           a.horizontal_scroll == b.horizontal_scroll && a.dirty_snapshot == b.dirty_snapshot &&
+           a.line_ending == b.line_ending && a.buffer_lines == b.buffer_lines &&
+           a.compare_path == b.compare_path && a.compare_left_path == b.compare_left_path &&
+           a.compare_right_path == b.compare_right_path &&
+           a.compare_commit_hash == b.compare_commit_hash &&
+           a.compare_commit_short_hash == b.compare_commit_short_hash &&
+           a.compare_right_ref == b.compare_right_ref &&
+           a.compare_right_label == b.compare_right_label &&
+           a.compare_selected_row == b.compare_selected_row &&
+           a.compare_scroll_row == b.compare_scroll_row &&
+           a.compare_horizontal_scroll == b.compare_horizontal_scroll &&
+           a.compare_divider_fraction == b.compare_divider_fraction &&
+           a.compare_review_mode == b.compare_review_mode &&
+           a.compare_staging_view == b.compare_staging_view &&
+           a.merge_base_path == b.merge_base_path &&
+           a.merge_incoming_path == b.merge_incoming_path &&
+           a.merge_current_path == b.merge_current_path &&
+           a.merge_output_path == b.merge_output_path &&
+           a.merge_selected_hunk == b.merge_selected_hunk &&
+           a.merge_scroll_row == b.merge_scroll_row &&
+           a.merge_horizontal_scroll == b.merge_horizontal_scroll &&
+           a.merge_left_divider_fraction == b.merge_left_divider_fraction &&
+           a.merge_right_divider_fraction == b.merge_right_divider_fraction &&
+           a.merge_hunk_choices == b.merge_hunk_choices;
+  };
+  const auto dump = [](const std::string& value) {
+    std::string out;
+    for (unsigned char c : value) {
+      if (c < 0x20 || c == 0x7f) {
+        out += "\\x" + std::string(1, "0123456789abcdef"[c >> 4]) +
+               std::string(1, "0123456789abcdef"[c & 15]);
+      } else {
+        out.push_back(static_cast<char>(c));
+      }
+    }
+    return out.size() > 200 ? out.substr(0, 200) + "..." : out;
+  };
+
+  for (int round = 0; round < 60; ++round) {
+    PersistedProjectSessionState session;
+    session.sidebar_visible = next(2) == 0;
+    session.sidebar_width = random_float();
+    session.bottom_panel_height = random_float();
+    session.outgoing_base_choice.kind =
+        static_cast<microide::workspace::OutgoingBaseChoice::Kind>(next(3));
+    session.outgoing_base_choice.custom_ref = random_string(4);
+    const std::size_t group_count = 1 + next(4);
+    for (std::size_t g = 0; g < group_count; ++g) {
+      PersistedEditorGroupState group;
+      const std::size_t tab_count = next(5);
+      for (std::size_t t = 0; t < tab_count; ++t) {
+        PersistedEditorTabState tab;
+        switch (next(3)) {
+          case 0:
+            tab.kind = "editor";
+            tab.path = random_string(4);
+            tab.cursor_line = random_size();
+            tab.cursor_column = random_size();
+            tab.scroll_line = random_size();
+            tab.horizontal_scroll = random_size();
+            tab.dirty_snapshot = next(2) == 0;
+            tab.line_ending = next(2) == 0 ? microide::util::LineEnding::LF
+                                           : microide::util::LineEnding::CRLF;
+            if (tab.dirty_snapshot) {
+              tab.buffer_lines = random_lines(6);
+            }
+            break;
+          case 1:
+            tab.kind = "compare";
+            tab.compare_path = random_string(4);
+            tab.compare_left_path = random_string(4);
+            tab.compare_right_path = random_string(4);
+            tab.compare_commit_hash = random_string(4);
+            tab.compare_commit_short_hash = random_string(2);
+            tab.compare_right_ref = random_string(3);
+            tab.compare_right_label = random_string(3);
+            tab.compare_selected_row = random_size();
+            tab.compare_scroll_row = random_size();
+            tab.compare_horizontal_scroll = random_size();
+            tab.compare_divider_fraction = random_float();
+            tab.compare_review_mode = random_string(2);
+            tab.compare_staging_view = random_string(2);
+            break;
+          default:
+            tab.kind = "merge";
+            tab.merge_base_path = random_string(4);
+            tab.merge_incoming_path = random_string(4);
+            tab.merge_current_path = random_string(4);
+            tab.merge_output_path = random_string(4);
+            tab.merge_selected_hunk = random_size();
+            tab.merge_scroll_row = random_size();
+            tab.merge_horizontal_scroll = random_size();
+            tab.merge_left_divider_fraction = random_float();
+            tab.merge_right_divider_fraction = random_float();
+            tab.merge_hunk_choices = random_lines(5);
+            break;
+        }
+        group.tabs.push_back(std::move(tab));
+      }
+      group.active_tab_index = group.tabs.empty() ? 0 : next(group.tabs.size());
+      session.groups.push_back(std::move(group));
+    }
+    session.focused_group_index = next(group_count);
+    {
+      microide::workspace::EditorSplitTree tree;
+      for (std::size_t g = 1; g < group_count; ++g) {
+        tree.InsertLeaf(next(g), next(2) == 0 ? microide::workspace::EditorSplitOrientation::Horizontal
+                                              : microide::workspace::EditorSplitOrientation::Vertical,
+                        next(2) == 0);
+      }
+      session.split_tree = tree.Flatten();
+    }
+    session.right_pane_visible = next(2) == 0;
+    session.right_pane_width = random_float();
+    session.right_pane_mode = static_cast<std::uint8_t>(next(256));
+    session.expanded_tree_paths = random_lines(4);
+    session.collapsed_tree_paths = random_lines(4);
+    session.selected_tree_path = random_string(4);
+    session.sidebar_scroll_row = static_cast<int>(next(1u << 31));  // negatives clamp to 0
+    session.sidebar_view_id = random_string(3);
+
+    std::vector<std::byte> encoded;
+    Expect(EncodeProjectSessionRecord(session, &encoded), "the random session encodes");
+    PersistedProjectSessionState decoded;
+    Expect(DecodeProjectSessionRecord(encoded, &decoded), "the random session decodes");
+    std::string mismatch;
+    if (decoded.sidebar_visible != session.sidebar_visible) mismatch = "sidebar_visible";
+    else if (decoded.sidebar_width != session.sidebar_width) mismatch = "sidebar_width";
+    else if (decoded.bottom_panel_height != session.bottom_panel_height) mismatch = "bottom_panel_height";
+    else if (decoded.outgoing_base_choice.kind != session.outgoing_base_choice.kind ||
+             decoded.outgoing_base_choice.custom_ref != session.outgoing_base_choice.custom_ref)
+      mismatch = "outgoing_base_choice " + dump(session.outgoing_base_choice.custom_ref);
+    else if (decoded.groups.size() != session.groups.size()) mismatch = "group count";
+    else if (decoded.focused_group_index != session.focused_group_index) mismatch = "focused_group_index";
+    else if (!(decoded.split_tree == session.split_tree)) mismatch = "split_tree";
+    else if (decoded.right_pane_visible != session.right_pane_visible) mismatch = "right_pane_visible";
+    else if (decoded.right_pane_width != session.right_pane_width) mismatch = "right_pane_width";
+    else if (decoded.right_pane_mode != session.right_pane_mode) mismatch = "right_pane_mode";
+    else if (decoded.expanded_tree_paths != session.expanded_tree_paths) mismatch = "expanded_tree_paths";
+    else if (decoded.collapsed_tree_paths != session.collapsed_tree_paths) mismatch = "collapsed_tree_paths";
+    else if (decoded.selected_tree_path != session.selected_tree_path)
+      mismatch = "selected_tree_path " + dump(session.selected_tree_path);
+    else if (decoded.sidebar_scroll_row != session.sidebar_scroll_row) mismatch = "sidebar_scroll_row";
+    else if (decoded.sidebar_view_id != session.sidebar_view_id)
+      mismatch = "sidebar_view_id " + dump(session.sidebar_view_id);
+    for (std::size_t g = 0; mismatch.empty() && g < session.groups.size(); ++g) {
+      const auto& expected = session.groups[g];
+      const auto& actual = decoded.groups[g];
+      if (actual.active_tab_index != expected.active_tab_index) {
+        mismatch = "group " + std::to_string(g) + " active_tab_index";
+      } else if (actual.tabs.size() != expected.tabs.size()) {
+        mismatch = "group " + std::to_string(g) + " tab count";
+      }
+      for (std::size_t t = 0; mismatch.empty() && t < expected.tabs.size(); ++t) {
+        if (!same_tab(actual.tabs[t], expected.tabs[t])) {
+          mismatch = "group " + std::to_string(g) + " tab " + std::to_string(t) + " (" +
+                     expected.tabs[t].kind + ", path " + dump(expected.tabs[t].path.string()) +
+                     ")";
+        }
+      }
+    }
+    if (!mismatch.empty()) {
+      Expect(false, "round " + std::to_string(round) + ": " + mismatch + " did not round-trip");
+      return;
+    }
+  }
 }
 
 // A1 regression: compare `review_mode` and `staging_view` must survive a binary
@@ -1276,6 +1497,8 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateProjectSessionRoundTripOmitsChatRegistry);
   AddTest(tests, "PersistedStateRecord/ProjectSessionAcceptsLegacyChatRegistryTag",
           TestPersistedStateProjectSessionAcceptsLegacyChatRegistryTag);
+  AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripsRandomContent",
+          TestPersistedStateProjectSessionRoundTripsRandomContent);
   AddTest(tests, "PersistedStateRecord/ProjectSessionRoundTripsTreeState",
           TestPersistedStateProjectSessionRoundTripsTreeState);
   AddTest(tests, "PersistedStateRecord/DecodersSkipUnknownTags",
