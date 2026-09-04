@@ -2,7 +2,10 @@
 
 #include <algorithm>
 #include <cctype>
+#include <ctime>
+#include <filesystem>
 #include <optional>
+#include <random>
 #include <set>
 #include <utility>
 
@@ -35,163 +38,512 @@ void SnippetSessionState::Reset(TextViewport* viewport_restore_secondary_to) {
   *this = SnippetSessionState{};
 }
 
-SnippetParseResult ParseSnippetBody(std::string_view body) {
-  SnippetParseResult result;
-  result.expanded.clear();
-  result.occurrences.clear();
+namespace {
 
+// Unknown variables become placeholders numbered after the highest numeric tab
+// stop, in order of first appearance; the same name always maps to the same
+// stop. They carry a negative id (-1, -2, ...) while parsing and are renumbered
+// once the maximum is known.
+constexpr std::size_t kMaxNestingDepth = 32;
+
+bool IsVariableStart(char ch) {
+  return util::IsAsciiAlpha(static_cast<unsigned char>(ch)) != 0 || ch == '_';
+}
+
+bool IsVariableChar(char ch) {
+  return util::IsAsciiAlnum(static_cast<unsigned char>(ch)) != 0 || ch == '_';
+}
+
+class SnippetBodyParser {
+ public:
+  SnippetBodyParser(std::string_view body, const SnippetVariableResolver& resolver,
+                    SnippetParseResult& out)
+      : body_(body), resolver_(resolver), out_(out) {}
+
+  bool Parse() {
+    std::size_t pos = 0;
+    if (!ParseSequence(pos, /*nested=*/false, SnippetParseResult::kNoParent, 0)) {
+      return false;
+    }
+    return RenumberUnknownVariables();
+  }
+
+ private:
+  // Text and constructs up to the end of the body or, when `nested`, up to the
+  // unescaped '}' that closes the enclosing placeholder (consumed). An
+  // unterminated placeholder keeps what it parsed, as it always did.
+  bool ParseSequence(std::size_t& pos, bool nested, std::size_t parent, std::size_t depth) {
+    while (pos < body_.size()) {
+      const char c = body_[pos];
+      if (c == '\\' && pos + 1 < body_.size() &&
+          (body_[pos + 1] == '$' || body_[pos + 1] == '}' || body_[pos + 1] == '\\')) {
+        // VS Code's text escapes. Any other `\x` stays two literal bytes.
+        if (!AppendText(body_[pos + 1])) {
+          return false;
+        }
+        pos += 2;
+        continue;
+      }
+      if (nested && c == '}') {
+        ++pos;
+        return true;
+      }
+      if (c == '$') {
+        if (!ParseDollar(pos, parent, depth)) {
+          return false;
+        }
+        continue;
+      }
+      if (!AppendText(c)) {
+        return false;
+      }
+      ++pos;
+    }
+    return true;
+  }
+
+  // `pos` is at a '$'. Every form that is not a construct leaves a literal '$'
+  // and resumes after it, which is how a stray `$}` or `${x` always read.
+  bool ParseDollar(std::size_t& pos, std::size_t parent, std::size_t depth) {
+    std::size_t j = pos + 1;
+    if (j < body_.size() && IsDigit(body_[j])) {
+      // Bare `$N`: ALL consecutive digits (VS Code treats `$10` as stop 10).
+      int tab = 0;
+      if (!ReadTabId(j, tab)) {
+        return false;
+      }
+      pos = j;
+      return AddTabStop(tab, parent);
+    }
+    if (j < body_.size() && IsVariableStart(body_[j])) {
+      const std::string_view name = ReadVariableName(j);
+      pos = j;
+      return AddVariable(name, /*default_at=*/std::nullopt, pos, parent, depth);
+    }
+    if (j >= body_.size() || body_[j] != '{') {
+      return LiteralDollar(pos);
+    }
+    ++j;  // after '{'
+    if (j < body_.size() && IsDigit(body_[j])) {
+      int tab = 0;
+      if (!ReadTabId(j, tab)) {
+        return false;
+      }
+      if (j < body_.size() && body_[j] == '}') {
+        pos = j + 1;
+        return AddTabStop(tab, parent);
+      }
+      if (j < body_.size() && body_[j] == '|') {
+        pos = j;
+        return ParseChoice(pos, tab, parent);
+      }
+      if (j + 1 < body_.size() && body_[j] == ':' && body_[j + 1] == '|') {
+        // The `${1:|a,b|}` spelling this engine accepted before the standard
+        // `${1|a,b|}` form; kept so a shipped body keeps parsing.
+        pos = j + 1;
+        return ParseChoice(pos, tab, parent);
+      }
+      if (j < body_.size() && body_[j] == ':') {
+        pos = j + 1;
+        return ParsePlaceholder(pos, tab, parent, depth);
+      }
+      if (j < body_.size() && body_[j] == '/') {
+        // `${1/regex/format/opts}`: the stop is inserted untransformed.
+        pos = j;
+        SkipToClosingBrace(pos);
+        return AddTabStop(tab, parent);
+      }
+      return LiteralDollar(pos);
+    }
+    if (j < body_.size() && IsVariableStart(body_[j])) {
+      const std::string_view name = ReadVariableName(j);
+      if (j < body_.size() && body_[j] == '}') {
+        pos = j + 1;
+        return AddVariable(name, std::nullopt, pos, parent, depth);
+      }
+      if (j < body_.size() && body_[j] == ':') {
+        pos = j + 1;
+        return AddVariable(name, pos, pos, parent, depth);
+      }
+      if (j < body_.size() && body_[j] == '/') {
+        pos = j;
+        SkipToClosingBrace(pos);
+        return AddVariable(name, std::nullopt, pos, parent, depth);
+      }
+      return LiteralDollar(pos);
+    }
+    return LiteralDollar(pos);
+  }
+
+  bool LiteralDollar(std::size_t& pos) {
+    ++pos;
+    return AppendText('$');
+  }
+
+  // Checked accumulation: `tab` is <= kMaxTabStopId before each step, so
+  // tab*10 + digit cannot signed-overflow. An id past the cap fails the parse.
+  bool ReadTabId(std::size_t& j, int& tab) {
+    tab = 0;
+    while (j < body_.size() && IsDigit(body_[j])) {
+      tab = tab * 10 + (body_[j] - '0');
+      if (tab > kMaxTabStopId) {
+        return false;
+      }
+      ++j;
+    }
+    return true;
+  }
+
+  std::string_view ReadVariableName(std::size_t& j) {
+    const std::size_t start = j;
+    while (j < body_.size() && IsVariableChar(body_[j])) {
+      ++j;
+    }
+    return body_.substr(start, j - start);
+  }
+
+  // Skip to just past the '}' that closes the construct `pos` is inside, over
+  // `\x` escapes and balanced inner braces (a transform's format may spell
+  // `${1:/upcase}`).
+  void SkipToClosingBrace(std::size_t& pos) {
+    std::size_t depth = 0;
+    while (pos < body_.size()) {
+      const char c = body_[pos];
+      if (c == '\\') {
+        pos += 2;
+        continue;
+      }
+      if (c == '{') {
+        ++depth;
+      } else if (c == '}') {
+        if (depth == 0) {
+          ++pos;
+          return;
+        }
+        --depth;
+      }
+      ++pos;
+    }
+  }
+
+  bool ParsePlaceholder(std::size_t& pos, int tab, std::size_t parent, std::size_t depth) {
+    if (depth >= kMaxNestingDepth) {
+      return false;
+    }
+    const std::size_t index = out_.occurrences.size();
+    if (!PushOccurrence(tab, parent)) {
+      return false;
+    }
+    // The default may itself hold placeholders; they record this one as their
+    // parent. Indices, not references: the vector grows underneath.
+    if (!ParseSequence(pos, /*nested=*/true, index, depth + 1)) {
+      return false;
+    }
+    out_.occurrences[index].end_off = out_.expanded.size();
+    return true;
+  }
+
+  // `pos` is at the opening '|'.
+  bool ParseChoice(std::size_t& pos, int tab, std::size_t parent) {
+    std::size_t j = pos + 1;
+    std::vector<std::string> choices;
+    while (j < body_.size()) {
+      if (body_[j] == '|') {
+        ++j;
+        break;
+      }
+      // Honor escapes inside a choice value: `\,`, `\|`, `\}`, and `\\`
+      // insert the literal character instead of ending the choice, so a
+      // choice like `${1|a\,b,c|}` yields the two options "a,b" and "c".
+      std::string value;
+      while (j < body_.size() && body_[j] != ',' && body_[j] != '|') {
+        if (body_[j] == '\\' && j + 1 < body_.size() &&
+            (body_[j + 1] == ',' || body_[j + 1] == '|' || body_[j + 1] == '}' ||
+             body_[j + 1] == '\\')) {
+          value += body_[j + 1];
+          j += 2;
+        } else {
+          value += body_[j];
+          ++j;
+        }
+      }
+      // A choice value must stay single-line: ApplyChoiceForTab records the
+      // post-cycle range as `start.column + text.size()` on one line, so a
+      // choice carrying a '\n'/'\r' (ReplaceRange would add a line) leaves a
+      // stale off-line range and orphans the wrapped text on the next cycle.
+      // Reject the malformed snippet (matching VSCode, whose choices cannot
+      // contain newlines, and the other parse-cap failure sentinels here).
+      if (value.find('\n') != std::string::npos || value.find('\r') != std::string::npos) {
+        return false;
+      }
+      choices.push_back(std::move(value));
+      if (choices.size() > kMaxChoicesPerPlaceholder) {
+        return false;
+      }
+      if (j < body_.size() && body_[j] == ',') {
+        ++j;
+      }
+    }
+    if (j < body_.size() && body_[j] == '}') {
+      ++j;
+    }
+    pos = j;
+    const std::size_t index = out_.occurrences.size();
+    if (!PushOccurrence(tab, parent)) {
+      return false;
+    }
+    if (!choices.empty() && !AppendText(choices.front())) {
+      return false;
+    }
+    out_.occurrences[index].end_off = out_.expanded.size();
+    out_.occurrences[index].choices = std::move(choices);
+    return true;
+  }
+
+  bool AddTabStop(int tab, std::size_t parent) {
+    return PushOccurrence(tab, parent);
+  }
+
+  // `default_at`, when set, is the offset of a `${NAME:default}` default whose
+  // closing '}' has not been consumed; `pos` is updated past it either way.
+  bool AddVariable(std::string_view name, std::optional<std::size_t> default_at, std::size_t& pos,
+                   std::size_t parent, std::size_t depth) {
+    const std::optional<std::string> value = resolver_ ? resolver_(name) : std::nullopt;
+    if (value.has_value() && !value->empty()) {
+      // Known and set: the value, and the default is syntax to step over.
+      if (!AppendText(*value)) {
+        return false;
+      }
+      if (default_at.has_value()) {
+        pos = *default_at;
+        SkipToClosingBrace(pos);
+      }
+      return true;
+    }
+    if (value.has_value()) {
+      // Known but empty: the default text, or nothing.
+      if (!default_at.has_value()) {
+        return true;
+      }
+      if (depth >= kMaxNestingDepth) {
+        return false;
+      }
+      pos = *default_at;
+      return ParseSequence(pos, /*nested=*/true, parent, depth + 1);
+    }
+    // Unknown: the default (or the name) is inserted and becomes a placeholder.
+    const int tab = UnknownVariableTab(name);
+    if (depth >= kMaxNestingDepth) {
+      return false;
+    }
+    const std::size_t index = out_.occurrences.size();
+    if (!PushOccurrence(tab, parent)) {
+      return false;
+    }
+    if (default_at.has_value()) {
+      pos = *default_at;
+      if (!ParseSequence(pos, /*nested=*/true, index, depth + 1)) {
+        return false;
+      }
+    } else if (!AppendText(name)) {
+      return false;
+    }
+    out_.occurrences[index].end_off = out_.expanded.size();
+    return true;
+  }
+
+  int UnknownVariableTab(std::string_view name) {
+    for (std::size_t i = 0; i < unknown_variables_.size(); ++i) {
+      if (unknown_variables_[i] == name) {
+        return -static_cast<int>(i) - 1;
+      }
+    }
+    unknown_variables_.emplace_back(name);
+    return -static_cast<int>(unknown_variables_.size());
+  }
+
+  bool RenumberUnknownVariables() {
+    if (unknown_variables_.empty()) {
+      return true;
+    }
+    int max_tab = 0;
+    for (const auto& occ : out_.occurrences) {
+      max_tab = std::max(max_tab, occ.tab_stop);
+    }
+    if (max_tab > kMaxTabStopId - static_cast<int>(unknown_variables_.size())) {
+      return false;
+    }
+    for (auto& occ : out_.occurrences) {
+      if (occ.tab_stop < 0) {
+        occ.tab_stop = max_tab - occ.tab_stop;  // -1 -> max+1, -2 -> max+2
+      }
+    }
+    return true;
+  }
+
+  // A zero-width occurrence at the current end of the expansion; a placeholder
+  // grows it by setting end_off after its default is appended.
+  bool PushOccurrence(int tab, std::size_t parent) {
+    SnippetParseResult::Occurrence occ;
+    occ.tab_stop = tab;
+    occ.start_off = out_.expanded.size();
+    occ.end_off = occ.start_off;
+    occ.is_final = tab == 0;
+    occ.parent = parent;
+    out_.occurrences.push_back(std::move(occ));
+    return out_.occurrences.size() <= kMaxOccurrences;
+  }
+
+  bool AppendText(char c) {
+    out_.expanded += c;
+    return out_.expanded.size() <= kMaxExpandedBytes;
+  }
+
+  bool AppendText(std::string_view text) {
+    out_.expanded += text;
+    return out_.expanded.size() <= kMaxExpandedBytes;
+  }
+
+  std::string_view body_;
+  const SnippetVariableResolver& resolver_;
+  SnippetParseResult& out_;
+  std::vector<std::string> unknown_variables_;
+};
+
+}  // namespace
+
+SnippetParseResult ParseSnippetBody(std::string_view body,
+                                    const SnippetVariableResolver& resolve_variable) {
   // Oversized bodies are rejected outright rather than parsed; every downstream
   // buffer (expanded text, occurrence list) is bounded by the body length.
   if (body.size() > kMaxBodyBytes) {
     return SnippetParseResult{};
   }
-
-  for (std::size_t i = 0; i < body.size();) {
-    if (body[i] != '$') {
-      result.expanded += body[i];
-      if (result.expanded.size() > kMaxExpandedBytes) {
-        return SnippetParseResult{};
-      }
-      ++i;
-      continue;
-    }
-    if (i + 1 < body.size() && body[i + 1] == '{') {
-      const std::size_t j_start = i + 2;
-      int tab = -1;
-      std::size_t j = j_start;
-      if (j < body.size() && IsDigit(body[j])) {
-        tab = 0;
-        while (j < body.size() && IsDigit(body[j])) {
-          // Checked accumulation: `tab` is <= kMaxTabStopId before each step, so
-          // tab*10 + digit cannot signed-overflow (stays well under INT_MAX).
-          // Any id past the cap fails the whole parse cleanly.
-          tab = tab * 10 + (body[j] - '0');
-          if (tab > kMaxTabStopId) {
-            return SnippetParseResult{};
-          }
-          ++j;
-        }
-      }
-      if (tab < 0) {
-        result.expanded += '$';
-        ++i;
-        continue;
-      }
-      std::string default_text;
-      std::vector<std::string> choices;
-      if (j < body.size() && body[j] == ':') {
-        ++j;
-        if (j < body.size() && body[j] == '|') {
-          ++j;
-          while (j < body.size()) {
-            if (body[j] == '|') {
-              ++j;
-              break;
-            }
-            // Honor escapes inside a choice value: `\,`, `\|`, `\}`, and `\\`
-            // insert the literal character instead of ending the choice, so a
-            // choice like `${1|a\,b,c|}` yields the two options "a,b" and "c".
-            std::string value;
-            while (j < body.size() && body[j] != ',' && body[j] != '|') {
-              if (body[j] == '\\' && j + 1 < body.size() &&
-                  (body[j + 1] == ',' || body[j + 1] == '|' || body[j + 1] == '}' ||
-                   body[j + 1] == '\\')) {
-                value += body[j + 1];
-                j += 2;
-              } else {
-                value += body[j];
-                ++j;
-              }
-            }
-            choices.emplace_back(std::move(value));
-            // A choice value must stay single-line: ApplyChoiceForTab records the
-            // post-cycle range as `start.column + text.size()` on one line, so a
-            // choice carrying a '\n'/'\r' (ReplaceRange would add a line) leaves a
-            // stale off-line range and orphans the wrapped text on the next cycle.
-            // Reject the malformed snippet (matching VSCode, whose choices cannot
-            // contain newlines, and the other parse-cap failure sentinels here).
-            if (choices.back().find('\n') != std::string::npos ||
-                choices.back().find('\r') != std::string::npos) {
-              return SnippetParseResult{};
-            }
-            if (choices.size() > kMaxChoicesPerPlaceholder) {
-              return SnippetParseResult{};
-            }
-            if (j < body.size() && body[j] == ',') {
-              ++j;
-            }
-          }
-          default_text = choices.empty() ? std::string{} : choices.front();
-        } else {
-          // Honor VSCode-style escapes inside the default text: `\}`, `\$`, and
-          // `\\` insert the literal character instead of terminating the
-          // placeholder. Without this, a default containing a brace or dollar
-          // (e.g. `${1:obj\}}`) truncated at the first raw `}`.
-          std::string dt;
-          while (j < body.size() && body[j] != '}') {
-            if (body[j] == '\\' && j + 1 < body.size() &&
-                (body[j + 1] == '}' || body[j + 1] == '$' || body[j + 1] == '\\')) {
-              dt += body[j + 1];
-              j += 2;
-            } else {
-              dt += body[j];
-              ++j;
-            }
-          }
-          default_text = std::move(dt);
-        }
-      }
-      if (j < body.size() && body[j] == '}') {
-        ++j;
-      }
-
-      SnippetParseResult::Occurrence occ;
-      occ.tab_stop = tab;
-      occ.start_off = result.expanded.size();
-      result.expanded += default_text;
-      if (result.expanded.size() > kMaxExpandedBytes) {
-        return SnippetParseResult{};
-      }
-      occ.end_off = result.expanded.size();
-      occ.is_final = tab == 0;
-      occ.choices = std::move(choices);
-      result.occurrences.push_back(std::move(occ));
-      if (result.occurrences.size() > kMaxOccurrences) {
-        return SnippetParseResult{};
-      }
-      i = j;
-      continue;
-    }
-    if (i + 1 < body.size() && IsDigit(body[i + 1])) {
-      // Bare `$N` tab stop: read ALL consecutive digits. VSCode treats `$10` as
-      // tab stop 10, not tab stop 1 followed by a literal '0'; reading a single
-      // digit here diverged from that and from the braced `${N}` form above.
-      // Share that form's checked accumulation and overflow cap.
-      int tab = 0;
-      std::size_t j = i + 1;
-      while (j < body.size() && IsDigit(body[j])) {
-        tab = tab * 10 + (body[j] - '0');
-        if (tab > kMaxTabStopId) {
-          return SnippetParseResult{};
-        }
-        ++j;
-      }
-      SnippetParseResult::Occurrence occ;
-      occ.tab_stop = tab;
-      occ.start_off = result.expanded.size();
-      occ.end_off = result.expanded.size();
-      occ.is_final = tab == 0;
-      result.occurrences.push_back(std::move(occ));
-      if (result.occurrences.size() > kMaxOccurrences) {
-        return SnippetParseResult{};
-      }
-      i = j;
-      continue;
-    }
-    result.expanded += '$';
-    ++i;
+  SnippetParseResult result;
+  SnippetBodyParser parser(body, resolve_variable, result);
+  if (!parser.Parse()) {
+    return SnippetParseResult{};
   }
   return result;
+}
+
+namespace {
+
+std::string FormatLocalTime(const char* format) {
+  const std::time_t now = std::time(nullptr);
+  std::tm local{};
+  localtime_r(&now, &local);
+  char buffer[64];
+  const std::size_t written = std::strftime(buffer, sizeof(buffer), format, &local);
+  return std::string(buffer, written);
+}
+
+std::uint64_t SnippetRandomBits() {
+  static thread_local std::mt19937_64 engine{std::random_device{}()};
+  return engine();
+}
+
+std::string RandomHexDigits(std::size_t count) {
+  static constexpr char kDigits[] = "0123456789abcdef";
+  std::string out;
+  out.reserve(count);
+  std::uint64_t bits = SnippetRandomBits();
+  for (std::size_t i = 0; i < count; ++i) {
+    if (i % 16 == 0 && i != 0) {
+      bits = SnippetRandomBits();
+    }
+    out.push_back(kDigits[bits & 0xF]);
+    bits >>= 4;
+  }
+  return out;
+}
+
+}  // namespace
+
+std::optional<std::string> ResolveEditorSnippetVariable(const TextViewport& viewport,
+                                                        const SelectionRange& trigger,
+                                                        std::string_view name) {
+  const std::filesystem::path& path = viewport.path();
+  const std::size_t line = std::min(trigger.start.line, viewport.lines().size() - 1);
+  if (name == "TM_SELECTED_TEXT") {
+    // The trigger range is the typed prefix or completion word, not a selection.
+    return std::string{};
+  }
+  if (name == "TM_CURRENT_LINE") {
+    return viewport.lines().empty() ? std::string{} : viewport.lines()[line];
+  }
+  if (name == "TM_CURRENT_WORD") {
+    return viewport.TextInRange(trigger);
+  }
+  if (name == "TM_LINE_INDEX") {
+    return std::to_string(trigger.start.line);
+  }
+  if (name == "TM_LINE_NUMBER") {
+    return std::to_string(trigger.start.line + 1);
+  }
+  if (name == "TM_FILENAME" || name == "RELATIVE_FILEPATH") {
+    return path.filename().string();
+  }
+  if (name == "TM_FILENAME_BASE") {
+    return path.stem().string();
+  }
+  if (name == "TM_DIRECTORY") {
+    return path.parent_path().string();
+  }
+  if (name == "TM_FILEPATH") {
+    return path.string();
+  }
+  if (name == "CLIPBOARD" || name == "WORKSPACE_NAME" || name == "WORKSPACE_FOLDER") {
+    // Set but empty: the editor layer has no clipboard or project root in hand,
+    // and an empty value lets a `${CLIPBOARD:default}` default apply.
+    return std::string{};
+  }
+  if (name == "CURSOR_INDEX") {
+    return std::string("0");
+  }
+  if (name == "CURSOR_NUMBER") {
+    return std::string("1");
+  }
+  if (name == "CURRENT_YEAR") return FormatLocalTime("%Y");
+  if (name == "CURRENT_YEAR_SHORT") return FormatLocalTime("%y");
+  if (name == "CURRENT_MONTH") return FormatLocalTime("%m");
+  if (name == "CURRENT_MONTH_NAME") return FormatLocalTime("%B");
+  if (name == "CURRENT_MONTH_NAME_SHORT") return FormatLocalTime("%b");
+  if (name == "CURRENT_DATE") return FormatLocalTime("%d");
+  if (name == "CURRENT_DAY_NAME") return FormatLocalTime("%A");
+  if (name == "CURRENT_DAY_NAME_SHORT") return FormatLocalTime("%a");
+  if (name == "CURRENT_HOUR") return FormatLocalTime("%H");
+  if (name == "CURRENT_MINUTE") return FormatLocalTime("%M");
+  if (name == "CURRENT_SECOND") return FormatLocalTime("%S");
+  if (name == "CURRENT_TIMEZONE_OFFSET") return FormatLocalTime("%z");
+  if (name == "CURRENT_SECONDS_UNIX") {
+    return std::to_string(static_cast<long long>(std::time(nullptr)));
+  }
+  if (name == "RANDOM") {
+    std::string digits = std::to_string(SnippetRandomBits() % 1000000);
+    return std::string(6 - digits.size(), '0') + digits;
+  }
+  if (name == "RANDOM_HEX") {
+    return RandomHexDigits(6);
+  }
+  if (name == "UUID") {
+    std::string hex = RandomHexDigits(32);
+    hex[12] = '4';
+    hex[16] = "89ab"[hex[16] & 0x3];
+    return hex.substr(0, 8) + "-" + hex.substr(8, 4) + "-" + hex.substr(12, 4) + "-" +
+           hex.substr(16, 4) + "-" + hex.substr(20, 12);
+  }
+  const LanguageContractView& contract = viewport.language_contract_view();
+  if (name == "LINE_COMMENT") {
+    return contract.line_comment;
+  }
+  if (name == "BLOCK_COMMENT_START") {
+    return contract.block_comment_open;
+  }
+  if (name == "BLOCK_COMMENT_END") {
+    return contract.block_comment_close;
+  }
+  return std::nullopt;
 }
 
 TextPosition PositionAfterOffsetInExpanded(TextPosition trigger_start,
@@ -296,10 +648,147 @@ struct AppliedMirrorEdit {
 // Start and end move together (linked mirrors keep their width); the edited tab's
 // own mirror additionally grows/shrinks by its own delta, and never shifts its
 // own start on its own edit.
+// The link that names (tab, index)'s parent, if it is nested.
+static const SnippetNestedLink* ParentLinkOf(const SnippetSessionState& session, int tab,
+                                            std::size_t index) {
+  for (const SnippetNestedLink& link : session.nested_links) {
+    if (link.tab == tab && link.index == index) {
+      return &link;
+    }
+  }
+  return nullptr;
+}
+
+static bool IsNestedInsideTab(const SnippetSessionState& session, int tab, std::size_t index,
+                              int ancestor_tab) {
+  // Bounded by the link count: a chain cannot be longer than the links.
+  for (std::size_t hops = 0; hops <= session.nested_links.size(); ++hops) {
+    const SnippetNestedLink* link = ParentLinkOf(session, tab, index);
+    if (link == nullptr) {
+      return false;
+    }
+    if (link->parent_tab == ancestor_tab) {
+      return true;
+    }
+    tab = link->parent_tab;
+    index = link->parent_index;
+  }
+  return false;
+}
+
+// Typing over a placeholder discards the placeholders nested in it (VS Code's
+// rule): their text was just replaced, so their ranges name nothing. Every
+// mirror of the edited tab holds the same nested set, so all of them go.
+static void DropPlaceholdersNestedInTab(SnippetSessionState& session, int edited_tab) {
+  std::vector<int> emptied_tabs;
+  for (auto& [tab, ranges] : session.ranges_by_tab) {
+    std::vector<std::size_t> new_index(ranges.size(), 0);
+    std::size_t kept = 0;
+    for (std::size_t i = 0; i < ranges.size(); ++i) {
+      if (IsNestedInsideTab(session, tab, i, edited_tab)) {
+        new_index[i] = static_cast<std::size_t>(-1);
+        continue;
+      }
+      new_index[i] = kept;
+      ranges[kept++] = ranges[i];
+    }
+    if (kept == ranges.size()) {
+      continue;
+    }
+    ranges.resize(kept);
+    // Remap the links that name this tab; a link whose child or parent was
+    // dropped goes with it (a dropped parent means a dropped child).
+    std::vector<SnippetNestedLink> links;
+    links.reserve(session.nested_links.size());
+    for (SnippetNestedLink link : session.nested_links) {
+      if (link.tab == tab) {
+        if (new_index[link.index] == static_cast<std::size_t>(-1)) {
+          continue;
+        }
+        link.index = new_index[link.index];
+      }
+      if (link.parent_tab == tab) {
+        if (new_index[link.parent_index] == static_cast<std::size_t>(-1)) {
+          continue;
+        }
+        link.parent_index = new_index[link.parent_index];
+      }
+      links.push_back(link);
+    }
+    session.nested_links = std::move(links);
+    if (kept == 0) {
+      emptied_tabs.push_back(tab);
+    }
+  }
+  for (const int tab : emptied_tabs) {
+    session.ranges_by_tab.erase(tab);
+    session.choices_by_tab.erase(tab);
+    session.choice_index_by_tab.erase(tab);
+    for (std::size_t i = 0; i < session.navigate_order.size();) {
+      if (session.navigate_order[i] != tab) {
+        ++i;
+        continue;
+      }
+      session.navigate_order.erase(session.navigate_order.begin() + static_cast<std::ptrdiff_t>(i));
+      if (i < session.navigate_index) {
+        --session.navigate_index;
+      }
+    }
+  }
+}
+
 static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_tab,
                                      const std::vector<AppliedMirrorEdit>& edits) {
   if (edits.empty()) {
     return;
+  }
+  // Nesting: the placeholders inside the edited tab are gone, and the ones the
+  // edited tab sits INSIDE grow by each mirror's delta at their end. The
+  // ancestors' starts are at or left of the edit; the one case the generic
+  // start shift below would move them is an edit at exactly their start, which
+  // is excluded here.
+  struct AncestorAdjust {
+    int tab = 0;
+    std::size_t index = 0;
+    std::ptrdiff_t end_extra = 0;
+    std::ptrdiff_t start_exclude = 0;
+  };
+  std::vector<AncestorAdjust> ancestor_adjust;
+  if (!session.nested_links.empty()) {
+    DropPlaceholdersNestedInTab(session, edited_tab);
+    for (const AppliedMirrorEdit& e : edits) {
+      int tab = edited_tab;
+      std::size_t index = e.range_index;
+      for (std::size_t hops = 0; hops <= session.nested_links.size(); ++hops) {
+        const SnippetNestedLink* link = ParentLinkOf(session, tab, index);
+        if (link == nullptr) {
+          break;
+        }
+        tab = link->parent_tab;
+        index = link->parent_index;
+        const auto it = session.ranges_by_tab.find(tab);
+        if (it == session.ranges_by_tab.end() || index >= it->second.size()) {
+          break;
+        }
+        const SelectionRange& ancestor = it->second[index];
+        AncestorAdjust* adjust = nullptr;
+        for (AncestorAdjust& a : ancestor_adjust) {
+          if (a.tab == tab && a.index == index) {
+            adjust = &a;
+          }
+        }
+        if (adjust == nullptr) {
+          ancestor_adjust.push_back(AncestorAdjust{.tab = tab, .index = index});
+          adjust = &ancestor_adjust.back();
+        }
+        if (e.line == ancestor.end.line) {
+          adjust->end_extra += e.delta;
+        }
+        if (e.line == ancestor.start.line && e.origin_col == ancestor.start.column) {
+          adjust->start_exclude += e.delta;
+        }
+      }
+    }
   }
   // (line, origin_col) -> running prefix sum of the deltas at or left of it, as
   // ONE sorted vector.
@@ -381,8 +870,15 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
           start_shift -= own.delta;
         }
       }
+      std::ptrdiff_t end_extra = 0;
+      for (const AncestorAdjust& a : ancestor_adjust) {
+        if (a.tab == tab && a.index == j) {
+          start_shift -= a.start_exclude;
+          end_extra = a.end_extra;
+        }
+      }
       shift_column(r.start.column, start_shift);
-      shift_column(r.end.column, start_shift + own_delta);
+      shift_column(r.end.column, start_shift + own_delta + end_extra);
     }
   }
 }
@@ -428,8 +924,11 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
                               std::string_view snippet_body) {
   session.Reset(&viewport);
 
-  const SnippetParseResult parsed = ParseSnippetBody(snippet_body);
   const SelectionRange trigger = TextViewport::NormalizeRange(trigger_range);
+  const SnippetParseResult parsed =
+      ParseSnippetBody(snippet_body, [&](std::string_view name) {
+        return ResolveEditorSnippetVariable(viewport, trigger, name);
+      });
 
   session.saved_secondary_carets = viewport.secondary_carets();
   viewport.ClearSecondaryCarets();
@@ -462,13 +961,27 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
     return true;
   }
 
-  for (const auto& occ : parsed.occurrences) {
+  // Where each occurrence landed, so a nested one can name its parent's slot.
+  std::vector<std::size_t> slot_index(parsed.occurrences.size(), 0);
+  for (std::size_t i = 0; i < parsed.occurrences.size(); ++i) {
+    const auto& occ = parsed.occurrences[i];
     const TextPosition a = PositionAfterOffsetInExpanded(trigger.start, parsed.expanded, occ.start_off);
     const TextPosition b = PositionAfterOffsetInExpanded(trigger.start, parsed.expanded, occ.end_off);
-    session.ranges_by_tab[occ.tab_stop].push_back(SelectionRange{a, b});
+    auto& ranges = session.ranges_by_tab[occ.tab_stop];
+    slot_index[i] = ranges.size();
+    ranges.push_back(SelectionRange{a, b});
     if (!occ.choices.empty()) {
       session.choices_by_tab[occ.tab_stop] = occ.choices;
       session.choice_index_by_tab[occ.tab_stop] = 0;
+    }
+    if (occ.parent != SnippetParseResult::kNoParent) {
+      const auto& parent = parsed.occurrences[occ.parent];
+      session.nested_links.push_back(SnippetNestedLink{
+          .tab = occ.tab_stop,
+          .index = slot_index[i],
+          .parent_tab = parent.tab_stop,
+          .parent_index = slot_index[occ.parent],
+      });
     }
   }
 

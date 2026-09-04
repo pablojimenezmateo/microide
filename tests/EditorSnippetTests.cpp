@@ -4,7 +4,9 @@
 #include "editor/TextViewport.h"
 #include "util/StringUtil.h"
 
+#include <optional>
 #include <string>
+#include <string_view>
 
 namespace microide::tests {
 namespace {
@@ -210,6 +212,160 @@ void TestSnippetTypingReplacesSelectedDefault() {
   // Backspace with the caret at the field's start is not a field edit.
   Expect(!SnippetTryBackspace(viewport, session),
          "backspace at the field's start falls back to an ordinary backspace");
+}
+
+// VS Code's text escapes apply everywhere, not only inside a default: `\$`,
+// `\}` and `\\` are one literal byte. `\$HOME` used to expand to a backslash
+// and a dollar.
+void TestSnippetParseTopLevelEscapes() {
+  const auto parsed = ParseSnippetBody("echo \\$HOME \\\\ \\} $1");
+  Expect(parsed.expanded == "echo $HOME \\ } ", "top-level escapes yield the literal byte");
+  Expect(parsed.occurrences.size() == 1u && parsed.occurrences[0].tab_stop == 1,
+         "the tab stop after the escapes is still parsed");
+  const auto other = ParseSnippetBody("a\\nb");
+  Expect(other.expanded == "a\\nb", "any other backslash pair stays two literal bytes");
+}
+
+// A placeholder's default may hold placeholders (`${1:foo ${2:bar}}`): the text
+// is the flattened default, the inner stop records the outer as its parent, and
+// the outer's range spans the whole default. This used to stop at the first
+// `}` and leave `${2:bar}` as literal text.
+void TestSnippetParseNestedPlaceholders() {
+  const auto parsed = ParseSnippetBody("${1:foo ${2:bar} baz}$0");
+  Expect(parsed.expanded == "foo bar baz", "nested defaults flatten");
+  Expect(parsed.occurrences.size() == 3u, "outer, inner and final stops are recorded");
+  const auto& outer = parsed.occurrences[0];
+  const auto& inner = parsed.occurrences[1];
+  Expect(outer.tab_stop == 1 && outer.start_off == 0 && outer.end_off == 11,
+         "the outer spans its whole default");
+  Expect(inner.tab_stop == 2 && inner.start_off == 4 && inner.end_off == 7,
+         "the inner spans its own default inside the outer");
+  Expect(inner.parent == 0 && outer.parent == microide::editor::SnippetParseResult::kNoParent,
+         "the inner names the outer as its parent");
+  Expect(parsed.occurrences[2].tab_stop == 0 && parsed.occurrences[2].start_off == 11,
+         "the final stop follows the outer's closing brace");
+
+  const auto deep = ParseSnippetBody("${1:${2:${3:x}}}");
+  Expect(deep.expanded == "x" && deep.occurrences.size() == 3u &&
+             deep.occurrences[2].parent == 1 && deep.occurrences[1].parent == 0,
+         "nesting chains");
+}
+
+// `$VAR` / `${VAR}` / `${VAR:default}` resolve through the caller's resolver: a
+// set variable inserts its value (and steps over any default), an empty one
+// inserts the default, and an unknown one inserts its name (or its default) as
+// a placeholder numbered after the last numeric stop — the same name always
+// maps to the same stop. Transforms are stepped over untransformed.
+void TestSnippetParseVariables() {
+  const auto resolve = [](std::string_view name) -> std::optional<std::string> {
+    if (name == "FILE") return std::string("main.cpp");
+    if (name == "EMPTY") return std::string{};
+    return std::nullopt;
+  };
+  const auto parsed = ParseSnippetBody("$FILE ${FILE} ${FILE:ignored ${1:x}} ${EMPTY:dflt} $EMPTY|",
+                                       resolve);
+  Expect(parsed.expanded == "main.cpp main.cpp main.cpp dflt |",
+         "set variables insert their value; an empty one its default");
+  Expect(parsed.occurrences.empty(), "a stepped-over default records no stops");
+
+  const auto unknown = ParseSnippetBody("${2:b} $NOPE ${NOPE} ${OTHER:o} $1", resolve);
+  Expect(unknown.expanded == "b NOPE NOPE o ", "unknown variables insert their name or default");
+  Expect(unknown.occurrences.size() == 5u, "each unknown variable is a placeholder");
+  Expect(unknown.occurrences[1].tab_stop == 3 && unknown.occurrences[2].tab_stop == 3,
+         "the same unknown name shares one stop, numbered after the last numeric one");
+  Expect(unknown.occurrences[3].tab_stop == 4 && unknown.occurrences[3].start_off == 12 &&
+             unknown.occurrences[3].end_off == 13,
+         "a different unknown name gets the next stop, spanning its default");
+  Expect(unknown.occurrences[4].tab_stop == 1, "numeric stops keep their numbers");
+
+  const auto transformed =
+      ParseSnippetBody("${1/(.*)/${1:/upcase}/} ${FILE/\\.cpp$/.h/}x", resolve);
+  Expect(transformed.expanded == " main.cppx", "a transform is stepped over, value untransformed");
+  Expect(transformed.occurrences.size() == 1u && transformed.occurrences[0].tab_stop == 1 &&
+             transformed.occurrences[0].end_off == 0,
+         "a transformed tab stop is a plain zero-width stop");
+}
+
+// The editor's resolver: file variables from the viewport path, the comment
+// tokens from the language contract, an empty selection so its default applies.
+void TestSnippetEditorVariables() {
+  TextViewport viewport;
+  viewport.LoadContent("int x;", "/tmp/proj/main.cpp");
+  microide::editor::LanguageContractView contract;
+  contract.line_comment = "//";
+  contract.block_comment_open = "/*";
+  contract.block_comment_close = "*/";
+  viewport.SetLanguageContractView(std::move(contract));
+  const SelectionRange trigger{{0, 4}, {0, 5}};
+  using microide::editor::ResolveEditorSnippetVariable;
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_FILENAME") == "main.cpp", "filename");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_FILENAME_BASE") == "main", "stem");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_DIRECTORY") == "/tmp/proj", "dir");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_FILEPATH") == "/tmp/proj/main.cpp",
+         "path");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_CURRENT_LINE") == "int x;", "line");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_CURRENT_WORD") == "x", "word");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_LINE_NUMBER") == "1", "1-based line");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "LINE_COMMENT") == "//", "line comment");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "BLOCK_COMMENT_END") == "*/",
+         "block comment end");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "TM_SELECTED_TEXT") == std::string{},
+         "no selection: set but empty");
+  Expect(!ResolveEditorSnippetVariable(viewport, trigger, "NOT_A_THING").has_value(),
+         "an unknown name is unknown");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "CURRENT_YEAR")->size() == 4u, "year");
+  Expect(ResolveEditorSnippetVariable(viewport, trigger, "UUID")->size() == 36u, "uuid");
+
+  SnippetSessionState session;
+  viewport.BeginUndoGroup();
+  Expect(ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 6}, {0, 6}},
+                                  " $LINE_COMMENT ${TM_SELECTED_TEXT:todo}$0"),
+         "a body with variables expands");
+  Expect(viewport.lines()[0] == "int x; // todo", "variables resolve through the editor");
+}
+
+// Nested placeholders in a live session. Typing into the INNER grows the outer
+// around it; typing over the OUTER discards the inner (its text is gone), and
+// the navigation order forgets it.
+void TestSnippetNestedPlaceholderSession() {
+  {
+    TextViewport viewport;
+    viewport.LoadContent("", "/tmp/snippet.cpp");
+    SnippetSessionState session;
+    viewport.BeginUndoGroup();
+    Expect(ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 0}, {0, 0}},
+                                    "${1:foo ${2:bar}} ${3:z}$0"),
+           "a nested body expands");
+    Expect(viewport.lines()[0] == "foo bar z", "the flattened defaults are inserted");
+    Expect(session.nested_links.size() == 1u, "the inner stop is linked to the outer");
+    Expect(SnippetNavigateTab(viewport, session, false), "Tab moves to the inner stop");
+    Expect(viewport.SelectedText() == "bar", "the inner default is selected");
+    Expect(SnippetTryInsertText(viewport, session, "quux"), "typing into the inner");
+    Expect(viewport.lines()[0] == "foo quux z", "the inner default is replaced");
+    const SelectionRange& outer = session.ranges_by_tab[1][0];
+    Expect(outer.start.column == 0 && outer.end.column == 8,
+           "the outer grows around the edited inner");
+    Expect(session.ranges_by_tab[3][0].start.column == 9, "the stop after the outer shifts");
+    Expect(SnippetNavigateTab(viewport, session, true), "Shift+Tab back to the outer");
+    Expect(viewport.SelectedText() == "foo quux", "the outer selects its grown text");
+  }
+  {
+    TextViewport viewport;
+    viewport.LoadContent("", "/tmp/snippet.cpp");
+    SnippetSessionState session;
+    viewport.BeginUndoGroup();
+    Expect(ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 0}, {0, 0}},
+                                    "${1:foo ${2:bar}} ${3:z}$0"),
+           "a nested body expands");
+    Expect(SnippetTryInsertText(viewport, session, "x"), "typing over the outer");
+    Expect(viewport.lines()[0] == "x z", "the whole outer default is replaced");
+    Expect(session.ranges_by_tab.count(2) == 0, "the inner stop is discarded");
+    Expect(session.nested_links.empty(), "no link survives the outer's edit");
+    Expect(session.navigate_order.size() == 3u && session.navigate_order[1] == 3,
+           "the navigation order skips the discarded stop");
+    Expect(SnippetNavigateTab(viewport, session, false), "Tab moves on");
+    Expect(viewport.SelectedText() == "z", "straight to the stop after the outer");
+  }
 }
 
 void TestSnippetParseFallbackLeavesDollarLiteral() {
@@ -552,6 +708,11 @@ void TestSnippetManyMirrorBatchedShift() {
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/TypingReplacesSelectedDefault",
           TestSnippetTypingReplacesSelectedDefault);
+  AddTest(tests, "EditorSnippet/ParseTopLevelEscapes", TestSnippetParseTopLevelEscapes);
+  AddTest(tests, "EditorSnippet/ParseNestedPlaceholders", TestSnippetParseNestedPlaceholders);
+  AddTest(tests, "EditorSnippet/ParseVariables", TestSnippetParseVariables);
+  AddTest(tests, "EditorSnippet/EditorVariables", TestSnippetEditorVariables);
+  AddTest(tests, "EditorSnippet/NestedPlaceholderSession", TestSnippetNestedPlaceholderSession);
   AddTest(tests, "EditorSnippet/ManyMirrorBatchedShift", TestSnippetManyMirrorBatchedShift);
   AddTest(tests, "EditorSnippet/ParseHonorsEscapedDelimiters",
           TestSnippetParseHonorsEscapedDelimiters);
