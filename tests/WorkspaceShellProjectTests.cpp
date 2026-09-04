@@ -1294,6 +1294,13 @@ void TestWorkspaceShellFileFinderOpensIntoTheFocusedPane() {
   WorkspaceShell shell;
   Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
          "file finder split fixture should open the project");
+  // This test asks the finder to MATCH gamma.txt, so it depends on the background
+  // index the same way the sibling above does. Without this wait it is a race the
+  // loaded CI runner loses: the index is still empty, the query matches nothing,
+  // and the failure reads "gamma.txt should match" as if the finder regressed.
+  Expect(WaitForFileIndexPath(shell, std::filesystem::path("gamma.txt"), true,
+                              std::chrono::milliseconds(5000)),
+         "the file index must contain gamma.txt before the finder is asked to match it");
   WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
   WorkspaceShellTestAccess::OpenFile(shell, root / "alpha.txt");
   Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
@@ -1740,8 +1747,9 @@ void TestWorkspaceShellFilesShortcutOpensMatchedFileAfterDeferredIndexCacheBuild
   // asserts a match OPENS — so it has to wait for the target to be there. Without
   // this the assertion is a race the CI runner loses: the finder finds nothing,
   // Enter opens nothing, and the failure reads as a file-finder regression.
-  // (The sibling finder tests below assert focus/surface behaviour, which does not
-  // depend on the index, so they legitimately do not wait.)
+  // (A sibling finder test below made exactly the "focus behaviour does not depend
+  // on the index" assumption and skipped this wait; it then failed in CI for the
+  // reason above. Any finder test that asserts a MATCH has to wait here.)
   Expect(WaitForFileIndexPath(shell, std::filesystem::path("src/target-match.cpp"), true,
                               std::chrono::milliseconds(5000)),
          "file index should contain the target before the finder is asked to match it");
