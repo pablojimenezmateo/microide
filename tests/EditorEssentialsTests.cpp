@@ -718,8 +718,8 @@ void TestShapingToggleBlockCommentRoundTrips() {
   viewport.MoveCursorTo(0, 0);
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
          "first toggle should wrap the line in a block comment");
-  Expect(viewport.lines()[0] == "/*alpha*/",
-         "line should be wrapped exactly once");
+  Expect(viewport.lines()[0] == "/* alpha */",
+         "line should be wrapped exactly once, padded as VS Code writes it");
   // Toggling again must STRIP, not nest to `/* /*alpha*/ */`.
   viewport.MoveCursorTo(0, 0);
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
@@ -736,8 +736,49 @@ void TestShapingToggleBlockCommentSelectionStripsWithWhitespace() {
   viewport.MoveCursorTo(0, viewport.lines()[0].size(), true);
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
          "toggle should recognise an existing wrap despite surrounding whitespace");
-  Expect(viewport.lines()[0] == "   boxed   ",
-         "strip should preserve leading/trailing whitespace around the markers");
+  Expect(viewport.lines()[0] == "  boxed  ",
+         "strip should keep the whitespace around the markers and drop their padding");
+}
+
+// Found by driving the real binary: a selection toggle collapsed the selection
+// after wrapping, so the second toggle inserted an empty `/**/` at the caret
+// instead of unwrapping. VS Code keeps the wrapped text selected and the next
+// toggle finds the markers just outside the selection.
+void TestShapingToggleBlockCommentSelectionIsAToggle() {
+  TextViewport viewport;
+  viewport.LoadContent("int x;\nint y;\n", "/tmp/sample.c");
+  viewport.SelectAll();
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the wrap applies");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"/* int x;", "int y;", " */"},
+         "the selection is wrapped once, padded (got <" + viewport.lines()[0] + "|" +
+             viewport.lines()[viewport.line_count() - 1] + ">)");
+  const auto kept = viewport.selection_range();
+  Expect(kept.has_value() && kept->start == TextPosition{0, 3} && kept->end == TextPosition{2, 0},
+         "the wrapped text stays selected, markers outside");
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the second toggle applies");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"int x;", "int y;", ""},
+         "the second toggle unwraps (got <" + viewport.lines()[0] + "|" +
+             viewport.lines()[viewport.line_count() - 1] + ">)");
+  const auto after = viewport.selection_range();
+  Expect(after.has_value() && after->start == TextPosition{0, 0} && after->end == TextPosition{2, 0},
+         "the unwrapped text stays selected");
+
+  // A single-line selection: wrap, unwrap, and a selection over the markers.
+  viewport.LoadContent("a + b\n", "/tmp/sample.c");
+  viewport.MoveCursorTo(0, 2, false);
+  viewport.MoveCursorTo(0, 3, true);
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/") && viewport.lines()[0] == "a /* + */ b",
+         "an inner selection wraps with padding");
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/") && viewport.lines()[0] == "a + b",
+         "and the next toggle unwraps it");
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(0, 5, true);
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/") && viewport.lines()[0] == "/* a + b */",
+         "a whole-line selection wraps");
+  viewport.MoveCursorTo(0, 0, false);
+  viewport.MoveCursorTo(0, 11, true);
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/") && viewport.lines()[0] == "a + b",
+         "a selection covering the markers strips them");
 }
 
 void TestShapingSortLinesAscending() {
@@ -2140,6 +2181,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingToggleLineComment);
   AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentRoundTrips",
           TestShapingToggleBlockCommentRoundTrips);
+  AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentSelectionIsAToggle",
+          TestShapingToggleBlockCommentSelectionIsAToggle);
   AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentSelectionStripsWithWhitespace",
           TestShapingToggleBlockCommentSelectionStripsWithWhitespace);
   AddTest(tests, "EditorEssentials/Shaping/SortLinesAscending",

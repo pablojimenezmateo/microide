@@ -120,7 +120,9 @@ std::size_t LeadingWhitespaceCount(std::string_view s) {
 // If `content` — ignoring leading/trailing horizontal whitespace — is already
 // wrapped in `open`…`close`, returns the un-wrapped text with the surrounding
 // whitespace preserved. Otherwise returns nullopt. This makes ToggleBlockComment
-// a true toggle instead of nesting `/* /* x */ */` on repeat.
+// a true toggle instead of nesting `/* /* x */ */` on repeat. The one padding
+// space the wrap puts inside each marker (`/* x */`, as VS Code writes it) comes
+// off with the marker; any other whitespace inside stays.
 std::optional<std::string> TryStripBlockComment(std::string_view content,
                                                 std::string_view open,
                                                 std::string_view close) {
@@ -137,14 +139,77 @@ std::optional<std::string> TryStripBlockComment(std::string_view content,
   // mistaken for a wrapped block (e.g. `/*` alone must not strip to nothing).
   if (core.size() < open.size() + close.size()) return std::nullopt;
   if (!core.starts_with(open) || !core.ends_with(close)) return std::nullopt;
-  const std::string_view inner =
+  std::string_view inner =
       core.substr(open.size(), core.size() - open.size() - close.size());
+  if (inner.starts_with(' ')) inner.remove_prefix(1);
+  if (inner.ends_with(' ')) inner.remove_suffix(1);
   std::string result;
   result.reserve(content.size());
   result.append(content.substr(0, begin));
   result.append(inner);
   result.append(content.substr(end));
   return result;
+}
+
+// The position just past `text` inserted at `start`.
+TextPosition EndOfInsertion(TextPosition start, std::string_view text) {
+  const std::size_t last_newline = text.rfind('\n');
+  if (last_newline == std::string_view::npos) {
+    return TextPosition{start.line, start.column + text.size()};
+  }
+  const std::size_t newlines =
+      static_cast<std::size_t>(std::count(text.begin(), text.end(), '\n'));
+  return TextPosition{start.line + newlines, text.size() - last_newline - 1};
+}
+
+// Replaces `range` with `text` and leaves [`select_from`, `select_to`) of the
+// inserted text selected, so a second toggle sees what the first one made.
+bool ReplaceAndSelect(TextViewport& viewport,
+                      const SelectionRange& range,
+                      const std::string& text,
+                      std::size_t select_from,
+                      std::size_t select_to) {
+  if (!viewport.ReplaceRange(range, text, /*record_undo=*/true)) {
+    return false;
+  }
+  const std::string_view inserted = text;
+  const TextPosition from = EndOfInsertion(range.start, inserted.substr(0, select_from));
+  const TextPosition to = EndOfInsertion(range.start, inserted.substr(0, select_to));
+  viewport.MoveCursorTo(from.line, from.column, false);
+  viewport.MoveCursorTo(to.line, to.column, true);
+  return true;
+}
+
+// The wrap ToggleBlockComment leaves the inner text selected, so the next toggle
+// sees a selection whose markers sit just OUTSIDE it (a padding space allowed).
+// Returns the range widened over those markers, or nullopt.
+std::optional<SelectionRange> RangeOverSurroundingMarkers(const TextViewport& viewport,
+                                                          const SelectionRange& range,
+                                                          std::string_view open,
+                                                          std::string_view close) {
+  const std::string& first = viewport.lines()[range.start.line];
+  const std::string& last = viewport.lines()[range.end.line];
+  const std::string_view before = std::string_view(first).substr(0, range.start.column);
+  const std::string_view after = std::string_view(last).substr(range.end.column);
+  std::size_t open_len = 0;
+  if (before.ends_with(open)) {
+    open_len = open.size();
+  } else if (before.size() > open.size() && before.back() == ' ' &&
+             before.substr(0, before.size() - 1).ends_with(open)) {
+    open_len = open.size() + 1;
+  }
+  std::size_t close_len = 0;
+  if (after.starts_with(close)) {
+    close_len = close.size();
+  } else if (after.size() > close.size() && after.front() == ' ' &&
+             after.substr(1).starts_with(close)) {
+    close_len = close.size() + 1;
+  }
+  if (open_len == 0 || close_len == 0) {
+    return std::nullopt;
+  }
+  return SelectionRange{TextPosition{range.start.line, range.start.column - open_len},
+                        TextPosition{range.end.line, range.end.column + close_len}};
 }
 
 }  // namespace
@@ -266,9 +331,9 @@ bool ToggleBlockComment(TextViewport& viewport,
       return viewport.ReplaceRange(r, *stripped, /*record_undo=*/true);
     }
     std::string replacement;
-    replacement.reserve(open.size() + line.size() + close.size());
-    replacement.append(open);
-    replacement.append(line);
+    replacement.reserve(open.size() + line.size() + close.size() + 2);
+    replacement.append(open).push_back(' ');
+    replacement.append(line).push_back(' ');
     replacement.append(close);
     return viewport.ReplaceRange(r, replacement, /*record_undo=*/true);
   }
@@ -279,14 +344,22 @@ bool ToggleBlockComment(TextViewport& viewport,
   }
   std::string content = viewport.SelectedText();
   if (auto stripped = TryStripBlockComment(content, open, close)) {
-    return viewport.ReplaceRange(n, *stripped, /*record_undo=*/true);
+    return ReplaceAndSelect(viewport, n, *stripped, 0, stripped->size());
   }
+  // The selection a wrap leaves behind is the inner text; its markers sit just
+  // outside. Strip those, keeping the text selected.
+  if (const auto outer = RangeOverSurroundingMarkers(viewport, n, open, close)) {
+    return ReplaceAndSelect(viewport, *outer, content, 0, content.size());
+  }
+  // `/* text */`, as VS Code writes it, with the text kept selected so the next
+  // toggle strips instead of nesting.
   std::string wrapped;
-  wrapped.reserve(open.size() + content.size() + close.size());
-  wrapped.append(open);
-  wrapped.append(content);
+  wrapped.reserve(open.size() + content.size() + close.size() + 2);
+  wrapped.append(open).push_back(' ');
+  wrapped.append(content).push_back(' ');
   wrapped.append(close);
-  return viewport.ReplaceRange(n, wrapped, /*record_undo=*/true);
+  return ReplaceAndSelect(viewport, n, wrapped, open.size() + 1,
+                          open.size() + 1 + content.size());
 }
 
 namespace {
