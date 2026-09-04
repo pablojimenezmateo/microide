@@ -6,6 +6,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project aims to follow semantic versioning. microide is a stable, actively developed
 project (see [README](README.md)); versions track meaningful shipped work.
 
+## [Unreleased]
+
+### Fixed
+
+- **Typing over a snippet placeholder replaces its default text.** A language
+  server's `foo(${1:int x})` is typed over now, as in VS Code, instead of having
+  the keystroke appended (`int xy`) and the whole field re-selected after every
+  character. Backspace and Delete over a field selection remove it.
+- **Snippet bodies follow VS Code's grammar.** Top-level `\$`, `\}` and `\\`
+  escapes, nested placeholders (`${1:foo ${2:bar}}` — editing the inner grows the
+  outer, typing over the outer drops the inner), `$TM_FILENAME`-style variables
+  resolved from the file, line, clock and language contract (an unknown variable
+  becomes a placeholder), and transforms stepped over instead of spilling their
+  regex into the document.
+- **A search scope, gitignore or EditorConfig `**` no longer ends inside a path
+  segment.** `a/**/b` matched `a/ab`, `**/build` ignored `prebuild`, the scope
+  entry `tests` caught `mytests/x`, and an EditorConfig `[x.py]` section applied
+  to `ax.py`.
+- **Renaming a directory keeps its files in the index and the directory
+  watched.** On the inotify backend `mv a b` deleted `b` from the index right
+  after indexing it and stopped watching it until the next full rescan.
+- **Case-insensitive search folds all of Unicode's simple case pairs**, not the
+  Latin-1/Latin-A/Greek/Cyrillic subset: Vietnamese, accented Greek, extended
+  Cyrillic, Armenian, Georgian, Latin Extended-B and fullwidth text now match
+  across case in find, project search and the file finder.
+- **Terminal cell widths follow the Unicode data.** ⚡ ✅ ❌ and the other
+  East Asian Wide emoji in U+2600-27BF take two columns, Tangut takes two, and
+  the nonspacing marks of every Indic script take none, so prompts and TUIs
+  showing them stop drifting a column per glyph.
+- **A pasted line break reaches the terminal as Enter** (`\r`), as VTE and
+  VS Code send it, instead of a Ctrl+J byte that raw-mode programs do not bind.
+- **Smart indent no longer miscounts a leading space run that ends in `!`** (a
+  word-at-a-time fast path treated `!` after spaces as another space).
+
 ## [2.11.0] - 2026-09-03
 
 ### Added
