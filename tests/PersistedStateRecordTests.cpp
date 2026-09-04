@@ -70,20 +70,6 @@ void TestPersistedStateConfigDedupesDuplicateSettingIds() {
   Expect(tab_size_value == "8", "the last value wins for a duplicate setting id");
 }
 
-// TD-2026-07-16-36: config decode fails closed on a malformed setting id (control
-// char / space / empty) rather than smuggling it past the runtime validation choke.
-void TestPersistedStateConfigRejectsMalformedSettingId() {
-  PersistedUserConfigState user{
-      .ui_scale = 1.0f,
-      .settings = {{"bad id with space", "x"}},  // space is invalid per IsValidSettingId
-  };
-  std::vector<std::byte> encoded;
-  Expect(EncodeUserConfigRecord(user, &encoded), "encode of a malformed id should still write bytes");
-  PersistedUserConfigState decoded;
-  Expect(!DecodeUserConfigRecord(encoded, &decoded),
-         "decode must fail closed on a malformed setting id");
-}
-
 // TD-2026-07-16-36: repeated disabled keybinding/plugin ids dedupe by value on decode
 // so stale duplicates cannot inflate downstream resolution.
 void TestPersistedStateConfigDedupesDisabledIds() {
@@ -179,6 +165,164 @@ void TestPersistedStateUserAndProjectConfigRecordRoundTrip() {
   Expect(decoded_project.sidebar_policies.size() == 1 &&
              decoded_project.sidebar_policies[0].order == 3,
          "project config sidebar policy should round-trip");
+}
+
+
+// Encode/decode of the user and project config records over random content:
+// setting keys and values with control bytes, multi-byte scalars, an embedded
+// NUL, empty strings and long runs; id lists of random length; a random color.
+// Every field must come back byte for byte.
+void TestPersistedStateConfigRecordsRoundTripRandomContent() {
+  std::uint64_t state = 0xC0FFEE1234567890ull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kAtoms[] = {"a", "Z", "0", " ", "\n", "\t", "\r", "=", ":", "\"",
+                                           "\\", "é", "中", "😀", "\x01", "\x7f", "x.y", ""};
+  const auto random_string = [&](std::size_t max_atoms, bool allow_nul) {
+    std::string out;
+    const std::size_t atoms = next(max_atoms + 1);
+    for (std::size_t i = 0; i < atoms; ++i) {
+      out += kAtoms[next(std::size(kAtoms))];
+    }
+    if (allow_nul && next(8) == 0) {
+      out.push_back('\0');
+      out += "after";
+    }
+    if (next(16) == 0) {
+      out.append(3000, 'w');
+    }
+    return out;
+  };
+  for (int round = 0; round < 40; ++round) {
+    PersistedUserConfigState user;
+    user.ui_scale = 0.5f + static_cast<float>(next(300)) / 100.0f;
+    // Keys are distinct valid ids (the decoder dedupes last-writer-wins and drops
+    // an invalid id — that policy has its own test below); values are hostile.
+    const std::size_t settings = next(6);
+    for (std::size_t i = 0; i < settings; ++i) {
+      user.settings.emplace_back("k" + std::to_string(round) + "." + std::to_string(i) +
+                                     std::string(next(2), '-'),
+                                 random_string(6, true));
+    }
+    // Disabled ids dedupe on decode (covered above), so keep them distinct here.
+    const std::size_t keybindings = next(5);
+    for (std::size_t i = 0; i < keybindings; ++i) {
+      user.disabled_keybinding_ids.push_back(std::to_string(i) + random_string(3, false));
+    }
+    const std::size_t plugins = next(5);
+    for (std::size_t i = 0; i < plugins; ++i) {
+      user.disabled_plugin_ids.push_back(std::to_string(i) + random_string(3, false));
+    }
+    std::vector<std::byte> encoded;
+    Expect(EncodeUserConfigRecord(user, &encoded), "user config encodes");
+    PersistedUserConfigState decoded;
+    const auto dump = [](const std::string& text) {
+      std::string out;
+      for (const unsigned char c : text) {
+        if (c >= 0x20 && c < 0x7f) out.push_back(static_cast<char>(c));
+        else { char buf[8]; std::snprintf(buf, sizeof(buf), "\\x%02x", c); out += buf; }
+      }
+      if (out.size() > 60) out = out.substr(0, 60) + "...(" + std::to_string(text.size()) + ")";
+      return out;
+    };
+    std::string inputs;
+    for (const auto& [k, v] : user.settings) inputs += "[" + dump(k) + "=" + dump(v) + "]";
+    for (const auto& id : user.disabled_keybinding_ids) inputs += "{kb " + dump(id) + "}";
+    for (const auto& id : user.disabled_plugin_ids) inputs += "{pl " + dump(id) + "}";
+    Expect(DecodeUserConfigRecord(encoded, &decoded),
+           ("user config decodes; inputs=" + inputs + " bytes=" + std::to_string(encoded.size()))
+               .c_str());
+    Expect(std::fabs(decoded.ui_scale - user.ui_scale) < 0.0001f, "ui scale round-trips");
+    Expect(decoded.settings == user.settings,
+           ("round " + std::to_string(round) + ": settings round-trip byte for byte").c_str());
+    Expect(decoded.disabled_keybinding_ids == user.disabled_keybinding_ids,
+           "disabled keybinding ids round-trip");
+    Expect(decoded.disabled_plugin_ids == user.disabled_plugin_ids, "disabled plugin ids round-trip");
+
+    PersistedProjectConfigState project;
+    project.colorscheme_name = random_string(4, false);
+    if (next(2) == 0) {
+      project.project_base_color = SDL_Color{static_cast<Uint8>(next(256)), static_cast<Uint8>(next(256)),
+                                             static_cast<Uint8>(next(256)), static_cast<Uint8>(next(256))};
+    }
+    const std::size_t project_settings = next(6);
+    for (std::size_t i = 0; i < project_settings; ++i) {
+      project.settings.emplace_back("p" + std::to_string(round) + "." + std::to_string(i),
+                                    random_string(6, true));
+    }
+    const std::size_t policies = next(4);
+    for (std::size_t i = 0; i < policies; ++i) {
+      project.sidebar_policies.push_back(PersistedSidebarViewPolicy{
+          .view_id = random_string(3, false), .hidden = next(2) == 0, .order = static_cast<int>(next(50))});
+    }
+    std::vector<std::byte> encoded_project;
+    Expect(EncodeProjectConfigRecord(project, &encoded_project), "project config encodes");
+    PersistedProjectConfigState decoded_project;
+    Expect(DecodeProjectConfigRecord(encoded_project, &decoded_project), "project config decodes");
+    Expect(decoded_project.colorscheme_name == project.colorscheme_name, "colorscheme round-trips");
+    Expect(decoded_project.project_base_color.has_value() == project.project_base_color.has_value() &&
+               (!project.project_base_color.has_value() ||
+                (decoded_project.project_base_color->r == project.project_base_color->r &&
+                 decoded_project.project_base_color->g == project.project_base_color->g &&
+                 decoded_project.project_base_color->b == project.project_base_color->b &&
+                 decoded_project.project_base_color->a == project.project_base_color->a)),
+           "base color round-trips");
+    Expect(decoded_project.settings == project.settings,
+           ("round " + std::to_string(round) + ": project settings round-trip byte for byte").c_str());
+    Expect(decoded_project.sidebar_policies.size() == project.sidebar_policies.size(),
+           "sidebar policy count round-trips");
+    for (std::size_t i = 0; i < project.sidebar_policies.size() &&
+                            i < decoded_project.sidebar_policies.size();
+         ++i) {
+      Expect(decoded_project.sidebar_policies[i].view_id == project.sidebar_policies[i].view_id &&
+                 decoded_project.sidebar_policies[i].hidden == project.sidebar_policies[i].hidden &&
+                 decoded_project.sidebar_policies[i].order == project.sidebar_policies[i].order,
+             "sidebar policy round-trips");
+    }
+  }
+}
+
+
+// TD-2026-07-16-36 kept malformed ids (control char / space / empty) out of the
+// runtime by failing the decode. One malformed setting id now costs that entry
+// and nothing else — the validation choke still holds. Decoding used to
+// fail the whole record — every setting and disabled id gone for one bad key,
+// which is what a later version's tighter id rule does to a config an earlier
+// one wrote — and the encoder wrote such an id without complaint.
+void TestPersistedStateConfigRecordDropsOnlyTheInvalidSettingId() {
+  PersistedUserConfigState user{
+      .ui_scale = 1.25f,
+      .settings = {{"editor.tab_size", "2"}, {"has space", "x"}, {"", "y"}, {"theme", "dark"}},
+      .disabled_keybinding_ids = {"terminal.focus"},
+      .disabled_plugin_ids = {"eslint"},
+  };
+  std::vector<std::byte> encoded;
+  Expect(EncodeUserConfigRecord(user, &encoded), "the record encodes");
+  PersistedUserConfigState decoded;
+  Expect(DecodeUserConfigRecord(encoded, &decoded), "the record decodes despite the bad ids");
+  Expect(decoded.settings.size() == 2 && decoded.settings[0].first == "editor.tab_size" &&
+             decoded.settings[1].first == "theme",
+         "the valid settings survive, in order");
+  Expect(decoded.disabled_keybinding_ids.size() == 1 && decoded.disabled_plugin_ids.size() == 1,
+         "the disabled ids survive");
+  // The encoder never writes an invalid id: the bytes carry no trace of it.
+  const std::string bytes(reinterpret_cast<const char*>(encoded.data()), encoded.size());
+  Expect(bytes.find("has space") == std::string::npos, "an invalid id is not written");
+
+  PersistedProjectConfigState project{
+      .colorscheme_name = "sunrise",
+      .settings = {{"bad key", "1"}, {"editor.wrap", "word"}},
+  };
+  std::vector<std::byte> encoded_project;
+  Expect(EncodeProjectConfigRecord(project, &encoded_project), "the project record encodes");
+  PersistedProjectConfigState decoded_project;
+  Expect(DecodeProjectConfigRecord(encoded_project, &decoded_project), "and decodes");
+  Expect(decoded_project.settings.size() == 1 && decoded_project.settings[0].first == "editor.wrap",
+         "the project's valid setting survives alone");
 }
 
 PersistedProjectSessionState BuildProjectSessionFixture() {
@@ -1114,10 +1258,12 @@ void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests) {
           TestPersistedStateRejectsAdversarialLengthWithoutOom);
   AddTest(tests, "PersistedStateRecord/UserAndProjectConfigRoundTrip",
           TestPersistedStateUserAndProjectConfigRecordRoundTrip);
+  AddTest(tests, "PersistedStateRecord/ConfigRecordDropsOnlyTheInvalidSettingId",
+          TestPersistedStateConfigRecordDropsOnlyTheInvalidSettingId);
+  AddTest(tests, "PersistedStateRecord/ConfigRecordsRoundTripRandomContent",
+          TestPersistedStateConfigRecordsRoundTripRandomContent);
   AddTest(tests, "PersistedState/ConfigDedupesDuplicateSettingIds",
           TestPersistedStateConfigDedupesDuplicateSettingIds);
-  AddTest(tests, "PersistedState/ConfigRejectsMalformedSettingId",
-          TestPersistedStateConfigRejectsMalformedSettingId);
   AddTest(tests, "PersistedState/ConfigDedupesDisabledIds",
           TestPersistedStateConfigDedupesDisabledIds);
   AddTest(tests, "PersistedState/CommitDraftBodyBudget",

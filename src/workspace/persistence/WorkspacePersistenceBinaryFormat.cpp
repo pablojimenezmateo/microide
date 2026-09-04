@@ -70,6 +70,9 @@ bool EncodeUserConfigRecord(const PersistedUserConfigState& state, std::vector<s
     return false;
   }
   for (const auto& setting : state.settings) {
+    if (!SettingsStore::IsValidSettingId(setting.first)) {
+      continue;  // never written: the decoder would drop it (see there)
+    }
     std::vector<std::byte> payload;
     if (!EncodeSettingPair(setting, &payload) ||
         !AppendTaggedRecord(static_cast<std::uint16_t>(UserConfigTag::Setting), payload, out)) {
@@ -122,10 +125,13 @@ bool DecodeUserConfigRecord(std::span<const std::byte> input, PersistedUserConfi
                    if (!DecodeSettingPair(payload, &setting)) {
                      return false;
                    }
-                   // Fail closed on a malformed setting id: runtime mutation already
-                   // rejects invalid ids, so restore must not smuggle them in.
+                   // A malformed setting id is dropped, not smuggled in (runtime
+                   // mutation rejects such ids too) — and dropped ALONE. Failing the
+                   // whole record here threw away every setting and disabled id a
+                   // user had for one bad key, which is what a rule tightened in a
+                   // later version does to a config the earlier one wrote.
                    if (!SettingsStore::IsValidSettingId(setting.first)) {
-                     return false;
+                     return true;
                    }
                    // Dedupe by id, last-writer-wins: a corrupt/hand-edited config
                    // with duplicate keys must not become a split-brain state where
@@ -188,6 +194,9 @@ bool EncodeProjectConfigRecord(const PersistedProjectConfigState& state, std::ve
     }
   }
   for (const auto& setting : state.settings) {
+    if (!SettingsStore::IsValidSettingId(setting.first)) {
+      continue;  // never written: the decoder would drop it (see there)
+    }
     std::vector<std::byte> payload;
     if (!EncodeSettingPair(setting, &payload) ||
         !AppendTaggedRecord(static_cast<std::uint16_t>(ProjectConfigTag::Setting), payload, out)) {
@@ -294,7 +303,7 @@ bool DecodeProjectConfigRecord(std::span<const std::byte> input, PersistedProjec
                    }
                    // Fail closed on a malformed setting id (see DecodeUserConfigRecord).
                    if (!SettingsStore::IsValidSettingId(setting.first)) {
-                     return false;
+                     return true;  // dropped alone, see DecodeUserConfigRecord
                    }
                    // Dedupe by id, last-writer-wins (see DecodeUserConfigRecord).
                    const std::size_t existing = setting_index.Find(setting.first);
