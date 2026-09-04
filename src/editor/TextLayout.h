@@ -39,6 +39,12 @@ struct LineLayoutFacts {
   // instead of walking to it. Read only when `known`.
   bool plain_ascii = false;
   bool known = false;
+  // `leading_tabs` tabs and then only plain single-cell ASCII: every indented
+  // line of a tab-indented file. Column conversions are then arithmetic
+  // (`leading_tabs * tab_size` cells of indentation, one cell per byte after).
+  // Read only when `known`; false whenever the run does not fit the table.
+  bool tab_indented = false;
+  std::size_t leading_tabs = 0;
 };
 
 class TextLayout {

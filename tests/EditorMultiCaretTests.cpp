@@ -6,6 +6,7 @@
 #include "editor/LanguageContractView.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextBuffer.h"
+#include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
 
 namespace microide::tests {
@@ -13,6 +14,7 @@ namespace {
 
 using microide::editor::FoldingModel;
 using microide::editor::TextPosition;
+using microide::editor::TextLayout;
 using microide::editor::TextViewport;
 
 FoldingModel::ComputeOptions DefaultFoldOptions() {
@@ -653,6 +655,113 @@ void TestSetBoxSelectionSelectsEachLineAcrossColumns() {
          "line 1 should select columns 1..4 with its caret at the caret column");
 }
 
+// The box is a rectangle of visual columns, as in VS Code. It used to be built
+// from byte columns clamped per line, so over a tab-indented or non-ASCII line
+// the selection slid by the byte count: with the anchor after `a` on `a\tb` and
+// the caret at visual column 6 on the ASCII line, the accented line got bytes
+// 1..6 — starting mid-character, then snapped — instead of the cells 1..6.
+void TestSetBoxSelectionIsRectangularInVisualColumns() {
+  TextViewport viewport;
+  viewport.LoadContent("a\tb\nabcdefgh\n\xc3\xa9\xc3\xa9\xc3\xa9\xc3\xa9\n", "/tmp/mc-box-visual.txt");
+  viewport.SetTabSize(4);
+
+  // Anchor after `a` on line 0 (visual column 1); caret at byte/visual column 6 on
+  // the ASCII line 1.
+  viewport.SetBoxSelection(TextPosition{0, 1}, TextPosition{1, 6});
+  const auto primary = viewport.selection_range();
+  Expect(primary.has_value() && primary->start == TextPosition{1, 1} &&
+             primary->end == TextPosition{1, 6},
+         "the ASCII caret line spans visual columns 1..6 as bytes 1..6");
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 1, "one secondary range for the other line");
+  // On `a\tb` visual 1 is byte 1 (before the tab) and visual 6 is past the line's
+  // 5 cells, so the range ends at the line's end (byte 3).
+  Expect(ranges.size() == 1 && ranges[0].selection_anchor == std::optional<TextPosition>(TextPosition{0, 1}) &&
+             ranges[0].position == TextPosition{0, 3},
+         "the tab line maps the visual columns through its tab");
+
+  // Now extend the same box down onto the accented line (4 two-byte characters,
+  // 4 cells). A corner is a text position on its own line, so visual column 6
+  // there is byte 8 plus two virtual cells: byte column 10. Visual 1 is byte 2.
+  viewport.SetBoxSelection(TextPosition{0, 1}, TextPosition{2, 10});
+  const auto primary2 = viewport.selection_range();
+  Expect(primary2.has_value() && primary2->start == TextPosition{2, 2} &&
+             primary2->end == TextPosition{2, 8},
+         "the accented line selects whole characters at the box's visual columns");
+  const auto ranges2 = viewport.secondary_caret_ranges();
+  Expect(ranges2.size() == 2 && ranges2[1].selection_anchor == std::optional<TextPosition>(TextPosition{1, 1}) &&
+             ranges2[1].position == TextPosition{1, 6},
+         "the ASCII line keeps bytes 1..6");
+
+  // A corner past the end of its line is a virtual column: anchoring at byte 6 of
+  // `a\tb` (5 cells wide, 3 bytes) means visual column 8, so the ASCII line
+  // selects up to byte 8.
+  viewport.SetBoxSelection(TextPosition{0, 6}, TextPosition{1, 0});
+  const auto primary3 = viewport.selection_range();
+  Expect(primary3.has_value() && primary3->start == TextPosition{1, 0} &&
+             primary3->end == TextPosition{1, 8},
+         "a corner beyond its line's end is one cell per extra byte");
+  // The visual width of the span bounds the keyboard gesture: the accented line
+  // is 4 cells, the ASCII line 8, the tab line 5.
+  Expect(viewport.MaxVisualWidthInSpan(0, 2) == 8, "the widest line counts cells, not bytes");
+}
+
+// The per-line mapping has an arithmetic fast path for "leading tabs, then plain
+// ASCII" (every indented line of a tab-indented file) so a held column-select
+// gesture over kernel-style code does not walk each line per keystroke. It must
+// agree with the general walk, tab rounding included, on every visual column.
+void TestBoxColumnsOnLineTabArithmeticAgreesWithTheWalk() {
+  std::uint64_t state = 0x2545f4914f6cdd1dULL;
+  const auto next = [&](std::size_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return static_cast<std::size_t>(state % bound);
+  };
+  for (int round = 0; round < 200; ++round) {
+    const std::size_t tabs = next(5);
+    const std::size_t tail = next(12);
+    std::string line(tabs, '\t');
+    for (std::size_t i = 0; i < tail; ++i) {
+      line.push_back(static_cast<char>('a' + next(26)));
+    }
+    if (next(4) == 0) {
+      line += "\t";  // a tab past the indentation takes the walk
+    }
+    if (next(6) == 0) {
+      line += "\xc3\xa9";  // so does a multi-byte character
+    }
+    TextViewport viewport;
+    viewport.LoadContent(line + "\nother\n", "/tmp/mc-box-tabs.txt");
+    const std::size_t tab_size = 2 + next(7);
+    viewport.SetTabSize(tab_size);
+    if (round % 2 == 0) {
+      (void)viewport.max_visual_columns();  // the width-table path, as after a paint
+    }
+    const std::size_t width = TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size);
+    for (std::size_t v1 = 0; v1 <= width + 2; ++v1) {
+      const std::size_t v2 = next(width + 3);
+      std::size_t a = 0;
+      std::size_t c = 0;
+      viewport.BoxColumnsOnLine(0, v1, v2, &a, &c);
+      const std::size_t expected_a = TextLayout::TextColumnForVisualColumn(line, v1, tab_size);
+      const std::size_t expected_c = TextLayout::TextColumnForVisualColumn(line, v2, tab_size);
+      const std::size_t via_accessor = viewport.TextColumnAtVisualColumn(0, v1);
+      const std::size_t back = viewport.VisualColumnAt(0, expected_a);
+      if (a != expected_a || c != expected_c || via_accessor != expected_a ||
+          back != TextLayout::VisualColumnForTextColumn(line, expected_a, tab_size)) {
+        Expect(false, "box column mapping disagrees with the walk on tabs=" + std::to_string(tabs) +
+                          " tail=" + std::to_string(tail) + " tab_size=" + std::to_string(tab_size) +
+                          " v1=" + std::to_string(v1) + " v2=" + std::to_string(v2) + ": got " +
+                          std::to_string(a) + "," + std::to_string(c) + " expected " +
+                          std::to_string(expected_a) + "," + std::to_string(expected_c));
+        return;
+      }
+    }
+    Expect(viewport.MaxVisualWidthInSpan(0, 0) == width, "the span width agrees with the walk");
+  }
+}
+
 // A leftward (caret column < anchor column) box drag must keep every caret on
 // the caret column, aligned with the primary, not stranded on the anchor edge.
 // Regression: SetSecondaryCaretsWithRanges normalized each range and forced the
@@ -1114,6 +1223,10 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestPlaceColumnCaretsBetweenLinesUsesAnchorColumnOnEveryLine);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionSelectsEachLineAcrossColumns",
           TestSetBoxSelectionSelectsEachLineAcrossColumns);
+  AddTest(tests, "EditorMultiCaret/SetBoxSelectionIsRectangularInVisualColumns",
+          TestSetBoxSelectionIsRectangularInVisualColumns);
+  AddTest(tests, "EditorMultiCaret/BoxColumnsOnLineTabArithmeticAgreesWithTheWalk",
+          TestBoxColumnsOnLineTabArithmeticAgreesWithTheWalk);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionLeftwardKeepsCaretsOnCaretColumn",
           TestSetBoxSelectionLeftwardKeepsCaretsOnCaretColumn);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionClampsShortLinesToEndOfLine",

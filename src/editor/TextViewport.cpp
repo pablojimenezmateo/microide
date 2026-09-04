@@ -761,11 +761,13 @@ void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
                                                  std::size_t target_line,
                                                  std::size_t column) {
   // Zero-width column carets are the degenerate box selection where both corners
-  // share `column`; delegate so the span cap and caret-set construction live once.
-  SetBoxSelection(TextPosition{anchor_line, column}, TextPosition{target_line, column});
+  // share a visual column; delegate so the span cap and caret-set construction
+  // live once.
+  const std::size_t visual = BoxCornerVisualColumn(TextPosition{anchor_line, column});
+  SetBoxSelectionVisual(anchor_line, visual, target_line, visual);
 }
 
-std::size_t TextViewport::MaxLineLengthInSpan(std::size_t lo, std::size_t hi) const {
+std::size_t TextViewport::MaxVisualWidthInSpan(std::size_t lo, std::size_t hi) const {
   if (document_->lines.empty()) {
     return 0;
   }
@@ -779,23 +781,131 @@ std::size_t TextViewport::MaxLineLengthInSpan(std::size_t lo, std::size_t hi) co
                               hi - lo + 1);
   std::size_t longest = 0;
   for (std::size_t line = lo; line <= hi; ++line) {
-    longest = std::max(longest, document_->lines.LineLength(line));
+    const std::size_t line_length = document_->lines.LineLength(line);
+    const LineLayoutFacts facts = CachedLineFacts(line);
+    if (facts.known) {
+      longest = std::max(longest, facts.visual_columns);
+      continue;
+    }
+    const std::string_view text = document_->lines.LineView(line);
+    const std::size_t tabs = util::LeadingByteRun(text, '\t');
+    const std::size_t width =
+        util::FirstNonAsciiOrByte(text.substr(tabs), '\t') == std::string_view::npos
+            ? tabs * tab_size_ + (line_length - tabs)
+            : TextLayout::VisualColumnForTextColumn(text, line_length, tab_size_);
+    longest = std::max(longest, width);
   }
   return longest;
 }
 
+std::size_t TextViewport::BoxCornerVisualColumn(TextPosition corner) const {
+  if (document_->lines.empty()) {
+    return corner.column;
+  }
+  corner.line = std::min(corner.line, document_->lines.size() - 1);
+  const std::size_t line_length = document_->lines.LineLength(corner.line);
+  const std::size_t within = std::min(corner.column, line_length);
+  // Past the end of the line the column is virtual: one cell per byte, so a box
+  // dragged out into the void keeps its width when it reaches a longer line.
+  return VisualColumnAt(corner.line, within) + (corner.column - within);
+}
+
+namespace {
+
+// Text column for a visual column on a line made of `tabs` leading tabs followed
+// by plain single-cell ASCII (every indented line of a tab-indented file):
+// arithmetic instead of a walk. Inside a tab's cells the nearest boundary wins,
+// exactly as TextLayout::TextColumnForVisualColumn rounds.
+std::size_t TabIndentedTextColumn(std::size_t visual_column, std::size_t tabs,
+                                  std::size_t tab_size, std::size_t line_length) {
+  const std::size_t indent_width = tabs * tab_size;
+  if (visual_column >= indent_width) {
+    return std::min(tabs + (visual_column - indent_width), line_length);
+  }
+  const std::size_t tab_index = visual_column / tab_size;
+  const std::size_t into_tab = visual_column % tab_size;
+  return into_tab * 2 <= tab_size ? tab_index : tab_index + 1;
+}
+
+}  // namespace
+
+void TextViewport::BoxColumnsOnLine(std::size_t line, std::size_t anchor_visual_column,
+                                    std::size_t caret_visual_column, std::size_t* anchor_column,
+                                    std::size_t* caret_column) {
+  // The per-line width table (current on any pane that has painted) answers a
+  // plain-ASCII line (visual column == byte column) and a tab-indented one
+  // (leading tabs, then one cell per byte) without reading the line at all --
+  // the two shapes that are every line of an indented source file. A held
+  // column-select gesture does this for every spanned line on every keystroke.
+  const LineLayoutFacts facts = CachedLineFacts(line);
+  if (facts.known && facts.plain_ascii) {
+    const std::size_t line_length = facts.visual_columns;
+    *anchor_column = std::min(anchor_visual_column, line_length);
+    *caret_column = std::min(caret_visual_column, line_length);
+    return;
+  }
+  if (facts.known && facts.tab_indented) {
+    const std::size_t line_length =
+        facts.leading_tabs + (facts.visual_columns - facts.leading_tabs * tab_size_);
+    *anchor_column =
+        TabIndentedTextColumn(anchor_visual_column, facts.leading_tabs, tab_size_, line_length);
+    *caret_column =
+        TabIndentedTextColumn(caret_visual_column, facts.leading_tabs, tab_size_, line_length);
+    return;
+  }
+  // Otherwise one line view (zero-copy off the piece the line lives in) and two
+  // eight-bytes-at-a-time scans bounded by the prefix the box can reach -- a byte
+  // is at least one cell, so `reach` bytes cover `reach` visual columns -- settle
+  // the same two shapes; only a line with a multi-byte character or a tab past
+  // its indentation walks, and that walk needs the whole line: zero-width or wide
+  // characters put a visual column further along, or nearer, than its byte count.
+  const std::string_view text = document_->lines.LineView(line);
+  const std::size_t line_length = text.size();
+  const std::size_t reach = std::min(std::max(anchor_visual_column, caret_visual_column), line_length);
+  const std::size_t tabs = util::LeadingByteRun(text.substr(0, reach), '\t');
+  if (util::FirstNonAsciiOrByte(text.substr(tabs, reach - tabs), '\t') == std::string_view::npos) {
+    if (tabs == 0) {
+      *anchor_column = std::min(anchor_visual_column, line_length);
+      *caret_column = std::min(caret_visual_column, line_length);
+    } else {
+      *anchor_column = TabIndentedTextColumn(anchor_visual_column, tabs, tab_size_, line_length);
+      *caret_column = TabIndentedTextColumn(caret_visual_column, tabs, tab_size_, line_length);
+    }
+    return;
+  }
+  *anchor_column = TextLayout::TextColumnForVisualColumn(text, anchor_visual_column, tab_size_);
+  *caret_column = TextLayout::TextColumnForVisualColumn(text, caret_visual_column, tab_size_);
+}
+
 void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
+  if (document_->lines.empty()) {
+    return;
+  }
+  SetBoxSelectionVisual(anchor.line, BoxCornerVisualColumn(anchor), caret.line,
+                        BoxCornerVisualColumn(caret));
+}
+
+void TextViewport::SetBoxSelectionVisual(std::size_t anchor_line,
+                                         std::size_t anchor_visual_column,
+                                         std::size_t caret_line,
+                                         std::size_t caret_visual_column) {
   util::PerformanceTrace::Scope trace_scope("TextViewport::SetBoxSelection");
   if (document_->lines.empty()) {
     return;
   }
   util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionBuilds);
+  // Every spanned line's column mapping (BoxColumnsOnLine) reads the per-line
+  // width table when it is current — it always is on a pane that has painted,
+  // which built it for its scrollbar and splices it on every edit — and falls
+  // back to a bounded read of the line otherwise. It is not primed here: an
+  // O(document) build hidden in a keystroke is the wrong trade for a viewport
+  // that never painted, which is only ever a headless one.
   const std::size_t last_line = document_->lines.size() - 1;
-  anchor.line = std::min(anchor.line, last_line);
-  caret.line = std::min(caret.line, last_line);
+  anchor_line = std::min(anchor_line, last_line);
+  caret_line = std::min(caret_line, last_line);
 
-  std::size_t lo = std::min(anchor.line, caret.line);
-  std::size_t hi = std::max(anchor.line, caret.line);
+  std::size_t lo = std::min(anchor_line, caret_line);
+  std::size_t hi = std::max(anchor_line, caret_line);
 
   // Cap the caret span. A column/box-select gesture across a multi-million-line
   // file would otherwise allocate one caret per line (and every later multi-caret
@@ -804,24 +914,20 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   // edit spans a modest number of lines.
   constexpr std::size_t kMaxColumnCarets = 10000;
   if (hi - lo + 1 > kMaxColumnCarets) {
-    if (caret.line >= hi) {
+    if (caret_line >= hi) {
       lo = hi - (kMaxColumnCarets - 1);
     } else {
       hi = lo + (kMaxColumnCarets - 1);
     }
   }
 
-  // Virtual box columns. Each line clamps them to its own length so a short line
-  // collapses to a zero-width caret at end-of-line instead of dropping out.
-  const std::size_t anchor_column = anchor.column;
-  const std::size_t caret_column = caret.column;
-
   ClearSecondaryCarets();
 
   // Build the ranged secondary set once (single clamp+sort+dedupe pass in
   // SetSecondaryCaretsWithRanges) for every line except the primary/caret line.
-  // Columns are pre-clamped to each line's length so ValidateRangeColumns accepts
-  // them; an anchor==caret range on a line yields a zero-width caret.
+  // Each line maps the two visual columns to its own nearest character boundary
+  // (a visual column beyond the line lands on its end), so ValidateRangeColumns
+  // accepts them; an anchor==caret range on a line yields a zero-width caret.
   util::AddPerformanceCounter(util::PerfCounterId::EditorBoxSelectionCaretsPlaced, hi - lo + 1);
   // Reused across keystrokes: a held column-select gesture rebuilds the whole set
   // every step, so a fresh vector here is one growing allocation per keystroke.
@@ -829,21 +935,24 @@ void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
   ranges.clear();
   util::ReserveGrowing(ranges, hi - lo);
   for (std::size_t line = lo; line <= hi; ++line) {
-    if (line == caret.line) {
+    if (line == caret_line) {
       continue;
     }
-    const std::size_t line_len = document_->lines.LineLength(line);
-    const std::size_t a = std::min(anchor_column, line_len);
-    const std::size_t c = std::min(caret_column, line_len);
+    std::size_t a = 0;
+    std::size_t c = 0;
+    BoxColumnsOnLine(line, anchor_visual_column, caret_visual_column, &a, &c);
     ranges.push_back(SelectionRange{TextPosition{line, a}, TextPosition{line, c}});
   }
 
   // Primary caret+selection on the caret line: land on the anchor column (clearing
   // any prior selection), then extend to the caret column so the primary row spans
   // the box. Equal columns leave an empty selection -> a plain column caret.
-  const std::size_t caret_line_len = document_->lines.LineLength(caret.line);
-  MoveCursorTo(caret.line, std::min(anchor_column, caret_line_len), false);
-  MoveCursorTo(caret.line, std::min(caret_column, caret_line_len), true);
+  std::size_t primary_anchor = 0;
+  std::size_t primary_caret = 0;
+  BoxColumnsOnLine(caret_line, anchor_visual_column, caret_visual_column, &primary_anchor,
+                   &primary_caret);
+  MoveCursorTo(caret_line, primary_anchor, false);
+  MoveCursorTo(caret_line, primary_caret, true);
   SetSecondaryCaretsWithRanges(ranges);
 }
 

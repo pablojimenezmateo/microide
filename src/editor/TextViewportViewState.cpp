@@ -519,6 +519,15 @@ std::size_t TextViewport::VisualColumnAt(std::size_t line, std::size_t column) c
   if (facts.known ? facts.plain_ascii : PlainAsciiThroughColumn(line, column)) {
     return std::min(column, document_->lines.LineLength(line));
   }
+  if (facts.known && facts.tab_indented) {
+    // Leading tabs then plain ASCII: arithmetic, no line read.
+    const std::size_t line_length =
+        facts.leading_tabs + (facts.visual_columns - facts.leading_tabs * tab_size_);
+    const std::size_t clamped = std::min(column, line_length);
+    return clamped <= facts.leading_tabs
+               ? clamped * tab_size_
+               : facts.leading_tabs * tab_size_ + (clamped - facts.leading_tabs);
+  }
   const std::string_view text = document_->lines.LineView(line);
   util::AddPerformanceCounter(util::PerfCounterId::EditorVisualColumnWalkBytes,
                               std::min(column, text.size()));
@@ -536,6 +545,18 @@ std::size_t TextViewport::TextColumnAtVisualColumn(std::size_t line,
   const LineLayoutFacts facts = CachedLineFacts(line);
   if (facts.known ? facts.plain_ascii : PlainAsciiThroughColumn(line, visual_column)) {
     return std::min(visual_column, document_->lines.LineLength(line));
+  }
+  if (facts.known && facts.tab_indented) {
+    // The inverse, with the nearest-boundary rounding inside a tab that
+    // TextLayout::TextColumnForVisualColumn applies.
+    const std::size_t line_length =
+        facts.leading_tabs + (facts.visual_columns - facts.leading_tabs * tab_size_);
+    const std::size_t indent_width = facts.leading_tabs * tab_size_;
+    if (visual_column >= indent_width) {
+      return std::min(facts.leading_tabs + (visual_column - indent_width), line_length);
+    }
+    const std::size_t into_tab = visual_column % tab_size_;
+    return visual_column / tab_size_ + (into_tab * 2 <= tab_size_ ? 0 : 1);
   }
   const std::string_view text = document_->lines.LineView(line);
   // Counted the same way: this walk stops at the requested visual column, which on

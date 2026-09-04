@@ -171,16 +171,23 @@ std::size_t TextLayout::NextTextColumn(std::string_view line, std::size_t text_c
 }
 
 LineLayoutFacts TextLayout::MeasureLineFacts(std::string_view line, std::size_t tab_size) {
-  const std::size_t plain_prefix = FirstNonPlainAsciiByte(line);
-  std::size_t visual_column = plain_prefix;
+  // Leading tabs first: a tab-indented file's lines all start with them, and
+  // measuring those byte by byte made the table build walk the whole file. After
+  // the run, plain ASCII is one cell per byte and the width is arithmetic.
+  const std::size_t leading_tabs = util::LeadingByteRun(line, '\t');
+  const std::size_t plain_prefix =
+      leading_tabs + FirstNonPlainAsciiByte(line.substr(leading_tabs));
+  std::size_t visual_column = leading_tabs * tab_size + (plain_prefix - leading_tabs);
   for (std::size_t i = plain_prefix; i < line.size();) {
     visual_column = AdvanceVisualColumn(visual_column, line[i], tab_size);
     i += util::Utf8SequenceLength(line, i);
   }
   return LineLayoutFacts{
       .visual_columns = visual_column,
-      .plain_ascii = plain_prefix == line.size(),
+      .plain_ascii = leading_tabs == 0 && plain_prefix == line.size(),
       .known = true,
+      .tab_indented = leading_tabs > 0 && plain_prefix == line.size(),
+      .leading_tabs = leading_tabs,
   };
 }
 

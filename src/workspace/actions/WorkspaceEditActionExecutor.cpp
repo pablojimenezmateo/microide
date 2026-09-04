@@ -358,18 +358,22 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           : id == ActionId::ColumnSelectLeft ? editor::ColumnSelectDirection::Left
                                              : editor::ColumnSelectDirection::Right;
       const editor::ColumnSelectionState before = viewport->column_selection();
-      const editor::TextPosition caret{viewport->cursor_line(), viewport->cursor_column()};
+      // The gesture works in visual columns (a step is one cell, and the box stays
+      // straight across tabs and multi-byte text), so the caret enters as the
+      // visual column it occupies.
+      const editor::TextPosition caret{viewport->cursor_line(), viewport->cursor_visual_column()};
       const std::size_t lo =
           before.active ? std::min(before.anchor.line, before.cursor.line) : caret.line;
       const std::size_t hi =
           before.active ? std::max(before.anchor.line, before.cursor.line) : caret.line;
-      // The virtual column may only grow to the longest line the box currently
+      // The virtual column may only grow to the widest line the box currently
       // covers; unbounded growth would let Right run forever over short lines.
       const editor::ColumnSelectionState after = editor::StepColumnSelection(
           before, direction, caret, viewport->line_count(),
-          viewport->MaxLineLengthInSpan(lo, hi));
+          viewport->MaxVisualWidthInSpan(lo, hi));
       viewport->SetColumnSelection(after);
-      viewport->SetBoxSelection(after.anchor, after.cursor);
+      viewport->SetBoxSelectionVisual(after.anchor.line, after.anchor.column, after.cursor.line,
+                                      after.cursor.column);
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;
     }

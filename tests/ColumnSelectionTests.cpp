@@ -108,14 +108,14 @@ void TestVirtualColumnSurvivesShortLines() {
          "the virtual column should be intact on reaching a long line again");
 }
 
-void TestMaxLineLengthInSpanFindsTheLongestLine() {
+void TestMaxVisualWidthInSpanFindsTheLongestLine() {
   TextViewport viewport = MakeRaggedViewport();
-  Expect(viewport.MaxLineLengthInSpan(1, 2) == 2,
+  Expect(viewport.MaxVisualWidthInSpan(1, 2) == 2,
          "a span of short lines should report the short maximum");
-  Expect(viewport.MaxLineLengthInSpan(0, 4) == 19,
+  Expect(viewport.MaxVisualWidthInSpan(0, 4) == 19,
          "a whole-document span should report the longest line");
-  Expect(viewport.MaxLineLengthInSpan(4, 0) == 19, "reversed bounds should be normalized");
-  Expect(viewport.MaxLineLengthInSpan(0, 99) == 19, "an out-of-range span should be clamped");
+  Expect(viewport.MaxVisualWidthInSpan(4, 0) == 19, "reversed bounds should be normalized");
+  Expect(viewport.MaxVisualWidthInSpan(0, 99) == 19, "an out-of-range span should be clamped");
 }
 
 // End to end: the stepped state fed through SetBoxSelection must produce one caret
@@ -263,7 +263,7 @@ void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
           TestHorizontalMotionSaturatesAtColumnZeroAndTheLongestLine);
   AddTest(tests, "ColumnSelection/VirtualColumnSurvivesShortLines",
           TestVirtualColumnSurvivesShortLines);
-  AddTest(tests, "ColumnSelection/MaxLineLengthInSpan", TestMaxLineLengthInSpanFindsTheLongestLine);
+  AddTest(tests, "ColumnSelection/MaxVisualWidthInSpan", TestMaxVisualWidthInSpanFindsTheLongestLine);
   AddTest(tests, "ColumnSelection/ProducesOneCaretPerSpannedLine",
           TestSteppedStateProducesOneCaretPerSpannedLine);
   AddTest(tests, "ColumnSelection/ViewportStoresAndClears",

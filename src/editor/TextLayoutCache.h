@@ -315,20 +315,37 @@ class TextLayoutCache {
   // bytes per line to carry one bit. A visual width is bounded by the line's byte
   // length, so the top bit is free.
   struct PackedLineWidth {
+    // Bit 63: plain ASCII. Bit 62: tab-indented (leading tabs, then plain
+    // ASCII). Bits 48..55: the leading-tab count of a tab-indented line (a run
+    // over 255 tabs just forgoes the flag). Bits 0..47: the visual width -- a
+    // line is at most 4 GiB of bytes and a tab at most a few cells, so it fits.
     static constexpr std::size_t kPlainAsciiBit = std::size_t{1}
                                                   << (8 * sizeof(std::size_t) - 1);
+    static constexpr std::size_t kTabIndentedBit = std::size_t{1}
+                                                   << (8 * sizeof(std::size_t) - 2);
+    static constexpr std::size_t kLeadingTabsShift = 48;
+    static constexpr std::size_t kLeadingTabsMax = 255;
+    static constexpr std::size_t kWidthMask = (std::size_t{1} << kLeadingTabsShift) - 1;
     std::size_t packed = 0;
 
     static PackedLineWidth From(LineLayoutFacts facts) {
-      return PackedLineWidth{facts.visual_columns |
-                             (facts.plain_ascii ? kPlainAsciiBit : std::size_t{0})};
+      std::size_t packed = facts.visual_columns & kWidthMask;
+      if (facts.plain_ascii) {
+        packed |= kPlainAsciiBit;
+      } else if (facts.tab_indented && facts.leading_tabs <= kLeadingTabsMax) {
+        packed |= kTabIndentedBit | (facts.leading_tabs << kLeadingTabsShift);
+      }
+      return PackedLineWidth{packed};
     }
-    std::size_t visual_columns() const { return packed & ~kPlainAsciiBit; }
+    std::size_t visual_columns() const { return packed & kWidthMask; }
     LineLayoutFacts facts() const {
+      const bool tab_indented = (packed & kTabIndentedBit) != 0;
       return LineLayoutFacts{
           .visual_columns = visual_columns(),
           .plain_ascii = (packed & kPlainAsciiBit) != 0,
           .known = true,
+          .tab_indented = tab_indented,
+          .leading_tabs = tab_indented ? (packed >> kLeadingTabsShift) & kLeadingTabsMax : 0,
       };
     }
   };

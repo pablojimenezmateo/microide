@@ -714,7 +714,60 @@ void TestClampTextColumnBoundsMalformedSequences() {
   }
 }
 
+// The facts carry a tab-indented line's shape (leading tabs, then plain ASCII)
+// so column conversions and the box mapping are arithmetic on such lines and the
+// table build does not walk them byte by byte. Checked against the walk on
+// random lines, packed through the width table's entry and back.
+void TestMeasureLineFactsRecordsTabIndentation() {
+  std::uint64_t state = 0x1234567887654321ULL;
+  const auto next = [&](std::size_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return static_cast<std::size_t>(state % bound);
+  };
+  for (int round = 0; round < 300; ++round) {
+    const std::size_t tabs = next(4) == 0 ? 0 : next(300);
+    std::string line(tabs, '\t');
+    const std::size_t tail = next(10);
+    for (std::size_t i = 0; i < tail; ++i) {
+      line.push_back(static_cast<char>('a' + next(26)));
+    }
+    const int shape = next(5);
+    if (shape == 1) line += "\t";
+    if (shape == 2) line += "\xc3\xa9";
+    if (shape == 3) line.insert(0, "x");
+    const std::size_t tab_size = 1 + next(8);
+    const LineLayoutFacts facts = TextLayout::MeasureLineFacts(line, tab_size);
+    const std::size_t width = TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size);
+    Expect(facts.visual_columns == width, "the measured width agrees with the walk");
+    const std::size_t run = line.find_first_not_of('\t') == std::string::npos
+                                ? line.size()
+                                : line.find_first_not_of('\t');
+    const bool plain_after =
+        line.find_first_not_of("abcdefghijklmnopqrstuvwxyz", run) == std::string::npos;
+    const bool expect_tab_indented = run > 0 && plain_after;
+    Expect(facts.tab_indented == expect_tab_indented &&
+               (!facts.tab_indented || facts.leading_tabs == run),
+           "tab-indented means leading tabs then plain ASCII only");
+    Expect(facts.plain_ascii == (run == 0 && plain_after),
+           "plain ASCII means no tab and no multi-byte character anywhere");
+    // Through the width table's packed entry: a run over 255 tabs forgoes the flag.
+    microide::editor::TextLayoutCache cache;
+    std::vector<std::string> lines = {line};
+    (void)cache.MaxVisualColumns(lines, tab_size, /*content_revision=*/1);
+    const LineLayoutFacts packed = cache.LineFactsIfCurrent(1, 0, tab_size, 1);
+    Expect(packed.known && packed.visual_columns == width && packed.plain_ascii == facts.plain_ascii,
+           "the packed entry keeps the width and the plain flag");
+    Expect(packed.tab_indented == (facts.tab_indented && run <= 255) &&
+               packed.leading_tabs == (packed.tab_indented ? run : 0),
+           "the packed entry keeps the tab run when it fits");
+  }
+}
+
 void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextLayout/MeasureLineFactsRecordsTabIndentation",
+          TestMeasureLineFactsRecordsTabIndentation);
   AddTest(tests, "TextLayout/VisualColumnsAreIdentityMatchesTheWalk",
           TestVisualColumnsAreIdentityMatchesTheWalk);
   AddTest(tests, "TextLayout/ClampTextColumnMatchesForwardTiling",

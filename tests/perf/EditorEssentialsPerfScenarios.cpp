@@ -148,6 +148,11 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
   vp.ClearSecondaryCarets();
   vp.ClearColumnSelection();
   vp.MoveCursorTo(5000, 8, false);
+  // A column-select gesture always happens on a pane that has painted, and the
+  // paint builds the per-line width table the box mapping reads; a viewport that
+  // never painted would build it inside the first measured step instead (an
+  // O(document) allocation burst no real gesture pays).
+  context.PumpFrames(1);
 
   // 400 Down steps: the caret set grows by one line per step and is rebuilt whole
   // each time, so allocations here scale with the SUM of the span, not its final
@@ -158,10 +163,11 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
       const std::size_t lo = state.active ? std::min(state.anchor.line, state.cursor.line) : 5000;
       const std::size_t hi = state.active ? std::max(state.anchor.line, state.cursor.line) : 5000;
       state = editor::StepColumnSelection(state, editor::ColumnSelectDirection::Down,
-                                          editor::TextPosition{vp.cursor_line(), vp.cursor_column()},
-                                          vp.line_count(), vp.MaxLineLengthInSpan(lo, hi));
+                                          editor::TextPosition{vp.cursor_line(), vp.cursor_visual_column()},
+                                          vp.line_count(), vp.MaxVisualWidthInSpan(lo, hi));
       vp.SetColumnSelection(state);
-      vp.SetBoxSelection(state.anchor, state.cursor);
+      vp.SetBoxSelectionVisual(state.anchor.line, state.anchor.column, state.cursor.line,
+                               state.cursor.column);
     }
   });
 
@@ -173,10 +179,11 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
       const std::size_t lo = std::min(state.anchor.line, state.cursor.line);
       const std::size_t hi = std::max(state.anchor.line, state.cursor.line);
       state = editor::StepColumnSelection(state, editor::ColumnSelectDirection::Right,
-                                          editor::TextPosition{vp.cursor_line(), vp.cursor_column()},
-                                          vp.line_count(), vp.MaxLineLengthInSpan(lo, hi));
+                                          editor::TextPosition{vp.cursor_line(), vp.cursor_visual_column()},
+                                          vp.line_count(), vp.MaxVisualWidthInSpan(lo, hi));
       vp.SetColumnSelection(state);
-      vp.SetBoxSelection(state.anchor, state.cursor);
+      vp.SetBoxSelectionVisual(state.anchor.line, state.anchor.column, state.cursor.line,
+                               state.cursor.column);
     }
   });
 }

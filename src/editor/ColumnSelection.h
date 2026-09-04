@@ -9,11 +9,13 @@
 // rectangular selection at all.
 //
 // The state machine is separated from the viewport so the arrow-key arithmetic can
-// be tested directly. The interesting part is the *virtual* cursor column: VSCode
-// lets a column selection extend past the end of a short line, and the caret keeps
-// its virtual column so moving down onto a long line restores the full width.
-// TextViewport clamps per line when it materializes the carets, so the virtual
-// column has to be tracked out here or it is lost on the first short line.
+// be tested directly. Columns here are VISUAL columns (cells), as in VSCode: one
+// step is one cell whatever the bytes underneath, and the box stays a rectangle
+// across tabs and multi-byte text. The interesting part is the *virtual* cursor
+// column: VSCode lets a column selection extend past the end of a short line, and
+// the caret keeps its virtual column so moving down onto a long line restores the
+// full width. TextViewport clamps per line when it materializes the carets, so the
+// virtual column has to be tracked out here or it is lost on the first short line.
 
 #include <cstddef>
 
@@ -32,19 +34,20 @@ struct ColumnSelectionState {
   // False until the first column-select keystroke. Any other caret movement resets
   // it, so a fresh gesture anchors at wherever the caret ended up.
   bool active = false;
-  // Fixed corner, captured when the gesture starts.
+  // Fixed corner, captured when the gesture starts. `column` is a visual column.
   TextPosition anchor;
-  // Moving corner. Its column is virtual: it may exceed the length of the line it
-  // currently sits on.
+  // Moving corner. Its column is a virtual visual column: it may exceed the width
+  // of the line it currently sits on.
   TextPosition cursor;
 };
 
-// Advances one step. When `state` is inactive both corners start at `caret`.
+// Advances one step. When `state` is inactive both corners start at `caret`
+// (given with its visual column).
 //
 // `line_count` bounds vertical motion; `max_column` bounds the virtual column so
 // Right cannot grow without limit on a document whose lines are all short. Callers
-// pass the longest line currently spanned by the box, which is what a user can
-// actually select.
+// pass the visual width of the widest line currently spanned by the box, which is
+// what a user can actually select.
 ColumnSelectionState StepColumnSelection(ColumnSelectionState state,
                                          ColumnSelectDirection direction,
                                          TextPosition caret,

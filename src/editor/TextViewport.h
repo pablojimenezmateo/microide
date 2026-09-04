@@ -549,20 +549,38 @@ class TextViewport {
   void SetSecondaryCaretsWithRanges(std::span<const SelectionRange> ranges);
   void ClearSecondaryCarets();
   // Places zero-width carets on every line between anchor_line and target_line
-  // (inclusive) at column. Primary caret moves to target_line; other lines become
-  // secondary carets. Clears any existing secondary carets and selection.
-  // Degenerate box selection: delegates to SetBoxSelection with both corners on
-  // `column`.
+  // (inclusive) at the visual column `column` occupies on `anchor_line`. Primary
+  // caret moves to target_line; other lines become secondary carets. Clears any
+  // existing secondary carets and selection. Degenerate box selection: delegates
+  // to SetBoxSelectionVisual with both corners on that visual column.
   void PlaceColumnCaretsBetweenLines(std::size_t anchor_line, std::size_t target_line,
                                      std::size_t column);
-  // Rectangular (column/box) selection between two corners. Every line in the row
-  // span gets a per-line selection from `anchor.column` to `caret.column`, clamped
-  // to that line's length (lines shorter than both columns collapse to a zero-width
-  // caret at end-of-line, matching VSCode column selection). The `caret` line holds
-  // the primary caret+selection; other lines become ranged secondary carets. Clears
-  // any existing secondary carets and selection. The caret span is capped so a drag
-  // across a huge file cannot allocate one caret per line.
+  // Rectangular (column/box) selection between two corners. The box is a
+  // rectangle of VISUAL columns, as in VS Code: each corner's text column is read
+  // as the visual column it occupies on its own line (a column past the end of the
+  // line is virtual: one cell per byte beyond it), and every line in the row span
+  // gets a per-line selection between those two visual columns, mapped back to
+  // the nearest character boundary on that line. Tabs and multi-byte characters
+  // therefore keep the box straight instead of sliding it by a byte count; a line
+  // shorter than both columns collapses to a zero-width caret at end-of-line. The
+  // `caret` line holds the primary caret+selection; other lines become ranged
+  // secondary carets. Clears any existing secondary carets and selection. The
+  // caret span is capped so a drag across a huge file cannot allocate one caret
+  // per line.
   void SetBoxSelection(TextPosition anchor, TextPosition caret);
+  // The same box given directly by visual columns (keyboard column selection
+  // steps a virtual visual column).
+  void SetBoxSelectionVisual(std::size_t anchor_line, std::size_t anchor_visual_column,
+                             std::size_t caret_line, std::size_t caret_visual_column);
+  // The visual column a box corner occupies on its line; past the end of the line
+  // the column is virtual (one cell per byte).
+  std::size_t BoxCornerVisualColumn(TextPosition corner) const;
+  // Maps the box's two visual columns onto one line's text columns in a single
+  // bounded read of that line: no per-call cache lookups, because a held
+  // column-select gesture does this for every spanned line on every keystroke.
+  void BoxColumnsOnLine(std::size_t line, std::size_t anchor_visual_column,
+                        std::size_t caret_visual_column, std::size_t* anchor_column,
+                        std::size_t* caret_column);
   // Keyboard column selection (Ctrl+Shift+Alt+Arrow). Lives on the viewport rather
   // than in shell interaction state so it is naturally per-tab and survives a tab
   // switch, like the secondary carets it drives. Two positions and a bool: no
@@ -571,10 +589,10 @@ class TextViewport {
   const ColumnSelectionState& column_selection() const { return column_selection_; }
   void SetColumnSelection(const ColumnSelectionState& selection) { column_selection_ = selection; }
   void ClearColumnSelection() { column_selection_ = ColumnSelectionState{}; }
-  // Longest line in [lo, hi], used to bound the virtual column when a column
-  // selection extends right. O(span), and the span is already capped by
-  // SetBoxSelection's caret limit.
-  std::size_t MaxLineLengthInSpan(std::size_t lo, std::size_t hi) const;
+  // Widest line in [lo, hi] in visual columns, used to bound the virtual column
+  // when a column selection extends right. O(span), and the span is already
+  // capped by SetBoxSelection's caret limit.
+  std::size_t MaxVisualWidthInSpan(std::size_t lo, std::size_t hi) const;
   bool has_selection() const;
   std::optional<SelectionRange> selection_range() const;
   const std::optional<AppliedEdit>& last_applied_edit() const { return last_applied_edit_; }
