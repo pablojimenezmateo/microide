@@ -2618,6 +2618,44 @@ void TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter() {
          "InsertTab should prepend an indent unit at the caret");
 }
 
+// Ctrl+D parity: every press adds the NEXT occurrence, walking forward from the
+// one the previous press added and wrapping once. The search was seeded from the
+// primary selection on every press, so the third press re-found the second
+// press's match and the dedupe swallowed it: "foo foo foo foo" could never get
+// more than two carets, and typing after three presses replaced two words.
+void TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "words.txt";
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WriteFile(file, "foo foo foo foo\nbar foo\n");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 1);
+
+  Expect(ExecuteCommand(shell, "add-cursor-next-match"), "the first press dispatches");
+  Expect(viewport.selection_range().has_value() && viewport.secondary_caret_range_view().empty(),
+         "the first press selects the word under the caret");
+  Expect(ExecuteCommand(shell, "add-cursor-next-match"), "the second press dispatches");
+  Expect(viewport.secondary_caret_range_view().size() == 1, "the second press adds the next occurrence");
+  Expect(ExecuteCommand(shell, "add-cursor-next-match"), "the third press dispatches");
+  Expect(viewport.secondary_caret_range_view().size() == 2,
+         "the third press adds the occurrence after the one the second press added");
+  Expect(ExecuteCommand(shell, "add-cursor-next-match") && ExecuteCommand(shell, "add-cursor-next-match"),
+         "two more presses dispatch");
+  Expect(viewport.secondary_caret_range_view().size() == 4,
+         "presses keep walking, wrapping onto the next line's occurrence");
+  Expect(ExecuteCommand(shell, "add-cursor-next-match"), "a press with nothing left dispatches");
+  Expect(viewport.secondary_caret_range_view().size() == 4,
+         "once every occurrence is a caret a press adds nothing");
+
+  viewport.InsertText("X");
+  Expect(viewport.lines()[0] == "X X X X" && viewport.lines()[1] == "bar X",
+         "typing replaces every occurrence the presses selected");
+}
+
 void TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6432,6 +6470,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyIndentsMultiLineSelection);
   AddTest(tests, "WorkspaceShell/TabKeyOnSingleLineInsertsTabCharacter",
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
+  AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchWalksForwardEachPress",
+          TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress);
   AddTest(tests, "WorkspaceShell/ShapingCapabilityTogglesGateExecutorCommandsAndIndentTab",
           TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab);
   AddTest(tests, "WorkspaceShell/CodeActionMenuIsCentered",

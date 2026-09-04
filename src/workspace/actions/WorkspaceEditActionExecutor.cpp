@@ -1,8 +1,10 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <optional>
+#include <span>
 #include <string>
 #include <utility>
 #include <vector>
@@ -484,9 +486,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       auto* viewport = context_.ActiveEditableViewport();
       if (viewport == nullptr) return DispatchResult::Handled;
-      // If no selection, expand to word under caret first.
+      // No selection: the word under the caret becomes the needle. For the
+      // next-match chord that IS the first press (VS Code's Ctrl+D selects the
+      // word and stops; the next press adds the next occurrence); select-all
+      // goes on to take every occurrence at once.
       if (!viewport->has_selection()) {
         viewport->SelectWordAtCursor();
+        if (id == ActionId::AddCursorAtNextMatch) {
+          context_.NotifyEditorCaretMoved();
+          return DispatchResult::Handled;
+        }
       }
       auto sel = viewport->selection_range();
       if (!sel || sel->start.line != sel->end.line || sel->start.column == sel->end.column) {
@@ -505,18 +514,74 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       const std::string_view needle_view = needle;
       const bool case_sensitive = SettingEnabled(context_, "editor.search.case_sensitive", false);
       if (id == ActionId::AddCursorAtNextMatch) {
-        if (const auto next = FindNextLiteralMatchAfterSeedWrapOnce(
-                lines, sel->start.line, a, b, needle_view, case_sensitive);
-            next.has_value()) {
+        // Each press adds the next occurrence that is not a caret yet, walking
+        // forward from the one the previous press added (VS Code's Ctrl+D). The
+        // search is seeded from the primary selection and wraps once; it used to
+        // stop there, so the third press re-found the second press's match and
+        // the dedupe swallowed it -- two carets was the most the chord could make.
+        const std::span<const editor::TextViewportUndoHistory::SecondaryCaret> taken =
+            viewport->secondary_caret_range_view();
+        std::size_t seed_line = sel->start.line;
+        std::size_t seed_start = a;
+        std::size_t seed_end = b;
+        // The presses so far took a prefix of the occurrences in cyclic document
+        // order from the primary, so the one added last is the farthest along
+        // that order: the last caret before the primary if the walk has wrapped,
+        // else the last caret after it. Seeding there makes a press one search;
+        // the hop loop below only has to skip carets placed by other means.
+        const editor::TextPosition primary_start{sel->start.line, a};
+        const auto precedes = [](const editor::TextPosition& lhs, const editor::TextPosition& rhs) {
+          return lhs.line < rhs.line || (lhs.line == rhs.line && lhs.column < rhs.column);
+        };
+        const editor::TextViewportUndoHistory::SecondaryCaret* last_added = nullptr;
+        bool wrapped = false;
+        for (const auto& caret : taken) {
+          if (!caret.selection_anchor.has_value()) {
+            continue;
+          }
+          const bool before_primary = precedes(caret.position, primary_start);
+          if (last_added == nullptr || (before_primary && !wrapped) ||
+              (before_primary == wrapped && precedes(last_added->position, caret.position))) {
+            last_added = &caret;
+            wrapped = before_primary;
+          }
+        }
+        if (last_added != nullptr && last_added->selection_anchor->line == last_added->position.line) {
+          seed_line = last_added->position.line;
+          seed_start = std::min(last_added->selection_anchor->column, last_added->position.column);
+          seed_end = std::max(last_added->selection_anchor->column, last_added->position.column);
+        }
+        std::optional<editor::SelectionRange> fresh;
+        for (std::size_t hops = 0; hops <= taken.size(); ++hops) {
+          const auto next = FindNextLiteralMatchAfterSeedWrapOnce(
+              lines, seed_line, seed_start, seed_end, needle_view, case_sensitive);
+          if (!next.has_value() || (next->line == sel->start.line && next->column == a)) {
+            break;  // wrapped back to the primary: every occurrence is a caret already
+          }
+          const editor::SelectionRange range{
+              editor::TextPosition{next->line, next->column},
+              editor::TextPosition{next->line, next->column + needle_view.size()},
+          };
+          const bool already_a_caret = std::any_of(
+              taken.begin(), taken.end(),
+              [&](const editor::TextViewportUndoHistory::SecondaryCaret& caret) {
+                return caret.position == range.end && caret.selection_anchor == range.start;
+              });
+          if (!already_a_caret) {
+            fresh = range;
+            break;
+          }
+          seed_line = range.start.line;
+          seed_start = range.start.column;
+          seed_end = range.end.column;
+        }
+        if (fresh.has_value()) {
           // Add the match as a RANGED secondary caret (anchor at match start,
           // cursor at match end) so multi-caret typing replaces the occurrence
           // and copy aggregates it -- VS Code parity. Bare positions through
           // SetSecondaryCarets would drop the selection anchor. This appends to
           // and preserves any secondary carets from prior presses.
-          viewport->AddSecondaryCaretWithRange(editor::SelectionRange{
-              editor::TextPosition{next->line, next->column},
-              editor::TextPosition{next->line, next->column + needle_view.size()},
-          });
+          viewport->AddSecondaryCaretWithRange(*fresh);
         }
       } else {
         // Add a ranged cursor at every match in the file, each keeping its
