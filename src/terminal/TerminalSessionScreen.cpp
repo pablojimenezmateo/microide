@@ -38,6 +38,7 @@ void TerminalSession::EnsureCursorLineExistsLocked() {
 
 void TerminalSession::SaveCursorLocked() {
   saved_cursor_row_ = cursor_row_;
+  ClampPendingWrapColumn(cursor_column_, columns_);
   saved_cursor_column_ = cursor_column_;
   saved_style_ = current_style_;
   saved_origin_mode_ = origin_mode_;

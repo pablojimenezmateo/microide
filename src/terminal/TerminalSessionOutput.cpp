@@ -417,6 +417,9 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         break;
       }
       case '\b':
+        // From the pending-wrap column a backspace lands on the second-to-last
+        // column, as in xterm (see ClampPendingWrapColumnLocked).
+        ClampPendingWrapColumn(cursor_column_, columns_);
         if (cursor_column_ > 0) {
           --cursor_column_;
         }
@@ -432,6 +435,9 @@ void TerminalSession::AppendOutputLocked(std::string_view data) {
         // underlying glyphs intact, so `ABCDEFGHIJ\r\tX` yields `ABCDEFGHXJ`, not
         // `        XJ`. A later write past the current line length pads the gap
         // with default-style blanks via ResizeLineLocked, so no fill is needed here.
+        // Not clamped: a tab at the pending-wrap column leaves the wrap pending,
+        // as xterm.js does (its tab() returns before moving when x >= cols), so
+        // the next glyph still wraps.
         cursor_column_ = NextTabStopLocked(cursor_column_);
         break;
       }

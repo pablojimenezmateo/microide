@@ -1992,6 +1992,71 @@ void TestTerminalSessionTabAtPendingWrapDoesNotMoveBackward() {
   Expect(session.cursor_column() == 8, "a tab at pending-wrap must not snap the cursor backward");
 }
 
+// At the pending-wrap column (a glyph just filled the last column) every
+// operation but the next glyph sees the cursor ON the last column, as in xterm
+// and xterm.js: CUB 1 lands on the second-to-last column, EL erases the last
+// glyph, DCH deletes it, backspace steps to the second-to-last column, and a
+// saved cursor restores onto the last column. Each was one column off before
+// (found against pyte), which is where readline and zsh redraw at the margin.
+void TestTerminalSessionPendingWrapColumnActsAsLastColumn() {
+  // An erased cell is a blank cell, not a shorter line: compare without the
+  // trailing blanks.
+  const auto trimmed_row = [](const microide::terminal::TerminalSession& session) {
+    std::string text = LineText(session.SnapshotLines()[0]);
+    while (!text.empty() && text.back() == ' ') {
+      text.pop_back();
+    }
+    return text;
+  };
+  const auto fresh = [](microide::terminal::TerminalSession& session) {
+    TerminalSessionTestAccess::Reset(session, 4, 8);
+    TerminalSessionTestAccess::AppendOutput(session, "abcdefgh");
+    Expect(session.cursor_column() == 8, "precondition: the cursor is at the pending-wrap column");
+  };
+  {
+    microide::terminal::TerminalSession session;
+    fresh(session);
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[DX");
+    ExpectLineText(session.SnapshotLines(), 0, "abcdefXh",
+                   "CUB 1 from pending wrap lands on the second-to-last column");
+  }
+  {
+    microide::terminal::TerminalSession session;
+    fresh(session);
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[K");
+    Expect(trimmed_row(session) == "abcdefg", "EL from pending wrap erases the last glyph");
+    Expect(session.cursor_column() == 7, "and leaves the cursor on the last column");
+  }
+  {
+    microide::terminal::TerminalSession session;
+    fresh(session);
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[P");
+    Expect(trimmed_row(session) == "abcdefg", "DCH from pending wrap deletes the last glyph");
+  }
+  {
+    microide::terminal::TerminalSession session;
+    fresh(session);
+    TerminalSessionTestAccess::AppendOutput(session, "\bX");
+    ExpectLineText(session.SnapshotLines(), 0, "abcdefXh",
+                   "backspace from pending wrap steps to the second-to-last column");
+  }
+  {
+    microide::terminal::TerminalSession session;
+    fresh(session);
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b" "7\r\x1b" "8X");
+    ExpectLineText(session.SnapshotLines(), 0, "abcdefgX",
+                   "a cursor saved at pending wrap restores onto the last column");
+  }
+  {
+    microide::terminal::TerminalSession session;
+    fresh(session);
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[1mX");
+    const auto lines = session.SnapshotLines();
+    ExpectLineText(lines, 0, "abcdefgh", "SGR between the last glyph and the next keeps the wrap");
+    ExpectLineText(lines, 1, "X", "so the next glyph still wraps to the next row");
+  }
+}
+
 // EL 2 (CSI 2K) at the pending-wrap column must not grow the line one cell past
 // the right margin.
 void TestTerminalSessionEraseWholeLineDoesNotOvergrowAtPendingWrap() {
@@ -2687,6 +2752,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionIgnoresDelInOutputStream);
   AddTest(tests, "TerminalSession/TabAtPendingWrapDoesNotMoveBackward",
           TestTerminalSessionTabAtPendingWrapDoesNotMoveBackward);
+  AddTest(tests, "TerminalSession/PendingWrapColumnActsAsLastColumn",
+          TestTerminalSessionPendingWrapColumnActsAsLastColumn);
   AddTest(tests, "TerminalSession/EraseWholeLineDoesNotOvergrowAtPendingWrap",
           TestTerminalSessionEraseWholeLineDoesNotOvergrowAtPendingWrap);
   AddTest(tests, "TerminalSession/CellIsTriviallyCopyableAndCompact",

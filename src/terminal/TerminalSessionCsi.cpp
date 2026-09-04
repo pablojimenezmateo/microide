@@ -1,5 +1,7 @@
 #include "terminal/TerminalSession.h"
 
+#include "terminal/TerminalInternalConstants.h"
+
 #include "terminal/TerminalAnsiColors.h"
 #include "terminal/TerminalCsiParser.h"
 #include "terminal/TerminalSessionEscapeInternal.h"
@@ -100,6 +102,26 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     return;
   }
 
+  // The pending-wrap (LCF) column: after a glyph lands in the last column the
+  // cursor is kept at cursor_column_ == columns_ so the NEXT glyph wraps, but to
+  // every other operation the cursor is on the last column, as in xterm — CUB 1
+  // from there lands on the second-to-last column, EL erases the last glyph,
+  // ECH/ICH/DCH act on it, and a save records it. Without this clamp each of
+  // those was one column off right after a line was filled, which is exactly
+  // where readline and zsh redraw a prompt at the margin. SGR, DA, DECSCUSR,
+  // TBC and DECSTBM leave the cursor alone (an attribute change between the
+  // last glyph and the next must not stop the wrap); found against pyte.
+  switch (final) {
+    case 'c':
+    case 'm':
+    case 'q':
+    case 'g':
+    case 'r':
+      break;
+    default:
+      ClampPendingWrapColumn(cursor_column_, columns_);
+      break;
+  }
   switch (final) {
     case 'c':
       SendBytesLocked("\x1b[?1;2c");
@@ -403,6 +425,7 @@ void TerminalSession::HandleEscapeSequenceLocked(std::string_view sequence) {
     }
     case 's':
       saved_cursor_row_ = cursor_row_;
+      ClampPendingWrapColumn(cursor_column_, columns_);
       saved_cursor_column_ = cursor_column_;
       return;
     case 'u':
