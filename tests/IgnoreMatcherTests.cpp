@@ -109,6 +109,45 @@ void TestIgnoreMatcherNegationAndDirectoryRules() {
   Expect(!matcher.Ignored("keep.tmp", false), "a later negation should un-ignore the file");
 }
 
+// git's verdict for a path inside a directory: the directory's own verdict wins
+// (gitignore(5): a parent's exclusion cannot be undone for its children), and a
+// slash-free rule names the ENTRY, not its ancestors. The old form tested a
+// basename rule against every path component, so `!a?` re-included `ab/a` by
+// matching the parent `ab`, and a directory-only `build/` never reached
+// `build/x.o` because the file's type was checked first. Found against
+// `git check-ignore` over generated rule sets.
+void TestIgnoreMatcherAncestorVerdictWinsAndNamesMatchTheEntry() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  WriteFile(root / ".gitignore", "?\n!a?\nbuild/\n!build/keep.txt\nout\n!out/keep.txt\n");
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  // `?` ignores the one-letter entry `a`; `!a?` names two-letter entries and must
+  // not re-include `a` for sitting under `ab`.
+  Expect(matcher.Ignored("ab", true) == false, "`!a?` re-includes the two-letter directory");
+  Expect(matcher.Ignored("ab/a", true), "`?` ignores ab/a; the parent's `!a?` does not reach it");
+  Expect(matcher.Ignored("ab/a/x.txt", false), "everything under an ignored directory is ignored");
+
+  // A directory-only rule reaches the files beneath the directory it names.
+  Expect(matcher.Ignored("build", true), "`build/` ignores the directory");
+  Expect(!matcher.Ignored("build", false), "`build/` does not ignore a file named build");
+  Expect(matcher.Ignored("build/x.o", false), "a file under `build/` is ignored");
+  Expect(matcher.Ignored("build/keep.txt", false),
+         "`!build/keep.txt` cannot re-include a file whose parent is excluded");
+  Expect(matcher.Ignored("out/keep.txt", false),
+         "the same holds for a slash-free `out` rule on the parent");
+
+  // The entry-only form is for callers that pruned ignored directories: it
+  // answers for the entry alone and never walks ancestors.
+  Expect(!matcher.IgnoredEntryNormalized("build/x.o", false),
+         "the entry form does not apply the parent's verdict");
+  Expect(!matcher.IgnoredEntryNormalized("ab/a/x.txt", false),
+         "the entry form does not apply the grandparent's verdict");
+  Expect(matcher.IgnoredEntryNormalized("ab/a", true), "the entry form still matches the entry");
+}
+
 void TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -181,6 +220,9 @@ void TestIgnoreMatcherDoubleStarCrossesDirectories() {
   Expect(!matcher.Ignored("other/generated", false),
          "src/**/generated must not match a different top segment");
 
+  Expect(matcher.Ignored("logs", true),
+         "logs/** ignores the logs directory itself, as git does");
+  Expect(!matcher.Ignored("logs", false), "logs/** does not ignore a FILE named logs");
   Expect(matcher.Ignored("logs/today.txt", false), "logs/** should match a direct child");
   Expect(matcher.Ignored("logs/2026/07/today.txt", false),
          "logs/** should match a deeply nested child");
@@ -442,6 +484,8 @@ void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
           TestIgnoreMatcherNegationAndDirectoryRules);
   AddTest(tests, "IgnoreMatcher/DefaultRulesGrayVcsAndBuildDirs",
           TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs);
+  AddTest(tests, "IgnoreMatcher/AncestorVerdictWinsAndNamesMatchTheEntry",
+          TestIgnoreMatcherAncestorVerdictWinsAndNamesMatchTheEntry);
   AddTest(tests, "IgnoreMatcher/ExcludeGlobsAndReinclude",
           TestIgnoreMatcherExcludeGlobsAndReinclude);
   AddTest(tests, "IgnoreMatcher/DoubleStarCrossesDirectories",

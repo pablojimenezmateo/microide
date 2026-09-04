@@ -105,7 +105,7 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
       state->ancestors_ignored = 0;
       for (std::string_view parent = util::NormalizedParentDirectoryView(relative);
            !parent.empty() && parent != ".";) {
-        if (matcher.IgnoredNormalized(parent, true)) {
+        if (matcher.IgnoredEntryNormalized(parent, true)) {
           state->ancestors_ignored = 1;
           break;
         }
@@ -124,7 +124,7 @@ bool ProjectTraversalFilter::Includes(const std::filesystem::path& path, platfor
 
   // `relative` is already lexically-normalized, so the string_view overload skips
   // the per-call re-normalization the path overload would otherwise perform.
-  return !matcher.IgnoredNormalized(relative, is_directory);
+  return !matcher.IgnoredEntryNormalized(relative, is_directory);
 }
 
 ProjectTraversalFilter::DirectoryState* ProjectTraversalFilter::StateForParentDirectoryText(

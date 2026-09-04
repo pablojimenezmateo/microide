@@ -141,7 +141,7 @@ void CollectFiles(const std::filesystem::path& root,
       // actually descend into — otherwise every ignored dir (node_modules, build, .git,
       // target, dist, __pycache__) pays a rules-vector copy + 2 syscalls per refresh just
       // to be discarded. Mirrors DirectoryTree::AppendDirectory.
-      if (matcher->IgnoredNormalized(matcher_relative_text, true)) {
+      if (matcher->IgnoredEntryNormalized(matcher_relative_text, true)) {
         iterator.increment(error);
         continue;
       }
@@ -161,7 +161,7 @@ void CollectFiles(const std::filesystem::path& root,
       continue;
     }
 
-    if (matcher->IgnoredNormalized(matcher_relative_text, false)) {
+    if (matcher->IgnoredEntryNormalized(matcher_relative_text, false)) {
       iterator.increment(error);
       continue;
     }

@@ -153,26 +153,56 @@ bool IgnoreMatcher::Ignored(const std::filesystem::path& relative_path, bool is_
   return IgnoredNormalized(ToSlash(relative_path), is_directory);
 }
 
-bool IgnoreMatcher::IgnoredNormalized(std::string_view normalized_relative_path,
-                                      bool is_directory) const {
-  // Same traversal the per-rule basename loop used to run, so a trailing '/' still
-  // yields no empty final component and "a//b" still yields the empty middle one.
-  PathComponents components;
-  for (std::size_t start = 0; start < normalized_relative_path.size();) {
-    const std::size_t end = normalized_relative_path.find('/', start);
-    if (end == std::string_view::npos) {
-      components.push_back(normalized_relative_path.substr(start));
-      break;
-    }
-    components.push_back(normalized_relative_path.substr(start, end - start));
-    start = end + 1;
+namespace {
+
+// The final '/'-separated component of a normalized path (a trailing separator
+// is not a component; "a//b" yields "b").
+std::string_view LastComponentOf(std::string_view path) {
+  while (!path.empty() && path.back() == '/') {
+    path.remove_suffix(1);
   }
-  return IgnoredWithComponents(normalized_relative_path, components, is_directory);
+  const std::size_t slash = path.rfind('/');
+  return slash == std::string_view::npos ? path : path.substr(slash + 1);
 }
 
-bool IgnoreMatcher::IgnoredWithComponents(std::string_view normalized_relative_path,
-                                          const PathComponents& components,
-                                          bool is_directory) const {
+}  // namespace
+
+bool IgnoreMatcher::IgnoredNormalized(std::string_view normalized_relative_path,
+                                      bool is_directory) const {
+  // gitignore(5): "It is not possible to re-include a file if a parent directory
+  // of that file is excluded." Every proper ancestor is a directory and gets the
+  // full last-match-wins verdict of its own; the first ignored one decides. The
+  // previous form folded this into the rules — a slash-free rule was tested
+  // against EVERY component of the path — which made a NEGATED rule whose name
+  // matched a parent directory re-include the children (`?` then `!a?` left
+  // `ab/a` un-ignored, git ignores it), and let a directory-only rule (`build/`)
+  // miss every file beneath the directory it names, because the entry's own type
+  // was checked before the parent component was. Found against `git check-ignore`
+  // over generated rule sets.
+  std::size_t component_start = 0;
+  for (std::size_t i = 0; i < normalized_relative_path.size(); ++i) {
+    if (normalized_relative_path[i] != '/') {
+      continue;
+    }
+    if (i > component_start &&
+        IgnoredEntry(normalized_relative_path.substr(0, i),
+                     normalized_relative_path.substr(component_start, i - component_start),
+                     /*is_directory=*/true)) {
+      return true;
+    }
+    component_start = i + 1;
+  }
+  return IgnoredEntryNormalized(normalized_relative_path, is_directory);
+}
+
+bool IgnoreMatcher::IgnoredEntryNormalized(std::string_view normalized_relative_path,
+                                           bool is_directory) const {
+  return IgnoredEntry(normalized_relative_path, LastComponentOf(normalized_relative_path),
+                      is_directory);
+}
+
+bool IgnoreMatcher::IgnoredEntry(std::string_view normalized_relative_path,
+                                 std::string_view last_component, bool is_directory) const {
   // Evaluate the inherited ancestor layers first, then this directory's own
   // rules on top. Because a child's rules apply strictly after its ancestors'
   // (gitignore last-match-wins), this parent-then-local recursion is exactly
@@ -181,12 +211,11 @@ bool IgnoreMatcher::IgnoredWithComponents(std::string_view normalized_relative_p
   // One bump per LAYER, so a matcher with a nested .gitignore chain reports the
   // rule sets it actually ran rather than the query it ran them for.
   util::AddPerformanceCounter(util::PerfCounterId::ProjectIgnoreFilterRuleSetEvaluations);
-  bool ignored =
-      parent_ != nullptr
-          ? parent_->IgnoredWithComponents(normalized_relative_path, components, is_directory)
-          : false;
+  bool ignored = parent_ != nullptr
+                     ? parent_->IgnoredEntry(normalized_relative_path, last_component, is_directory)
+                     : false;
   for (const auto& rule : rules_) {
-    if (!rule.Matches(normalized_relative_path, components, is_directory)) {
+    if (!rule.Matches(normalized_relative_path, last_component, is_directory)) {
       continue;
     }
     ignored = !rule.negated;
@@ -215,14 +244,9 @@ bool IgnoreMatcher::Rule::MatchesText(std::string_view text) const {
 }
 
 bool IgnoreMatcher::Rule::Matches(std::string_view relative_path,
-                                  const PathComponents& components, bool is_directory) const {
-  if (directory_only && !is_directory) {
-    return false;
-  }
-
+                                  std::string_view last_component, bool is_directory) const {
   // base_prefix is empty when base_relative is empty or ".", i.e. the rule applies
   // from the root and needs no path stripping.
-  std::size_t first_component = 0;
   if (!base_prefix.empty()) {
     if (relative_path == base_relative) {
       return false;
@@ -231,22 +255,25 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path,
       return false;
     }
     relative_path.remove_prefix(base_prefix.size());
-    // The prefix ends on a separator, so the stripped remainder is exactly the
-    // component list minus its first `base_component_count` entries.
-    first_component = base_component_count;
   }
 
   if (relative_path.empty()) {
     return false;
   }
 
-  if (match_basename) {
-    for (std::size_t index = first_component; index < components.size(); ++index) {
-      if (MatchesText(components[index])) {
-        return true;
-      }
-    }
+  // The entry's own type decides a directory-only rule: a rule that names a
+  // directory reaches the files beneath it through the ancestor walk in
+  // IgnoredNormalized, not by matching the file.
+  if (directory_only && !is_directory) {
     return false;
+  }
+
+  // A slash-free pattern matches the entry's own name at any depth. Only the
+  // entry's name: a match on a PARENT's name is that parent's verdict, which the
+  // ancestor walk applies with git's cannot-re-include rule (a negated rule
+  // matching a parent name must not re-include the children).
+  if (match_basename) {
+    return MatchesText(last_component);
   }
 
   // Anchored (slash-bearing) patterns are pinned to the .gitignore's directory:
@@ -255,7 +282,20 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path,
   // GlobMatches folds, including zero directories). Do NOT float the pattern
   // across path suffixes — git does not, and doing so over-excludes files
   // (e.g. `a/b` must not match `x/a/b`).
-  return MatchesText(relative_path);
+  if (MatchesText(relative_path)) {
+    return true;
+  }
+  // `logs/**` names everything inside logs, and git also treats the DIRECTORY
+  // itself as matched (it matches a directory with its trailing slash, which the
+  // final `**` then swallows empty), so `git status` shows `logs/` ignored as a
+  // whole. Without this the directory stayed un-ignored while every child was,
+  // so the tree showed a normal folder full of grayed entries. A directory-only
+  // `logs/**/` does not get this in git, and so not here.
+  if (is_directory && !directory_only && shape == PatternShape::Glob && pattern.size() > 3 &&
+      pattern.ends_with("/**")) {
+    return GlobMatches(std::string_view(pattern).substr(0, pattern.size() - 3), relative_path);
+  }
+  return false;
 }
 
 bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule& out_rule) {
@@ -324,15 +364,8 @@ bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule&
 
   std::string base = ToSlash(std::filesystem::path(std::move(base_relative)));
   std::string base_prefix;
-  std::size_t base_component_count = 0;
   if (!base.empty() && base != ".") {
     base_prefix = base + "/";
-    base_component_count = 1;
-    for (const char c : base) {
-      if (c == '/') {
-        ++base_component_count;
-      }
-    }
   }
 
   // Classify the pattern's shape once, here, so the per-entry test below is a
@@ -363,7 +396,6 @@ bool IgnoreMatcher::ParseRule(std::string base_relative, std::string line, Rule&
       .base_prefix = std::move(base_prefix),
       .pattern = pattern,
       .literal = std::move(literal),
-      .base_component_count = base_component_count,
       .shape = shape,
       .negated = negated,
       .directory_only = directory_only,
