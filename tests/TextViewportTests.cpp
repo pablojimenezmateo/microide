@@ -5796,6 +5796,85 @@ void TestTextViewportAppliedEditReplaysRandomEdits() {
   Expect(checked >= 200, "enough edits published an AppliedEdit to mean anything");
 }
 
+
+// Undo/redo as a round trip: N random edits, then undo them all must give back
+// the original text and redo them all the final text, with the same edit set
+// as the AppliedEdit test (multi-byte scalars, line breaks, range replacements).
+void TestTextViewportUndoRedoRoundTripRandomEdits() {
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+  using microide::editor::TextViewport;
+  const auto serialize = [](const TextViewport& viewport) {
+    std::string text;
+    const auto& lines = viewport.lines();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      text += lines[i];
+      if (i + 1 < lines.size()) {
+        text += '\n';
+      }
+    }
+    return text;
+  };
+  std::uint64_t state = 0x7F4A7C159E3779B9ull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kPieces[] = {"a", "b", "\n", "é", "中", "😀", " ", "xy\nz"};
+  for (int round = 0; round < 12; ++round) {
+    TextViewport viewport;
+    viewport.LoadContent("ab\né中\n", "/tmp/undo-redo.txt");
+    const std::string original = serialize(viewport);
+    std::vector<std::string> after_each;
+    for (int step = 0; step < 40; ++step) {
+      const std::size_t line = next(viewport.lines().size());
+      const std::size_t column =
+          microide::editor::TextLayout::ClampTextColumn(viewport.lines()[line], next(64));
+      const std::size_t kind = next(4);
+      if (kind == 0) {
+        viewport.MoveCursorTo(line, column, false);
+        viewport.InsertText(kPieces[next(std::size(kPieces))]);
+      } else if (kind == 1) {
+        viewport.MoveCursorTo(line, column, false);
+        viewport.Backspace();
+      } else if (kind == 2) {
+        viewport.MoveCursorTo(line, column, false);
+        viewport.DeleteForward();
+      } else {
+        const std::size_t end_line = std::min(viewport.lines().size() - 1, line + next(2));
+        const std::size_t end_column =
+            microide::editor::TextLayout::ClampTextColumn(viewport.lines()[end_line], next(64));
+        SelectionRange range{TextPosition{line, column}, TextPosition{end_line, end_column}};
+        viewport.ReplaceRange(TextViewport::NormalizeRange(range),
+                              kPieces[next(std::size(kPieces))], true);
+      }
+      after_each.push_back(serialize(viewport));
+    }
+    const std::string final_text = after_each.back();
+    for (std::size_t i = after_each.size(); i-- > 0;) {
+      const std::string expected = i == 0 ? original : after_each[i - 1];
+      if (after_each[i] == expected) {
+        continue;  // a no-op edit recorded nothing to undo
+      }
+      Expect(viewport.Undo(), "an edit that changed the text can be undone");
+      Expect(serialize(viewport) == expected,
+             ("round " + std::to_string(round) + " undo " + std::to_string(i) +
+              " restores the previous text; got=[" + serialize(viewport) + "] want=[" + expected +
+              "]")
+                 .c_str());
+    }
+    Expect(serialize(viewport) == original, "undoing everything restores the original");
+    while (viewport.Redo()) {
+    }
+    Expect(serialize(viewport) == final_text,
+           ("round " + std::to_string(round) + " redoing everything restores the final text; got=[" +
+            serialize(viewport) + "] want=[" + final_text + "]")
+               .c_str());
+  }
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/VerticalMovePreservesColumnWhenScrolled",
           TestTextViewportVerticalMovePreservesColumnWhenScrolled);
@@ -6146,6 +6225,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportDerivedCacheBytesTracksEachCache);
   AddTest(tests, "TextViewport/NoOpRangeReplaceDoesNotDirty",
           TestTextViewportNoOpRangeReplaceDoesNotDirty);
+  AddTest(tests, "TextViewport/UndoRedoRoundTripRandomEdits",
+          TestTextViewportUndoRedoRoundTripRandomEdits);
   AddTest(tests, "TextViewport/AppliedEditReplaysRandomEdits",
           TestTextViewportAppliedEditReplaysRandomEdits);
   AddTest(tests, "TextViewport/NoOpLineReplaceDoesNotDirty",

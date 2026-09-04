@@ -1,5 +1,8 @@
 #include "TestSupport.h"
 
+#include <cstdint>
+#include <filesystem>
+#include <iterator>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -361,7 +364,61 @@ void TestNonAsciiLineKeepsUnicodeWordBoundaries() {
 
 }  // namespace
 
+
+// The classification is one kind per BYTE of the line (the fold model and the
+// renderer index it by column), and it is a pure function of (line, state).
+// Random lines with the characters that open and close the regions of every
+// bundled language — quotes, slashes, stars, hashes, braces, backslashes,
+// multi-byte scalars — must keep both properties, and AdvanceState must agree
+// with the full highlight's end state.
+void TestSyntaxHighlighterRandomLinesKeepPerByteCoverage() {
+  using microide::editor::SyntaxHighlighter;
+  using microide::editor::SyntaxState;
+  static constexpr const char* kExtensions[] = {".cpp", ".h", ".c", ".py", ".js", ".ts",
+                                                ".rs", ".go", ".lua", ".md", ".json", ".sh",
+                                                ".html", ".css", ".java", ".yaml", ".toml",
+                                                ".txt", ".rb", ".php"};
+  static constexpr const char* kAtoms[] = {"a", "b", " ", "\"", "'", "/", "*", "#", "{", "}", "(", ")", "\\", "`", "<", ">", "-", "=", "é", "中", "0", "\t", "//", "/*", "*/", "\"\"\"", "'''"};
+  std::uint64_t state = 0x5DEECE66Dull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  std::size_t checked = 0;
+  for (const char* extension : kExtensions) {
+    const std::filesystem::path path = std::string("/tmp/random") + extension;
+    SyntaxState carried;
+    for (int line_index = 0; line_index < 120; ++line_index) {
+      std::string line;
+      const std::size_t atoms = next(14);
+      for (std::size_t i = 0; i < atoms; ++i) {
+        line += kAtoms[next(std::size(kAtoms))];
+      }
+      const auto first = SyntaxHighlighter::HighlightLine(line, path, carried);
+      const auto second = SyntaxHighlighter::HighlightLine(line, path, carried);
+      const SyntaxState advanced = SyntaxHighlighter::AdvanceState(line, path, carried);
+      Expect(first.tokens.size() == line.size(),
+             (std::string(extension) + ": one token kind per byte of [" + line + "] (got " +
+              std::to_string(first.tokens.size()) + " for " + std::to_string(line.size()) + ")")
+                 .c_str());
+      Expect(first.tokens == second.tokens && first.end_state == second.end_state,
+             (std::string(extension) + ": highlighting is deterministic for [" + line + "]").c_str());
+      Expect(advanced == first.end_state,
+             (std::string(extension) + ": AdvanceState agrees with the full highlight for [" +
+              line + "]")
+                 .c_str());
+      carried = first.end_state;
+      ++checked;
+    }
+  }
+  Expect(checked == std::size(kExtensions) * 120, "every language was exercised");
+}
+
 void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "RuntimeSyntaxSkip/RandomLinesKeepPerByteCoverage",
+          TestSyntaxHighlighterRandomLinesKeepPerByteCoverage);
   AddTest(tests, "RuntimeSyntaxSkip/AsciiAndUnicodeCompilationsAgreeOnAsciiInput",
           TestAsciiAndUnicodeCompilationsAgreeOnAsciiInput);
   AddTest(tests, "RuntimeSyntaxSkip/NonAsciiLineKeepsUnicodeWordBoundaries",
