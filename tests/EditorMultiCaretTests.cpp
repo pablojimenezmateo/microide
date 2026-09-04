@@ -14,6 +14,7 @@ namespace {
 
 using microide::editor::FoldingModel;
 using microide::editor::TextPosition;
+using microide::editor::SelectionRange;
 using microide::editor::TextLayout;
 using microide::editor::TextViewport;
 
@@ -762,6 +763,71 @@ void TestBoxColumnsOnLineTabArithmeticAgreesWithTheWalk() {
   }
 }
 
+// Found by driving the real binary: with three ranged carets live, Ctrl+A then
+// typing did nothing, and typing after a multi-caret cut did nothing either --
+// every later keystroke was refused by the overlap check until a plain caret
+// move. Select-all replaces the whole caret set with one selection (VS Code),
+// and a multi-caret delete must leave collapsed carets with no stale anchors.
+void TestMultiCaretSelectAllAndCutLeaveATypableCaretSet() {
+  TextViewport viewport;
+  viewport.LoadContent("foo foo\nfoo bar\n", "/tmp/mc-typable.txt");
+  const auto select_every_foo = [&] {
+    viewport.MoveCursorTo(0, 0, false);
+    viewport.MoveCursorTo(0, 3, true);
+    const std::vector<SelectionRange> ranges = {
+        SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}},
+        SelectionRange{TextPosition{1, 0}, TextPosition{1, 3}},
+    };
+    viewport.SetSecondaryCaretsWithRanges(ranges);
+  };
+
+  select_every_foo();
+  viewport.SelectAll();
+  Expect(!viewport.has_multiple_carets(), "select-all leaves a single selection");
+  viewport.InsertText("Q");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"Q"},
+         "typing after select-all replaces the whole buffer (got " +
+             std::to_string(viewport.line_count()) + " lines, first <" + viewport.lines()[0] + ">)");
+
+  viewport.LoadContent("foo foo\nfoo bar\n", "/tmp/mc-typable.txt");
+  select_every_foo();
+  viewport.DeleteMultiCaretSelections();
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{" ", " bar", ""},
+         "the multi-caret delete removes every selection (got <" + viewport.lines()[0] + "|" +
+             viewport.lines()[1] + ">)");
+  Expect(viewport.has_multiple_carets() && !viewport.has_selection(),
+         "the carets survive the delete, collapsed");
+  viewport.InsertText("R");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"R R", "R bar", ""},
+         "typing after the delete lands at every caret (got <" + viewport.lines()[0] + "|" +
+             viewport.lines()[1] + ">)");
+
+  // The real-binary shape: cut, then save with trim-on-save. The trim empties
+  // the " " line and clamps the caret that sat after the space onto the primary
+  // at column 0; that coincident caret read as an overlapping edit and every
+  // later keystroke was refused.
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path path = temp_dir.path() / "typable.txt";
+  WriteFile(path, "foo foo\nfoo bar\n");
+  TextViewport saved;
+  Expect(saved.OpenFile(path), "the fixture opens");
+  saved.SetSaveTrimTrailingWhitespace(true);
+  saved.MoveCursorTo(0, 0, false);
+  saved.MoveCursorTo(0, 3, true);
+  const std::vector<SelectionRange> foo_ranges = {
+      SelectionRange{TextPosition{0, 4}, TextPosition{0, 7}},
+      SelectionRange{TextPosition{1, 0}, TextPosition{1, 3}},
+  };
+  saved.SetSecondaryCaretsWithRanges(foo_ranges);
+  saved.DeleteMultiCaretSelections();
+  Expect(saved.Save(), "the save with trim succeeds");
+  Expect(saved.lines()[0].empty(), "the trim emptied the line of one space");
+  saved.InsertText("R");
+  Expect(saved.lines().Snapshot() == std::vector<std::string>{"R", "R bar", ""},
+         "typing after the trimming save lands at the merged caret and the other one (got <" +
+             saved.lines()[0] + "|" + saved.lines()[1] + ">)");
+}
+
 // A leftward (caret column < anchor column) box drag must keep every caret on
 // the caret column, aligned with the primary, not stranded on the anchor edge.
 // Regression: SetSecondaryCaretsWithRanges normalized each range and forced the
@@ -1227,6 +1293,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestSetBoxSelectionIsRectangularInVisualColumns);
   AddTest(tests, "EditorMultiCaret/BoxColumnsOnLineTabArithmeticAgreesWithTheWalk",
           TestBoxColumnsOnLineTabArithmeticAgreesWithTheWalk);
+  AddTest(tests, "EditorMultiCaret/SelectAllAndCutLeaveATypableCaretSet",
+          TestMultiCaretSelectAllAndCutLeaveATypableCaretSet);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionLeftwardKeepsCaretsOnCaretColumn",
           TestSetBoxSelectionLeftwardKeepsCaretsOnCaretColumn);
   AddTest(tests, "EditorMultiCaret/SetBoxSelectionClampsShortLinesToEndOfLine",

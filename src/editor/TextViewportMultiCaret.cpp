@@ -84,6 +84,14 @@ bool TextViewport::MultiCaretSelectionsOverlap() const {
     }
     return detail::PositionLess(lhs.end, rhs.end);
   });
+  // Two identical ranges are ONE site -- ApplyMultiCaretEdit collapses them --
+  // not an overlap. A save-time trim can clamp a secondary caret onto the
+  // primary; treating that as a conflict refused every later edit.
+  ranges.erase(std::unique(ranges.begin(), ranges.end(),
+                           [](const SelectionRange& lhs, const SelectionRange& rhs) {
+                             return lhs.start == rhs.start && lhs.end == rhs.end;
+                           }),
+               ranges.end());
   for (std::size_t i = 1; i < ranges.size(); ++i) {
     if (ranges[i].start == ranges[i - 1].start ||
         detail::PositionLess(ranges[i].start, ranges[i - 1].end)) {

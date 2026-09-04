@@ -757,6 +757,19 @@ void TextViewport::ClearSecondaryCarets() {
   secondary_carets_.clear();
 }
 
+void TextViewport::PruneCoincidentSecondaryCarets() {
+  const TextPosition primary{cursor_line_, cursor_column_};
+  std::sort(secondary_carets_.begin(), secondary_carets_.end(), detail::SecondaryCaretPositionLess);
+  secondary_carets_.erase(
+      std::unique(secondary_carets_.begin(), secondary_carets_.end(),
+                  [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
+                    return lhs.position == rhs.position;
+                  }),
+      secondary_carets_.end());
+  std::erase_if(secondary_carets_,
+                [&](const SecondaryCaret& caret) { return caret.position == primary; });
+}
+
 void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
                                                  std::size_t target_line,
                                                  std::size_t column) {
@@ -1125,6 +1138,11 @@ void TextViewport::SelectAll() {
   if (document_->lines.empty()) {
     return;
   }
+  // One selection replaces the whole caret set (VS Code). Secondary carets left
+  // inside the whole-buffer selection made every later edit an overlapping
+  // multi-caret edit, which the engine refuses -- typing after Ctrl+A did nothing
+  // until a plain caret move.
+  ClearSecondaryCarets();
 
   selection_anchor_ = TextPosition{0, 0};
   cursor_line_ = document_->lines.size() - 1;

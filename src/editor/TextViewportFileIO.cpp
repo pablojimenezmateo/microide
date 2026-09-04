@@ -257,6 +257,10 @@ bool TextViewport::Save() {
         clamp_position(*caret.selection_anchor);
       }
     }
+    // Clamping can land a secondary caret on the primary or on another
+    // secondary (a trimmed line held two of them); colliding carets merge, as
+    // VS Code merges cursors that meet.
+    PruneCoincidentSecondaryCarets();
     ClampScrollState();
   }
 

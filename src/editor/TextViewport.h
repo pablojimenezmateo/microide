@@ -548,6 +548,9 @@ class TextViewport {
   // capacity persists.
   void SetSecondaryCaretsWithRanges(std::span<const SelectionRange> ranges);
   void ClearSecondaryCarets();
+  // Merges secondary carets that share a position with each other or with the
+  // primary, after a clamp has moved them.
+  void PruneCoincidentSecondaryCarets();
   // Places zero-width carets on every line between anchor_line and target_line
   // (inclusive) at the visual column `column` occupies on `anchor_line`. Primary
   // caret moves to target_line; other lines become secondary carets. Clears any
