@@ -458,6 +458,45 @@ void TestStringUtilUnicodeCaseFold() {
   Expect(SimpleFoldCodepoint(0x0131) == 0x0131, "ı intentionally unfolded");
   // The 0x3A2 Greek hole and × (0xD7) are not letters.
   Expect(SimpleFoldCodepoint(0x00D7) == 0x00D7, "× multiplication sign unchanged");
+  Expect(SimpleFoldCodepoint(0x03A2) == 0x03A2, "the Greek capital hole is not a letter");
+
+  // The generated table reaches the scripts the hand-written ranges never did.
+  Expect(SimpleFoldCodepoint(0x1EA0) == 0x1EA1, "Vietnamese Ạ folds to ạ");
+  Expect(SimpleFoldCodepoint(0x0386) == 0x03AC, "accented Greek Ά folds to ά");
+  Expect(SimpleFoldCodepoint(0x0460) == 0x0461, "extended Cyrillic Ѡ folds to ѡ");
+  Expect(SimpleFoldCodepoint(0x04D0) == 0x04D1, "Cyrillic Ӑ folds to ӑ");
+  Expect(SimpleFoldCodepoint(0x0531) == 0x0561, "Armenian Ա folds to ա");
+  Expect(SimpleFoldCodepoint(0x10A0) == 0x2D00, "Georgian Ⴀ folds to ⴀ");
+  Expect(SimpleFoldCodepoint(0xFF21) == 0xFF41, "fullwidth Ａ folds to ａ");
+  Expect(SimpleFoldCodepoint(0x0182) == 0x0183, "Latin Extended-B Ƃ folds to ƃ");
+  Expect(SimpleFoldCodepoint(0x1E9E) == 0x1E9E,
+         "ẞ stays unfolded: its fold ß is a byte shorter and would desync offsets");
+  Expect(SimpleFoldCodepoint(0x212A) == 0x212A, "KELVIN SIGN stays unfolded for the same reason");
+  Expect(Utf8CaseFold("VIỆT NAM") == Utf8CaseFold("việt nam"),
+         "Vietnamese case-insensitive match after folding");
+
+  // Every fold keeps the scalar's UTF-8 byte length, which is the invariant the
+  // search paths rely on when they index a raw line by folded offsets.
+  {
+    std::string upper;
+    std::string lower;
+    bool length_preserved = true;
+    for (char32_t cp = 0x80; cp <= 0x10FFFF && length_preserved; ++cp) {
+      if (cp >= 0xD800 && cp <= 0xDFFF) {
+        continue;
+      }
+      const char32_t folded = SimpleFoldCodepoint(cp);
+      if (folded == cp) {
+        continue;
+      }
+      upper.clear();
+      lower.clear();
+      microide::util::AppendUtf8(upper, cp);
+      microide::util::AppendUtf8(lower, folded);
+      length_preserved = upper.size() == lower.size();
+    }
+    Expect(length_preserved, "every fold in the table preserves the UTF-8 byte length");
+  }
 
   // Whole-string folding matches across case for covered scripts.
   Expect(Utf8CaseFold("CafÉ") == Utf8CaseFold("café"),

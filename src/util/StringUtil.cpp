@@ -1,6 +1,7 @@
 #include "util/StringUtil.h"
 
 #include <algorithm>
+#include <iterator>
 #include <cctype>
 #include <cstdint>
 #include <cstring>
@@ -435,51 +436,55 @@ bool QueryHasUppercaseAscii(std::string_view text) {
                      [](unsigned char c) { return c >= 'A' && c <= 'Z'; });
 }
 
+namespace {
+
+// Unicode simple lowercase mappings as runs — see tools/gen-case-fold-table.py.
+// Sorted by `first`, disjoint, so a lookup is one binary search plus a stride
+// check. Restricted to mappings that keep the scalar's UTF-8 byte length: the
+// search paths index a raw line by offsets into its folded copy.
+struct CaseFoldRun {
+  char32_t first;
+  char32_t last;
+  std::int32_t delta;
+  std::uint8_t stride;
+};
+constexpr CaseFoldRun kCaseFoldRuns[] = {
+#include "util/CaseFoldTable.inc"
+};
+
+}  // namespace
+
 char32_t SimpleFoldCodepoint(char32_t cp) {
   // ASCII fast path (the overwhelmingly common case for source code / paths).
   if (cp < 0x80) {
     return (cp >= 'A' && cp <= 'Z') ? cp + 0x20 : cp;
   }
-  // Latin-1 Supplement uppercase letters (À..Ö, Ø..Þ). × (0xD7) is not a letter.
-  if ((cp >= 0xC0 && cp <= 0xD6) || (cp >= 0xD8 && cp <= 0xDE)) {
-    return cp + 0x20;
-  }
-  // Latin Extended-A. The block splits into two regular sub-patterns plus a
-  // handful of irregular codepoints. Turkish dotted/dotless I (0x130/0x131) is
-  // intentionally left unfolded — its correct fold is locale-sensitive.
-  if (cp >= 0x100 && cp <= 0x17F) {
-    if (cp == 0x130 || cp == 0x131 || cp == 0x138 || cp == 0x149 || cp == 0x178) {
-      return cp;  // ĸ, ŉ, İ, ı, Ÿ: irregular / handled elsewhere.
-    }
-    // Even-upper sub-blocks: 0x100..0x137, 0x14A..0x177 (Ā/ā style pairs).
-    if ((cp >= 0x100 && cp <= 0x137) || (cp >= 0x14A && cp <= 0x177)) {
-      return (cp % 2 == 0) ? cp + 1 : cp;
-    }
-    // Odd-upper sub-blocks: 0x139..0x148, 0x179..0x17E (Ĺ/ĺ style pairs).
-    if ((cp >= 0x139 && cp <= 0x148) || (cp >= 0x179 && cp <= 0x17E)) {
-      return (cp % 2 == 1) ? cp + 1 : cp;
-    }
+  if (cp < kCaseFoldRuns[0].first) {
     return cp;
   }
-  // Greek uppercase Α..Ω (0x391..0x3A9); 0x3A2 is an unassigned hole.
-  if (cp >= 0x391 && cp <= 0x3A9 && cp != 0x3A2) {
-    return cp + 0x20;
+  // The hand-written predecessor covered Latin-1, Latin Extended-A, basic Greek
+  // and basic Cyrillic — 12 % of the mappings — so a case-insensitive search for
+  // Vietnamese, accented Greek, extended Cyrillic, Armenian, Georgian or
+  // fullwidth text simply found nothing. Turkish İ/ı stay unfolded (their fold is
+  // locale-sensitive, and İ's lowercase is two scalars), as does every mapping
+  // that would change the UTF-8 byte length (KELVIN SIGN, OHM SIGN, …).
+  const CaseFoldRun* run = std::upper_bound(
+      std::begin(kCaseFoldRuns), std::end(kCaseFoldRuns), cp,
+      [](char32_t value, const CaseFoldRun& candidate) { return value < candidate.first; });
+  if (run == std::begin(kCaseFoldRuns)) {
+    return cp;
   }
-  // Cyrillic: А..Я (0x410..0x42F) and the preceding accented block Ѐ..Џ
-  // (0x400..0x40F) fold to their lowercase forms.
-  if (cp >= 0x410 && cp <= 0x42F) {
-    return cp + 0x20;
+  --run;
+  if (cp > run->last || (cp - run->first) % run->stride != 0) {
+    return cp;
   }
-  if (cp >= 0x400 && cp <= 0x40F) {
-    return cp + 0x50;
-  }
-  return cp;
+  return static_cast<char32_t>(static_cast<std::int32_t>(cp) + run->delta);
 }
 
 void Utf8CaseFoldAppend(std::string_view text, std::string& out) {
-  // A folded string is never longer than a byte-wise ASCII-lowered one for the
-  // ranges we cover (each folded scalar occupies the same UTF-8 length), so a
-  // size hint avoids reallocations on the common path.
+  // A folded string is exactly as long as its input: every mapping in the table
+  // keeps the scalar's UTF-8 byte length (the generator enforces it), which is
+  // what lets the search paths index the raw line by folded offsets.
   out.reserve(out.size() + text.size());
   std::size_t offset = 0;
   while (offset < text.size()) {
