@@ -7,6 +7,7 @@
 #include "editor/HighlightPrefetchService.h"
 #include "editor/SyntaxHighlighter.h"
 #include "editor/TextBuffer.h"
+#include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
 #include "perf/AllocationCounter.h"
 #include "util/PerformanceCounters.h"
@@ -15,6 +16,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string>
@@ -5702,6 +5704,98 @@ void TestTextViewportSoftWrapTabSizeChangePreservesWrappedColumn() {
          "changing tab size must keep the wrapped caret column, not snap to line start");
 }
 
+// The AppliedEdit contract, which the LSP incremental sync and the merge
+// conflict tracker consume: after any single-region edit, splicing
+// `replacement_text` into the PREVIOUS text at `range_before` must give the new
+// text exactly. Random edits over a small alphabet with multi-byte scalars and
+// line breaks, including undo/redo, which replay history entries.
+void TestTextViewportAppliedEditReplaysRandomEdits() {
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+  using microide::editor::TextViewport;
+  const auto serialize = [](const TextViewport& viewport) {
+    std::string text;
+    const auto& lines = viewport.lines();
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      text += lines[i];
+      if (i + 1 < lines.size()) {
+        text += '\n';
+      }
+    }
+    return text;
+  };
+  const auto offset_of = [](const std::string& text, TextPosition position) {
+    std::size_t offset = 0;
+    for (std::size_t line = 0; line < position.line; ++line) {
+      const std::size_t newline = text.find('\n', offset);
+      if (newline == std::string::npos) {
+        return text.size();
+      }
+      offset = newline + 1;
+    }
+    return std::min(text.size(), offset + position.column);
+  };
+  std::uint64_t state = 0x9E3779B97F4A7C15ull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kPieces[] = {"a", "b", "\n", "é", "中", "😀", " ", "xy\nz"};
+  TextViewport viewport;
+  viewport.LoadContent("ab\né中\n", "/tmp/applied-edit.txt");
+  std::string previous = serialize(viewport);
+  int checked = 0;
+  for (int step = 0; step < 600; ++step) {
+    const std::size_t line_count = viewport.lines().size();
+    const std::size_t line = next(line_count);
+    const std::size_t column =
+        microide::editor::TextLayout::ClampTextColumn(viewport.lines()[line], next(64));
+    const std::size_t kind = next(6);
+    if (kind == 0) {
+      viewport.MoveCursorTo(line, column, false);
+      viewport.InsertText(kPieces[next(std::size(kPieces))]);
+    } else if (kind == 1) {
+      viewport.MoveCursorTo(line, column, false);
+      viewport.Backspace();
+    } else if (kind == 2) {
+      viewport.MoveCursorTo(line, column, false);
+      viewport.DeleteForward();
+    } else if (kind == 3) {
+      const std::size_t end_line = std::min(line_count - 1, line + next(2));
+      const std::size_t end_column =
+          microide::editor::TextLayout::ClampTextColumn(viewport.lines()[end_line], next(64));
+      SelectionRange range{TextPosition{line, column}, TextPosition{end_line, end_column}};
+      viewport.ReplaceRange(TextViewport::NormalizeRange(range), kPieces[next(std::size(kPieces))],
+                            true);
+    } else if (kind == 4) {
+      viewport.Undo();
+    } else {
+      viewport.Redo();
+    }
+    const std::string current = serialize(viewport);
+    if (const auto& edit = viewport.last_applied_edit(); edit.has_value() && current != previous) {
+      const SelectionRange range = TextViewport::NormalizeRange(edit->range_before);
+      const std::size_t begin = offset_of(previous, range.start);
+      const std::size_t end = std::max(begin, offset_of(previous, range.end));
+      const std::string replayed =
+          previous.substr(0, begin) + edit->replacement_text + previous.substr(end);
+      Expect(replayed == current,
+             ("step " + std::to_string(step) + ": replaying the applied edit onto the previous "
+              "text gives the new text; previous=[" + previous + "] range=" +
+              std::to_string(range.start.line) + ":" + std::to_string(range.start.column) + "-" +
+              std::to_string(range.end.line) + ":" + std::to_string(range.end.column) +
+              " replacement=[" + edit->replacement_text + "] got=[" + replayed + "] want=[" +
+              current + "]")
+                 .c_str());
+      ++checked;
+    }
+    previous = current;
+  }
+  Expect(checked >= 200, "enough edits published an AppliedEdit to mean anything");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/VerticalMovePreservesColumnWhenScrolled",
           TestTextViewportVerticalMovePreservesColumnWhenScrolled);
@@ -6052,6 +6146,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportDerivedCacheBytesTracksEachCache);
   AddTest(tests, "TextViewport/NoOpRangeReplaceDoesNotDirty",
           TestTextViewportNoOpRangeReplaceDoesNotDirty);
+  AddTest(tests, "TextViewport/AppliedEditReplaysRandomEdits",
+          TestTextViewportAppliedEditReplaysRandomEdits);
   AddTest(tests, "TextViewport/NoOpLineReplaceDoesNotDirty",
           TestTextViewportNoOpLineReplaceDoesNotDirty);
   AddTest(tests, "TextViewport/EmptyLineDeleteIsNotTreatedAsNoOp",

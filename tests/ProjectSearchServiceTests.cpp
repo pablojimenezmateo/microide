@@ -9,6 +9,7 @@
 #include <atomic>
 #include <chrono>
 #include <filesystem>
+#include <cstdint>
 #include <string>
 #include <thread>
 #include <vector>
@@ -102,6 +103,114 @@ SearchRunResult RunProjectSearch(const std::filesystem::path& root,
               return lhs.column < rhs.column;
             });
   return result;
+}
+
+// Random literal queries over random files against a plain per-line scan: the
+// same set of (file, line, byte column) hits, in both case modes, with matches
+// that abut, overlap by prefix, sit at line ends, and cross ASCII/non-ASCII
+// case pairs. The service is chunked, multi-threaded and previews its hits;
+// none of that may change what is found.
+void TestProjectSearchServiceRandomLiteralQueriesAgreeWithReference() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::uint64_t state = 0x1234567887654321ull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kAtoms[] = {"a", "A", "b", "B", "é", "É", " ", "aa", "ab", "\n"};
+  const auto fold = [](std::string_view text) {
+    std::string out;
+    for (std::size_t i = 0; i < text.size();) {
+      if (text.compare(i, 2, "\xC3\x89") == 0) {  // É -> é
+        out += "\xC3\xA9";
+        i += 2;
+        continue;
+      }
+      const char c = text[i];
+      out += (c >= 'A' && c <= 'Z') ? static_cast<char>(c + 32) : c;
+      ++i;
+    }
+    return out;
+  };
+  std::vector<std::pair<std::string, std::string>> files;
+  for (int f = 0; f < 6; ++f) {
+    std::string content;
+    const std::size_t atoms = 20 + next(60);
+    for (std::size_t i = 0; i < atoms; ++i) {
+      content += kAtoms[next(std::size(kAtoms))];
+    }
+    const std::string name = "f" + std::to_string(f) + ".txt";
+    WriteFile(root / name, content);
+    files.emplace_back(name, content);
+  }
+  const auto indexed_files =
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+
+  int compared = 0;
+  for (int q = 0; q < 24; ++q) {
+    std::string query;
+    const std::size_t atoms = 1 + next(3);
+    for (std::size_t i = 0; i < atoms; ++i) {
+      const char* atom = kAtoms[next(std::size(kAtoms) - 1)];  // no line breaks
+      query += atom;
+    }
+    for (const bool sensitive : {true, false}) {
+      ProjectSearchOptions options;
+      options.case_mode =
+          sensitive ? ProjectSearchCaseMode::Sensitive : ProjectSearchCaseMode::Insensitive;
+      const auto run = RunProjectSearch(root, query, options, indexed_files);
+      Expect(run.finished && run.error.empty(), "the search finishes without error");
+      std::vector<std::string> got;
+      for (const auto& result : run.results) {
+        got.push_back(result.relative_path_string + ":" + std::to_string(result.line) + ":" +
+                      std::to_string(result.column));
+      }
+      std::vector<std::string> want;
+      const std::string needle = sensitive ? query : fold(query);
+      for (const auto& [name, content] : files) {
+        std::size_t line = 0;
+        std::size_t start = 0;
+        while (start <= content.size()) {
+          const std::size_t newline = content.find('\n', start);
+          const std::string_view raw =
+              std::string_view(content).substr(start, newline == std::string::npos
+                                                          ? std::string::npos
+                                                          : newline - start);
+          const std::string hay = sensitive ? std::string(raw) : fold(raw);
+          // Folding keeps byte offsets: every fold here is length-preserving.
+          // Hits do not overlap (grep's and VS Code's rule): `bb` is one hit in
+          // `bbb`, the scan resumes after each match.
+          for (std::size_t at = hay.find(needle); at != std::string::npos;
+               at = hay.find(needle, at + needle.size())) {
+            want.push_back(name + ":" + std::to_string(line) + ":" + std::to_string(at));
+          }
+          if (newline == std::string::npos) {
+            break;
+          }
+          start = newline + 1;
+          ++line;
+        }
+      }
+      std::sort(got.begin(), got.end());
+      std::sort(want.begin(), want.end());
+      std::string diff;
+      if (got != want) {
+        diff = " got=";
+        for (const auto& g : got) diff += g + ",";
+        diff += " want=";
+        for (const auto& w : want) diff += w + ",";
+      }
+      Expect(got == want,
+             ("query [" + query + "] " + (sensitive ? "sensitive" : "insensitive") +
+              " finds exactly the reference hits" + diff)
+                 .c_str());
+      ++compared;
+    }
+  }
+  Expect(compared == 48, "every query ran in both case modes");
 }
 
 void TestProjectSearchServiceLiteralModesAndCaseControls() {
@@ -906,6 +1015,8 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceNoMatchFinishesPromptly);
   AddTest(tests, "ProjectSearchService/PublishesProgressDenominator",
           TestProjectSearchServicePublishesProgressDenominator);
+  AddTest(tests, "ProjectSearchService/RandomLiteralQueriesAgreeWithReference",
+          TestProjectSearchServiceRandomLiteralQueriesAgreeWithReference);
   AddTest(tests, "ProjectSearchService/ProgressPublishesBeforeFirstMatch",
           TestProjectSearchServiceProgressPublishesBeforeFirstMatch);
   AddTest(tests, "ProjectFileScanner/TerminatesOnSymlinkLoop",
