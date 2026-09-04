@@ -60,7 +60,8 @@ for what is actually measured, and what is not.
 - Drag and drop from the desktop: a file opens as a tab, a folder opens as the project
 - UTF-8 codepoint boundaries, IME preedit, line-ending detection and preservation
 - Multi-caret editing with position remap, region-stack highlighting, and copy-with-context
-- Column/box selection by mouse (Shift+Alt+drag) and keyboard (Ctrl+Shift+Alt+Arrow), with a
+- Column/box selection by mouse (Shift+Alt+drag) and keyboard (Ctrl+Shift+Alt+Arrow): a
+  rectangle of visual columns that stays straight across tabs and non-ASCII text, with a
   virtual column that survives short lines
 - Soft word wrap with hanging indent; long-method fold resolution
 - Syntax highlighting with per-file checkpointed state (fast random jumps in large files)
