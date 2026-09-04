@@ -115,6 +115,31 @@ void TestKeybindingRegistryFindUnknown() {
          "unknown keybinding id should return nullptr");
 }
 
+
+// No two built-in bindings may claim one chord in contexts that can both be
+// active: FindKeybinding returns the FIRST match in list order, so a Global
+// binding listed before a context-specific one silently shadows it (and vice
+// versa), with nothing to say so.
+void TestBuiltinKeybindingsDoNotShadowEachOther() {
+  using microide::workspace::KeybindingContext;
+  using microide::workspace::ResolveKeybindings;
+  const auto bindings = ResolveKeybindings(std::vector<microide::plugin::PluginHost::ContributedKeybinding>{});
+  std::string offenders;
+  for (std::size_t i = 0; i < bindings.size(); ++i) {
+    for (std::size_t j = i + 1; j < bindings.size(); ++j) {
+      const auto& a = bindings[i];
+      const auto& b = bindings[j];
+      if (a.key != b.key || a.modifiers != b.modifiers) continue;
+      const bool overlap = a.context == b.context || a.context == KeybindingContext::Global ||
+                           b.context == KeybindingContext::Global;
+      if (!overlap) continue;
+      offenders += a.id + " vs " + b.id + " (" +
+                   microide::workspace::FormatKeyChord(a.key, a.modifiers) + "); ";
+    }
+  }
+  Expect(offenders.empty(), ("built-in bindings shadow each other: " + offenders).c_str());
+}
+
 void TestParseKeyChordSingleKey() {
   SDL_Keycode key = SDLK_UNKNOWN;
   SDL_Keymod mods = SDL_KMOD_NONE;
@@ -1321,6 +1346,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
   AddTest(tests, "KeybindingRegistry/FindUnknown", TestKeybindingRegistryFindUnknown);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordSingleKey",
           TestParseKeyChordSingleKey);
+  AddTest(tests, "KeybindingRegistry/BuiltinKeybindingsDoNotShadowEachOther",
+          TestBuiltinKeybindingsDoNotShadowEachOther);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordWithModifiers",
           TestParseKeyChordWithModifiers);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordResolvesKeycodesByName",
