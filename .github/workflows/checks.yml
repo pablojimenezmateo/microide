@@ -73,7 +73,16 @@ jobs:
       # build (MICROIDE_PERF_HARNESS_BUILD is OFF there), so the "must not
       # allocate" contracts in the render/view-model/presentation hot paths are
       # unchecked unless this second pass runs.
+      #
+      # `if: !cancelled()` on this and the two validation steps below: they are
+      # INDEPENDENT lanes that happen to share this job's build tree, and the
+      # default fail-fast made the first red one hide the rest. That is what the
+      # 2026-09-03 run cost — a flaky test here left "does the perf gate still
+      # fail when it should" and "does the tree pass under a hardened libstdc++"
+      # unanswered, so the red run said less than it could have. Each still fails
+      # the job; they just all report.
       - name: Run allocation-gated tests
+        if: ${{ !cancelled() }}
         run: tools/run-checks.sh perf-tests
 
       # Proves the perf gate can still FAIL. Everything else in the perf lane
@@ -85,6 +94,7 @@ jobs:
       # microide-perf tree, so this reuses it and costs two short scenario runs
       # rather than a second LTO build.
       - name: Prove the perf gate is not vacuous
+        if: ${{ !cancelled() }}
         run: tools/run-checks.sh perf-canary
 
       # Library-precondition UB (an inverted std::clamp range, an out-of-bounds
@@ -93,6 +103,7 @@ jobs:
       # release speed. Its first run as a lane caught four merge divider clamps
       # under a test that had covered the failing sizes all along (2026-09-03).
       - name: Run the suite with hardened libstdc++
+        if: ${{ !cancelled() }}
         run: tools/run-checks.sh hardened
 
       - name: Upload logs
