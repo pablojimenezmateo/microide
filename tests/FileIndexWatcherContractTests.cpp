@@ -35,6 +35,11 @@ struct WatcherContractFixture {
   std::vector<platform::IndexUpdateBatch> pending;
   bool saw_initial = false;
   bool saw_tree_structure_change = false;
+  // How many batches have carried tree_structure_changed. A negative assertion
+  // that fails cannot otherwise say WHICH event set the bit, and this suite's one
+  // CI failure ("a gitignored directory is not a shape change") was exactly that:
+  // a bare bool with no way to tell a straggler from the event under test.
+  int shape_change_batches = 0;
 
   explicit WatcherContractFixture(bool force_poll) {
     index.SetRoot(temp.path(), project::FileIndex::RootPopulationMode::Deferred);
@@ -61,7 +66,10 @@ struct WatcherContractFixture {
     }
     for (platform::IndexUpdateBatch& batch : local) {
       saw_initial = saw_initial || batch.is_initial;
-      saw_tree_structure_change = saw_tree_structure_change || batch.tree_structure_changed;
+      if (batch.tree_structure_changed) {
+        ++shape_change_batches;
+        saw_tree_structure_change = true;
+      }
       index.ApplyBatch(batch);
     }
   }
@@ -99,6 +107,29 @@ struct WatcherContractFixture {
   bool WaitTreeStructureChange() {
     return WaitUntil([&] { return saw_tree_structure_change; }, std::chrono::seconds(5),
                      std::chrono::milliseconds(5), [&] { Pump(); });
+  }
+
+  // Drain every event queued before this call, so a following NEGATIVE assertion
+  // is about the event under test and not about a straggler from the previous
+  // step. Waiting for the flag is not a drain: one filesystem operation can reach
+  // the consumer as several batches (a directory removal fires IN_DELETE on the
+  // parent watch AND IN_DELETE_SELF on the directory's own), the wait returns on
+  // the first, and the second arrives after the test has reset the flag. That is
+  // the race this suite lost in CI.
+  //
+  // Both backends make the barrier sound: inotify delivers in queue order across
+  // every watch on one fd, so the batch carrying `marker` cannot precede an event
+  // queued earlier; the poll backend diffs a whole-tree snapshot, so a cycle that
+  // sees `marker` has already reported everything older. A plain file is used
+  // deliberately -- it moves the index, never the tree's shape.
+  bool Quiesce(const char* marker) {
+    WriteFile(temp.path() / marker, "quiesce\n");
+    if (!WaitIndexed(marker)) {
+      return false;
+    }
+    Pump();
+    saw_tree_structure_change = false;
+    return true;
   }
 };
 
@@ -249,8 +280,11 @@ void RunWatcherTreeShapeContract(bool force_poll) {
   Expect(fixture.WaitTreeStructureChange(),
          "tree-shape contract: creating an empty directory reports a shape change");
 
-  // 2. Removing it, likewise.
-  fixture.saw_tree_structure_change = false;
+  // 2. Removing it, likewise. The barrier matters for a POSITIVE assertion too:
+  //    without it a straggler from the creation above could satisfy this wait, and
+  //    a backend that reported nothing at all for a removal would still pass.
+  Expect(fixture.Quiesce("quiesce-create.txt"),
+         "tree-shape contract: the barrier after the create drains");
   fs::remove(root / "empty-dir");
   Expect(fixture.WaitTreeStructureChange(),
          "tree-shape contract: removing an empty directory reports a shape change");
@@ -259,13 +293,17 @@ void RunWatcherTreeShapeContract(bool force_poll) {
   //    it is pure waste — and a build creating them in bulk would be a refresh storm.
   //    Ordering trick: the sentinel file follows, so once it is indexed the ignored
   //    mkdir has had its chance to (wrongly) surface.
-  fixture.saw_tree_structure_change = false;
+  Expect(fixture.Quiesce("quiesce-remove.txt"),
+         "tree-shape contract: the barrier before the negative assertion drains");
+  const int shape_batches_before = fixture.shape_change_batches;
   fs::create_directories(root / "ignored" / "nested");
   WriteFile(root / "sentinel.txt", "s\n");
   Expect(fixture.WaitIndexed("sentinel.txt"), "tree-shape contract: sentinel write lands");
   fixture.Pump();
   Expect(!fixture.saw_tree_structure_change,
-         "tree-shape contract: a gitignored directory is not a shape change");
+         "tree-shape contract: a gitignored directory is not a shape change (shape batches "
+         "before the ignored mkdir=" + std::to_string(shape_batches_before) +
+             ", after=" + std::to_string(fixture.shape_change_batches) + ")");
 }
 
 void TestFileIndexWatcherContractNativeBackend() {
