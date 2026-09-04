@@ -939,31 +939,25 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
     }
   }
 
-  // Map remaining string to SDL_Keycode.
+  // Map the key name to an SDL_Keycode BY NAME, never through a scancode. A
+  // key event carries the keycode the pressed key produces under the user's
+  // layout (`z` on the key labelled Z), and FindKeybinding compares keycodes, so
+  // the chord has to name the same thing. The old form went
+  // SDL_GetScancodeFromName("Z") -> SDL_GetKeyFromScancode: that is the PHYSICAL
+  // QWERTY position, so on a QWERTZ layout a plugin's "ctrl+z" bound to the key
+  // labelled Y (and "ctrl+y" to Z), and on AZERTY "ctrl+a" to the key labelled Q.
+  // SDL3 keycodes for printable ASCII are the character itself (SDLK_A is 'a',
+  // SDLK_MINUS is '-'), so a one-byte printable name IS its keycode; the named
+  // keys are the constants; F-keys resolve by SDL's own key name.
   const std::string lower_key = util::ToLowerAscii(remaining);
-
-  // SDL's scancode names for letters and function keys are UPPERCASE ("A".."Z",
-  // "F1"..). A plugin binding written "ctrl+a" arrives lowercase, so pass the
-  // canonical uppercase form — otherwise a case-sensitive SDL_GetScancodeFromName
-  // returns SCANCODE_UNKNOWN and the whole binding is silently dropped.
-  std::string sdl_scancode_name = remaining;
-  for (char& character : sdl_scancode_name) {
-    character = util::ToUpperAsciiChar(static_cast<char>(character));
-  }
-
-  if (lower_key.size() == 1 && util::IsAsciiAlpha(static_cast<unsigned char>(lower_key[0]))) {
-    // Single letter: map to SDL keycode via scancode.
-    const SDL_Scancode sc = SDL_GetScancodeFromName(sdl_scancode_name.c_str());
-    if (sc == SDL_SCANCODE_UNKNOWN) {
-      return false;
-    }
-    *key_out = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+  if (lower_key.size() == 1 && lower_key[0] > ' ' && lower_key[0] < 0x7F) {
+    *key_out = static_cast<SDL_Keycode>(static_cast<unsigned char>(lower_key[0]));
     *mods_out = mods;
-    return *key_out != SDLK_UNKNOWN;
+    return true;
   }
 
-  // Function keys F1-F24.
-  if (lower_key.size() >= 2 && lower_key[0] == 'f') {
+  // Function keys F1-F24, by SDL's key name ("F1").
+  if (lower_key.size() >= 2 && lower_key.size() <= 3 && lower_key[0] == 'f') {
     bool all_digits = true;
     for (std::size_t i = 1; i < lower_key.size(); ++i) {
       if (!util::IsAsciiDigit(static_cast<unsigned char>(lower_key[i]))) {
@@ -972,60 +966,31 @@ bool ParseKeyChord(std::string_view chord, SDL_Keycode* key_out, SDL_Keymod* mod
       }
     }
     if (all_digits) {
-      const SDL_Scancode sc = SDL_GetScancodeFromName(sdl_scancode_name.c_str());
-      if (sc != SDL_SCANCODE_UNKNOWN) {
-        *key_out = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+      std::string sdl_name = lower_key;
+      sdl_name[0] = 'F';
+      const SDL_Keycode key = SDL_GetKeyFromName(sdl_name.c_str());
+      if (key != SDLK_UNKNOWN) {
+        *key_out = key;
         *mods_out = mods;
-        return *key_out != SDLK_UNKNOWN;
+        return true;
       }
     }
   }
 
   // Named keys.
-  static const std::pair<std::string_view, SDL_Scancode> kNamedKeys[] = {
-      {"escape", SDL_SCANCODE_ESCAPE},
-      {"enter", SDL_SCANCODE_RETURN},
-      {"return", SDL_SCANCODE_RETURN},
-      {"tab", SDL_SCANCODE_TAB},
-      {"space", SDL_SCANCODE_SPACE},
-      {"backspace", SDL_SCANCODE_BACKSPACE},
-      {"delete", SDL_SCANCODE_DELETE},
-      {"insert", SDL_SCANCODE_INSERT},
-      {"home", SDL_SCANCODE_HOME},
-      {"end", SDL_SCANCODE_END},
-      {"pageup", SDL_SCANCODE_PAGEUP},
-      {"pagedown", SDL_SCANCODE_PAGEDOWN},
-      {"up", SDL_SCANCODE_UP},
-      {"down", SDL_SCANCODE_DOWN},
-      {"left", SDL_SCANCODE_LEFT},
-      {"right", SDL_SCANCODE_RIGHT},
-      {"-", SDL_SCANCODE_MINUS},
-      {"=", SDL_SCANCODE_EQUALS},
-      {"[", SDL_SCANCODE_LEFTBRACKET},
-      {"]", SDL_SCANCODE_RIGHTBRACKET},
-      {"\\", SDL_SCANCODE_BACKSLASH},
-      {";", SDL_SCANCODE_SEMICOLON},
-      {"'", SDL_SCANCODE_APOSTROPHE},
-      {",", SDL_SCANCODE_COMMA},
-      {".", SDL_SCANCODE_PERIOD},
-      {"/", SDL_SCANCODE_SLASH},
-      {"`", SDL_SCANCODE_GRAVE},
-      {"0", SDL_SCANCODE_0},
-      {"1", SDL_SCANCODE_1},
-      {"2", SDL_SCANCODE_2},
-      {"3", SDL_SCANCODE_3},
-      {"4", SDL_SCANCODE_4},
-      {"5", SDL_SCANCODE_5},
-      {"6", SDL_SCANCODE_6},
-      {"7", SDL_SCANCODE_7},
-      {"8", SDL_SCANCODE_8},
-      {"9", SDL_SCANCODE_9},
+  static const std::pair<std::string_view, SDL_Keycode> kNamedKeys[] = {
+      {"escape", SDLK_ESCAPE},   {"esc", SDLK_ESCAPE},        {"enter", SDLK_RETURN},
+      {"return", SDLK_RETURN},   {"tab", SDLK_TAB},           {"space", SDLK_SPACE},
+      {"backspace", SDLK_BACKSPACE}, {"delete", SDLK_DELETE}, {"insert", SDLK_INSERT},
+      {"home", SDLK_HOME},       {"end", SDLK_END},           {"pageup", SDLK_PAGEUP},
+      {"pagedown", SDLK_PAGEDOWN}, {"up", SDLK_UP},           {"down", SDLK_DOWN},
+      {"left", SDLK_LEFT},       {"right", SDLK_RIGHT},
   };
-  for (const auto& [name, sc] : kNamedKeys) {
+  for (const auto& [name, key] : kNamedKeys) {
     if (lower_key == name) {
-      *key_out = SDL_GetKeyFromScancode(sc, SDL_KMOD_NONE, false);
+      *key_out = key;
       *mods_out = mods;
-      return *key_out != SDLK_UNKNOWN;
+      return true;
     }
   }
 

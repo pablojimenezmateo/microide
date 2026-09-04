@@ -121,6 +121,38 @@ void TestParseKeyChordSingleKey() {
   Expect(mods == SDL_KMOD_NONE, "F8 should have no modifiers");
 }
 
+// A chord names a KEYCODE — what the key produces under the user's layout —
+// because that is what a key event carries and what FindKeybinding compares.
+// The parser used to go through the physical QWERTY scancode, so on QWERTZ a
+// plugin's "ctrl+z" bound to the key labelled Y. Pin the mapping to the keycode
+// constants (on this test's QWERTY keymap both forms agree, so the pin is the
+// contract, not a layout repro).
+void TestParseKeyChordResolvesKeycodesByName() {
+  SDL_Keycode key = SDLK_UNKNOWN;
+  SDL_Keymod mods = SDL_KMOD_NONE;
+  Expect(ParseKeyChord("ctrl+z", &key, &mods) && key == SDLK_Z, "z is SDLK_Z");
+  Expect(ParseKeyChord("Ctrl+Y", &key, &mods) && key == SDLK_Y, "Y is SDLK_Y, case-insensitive");
+  Expect(ParseKeyChord("alt+1", &key, &mods) && key == SDLK_1 && (mods & SDL_KMOD_ALT) != 0,
+         "a digit is its keycode");
+  Expect(ParseKeyChord("ctrl+-", &key, &mods) && key == SDLK_MINUS, "'-' is SDLK_MINUS");
+  Expect(ParseKeyChord("ctrl+=", &key, &mods) && key == SDLK_EQUALS, "'=' is SDLK_EQUALS");
+  Expect(ParseKeyChord("ctrl+[", &key, &mods) && key == SDLK_LEFTBRACKET, "'[' is its keycode");
+  Expect(ParseKeyChord("ctrl+/", &key, &mods) && key == SDLK_SLASH, "'/' is SDLK_SLASH");
+  Expect(ParseKeyChord("ctrl+`", &key, &mods) && key == SDLK_GRAVE, "'`' is SDLK_GRAVE");
+  Expect(ParseKeyChord("F12", &key, &mods) && key == SDLK_F12, "F12 is SDLK_F12");
+  Expect(ParseKeyChord("shift+enter", &key, &mods) && key == SDLK_RETURN &&
+             (mods & SDL_KMOD_SHIFT) != 0,
+         "enter is SDLK_RETURN");
+  Expect(ParseKeyChord("escape", &key, &mods) && key == SDLK_ESCAPE, "escape is SDLK_ESCAPE");
+  Expect(ParseKeyChord("ctrl+pagedown", &key, &mods) && key == SDLK_PAGEDOWN,
+         "pagedown is SDLK_PAGEDOWN");
+  Expect(ParseKeyChord("super+space", &key, &mods) && key == SDLK_SPACE &&
+             (mods & SDL_KMOD_GUI) != 0,
+         "space is SDLK_SPACE and super is the GUI modifier");
+  Expect(!ParseKeyChord("ctrl+nosuchkey", &key, &mods), "an unknown key name fails");
+  Expect(!ParseKeyChord("ctrl+", &key, &mods), "a trailing modifier with no key fails");
+}
+
 void TestParseKeyChordWithModifiers() {
   SDL_Keycode key = SDLK_UNKNOWN;
   SDL_Keymod mods = SDL_KMOD_NONE;
@@ -1280,6 +1312,8 @@ void RegisterContributionRegistryTests(std::vector<TestCase>& tests) {
           TestParseKeyChordSingleKey);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordWithModifiers",
           TestParseKeyChordWithModifiers);
+  AddTest(tests, "KeybindingRegistry/ParseKeyChordResolvesKeycodesByName",
+          TestParseKeyChordResolvesKeycodesByName);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordMultipleModifiers",
           TestParseKeyChordMultipleModifiers);
   AddTest(tests, "KeybindingRegistry/ParseKeyChordInvalid",
