@@ -389,6 +389,96 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-04-284 — the red CI run of 2026-09-03: two async races, and the job shape that hid three lanes behind them. [RESOLVED same session.]
+
+The `checks` run on `1f322e18` failed in two jobs, on three distinct causes.
+None of them was a regression in the commit that went red — all three were
+latent, and the two test races had been passing on quieter machines for as long
+as they had existed.
+
+- **`WorkspaceShell/FileFinderOpensIntoTheFocusedPane` raced the background
+  index** ("gamma.txt should match"). It opened a project, typed a query and
+  asserted a match count, with nothing between the open and the query; the file
+  index is filled by the watcher on its own thread. The sibling test one screen
+  up already waits for its target path and carries a comment asserting that "the
+  sibling finder tests below assert focus/surface behaviour, which does not
+  depend on the index, so they legitimately do not wait" — true of the others,
+  false of this one, which asserts a match. Fixed by waiting; the comment now
+  says what actually distinguishes the two, so the next test does not inherit
+  the wrong half of it.
+
+- **`FileIndexWatcherContract/NativeBackendTreeShape` mistook a straggler for
+  the event under test** ("a gitignored directory is not a shape change"). The
+  step reset `saw_tree_structure_change` and then asserted it stayed false — but
+  a reset only discards batches ALREADY pumped. One filesystem operation can
+  reach the consumer as several batches: a directory removal fires `IN_DELETE`
+  on the parent watch and `IN_DELETE_SELF` on the directory's own, the previous
+  step's wait returns on the first, and the second lands after the reset. The
+  fix is a real barrier (`Quiesce()`: write a plain file, wait for it to be
+  indexed, pump), which is sound on both backends — inotify delivers in queue
+  order across every watch on one fd, and the poll backend diffs a whole-tree
+  snapshot, so a cycle that sees the marker has already reported everything
+  older. A plain file moves the index and never the tree's shape, so the barrier
+  cannot mask the bit it protects. It is used before the REMOVAL step too:
+  without it a straggler from the creation could satisfy that positive wait, and
+  a backend reporting nothing at all for a removal would still pass.
+
+  The failure was also unactionable, which is its own defect: a bare bool cannot
+  say whether a straggler or the event under test set it. The fixture counts
+  shape-change batches now and the assertion names the numbers, the same
+  treatment the file-finder test next door got after failing the same way.
+
+- **The `tests` job hid three lanes behind the first red one.** It runs four
+  independent validation lanes in sequence — the suite, the allocation-gated
+  pass, the perf-gate vacuity canary, the hardened-libstdc++ pass — sharing the
+  job only because they share its build tree. Default step fail-fast meant the
+  flaky allocation-gated pass left "can the perf gate still go red" and "does the
+  tree pass under `_GLIBCXX_ASSERTIONS`" unanswered. `if: !cancelled()` on the
+  three later steps; each still fails the job, they just all report.
+
+Opened and closed by the same pass, from reading the code the flake sat in:
+
+- **A directory removal scanned the WHOLE index, once per removed directory.**
+  `RemoveProjectSubtreeLocked` asked the containment predicate about every
+  indexed file and then erased in place. `files_` is sorted by
+  `relative_path.native()`, so the subtree is already a contiguous run — the
+  entries under `dir` are exactly those with the byte prefix `dir/`, and every
+  such string sorts into `[dir/, dir<sep+1>)` — and two binary searches bound it.
+  (A directory covers two runs, not one: its own path, should a batch have
+  indexed it as a file, sorts before the prefix run and is not adjacent to it,
+  because `.` (0x2E) precedes `/` (0x2F) and so `sub.txt` falls between `sub` and
+  `sub/a.cpp`.) Bounding alone was only 2.3x, because the other half of the cost
+  is the per-erase tail shift and a single `rm -rf`, branch switch or build clean
+  arrives as one recursive change per removed directory — doubled, since the
+  parent watch and the directory's own each report it. `ApplyBatch` consumes the
+  whole consecutive run and compacts once; recursive deletions are idempotent and
+  commute, so a run is exactly the union of its ranges, and the run stops at the
+  next non-recursive change so a create under a just-deleted directory (how a
+  move-in arrives) still survives. 50,000 entries / 1,000 recursive changes over
+  500 directories: **141ms -> 1.5ms**. Two counters
+  (`watch.file_index_subtree_removals`, `..._entries_removed`) make the shape
+  visible; many removals dropping nothing is the double-reporting above.
+
+  Coverage is differential rather than hand-computed survivors: one test compares
+  against the containment predicate that was replaced, over a corpus of the byte
+  neighbours of the separator (`sub`, `sub.txt`, `sub-dash.txt`, `sub0`,
+  `subtly`, `subZ`) — a scan cannot get those wrong, a bounded erase can — and
+  another compares a coalesced run against applying the same deletions one batch
+  at a time, over a corpus containing a range strictly enclosed by another (the
+  one shape a left-to-right sweep gets wrong, by rewinding its cursor into ground
+  it already erased). Every guard was probed by injection; one first draft of the
+  overlap clamp turned out to be unreachable defensive code and was removed
+  rather than left looking load-bearing.
+
+  Caught by the clang lane, not GCC: the coalescing loop's helper lambda captured
+  `this` it did not use (`-Wunused-lambda-capture`), which only the
+  warnings-as-errors second-compiler job treats as a failure.
+
+Validated: `tests`, `perf-tests`, `perf-canary`, `hardened`, `clang-build`,
+`coverage`, `fuzz`, and ASAN/UBSAN/TSAN all green, with zero sanitizer warnings.
+The two races were additionally re-run 480x under 12-way load and the whole
+suite six rounds at 24-way oversubscription across both build trees.
+
 ### TD-2026-09-03-283 — what the second 2026-09-03 assessment pass found, fixed, and deliberately left. [RESOLVED same session — open remainder zero again; recorded so the dispositions are not re-derived.]
 
 A same-day follow-up to [282](#td-2026-09-03-282), deliberately aimed at what
