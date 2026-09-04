@@ -149,7 +149,10 @@ class FileFinder {
   // empty otherwise — see CachedFileEntry::fold_preserves_offsets.
   static int MatchPenalty(std::string_view text, std::string_view original,
                           std::string_view query);
+  // `query` is the lowercased query; `raw_query` the text as typed, for the
+  // case-exact filename bonus.
   int RankMatchCached(const CachedFileEntry& entry, const std::string& query,
+                      std::string_view raw_query,
                       std::uint64_t query_mask) const;
   // Append one indexed path to the blobs and push its entry. Returns false when
   // the blob bound is reached, which stops the rebuild instead of truncating an

@@ -51,6 +51,10 @@ constexpr int kPathLengthDivisor = 4;
 constexpr int kSegmentWeight = 2;
 // The folded filename IS the query.
 constexpr int kExactFilenameBonus = 100;
+// On top of the exact-filename bonus when the query's CASE matches the file's
+// too: typing `abc.md` must put `abc.md` above `aBc.md`, which the camelCase
+// bonus otherwise ranked first (its `B` scored as a word start).
+constexpr int kExactCaseFilenameBonus = 40;
 // The folded filename starts with the query.
 constexpr int kFilenamePrefixBonus = 30;
 // Every filename match sorts ahead of every path-only match, which is VSCode's
@@ -236,7 +240,7 @@ void FileFinder::Refresh() {
       ++mask_rejects;
       return;
     }
-    const int score = RankMatchCached(entry, lower_query, query_mask);
+    const int score = RankMatchCached(entry, lower_query, query(), query_mask);
     if (score == std::numeric_limits<int>::max()) {
       return;
     }
@@ -420,7 +424,7 @@ std::uint64_t FileFinder::CharPresenceMask(std::string_view text) {
 }
 
 int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string& query,
-                                std::uint64_t query_mask) const {
+                                std::string_view raw_query, std::uint64_t query_mask) const {
   if (query.empty()) {
     return static_cast<int>(entry.path_size);
   }
@@ -462,6 +466,9 @@ int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string&
                     static_cast<int>(lower_filename.size()) * kFilenameLengthWeight;
         if (lower_filename == query) {
           score -= kExactFilenameBonus;
+          if (original_filename == raw_query) {
+            score -= kExactCaseFilenameBonus;
+          }
         } else if (lower_filename.rfind(query, 0) == 0) {
           score -= kFilenamePrefixBonus;
         }
@@ -490,6 +497,10 @@ int FileFinder::RankMatchCached(const CachedFileEntry& entry, const std::string&
                     static_cast<int>(lower_filename.size()) * kFilenameLengthWeight;
         if (lower_filename == name_query) {
           score -= kExactFilenameBonus;
+          if (raw_query.size() == query.size() &&
+              original_filename == raw_query.substr(query_slash + 1)) {
+            score -= kExactCaseFilenameBonus;
+          }
         } else if (lower_filename.rfind(name_query, 0) == 0) {
           score -= kFilenamePrefixBonus;
         }

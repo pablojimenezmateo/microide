@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <filesystem>
 #include <initializer_list>
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -722,7 +723,109 @@ void TestFileFinderPresenceMaskNeverRejectsAMatch() {
   }
 }
 
+
+// Every result of a fuzzy query must contain the query's characters in order,
+// case-insensitively (that is what "fuzzy" promises), a file whose name equals
+// the query must be the first result, and the result list must never hold a
+// path the index does not.
+void TestFileFinderResultsAreSubsequenceMatchesWithExactNameFirst() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  WriteFile(root / "README.md", "root\n");
+  std::uint64_t state = 0x1F2E3D4C5B6A7988ull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kSegments[] = {"src", "lib", "app", "Test", "util", "docs"};
+  static constexpr const char* kNames[] = {"main", "Main", "index", "reader", "writer",
+                                           "readme", "abc", "aBc", "config", "x"};
+  static constexpr const char* kExts[] = {".cpp", ".h", ".md", ".txt", ".py"};
+  std::vector<std::string> paths;
+  IndexUpdateBatch batch;
+  batch.is_initial = true;
+  for (int i = 0; i < 60; ++i) {
+    std::string path;
+    const std::size_t depth = next(3);
+    for (std::size_t d = 0; d < depth; ++d) {
+      path += kSegments[next(std::size(kSegments))];
+      path += '/';
+    }
+    path += kNames[next(std::size(kNames))];
+    path += kExts[next(std::size(kExts))];
+    if (std::find(paths.begin(), paths.end(), path) != paths.end()) {
+      continue;
+    }
+    paths.push_back(path);
+    batch.changes.push_back(MakeCreateChange(path));
+  }
+  FileIndex index;
+  Expect(index.SetRoot(root, FileIndex::RootPopulationMode::Deferred), "index root");
+  Expect(index.ApplyBatch(batch), "initial batch");
+  FileFinder finder;
+  finder.SetIndex(&index);
+
+  const auto lower = [](std::string text) {
+    for (char& c : text) {
+      if (c >= 'A' && c <= 'Z') c = static_cast<char>(c + 32);
+    }
+    return text;
+  };
+  const auto is_subsequence = [&](const std::string& query, const std::string& path) {
+    const std::string q = lower(query);
+    const std::string p = lower(path);
+    std::size_t at = 0;
+    for (const char c : q) {
+      at = p.find(c, at);
+      if (at == std::string::npos) return false;
+      ++at;
+    }
+    return true;
+  };
+
+  static constexpr const char* kQueries[] = {"main", "MAIN", "rd", "abc", "aBc", "src/main",
+                                             "x", "cfg", "readme.md", "zzz", "i", "u/r"};
+  for (const char* query : kQueries) {
+    finder.SetQuery(query);
+    const auto results = finder.results();
+    for (const auto& result : results) {
+      Expect(std::find(paths.begin(), paths.end(), result.path_string) != paths.end(),
+             (std::string("[") + query + "] result " + result.path_string + " is an indexed path")
+                 .c_str());
+      Expect(is_subsequence(query, result.path_string),
+             (std::string("[") + query + "] result " + result.path_string +
+              " contains the query as a subsequence")
+                 .c_str());
+    }
+    std::size_t expected = 0;
+    for (const auto& path : paths) {
+      expected += is_subsequence(query, path) ? 1 : 0;
+    }
+    Expect((expected == 0) == results.empty(),
+           (std::string("[") + query + "] finds something iff a path matches").c_str());
+  }
+  // A file whose whole name is the query ranks first.
+  if (std::find(paths.begin(), paths.end(), "abc.md") == paths.end()) {
+    IndexUpdateBatch more;
+    more.changes.push_back(MakeCreateChange("abc.md"));
+    Expect(index.ApplyBatch(more), "add the exact-name file");
+    finder.Refresh();
+    paths.push_back("abc.md");
+  }
+  finder.SetQuery("abc.md");
+  std::string top;
+  for (std::size_t i = 0; i < std::min<std::size_t>(4, finder.results().size()); ++i) {
+    top += finder.results()[i].path_string + "(" + std::to_string(finder.results()[i].score) + ") ";
+  }
+  Expect(!finder.results().empty() && finder.results().front().path_string == "abc.md",
+         ("an exact file-name match ranks first; top=" + top).c_str());
+}
+
 void RegisterFileFinderTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "FileFinder/ResultsAreSubsequenceMatchesWithExactNameFirst",
+          TestFileFinderResultsAreSubsequenceMatchesWithExactNameFirst);
   AddTest(tests, "FileFinder/RanksContiguousMatchesFirst",
           TestFileFinderRanksContiguousMatchesFirst);
   AddTest(tests, "FileFinder/PrefersShorterShallowerPaths",
