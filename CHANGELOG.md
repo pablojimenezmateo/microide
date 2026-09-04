@@ -39,6 +39,46 @@ project (see [README](README.md)); versions track meaningful shipped work.
   VS Code send it, instead of a Ctrl+J byte that raw-mode programs do not bind.
 - **Smart indent no longer miscounts a leading space run that ends in `!`** (a
   word-at-a-time fast path treated `!` after spaces as another space).
+- **Staging a hunk from the Combined view stages that hunk.** The patch was
+  written against HEAD and applied to the index, so after the first hunk git's
+  anchored offsets put the next one on the wrong lines; the patch is now
+  regenerated against the index for the hunk's rows. Stage and unstage sequences
+  through git itself are exercised over 80 random edit sets.
+- **Three-way merge groups touching changes into one conflict**, as `git
+  merge-file` does; adjacent edits from both sides used to come out as two
+  independent hunks that could both be taken.
+- **The terminal's pending-wrap column behaves as the last column** for cursor
+  reports, backspace and cursor saves, matching xterm; a paste's line breaks
+  arrive as Enter.
+- **Keybindings are parsed by key name**, not scancode, so a layout where `z`
+  is not where a US keyboard puts it still binds `Ctrl+Z` to undo; float
+  settings serialize the same in every locale.
+- **One malformed setting id no longer drops the whole config record.** A key
+  with a space or control byte (which a later version's tighter rule can make
+  of an earlier version's key) is skipped alone, and never written.
+- **Indent detection reads a 2-space file with `+4` continuations as 2-space.**
+  It counted only indentation increases, so clang-format's wrapped-call
+  continuations outvoted the block steps in 141 of this repository's own C++
+  files. It is VS Code's `guessIndentation` now: steps in both directions,
+  alignment lines ignored, 2 beating 4 when half as common, and a tab-indented
+  file leaves the tab size alone.
+- **Column (box) selection is a rectangle of visual columns.** It was built
+  from byte columns, so over a tab-indented or accented line the box slid by
+  the byte count and could start mid-character. The per-line width table now
+  also records a line's leading-tab shape, so the mapping is arithmetic on
+  indented code.
+- **Add-cursor-at-next-match (Ctrl+D) keeps walking.** The third press re-found
+  the second press's occurrence and was deduped, so two carets was the most the
+  chord could make; the first press now only selects the word, as in VS Code.
+- **A caret set no longer goes dead after select-all or a trimming save.**
+  With several carets live, Ctrl+A then typing did nothing, and typing after a
+  multi-caret cut plus a save with trim-on-save did nothing, until a plain
+  caret move: select-all now replaces the caret set with its one selection,
+  and carets that a clamp lands on the same spot merge.
+- **Toggle-block-comment on a selection is a toggle.** The wrap collapsed the
+  selection, so the second `Shift+Alt+A` inserted an empty `/**/`; the wrapped
+  text now stays selected, the markers are padded (`/* text */`) and the next
+  toggle strips them.
 
 ## [2.11.0] - 2026-09-03
 

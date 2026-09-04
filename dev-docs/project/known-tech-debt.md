@@ -389,6 +389,110 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-05-286 — the second and third sweeps of the 2026-09-04 pass: stage/merge/terminal/keybinding defects from reference tests, and four editor defects the unit suites had green that driving the real binary found in an hour. [RESOLVED same session — open remainder zero; two deliberate deviations recorded below so they are not re-litigated.]
+
+[285](#td-2026-09-04-285) compared primitives against references. The second
+sweep kept doing that one layer up (staging, merge, terminal, persistence,
+keybindings); the third switched technique: **start the real binary headlessly
+(`microide --control --control-spec`, under xvfb), drive it with the same
+commands a user's chords dispatch, and read the result back off disk after a
+`save`.** The unit suites were green around every one of the four editor
+defects that found — each was a state interaction between two features that no
+single-feature test constructs.
+
+Fixed, each with a regression test, in commit order:
+
+- **Staging a hunk from the Combined view staged the wrong lines after the
+  first hunk.** The patch was generated against HEAD and applied to the index;
+  git's anchored hunk offsets then landed the second hunk elsewhere. The request
+  carries the hunk's row span and `RegenerateStagingPatch` rebuilds the patch
+  against the index for exactly those rows. 80 random edit sets are staged and
+  unstaged through git itself, alone and in sequence; on the way it also found
+  the phantom trailing element aligning with a blank line, an emptied file read
+  as a deletion, and a Modified row carrying the phantom.
+- **The merge model split touching changes into two independent hunks** where
+  `git merge-file` reports one conflict; grouping joins touching spans. 120
+  random triples with unique lines agree with git; with repeated lines the
+  residual disagreement is alignment ambiguity, about 1 %.
+- **Terminal: the pending-wrap column** (`cursor_column_ == columns_`) reached
+  CSI dispatch, backspace and DECSC as one past the last column; it is clamped
+  at those entries now (tab deliberately not, matching xterm.js). A pasted line
+  break reaches the shell as `\r`.
+- **Keybindings were parsed by scancode**, so a layout that moves `z` lost
+  `Ctrl+Z`; `ParseKeyChord` resolves key names to keycodes. Float settings went
+  through `std::to_string`, which is locale-dependent; `std::to_chars` now.
+- **One malformed setting id dropped the whole config record.** The encoder
+  wrote any id and the decoder failed the record on the first invalid one, so a
+  key with a space or control byte (which a later version's tighter id rule can
+  make of an earlier version's key) cost the user every setting and disabled id.
+  Both skip the entry alone. Found by a random round trip over hostile ids and
+  values; the same round trip over the whole project session record found
+  nothing.
+- **Indent detection read 141 of this repository's own 1068 C++ files as
+  4-space.** It counted only increases from the previous line, so clang-format's
+  `+4` continuation lines outvoted the `+2` block steps. It is VS Code's
+  `guessIndentation` now (both directions, alignment lines skipped, `2,4,6,8,3,5,7`
+  order, 2 beats 4 when at least half as common, a tab file leaves the tab size
+  alone, window 1024 lines). The remaining 45 are headers whose only indentation
+  is continuation, which no detector can read otherwise. The check was the
+  repository itself against a Python port of VS Code's algorithm.
+- **Column (box) selection was a rectangle of bytes.** Over a tab-indented or
+  accented line it slid by the byte count and could start mid-character. Corners
+  are still text positions; each spanned line maps the two VISUAL columns to its
+  nearest boundary. To keep the per-keystroke rebuild off the buffer, the
+  per-line width table records a line's leading-tab shape in its free bits (bits
+  48..55 tab count, bit 62 flag), which also makes the caret's visual/text column
+  conversion arithmetic on indented code and stops the table build walking
+  tab-indented lines byte by byte. `editor_column_selection_burst` now paints a
+  frame before measuring, as the pane a real gesture runs on has; re-recorded.
+- **Ctrl+D stalled at two carets.** The next-match search was seeded from the
+  primary selection every press, so the third press re-found the second's match
+  and the dedupe swallowed it; the first press also both selected the word and
+  added a caret. It seeds from the caret farthest along the cyclic document order
+  from the primary (the one added last), one search per press, and the first
+  press only selects, as VS Code. `editor_add_cursor_next_match` had been
+  measuring 95 no-op presses; re-recorded.
+- **A caret set went dead after select-all, or after a cut plus a trimming
+  save.** Select-all left the secondaries inside the whole-buffer selection
+  (every later edit an overlapping multi-caret edit the engine refuses); the save
+  clamp moved a secondary from a trimmed line onto the primary, and the overlap
+  check counted two identical collapsed carets as a conflict while the applier
+  collapses them into one site. Select-all clears the set; identical ranges are
+  one site; colliding carets merge after the clamp.
+- **Toggle-block-comment on a selection was not a toggle**: the wrap collapsed
+  the selection and the second `Shift+Alt+A` inserted an empty `/**/`. It pads
+  (`/* text */`), keeps the inner text selected, and the next toggle finds the
+  markers just outside the selection.
+
+Checked and found clean: `QuoteCommandArg`/`ParseCommandLine` over 500 random
+hostile argument lists, the project session record over 60 random sessions,
+`ParseHexColor`, the regex replace (it is `pcre2_substitute`), and through the
+real binary: undo/redo, sort, indent/outdent under both tab modes, move/copy/
+insert/delete line, jump-to-matching-bracket, format-json, add-cursor-all-
+matches, cut/copy/paste, splits and `close-group`, tab switching, a second
+project and switching between them, `git-stash`/`git-stash-pop`,
+`git-create-branch`/`git-switch-branch`, `review-branch`, `review-commit`,
+`compare-clipboard`, the terminal panel, wrap/colorscheme/ui-scale, and a spec
+cold start with `open`/`commands`.
+
+Two deliberate deviations, recorded rather than changed:
+
+- **A bare LF resets the terminal column to 0** (xterm keeps the column).
+  `ONLCR` hides it for every shell, and many tests encode `\n` as CR+LF; left.
+- **The file tree hides dotfiles unless the ignore rules mark them** (`.github`,
+  `.gitignore`, `.editorconfig` are not shown; `.git` is, greyed). VS Code shows
+  dotfiles and hides `.git` through `files.exclude`. It is a product choice
+  with tests (`DirectoryTree.cpp`, "hidden ignored files should remain visible"),
+  so it stays until someone decides otherwise.
+
+The trap worth carrying forward: **a feature's unit test constructs one state;
+the defects here lived between two features** (undo leaving carets, then
+select-all; a multi-caret cut, then save-time trim; a wrap, then the toggle
+again). Driving the binary through the control channel with a `save` and a
+disk read after each step costs seconds per sequence and reaches those states.
+`type` with one character and with two go through different insert paths
+(`InsertCharacter` vs `InsertText`), so a dead-typing symptom needs both.
+
 ### TD-2026-09-04-285 — the 2026-09-04 assessment pass: six primitives that were wrong on inputs their tests never generated, found by comparing each against a reference. [RESOLVED same session — open remainder zero; recorded so the technique and the dispositions are not re-derived.]
 
 The two previous passes ([282](#td-2026-09-03-282), [283](#td-2026-09-03-283))
