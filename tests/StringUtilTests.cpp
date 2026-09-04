@@ -430,6 +430,38 @@ void TestSaturatingMath() {
   Expect(SaturatingAdd<U64>(kMax, kMax) == kMax, "doubling the max clamps to the max");
 }
 
+// The terminal's cell width: wcwidth's rules over the generated Unicode tables.
+void TestStringUtilCodepointDisplayWidth() {
+  using microide::util::CodepointDisplayWidth;
+  Expect(CodepointDisplayWidth(U'a') == 1, "ASCII is one column");
+  Expect(CodepointDisplayWidth(0x0000) == 0, "NUL has no advance");
+  Expect(CodepointDisplayWidth(0x001B) == 0, "a C0 control has no advance");
+  Expect(CodepointDisplayWidth(0x00AD) == 1, "SOFT HYPHEN is one column, as in glibc");
+  Expect(CodepointDisplayWidth(0x0301) == 0, "a combining acute is zero width");
+  Expect(CodepointDisplayWidth(0x093C) == 0, "Devanagari nukta is zero width");
+  Expect(CodepointDisplayWidth(0x093F) == 1, "Devanagari vowel sign I is a SPACING mark: one column");
+  Expect(CodepointDisplayWidth(0x0BC0) == 0, "Tamil vowel sign II is zero width");
+  Expect(CodepointDisplayWidth(0x0E31) == 0, "Thai MAI HAN-AKAT is zero width");
+  Expect(CodepointDisplayWidth(0x1160) == 0, "a conjoining Hangul jungseong is zero width");
+  Expect(CodepointDisplayWidth(0x200D) == 0, "ZERO WIDTH JOINER is zero width");
+  Expect(CodepointDisplayWidth(0xFE0F) == 0, "VARIATION SELECTOR-16 is zero width");
+  Expect(CodepointDisplayWidth(0xE0100) == 0, "a supplementary variation selector is zero width");
+  Expect(CodepointDisplayWidth(0x4E2D) == 2, "CJK 中 is two columns");
+  Expect(CodepointDisplayWidth(0xAC00) == 2, "Hangul syllable 가 is two columns");
+  Expect(CodepointDisplayWidth(0xFF21) == 2, "fullwidth Ａ is two columns");
+  Expect(CodepointDisplayWidth(0x26A1) == 2, "⚡ is two columns (it was one)");
+  Expect(CodepointDisplayWidth(0x2705) == 2, "✅ is two columns (it was one)");
+  Expect(CodepointDisplayWidth(0x274C) == 2, "❌ is two columns (it was one)");
+  Expect(CodepointDisplayWidth(0x231A) == 2, "⌚ is two columns");
+  Expect(CodepointDisplayWidth(0x2603) == 1, "☃ is one column (East Asian Neutral)");
+  Expect(CodepointDisplayWidth(0x1F600) == 2, "😀 is two columns");
+  Expect(CodepointDisplayWidth(0x1F3FB) == 2, "an emoji skin-tone modifier is two columns");
+  Expect(CodepointDisplayWidth(0x17000) == 2, "Tangut is two columns (it was one)");
+  Expect(CodepointDisplayWidth(0x20000) == 2, "CJK extension B is two columns");
+  Expect(CodepointDisplayWidth(0x00E9) == 1, "é is one column");
+  Expect(CodepointDisplayWidth(0x0416) == 1, "Cyrillic Ж is one column");
+}
+
 void TestStringUtilUnicodeCaseFold() {
   using microide::util::SimpleFoldCodepoint;
   using microide::util::Utf8CaseFold;
@@ -920,6 +952,7 @@ void RegisterStringUtilTests(std::vector<TestCase>& tests) {
           TestStringUtilAsciiClassifiersAreLocaleIndependent);
   AddTest(tests, "StringUtil/ContainsCaseInsensitiveAscii",
           TestStringUtilContainsCaseInsensitiveAscii);
+  AddTest(tests, "StringUtil/CodepointDisplayWidth", TestStringUtilCodepointDisplayWidth);
   AddTest(tests, "StringUtil/UnicodeCaseFold", TestStringUtilUnicodeCaseFold);
   AddTest(tests, "StringUtil/AppendUtf8EncodesAllSequenceLengths",
           TestStringUtilAppendUtf8EncodesAllSequenceLengths);
