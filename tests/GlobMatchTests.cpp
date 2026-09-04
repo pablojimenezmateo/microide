@@ -172,10 +172,18 @@ void TestGlobMatchesDoubleStarConsumesWholeSegments() {
   Expect(GlobMatches("**/*/b", "x/a/b"), "'**/*/b' matches with a directory in between");
   Expect(GlobMatches("**/x*/b", "q/xa/b"), "'**/x*/b' resumes on a segment boundary");
   Expect(!GlobMatches("**/x*/b", "q/axa/b"), "'**/x*/b' must not start x mid-segment");
-  // EditorConfig's convention is unchanged: '**' is any string of characters.
+  // EditorConfig's convention: a '**' that does not fold a '/' is any string of
+  // characters, but its "**/" (what a slash-free section header becomes) is
+  // still whole directories — "[x.py]" must not apply to "ax.py".
   using microide::project::GlobDoubleStar;
   Expect(GlobMatches("a/**b", "a/x/yb", GlobDoubleStar::Always),
-         "EditorConfig's '**' still ends anywhere");
+         "EditorConfig's unfolded '**' still ends anywhere");
+  Expect(!GlobMatches("**/x.py", "ax.py", GlobDoubleStar::Always),
+         "EditorConfig's '**/' must not end inside a segment");
+  Expect(GlobMatches("**/x.py", "a/x.py", GlobDoubleStar::Always),
+         "EditorConfig's '**/' matches at depth");
+  Expect(GlobMatches("**/x.py", "x.py", GlobDoubleStar::Always),
+         "EditorConfig's '**/' matches at the top level");
 
   const GlobSet scope = GlobSet::Parse("tests");
   Expect(scope.Matches("tests/a.cpp"), "'tests' scopes its own subtree");

@@ -11,16 +11,18 @@ namespace {
 // index just past what the wildcard has swallowed so far; on success it moves to
 // the next legal restart and the caller resumes the pattern there.
 //
-// Under the segment-anchored rule a '**' stands for WHOLE directories only —
-// git's "a/**/b" matches "a/b", "a/x/b", "a/x/y/b" and nothing else — so the only
-// restarts are just past a '/'. Stepping one byte at a time let the folded
-// "**/" end inside a segment: "a/**/b" matched "a/ab", "**/build" matched
+// A "**/" (`folded_slash`) stands for WHOLE directories only — git's "a/**/b"
+// matches "a/b", "a/x/b", "a/x/y/b" and nothing else, and EditorConfig's
+// "[x.py]" (spelled "**/x.py") means x.py in any directory, not "ax.py" — so the
+// only restarts are just past a '/'. Stepping one byte at a time let the folded
+// wildcard end inside a segment: "a/**/b" matched "a/ab", "**/build" matched
 // "prebuild", and every floating scope entry ("tests" → "**/tests/**") caught
-// "mytests/x". EditorConfig's '**' is "any string of characters", so that mode
-// keeps the byte step.
+// "mytests/x". A '**' that did not fold a slash exists only under EditorConfig's
+// convention ("lib/**.c"), where it is "any string of characters" and keeps the
+// byte step.
 bool ExtendSegmentDoubleStar(std::string_view text, std::size_t& consumed_end,
-                             bool double_star_always_crosses) {
-  if (double_star_always_crosses) {
+                             bool folded_slash) {
+  if (!folded_slash) {
     if (consumed_end >= text.size()) {
       return false;
     }
@@ -53,6 +55,10 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
   // fallback, '**/' degrades to matching at the top level only.
   std::size_t dstar_pi = std::string_view::npos;
   std::size_t dstar_ti = 0;
+  // Whether the pending '**' and the remembered one swallowed the '/' after them
+  // (and so may only restart on a segment boundary; see ExtendSegmentDoubleStar).
+  bool star_folded_slash = false;
+  bool dstar_folded_slash = false;
 
   while (ti < tlen) {
     if (pi < plen) {
@@ -75,7 +81,8 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
           // segments or not; there is nothing after it to resume.
           return true;
         }
-        if (segment_doublestar && pi < plen && pattern[pi] == '/') {
+        const bool folded_slash = segment_doublestar && pi < plen && pattern[pi] == '/';
+        if (folded_slash) {
           // '**/' can match zero directories: fold the following '/' into the
           // wildcard so the pattern can resume with nothing consumed from text.
           ++pi;
@@ -83,11 +90,13 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
         star_pi = pi;
         star_ti = ti;
         star_cross_slash = segment_doublestar;
+        star_folded_slash = folded_slash;
         if (segment_doublestar) {
           // Remember this cross-slash '**' restart independently so a later
           // non-crossing '*' cannot clobber our only way back across a '/'.
           dstar_pi = pi;
           dstar_ti = ti;
+          dstar_folded_slash = folded_slash;
         }
         continue;
       }
@@ -167,7 +176,7 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
     }
     if (star_pi != std::string_view::npos) {
       if (star_cross_slash) {
-        if (ExtendSegmentDoubleStar(text, star_ti, double_star_always_crosses)) {
+        if (ExtendSegmentDoubleStar(text, star_ti, star_folded_slash)) {
           pi = star_pi;
           ti = star_ti;
           continue;
@@ -185,7 +194,7 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
     // later literal mismatch cannot wrongly jump forward into it while we are
     // re-extending the '**'; it is freshly re-armed when the '*' is reached again.
     if (dstar_pi != std::string_view::npos &&
-        ExtendSegmentDoubleStar(text, dstar_ti, double_star_always_crosses)) {
+        ExtendSegmentDoubleStar(text, dstar_ti, dstar_folded_slash)) {
       pi = dstar_pi;
       ti = dstar_ti;
       star_pi = std::string_view::npos;

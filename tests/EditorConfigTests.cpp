@@ -178,6 +178,9 @@ indent_size = 9
 
 [lib/**.c]
 indent_size = 5
+
+[exact.py]
+indent_size = 7
 )");
 
   EditorConfigResolver resolver;
@@ -196,6 +199,14 @@ indent_size = 5
          "a leading-slash pattern must match at the config's directory");
   Expect(!resolver.Resolve(root / "deep" / "toplevel.c").indent_width.has_value(),
          "a leading-slash pattern must not match deeper");
+
+  // A slash-free header names a basename in any directory, not a suffix of one:
+  // "**/exact.py" used to restart its '**' one byte at a time and so applied
+  // to "inexact.py".
+  Expect(resolver.Resolve(root / "deep" / "exact.py").indent_width.value_or(0) == 7,
+         "a slash-free header matches its basename at any depth");
+  Expect(!resolver.Resolve(root / "deep" / "inexact.py").indent_width.has_value(),
+         "a slash-free header must not match a longer basename ending in it");
 
   // A pattern containing '/' is anchored too.
   Expect(resolver.Resolve(root / "lib" / "deep" / "x.c").indent_width.value_or(0) == 5,
