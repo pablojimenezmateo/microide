@@ -185,6 +185,32 @@ void RunWatcherContract(bool force_poll) {
   Expect(fixture.WaitIndexed("e.txt"), "watcher contract: a renamed file appears at its new path");
   Expect(fixture.WaitGone("d.txt"), "watcher contract: a renamed file leaves its old path");
 
+  // 5b. Rename a DIRECTORY within the tree: its files move to the new path,
+  //     and the directory stays watched afterwards. inotify keeps the watch on
+  //     the moved inode and reports IN_MOVED_FROM/IN_MOVED_TO on the parent and
+  //     then IN_MOVE_SELF on the directory itself; the native backend re-walks
+  //     the new path on IN_MOVED_TO, which re-registers the SAME descriptor
+  //     under the new path — so the IN_MOVE_SELF that follows must not read the
+  //     descriptor's (now new) path as "moved away" and delete it from the index.
+  fs::create_directories(root / "movedir");
+  WriteFile(root / "movedir" / "m.txt", "m\n");
+  Expect(fixture.WaitIndexed("movedir/m.txt"), "watcher contract: the directory to move is indexed");
+  fs::rename(root / "movedir", root / "renamed");
+  Expect(fixture.WaitIndexed("renamed/m.txt"),
+         "watcher contract: a renamed directory's files appear at the new path");
+  Expect(fixture.WaitGone("movedir/m.txt"),
+         "watcher contract: a renamed directory's files leave the old path");
+  // The delete that follows the walk lands later than the creation; give it its
+  // chance before asserting the file is still here.
+  WriteFile(root / "renamed-sentinel.txt", "s\n");
+  Expect(fixture.WaitIndexed("renamed-sentinel.txt"), "watcher contract: sentinel write lands");
+  fixture.Pump();
+  Expect(fixture.IndexHas("renamed/m.txt"),
+         "watcher contract: a renamed directory's files STAY indexed after its own move event");
+  WriteFile(root / "renamed" / "n.txt", "n\n");
+  Expect(fixture.WaitIndexed("renamed/n.txt"),
+         "watcher contract: a renamed directory is still watched at its new path");
+
   // 6. Deleted file leaves the index.
   fs::remove(root / "sub" / "b.txt");
   Expect(fixture.WaitGone("sub/b.txt"), "watcher contract: a deleted file leaves the index");

@@ -21,6 +21,7 @@
 #include <cstring>
 #include <filesystem>
 #include <map>
+#include <set>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -587,6 +588,9 @@ struct FileIndexWatcher::Impl {
   int inotify_fd = -1;
   int control_pipe[2] = {-1, -1};
   std::map<int, std::filesystem::path> wd_to_path;  // watch descriptor -> abs path
+  // Descriptors a moved-in walk re-bound to a new path, awaiting the directory's
+  // own IN_MOVE_SELF (see AddSingleWatch). Consumed by that event.
+  std::set<int> rebound_watches;
   std::thread worker;
   std::thread setup_thread;
   std::atomic<bool> stop_native_setup{false};
@@ -709,7 +713,18 @@ struct FileIndexWatcher::Impl {
       }
       return true;
     }
-    wd_to_path[wd] = dir;
+    const auto [slot, inserted] = wd_to_path.try_emplace(wd, dir);
+    if (!inserted && slot->second != dir) {
+      // An inode already watched under another path: this is the walk of a
+      // directory that was just moved WITHIN the tree (the kernel keeps the
+      // watch on the inode and hands back its descriptor). Re-point the
+      // mapping and remember that it was re-bound, because the directory's own
+      // IN_MOVE_SELF is still queued behind the parent's IN_MOVED_TO that
+      // triggered this walk; read against the new path it would look like the
+      // directory vanishing.
+      slot->second = dir;
+      rebound_watches.insert(wd);
+    }
     out_added = true;
     return true;
   }
@@ -934,6 +949,7 @@ struct FileIndexWatcher::Impl {
             // stale mapping (the watch is already gone — no inotify_rm_watch needed).
             if ((ev->mask & IN_IGNORED) != 0) {
               wd_to_path.erase(it);
+              rebound_watches.erase(ev->wd);
               continue;
             }
             const std::filesystem::path& dir = it->second;
@@ -1014,6 +1030,16 @@ struct FileIndexWatcher::Impl {
                 }
               }
             } else if ((ev->mask & (IN_DELETE_SELF | IN_MOVE_SELF)) != 0) {
+              // A directory renamed within the tree arrives as IN_MOVED_FROM and
+              // IN_MOVED_TO on the parent and THEN IN_MOVE_SELF on the directory:
+              // the moved-to walk above already re-bound this descriptor to the
+              // new path (see AddSingleWatch) and enqueued the files under it.
+              // Reading that new mapping here as the vanished directory undid the
+              // walk — a recursive delete of the NEW path — and unwatched it, so
+              // `mv a b` emptied b from the index until a full rescan.
+              if ((ev->mask & IN_MOVE_SELF) != 0 && rebound_watches.erase(ev->wd) != 0) {
+                continue;
+              }
               // The watched directory itself was removed/moved. Drop the watch AND
               // emit a recursive deletion for it, or every file it contained lingers
               // in the index as a ghost until a full rescan.
@@ -1030,6 +1056,7 @@ struct FileIndexWatcher::Impl {
                 inotify_rm_watch(inotify_fd, ev->wd);
               }
               wd_to_path.erase(it);
+              rebound_watches.erase(ev->wd);
             }
           }
 
