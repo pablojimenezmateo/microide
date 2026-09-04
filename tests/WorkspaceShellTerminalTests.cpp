@@ -126,7 +126,7 @@ void TestWorkspaceShellCtrlShiftVPastesBracketedClipboard() {
              shell, SDLK_V, static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT)),
          "Ctrl+Shift+V should be handled by the terminal");
   Expect(TerminalSessionTestAccess::SentBytes(session) ==
-             "\x1b[200~printf 'hi'\n\x1b[201~",
+             "\x1b[200~printf 'hi'\r\x1b[201~",
          "Ctrl+Shift+V should paste clipboard text using bracketed paste mode");
 }
 
@@ -140,7 +140,7 @@ void TestWorkspaceShellShiftInsertPastesRawClipboard() {
 
   Expect(WorkspaceShellTestAccess::HandleTerminalKeyDown(shell, SDLK_INSERT, SDL_KMOD_SHIFT),
          "Shift+Insert should be handled by the terminal");
-  Expect(TerminalSessionTestAccess::SentBytes(session) == "git status\n",
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "git status\r",
          "Shift+Insert should paste raw clipboard text when bracketed paste mode is disabled");
 }
 

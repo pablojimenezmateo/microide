@@ -263,8 +263,29 @@ void TestTerminalSessionPasteUsesBracketedPasteWhenEnabled() {
 
   session.PasteText("echo hi\n");
 
-  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[200~echo hi\n\x1b[201~",
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[200~echo hi\r\x1b[201~",
          "terminal paste should wrap clipboard text when bracketed paste mode is enabled");
+}
+
+// A pasted line break is the Enter key, which is a carriage return on the wire
+// (what VTE and xterm.js send). `\r\n` collapses to one `\r`; a bare `\r` is
+// already right. Both with and without bracketed paste.
+void TestTerminalSessionPasteSendsLineBreaksAsCarriageReturns() {
+  {
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    session.PasteText("one\ntwo\r\nthree\rfour\n\n");
+    Expect(TerminalSessionTestAccess::SentBytes(session) == "one\rtwo\rthree\rfour\r\r",
+           "a plain paste rewrites every line break to a carriage return");
+  }
+  {
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 24, 80);
+    TerminalSessionTestAccess::AppendOutput(session, "\x1b[?2004h");
+    session.PasteText("one\r\ntwo\n");
+    Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[200~one\rtwo\r\x1b[201~",
+           "a bracketed paste rewrites line breaks inside the guards");
+  }
 }
 
 // A poisoned clipboard containing the bracketed-paste end marker must not be able
@@ -277,7 +298,7 @@ void TestTerminalSessionPasteStripsEmbeddedEndMarker() {
   session.PasteText("safe\x1b[201~rm -rf ~\n");
 
   // The embedded end marker is dropped; the payload stays inside the paste guard.
-  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[200~saferm -rf ~\n\x1b[201~",
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[200~saferm -rf ~\r\x1b[201~",
          "an embedded end marker must be stripped so paste mode can't be escaped");
 }
 
@@ -296,7 +317,7 @@ void TestTerminalSessionPasteNeutralizesReconstitutedEndMarker() {
   const std::string sent = TerminalSessionTestAccess::SentBytes(session);
   // The only end marker present must be the trailing guard we appended; the body
   // must contain no embedded ESC[201~ that could terminate paste mode early.
-  Expect(sent == "\x1b[200~rm -rf ~\n\x1b[201~",
+  Expect(sent == "\x1b[200~rm -rf ~\r\x1b[201~",
          "reconstituted end markers must be neutralized to a fixed point");
   const std::string_view body_and_tail(sent.data() + 6, sent.size() - 6);  // skip ESC[200~
   Expect(body_and_tail.find("\x1b[201~") == body_and_tail.size() - 6,
@@ -307,10 +328,11 @@ void TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
 
-  session.PasteText("echo hi\n");
+  session.PasteText("echo hi\x1b[Ax\n");
 
-  Expect(TerminalSessionTestAccess::SentBytes(session) == "echo hi\n",
-         "terminal paste should send raw bytes when bracketed paste mode is disabled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "echo hi\x1b[Ax\r",
+         "terminal paste should send the bytes unguarded (line breaks as Enter) when "
+         "bracketed paste mode is disabled");
 }
 
 using KeyPress = microide::terminal::TerminalSession::KeyPress;
@@ -2681,6 +2703,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionDeleteLineRespectsScrollRegion);
   AddTest(tests, "TerminalSession/PasteBracketedMode",
           TestTerminalSessionPasteUsesBracketedPasteWhenEnabled);
+  AddTest(tests, "TerminalSession/PasteSendsLineBreaksAsCarriageReturns",
+          TestTerminalSessionPasteSendsLineBreaksAsCarriageReturns);
   AddTest(tests, "TerminalSession/PasteStripsEmbeddedEndMarker",
           TestTerminalSessionPasteStripsEmbeddedEndMarker);
   AddTest(tests, "TerminalSession/PasteNeutralizesReconstitutedEndMarker",

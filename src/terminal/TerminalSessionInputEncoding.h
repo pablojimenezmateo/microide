@@ -33,8 +33,30 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
                                    const TerminalSession::KeyPress& press);
 
 inline std::string FormatTerminalPasteBytes(bool bracketed_paste_mode, std::string_view text) {
+  // A pasted line break is the Enter KEY, and Enter is a carriage return on the
+  // wire: VTE and xterm.js (VS Code's terminal) both rewrite `\r?\n` to `\r` on
+  // paste. Sending the LF through as typed is wrong for anything in raw mode
+  // that tells the two apart — a readline prompt takes ^J as accept-line, but
+  // vim/fzf/less and most TUIs bind Enter (^M), and a multi-line paste into
+  // them used to land as Ctrl+J keystrokes.
+  const auto push_normalized = [](std::string& out, char c, char previous) {
+    if (c == '\n') {
+      if (previous != '\r') {
+        out.push_back('\r');
+      }
+      return;
+    }
+    out.push_back(c);
+  };
   if (!bracketed_paste_mode) {
-    return std::string(text);
+    std::string bytes;
+    bytes.reserve(text.size());
+    char previous = '\0';
+    for (const char c : text) {
+      push_normalized(bytes, c, previous);
+      previous = c;
+    }
+    return bytes;
   }
 
   // Neutralize any embedded end marker in the pasted text: otherwise a poisoned
@@ -51,8 +73,10 @@ inline std::string FormatTerminalPasteBytes(bool bracketed_paste_mode, std::stri
   static constexpr std::string_view kEndMarker = "\x1b[201~";
   std::string body;
   body.reserve(text.size());
+  char previous = '\0';
   for (const char c : text) {
-    body.push_back(c);
+    push_normalized(body, c, previous);
+    previous = c;
     if (body.size() >= kEndMarker.size() &&
         std::string_view(body).substr(body.size() - kEndMarker.size()) == kEndMarker) {
       body.erase(body.size() - kEndMarker.size());
