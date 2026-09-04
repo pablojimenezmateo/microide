@@ -521,6 +521,29 @@ void TestStringUtilLeadingByteRun() {
   std::string high(20, ' ');
   high[13] = static_cast<char>(0xC3);
   Expect(util::LeadingByteRun(high, ' ') == 13, "a non-ASCII byte ends the run");
+  // EVERY other byte value must end the run, at every offset inside a word. The
+  // first word-at-a-time form applied the has-zero-byte trick per byte, which is
+  // exact only for "any zero byte": a byte equal to `byte ^ 0x01` above a matching
+  // byte in the same word borrowed its way into a false match, so
+  // `"  !      x"` read 9 leading spaces instead of 2 (the whole word passed, and
+  // the scalar tail started after it).
+  for (char byte : kBytes) {
+    for (int other = 0; other < 256; ++other) {
+      if (static_cast<char>(other) == byte) {
+        continue;
+      }
+      for (std::size_t at = 0; at < 16; ++at) {
+        std::string text(16, byte);
+        text[at] = static_cast<char>(other);
+        Expect(util::LeadingByteRun(text, byte) == at,
+               "every non-matching byte value ends the run at its own offset");
+      }
+    }
+  }
+  Expect(util::LeadingByteRun("  !      x", ' ') == 2,
+         "a '!' two bytes into a space run ends the run there");
+  Expect(util::LeadingByteRun("\t\x08\t\t\t\t\t\tz", '\t') == 1,
+         "a backspace one byte into a tab run ends the run there");
 }
 
 // FirstNonAsciiOrByte reads eight bytes at a time, so the cases that matter are

@@ -63,18 +63,20 @@ bool IsAllAscii(std::string_view text) {
 }
 
 std::size_t LeadingByteRun(std::string_view text, char byte) {
-  constexpr std::uint64_t kHighBits = 0x8080808080808080ULL;
   constexpr std::uint64_t kLowOnes = 0x0101010101010101ULL;
   const std::uint64_t match_word = kLowOnes * static_cast<unsigned char>(byte);
   std::size_t index = 0;
-  // Classic has-zero-byte trick over `word ^ match_word`: a zero byte there marks
-  // a byte equal to `byte`, so a non-zero mask means the run ends inside this
-  // word and the scalar tail resolves exactly where.
+  // A whole word matches iff it equals `match_word`; the scalar tail resolves
+  // where the run ends inside the first word that does not. This used to apply
+  // the has-zero-byte trick to `word ^ match_word` and demand every byte's flag
+  // be set, but that trick is only exact for "is there ANY zero byte": above a
+  // real zero byte the borrow chain also flags any 0x01 byte, so a byte equal to
+  // `byte ^ 0x01` (`!` in a space run, backspace in a tab run) counted as a match
+  // and the run over-reported by up to a word.
   for (; index + sizeof(std::uint64_t) <= text.size(); index += sizeof(std::uint64_t)) {
     std::uint64_t word = 0;
     std::memcpy(&word, text.data() + index, sizeof(word));
-    const std::uint64_t marks = word ^ match_word;
-    if (((marks - kLowOnes) & ~marks & kHighBits) != (kHighBits)) {
+    if (word != match_word) {
       break;
     }
   }
