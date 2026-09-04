@@ -362,6 +362,40 @@ void RunSnippetManyMirrorEdit(ScenarioContext& context) {
   });
 }
 
+// ---- snippet expansion: parse + insert of a language-server body -----------
+//
+// The body shapes clangd / rust-analyzer / typescript-language-server send:
+// nested placeholders, a choice, variables (one set, one empty with a default,
+// one unknown), a transform to step over, and escapes. ExpandSnippetAtSelection
+// parses through the editor's variable resolver and records the nested links,
+// so this is the whole per-completion cost the user pays on accepting a snippet
+// item -- the mirror-edit scenario above measures only the keystrokes after.
+void RunSnippetExpandCompletion(ScenarioContext& context) {
+  static constexpr std::string_view kBody =
+      "template <typename ${1:T}>\n"
+      "${2|inline,constexpr,static|} ${3:auto} ${4:${TM_FILENAME_BASE}_fn}("
+      "${5:const ${1:T}\\& value}) {\n"
+      "\t// $LINE_COMMENT ${TM_SELECTED_TEXT:body} \\$1 \\}\n"
+      "\t${6/(.*)/${1:/upcase}/}${UNKNOWN_VAR}\n"
+      "\treturn ${7:value};\n"
+      "}$0";
+  context.Measure("snippet.expand_completion", [&]() {
+    for (int iter = 0; iter < 40; ++iter) {
+      editor::TextViewport viewport;
+      viewport.LoadContent("int x;\nfoo", "/tmp/perf_snippet_expand.cpp");
+      viewport.MoveCursorTo(1, 3);
+      editor::SnippetSessionState session;
+      viewport.BeginUndoGroup();
+      const editor::SelectionRange trigger{{1, 0}, {1, 3}};
+      if (!editor::ExpandSnippetAtSelection(viewport, session, trigger, kBody)) {
+        return;
+      }
+      volatile std::size_t sink = session.ranges_by_tab.size() + session.nested_links.size();
+      (void)sink;
+    }
+  });
+}
+
 // ---- 058: user-config record decode (id->index map + disabled-id dedupe) ---
 //
 // Loading a project's user config decodes a settings layer and the disabled
@@ -787,6 +821,14 @@ const ScenarioRegistration g_perf_snippet_many_mirror_edit({Scenario{
     .tolerance_p95_percent = tolerance::kJitterWallP95,
     .tolerance_max_percent = tolerance::kJitterWallMax,
     .run = RunSnippetManyMirrorEdit,
+}});
+const ScenarioRegistration g_perf_snippet_expand_completion({Scenario{
+    .name = "snippet_expand_completion",
+    .smoke = true,
+    .baseline_gated = true,
+    .tolerance_p95_percent = tolerance::kJitterWallP95,
+    .tolerance_max_percent = tolerance::kJitterWallMax,
+    .run = RunSnippetExpandCompletion,
 }});
 const ScenarioRegistration g_perf_user_config_record_decode({Scenario{
     .name = "user_config_record_decode",
