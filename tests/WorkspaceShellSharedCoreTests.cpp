@@ -106,6 +106,53 @@ void TestWorkspaceSharedParseCommandLineIncompleteState() {
   Expect(quoted.open_quote == '"', "unterminated quote should be reported");
 }
 
+// QuoteCommandArg and ParseCommandLine are a pair: the control spec, completion
+// and every generated command line rely on any argument surviving the round
+// trip. Random arguments over the characters the quoting has to defend against
+// (both quote kinds, backslash, blanks, control bytes, non-ASCII, empty).
+void TestWorkspaceSharedQuoteCommandArgRoundTripsRandomArguments() {
+  std::uint64_t state = 0x5eed5eed5eed5eedULL;
+  const auto next = [&](std::size_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kAtoms[] = {"a", "Z", "0", " ", "\t", "\n", "'", "\"", "\\", "\\\\",
+                                           "'\\''", "é", "中", "\x01", "/", ":", "-", "_", "."};
+  for (int round = 0; round < 500; ++round) {
+    std::vector<std::string> args;
+    const std::size_t count = next(5);
+    for (std::size_t i = 0; i < count; ++i) {
+      std::string arg;
+      const std::size_t atoms = next(6);
+      for (std::size_t j = 0; j < atoms; ++j) {
+        arg += kAtoms[next(std::size(kAtoms))];
+      }
+      args.push_back(std::move(arg));
+    }
+    std::string line = "cmd";
+    for (const std::string& arg : args) {
+      line += ' ';
+      line += QuoteCommandArg(arg);
+    }
+    const auto parsed = ParseCommandLine(line);
+    bool same = parsed.tokens.size() == args.size() + 1 && parsed.tokens[0].text == "cmd" &&
+                parsed.open_quote == '\0' && !parsed.dangling_escape && !parsed.trailing_space;
+    for (std::size_t i = 0; same && i < args.size(); ++i) {
+      same = parsed.tokens[i + 1].text == args[i];
+    }
+    if (!same) {
+      std::string dump = "quoted line did not parse back to its arguments: <" + line + "> ->";
+      for (const auto& token : parsed.tokens) {
+        dump += " <" + token.text + ">";
+      }
+      Expect(false, dump);
+      return;
+    }
+  }
+}
+
 // Regression: ParseCommandLine bounds a pasted-huge command — the scanned length
 // and the token count are capped so it cannot allocate/drive completion without
 // limit on the UI thread.
@@ -978,6 +1025,8 @@ void RegisterWorkspaceShellSharedCoreTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShared/ParseCommandLine", TestWorkspaceSharedParseCommandLine);
   AddTest(tests, "WorkspaceShared/ParseCommandLineIncompleteState",
           TestWorkspaceSharedParseCommandLineIncompleteState);
+  AddTest(tests, "WorkspaceShared/QuoteCommandArgRoundTripsRandomArguments",
+          TestWorkspaceSharedQuoteCommandArgRoundTripsRandomArguments);
   AddTest(tests, "WorkspaceShellSharedCore/ParseCommandLineBoundsHugeInput",
           TestWorkspaceSharedParseCommandLineBoundsHugeInput);
   AddTest(tests, "WorkspaceShared/UiScaleParsing", TestWorkspaceSharedUiScaleParsing);
