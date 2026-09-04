@@ -33,8 +33,8 @@ struct TaggedChange {
   SideChange change;
 };
 
-std::vector<SideChange> BuildSideChanges(const std::vector<std::string_view>& base_lines,
-                                         const std::vector<std::string_view>& variant_lines) {
+std::vector<SideChange> BuildSideChanges(std::span<const std::string_view> base_lines,
+                                         std::span<const std::string_view> variant_lines) {
   // Scoped: BuildMergeModel is one synchronous 50 ms call on the shell path when a
   // merge tab opens, and until this scope existed there was no way to say which of
   // its three phases (split, the two diffs, hunk grouping) that time was.
@@ -224,10 +224,29 @@ MergeModel BuildMergeModel(const std::string& base,
     model.current_lines = util::SplitLineViews(*model.current_source);
   }
 
+  // SplitLineViews leaves a trailing "" after a final '\n' (and one for an
+  // empty buffer): the phantom, the mark that the side ends in a newline, not
+  // a line. When every side has one it is one equal line at the end, so keep it
+  // out of the diffs — aligned with the real lines it matched any blank line
+  // near the end, and two sides deleting one of two blank lines came out as two
+  // deletions (dropping both), or a side's trailing insertion landed past the
+  // phantom and stopped touching the other side's change that git says it
+  // touches. When the sides disagree on the final newline the phantom IS the
+  // difference and stays in.
+  const auto has_phantom = [](const std::string& source) {
+    return source.empty() || source.back() == '\n';
+  };
+  const bool phantoms_agree = has_phantom(*model.base_source) &&
+                              has_phantom(*model.incoming_source) &&
+                              has_phantom(*model.current_source);
+  const auto real_lines = [&](const std::vector<std::string_view>& lines) {
+    return std::span<const std::string_view>(lines).first(
+        phantoms_agree && !lines.empty() ? lines.size() - 1 : lines.size());
+  };
   std::vector<SideChange> incoming_changes =
-      BuildSideChanges(model.base_lines, model.incoming_lines);
+      BuildSideChanges(real_lines(model.base_lines), real_lines(model.incoming_lines));
   std::vector<SideChange> current_changes =
-      BuildSideChanges(model.base_lines, model.current_lines);
+      BuildSideChanges(real_lines(model.base_lines), real_lines(model.current_lines));
 
   std::vector<TaggedChange> all_changes =
       TaggedChanges(std::move(incoming_changes), MergeSide::Incoming);
@@ -247,13 +266,17 @@ MergeModel BuildMergeModel(const std::string& base,
   });
 
   // Single linear pass over the sorted change list. After sort-by base_start,
-  // any change whose base_start is < group_max_end overlaps the group's union
-  // interval and therefore interacts with at least one existing member (the
-  // one contributing the running max). The lone asymmetry is two insertions
-  // at the same base column: their (start == end) means they fail the strict
-  // `<` gate, but ChangesInteract still pairs them. The sort order keeps such
-  // insertions adjacent, so a single "previous-was-an-insertion-at-same-start"
-  // check covers that case without rescanning the group.
+  // any change whose base_start is <= group_max_end overlaps OR TOUCHES the
+  // group's union interval and therefore interacts with at least one existing
+  // member. Touching counts: git's merge (xdiff's xdl_merge) treats two changes
+  // as conflicting unless at least one unchanged base line separates them, so
+  // an insertion at the boundary of the other side's replacement, or two
+  // deletions that meet, are one conflict to `git merge-file` and were two
+  // clean, independently applied hunks here — 175 of 500 random three-way
+  // merges git refused came out silently auto-merged (an interleaving that,
+  // for two identical deletions, also dropped a line twice). A side's own
+  // changes never touch — a diff separates them by an equal line — so the
+  // group's members always come from both sides.
   // Reused across groups: one hunk's partition buffers are the next hunk's, and a
   // merge with hundreds of hunks otherwise allocated two vectors per hunk.
   std::vector<SideChange> hunk_incoming_changes;
@@ -299,19 +322,7 @@ MergeModel BuildMergeModel(const std::string& base,
   int group_max_end = 0;
   for (std::size_t i = 0; i < all_changes.size(); ++i) {
     const SideChange& c = all_changes[i].change;
-    const bool c_is_insertion = c.base_start == c.base_end;
-    bool join = false;
-    if (group.empty()) {
-      join = true;
-    } else if (c.base_start < group_max_end) {
-      join = true;
-    } else if (c_is_insertion) {
-      const SideChange& prev = all_changes[group.back()].change;
-      const bool prev_is_insertion = prev.base_start == prev.base_end;
-      if (prev_is_insertion && prev.base_start == c.base_start) {
-        join = true;
-      }
-    }
+    const bool join = group.empty() || c.base_start <= group_max_end;
     if (!join) {
       flush_group(group);
       group.clear();

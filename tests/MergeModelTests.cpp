@@ -6,6 +6,8 @@
 #include "workspace/state/WorkspaceTabState.h"
 
 #include <span>
+#include <cstdint>
+#include <filesystem>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -107,15 +109,119 @@ void TestMergeBothChoiceConcatenatesConflictInsertions() {
   Expect(lines[1] == "current", "both choice should append current lines");
 }
 
-void TestMergeInsertionAndReplacementAtSameBoundaryStaySeparateHunks() {
+// Two changes that touch — no unchanged base line between them — are ONE
+// conflict, as `git merge-file` reports them (an insertion at either boundary
+// of the other side's replacement, two deletions that meet). This test used to
+// pin the opposite: two clean hunks, applied independently, for a case git
+// refuses to merge. Checked against git over 500 random three-way merges.
+void TestMergeTouchingChangesAreOneConflict() {
   const auto model = BuildMergeModel("alpha\nbeta\ngamma\n", "alpha\ninserted\nbeta\ngamma\n",
                                      "alpha\nbeta-current\ngamma\n");
-  Expect(model.hunks.size() == 2,
-         "insertion at a replacement boundary should not be merged into the replacement hunk");
-  Expect(model.hunks[0].base_start == 1 && model.hunks[0].base_end == 1,
-         "boundary insertion should remain a zero-width hunk");
-  Expect(model.hunks[1].base_start == 1 && model.hunks[1].base_end == 2,
-         "replacement should keep its original base span");
+  Expect(model.hunks.size() == 1,
+         "an insertion at a replacement's boundary joins the replacement's hunk");
+  Expect(model.hunks[0].conflict, "the joined hunk is a conflict, as in git");
+  Expect(model.hunks[0].base_start == 1 && model.hunks[0].base_end == 2,
+         "the hunk spans the replaced base line");
+
+  const auto after = BuildMergeModel("alpha\nbeta\ngamma\n", "alpha\nbeta\ninserted\ngamma\n",
+                                     "alpha\nbeta-current\ngamma\n");
+  Expect(after.hunks.size() == 1 && after.hunks[0].conflict,
+         "an insertion right after the replacement is the same conflict");
+
+  const auto apart = BuildMergeModel("alpha\nbeta\nmid\ngamma\n",
+                                     "alpha\nbeta\nmid\ninserted\ngamma\n",
+                                     "alpha\nbeta-current\nmid\ngamma\n");
+  Expect(apart.hunks.size() == 2 && !apart.hunks[0].conflict && !apart.hunks[1].conflict,
+         "with an unchanged line between them the two changes merge cleanly");
+  Expect(BootstrapMergeResultText(apart) == "alpha\nbeta-current\nmid\ninserted\ngamma\n",
+         "and the clean merge is git's");
+
+  // Two sides deleting one of two identical trailing blank lines is one change
+  // made twice, not two deletions: the result keeps the other blank line.
+  const auto twice = BuildMergeModel("a\n\n\n", "a\n\n", "a\n\n");
+  Expect(BootstrapMergeResultText(twice) == "a\n\n", "the same deletion on both sides applies once");
+}
+
+// The model's verdicts against `git merge-file` over random three-way edits.
+// Every line is unique, so the two diffs cannot legitimately align an edit
+// differently (with repeated lines they can, and then the two tools disagree
+// on a few merges in a thousand without either being wrong); with that removed
+// the agreement is exact: a conflict where git reports one, a clean merge with
+// git's text where it does not. This is what caught the touching-changes rule
+// (175 of 500 merges git refused were auto-merged) and the phantom alignment.
+void TestMergeRandomTriplesAgreeWithGitMergeFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path dir = temp_dir.path();
+  std::uint64_t state = 0x2545F4914F6CDD1Dull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  const auto edit = [&](std::vector<std::string> lines, const char* tag) {
+    const std::size_t edits = 1 + next(3);
+    for (std::size_t e = 0; e < edits; ++e) {
+      const std::string fresh = std::string(tag) + std::to_string(e);
+      const std::size_t kind = next(3);
+      if (kind == 0 && !lines.empty()) {
+        lines[next(lines.size())] = fresh;
+      } else if (kind == 1 || lines.empty()) {
+        lines.insert(lines.begin() + static_cast<std::ptrdiff_t>(next(lines.size() + 1)), fresh);
+      } else {
+        lines.erase(lines.begin() + static_cast<std::ptrdiff_t>(next(lines.size())));
+      }
+    }
+    return lines;
+  };
+  const auto join = [](const std::vector<std::string>& lines) {
+    std::string text;
+    for (const std::string& line : lines) {
+      text += line;
+      text += '\n';
+    }
+    return text;
+  };
+  int agreed_clean = 0;
+  int agreed_conflict = 0;
+  for (int trial = 0; trial < 120; ++trial) {
+    std::vector<std::string> base;
+    const std::size_t count = 2 + next(9);
+    for (std::size_t i = 0; i < count; ++i) {
+      base.push_back("b" + std::to_string(i));
+    }
+    const std::string base_text = join(base);
+    const std::string current_text = join(edit(base, "c"));
+    const std::string incoming_text = join(edit(base, "i"));
+    WriteFile(dir / "base", base_text);
+    WriteFile(dir / "current", current_text);
+    WriteFile(dir / "incoming", incoming_text);
+    const int git_exit = RunCommand("cd '" + dir.string() +
+                                    "' && git merge-file -p current base incoming > merged 2>/dev/null");
+    const bool git_conflict = git_exit != 0;
+    const std::string git_text = ReadFile(dir / "merged");
+
+    const auto model = BuildMergeModel(base_text, incoming_text, current_text);
+    bool conflict = false;
+    for (const auto& hunk : model.hunks) {
+      conflict = conflict || hunk.conflict;
+    }
+    const std::string label = "trial " + std::to_string(trial) + " base=[" + base_text +
+                              "] current=[" + current_text + "] incoming=[" + incoming_text + "]";
+    Expect(conflict == git_conflict,
+           ("the model conflicts exactly where git merge-file does: " + label).c_str());
+    if (!conflict && !git_conflict) {
+      Expect(BootstrapMergeResultText(model) == git_text,
+             ("a clean merge produces git's text: " + label + " git=[" + git_text + "] model=[" +
+              BootstrapMergeResultText(model) + "]")
+                 .c_str());
+      ++agreed_clean;
+    } else if (conflict && git_conflict) {
+      ++agreed_conflict;
+    }
+  }
+  Expect(agreed_clean >= 20 && agreed_conflict >= 20,
+         "the generator produced both clean and conflicting merges");
 }
 
 void TestMergeChoiceLabels() {
@@ -132,9 +238,11 @@ void TestMergeChoiceLabels() {
 }
 
 void TestBootstrapMergeResultTextUsesOneTimeChoices() {
-  const auto model = BuildMergeModel("zero\nsame\nlast\n", "zero\nincoming\nlast\n",
-                                     "zero\nsame\ncurrent\n");
-  Expect(BootstrapMergeResultText(model) == "zero\nincoming\ncurrent\n",
+  // An unchanged line separates the two sides' edits; adjacent edits are one
+  // conflict, as in git (see TestMergeTouchingChangesAreOneConflict).
+  const auto model = BuildMergeModel("zero\nsame\nmid\nlast\n", "zero\nincoming\nmid\nlast\n",
+                                     "zero\nsame\nmid\ncurrent\n");
+  Expect(BootstrapMergeResultText(model) == "zero\nincoming\nmid\ncurrent\n",
          "bootstrap merge result should apply only the initial per-hunk choices");
 }
 
@@ -212,15 +320,16 @@ void TestMergeLargeInputsUseSharedFallbackDiff() {
   for (int line = 0; line < 900; ++line) {
     const std::string text = "line " + std::to_string(line) + "\n";
     base += text;
+    // Two lines apart: adjacent edits are one conflict, as in git.
     incoming += line == 450 ? "line 450 incoming\n" : text;
-    current += line == 451 ? "line 451 current\n" : text;
+    current += line == 452 ? "line 452 current\n" : text;
   }
 
   const auto model = BuildMergeModel(base, incoming, current);
   Expect(model.hunks.size() == 2,
          "large merge inputs should still produce independent hunks without exhausting memory");
   const auto result = MergeResultLines(model);
-  Expect(result[450] == "line 450 incoming" && result[451] == "line 451 current",
+  Expect(result[450] == "line 450 incoming" && result[452] == "line 452 current",
          "large merge inputs should keep both sides' independent edits");
 }
 
@@ -297,8 +406,10 @@ void RegisterMergeModelTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Merge/IdenticalInsertions", TestMergeIdenticalInsertions);
   AddTest(tests, "Merge/BothChoiceConcatenatesConflictInsertions",
           TestMergeBothChoiceConcatenatesConflictInsertions);
-  AddTest(tests, "Merge/InsertionAndReplacementAtSameBoundaryStaySeparateHunks",
-          TestMergeInsertionAndReplacementAtSameBoundaryStaySeparateHunks);
+  AddTest(tests, "Merge/RandomTriplesAgreeWithGitMergeFile",
+          TestMergeRandomTriplesAgreeWithGitMergeFile);
+  AddTest(tests, "Merge/TouchingChangesAreOneConflict",
+          TestMergeTouchingChangesAreOneConflict);
   AddTest(tests, "Merge/ChoiceLabels", TestMergeChoiceLabels);
   AddTest(tests, "Merge/BootstrapMergeResultTextUsesOneTimeChoices",
           TestBootstrapMergeResultTextUsesOneTimeChoices);
