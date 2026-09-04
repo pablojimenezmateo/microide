@@ -1,6 +1,14 @@
 #include "project/GitPatchApply.h"
 
+#include <string>
+#include <string_view>
+#include <utility>
+#include <variant>
 #include <vector>
+
+#include "compare/CompareModel.h"
+#include "project/PatchGenerator.h"
+#include "util/TextFileIO.h"
 
 #include "project/GitCommandUtil.h"
 #include "project/GitRepository.h"
@@ -108,7 +116,68 @@ GitPatchApplyOutcome ApplyGitPatch(const std::filesystem::path& repository_root,
   return RunGitApply(repository_root, patch_text, options, false);
 }
 
+namespace {
+
+// A Combined-view stage or unstage: build the patch against the index as it is
+// now (see PatchChangeSpan). Returns the patch, or the result to report.
+std::variant<std::string, PatchApplyResult> RegenerateStagingPatch(
+    const PatchApplyRequest& request) {
+  const PatchApplyTarget& target = request.target;
+  const bool stage = request.operation == PatchOperationKind::StageHunk ||
+                     request.operation == PatchOperationKind::StageSelectedLines;
+  const GitRepository repo(target.repository_root);
+  const auto head_blob = repo.ReadBlobAtRevision(target.relative_path, "HEAD");
+  const auto index_blob = repo.ReadBlobAtRevision(target.relative_path, ":0");
+  const std::string head = head_blob.has_value() ? head_blob->content : std::string();
+  const std::string index = index_blob.has_value() ? index_blob->content : std::string();
+  std::string worktree;
+  bool worktree_exists = target.working_tree_exists;
+  if (target.working_tree_source != nullptr) {
+    worktree = *target.working_tree_source;
+  } else {
+    const util::TextFileReadResult working =
+        util::ReadTextFileClassified(target.repository_root / target.relative_path);
+    worktree = working.ok() ? working.content : std::string();
+    worktree_exists = working.status != util::TextFileReadStatus::Missing;
+  }
+  StagingPatchOutcome outcome = BuildStagingPatch(
+      head, index, worktree, *target.change_span, stage, target.relative_path,
+      head_blob.has_value(), index_blob.has_value(), worktree_exists);
+  if (outcome.already_applied) {
+    return PatchApplyResult{
+        .category = PatchApplyResultCategory::UnsupportedTarget,
+        .detail = stage ? "Nothing to stage: this change is already in the index"
+                        : "Nothing to unstage: this change is not in the index",
+    };
+  }
+  if (outcome.span_not_intact || !outcome.patch.has_value()) {
+    return PatchApplyResult{
+        .category = PatchApplyResultCategory::StaleDiff,
+        .detail = stage ? "This change is partly staged already; refresh the compare tab"
+                        : "This change is partly unstaged already; refresh the compare tab",
+    };
+  }
+  return std::move(*outcome.patch);
+}
+
+}  // namespace
+
 PatchApplyResult ApplyPatchRequest(const PatchApplyRequest& request, std::string_view patch_text) {
+  // A regenerated patch already goes from the index to the desired state, for a
+  // stage and an unstage alike, so it is applied forward either way.
+  std::string regenerated;
+  bool forward = false;
+  if (request.target.change_span.has_value() &&
+      request.operation != PatchOperationKind::DiscardHunk &&
+      request.operation != PatchOperationKind::DiscardSelectedLines) {
+    auto outcome = RegenerateStagingPatch(request);
+    if (auto* failure = std::get_if<PatchApplyResult>(&outcome)) {
+      return std::move(*failure);
+    }
+    regenerated = std::move(std::get<std::string>(outcome));
+    patch_text = regenerated;
+    forward = true;
+  }
   if (patch_text.empty()) {
     return PatchApplyResult{
         .category = PatchApplyResultCategory::UnsupportedTarget,
@@ -118,7 +187,7 @@ PatchApplyResult ApplyPatchRequest(const PatchApplyRequest& request, std::string
 
   GitPatchApplyOptions git_options{
       .apply_to_index = PatchOperationAppliesToIndex(request.operation),
-      .reverse = PatchOperationReversesPatch(request.operation),
+      .reverse = !forward && PatchOperationReversesPatch(request.operation),
   };
   const GitPatchApplyOutcome outcome =
       ApplyGitPatch(request.target.repository_root, patch_text, git_options);

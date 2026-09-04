@@ -52,9 +52,10 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   if (working.is_error()) {
     return std::nullopt;
   }
-  auto compare_tab = BuildCompareTabFromBuffers(normalized_path, content->exists ? content->content : "",
-                                                working.content, commit.short_hash,
-                                                "Working tree", selected_row, true);
+  auto compare_tab = BuildCompareTabFromBuffers(
+      normalized_path, content->exists ? content->content : "", working.content,
+      commit.short_hash, "Working tree", selected_row, true, content->exists,
+      working.status != util::TextFileReadStatus::Missing);
   if (compare_tab.has_value() && compare_tab->compare.has_value()) {
     compare_tab->compare->left_path = normalized_path;
     compare_tab->compare->right_path = normalized_path;
@@ -82,6 +83,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   }
 
   std::string right_content;
+  bool right_exists = true;
   if (compare_tab.right_ref == "WORKTREE") {
     if (compare_tab.right_viewport.dirty()) {
       right_content = util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
@@ -94,6 +96,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
         return std::nullopt;
       }
       right_content = working.content;
+      right_exists = working.status != util::TextFileReadStatus::Missing;
     }
   } else {
     const auto right_commit_content =
@@ -103,13 +106,13 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     }
     right_content =
         right_commit_content->exists ? right_commit_content->content : std::string{};
+    right_exists = right_commit_content->exists;
   }
 
-  auto rebuilt = BuildCompareTabFromBuffers(normalized_path,
-                                            left_content->exists ? left_content->content : "",
-                                            std::move(right_content), compare_tab.left_label,
-                                            compare_tab.right_label, compare_tab.selected_row,
-                                            compare_tab.persistable);
+  auto rebuilt = BuildCompareTabFromBuffers(
+      normalized_path, left_content->exists ? left_content->content : "",
+      std::move(right_content), compare_tab.left_label, compare_tab.right_label,
+      compare_tab.selected_row, compare_tab.persistable, left_content->exists, right_exists);
   if (!rebuilt.has_value() || !rebuilt->compare.has_value()) {
     return std::nullopt;
   }
@@ -120,7 +123,10 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   rebuilt->compare->right_path = right_source_path;
   rebuilt->compare->scroll_row = compare_tab.scroll_row;
   rebuilt->compare->horizontal_scroll = compare_tab.horizontal_scroll;
-  rebuilt->compare->build_options = compare_tab.build_options;
+  // Only the user's toggle carries over: the existence flags were just set from
+  // what this rebuild read, and the old tab's could be stale (a file deleted or
+  // recreated since).
+  rebuilt->compare->build_options.ignore_whitespace = compare_tab.build_options.ignore_whitespace;
   rebuilt->compare->show_whitespace = compare_tab.show_whitespace;
   rebuilt->compare->opened_from_commit_picker = compare_tab.opened_from_commit_picker;
   rebuilt->compare->review_files = compare_tab.review_files;
@@ -152,10 +158,14 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabFromBuffe
     std::string left_label,
     std::string right_label,
     std::size_t selected_row,
-    bool persistable) const {
+    bool persistable,
+    bool left_exists,
+    bool right_exists) const {
   const std::filesystem::path normalized_path = path.lexically_normal();
 
   CompareTabState compare_tab;
+  compare_tab.build_options.left_exists = left_exists;
+  compare_tab.build_options.right_exists = right_exists;
   compare_tab.path = normalized_path;
   compare_tab.left_path = normalized_path;
   compare_tab.right_path = normalized_path;

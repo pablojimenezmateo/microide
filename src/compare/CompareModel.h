@@ -153,6 +153,10 @@ struct CompareModel {
   // — so the patch generator can emit `/dev/null` headers.
   bool left_empty = false;
   bool right_empty = false;
+  // The side's file does not exist (see CompareBuildOptions::left_exists): a
+  // whole-file creation or deletion rather than an edit down to zero lines.
+  bool left_absent = false;
+  bool right_absent = false;
   // True when the corresponding source buffer uses CRLF line terminators.
   // SplitLineViews strips the ending, so a CRLF file's rows carry bare text —
   // but git stores the `\r` as part of each line's content, so a generated patch

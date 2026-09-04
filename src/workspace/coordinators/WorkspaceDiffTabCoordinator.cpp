@@ -312,8 +312,9 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
     return false;
   }
   auto compare_tab = operations_.build_compare_tab_from_buffers(
-      normalized_path, left_content->exists ? left_content->content : "",
-      working.content, left_label, "Working tree", 0, true);
+      normalized_path, left_content->exists ? left_content->content : "", working.content,
+      left_label, "Working tree", 0, true, left_content->exists,
+      working.status != util::TextFileReadStatus::Missing);
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return false;
   }
@@ -362,7 +363,8 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
   }
   auto compare_tab = operations_.build_compare_tab_from_buffers(
       normalized_path, left_content->exists ? left_content->content : "",
-      right_content->exists ? right_content->content : "", left_label, right_label, 0, true);
+      right_content->exists ? right_content->content : "", left_label, right_label, 0, true,
+      left_content->exists, right_content->exists);
   if (!compare_tab.has_value() || !compare_tab->compare.has_value()) {
     return false;
   }

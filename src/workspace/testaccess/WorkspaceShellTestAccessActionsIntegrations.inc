@@ -370,6 +370,7 @@
   }
   static void DrainGitOperationCompletions(WorkspaceShell& shell) {
     shell.git_operation_service_.DrainCompletions();
+    shell.patch_apply_service_.DrainCompletions();
   }
   static void ToggleProjectSearchHiddenFiles(WorkspaceShell& shell) {
     shell.ToggleProjectSearchHiddenFiles();

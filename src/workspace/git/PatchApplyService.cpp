@@ -142,6 +142,36 @@ std::optional<project::PatchApplyRequest> PatchApplyService::BuildRequest(
     target.hunk = project::PatchHunkTarget{.hunk_index = hunk_index};
   }
 
+  // A Combined view diffs HEAD against the working tree, but a stage is applied
+  // to the index and an unstage taken out of it, so the tab's patch only fits
+  // while the index still equals HEAD: after the first staged hunk its line
+  // numbers are stale (git refuses to shift a hunk anchored at either end of the
+  // file) and a hunk already staged would apply twice. Carry the change's window
+  // as its HEAD and working-tree line ranges, and let the apply build the patch
+  // against the index as it is then (see PatchChangeSpan).
+  const bool stage = operation == PatchOperationKind::StageHunk ||
+                     operation == PatchOperationKind::StageSelectedLines;
+  const bool unstage = operation == PatchOperationKind::UnstageHunk ||
+                       operation == PatchOperationKind::UnstageSelectedLines;
+  if ((stage || unstage) &&
+      compare_tab.staging_view == compare::WorkingTreeStagingView::Combined) {
+    std::size_t first_row = 0;
+    std::size_t last_row = 0;
+    if (target.line_selection.has_value()) {
+      first_row = target.line_selection->first_model_row;
+      last_row = target.line_selection->last_model_row;
+    } else if (target.hunk.has_value() && target.hunk->hunk_index >= 0 &&
+               static_cast<std::size_t>(target.hunk->hunk_index) < compare_tab.model.hunks.size()) {
+      const compare::CompareHunk& hunk =
+          compare_tab.model.hunks[static_cast<std::size_t>(target.hunk->hunk_index)];
+      first_row = static_cast<std::size_t>(std::max(0, hunk.start_row));
+      last_row = static_cast<std::size_t>(std::max(0, hunk.end_row));
+    }
+    target.change_span = project::ChangeSpanForRows(compare_tab.model, first_row, last_row);
+    target.working_tree_source = compare_tab.model.right_source;
+    target.working_tree_exists = compare_tab.build_options.right_exists.value_or(true);
+  }
+
   // Deliberately do NOT copy compare_tab.model into the request. The patch text
   // is generated synchronously (BuildPatchForRequest) from the live model before
   // dispatch, and the background apply path (project::ApplyPatchRequest) never
@@ -173,63 +203,83 @@ std::optional<std::string> PatchApplyService::BuildPatchForRequest(
 }
 
 void PatchApplyService::DispatchApply(project::PatchApplyRequest request, std::string patch_text) {
-  const std::uint64_t diff_generation = request.diff_model_generation;
-  background_executor_.Post([this, request = std::move(request), patch_text = std::move(patch_text),
-                             diff_generation]() mutable {
+  background_executor_.Post([this, request = std::move(request),
+                             patch_text = std::move(patch_text)]() mutable {
+    // Background half: the generation check, the `git apply` itself, and the
+    // repository-service invalidation (mutex-protected). Everything that
+    // touches shell state waits for the main thread below.
     const project::GitRepositoryState current_state = callbacks_.current_repository_state();
     if (request.repository_snapshot_generation != current_state.generation) {
-      PublishResult(
-          PatchApplyResult{
-              .category = PatchApplyResultCategory::StaleGeneration,
-              .detail = "repository state changed before the patch could be applied",
-          },
-          request);
+      completion_mailbox_.Post([this, request = std::move(request)]() {
+        PublishResult(
+            PatchApplyResult{
+                .category = PatchApplyResultCategory::StaleGeneration,
+                .detail = "repository state changed before the patch could be applied",
+            },
+            request);
+      });
       return;
     }
 
     PatchApplyResult result = project::ApplyPatchRequest(request, patch_text);
     const bool patch_applied = result.category == PatchApplyResultCategory::Success;
-
-    const project::GitRepositoryState completion_state = callbacks_.current_repository_state();
-
-    // If the patch actually applied, the working tree / index changed ON DISK — so
-    // run the cache invalidations for the applied path REGARDLESS of a generation
-    // race. A refresh that completed during the apply moves the generation and we
-    // still report StaleGeneration below (so the caller re-syncs its snapshot), but
-    // skipping these invalidations left blame/compare/clean-tab caches stale until
-    // an unrelated refresh and produced a misleading "nothing applied" message.
     if (patch_applied) {
       git_repository_service_.MarkStale();
-      if (callbacks_.request_git_refresh != nullptr) {
-        callbacks_.request_git_refresh();
-      }
-      const std::filesystem::path absolute_path =
-          request.target.repository_root / request.target.relative_path;
-      if (callbacks_.invalidate_editor_blame_path != nullptr) {
-        callbacks_.invalidate_editor_blame_path(absolute_path);
-      }
-      if (callbacks_.reload_clean_editor_tabs_for_path != nullptr) {
-        callbacks_.reload_clean_editor_tabs_for_path(absolute_path);
-      }
-      if (callbacks_.refresh_compare_tab_for_path != nullptr) {
-        callbacks_.refresh_compare_tab_for_path(absolute_path);
-      }
-      (void)diff_generation;
     }
+    const project::GitRepositoryState completion_state = callbacks_.current_repository_state();
 
-    if (patch_applied &&
-        request.repository_snapshot_generation != completion_state.generation) {
-      result = PatchApplyResult{
-          .category = PatchApplyResultCategory::StaleGeneration,
-          .detail = "repository state changed while the patch was applying",
-      };
-    } else if (patch_applied) {
-      result.completed_repository_generation = completion_state.generation;
-    }
+    // Main-thread half. This used to run right here, on the executor's thread:
+    // the compare tab was rebuilt and reassigned, clean editor tabs were reloaded
+    // from disk, and the feedback line was written while the main thread could be
+    // rendering all three — a data race no test exercised because the tests
+    // drained the executor before looking. The two sibling git services already
+    // marshal their completions through a mailbox; this one does now too.
+    completion_mailbox_.Post([this, request = std::move(request), result = std::move(result),
+                              patch_applied, completion_state]() mutable {
+      // If the patch actually applied, the working tree / index changed ON DISK —
+      // so run the cache invalidations for the applied path REGARDLESS of a
+      // generation race. A refresh that completed during the apply moves the
+      // generation and we still report StaleGeneration below (so the caller
+      // re-syncs its snapshot), but skipping these invalidations left
+      // blame/compare/clean-tab caches stale until an unrelated refresh and
+      // produced a misleading "nothing applied" message.
+      if (patch_applied) {
+        if (callbacks_.request_git_refresh != nullptr) {
+          callbacks_.request_git_refresh();
+        }
+        const std::filesystem::path absolute_path =
+            request.target.repository_root / request.target.relative_path;
+        if (callbacks_.invalidate_editor_blame_path != nullptr) {
+          callbacks_.invalidate_editor_blame_path(absolute_path);
+        }
+        if (callbacks_.reload_clean_editor_tabs_for_path != nullptr) {
+          callbacks_.reload_clean_editor_tabs_for_path(absolute_path);
+        }
+        if (callbacks_.refresh_compare_tab_for_path != nullptr) {
+          callbacks_.refresh_compare_tab_for_path(absolute_path);
+        }
+      }
 
-    PublishResult(std::move(result), request);
+      if (patch_applied &&
+          request.repository_snapshot_generation != completion_state.generation) {
+        result = PatchApplyResult{
+            .category = PatchApplyResultCategory::StaleGeneration,
+            .detail = "repository state changed while the patch was applying",
+        };
+      } else if (patch_applied) {
+        result.completed_repository_generation = completion_state.generation;
+      }
+
+      PublishResult(std::move(result), request);
+    });
   });
 }
+
+void PatchApplyService::SetCompletionWakeEvent(std::uint32_t event_type) {
+  completion_mailbox_.SetWakeEventType(event_type);
+}
+
+void PatchApplyService::DrainCompletions() { completion_mailbox_.Drain(); }
 
 void PatchApplyService::PublishResult(project::PatchApplyResult result,
                                       const project::PatchApplyRequest& request) {

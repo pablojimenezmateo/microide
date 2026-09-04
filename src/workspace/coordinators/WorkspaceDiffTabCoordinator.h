@@ -34,6 +34,8 @@ class DiffTabCoordinator {
                                           const std::string&,
                                           const std::string&,
                                           std::size_t,
+                                          bool,
+                                          bool,
                                           bool)>
         build_compare_tab_from_buffers;
     std::function<std::optional<TabEntry>(CompareInput, CompareInput)> build_plain_compare_tab;

@@ -1274,13 +1274,17 @@
                                                      std::string_view left_ref,
                                                      std::string_view right_ref) const;
   std::optional<std::size_t> FindOpenMergeTabIndex(const std::filesystem::path& path) const;
+  // `left_exists`/`right_exists`: whether each side's file exists at all, as
+  // opposed to being empty — see CompareBuildOptions.
   std::optional<TabEntry> BuildCompareTabFromBuffers(const std::filesystem::path& path,
                                                      std::string left_content,
                                                      std::string right_content,
                                                      std::string left_label,
                                                      std::string right_label,
                                                      std::size_t selected_row = 0,
-                                                     bool persistable = true) const;
+                                                     bool persistable = true,
+                                                     bool left_exists = true,
+                                                     bool right_exists = true) const;
   bool OpenWorkingTreeComparison(const std::filesystem::path& path,
                                  const std::string& left_ref,
                                  const std::string& left_label);

@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <string>
+#include <string_view>
 
 #include "compare/CompareModel.h"
 #include "project/PatchApplyTypes.h"
@@ -17,6 +19,36 @@ struct PatchGenerationOptions {
   // of building it. 0 disables the budget. TD-2026-07-17A-099.
   std::size_t max_patch_bytes = 64u * 1024 * 1024;  // 64 MiB
 };
+
+// The PatchChangeSpan that model rows [first_row, last_row] of a HEAD-vs-
+// working-tree model describe.
+PatchChangeSpan ChangeSpanForRows(const compare::CompareModel& model,
+                                  std::size_t first_row,
+                                  std::size_t last_row);
+
+// The patch git needs to bring `current_text` (the index) to the state where
+// `span` — a change between `head_text` and `worktree_text` — is applied
+// (`stage`) or reverted (`unstage`). Empty when the change is already in that
+// state; nullopt when the span's lines are no longer intact in `current_text`
+// (partially staged, or edited since), which the caller reports.
+struct StagingPatchOutcome {
+  std::optional<std::string> patch;
+  bool already_applied = false;
+  bool span_not_intact = false;
+};
+// `head_exists`/`index_exists`/`worktree_exists`: whether the file exists on
+// each side (an absent side reads as "" but is a creation/deletion, not an
+// empty file — see CompareBuildOptions).
+StagingPatchOutcome BuildStagingPatch(std::string_view head_text,
+                                      std::string_view current_index_text,
+                                      std::string_view worktree_text,
+                                      const PatchChangeSpan& span,
+                                      bool stage,
+                                      const std::filesystem::path& relative_path,
+                                      bool head_exists = true,
+                                      bool index_exists = true,
+                                      bool worktree_exists = true,
+                                      const PatchGenerationOptions& options = {});
 
 std::optional<std::string> GenerateComparePatch(const compare::CompareModel& model,
                                                 const std::filesystem::path& relative_path,

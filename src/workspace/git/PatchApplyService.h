@@ -8,6 +8,7 @@
 
 #include "project/PatchApplyTypes.h"
 #include "project/ProjectBackgroundExecutor.h"
+#include "util/MainThreadMailbox.h"
 #include "workspace/state/WorkspaceTabState.h"
 
 namespace microide::workspace {
@@ -30,6 +31,18 @@ class PatchApplyService {
                     GitRepositoryService& git_repository_service);
 
   void SetCallbacks(Callbacks callbacks);
+
+  // The apply runs on the background executor; everything it then does to the
+  // shell — rebuilding the compare tab, reloading clean editor tabs, the
+  // feedback line, the sidebar refresh request — is main-thread state and is
+  // marshaled back through this mailbox, exactly as GitOperationService and
+  // CommitWorkflowService do. SetCompletionWakeEvent names the SDL user event
+  // that wakes the UI loop when a completion is queued; DrainCompletions runs
+  // the queued completions on the main thread (the shell calls it from
+  // ConsumeGitSidebarRefresh, the same drain as its two siblings).
+  void SetCompletionWakeEvent(std::uint32_t event_type);
+  void DrainCompletions();
+  int PendingCompletionCount() const { return completion_mailbox_.PendingCount(); }
 
   bool CanApplyPatchToCompareTab(const CompareTabState& compare_tab,
                                  project::PatchOperationKind operation) const;
@@ -101,6 +114,7 @@ class PatchApplyService {
   project::ProjectBackgroundExecutor& background_executor_;
   GitRepositoryService& git_repository_service_;
   Callbacks callbacks_;
+  util::MainThreadMailbox completion_mailbox_;
   mutable std::mutex mutex_;
   std::optional<PendingDiscard> pending_discard_;
   std::uint64_t operation_generation_ = 0;

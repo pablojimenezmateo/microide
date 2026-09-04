@@ -514,6 +514,7 @@ void WorkspaceShell::ConsumeGitSidebarRefresh() {
   compare_picker_mailbox_.Drain();
   commit_workflow_service_.DrainCompletions();
   git_operation_service_.DrainCompletions();
+  patch_apply_service_.DrainCompletions();
   MakeSidebarService().RefreshGit();
 }
 

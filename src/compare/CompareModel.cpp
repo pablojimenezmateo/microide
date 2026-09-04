@@ -1590,6 +1590,8 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   model.right_final_newline_missing = !right.empty() && right.back() != '\n';
   model.left_empty = left.empty();
   model.right_empty = right.empty();
+  model.left_absent = options.left_exists.has_value() ? !*options.left_exists : left.empty();
+  model.right_absent = options.right_exists.has_value() ? !*options.right_exists : right.empty();
   // Classify each side's line terminator from its first newline. git keeps the
   // `\r` of a CRLF file inside the blob, so the patch generator must re-emit it.
   const auto uses_crlf = [](const std::string& buffer) {
@@ -1611,6 +1613,23 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   detail::CompareBuildScratch& scratch = EnsureBuildScratch(model);
   util::SplitLineViewsInto(left, scratch.left_lines);
   util::SplitLineViewsInto(right, scratch.right_lines);
+  // The element after a final '\n' (and the single element of an empty buffer)
+  // is the trailing phantom: not a line, the marker that the file ended in a
+  // newline. Keep it out of the alignment so it can pair only with the other
+  // side's phantom, appended as a row after the last real line below. Aligned
+  // with the real lines, it matched any empty line: a blank line inserted at the
+  // end of a file that also lost its final newline came out as an Unchanged row
+  // (HEAD's phantom against the new blank line) that belonged to no hunk, so it
+  // could be neither staged nor navigated to, and a file emptied to a single
+  // blank line diffed as unchanged.
+  const bool left_phantom = !model.left_final_newline_missing;
+  const bool right_phantom = !model.right_final_newline_missing;
+  if (left_phantom && !scratch.left_lines.empty() && scratch.left_lines.back().empty()) {
+    scratch.left_lines.pop_back();
+  }
+  if (right_phantom && !scratch.right_lines.empty() && scratch.right_lines.back().empty()) {
+    scratch.right_lines.pop_back();
+  }
   const std::vector<std::string_view>& left_lines = scratch.left_lines;
   const std::vector<std::string_view>& right_lines = scratch.right_lines;
   profile.split_lines_ns = DurationNs(split_start, Clock::now());
@@ -1736,6 +1755,36 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
     row.right_text = right_lines[index - left_suffix + right_suffix];
     row.left_line = left_line++;
     row.right_line = right_line++;
+  }
+  // The phantom rows (see the split above): one Unchanged row when both sides
+  // end in a newline, else a one-sided row that is its own hunk — the change of
+  // final-newline state, which the patch generator expresses on the last real
+  // line.
+  if (left_phantom || right_phantom) {
+    CompareRow& row = sink.Next();
+    row.left_text = std::string_view();
+    row.right_text = std::string_view();
+    if (left_phantom && right_phantom) {
+      row.left_line = left_line++;
+      row.right_line = right_line++;
+    } else {
+      row.kind = left_phantom ? CompareRowKind::Deleted : CompareRowKind::Added;
+      row.left_line = left_phantom ? left_line++ : 0;
+      row.right_line = right_phantom ? right_line++ : 0;
+      const int row_index = static_cast<int>(sink.size()) - 1;
+      // Adjacent to a changed run it joins that hunk: the patch generator states
+      // a final-newline change on the last real line, which context expansion
+      // cannot reach past a changed row. Otherwise it is a hunk of its own.
+      if (!model.hunks.empty() && model.hunks.back().end_row == row_index - 1) {
+        model.hunks.back().end_row = row_index;
+      } else {
+        model.hunks.push_back(CompareHunk{
+            .index = static_cast<int>(model.hunks.size()),
+            .start_row = row_index,
+            .end_row = row_index,
+        });
+      }
+    }
   }
   sink.Finish();
 

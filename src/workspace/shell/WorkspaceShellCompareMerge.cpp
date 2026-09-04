@@ -42,9 +42,12 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                      const std::string& left_label,
                      const std::string& right_label,
                      std::size_t selected_row,
-                     bool persistable) {
+                     bool persistable,
+                     bool left_exists,
+                     bool right_exists) {
                 return BuildCompareTabFromBuffers(path, left_content, right_content, left_label,
-                                                  right_label, selected_row, persistable);
+                                                  right_label, selected_row, persistable,
+                                                  left_exists, right_exists);
               },
           .build_plain_compare_tab =
               [this](CompareInput left, CompareInput right) -> std::optional<TabEntry> {

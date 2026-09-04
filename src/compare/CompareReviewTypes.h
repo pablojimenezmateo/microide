@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -63,6 +64,14 @@ struct BranchReviewTargetIdentity {
 
 struct CompareBuildOptions {
   bool ignore_whitespace = false;
+  // Whether each side's file exists at all. A side that does not is a whole-file
+  // creation/deletion, and its patch header says so (`/dev/null`); an EXISTING
+  // empty file is an ordinary edit of zero lines. The two read alike as text —
+  // both are "" — so a caller that knows says so here; unset infers "absent"
+  // from emptiness, which is what every caller did before and what an emptied
+  // file staged as a deletion came from.
+  std::optional<bool> left_exists;
+  std::optional<bool> right_exists;
 };
 
 std::string CompareReviewModeLabel(CompareReviewMode mode);

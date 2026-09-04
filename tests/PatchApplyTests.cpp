@@ -12,8 +12,11 @@
 #include "workspace/git/PatchApplyService.h"
 #include "workspace/state/WorkspaceTabState.h"
 
+#include <algorithm>
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
+#include <iterator>
 #include <regex>
 #include <string>
 #include <vector>
@@ -1134,6 +1137,149 @@ void TestPatchLineScopeSelectionExcludesExclusiveEndLine() {
   executor.Shutdown();
 }
 
+// Every hunk of a random edit must stage through real `git apply`, alone on a
+// clean index and in sequence, and the sequence must leave the index holding the
+// edited file byte for byte. The literal cases above each pin one shape the
+// generator got wrong once (phantom trailing element, missing final newline,
+// blank context, CRLF); this walks the shapes in between: repeated and blank
+// lines, adjacent hunks, edits at both ends of the file, a final newline that
+// appears or disappears, and files that are all context but one line.
+void TestPatchGeneratorRandomEditsStageThroughGit() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  std::filesystem::create_directories(repo_path);
+  InitializeGitRepo(repo_path);
+  const auto file_path = repo_path / "f.txt";
+  GitRepository repo(repo_path);
+
+  static constexpr const char* kVocabulary[] = {"alpha", "beta", "gamma", "", "alpha", "  x",
+                                                "}", "{", "delta", "eps"};
+  std::uint64_t state = 0x9E3779B97F4A7C15ull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  const auto join = [](const std::vector<std::string>& lines, bool final_newline) {
+    std::string text;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      text += lines[i];
+      if (i + 1 < lines.size() || final_newline) {
+        text += '\n';
+      }
+    }
+    return text;
+  };
+
+  int trials_with_hunks = 0;
+  for (int trial = 0; trial < 80; ++trial) {
+    std::vector<std::string> base_lines;
+    const std::size_t base_count = 1 + next(10);
+    for (std::size_t i = 0; i < base_count; ++i) {
+      base_lines.push_back(kVocabulary[next(std::size(kVocabulary))]);
+    }
+    std::vector<std::string> edited = base_lines;
+    const std::size_t edits = 1 + next(4);
+    for (std::size_t e = 0; e < edits; ++e) {
+      const std::size_t kind = next(3);
+      if (kind == 0 || edited.empty()) {
+        edited.insert(edited.begin() + static_cast<std::ptrdiff_t>(next(edited.size() + 1)),
+                      kVocabulary[next(std::size(kVocabulary))]);
+      } else if (kind == 1) {
+        edited.erase(edited.begin() + static_cast<std::ptrdiff_t>(next(edited.size())));
+      } else {
+        edited[next(edited.size())] = kVocabulary[next(std::size(kVocabulary))];
+      }
+    }
+    const bool base_newline = next(4) != 0;
+    const bool edited_newline = next(4) != 0;
+    const std::string base = join(base_lines, base_newline);
+    const std::string modified = join(edited, edited_newline);
+    if (base == modified) {
+      continue;
+    }
+
+    WriteFile(file_path, base);
+    CommitAll(repo_path, "base", "base");
+    WriteFile(file_path, modified);
+    // Both files exist throughout (an emptied file is an edit, not a deletion).
+    microide::compare::CompareBuildOptions both_exist;
+    both_exist.left_exists = true;
+    both_exist.right_exists = true;
+    const CompareModel model = BuildCompareModel(base, modified, both_exist);
+    if (model.hunks.empty()) {
+      continue;
+    }
+    ++trials_with_hunks;
+    const std::string label = "trial " + std::to_string(trial) + " base=[" + base +
+                              "] modified=[" + modified + "]";
+
+    // Each hunk alone, on a clean index.
+    for (std::size_t hunk = 0; hunk < model.hunks.size(); ++hunk) {
+      Expect(repo.Execute({"reset", "-q"}).success(), "index reset");
+      const auto patch = GenerateComparePatch(model, "f.txt", static_cast<int>(hunk));
+      Expect(patch.has_value(), ("a patch is generated for every hunk: " + label).c_str());
+      if (!patch.has_value()) {
+        continue;
+      }
+      PatchApplyRequest request{
+          .operation = PatchOperationKind::StageHunk,
+          .target{.repository_root = repo_path,
+                  .relative_path = std::filesystem::path("f.txt"),
+                  .hunk = std::nullopt,
+                  .line_selection = std::nullopt},
+          .model = model,
+      };
+      const auto result = ApplyPatchRequest(request, *patch);
+      Expect(result.category == PatchApplyResultCategory::Success,
+             ("hunk " + std::to_string(hunk) + " stages alone: " + label + " patch=[" + *patch +
+              "] error=[" + result.detail + "]")
+                 .c_str());
+    }
+
+    // Every hunk in sequence, the way the product does it: each request carries
+    // the hunk's working-tree line window from the HEAD-vs-worktree model, and
+    // the apply regenerates the patch against the index as it is by then. The
+    // index must end up holding the edited file exactly, whatever order the
+    // hunks were staged in.
+    Expect(repo.Execute({"reset", "-q"}).success(), "index reset");
+    std::vector<std::size_t> order(model.hunks.size());
+    for (std::size_t i = 0; i < order.size(); ++i) {
+      order[i] = i;
+    }
+    if (next(2) == 1) {
+      std::reverse(order.begin(), order.end());
+    }
+    for (const std::size_t hunk : order) {
+      const auto& h = model.hunks[hunk];
+      PatchApplyRequest request{
+          .operation = PatchOperationKind::StageHunk,
+          .target{.repository_root = repo_path,
+                  .relative_path = std::filesystem::path("f.txt"),
+                  .hunk = microide::project::PatchHunkTarget{.hunk_index = static_cast<int>(hunk)},
+                  .line_selection = std::nullopt,
+                  .change_span = microide::project::ChangeSpanForRows(
+                      model, static_cast<std::size_t>(std::max(0, h.start_row)),
+                      static_cast<std::size_t>(std::max(0, h.end_row))),
+                  .working_tree_source = model.right_source},
+      };
+      const auto result = ApplyPatchRequest(request, "unused");
+      Expect(result.category == PatchApplyResultCategory::Success,
+             ("hunk " + std::to_string(hunk) + " stages after the hunks before it: " + label +
+              " error=[" + result.detail + "]")
+                 .c_str());
+    }
+    const auto staged = repo.Execute({"show", ":f.txt"});
+    Expect(staged.success() && staged.output == modified,
+           ("staging every hunk leaves the index equal to the edited file: " + label +
+            " index=[" + staged.output + "]")
+               .c_str());
+    Expect(repo.Execute({"reset", "-q"}).success(), "index reset");
+  }
+  Expect(trials_with_hunks >= 60, "the generator produced enough distinct edits to mean anything");
+}
+
 void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/AppendAfterMissingFinalNewline",
                    TestPatchStageAppendAfterMissingFinalNewline});
@@ -1143,6 +1289,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/GeneratorByteBudget", TestPatchGeneratorEnforcesByteBudget});
   tests.push_back({"PatchApply/SelectedLines", TestPatchGeneratorSelectedLinesIncludeContext});
   tests.push_back({"PatchApply/StageHunk", TestPatchStageHunkInRepository});
+  tests.push_back({"PatchApply/RandomEditsStageThroughGit",
+                   TestPatchGeneratorRandomEditsStageThroughGit});
   tests.push_back({"PatchApply/OneSidedPhantomTrailingLine",
                    TestPatchGeneratorOneSidedPhantomTrailingLineApplies});
   tests.push_back({"PatchApply/NonTerminalHunkNoNewlineMarker",

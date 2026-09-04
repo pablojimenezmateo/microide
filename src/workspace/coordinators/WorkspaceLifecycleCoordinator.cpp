@@ -172,6 +172,8 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   // wake (drained alongside the sidebar refresh in ConsumeGitSidebarRefresh).
   compare_picker_mailbox_.SetWakeEventType(git_sidebar_event_type_);
   InitializeCommitWorkflowService();
+  // The patch apply's post-apply shell work rides the same wake and drain.
+  patch_apply_service_.SetCompletionWakeEvent(git_sidebar_event_type_);
   patch_apply_service_.SetCallbacks(PatchApplyService::Callbacks{
       .current_repository_state = [this]() {
         return git_repository_service_.CurrentState();

@@ -1,5 +1,6 @@
 #include "project/PatchGenerator.h"
 
+
 #include <algorithm>
 #include <sstream>
 #include <string>
@@ -183,8 +184,11 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
   // created/removed file. The diff alone can't distinguish "new file" from "a hunk
   // that is all additions" (an empty source buffer becomes one phantom empty
   // line), so the model records the raw emptiness of each side.
-  const bool is_new_file = model.left_empty && !model.right_empty;
-  const bool is_deleted_file = !model.left_empty && model.right_empty;
+  // Absence, not emptiness: an existing file edited down to nothing is an
+  // ordinary patch against its (empty) index entry, and staging it as a deletion
+  // dropped the entry while the file stayed on disk.
+  const bool is_new_file = model.left_absent && !model.right_absent;
+  const bool is_deleted_file = !model.left_absent && model.right_absent;
 
   // Highest line number present on each side, used to place the
   // `\ No newline at end of file` marker after the file's final line. (A file
@@ -219,6 +223,26 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
   // is already a no-op in that case.
   if (end_row >= start_row) {
     body_lines.reserve(end_row - start_row + 2);
+  }
+  // For each row of the range, whether this patch emits right-side content (a
+  // `+` line, or the final-newline addition the trailing phantom stands for)
+  // or left-side content after it. A shared line that is a side's LAST line
+  // without a newline must become a delete/add pair when this patch continues
+  // that side past it — the `\ No newline at end of file` marker is only valid
+  // on the final emitted line of a side — and stays a context line otherwise.
+  // This used to be decided by whether the range reached the model's end, which
+  // fused the new lines onto the old last line whenever the phantom row sat in
+  // a later hunk, and dropped a needed marker whenever it did not.
+  std::vector<std::uint8_t> adds_after(end_row - start_row + 2, 0);
+  std::vector<std::uint8_t> deletes_after(end_row - start_row + 2, 0);
+  for (std::size_t row = end_row + 1; row-- > start_row;) {
+    const std::size_t slot = row - start_row;
+    const CompareRowKind kind = model.rows[row].kind;
+    adds_after[slot] = adds_after[slot + 1] ||
+                       ((kind == CompareRowKind::Added || kind == CompareRowKind::Modified) ? 1 : 0);
+    deletes_after[slot] =
+        deletes_after[slot + 1] ||
+        ((kind == CompareRowKind::Deleted || kind == CompareRowKind::Modified) ? 1 : 0);
   }
   bool has_change = false;
   for (std::size_t row = start_row; row <= end_row; ++row) {
@@ -266,38 +290,31 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
             break;
           }
         }
-        // The `\ No newline at end of file` marker is only valid on the final
-        // emitted line of a side. When this shared line is the old file's last line
-        // (no trailing newline) but the new side extends past it — or vice versa —
-        // emitting it as a marked *context* line makes git treat it as EOF and fuse
-        // the following content onto it (silent data corruption on stage/discard).
-        // git instead represents such a line as a delete/add pair so the marker
-        // lands on the terminating side only; mirror that.
+        // See adds_after/deletes_after above.
         const bool left_last_no_nl = left_no_newline(compare_row.left_line);
         const bool right_last_no_nl = right_no_newline(compare_row.right_line);
-        const bool new_side_continues = compare_row.right_line < last_right_line;
-        const bool old_side_continues = compare_row.left_line < last_left_line;
-        // The no-newline marker — and the delete/add split that places it — is only
-        // valid when this hunk actually reaches the end of the file. For an isolated
-        // NON-terminal hunk (e.g. staging one hunk while a later hunk owns the file
-        // end) this shared line is mid-file, so a trailing marker would make git
-        // treat the hunk as reaching EOF and reject it. Emit ordinary context there.
-        const bool hunk_reaches_model_end = end_row + 1 == model.rows.size();
-        if (hunk_reaches_model_end && left_last_no_nl && new_side_continues) {
+        const bool new_side_continues = adds_after[row - start_row + 1] != 0;
+        const bool old_side_continues = deletes_after[row - start_row + 1] != 0;
+        if (left_last_no_nl && new_side_continues) {
           body_lines.push_back(PatchBodyLine{'-', context_text, true});
           body_lines.push_back(PatchBodyLine{'+', context_text, right_last_no_nl});
           has_change = true;
           break;
         }
-        if (hunk_reaches_model_end && right_last_no_nl && old_side_continues) {
+        if (right_last_no_nl && old_side_continues) {
           body_lines.push_back(PatchBodyLine{'-', context_text, false});
           body_lines.push_back(PatchBodyLine{'+', context_text, true});
           has_change = true;
           break;
         }
-        body_lines.push_back(PatchBodyLine{
-            ' ', context_text,
-            hunk_reaches_model_end && (left_last_no_nl || right_last_no_nl)});
+        // A context line that is the OLD file's last line with no newline needs
+        // the marker whichever hunk is being staged: the pre-image is matched
+        // with its newline state, and this patch leaves the line — and its
+        // missing newline — in place. A newline only the NEW side lacks is a
+        // change, and it is expressed by the pair above when this patch carries
+        // it (the phantom deletion follows the line); otherwise it is not this
+        // patch's to state and the line keeps its newline.
+        body_lines.push_back(PatchBodyLine{' ', context_text, left_last_no_nl});
         break;
       }
       case CompareRowKind::Deleted:
@@ -322,13 +339,29 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
             PatchBodyLine{'+', compare_row.right_text, right_no_newline(compare_row.right_line)});
         has_change = true;
         break;
-      case CompareRowKind::Modified:
-        body_lines.push_back(
-            PatchBodyLine{'-', compare_row.left_text, left_no_newline(compare_row.left_line)});
-        body_lines.push_back(
-            PatchBodyLine{'+', compare_row.right_text, right_no_newline(compare_row.right_line)});
-        has_change = true;
+      case CompareRowKind::Modified: {
+        // A side's trailing phantom (see the Deleted/Added cases) can pair with a
+        // real line on the other side: a file that gained a last line while
+        // losing its final newline aligns the old phantom with the new line.
+        // The phantom is not a line, so only the real side is emitted — a `-`
+        // for a line that never existed made git reject the hunk.
+        const bool left_is_phantom = compare_row.left_text.empty() &&
+                                     compare_row.left_line == last_left_line &&
+                                     !model.left_final_newline_missing;
+        const bool right_is_phantom = compare_row.right_text.empty() &&
+                                      compare_row.right_line == last_right_line &&
+                                      !model.right_final_newline_missing;
+        if (!left_is_phantom) {
+          body_lines.push_back(
+              PatchBodyLine{'-', compare_row.left_text, left_no_newline(compare_row.left_line)});
+        }
+        if (!right_is_phantom) {
+          body_lines.push_back(PatchBodyLine{'+', compare_row.right_text,
+                                             right_no_newline(compare_row.right_line)});
+        }
+        has_change = has_change || !left_is_phantom || !right_is_phantom;
         break;
+      }
     }
   }
 
@@ -419,6 +452,250 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
 }
 
 }  // namespace
+
+namespace {
+
+// A text as lines plus whether it ended in a newline, and back. Split on '\n'
+// only, so a CRLF file keeps its '\r' bytes inside the lines and rejoins
+// byte-for-byte.
+struct LineText {
+  std::vector<std::string_view> lines;
+  bool final_newline = false;
+};
+
+LineText SplitLineText(std::string_view text) {
+  LineText out;
+  if (text.empty()) {
+    return out;
+  }
+  out.final_newline = text.back() == '\n';
+  std::size_t start = 0;
+  while (start < text.size()) {
+    const std::size_t newline = text.find('\n', start);
+    if (newline == std::string_view::npos) {
+      out.lines.push_back(text.substr(start));
+      break;
+    }
+    out.lines.push_back(text.substr(start, newline - start));
+    start = newline + 1;
+  }
+  return out;
+}
+
+std::string JoinLineText(const std::vector<std::string_view>& lines, bool final_newline) {
+  std::string out;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    out.append(lines[i]);
+    if (i + 1 < lines.size() || final_newline) {
+      out.push_back('\n');
+    }
+  }
+  return out;
+}
+
+// One side's 1-based line range for rows [first_row, last_row]: an insertion
+// on that side is `last == first - 1` just after the preceding line.
+void SideRangeForRows(const compare::CompareModel& model, std::size_t first_row,
+                      std::size_t last_row, bool right_side, std::size_t& first,
+                      std::size_t& last) {
+  std::size_t previous = 0;
+  for (std::size_t row = first_row; row-- > 0;) {
+    const int line = right_side ? model.rows[row].right_line : model.rows[row].left_line;
+    if (line > 0) {
+      previous = static_cast<std::size_t>(line);
+      break;
+    }
+  }
+  std::size_t end = previous;
+  for (std::size_t row = first_row; row <= last_row; ++row) {
+    const int line = right_side ? model.rows[row].right_line : model.rows[row].left_line;
+    if (line > 0) {
+      end = std::max(end, static_cast<std::size_t>(line));
+    }
+  }
+  first = previous + 1;
+  last = end;
+}
+
+// Where `first..last` (1-based lines of `from`, an insertion point when
+// last == first - 1) lands in `to`, given the diff between them: the lines must
+// all be Unchanged rows, and contiguous on the `to` side. Returns false when
+// they are not — the change has been staged, or the region edited, since.
+bool MapRangeThroughDiff(const compare::CompareModel& diff, std::size_t first, std::size_t last,
+                         std::size_t& to_first, std::size_t& to_last) {
+  if (last + 1 == first) {
+    // Insertion point: after `from` line first - 1 (0 = the very start). If that
+    // anchor line is itself gone from `to` (a deletion staged earlier), the
+    // place is still right after wherever it was, which is after the nearest
+    // surviving line before it.
+    std::size_t after = 0;
+    for (const CompareRow& row : diff.rows) {
+      if (row.left_line <= 0 || row.left_line >= static_cast<int>(first)) {
+        continue;
+      }
+      if (row.kind == CompareRowKind::Unchanged && row.right_line > 0) {
+        after = std::max(after, static_cast<std::size_t>(row.right_line));
+      }
+    }
+    to_first = after + 1;
+    to_last = after;
+    return true;
+  }
+  std::optional<std::size_t> lo;
+  std::optional<std::size_t> hi;
+  std::size_t seen = 0;
+  for (const CompareRow& row : diff.rows) {
+    if (row.left_line <= 0) {
+      continue;
+    }
+    const auto line = static_cast<std::size_t>(row.left_line);
+    if (line < first || line > last) {
+      continue;
+    }
+    if (row.kind != CompareRowKind::Unchanged || row.right_line <= 0) {
+      return false;
+    }
+    const auto to = static_cast<std::size_t>(row.right_line);
+    lo = lo.has_value() ? std::min(*lo, to) : to;
+    hi = hi.has_value() ? std::max(*hi, to) : to;
+    ++seen;
+  }
+  if (!lo.has_value() || seen != last - first + 1 || *hi - *lo + 1 != seen) {
+    return false;
+  }
+  to_first = *lo;
+  to_last = *hi;
+  return true;
+}
+
+}  // namespace
+
+PatchChangeSpan ChangeSpanForRows(const compare::CompareModel& model,
+                                  std::size_t first_row,
+                                  std::size_t last_row) {
+  PatchChangeSpan span;
+  if (model.rows.empty() || first_row >= model.rows.size()) {
+    return span;
+  }
+  last_row = std::min(last_row, model.rows.size() - 1);
+  SideRangeForRows(model, first_row, last_row, /*right_side=*/false, span.head_first,
+                   span.head_last);
+  SideRangeForRows(model, first_row, last_row, /*right_side=*/true, span.worktree_first,
+                   span.worktree_last);
+  // The change reaches the end of the file when its rows do; the final-newline
+  // state is then part of it. The trailing phantom element a newline-terminated
+  // side carries is not a line: clip it off the range.
+  span.covers_end = last_row + 1 >= model.rows.size();
+  int last_left = 0;
+  int last_right = 0;
+  for (const CompareRow& row : model.rows) {
+    last_left = std::max(last_left, row.left_line);
+    last_right = std::max(last_right, row.right_line);
+  }
+  // An empty side has the phantom too (its one and only element).
+  const bool left_phantom = !model.left_final_newline_missing;
+  const bool right_phantom = !model.right_final_newline_missing;
+  const auto clamp_to_real = [](std::size_t& first, std::size_t& last, int last_line,
+                                bool phantom) {
+    const std::size_t real = static_cast<std::size_t>(std::max(0, last_line)) -
+                             ((phantom && last_line > 0) ? 1 : 0);
+    // An anchor on the phantom is an anchor on the last real line.
+    first = std::min(first, real + 1);
+    last = std::min(last, real);
+  };
+  clamp_to_real(span.head_first, span.head_last, last_left, left_phantom);
+  clamp_to_real(span.worktree_first, span.worktree_last, last_right, right_phantom);
+  return span;
+}
+
+StagingPatchOutcome BuildStagingPatch(std::string_view head_text,
+                                      std::string_view current_index_text,
+                                      std::string_view worktree_text,
+                                      const PatchChangeSpan& span,
+                                      bool stage,
+                                      const std::filesystem::path& relative_path,
+                                      bool head_exists,
+                                      bool index_exists,
+                                      bool worktree_exists,
+                                      const PatchGenerationOptions& options) {
+  StagingPatchOutcome outcome;
+  const LineText head = SplitLineText(head_text);
+  const LineText index = SplitLineText(current_index_text);
+  const LineText worktree = SplitLineText(worktree_text);
+
+  // `from` is the side whose lines the change replaces (HEAD for a stage, the
+  // working tree for an unstage); `to` is what they become.
+  const LineText& from = stage ? head : worktree;
+  const LineText& to = stage ? worktree : head;
+  const std::size_t from_first = stage ? span.head_first : span.worktree_first;
+  const std::size_t from_last = stage ? span.head_last : span.worktree_last;
+  const std::size_t to_first = stage ? span.worktree_first : span.head_first;
+  const std::size_t to_last = stage ? span.worktree_last : span.head_last;
+  if (from_last + 1 < from_first || from_last > from.lines.size() || to_last + 1 < to_first ||
+      to_last > to.lines.size()) {
+    outcome.span_not_intact = true;
+    return outcome;
+  }
+
+  // Where the `from` lines sit in the index now.
+  const std::string from_joined = JoinLineText(from.lines, from.final_newline);
+  const std::string index_joined = JoinLineText(index.lines, index.final_newline);
+  const compare::CompareModel from_to_index = compare::BuildCompareModel(from_joined, index_joined);
+  std::size_t index_first = 0;
+  std::size_t index_last = 0;
+  if (!MapRangeThroughDiff(from_to_index, from_first, from_last, index_first, index_last)) {
+    outcome.span_not_intact = true;
+    return outcome;
+  }
+
+  // Splice the `to` lines in.
+  std::vector<std::string_view> desired;
+  desired.reserve(index.lines.size() + (to_last + 1 - to_first));
+  for (std::size_t i = 1; i < index_first; ++i) {
+    desired.push_back(index.lines[i - 1]);
+  }
+  for (std::size_t i = to_first; i <= to_last; ++i) {
+    desired.push_back(to.lines[i - 1]);
+  }
+  for (std::size_t i = index_last + 1; i <= index.lines.size(); ++i) {
+    desired.push_back(index.lines[i - 1]);
+  }
+  const bool desired_final_newline =
+      span.covers_end ? (desired.empty() ? false : to.final_newline) : index.final_newline;
+  const std::string desired_joined = JoinLineText(desired, desired_final_newline);
+  if (desired_joined == index_joined) {
+    outcome.already_applied = true;
+    return outcome;
+  }
+
+  // The desired state exists whenever it has content, and otherwise exactly
+  // when the side it comes from does (staging a deletion removes the entry;
+  // staging an emptied file keeps it).
+  compare::CompareBuildOptions existence;
+  existence.left_exists = index_exists;
+  existence.right_exists =
+      !desired_joined.empty() || (stage ? worktree_exists : head_exists);
+  const compare::CompareModel index_to_desired =
+      compare::BuildCompareModel(index_joined, desired_joined, existence);
+  std::optional<std::size_t> first_change;
+  std::optional<std::size_t> last_change;
+  for (std::size_t row = 0; row < index_to_desired.rows.size(); ++row) {
+    if (index_to_desired.rows[row].kind == CompareRowKind::Unchanged) {
+      continue;
+    }
+    if (!first_change.has_value()) {
+      first_change = row;
+    }
+    last_change = row;
+  }
+  if (!first_change.has_value()) {
+    outcome.already_applied = true;
+    return outcome;
+  }
+  outcome.patch = GenerateComparePatchForRows(index_to_desired, relative_path, *first_change,
+                                              *last_change, options);
+  return outcome;
+}
 
 std::optional<std::string> GenerateComparePatch(const compare::CompareModel& model,
                                                 const std::filesystem::path& relative_path,

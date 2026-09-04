@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "project/GitRepository.h"
+
 #include "support/SoftwareCanvas.h"
 
 #include "workspace/render/DiffDividerGeometry.h"
@@ -148,6 +150,75 @@ void TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange() {
              microide::workspace::CompareTabRightLineForModelRow(
                  compare, static_cast<std::size_t>(hunks.front().start_row)),
          "the editable pane's caret should agree with the selected row at open");
+}
+
+// Staging one hunk, then the next, through the shell. The compare surface diffs
+// HEAD against the working tree, so after the first stage the INDEX has moved
+// while the second hunk's patch still carries HEAD's line numbers; git refuses
+// to shift a hunk anchored at the start of the file ("patch does not apply"),
+// and a mid-file hunk that is still shown after being staged would apply twice.
+// The apply runs on the background executor and its shell-side follow-up now
+// rides the git-sidebar mailbox, which is what ConsumeGitSidebarRefresh drains.
+void TestWorkspaceShellCompareStagesHunksInSequence() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "f.txt";
+  WriteFile(source, "}\n\neps\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  const std::string edited = "alpha\nalpha\n}\n\neps\nbeta\n";
+  WriteFile(source, edited);
+
+  WorkspaceShell shell;
+  // The apply service's callbacks are wired with the lifecycle wake events.
+  WorkspaceShellTestAccess::RegisterLifecycleWakeEvents(shell);
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+  SoftwareCanvas canvas(1280, 720);
+  shell.Render(canvas.renderer(), 1280, 720);
+  // The apply needs a repository snapshot; the sidebar refresh produces one.
+  WorkspaceShellTestAccess::RefreshGitSidebar(shell);
+  WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+  WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+
+  const auto stage_selected_hunk = [&]() {
+    WorkspaceShellTestAccess::StageCompareHunk(shell);
+    WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+    WorkspaceShellTestAccess::DrainProjectBackgroundExecutor(shell);
+    WorkspaceShellTestAccess::ConsumeGitSidebarRefresh(shell);
+  };
+  const auto index_content = [&]() {
+    microide::project::GitRepository repo(root);
+    return repo.Execute({"show", ":f.txt"}).output;
+  };
+
+  {
+    auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+    Expect(compare.model.hunks.size() == 2, "the edit is two hunks: a top insertion and a tail");
+    compare.selected_row = microide::compare::ComparePresentationRowForModelRow(
+        compare.presentation, static_cast<std::size_t>(compare.model.hunks.front().start_row));
+  }
+  stage_selected_hunk();
+  Expect(index_content() == "alpha\nalpha\n}\n\neps\n",
+         ("the top hunk is staged; index=[" + index_content() + "] feedback=[" +
+          WorkspaceShellTestAccess::CommandFeedbackText(shell) + "]")
+             .c_str());
+
+  {
+    auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+    Expect(!compare.model.hunks.empty(), "the tail hunk is still there to stage");
+    compare.selected_row = microide::compare::ComparePresentationRowForModelRow(
+        compare.presentation, static_cast<std::size_t>(compare.model.hunks.back().start_row));
+  }
+  stage_selected_hunk();
+  Expect(index_content() == edited,
+         ("staging the second hunk after the first leaves the index equal to the file; index=[" +
+          index_content() + "] feedback=[" +
+          WorkspaceShellTestAccess::CommandFeedbackText(shell) + "]")
+             .c_str());
 }
 
 // The other half of the same disagreement: `JumpCompareHunk` moved `selected_row`
@@ -2554,6 +2625,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkingTreeCompareOpensOnFirstChange);
   AddTest(tests, "WorkspaceShell/CompareHunkJumpMovesTheEditableCaret",
           TestWorkspaceShellCompareHunkJumpMovesTheEditableCaret);
+  AddTest(tests, "WorkspaceShell/StagesHunksInSequence",
+          TestWorkspaceShellCompareStagesHunksInSequence);
 }
 
 }  // namespace microide::tests
