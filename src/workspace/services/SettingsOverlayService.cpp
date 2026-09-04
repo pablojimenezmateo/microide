@@ -2,6 +2,8 @@
 
 #include <algorithm>
 #include <cctype>
+#include <charconv>
+#include <system_error>
 
 #include "util/Parse.h"
 #include "util/StringUtil.h"
@@ -11,30 +13,25 @@ namespace microide::workspace {
 
 namespace {
 
-// Renders a float setting value without std::to_string's trailing zeros so the
-// overlay shows "1" / "1.25" instead of "1.000000".
-// Into a string the caller already owns: the rows are retained across rebuilds
-// precisely so their buffers are not freed and re-allocated on every keystroke of
-// the filter, and returning a fresh string to move-assign over one undoes that.
+// Renders a float setting value in its shortest round-trip form so the overlay
+// shows "1" / "1.25" rather than "1.000000". Into a string the caller already
+// owns: the rows are retained across rebuilds precisely so their buffers are not
+// freed and re-allocated on every keystroke of the filter, and returning a fresh
+// string to move-assign over one undoes that. to_chars, not std::to_string: the
+// latter honours LC_NUMERIC (see SerializeSettingValueInto).
 void CompactFloatInto(std::string_view value, std::string* out) {
   const auto parsed = util::ParseFloat(value);
   if (!parsed.has_value()) {
     out->assign(value);
     return;
   }
-  // to_string of a float is always short enough for the small-string buffer.
-  out->assign(std::to_string(*parsed));
-  if (out->find('.') != std::string::npos) {
-    while (!out->empty() && out->back() == '0') {
-      out->pop_back();
-    }
-    if (!out->empty() && out->back() == '.') {
-      out->pop_back();
-    }
+  char buffer[24];
+  const auto [end, ec] = std::to_chars(buffer, buffer + sizeof(buffer), *parsed);
+  if (ec != std::errc{}) {
+    out->assign(value);
+    return;
   }
-  if (out->empty()) {
-    out->assign("0");
-  }
+  out->assign(buffer, static_cast<std::size_t>(end - buffer));
 }
 
 // Fill `index` with one (key -> payload) pair per element of `layer`, sorted for

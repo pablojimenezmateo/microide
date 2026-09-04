@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "util/Parse.h"
+
 #include "editor/PluginDecorationStore.h"
 #include "editor/PluginSurfaceStore.h"
 #include "plugin/PluginHost.h"
@@ -307,6 +309,15 @@ void TestSerializeSettingValueRoundTrip() {
   Expect(text == "42", "serialised int should be '42'");
   const std::string btext = SerializeSettingValue(true);
   Expect(btext == "true", "serialised bool should be 'true'");
+  // A float goes out in its shortest round-trip form through a locale-
+  // independent formatter: std::to_string gave "1.500000", and under a
+  // comma-decimal LC_NUMERIC (which SDL's X11 backend installs) "1,500000",
+  // which the locale-independent ParseFloat rejected on reload.
+  Expect(SerializeSettingValue(1.5f) == "1.5", "serialised float is the shortest form");
+  Expect(SerializeSettingValue(1.0f) == "1", "an integral float has no fraction digits");
+  Expect(SerializeSettingValue(0.75f) == "0.75", "0.75 round-trips exactly");
+  Expect(microide::util::ParseFloat(SerializeSettingValue(1.25f)).value_or(0) == 1.25f,
+         "the serialised form parses back");
 }
 
 void TestDefaultSettingValue() {

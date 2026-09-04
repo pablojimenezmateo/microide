@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <charconv>
+#include <system_error>
 
 #include "plugin/PluginHost.h"
 #include "util/Parse.h"
@@ -1132,7 +1133,16 @@ void SerializeSettingValueInto(const SettingValue& value, std::string* out) {
           // into whatever `out` already holds.
           out->assign(std::to_string(v));
         } else if constexpr (std::is_same_v<T, float>) {
-          out->assign(std::to_string(v));
+          // to_chars, NOT std::to_string: to_string formats through printf's
+          // "%f", which takes the decimal separator from LC_NUMERIC, and SDL's
+          // X11 backend sets the process locale behind our back — so under a
+          // comma-decimal locale ui.scale serialized as "1,500000" and the
+          // locale-independent ParseFloat rejected it on the way back. to_chars
+          // is locale-independent and shortest-round-trip ("1.5", not
+          // "1.500000"), and 24 bytes always fits a float.
+          char buffer[24];
+          const auto [end, ec] = std::to_chars(buffer, buffer + sizeof(buffer), v);
+          out->assign(buffer, ec == std::errc{} ? static_cast<std::size_t>(end - buffer) : 0);
         } else {
           out->assign(v);
         }
