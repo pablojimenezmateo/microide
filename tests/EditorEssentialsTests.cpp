@@ -872,8 +872,8 @@ void TestIndentDetectSpacesMajority() {
       "    return",
   };
   auto detected = microide::editor::DetectIndent(lines);
-  Expect(detected.detected, "indent should be detected");
-  Expect(detected.soft_tabs, "majority spaces should yield soft_tabs=true");
+  Expect(detected.detected(), "indent should be detected");
+  Expect(detected.soft_tabs == true, "majority spaces should yield soft_tabs=true");
   Expect(detected.indent_width == 2,
          "indent step should be detected as 2");
   Expect(detected.non_blank_lines_inspected == 6, "short buffers inspect every non-blank line");
@@ -882,8 +882,10 @@ void TestIndentDetectSpacesMajority() {
 void TestIndentDetectTabsMajority() {
   std::vector<std::string> lines = {"\tfoo", "\tbar", "\tbaz"};
   auto detected = microide::editor::DetectIndent(lines);
-  Expect(detected.detected, "tabs should be detected");
-  Expect(!detected.soft_tabs, "majority tabs should yield soft_tabs=false");
+  Expect(detected.detected(), "tabs should be detected");
+  Expect(detected.soft_tabs == false, "majority tabs should yield soft_tabs=false");
+  Expect(!detected.indent_width.has_value(),
+         "a tab-indented buffer cannot say how wide a tab is: the width stays the caller's");
   Expect(detected.non_blank_lines_inspected == 3, "tab-majority sample uses three non-blank lines");
 }
 
@@ -900,9 +902,51 @@ void TestIndentDetectMixedLeadingTabsCountAsTabs() {
       "\tbaz",
   };
   auto detected = microide::editor::DetectIndent(lines);
-  Expect(detected.detected, "mixed leading tabs should still detect indentation");
-  Expect(!detected.soft_tabs,
+  Expect(detected.detected(), "mixed leading tabs should still detect indentation");
+  Expect(detected.soft_tabs == false,
          "leading whitespace containing a tab must count as tab indentation, not spaces");
+}
+
+// The detector used to count only indentation increases, so a 2-space file whose
+// wrapped calls continue at +4 (clang-format's default) was read as 4-space: 141
+// of this repository's own 1068 C++ files came back as 4-space, `Theme.cpp` with
+// twice as many +4 continuations as +2 block steps among them. VS Code counts the
+// step in both directions and lets 2 win over 4 when 2-steps are at least half
+// as common, which is what a 2-space file with continuations looks like.
+void TestIndentDetectTwoSpaceFileWithFourSpaceContinuations() {
+  std::vector<std::string> lines;
+  for (int i = 0; i < 10; ++i) {
+    lines.push_back("void f() {");
+    lines.push_back("  call(alpha,");
+    lines.push_back("      beta);");  // aligned under `alpha`: no evidence
+    lines.push_back("  other_call(");
+    lines.push_back("      gamma, delta);");  // +4 continuation
+    lines.push_back("  if (x) {");
+    lines.push_back("    y();");
+    lines.push_back("  }");
+    lines.push_back("}");
+  }
+  auto detected = microide::editor::DetectIndent(lines);
+  Expect(detected.soft_tabs == true, "the file is space-indented");
+  Expect(detected.indent_width == 2, "continuation lines must not turn a 2-space file into 4");
+
+  // A genuine 4-space file with dedents still reads as 4.
+  std::vector<std::string> four = {"a", "    b", "        c", "    d", "a", "    e"};
+  Expect(microide::editor::DetectIndent(four).indent_width == 4, "a 4-space file reads as 4");
+  // Dedents are evidence too: a file that opens mid-block and only ever dedents.
+  std::vector<std::string> dedent_only = {"      a", "    b", "  c", "d"};
+  Expect(microide::editor::DetectIndent(dedent_only).indent_width == 2,
+         "a step is a step in either direction");
+}
+
+// Tabs and spaces tie (or nothing is indented): the style is unknown and stays
+// whatever the preferences chose, while a space step can still be reported.
+void TestIndentDetectTieLeavesStyleUndetermined() {
+  std::vector<std::string> tie = {"a", "\tb", "a", "  c"};
+  auto detected = microide::editor::DetectIndent(tie);
+  Expect(!detected.soft_tabs.has_value(), "a tab/space tie must not pick a style");
+  std::vector<std::string> flat = {"a", "b", "c"};
+  Expect(!microide::editor::DetectIndent(flat).detected(), "an unindented buffer detects nothing");
 }
 
 void TestIndentDetectMaxInspectBoundsNonBlankCount() {
@@ -2118,6 +2162,10 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestIndentDetectTabsMajority);
   AddTest(tests, "EditorEssentials/IndentDetect/MixedLeadingTabsCountAsTabs",
           TestIndentDetectMixedLeadingTabsCountAsTabs);
+  AddTest(tests, "EditorEssentials/IndentDetect/TwoSpaceFileWithFourSpaceContinuations",
+          TestIndentDetectTwoSpaceFileWithFourSpaceContinuations);
+  AddTest(tests, "EditorEssentials/IndentDetect/TieLeavesStyleUndetermined",
+          TestIndentDetectTieLeavesStyleUndetermined);
   AddTest(tests, "EditorEssentials/IndentDetect/MaxInspectBoundsNonBlankCount",
           TestIndentDetectMaxInspectBoundsNonBlankCount);
   AddTest(tests, "EditorEssentials/IndentDetect/ApplyOnOpenUpdatesViewport",

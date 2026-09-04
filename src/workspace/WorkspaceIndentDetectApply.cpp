@@ -33,18 +33,19 @@ void ApplyDetectedIndentAfterPreferences(
   // LineView instead of materializing the whole document with Snapshot() on every
   // file open (TD-2026-07-17A-003).
   const editor::IndentDetection detected = editor::DetectIndent(viewport.lines());
-  if (!detected.detected) {
+  if (!pins_style && detected.soft_tabs) {
+    viewport.SetSoftTabs(*detected.soft_tabs);
+  }
+  // A tab-indented buffer says nothing about how wide a tab is: the width stays
+  // whatever the preferences chose (VS Code keeps its default tab size too).
+  if (!detected.indent_width) {
     return;
   }
-
-  if (!pins_style) {
-    viewport.SetSoftTabs(detected.soft_tabs);
-  }
   if (!pins_width) {
-    viewport.SetIndentWidth(detected.indent_width);
+    viewport.SetIndentWidth(*detected.indent_width);
   }
   if (!pins_tab_size) {
-    viewport.SetTabSize(detected.indent_width);
+    viewport.SetTabSize(*detected.indent_width);
   }
 }
 

@@ -208,9 +208,15 @@ Two rules the surfaces enforce:
 - **Settings:** `editor.indent.detect_on_open` (user-scoped, default on).
 - **Behavior:** After preferences apply on disk-backed loads,
   `ApplyDetectedIndentAfterPreferences` runs `editor::DetectIndent` on the
-  buffer (up to **256 non-blank lines** per `IndentDetect.h`) and sets only
+  buffer (up to **1024 non-blank lines** per `IndentDetect.h`) and sets only
   `TextViewport` tab/indent fields — **no** buffer mutation, **no** persisted
-  detection result.
+  detection result. The detector is VS Code's `guessIndentation`: the style is
+  the majority of tab- vs space-indented lines (a tie leaves the preference
+  alone), the width is the most common change in leading spaces between
+  consecutive content lines in either direction, with 2 beating 4 whenever
+  2-steps are at least half as common (a 2-space file's +4 continuation lines
+  used to read as 4-space). A tab-indented buffer reports no width: the tab
+  size stays the preference.
 
 ## Occurrences highlight
 

@@ -637,7 +637,7 @@ void RunEditorIndentDetectOpen(ScenarioContext& context) {
   // Zero-copy LineSpan path (TD-2026-07-17A-003): detect over the live buffer without
   // a Snapshot() materialization.
   const editor::IndentDetection det = editor::DetectIndent(context.ActiveViewport().lines());
-  if (det.non_blank_lines_inspected > 256) {
+  if (det.non_blank_lines_inspected > 1024) {  // DetectIndent's default window
     throw std::runtime_error("editor_indent_detect_open: DetectIndent exceeded non-blank budget");
   }
   context.PumpFrames(1);
