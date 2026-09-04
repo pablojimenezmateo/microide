@@ -26,6 +26,8 @@
 
 #include <algorithm>
 #include <optional>
+#include <cstdint>
+#include <utility>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -1917,7 +1919,123 @@ void TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm() {
 
 }  // namespace
 
+
+// A plain stack over the text is the definition of bracket matching (no
+// syntax viewport, so strings and comments are not exempt): for every bracket
+// in random bracket soup the scanner must return the stack's partner, and the
+// partner's partner must be the original. Random multi-line soup with all
+// three bracket kinds nested and mismatched, with long and empty lines.
+void TestBracketScannerAgreesWithStackReference() {
+  using microide::editor::FindBracketMatchInLines;
+  std::uint64_t state = 0xA5A5A5A55A5A5A5Aull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kAtoms[] = {"(", ")", "[", "]", "{", "}", "a", " ", "é", "\n"};
+  std::size_t checked = 0;
+  for (int round = 0; round < 60; ++round) {
+    std::string text;
+    const std::size_t atoms = 1 + next(40);
+    for (std::size_t i = 0; i < atoms; ++i) {
+      text += kAtoms[next(std::size(kAtoms))];
+    }
+    std::vector<std::string> owned;
+    {
+      std::size_t start = 0;
+      while (true) {
+        const std::size_t newline = text.find('\n', start);
+        owned.push_back(text.substr(start, newline == std::string::npos ? std::string::npos
+                                                                        : newline - start));
+        if (newline == std::string::npos) break;
+        start = newline + 1;
+      }
+    }
+    std::vector<std::string_view> lines(owned.begin(), owned.end());
+    struct Pos { std::size_t line, column; };
+    std::vector<std::pair<Pos, Pos>> pairs;
+    std::vector<std::pair<Pos, char>> stack;
+    for (std::size_t l = 0; l < lines.size(); ++l) {
+      for (std::size_t c = 0; c < lines[l].size(); ++c) {
+        const char ch = lines[l][c];
+        if (ch == '(' || ch == '[' || ch == '{') {
+          stack.push_back({{l, c}, ch});
+        } else if (ch == ')' || ch == ']' || ch == '}') {
+          const char open = ch == ')' ? '(' : ch == ']' ? '[' : '{';
+          if (!stack.empty() && stack.back().second == open) {
+            pairs.push_back({stack.back().first, {l, c}});
+            stack.pop_back();
+          } else {
+            stack.clear();  // a mismatched closer abandons the openers it could not close
+          }
+        }
+      }
+    }
+    const auto expected_partner = [&](std::size_t l, std::size_t c) -> std::optional<Pos> {
+      for (const auto& [open, close] : pairs) {
+        if (open.line == l && open.column == c) return close;
+        if (close.line == l && close.column == c) return open;
+      }
+      return std::nullopt;
+    };
+    // The scanner tries the bracket AT the caret first and the one before it
+    // second, so the bracket it used is read back from the pair it returns.
+    for (std::size_t l = 0; l < lines.size(); ++l) {
+      for (std::size_t c = 0; c <= lines[l].size(); ++c) {
+        const auto got = FindBracketMatchInLines(lines, l, c, 2000, nullptr);
+        const std::string label = "round " + std::to_string(round) + " text=[" + text +
+                                  "] caret " + std::to_string(l) + ":" + std::to_string(c);
+        if (!got.has_value()) {
+          // Nothing found: neither candidate may have a reference partner.
+          for (const std::size_t cand : {c, c > 0 ? c - 1 : c}) {
+            if (cand < lines[l].size()) {
+              Expect(!expected_partner(l, cand).has_value(),
+                     (label + ": no match, so candidate " + std::to_string(cand) +
+                      " has no reference partner")
+                         .c_str());
+            }
+          }
+          ++checked;
+          continue;
+        }
+        const std::size_t used_line = got->caret_at_opener ? got->open_line : got->close_line;
+        const std::size_t used_col = got->caret_at_opener ? got->open_column : got->close_column;
+        const std::size_t partner_line = got->caret_at_opener ? got->close_line : got->open_line;
+        const std::size_t partner_col = got->caret_at_opener ? got->close_column : got->open_column;
+        Expect(used_line == l && (used_col == c || used_col + 1 == c),
+               (label + ": the matched bracket is at or just before the caret").c_str());
+        const char ch = lines[used_line][used_col];
+        const char partner = lines[partner_line][partner_col];
+        const char expected_partner_char = ch == '(' ? ')' : ch == ')' ? '(' : ch == '[' ? ']'
+                                           : ch == ']' ? '[' : ch == '{' ? '}' : '{';
+        Expect(partner == expected_partner_char,
+               (label + ": the partner is the matching bracket kind").c_str());
+        if (const auto want = expected_partner(used_line, used_col); want.has_value()) {
+          Expect(partner_line == want->line && partner_col == want->column,
+                 (label + ": the partner is the stack's partner (got " +
+                  std::to_string(partner_line) + ":" + std::to_string(partner_col) + " want " +
+                  std::to_string(want->line) + ":" + std::to_string(want->column) + ")")
+                     .c_str());
+        }
+        // Symmetric: the partner's own match (the bracket AT the partner is
+        // tried first) is this pair.
+        const auto back = FindBracketMatchInLines(lines, partner_line, partner_col, 2000, nullptr);
+        Expect(back.has_value() && back->open_line == got->open_line &&
+                   back->open_column == got->open_column && back->close_line == got->close_line &&
+                   back->close_column == got->close_column,
+               (label + ": the partner's match is the same pair").c_str());
+        ++checked;
+      }
+    }
+  }
+  Expect(checked >= 300, "enough brackets were checked to mean anything");
+}
+
 void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorEssentials/IndentGuides/BracketScannerAgreesWithStackReference",
+          TestBracketScannerAgreesWithStackReference);
   AddTest(tests, "EditorEssentials/IndentGuides/LeadingIndentScanIsBoundedAndMatchesTheWholeLineForm",
           TestLeadingIndentScanIsBoundedAndMatchesTheWholeLineForm);
   AddTest(tests, "EditorEssentials/BracketScanner/ForwardMatch",
