@@ -490,6 +490,28 @@ argument and always prompted, so nothing headless could rename -- it takes the
 name now. A word-motion reference (a port of VS Code's rule) over random lines
 found nothing.
 
+Sweeps six to nine kept driving the binary and comparing against references:
+`toggle-line-comment` and `sort-lines` lost the selection (a second press acted
+on one line -- the same `ReplaceLines` caret snap, now restored through the
+indent verbs' helpers), `format-json` snapped the caret to the top, and the
+EditorConfig resolver disagreed with the reference `editorconfig` library on
+115 of 3600 random resolutions, all on two spec rules (`indent_style = tab`
+implies `indent_size = tab`; a later `max_line_length = off` overrides). Clean:
+undo grouping, CRLF and opaque-byte round trips, a 200k-line file, sort
+stability, comment toggling on mixed lines, indent over blank lines, line-op
+edges, multi-caret move/indent/comment/delete-line, push/pull/fetch/sync/
+publish against a bare remote, autosave after a delay, settings persistence
+across a restart, restore of a dirty never-saved buffer, `ParseInt`/`ParseDouble`
+against `from_chars` (a leading `+` is rejected on both sides), the UTF-8
+boundary helpers and `NormalizeLineEndings` against byte-level references,
+and every fuzz target for 45 s.
+
+One limitation recorded, not changed: a conflict-review merge tab does not come
+back after a restart. Its base/incoming/current sides are temporary files
+extracted from the index stages, and the session restores a merge tab from
+those four paths, so `review-conflicts` has to be run again; a
+`merge <base> <incoming> <current>` tab over real files restores.
+
 Two deliberate deviations, recorded rather than changed:
 
 - **A bare LF resets the terminal column to 0** (xterm keeps the column).

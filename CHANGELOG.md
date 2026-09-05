@@ -93,6 +93,15 @@ project (see [README](README.md)); versions track meaningful shipped work.
   selection, so the second `Shift+Alt+A` inserted an empty `/**/`; the wrapped
   text now stays selected, the markers are padded (`/* text */`) and the next
   toggle strips them.
+- **Toggle-line-comment and sort-lines keep the selection.** Both went through
+  a line replace that snapped the caret to the region start, so a second
+  `Ctrl+/` uncommented one line and a second sort acted on one line; the
+  selection (or the carets) now survive, the caret shifted by the marker.
+- **Format-json keeps the caret on its line** instead of jumping to the top.
+- **EditorConfig follows two more spec rules**, checked against the reference
+  implementation over random config trees: `indent_style = tab` with no
+  `indent_size` follows `tab_width`, and a later `max_line_length = off`
+  overrides an earlier limit.
 
 ## [2.11.0] - 2026-09-03
 
