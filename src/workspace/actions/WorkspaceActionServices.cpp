@@ -830,7 +830,16 @@ bool WorkspaceActionContext::ExecuteLineNavigation(const LineNavigationRequest& 
     line = from_end >= line_count ? 0 : line_count - from_end;
   }
 
-  viewport->JumpCursorTo(line, request.column > 0 ? request.column - 1 : 0);
+  // `line:col` names a 1-based CHARACTER column (VS Code's Ctrl+G), not a byte:
+  // convert through the target line so a multibyte character before the target
+  // does not land the caret short of it.
+  line = std::min(line, line_count - 1);
+  std::size_t byte_column = 0;
+  if (request.column > 0 && line < viewport->line_count()) {
+    byte_column = util::Utf8ByteOffsetForCodepointCount(viewport->lines().LineView(line),
+                                                        static_cast<std::size_t>(request.column - 1));
+  }
+  viewport->JumpCursorTo(line, byte_column);
   state_.surface.focus = FocusTarget::Editor;
   operations_.request_focused_editor_redraw();
   return true;

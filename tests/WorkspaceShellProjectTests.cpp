@@ -1383,7 +1383,7 @@ void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "main.cpp";
-  WriteFile(source, "line1\nline2\nline3\nline4\n");
+  WriteFile(source, "line1\nline2\nline3\nline4\n\xc3\xa9=1\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -1399,6 +1399,12 @@ void TestWorkspaceShellGotoAndJumpCommandsUseTypedNavigationRequests() {
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 1 &&
              WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 0,
          "jump should move the cursor relative to the current line");
+  // The column is a CHARACTER column (VS Code's Ctrl+G), so on "é=1" column 3 is
+  // the "1" -- byte offset 3, not byte offset 2 (which would split "é=" short).
+  Expect(ExecuteCommand(shell, "goto 5:3"), "goto with a column on a multibyte line executes");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).cursor_line() == 4 &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).cursor_column() == 3,
+         "the column counts characters, so a two-byte letter before it is one column");
 }
 
 // TD-2026-07-16-68: `goto` is an absolute 1-based line. A negative or zero line must be
