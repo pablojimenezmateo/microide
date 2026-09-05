@@ -347,6 +347,15 @@ struct LaunchConfigPickerState {
   std::size_t selected_index = 0;
 };
 
+// One extra edit a completion item carries (LSP `additionalTextEdits`), applied
+// with the insertion and positioned in the document as it was before it -- the
+// auto-import / `#include` line the item needs. Editor byte columns, converted
+// from the server's encoding when the item arrived.
+struct CompletionAdditionalEdit {
+  editor::SelectionRange range;
+  std::string new_text;
+};
+
 struct CompletionSessionItem {
   std::string label;
   std::string detail;
@@ -358,6 +367,7 @@ struct CompletionSessionItem {
   // `replacement_range` so member/path completions extend the qualifier instead of
   // overwriting it.
   std::optional<editor::SelectionRange> replacement_range;
+  std::vector<CompletionAdditionalEdit> additional_edits;
 };
 
 struct CompletionSessionState {

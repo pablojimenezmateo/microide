@@ -24,6 +24,66 @@
 
 namespace microide::workspace {
 
+namespace {
+
+bool PositionBefore(const editor::TextPosition& a, const editor::TextPosition& b) {
+  return a.line < b.line || (a.line == b.line && a.column < b.column);
+}
+
+// Where `position` (at or after `edit`'s end, in the pre-edit document) sits
+// after `edit` replaced its range with `new_text`.
+editor::TextPosition RemapAcrossEdit(editor::TextPosition position,
+                                     const CompletionAdditionalEdit& edit) {
+  const std::size_t newlines =
+      static_cast<std::size_t>(std::count(edit.new_text.begin(), edit.new_text.end(), '\n'));
+  const std::size_t last_segment =
+      edit.new_text.size() - (newlines == 0 ? 0 : edit.new_text.rfind('\n') + 1);
+  if (position.line == edit.range.end.line) {
+    const std::size_t tail = position.column - edit.range.end.column;
+    return editor::TextPosition{
+        edit.range.start.line + newlines,
+        (newlines == 0 ? edit.range.start.column + last_segment : last_segment) + tail};
+  }
+  const std::size_t removed_lines = edit.range.end.line - edit.range.start.line;
+  return editor::TextPosition{position.line + newlines - removed_lines, position.column};
+}
+
+// Applies a completion item's additionalTextEdits, highest first so each stays
+// valid against the still-unedited text below it, and returns `insertion`
+// remapped across every edit that sits above it. An edit overlapping the
+// insertion range is skipped: the protocol forbids it and applying it would
+// double-edit the token being completed.
+editor::SelectionRange ApplyCompletionAdditionalEdits(
+    editor::TextViewport& viewport,
+    const std::vector<CompletionAdditionalEdit>& edits,
+    editor::SelectionRange insertion) {
+  std::vector<const CompletionAdditionalEdit*> ordered;
+  ordered.reserve(edits.size());
+  for (const CompletionAdditionalEdit& edit : edits) {
+    const bool above = !PositionBefore(insertion.start, edit.range.end);
+    const bool below = !PositionBefore(edit.range.start, insertion.end);
+    if (above || below) {
+      ordered.push_back(&edit);
+    }
+  }
+  std::sort(ordered.begin(), ordered.end(),
+            [](const CompletionAdditionalEdit* a, const CompletionAdditionalEdit* b) {
+              return PositionBefore(b->range.start, a->range.start);
+            });
+  for (const CompletionAdditionalEdit* edit : ordered) {
+    if (!viewport.ReplaceRange(edit->range, edit->new_text)) {
+      continue;
+    }
+    if (!PositionBefore(insertion.start, edit->range.end)) {
+      insertion.start = RemapAcrossEdit(insertion.start, *edit);
+      insertion.end = RemapAcrossEdit(insertion.end, *edit);
+    }
+  }
+  return insertion;
+}
+
+}  // namespace
+
 bool AssistService::ResultIsStale(const editor::TextViewport* active_editable,
                                   const std::filesystem::path& request_path) {
   return active_editable == nullptr || active_editable->path() != request_path;
@@ -206,8 +266,18 @@ std::vector<CompletionSessionItem> AssistService::TransformLspCompletions(
   result.reserve(items->size());
   for (const auto& item : *items) {
     std::optional<editor::SelectionRange> item_range;
-    if (item.replace_range.has_value() && apply_viewport != nullptr) {
-      item_range = LspRangeToEditorRange(*apply_viewport, *item.replace_range, encoding);
+    std::vector<CompletionAdditionalEdit> additional_edits;
+    if (apply_viewport != nullptr) {
+      if (item.replace_range.has_value()) {
+        item_range = LspRangeToEditorRange(*apply_viewport, *item.replace_range, encoding);
+      }
+      additional_edits.reserve(item.additional_text_edits.size());
+      for (const auto& [range, new_text] : item.additional_text_edits) {
+        additional_edits.push_back(CompletionAdditionalEdit{
+            .range = LspRangeToEditorRange(*apply_viewport, range, encoding),
+            .new_text = new_text,
+        });
+      }
     }
     result.push_back(CompletionSessionItem{
         .label = item.label,
@@ -216,6 +286,7 @@ std::vector<CompletionSessionItem> AssistService::TransformLspCompletions(
         .insert_text = item.insert_text,
         .is_snippet = snippets_on && item.insert_text_format == 2,
         .replacement_range = item_range,
+        .additional_edits = std::move(additional_edits),
     });
   }
   return result;
@@ -312,11 +383,28 @@ bool AssistService::ApplySelectedCompletion() {
       session.items[std::min(session.selected_index, session.items.size() - 1)];
   // Prefer the item's server-supplied textEdit range; fall back to the session's
   // heuristic word range for plugin completions / items without a textEdit.
-  const editor::SelectionRange replacement_range =
+  editor::SelectionRange replacement_range =
       item.replacement_range.value_or(session.replacement_range);
   const EditSideEffectsSnapshot snapshot = CaptureEditSnapshot(*viewport);
+  // The item's additionalTextEdits (an auto-import line, typically) are positioned
+  // in the document BEFORE the completion, so they go in first, highest first,
+  // and the insertion range is remapped across the ones above it. Doing them
+  // first also keeps a snippet insertion last, so its session sees the final
+  // document. One undo group covers the lot; a group nests inside the snippet
+  // path's own, so undo stays one step either way.
+  const bool has_additional_edits = !item.additional_edits.empty();
+  if (has_additional_edits) {
+    viewport->BeginUndoGroup();
+    replacement_range = ApplyCompletionAdditionalEdits(*viewport, item.additional_edits,
+                                                       replacement_range);
+  }
   const bool want_snippet = EditorSnippetsSettingEnabled() && item.is_snippet;
   bool snippet_applied = false;
+  const auto finish_group = [&] {
+    if (has_additional_edits && viewport->UndoGroupActive()) {
+      viewport->EndUndoGroup();
+    }
+  };
   if (want_snippet) {
     if (TabEntry::EditorTabState* editor_tab = operations_.active_editor_tab()) {
       viewport->BeginUndoGroup();
@@ -327,15 +415,19 @@ bool AssistService::ApplySelectedCompletion() {
           viewport->EndUndoGroup();
         }
         if (!viewport->ReplaceRange(replacement_range, item.insert_text)) {
-          return false;
+          finish_group();
+          return has_additional_edits;  // the import line still landed
         }
       }
     } else if (!viewport->ReplaceRange(replacement_range, item.insert_text)) {
-      return false;
+      finish_group();
+      return has_additional_edits;
     }
   } else if (!viewport->ReplaceRange(replacement_range, item.insert_text)) {
-    return false;
+    finish_group();
+    return has_additional_edits;
   }
+  finish_group();
   // A completion edit mutates the buffer; the fold model's content_revision fingerprint
   // alone does not force a rescan once a file is fully resolved (see the Undo/Redo path),
   // so mark it dirty here — like the sibling snippet/insert paths — otherwise a

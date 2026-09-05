@@ -1933,7 +1933,11 @@ while True:
             {"label": "beta", "textEdit": {
                 "range": {"start": {"line": 1, "character": 2},
                           "end": {"line": 1, "character": 5}},
-                "newText": "beta_x"}},
+                "newText": "beta_x"},
+             "additionalTextEdits": [{
+                "range": {"start": {"line": 0, "character": 0},
+                          "end": {"line": 0, "character": 0}},
+                "newText": "import beta\n"}]},
         ]}})
     elif method == "shutdown":
         write_message({"jsonrpc": "2.0", "id": msg["id"], "result": None})
@@ -1970,6 +1974,11 @@ while True:
              (*received)[1].replace_range->start.character == 2 &&
              (*received)[1].replace_range->end.character == 5,
          "textEdit.range becomes the authoritative replace range");
+  Expect((*received)[0].additional_text_edits.empty(), "no additionalTextEdits parses as none");
+  Expect((*received)[1].additional_text_edits.size() == 1 &&
+             (*received)[1].additional_text_edits[0].first.start.line == 0 &&
+             (*received)[1].additional_text_edits[0].second == "import beta\n",
+         "additionalTextEdits parse with their range and text");
   client.Shutdown();
 }
 

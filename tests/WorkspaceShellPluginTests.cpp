@@ -2060,6 +2060,85 @@ return ide.plugin({
   Expect(has_plugin_only, "a plugin-only completion must survive the merge");
 }
 
+// Accepting a completion applies the item's additionalTextEdits -- the auto-import
+// line clangd/pyright/tsserver attach to a symbol from another file -- along with
+// the insertion, in one undo step. They are positioned in the pre-completion
+// document, so the import line above does not shift where the symbol lands.
+void TestWorkspaceShellCompletionAppliesAdditionalTextEdits() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+#if !defined(__unix__) && !defined(__APPLE__)
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path md_file = project / "notes.md";
+  WriteFile(md_file, "first\nx = ve\n");
+
+  WritePluginInit(
+      plugins_root, "mdlsp",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "mdlsp",
+  capabilities = { process = { exec = true } },
+  setup = function(ctx)
+    ctx.lsp.add({ id = "md.server", language_id = "markdown", command = { "md-lsp-server" } })
+  end
+})
+)");
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project, false, false),
+         "fixture should open the project");
+
+  auto stub = std::make_unique<workspace::LspClient>();
+  workspace::LspClient* const stub_raw = stub.get();
+  stub_raw->EnableTestStubMode();
+  stub_raw->SetTestCompletionHandler(
+      [](std::string, workspace::LspClient::Position,
+         workspace::LspClient::CompletionCallback cb) {
+        std::vector<workspace::LspClient::CompletionItem> items;
+        workspace::LspClient::CompletionItem item;
+        item.label = "vector";
+        item.insert_text = "vector";
+        item.replace_range = workspace::LspClient::Range{{1, 4}, {1, 6}};  // "ve"
+        item.additional_text_edits.push_back(
+            {workspace::LspClient::Range{{0, 0}, {0, 0}}, "import vector\n"});
+        items.push_back(std::move(item));
+        cb(std::move(items));
+      });
+  Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
+             .InstallTestClientIntoExistingForTesting("markdown", std::move(stub)),
+         "fixture should attach a stub markdown client");
+
+  WorkspaceShellTestAccess::OpenFile(shell, md_file);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(1, 6);
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "completion"),
+         "completion command should execute");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  const auto& session = WorkspaceShellTestAccess::CompletionSession(shell);
+  Expect(session.items.size() == 1 && session.items[0].additional_edits.size() == 1,
+         "the item carries its additional edit into the session");
+
+  Expect(WorkspaceShellTestAccess::ApplySelectedCompletion(shell), "the completion applies");
+  Expect(editor.lines().size() == 4 && editor.lines()[0] == "import vector" &&
+             editor.lines()[1] == "first" && editor.lines()[2] == "x = vector",
+         "the import line lands above and the symbol replaces the typed prefix: " +
+             std::string(editor.lines()[0]) + "|" + std::string(editor.lines()[1]) + "|" +
+             std::string(editor.lines()[2]));
+  Expect(editor.cursor_line() == 2 && editor.cursor_column() == 10,
+         "the caret sits after the inserted symbol on its (shifted) line");
+  Expect(editor.Undo(), "undo reverts");
+  Expect(editor.lines().size() == 3 && editor.lines()[0] == "first" && editor.lines()[1] == "x = ve",
+         "one undo step removes both the import line and the insertion");
+}
+
 // Signature help is LSP-primary: when a server serves the language, its result is
 // shown even though a plugin provider also answers. The plugin result is used only
 // as a fallback when no server serves the buffer.
@@ -5694,6 +5773,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRenameSymbolOpensAndSavesClosedFiles);
   AddTest(tests, "WorkspaceShell/CompletionMergesPluginAndLspSources",
           TestWorkspaceShellCompletionMergesPluginAndLspSources);
+  AddTest(tests, "WorkspaceShell/CompletionAppliesAdditionalTextEdits",
+          TestWorkspaceShellCompletionAppliesAdditionalTextEdits);
   AddTest(tests, "WorkspaceShell/SignatureHelpPrefersLspOverPlugin",
           TestWorkspaceShellSignatureHelpPrefersLspOverPlugin);
   AddTest(tests, "WorkspaceShell/InlayHintsPublishMidLineDecorations",

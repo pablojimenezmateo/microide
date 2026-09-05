@@ -115,6 +115,11 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
             if (!new_text.empty()) ci.insert_text = std::move(new_text);
           }
           if (ci.insert_text.empty()) ci.insert_text = ci.label;
+          // Capped like every other harvested array; a real item carries one or
+          // two (an import line and, rarely, a qualifier fix).
+          constexpr std::size_t kMaxAdditionalTextEdits = 64;
+          ci.additional_text_edits =
+              lsp_protocol::ParseTextEdits(item["additionalTextEdits"], kMaxAdditionalTextEdits);
           items.push_back(std::move(ci));
         }
         SortCompletionItemsByServerRank(items);

@@ -191,6 +191,11 @@ class LspClient {
     // extend the qualifier rather than overwriting it. Absent for servers/items
     // that only return `insertText`.
     std::optional<Range> replace_range;
+    // LSP `additionalTextEdits`: edits the item needs applied alongside its
+    // insertion, positioned in the document as it was BEFORE the completion --
+    // the auto-import / `#include` line clangd, pyright and tsserver attach to a
+    // symbol from another file. Same (range, newText) shape as formatting edits.
+    std::vector<std::pair<Range, std::string>> additional_text_edits;
   };
 
   struct WorkspaceEdit {
