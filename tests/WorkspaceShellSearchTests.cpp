@@ -596,6 +596,39 @@ void TestWorkspaceShellBufferReplaceMovesToTheNextMatch() {
          "past the last match the selection wraps to the first");
 }
 
+// In the replace widget, Enter in the find field steps to the next match (as in
+// the find-only widget and VS Code); only Enter in the replace field replaces.
+void TestWorkspaceShellBufferReplaceEnterInFindFieldStepsMatches() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "a a a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 0);
+
+  Expect(SendKeyDown(shell, SDLK_H, SDL_KMOD_CTRL), "Ctrl+H should open the replace widget");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "a"), "the query is typed");
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "b");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0, "the first match is current");
+
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter in the find field is handled");
+  Expect(editor.lines()[0] == "a a a", "Enter in the find field does not edit the buffer");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 1,
+         "Enter in the find field steps to the next match");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_SHIFT), "Shift+Enter steps back");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0, "back to the first");
+
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE), "Tab moves to the replace field");
+  Expect(SendKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE), "Enter in the replace field is handled");
+  Expect(editor.lines()[0] == "b a a", "Enter in the replace field replaces the current match: " +
+                                          std::string(editor.lines()[0]));
+}
+
 }  // namespace
 
 void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
@@ -1294,6 +1327,8 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferSearchStartsFromTheCaret);
   AddTest(tests, "WorkspaceShell/BufferReplaceMovesToTheNextMatch",
           TestWorkspaceShellBufferReplaceMovesToTheNextMatch);
+  AddTest(tests, "WorkspaceShell/BufferReplaceEnterInFindFieldStepsMatches",
+          TestWorkspaceShellBufferReplaceEnterInFindFieldStepsMatches);
 }
 
 }  // namespace microide::tests

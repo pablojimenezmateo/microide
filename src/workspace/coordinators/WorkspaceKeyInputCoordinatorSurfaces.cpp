@@ -135,6 +135,12 @@ bool KeyInputCoordinator::HandleOverlayKeyDown(const SDL_KeyboardEvent& event,
       case SDLK_KP_ENTER:
         if (modifiers & SDL_KMOD_CTRL) {
           operations_.replace_all_buffer_search_matches();
+        } else if (state_.overlay.buffer_search_field == BufferSearchField::Search) {
+          // Enter in the FIND field steps through the matches, exactly as in the
+          // find-only widget (and VS Code); only the replace field's Enter edits.
+          // Replacing from the find field turned "type a query, Enter to look at
+          // the next hit" into an edit with whatever the replace box held.
+          operations_.move_buffer_search_selection((modifiers & SDL_KMOD_SHIFT) ? -1 : 1);
         } else {
           operations_.replace_current_buffer_search_match();
         }
