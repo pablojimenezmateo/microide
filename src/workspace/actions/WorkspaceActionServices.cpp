@@ -402,6 +402,52 @@ bool WorkspaceActionContext::ActiveTabIsMerge() const {
          state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Merge;
 }
 
+bool WorkspaceActionContext::StepDiagnostic(int delta, std::string* error_message) {
+  editor::TextViewport* viewport = operations_.active_navigable_viewport();
+  if (viewport == nullptr || viewport->path().empty()) {
+    if (error_message != nullptr) *error_message = "No active file";
+    return false;
+  }
+  const std::vector<editor::PublishedDiagnostic>* diagnostics =
+      state_.diagnostics_store.FindByPath(viewport->path());
+  if (diagnostics == nullptr || diagnostics->empty()) {
+    if (error_message != nullptr) *error_message = "No problems in this file";
+    return false;
+  }
+  const editor::TextPosition caret{viewport->cursor_line(), viewport->cursor_column()};
+  const auto before = [](const editor::TextPosition& a, const editor::TextPosition& b) {
+    return a.line < b.line || (a.line == b.line && a.column < b.column);
+  };
+  // Strictly after (or before) the caret, else wrap to the first (or last): a
+  // linear scan over an already-small per-file list, so no sort is needed and a
+  // diagnostic AT the caret is stepped past rather than re-selected.
+  const editor::PublishedDiagnostic* target = nullptr;
+  const editor::PublishedDiagnostic* wrap = nullptr;
+  for (const editor::PublishedDiagnostic& diagnostic : *diagnostics) {
+    const editor::TextPosition& start = diagnostic.range.start;
+    if (delta > 0) {
+      if (before(caret, start) && (target == nullptr || before(start, target->range.start))) {
+        target = &diagnostic;
+      }
+      if (wrap == nullptr || before(start, wrap->range.start)) wrap = &diagnostic;
+    } else {
+      if (before(start, caret) && (target == nullptr || before(target->range.start, start))) {
+        target = &diagnostic;
+      }
+      if (wrap == nullptr || before(wrap->range.start, start)) wrap = &diagnostic;
+    }
+  }
+  if (target == nullptr) target = wrap;
+  viewport->JumpCursorTo(target->range.start.line, target->range.start.column);
+  NotifyEditorCaretMoved();
+  const NotificationService::Tone tone =
+      target->severity == editor::DiagnosticSeverity::Error     ? NotificationService::Tone::Error
+      : target->severity == editor::DiagnosticSeverity::Warning ? NotificationService::Tone::Warning
+                                                                 : NotificationService::Tone::Info;
+  Notify(tone, target->message);
+  return true;
+}
+
 void WorkspaceActionContext::StepBufferSearch(int delta) {
   auto& buffer_search = state_.overlay.workflow.buffer_search;
   if (buffer_search.query.text().empty()) {

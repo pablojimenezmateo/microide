@@ -177,6 +177,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       context_.OpenRenameSymbolPrompt();
       return DispatchResult::Handled;
     }
+    case ActionId::GoToNextDiagnostic:
+    case ActionId::GoToPreviousDiagnostic: {
+      std::string error_message;
+      if (!context_.StepDiagnostic(id == ActionId::GoToNextDiagnostic ? 1 : -1, &error_message)) {
+        return reject(error_message);
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::GoToDefinition: {
       std::string error_message;
       if (!context_.GoToLspDefinition(&error_message)) {

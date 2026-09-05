@@ -90,6 +90,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // open. Gated like RenameSymbol, which is what its executor already requires.
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
              LspFeatureAvailable(operations_, "lsp.call_hierarchy.enabled");
+    case ActionId::GoToNextDiagnostic:
+    case ActionId::GoToPreviousDiagnostic:
+      // Diagnostics come from servers and plugins alike; the executor reports an
+      // empty file. Any open file qualifies.
+      return active_viewport != nullptr;
     case ActionId::GoToDefinition:
       return active_viewport != nullptr && operations_.active_definition_available() &&
              LspFeatureAvailable(operations_, "lsp.goto_definition.enabled");

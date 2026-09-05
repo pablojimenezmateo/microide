@@ -400,6 +400,10 @@ class WorkspaceActionContext {
   // whether or not the widget is open (VS Code). With no term yet it opens the
   // widget; with the widget closed it re-runs the search first.
   void StepBufferSearch(int delta);
+  // Alt+F8 / Shift+Alt+F8: move the caret to the next (delta > 0) or previous
+  // diagnostic of the active file, wrapping at either end, and toast its message.
+  // Returns false (with `error_message`) when there is no file or no diagnostic.
+  bool StepDiagnostic(int delta, std::string* error_message);
   void OpenBufferReplace();
   std::filesystem::path ResolveComparePath(const std::filesystem::path& requested_path,
                                            ActionSource source) const;

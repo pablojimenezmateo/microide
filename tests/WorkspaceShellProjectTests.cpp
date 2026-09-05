@@ -3004,6 +3004,55 @@ void TestWorkspaceShellVsCodeParityBindings() {
          "Ctrl+Shift+E shows the project tree");
 }
 
+
+// Alt+F8 / Shift+Alt+F8 walk the active file's diagnostics from the caret, wrapping
+// at both ends (VS Code marker.next / marker.prev). There was no problem navigation
+// from the keyboard at all before.
+void TestWorkspaceShellAltF8StepsDiagnostics() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.py";
+  WriteFile(source, "a = 1\nb = 2\nc = 3\nd = 4\ne = 5\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  using microide::editor::Diagnostic;
+  using microide::editor::DiagnosticSeverity;
+  using microide::editor::SelectionRange;
+  using microide::editor::TextPosition;
+  // Published out of order on purpose: navigation must follow positions, not
+  // publication order.
+  Expect(WorkspaceShellTestAccess::PublishDiagnostics(
+             shell, "lsp", source,
+             {Diagnostic{SelectionRange{TextPosition{4, 0}, TextPosition{4, 1}},
+                         DiagnosticSeverity::Warning, "fourth"},
+              Diagnostic{SelectionRange{TextPosition{0, 2}, TextPosition{0, 3}},
+                         DiagnosticSeverity::Error, "first"},
+              Diagnostic{SelectionRange{TextPosition{2, 0}, TextPosition{2, 1}},
+                         DiagnosticSeverity::Error, "third"}}),
+         "the fixture publishes three diagnostics");
+
+  viewport.MoveCursorTo(1, 0);
+  Expect(SendKeyDown(shell, SDLK_F8, SDL_KMOD_ALT), "Alt+F8 is handled");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+         "Alt+F8 jumps to the first diagnostic after the caret (line 2)");
+  Expect(SendKeyDown(shell, SDLK_F8, SDL_KMOD_ALT), "a second Alt+F8 is handled");
+  Expect(viewport.cursor_line() == 4, "a second Alt+F8 reaches line 4");
+  Expect(SendKeyDown(shell, SDLK_F8, SDL_KMOD_ALT), "a third Alt+F8 is handled");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 2,
+         "Alt+F8 wraps from the last diagnostic to the first");
+  Expect(SendKeyDown(shell, SDLK_F8, SDL_KMOD_SHIFT | SDL_KMOD_ALT), "Shift+Alt+F8 is handled");
+  Expect(viewport.cursor_line() == 4, "Shift+Alt+F8 wraps from the first diagnostic to the last");
+  Expect(SendKeyDown(shell, SDLK_F8, SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+         "a second Shift+Alt+F8 is handled");
+  Expect(viewport.cursor_line() == 2, "Shift+Alt+F8 steps back to line 2");
+}
+
 void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6734,6 +6783,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
   AddTest(tests, "WorkspaceShell/VsCodeParityBindings", TestWorkspaceShellVsCodeParityBindings);
+  AddTest(tests, "WorkspaceShell/AltF8StepsDiagnostics", TestWorkspaceShellAltF8StepsDiagnostics);
   AddTest(tests, "WorkspaceShell/EscapeCancelsTheSelection",
           TestWorkspaceShellEscapeCancelsTheSelection);
   AddTest(tests, "WorkspaceShell/CtrlArrowsScrollAndCtrlLSelectsLines",

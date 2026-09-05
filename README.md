@@ -601,6 +601,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Alt+z` | Toggle word wrap |
 | `Ctrl+\` | Split the editor right |
 | `F9` | Toggle a breakpoint on the caret's line (debugger enabled) |
+| `Alt+F8` / `Shift+Alt+F8` | Next / previous problem in the file (wraps; the message shows as a toast) |
 | `Ctrl+Shift+e` / `Ctrl+Shift+g` / `Ctrl+Shift+m` | Show the project, source control, or problems sidebar |
 | `Shift+PageUp` / `Shift+PageDown` in terminal | Page through the transcript (`Ctrl+Shift+C` copies the selection, `Ctrl+Shift+V` pastes) |
 | `d` on sidebar file | Open compare commit picker |
@@ -655,6 +656,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `call-hierarchy [incoming|outgoing]`
 - `focus <editor|sidebar|panel>`
 - `goto-definition`
+- `next-diagnostic`
+- `previous-diagnostic`
 - `goto-type-definition`
 - `goto-implementation`
 - `goto-declaration`
