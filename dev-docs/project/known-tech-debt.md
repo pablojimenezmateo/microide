@@ -512,7 +512,22 @@ extracted from the index stages, and the session restores a merge tab from
 those four paths, so `review-conflicts` has to be run again; a
 `merge <base> <incoming> <current>` tab over real files restores.
 
-Two deliberate deviations, recorded rather than changed:
+The last three sweeps found nothing to fix: the plugin file-read gate through
+the binary (project-scoped by default, an outside path refused, registration
+verbs refused outside `setup`), `SubstituteInto` against a find-next-and-
+`ExpandMatchAt` loop over 17,618 random pattern/template/subject triples, and
+literal search with case folding and whole-word framing against a naive scan
+over 20,000 random buffers.
+
+Three deliberate deviations, recorded rather than changed:
+
+- **The regex find skips empty matches** (`^`, `$`, `\b`, `x*`), by design and
+  commented in `FindNextRegexMatchInLine`, while Replace All substitutes at
+  them (PCRE2's global substitute, which is also what VS Code does: `^` → `- `
+  prefixes every line). So Replace All with `^` works and Replace (one) finds
+  nothing. VS Code's find reports the empty matches. Changing it means
+  zero-width highlights, caret placement on an empty match and empty matches
+  in project search; left, recorded.
 
 - **A bare LF resets the terminal column to 0** (xterm keeps the column).
   `ONLCR` hides it for every shell, and many tests encode `\n` as CR+LF; left.
