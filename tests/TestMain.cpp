@@ -47,6 +47,7 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests);
 void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests);
 void RegisterFilesystemTests(std::vector<TestCase>& tests);
 void RegisterGlobMatchTests(std::vector<TestCase>& tests);
+void RegisterEditorSplitTreeTests(std::vector<TestCase>& tests);
 void RegisterGitBranchOperationsTests(std::vector<TestCase>& tests);
 void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests);
 void RegisterProjectTraversalFilterTests(std::vector<TestCase>& tests);
@@ -433,6 +434,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterDirtyRegionPolicyTests(tests);
   microide::tests::RegisterFilesystemTests(tests);
   microide::tests::RegisterGlobMatchTests(tests);
+  microide::tests::RegisterEditorSplitTreeTests(tests);
   microide::tests::RegisterGitBranchOperationsTests(tests);
   microide::tests::RegisterIgnoreMatcherTests(tests);
   microide::tests::RegisterProjectTraversalFilterTests(tests);

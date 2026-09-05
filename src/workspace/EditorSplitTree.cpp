@@ -126,24 +126,33 @@ std::size_t EditorSplitTree::CountLeaves() const {
 }
 
 void EditorSplitTree::Normalise(Node& branch) {
-  float total = 0.0f;
-  for (std::size_t i = 0; i < branch.weights.size(); ++i) {
-    // A hand-edited session could carry a negative or non-finite weight straight
-    // into layout; fold that back to an even share here rather than letting it
-    // reach the geometry pass.
-    if (!std::isfinite(branch.weights[i]) || branch.weights[i] <= 0.0f) {
-      branch.weights[i] = 0.0f;
-    }
-    total += branch.weights[i];
-  }
   if (branch.weights.empty()) {
     return;
   }
-  if (total <= 0.0f) {
+  float total = 0.0f;
+  bool invalid = false;
+  for (std::size_t i = 0; i < branch.weights.size(); ++i) {
+    // A hand-edited session could carry a negative or non-finite weight straight
+    // into layout; fold the whole branch back to even shares rather than letting
+    // a zero-width pane reach the geometry pass.
+    if (!std::isfinite(branch.weights[i]) || branch.weights[i] <= 0.0f) {
+      invalid = true;
+      break;
+    }
+    total += branch.weights[i];
+  }
+  if (invalid || total <= 0.0f) {
     const float even = 1.0f / static_cast<float>(branch.weights.size());
     for (std::size_t i = 0; i < branch.weights.size(); ++i) {
       branch.weights[i] = even;
     }
+    return;
+  }
+  // Idempotent within float precision: a branch whose shares already sum to one
+  // (up to the rounding a divider drag leaves behind) is left byte-for-byte as
+  // it is. Dividing through by 0.99999994 moved every weight by an ulp, so a
+  // tree did not equal its own persisted-and-reloaded form after one drag.
+  if (std::abs(total - 1.0f) <= 1e-5f) {
     return;
   }
   for (std::size_t i = 0; i < branch.weights.size(); ++i) {
@@ -334,7 +343,9 @@ bool EditorSplitTree::ResizeDivider(std::uint8_t node, std::size_t boundary, flo
   const float pair = branch.weights[boundary] + branch.weights[boundary + 1];
   const float share = std::clamp(first_share, kMinDividerShare, 1.0f - kMinDividerShare);
   branch.weights[boundary] = pair * share;
-  branch.weights[boundary + 1] = pair * (1.0f - share);
+  // The remainder, not `pair * (1 - share)`: the two products need not sum back
+  // to `pair` in floats, and the branch total would drift an ulp per drag.
+  branch.weights[boundary + 1] = pair - branch.weights[boundary];
   Touch();
   return true;
 }

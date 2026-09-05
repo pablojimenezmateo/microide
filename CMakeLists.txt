@@ -983,6 +983,7 @@ add_executable(microide_tests
   tests/DirtyRegionPolicyTests.cpp
   tests/FilesystemTests.cpp
   tests/GlobMatchTests.cpp
+  tests/EditorSplitTreeTests.cpp
   tests/GitBranchOperationsTests.cpp
   tests/IgnoreMatcherTests.cpp
   tests/ProjectTraversalFilterTests.cpp
