@@ -207,14 +207,16 @@ bool SingleLineEditor::MoveRight(bool extend_selection) {
   return true;
 }
 
+// Unlike MoveLeft/MoveRight, a word step over a selection does not collapse to
+// the selection's edge: it steps word-wise from the caret and lets the anchor
+// go, as the main editor's MoveCursorWord, VS Code and a GTK/Qt entry do.
 bool SingleLineEditor::MoveWordLeft(bool extend_selection) {
   Normalize();
-  if (!extend_selection && HasSelection()) {
-    caret_ = Selection()->start;
-    selection_anchor_.reset();
-    return true;
-  }
   if (caret_ == 0) {
+    if (!extend_selection && HasSelection()) {
+      selection_anchor_.reset();
+      return true;
+    }
     return false;
   }
   BeginSelectionIfNeeded(extend_selection);
@@ -225,12 +227,11 @@ bool SingleLineEditor::MoveWordLeft(bool extend_selection) {
 
 bool SingleLineEditor::MoveWordRight(bool extend_selection) {
   Normalize();
-  if (!extend_selection && HasSelection()) {
-    caret_ = Selection()->end;
-    selection_anchor_.reset();
-    return true;
-  }
   if (caret_ >= text_.size()) {
+    if (!extend_selection && HasSelection()) {
+      selection_anchor_.reset();
+      return true;
+    }
     return false;
   }
   BeginSelectionIfNeeded(extend_selection);

@@ -233,11 +233,37 @@ void TestSingleLineKeyHandlerBindsWordShortcuts() {
   Expect(editor.text() == "beta", "ctrl+backspace should delete the previous word");
 }
 
+// A word step over a selection steps word-wise from the caret and drops the
+// anchor -- the main editor's MoveCursorWord rule, VS Code's and a GTK entry's --
+// rather than merely collapsing to the selection's edge as Left/Right do.
+void TestSingleLineEditorWordStepOverSelectionMovesFromTheCaret() {
+  editor::SingleLineEditor editor("alpha beta gamma");
+  editor.SetCaret(6);
+  editor.SetSelectionAnchor(10);  // "beta" selected, caret at its start
+  Expect(editor.MoveWordLeft(), "word-left over a selection moves");
+  Expect(!editor.HasSelection() && editor.caret() == 0,
+         "word-left from the selection's caret end reaches the previous word start");
+
+  editor.SetCaret(10);
+  editor.SetSelectionAnchor(6);  // "beta" selected, caret at its end
+  Expect(editor.MoveWordRight(), "word-right over a selection moves");
+  Expect(!editor.HasSelection() && editor.caret() == 16,
+         "word-right from the selection's caret end reaches the next word end");
+
+  editor.SetCaret(6);
+  editor.SetSelectionAnchor(10);
+  Expect(editor.MoveWordRight(), "word-right with the caret at the selection start");
+  Expect(!editor.HasSelection() && editor.caret() == 10,
+         "it steps from the caret (6), not from the selection's end");
+}
+
 }  // namespace
 
 void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SingleLineEditor/SupportsInsertBackspaceAndDeleteForward",
           TestSingleLineEditorSupportsInsertBackspaceAndDeleteForward);
+  AddTest(tests, "SingleLineEditor/WordStepOverSelectionMovesFromTheCaret",
+          TestSingleLineEditorWordStepOverSelectionMovesFromTheCaret);
   AddTest(tests, "SingleLineEditor/SupportsMovementAndSelectionInvariants",
           TestSingleLineEditorSupportsMovementAndSelectionInvariants);
   AddTest(tests, "SingleLineEditor/SupportsSelectAllCopyCutPaste",
