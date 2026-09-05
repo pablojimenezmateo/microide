@@ -594,6 +594,8 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Shift+Alt+Down` / `Shift+Alt+Up` | Copy line down / up |
 | `Esc` | Collapse a multi-caret set back to one caret |
 | `PageUp` / `PageDown` | Scroll viewport |
+| `Ctrl+Up` / `Ctrl+Down` | Scroll the view one line without moving the caret |
+| `Ctrl+L` | Select the current line (each press adds the next line) |
 | `Shift+PageUp` / `Shift+PageDown` in terminal | Page through the transcript (`Ctrl+Shift+C` copies the selection, `Ctrl+Shift+V` pastes) |
 | `d` on sidebar file | Open compare commit picker |
 | `[` / `]` in compare/merge | Previous / next hunk |

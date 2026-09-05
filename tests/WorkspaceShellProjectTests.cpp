@@ -2847,6 +2847,69 @@ void TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu() {
          "right click inside settings overlay should not leak into editor context menu");
 }
 
+
+// Ctrl+Up/Down scroll the editor one line without moving the caret, and Ctrl+L
+// selects the caret's line and grows the selection by one line per press (VS
+// Code scrollLineUp/Down and expandLineSelection). Ctrl+Up/Down used to move the
+// caret like a plain arrow; Ctrl+L did nothing.
+void TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "long.txt";
+  // No trailing newline, so the document's last line carries text (the
+  // last-line arm below selects to its end; an empty last line would select
+  // nothing, which is also what VS Code does).
+  std::string content;
+  for (int i = 0; i < 200; ++i) {
+    content += (i == 0 ? "" : "\n") + std::string("line ") + std::to_string(i);
+  }
+  WriteFile(source, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  // The null test renderer never sizes the viewport (it stays one line tall, so
+  // any caret move would scroll); give it a real page.
+  viewport.SetViewportSize(40, 120);
+  viewport.MoveCursorTo(3, 2);
+  Expect(viewport.scroll_line() == 0, "the fixture starts scrolled to the top");
+
+  Expect(SendKeyDown(shell, SDLK_DOWN, SDL_KMOD_CTRL), "Ctrl+Down is handled by the editor");
+  Expect(viewport.scroll_line() == 1, "Ctrl+Down scrolls the view down one line");
+  Expect(viewport.cursor_line() == 3 && viewport.cursor_column() == 2,
+         "Ctrl+Down leaves the caret where it was");
+  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_CTRL), "Ctrl+Up is handled by the editor");
+  Expect(viewport.scroll_line() == 0, "Ctrl+Up scrolls the view back up");
+  Expect(SendKeyDown(shell, SDLK_UP, SDL_KMOD_CTRL), "Ctrl+Up at the top is still handled");
+  Expect(viewport.scroll_line() == 0 && viewport.cursor_line() == 3,
+         "Ctrl+Up at the top neither scrolls nor moves the caret");
+
+  Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_CTRL), "Ctrl+L is handled by the editor");
+  auto selection = viewport.selection_range();
+  Expect(selection.has_value() && selection->start.line == 3 && selection->start.column == 0 &&
+             selection->end.line == 4 && selection->end.column == 0,
+         "Ctrl+L selects the caret's whole line, caret at the start of the next line");
+  Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_CTRL), "a second Ctrl+L is handled");
+  selection = viewport.selection_range();
+  Expect(selection.has_value() && selection->start.line == 3 && selection->start.column == 0 &&
+             selection->end.line == 5 && selection->end.column == 0,
+         "a second Ctrl+L grows the selection by one more line");
+
+  // On the document's last line the selection ends at that line's end instead.
+  const std::size_t last = viewport.line_count() - 1;
+  viewport.MoveCursorTo(last, 0);
+  Expect(SendKeyDown(shell, SDLK_L, SDL_KMOD_CTRL), "Ctrl+L on the last line is handled");
+  selection = viewport.selection_range();
+  Expect(selection.has_value() && selection->start.line == last &&
+             selection->end.line == last &&
+             selection->end.column == viewport.lines().LineLength(last),
+         "Ctrl+L on the last line selects to its end");
+}
+
 void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6576,6 +6639,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCodeActionMenuIsCentered);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
+  AddTest(tests, "WorkspaceShell/CtrlArrowsScrollAndCtrlLSelectsLines",
+          TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines);
   AddTest(tests, "WorkspaceShell/SettingsOverlayTrapsKeyboardInput",
           TestWorkspaceShellSettingsOverlayTrapsKeyboardInput);
   AddTest(tests, "WorkspaceShell/SettingsOverlayWheelScrolls",

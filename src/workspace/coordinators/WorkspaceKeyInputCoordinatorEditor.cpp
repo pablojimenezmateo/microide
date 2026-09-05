@@ -696,15 +696,54 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
     }
   };
 
+  // Ctrl+Up/Down scroll the view one line and leave the caret where it is
+  // (VS Code scrollLineUp/Down). Ctrl+Shift+Alt+Up/Down is the column-select
+  // chord, dispatched by the keybinding registry before this handler runs.
+  const bool ctrl_only =
+      (modifiers & SDL_KMOD_CTRL) != 0 && (modifiers & (SDL_KMOD_SHIFT | SDL_KMOD_ALT)) == 0;
   switch (event.key) {
     case SDLK_UP:
+      if (ctrl_only) {
+        const std::size_t scroll = viewport->scroll_line();
+        viewport->SetScrollLine(scroll > 0 ? scroll - 1 : 0);
+        return true;
+      }
       viewport->MoveCursorVertical(-1, (modifiers & SDL_KMOD_SHIFT) != 0);
       after_editor_caret_motion();
       return true;
     case SDLK_DOWN:
+      if (ctrl_only) {
+        viewport->SetScrollLine(viewport->scroll_line() + 1);  // clamped to the last page
+        return true;
+      }
       viewport->MoveCursorVertical(1, (modifiers & SDL_KMOD_SHIFT) != 0);
       after_editor_caret_motion();
       return true;
+    case SDLK_L: {
+      // Ctrl+L: expand the selection to whole lines, one more line per press
+      // (VS Code expandLineSelection). The selection runs from the start of its
+      // first line to the start of the line after its last one, or to the end of
+      // the document's last line.
+      if (!ctrl_only) {
+        return false;
+      }
+      std::size_t first_line = viewport->cursor_line();
+      std::size_t last_line = first_line;
+      if (const auto selection = viewport->selection_range(); selection.has_value()) {
+        const editor::SelectionRange range = editor::TextViewport::NormalizeRange(*selection);
+        first_line = range.start.line;
+        last_line = range.end.line;
+      }
+      viewport->MoveCursorTo(first_line, 0);
+      if (last_line + 1 < viewport->line_count()) {
+        viewport->MoveCursorTo(last_line + 1, 0, /*extend_selection=*/true);
+      } else {
+        viewport->MoveCursorTo(last_line, viewport->lines().LineLength(last_line),
+                               /*extend_selection=*/true);
+      }
+      after_editor_caret_motion();
+      return true;
+    }
     case SDLK_LEFT:
       // Ctrl steps a word at a time. The column-select chord
       // Ctrl+Shift+Alt+Left is dispatched by the keybinding registry before this
