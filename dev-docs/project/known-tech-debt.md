@@ -475,6 +475,21 @@ project and switching between them, `git-stash`/`git-stash-pop`,
 `compare-clipboard`, the terminal panel, wrap/colorscheme/ui-scale, and a spec
 cold start with `open`/`commands`.
 
+A fourth sweep, after the lane chain went green, drove the rest of the product
+through the same channel: a gdb debug session (breakpoint, step, continue,
+terminate), a Lua plugin command editing the buffer and surviving
+`plugins-reload`, clangd-backed go-to-definition and rename with the bundled
+`cpp-lsp` plugin installed into the scratch config, session restore across a
+quit (groups, tabs, a dirty snapshot), an external edit landing on a clean and
+on a dirty buffer, EditorConfig indentation, and every fuzz target for 45 s.
+It found two gaps rather than defects, both closed: an untitled buffer could
+never become a file (no Save As; `save` refused it) and `tab <path>` failed for
+a path that did not exist yet -- `save [path]`, a Save As prompt behind Ctrl+S,
+and open-before-it-exists now follow VS Code; and `rename-symbol` ignored an
+argument and always prompted, so nothing headless could rename -- it takes the
+name now. A word-motion reference (a port of VS Code's rule) over random lines
+found nothing.
+
 Two deliberate deviations, recorded rather than changed:
 
 - **A bare LF resets the terminal column to 0** (xterm keeps the column).
