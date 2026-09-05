@@ -85,6 +85,45 @@ void TestTerminalBackendBufferedWriteReachesDrainingChild() {
          "buffered PTY writes must reach a draining child (round-trip through the write queue)");
 }
 
+// The shell inherits the editor's SIGPIPE disposition and cannot reset one that
+// was ignored at startup, so `yes | head` in the integrated terminal printed a
+// "Broken pipe" error where every other terminal shows nothing.
+void TestTerminalBackendShellGetsDefaultSigpipe() {
+  microide::platform::IgnoreBrokenPipeSignal();
+  auto backend = CreateTerminalBackend();
+
+  std::mutex mutex;
+  std::condition_variable cv;
+  std::string output;
+  TerminalBackendCallbacks callbacks;
+  callbacks.on_output = [&](std::string_view bytes) {
+    std::lock_guard<std::mutex> lock(mutex);
+    output.append(bytes);
+    cv.notify_all();
+  };
+
+  const auto result = backend->Start(
+      TerminalStartRequest{.command = "( yes 2>/dev/null; echo yes-exit=$? >&2 ) | head -c 1 "
+                                      ">/dev/null; echo probe-done",
+                           .rows = 24,
+                           .columns = 80},
+      std::move(callbacks));
+  if (!result.started) {
+    return;
+  }
+  bool saw_marker = false;
+  {
+    std::unique_lock<std::mutex> lock(mutex);
+    saw_marker = cv.wait_for(lock, std::chrono::seconds(5), [&] {
+      return output.find("probe-done") != std::string::npos;
+    });
+  }
+  backend->Stop();
+  Expect(saw_marker, "the SIGPIPE probe command should finish");
+  Expect(output.find("yes-exit=141") != std::string::npos,
+         "the terminal shell's children must see SIGPIPE at its default, got: " + output);
+}
+
 #endif  // defined(__unix__) || defined(__APPLE__)
 
 }  // namespace
@@ -95,6 +134,8 @@ void RegisterTerminalBackendTests(std::vector<TestCase>& tests) {
           TestTerminalBackendWriteDoesNotBlockOnStuckChild);
   AddTest(tests, "TerminalBackend/BufferedWriteReachesDrainingChild",
           TestTerminalBackendBufferedWriteReachesDrainingChild);
+  AddTest(tests, "TerminalBackend/ShellGetsDefaultSigpipe",
+          TestTerminalBackendShellGetsDefaultSigpipe);
 #else
   (void)tests;
 #endif

@@ -14,6 +14,7 @@
 #include <time.h>
 #include <unistd.h>
 
+#include "platform/ChildSignals.h"
 #include "util/PosixPipe.h"
 #elif defined(_WIN32)
 #ifndef NOMINMAX
@@ -215,6 +216,7 @@ bool AsyncSubprocess::Start(const std::vector<std::string>& argv, const std::str
         _exit(127);
       }
     }
+    RestoreDefaultSignalsInChild();
     ApplyChildSandbox(sandbox);
     execvp(raw_argv[0], raw_argv.data());
     _exit(errno == ENOENT ? 127 : 126);

@@ -316,6 +316,58 @@ void TestIgnoreBrokenPipeSignalPreventsCrash() {
   Expect(saved_errno == EPIPE, "write to a broken pipe should report EPIPE, not crash");
 }
 
+// The editor ignores SIGPIPE for itself, and an ignored disposition survives
+// exec, so every child used to inherit it: `yes | head` reported "Broken pipe"
+// and exited 1 where it should die quietly of the signal (141), and a shell
+// cannot reset a signal that was ignored when it started. The probe prints the
+// exit status of a `yes` whose reader went away.
+#if !defined(_WIN32)
+constexpr const char* kSigpipeProbe =
+    "( yes 2>/dev/null; echo yes-exit=$? >&2 ) | head -c 1 >/dev/null";
+
+void TestSubprocessChildGetsDefaultSigpipe() {
+  microide::platform::IgnoreBrokenPipeSignal();
+  const auto result = RunSubprocess({"sh", "-c", kSigpipeProbe},
+                                    SubprocessOptions{
+                                        .cwd = {},
+                                        .stdin_text = {},
+                                        .environment_overrides = {},
+                                        .capture_stdout = true,
+                                        .capture_stderr = true,
+                                        .silence_stderr = false,
+                                    });
+  Expect(result.stderr_text.find("yes-exit=141") != std::string::npos,
+         "a synchronous child must see SIGPIPE at its default disposition, got: " +
+             result.stderr_text);
+}
+
+void TestAsyncSubprocessChildGetsDefaultSigpipe() {
+  microide::platform::IgnoreBrokenPipeSignal();
+  microide::platform::AsyncSubprocess process;
+  // stderr is not captured by the async transport; route the marker to the
+  // outer shell's stdout through a saved descriptor (the subshell's own stdout
+  // is the pipe `head` drops).
+  Expect(process.Start({"sh", "-c", "exec 3>&1; ( yes 2>/dev/null; echo yes-exit=$? >&3 ) | "
+                                    "head -c 1 >/dev/null; echo done"}),
+         "async subprocess SIGPIPE probe should start");
+  std::string output;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+  while (std::chrono::steady_clock::now() < deadline) {
+    const auto chunk = process.Read(4096, 50);
+    if (!chunk.has_value()) {
+      break;
+    }
+    output += *chunk;
+    if (output.find("done") != std::string::npos) {
+      break;
+    }
+  }
+  process.Shutdown(500);
+  Expect(output.find("yes-exit=141") != std::string::npos,
+         "an async child must see SIGPIPE at its default disposition, got: " + output);
+}
+#endif
+
 // Regression: a child that echoes a payload larger than the kernel pipe buffer
 // would deadlock if the parent wrote all of stdin before draining stdout — the
 // child blocks on write(stdout) while the parent blocks on write(stdin). The
@@ -488,6 +540,11 @@ void RegisterSubprocessTests(std::vector<TestCase>& tests) {
           TestAsyncSubprocessMovedFromAccessorsDoNotCrash);
   AddTest(tests, "Subprocess/IgnoreBrokenPipeSignalPreventsCrash",
           TestIgnoreBrokenPipeSignalPreventsCrash);
+#if !defined(_WIN32)
+  AddTest(tests, "Subprocess/ChildGetsDefaultSigpipe", TestSubprocessChildGetsDefaultSigpipe);
+  AddTest(tests, "AsyncSubprocess/ChildGetsDefaultSigpipe",
+          TestAsyncSubprocessChildGetsDefaultSigpipe);
+#endif
   AddTest(tests, "Subprocess/LargeStdinDoesNotDeadlock",
           TestSubprocessLargeStdinDoesNotDeadlock);
   AddTest(tests, "Subprocess/TimeoutKillsHungChild", TestSubprocessTimeoutKillsHungChild);

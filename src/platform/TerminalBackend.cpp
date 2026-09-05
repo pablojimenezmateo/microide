@@ -1,5 +1,6 @@
 #include "platform/TerminalBackend.h"
 
+#include "platform/ChildSignals.h"
 #include "platform/ShellProcess.h"
 
 #include <atomic>
@@ -159,6 +160,7 @@ class PosixTerminalBackend final : public TerminalBackend {
       // Async-signal-safe pointer store instead of setenv(); the array was built in
       // the parent above.
       environ = env_pointers.data();
+      RestoreDefaultSignalsInChild();
       if (request.command.empty()) {
         execl(shell_path.c_str(), shell_name.c_str(), "-i", nullptr);
       } else {

@@ -1,5 +1,7 @@
 #include "platform/Subprocess.h"
 
+#include "platform/ChildSignals.h"
+
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
@@ -597,6 +599,7 @@ SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& arg
     if (has_env_overrides) {
       environ = child_envp.data();
     }
+    RestoreDefaultSignalsInChild();
     ApplyChildSandbox(options.sandbox);
     execvp(raw_argv[0], raw_argv.data());
     _exit(errno == ENOENT ? 127 : 126);
