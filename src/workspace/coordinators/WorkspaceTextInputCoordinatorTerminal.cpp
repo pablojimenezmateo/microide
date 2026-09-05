@@ -53,10 +53,18 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
     return handled_with_panel_redraw();
   };
 
-  if ((modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C && operations_.terminal_has_selection()) {
-    const std::string text = operations_.selected_terminal_text();
-    if (!text.empty() && operations_.write_clipboard_text(text)) {
-      operations_.write_primary_selection_text(text);
+  // Ctrl+C with a selection copies it (VS Code); Ctrl+Shift+C is copy on every
+  // Linux terminal, so it copies too and, with nothing selected, does NOTHING --
+  // it used to fall through to the control-byte path and send ^C, so the copy
+  // reflex from gnome-terminal interrupted whatever the shell was running.
+  const bool ctrl_c = (modifiers & SDL_KMOD_CTRL) && event.key == SDLK_C;
+  const bool ctrl_shift_c = ctrl_c && (modifiers & SDL_KMOD_SHIFT);
+  if (ctrl_c && (ctrl_shift_c || operations_.terminal_has_selection())) {
+    if (operations_.terminal_has_selection()) {
+      const std::string text = operations_.selected_terminal_text();
+      if (!text.empty() && operations_.write_clipboard_text(text)) {
+        operations_.write_primary_selection_text(text);
+      }
     }
     return true;
   }

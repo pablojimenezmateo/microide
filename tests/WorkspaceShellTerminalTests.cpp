@@ -951,6 +951,51 @@ void TestWorkspaceShellBottomPanelWheelScrollsTranscript() {
          "scrolling the panel must not pull keyboard focus out of the editor");
 }
 
+// Ctrl+Shift+C is copy on every Linux terminal. With nothing selected it used to
+// fall through to the control-byte path and send ^C, so the copy reflex from
+// gnome-terminal interrupted whatever the shell was running. It now copies the
+// selection when there is one and does nothing otherwise; plain Ctrl+C without a
+// selection still reaches the shell as an interrupt.
+void TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "select me");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+
+  std::string clipboard;
+  WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [&](std::string_view text) {
+    clipboard = std::string(text);
+    return true;
+  });
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_C, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+C without a selection is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "Ctrl+Shift+C without a selection sends nothing to the shell (no ^C)");
+  Expect(clipboard.empty(), "and copies nothing");
+
+  const SDL_FPoint start = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  const SDL_FPoint end = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 6);
+  Expect(SendMouseDown(shell, start.x, start.y, SDL_BUTTON_LEFT), "press starts a selection");
+  Expect(SendMouseMotion(shell, end.x, end.y, SDL_BUTTON_LMASK), "drag extends it");
+  Expect(SendMouseUp(shell, end.x, end.y, SDL_BUTTON_LEFT), "release ends it");
+  Expect(WorkspaceShellTestAccess::TerminalHasSelection(shell), "the fixture selected text");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_C, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "Ctrl+Shift+C with a selection is handled");
+  Expect(clipboard == "select", "Ctrl+Shift+C copies the selection: [" + clipboard + "]");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(), "and still sends nothing");
+
+  // Plain Ctrl+C with no selection is the interrupt the shell expects.
+  WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE);  // clears the selection
+  Expect(!WorkspaceShellTestAccess::TerminalHasSelection(shell), "Escape cleared the selection");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_C, SDL_KMOD_CTRL), "Ctrl+C is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x03",
+         "plain Ctrl+C without a selection reaches the shell as ^C");
+}
+
 void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1790,6 +1835,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBottomPanelWheelScrollsTranscript);
   AddTest(tests, "WorkspaceShell/TerminalDragAutoscrollsPastTheEdge",
           TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge);
+  AddTest(tests, "WorkspaceShell/TerminalCtrlShiftCNeverInterrupts",
+          TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
   AddTest(tests, "WorkspaceShell/TerminalDoubleClickSelectsWordTripleClickSelectsLine",
