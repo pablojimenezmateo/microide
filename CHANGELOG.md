@@ -50,8 +50,9 @@ project (see [README](README.md)); versions track meaningful shipped work.
 - **The terminal's pending-wrap column behaves as the last column** for cursor
   reports, backspace and cursor saves, matching xterm; a paste's line breaks
   arrive as Enter.
-- **Keybindings are parsed by key name**, not scancode, so a layout where `z`
-  is not where a US keyboard puts it still binds `Ctrl+Z` to undo; float
+- **A plugin's key chord binds the key, not its QWERTY position.** `ctrl+z`
+  from a plugin fired on the key labelled Y on a QWERTZ layout (the built-in
+  bindings were already right); chord names resolve to keycodes now. Float
   settings serialize the same in every locale.
 - **One malformed setting id no longer drops the whole config record.** A key
   with a space or control byte (which a later version's tighter rule can make
