@@ -592,7 +592,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+Backspace` / `Ctrl+Delete` | Delete the word before / after the caret |
 | `Ctrl+Enter` / `Ctrl+Shift+Enter` | Insert line below / above |
 | `Shift+Alt+Down` / `Shift+Alt+Up` | Copy line down / up |
-| `Esc` | Collapse a multi-caret set back to one caret |
+| `Esc` | Collapse a multi-caret set back to one caret; then cancel the selection |
 | `PageUp` / `PageDown` | Scroll viewport |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll the view one line without moving the caret |
 | `Ctrl+L` | Select the current line (each press adds the next line) |

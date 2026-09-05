@@ -586,6 +586,15 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       operations_.request_focused_editor_redraw();
       return true;
     }
+    // A single caret with a selection: Esc collapses it to the caret (VS Code's
+    // `cancelSelection`). With several carets that is the SECOND Esc, after the
+    // arm above has removed the secondaries -- the same two-step VS Code runs.
+    if (viewport->has_selection()) {
+      viewport->ClearSelection();
+      operations_.reset_caret_blink();
+      operations_.request_focused_editor_redraw();
+      return true;
+    }
     return false;
   }
   if (event.key == SDLK_TAB && operations_.accept_inline_completion()) {

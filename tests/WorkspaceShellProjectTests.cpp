@@ -2910,6 +2910,46 @@ void TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines() {
          "Ctrl+L on the last line selects to its end");
 }
 
+
+// Esc with a selection collapses it to the caret (VS Code cancelSelection). With
+// several carets the first Esc removes the secondaries and keeps the primary's
+// selection; the second Esc deselects. Esc used to leave a single selection alone.
+void TestWorkspaceShellEscapeCancelsTheSelection() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "hello world\nsecond line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  Expect(viewport.has_selection(), "the fixture selected \"hello\"");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Esc with a selection is handled");
+  Expect(!viewport.has_selection(), "Esc cancels the selection");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 5,
+         "Esc leaves the caret at the selection's active end");
+  Expect(!SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE),
+         "Esc with nothing to cancel is not consumed by the editor");
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.AddSecondaryCaret(1, 0);
+  Expect(viewport.has_multiple_carets() && viewport.has_selection(),
+         "the fixture has a selection plus a secondary caret");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "the first Esc is handled");
+  Expect(!viewport.has_multiple_carets() && viewport.has_selection(),
+         "the first Esc removes the secondary caret and keeps the selection");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "the second Esc is handled");
+  Expect(!viewport.has_selection(), "the second Esc cancels the selection");
+}
+
 void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6639,6 +6679,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCodeActionMenuIsCentered);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
+  AddTest(tests, "WorkspaceShell/EscapeCancelsTheSelection",
+          TestWorkspaceShellEscapeCancelsTheSelection);
   AddTest(tests, "WorkspaceShell/CtrlArrowsScrollAndCtrlLSelectsLines",
           TestWorkspaceShellCtrlArrowsScrollAndCtrlLSelectsLines);
   AddTest(tests, "WorkspaceShell/SettingsOverlayTrapsKeyboardInput",
