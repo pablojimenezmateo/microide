@@ -552,6 +552,26 @@ void TestStringUtilUnicodeCaseFold() {
   Expect(Utf8IsIdentifierCodepoint(0x53D8), "CJK 变 is identifier content");
   Expect(!Utf8IsIdentifierCodepoint(U' '), "space is not identifier content");
   Expect(!Utf8IsIdentifierCodepoint(0x2013), "en-dash is not identifier content");
+
+  // Identifier runs walk codepoints, not bytes: every byte of `größe` belongs to
+  // one run, a continuation byte snaps to its lead, and a symbol bounds the run.
+  using microide::util::Utf8CodepointStartAt;
+  using microide::util::Utf8IdentifierRunEnd;
+  using microide::util::Utf8IdentifierRunStart;
+  const std::string_view text = "x=gr\xc3\xb6\xc3\x9f" "e+\xe2\x86\x92y";  // "x=größe+→y"
+  const std::size_t g = 2;
+  const std::size_t word_end = g + 7;
+  Expect(Utf8CodepointStartAt(text, 5) == 4, "a continuation byte snaps to its lead byte");
+  Expect(Utf8CodepointStartAt(text, 4) == 4, "a lead byte is its own start");
+  Expect(Utf8IdentifierRunStart(text, word_end) == g, "run start walks back over ö and ß");
+  Expect(Utf8IdentifierRunStart(text, g) == g, "`=` bounds the run on the left");
+  Expect(Utf8IdentifierRunEnd(text, g) == word_end, "run end walks forward over ö and ß");
+  Expect(Utf8IdentifierRunEnd(text, word_end) == word_end, "`+` bounds the run on the right");
+  Expect(Utf8IdentifierRunStart(text, text.size()) == text.size() - 1,
+         "the arrow (U+2192) is a symbol, so the last run is just `y`");
+  Expect(Utf8IdentifierRunEnd(text, text.size()) == text.size() &&
+             Utf8IdentifierRunStart(text, 0) == 0,
+         "runs at the text bounds stay in bounds");
 }
 
 

@@ -552,6 +552,50 @@ bool SearchMatchStandsAlone(std::string_view text, std::size_t start, std::size_
   return end >= text.size() || !IsSearchWordByte(text[end]);
 }
 
+std::size_t Utf8CodepointStartAt(std::string_view text, std::size_t index) {
+  while (index > 0 && index < text.size() &&
+         IsUtf8ContinuationByte(static_cast<unsigned char>(text[index]))) {
+    --index;
+  }
+  return index;
+}
+
+bool Utf8IdentifierCodepointAt(std::string_view text, std::size_t start, std::size_t* length) {
+  if (start >= text.size()) {
+    *length = 0;
+    return false;
+  }
+  const unsigned char lead = static_cast<unsigned char>(text[start]);
+  if (lead < 0x80) {
+    *length = 1;
+    return Utf8IsIdentifierCodepoint(lead);
+  }
+  *length = std::max<std::size_t>(1, Utf8SequenceLength(text, start));
+  return Utf8IsIdentifierCodepoint(DecodeUtf8Codepoint(text.substr(start, *length)));
+}
+
+std::size_t Utf8IdentifierRunStart(std::string_view text, std::size_t end) {
+  std::size_t start = std::min(end, text.size());
+  while (start > 0) {
+    const std::size_t previous = Utf8CodepointStartAt(text, start - 1);
+    std::size_t length = 0;
+    if (!Utf8IdentifierCodepointAt(text, previous, &length)) {
+      break;
+    }
+    start = previous;
+  }
+  return start;
+}
+
+std::size_t Utf8IdentifierRunEnd(std::string_view text, std::size_t start) {
+  std::size_t end = start;
+  std::size_t length = 0;
+  while (end < text.size() && Utf8IdentifierCodepointAt(text, end, &length)) {
+    end += length;
+  }
+  return end;
+}
+
 bool Utf8IsIdentifierCodepoint(char32_t cp) {
   if (cp < 0x80) {
     return (cp >= 'A' && cp <= 'Z') || (cp >= 'a' && cp <= 'z') ||

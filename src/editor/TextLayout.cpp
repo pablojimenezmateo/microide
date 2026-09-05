@@ -363,71 +363,21 @@ std::size_t TextLayout::ResolveVisualColumn(const LayoutLine* layout,
   return source_column;
 }
 
-namespace {
-
-// Byte offset of the codepoint that contains byte `index` (a continuation byte
-// snaps back to its lead byte).
-std::size_t CodepointStartAt(std::string_view line, std::size_t index) {
-  while (index > 0 && index < line.size() &&
-         util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[index]))) {
-    --index;
-  }
-  return index;
-}
-
-// Whether the codepoint starting at `start` is identifier content; `*length`
-// receives its byte length. ASCII keeps the [A-Za-z0-9_] rule; anything beyond
-// ASCII goes through the shared identifier classification so `größe`, `変数`
-// or `naïve` are one hover target rather than three fragments (the old
-// byte-wise scan rejected every non-ASCII byte, so a hover over such a name
-// found no identifier at all).
-bool IdentifierCodepointAt(std::string_view line, std::size_t start, std::size_t* length) {
-  if (start >= line.size()) {
-    *length = 0;
-    return false;
-  }
-  const unsigned char lead = static_cast<unsigned char>(line[start]);
-  if (lead < 0x80) {
-    *length = 1;
-    return (lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z') ||
-           (lead >= '0' && lead <= '9') || lead == '_';
-  }
-  *length = std::max<std::size_t>(1, util::Utf8SequenceLength(line, start));
-  return util::Utf8IsIdentifierCodepoint(util::DecodeUtf8Codepoint(line.substr(start, *length)));
-}
-
-// Start of the identifier run ending just before byte `end` (== `end` when the
-// preceding codepoint is not identifier content).
-std::size_t IdentifierRunStartBefore(std::string_view line, std::size_t end) {
-  std::size_t start = end;
-  while (start > 0) {
-    const std::size_t previous = CodepointStartAt(line, start - 1);
-    std::size_t length = 0;
-    if (!IdentifierCodepointAt(line, previous, &length)) {
-      break;
-    }
-    start = previous;
-  }
-  return start;
-}
-
-}  // namespace
-
 TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
                                                     std::size_t text_column) {
   if (text_column >= line.size()) {
     return {};
   }
-  const std::size_t hit = CodepointStartAt(line, text_column);
+  // Codepoint-aware (util::Utf8IdentifierRun*): `größe`, `naïve` or `変数` are
+  // one hover target. The old byte-wise [A-Za-z0-9_] scan rejected every
+  // non-ASCII byte, so a hover over such a name found no identifier at all.
+  const std::size_t hit = util::Utf8CodepointStartAt(line, text_column);
   std::size_t length = 0;
-  if (!IdentifierCodepointAt(line, hit, &length)) {
+  if (!util::Utf8IdentifierCodepointAt(line, hit, &length)) {
     return {};
   }
-  std::size_t start = IdentifierRunStartBefore(line, hit);
-  std::size_t end = hit + length;
-  while (end < line.size() && IdentifierCodepointAt(line, end, &length)) {
-    end += length;
-  }
+  std::size_t start = util::Utf8IdentifierRunStart(line, hit);
+  const std::size_t end = util::Utf8IdentifierRunEnd(line, hit);
 
   // Extend the range leftward across member-access operators (`.` and `->`) so a
   // hover on the trailing member of `foo.bar` / `ptr->field` / `a.b.c` evaluates the
@@ -444,7 +394,7 @@ TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
     } else {
       break;
     }
-    const std::size_t run_start = IdentifierRunStartBefore(line, op_start);
+    const std::size_t run_start = util::Utf8IdentifierRunStart(line, op_start);
     if (run_start == op_start) {
       break;
     }

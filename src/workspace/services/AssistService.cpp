@@ -124,22 +124,15 @@ std::string JsonValueToArgumentString(const util::JsonValue& value) {
 
 editor::SelectionRange CompletionReplacementRange(const editor::TextViewport& viewport) {
   const std::string_view line = LineViewAt(viewport, viewport.cursor_line());
-  std::size_t start_column = std::min(viewport.cursor_column(), line.size());
-  while (start_column > 0) {
-    const char ch = line[start_column - 1];
-    // Only walk back over the trailing identifier token. `.`/`/`/`-` are token
-    // SEPARATORS, not word chars: including them made a member completion (obj.|)
-    // or path completion (a/b|) replace the whole chain, dropping the qualifier.
-    // The LSP path prefers the server's textEdit range anyway; this heuristic only
-    // covers plugin completions and LSP items without a textEdit.
-    const bool identifier_char =
-        (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ||
-        ch == '_';
-    if (!identifier_char) {
-      break;
-    }
-    --start_column;
-  }
+  // Only walk back over the trailing identifier token. `.`/`/`/`-` are token
+  // SEPARATORS, not word chars: including them made a member completion (obj.|)
+  // or path completion (a/b|) replace the whole chain, dropping the qualifier.
+  // The LSP path prefers the server's textEdit range anyway; this heuristic only
+  // covers plugin completions and LSP items without a textEdit. Codepoint-aware:
+  // a byte-wise ASCII walk stopped inside `größe|`, so accepting `größe_total`
+  // produced `größgröße_total`.
+  const std::size_t start_column = util::Utf8IdentifierRunStart(
+      line, std::min(viewport.cursor_column(), line.size()));
   return editor::SelectionRange{
       .start = editor::TextPosition{viewport.cursor_line(), start_column},
       .end = editor::TextPosition{viewport.cursor_line(), viewport.cursor_column()},
@@ -1420,14 +1413,9 @@ std::string AssistService::SymbolAtCursor() const {
     return {};
   }
   const std::string_view line = LspLineView(*viewport, viewport->cursor_line());
-  std::size_t begin = std::min(viewport->cursor_column(), line.size());
-  std::size_t end = begin;
-  while (begin > 0 && editor::IsIdentifierByte(line[begin - 1])) {
-    --begin;
-  }
-  while (end < line.size() && editor::IsIdentifierByte(line[end])) {
-    ++end;
-  }
+  const std::size_t caret = std::min(viewport->cursor_column(), line.size());
+  const std::size_t begin = util::Utf8IdentifierRunStart(line, caret);
+  const std::size_t end = util::Utf8IdentifierRunEnd(line, caret);
   return std::string(line.substr(begin, end - begin));
 }
 

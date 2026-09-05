@@ -2522,9 +2522,9 @@ void TestTextLayoutIdentifierRangeAt() {
   // continuation byte of `ö`) resolves to the whole word, and a chain through
   // `.` keeps working across it. The byte-wise ASCII scan used to reject every
   // non-ASCII byte, so a hover over such a name found nothing at all.
-  const std::string umlaut = "x = gr\xc3\xb6\xc3\x9fe + 1";  // "x = größe + 1"
+  const std::string umlaut = "x = gr\xc3\xb6\xc3\x9f" "e + 1";  // "x = größe + 1"
   const std::size_t g = umlaut.find("gr");
-  const std::size_t word_end = g + std::string("gr\xc3\xb6\xc3\x9fe").size();
+  const std::size_t word_end = g + std::string("gr\xc3\xb6\xc3\x9f" "e").size();
   for (std::size_t off = 0; off < word_end - g; ++off) {
     const auto r = TextLayout::IdentifierRangeAt(umlaut, g + off);
     Expect(!r.empty() && r.start == g && r.end == word_end,

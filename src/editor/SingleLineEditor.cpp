@@ -291,23 +291,22 @@ bool SingleLineEditor::MoveEnd(bool extend_selection) {
 
 bool SingleLineEditor::SelectWordAt(std::size_t byte_offset) {
   Normalize();
-  const std::size_t clamped = std::min(byte_offset, text_.size());
+  // Codepoint-aware: a double-click on `größe` selects the whole word rather
+  // than the ASCII fragment the byte-wise scan stopped at.
+  const std::size_t clamped =
+      util::Utf8CodepointStartAt(text_, std::min(byte_offset, text_.size()));
   std::size_t anchor = clamped;
-  if (clamped < text_.size() && IsIdentifierByte(text_[clamped])) {
+  std::size_t length = 0;
+  if (util::Utf8IdentifierCodepointAt(text_, clamped, &length)) {
     // primary position straddles a word character
-  } else if (clamped > 0 && IsIdentifierByte(text_[clamped - 1])) {
-    anchor = clamped - 1;
+  } else if (clamped > 0 && util::Utf8IdentifierCodepointAt(
+                                text_, util::Utf8CodepointStartAt(text_, clamped - 1), &length)) {
+    anchor = util::Utf8CodepointStartAt(text_, clamped - 1);
   } else {
     return false;
   }
-  std::size_t start = anchor;
-  std::size_t end = anchor;
-  while (start > 0 && IsIdentifierByte(text_[start - 1])) {
-    --start;
-  }
-  while (end < text_.size() && IsIdentifierByte(text_[end])) {
-    ++end;
-  }
+  const std::size_t start = util::Utf8IdentifierRunStart(text_, anchor);
+  const std::size_t end = util::Utf8IdentifierRunEnd(text_, anchor);
   if (start >= end) {
     return false;
   }

@@ -248,6 +248,20 @@ bool Utf8QueryHasCaseVariation(std::string_view text);
 // Used by word motion and identifier-range extraction so multi-byte identifiers
 // are not split mid-scalar.
 bool Utf8IsIdentifierCodepoint(char32_t cp);
+// Byte offset of the codepoint containing byte `index` of `text` (a continuation
+// byte snaps back to its lead byte; `index >= size` is returned unchanged).
+std::size_t Utf8CodepointStartAt(std::string_view text, std::size_t index);
+// Whether the codepoint starting at byte `start` is identifier content
+// (Utf8IsIdentifierCodepoint); `*length` receives its byte length (0 past the
+// end). Callers walking identifier runs by BYTE used to stop at the first
+// byte >= 0x80, splitting `größe` / `変数` into fragments.
+bool Utf8IdentifierCodepointAt(std::string_view text, std::size_t start, std::size_t* length);
+// Start of the identifier run that ends just before byte `end` (`end` itself
+// when the preceding codepoint is not identifier content).
+std::size_t Utf8IdentifierRunStart(std::string_view text, std::size_t end);
+// End (exclusive) of the identifier run that starts at byte `start` (`start`
+// itself when that codepoint is not identifier content).
+std::size_t Utf8IdentifierRunEnd(std::string_view text, std::size_t start);
 // Word constituent for the whole-word search toggle: ASCII alphanumerics, `_`,
 // and every non-ASCII byte (so a hit inside a multi-byte word is not reported as
 // standing alone). Byte-oriented on purpose — decoding the boundary codepoint

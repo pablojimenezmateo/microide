@@ -259,7 +259,23 @@ void TestSingleLineEditorWordStepOverSelectionMovesFromTheCaret() {
 
 }  // namespace
 
+// A double-click word selection spans a non-ASCII identifier; the byte-wise scan
+// stopped at the first byte >= 0x80 and selected only the ASCII tail.
+void TestSingleLineEditorSelectsNonAsciiWord() {
+  const std::string text = "gr\xc3\xb6\xc3\x9f" "e naive";  // "größe naive"
+  editor::SingleLineEditor editor(text);
+  const std::size_t word_end = std::string("gr\xc3\xb6\xc3\x9f" "e").size();
+  Expect(editor.SelectWordAt(3), "a click on a continuation byte selects the word");
+  ExpectEditorState(editor, text, word_end, editor::SingleLineSelection{0, word_end},
+                    "whole non-ASCII word");
+  editor.SetSelectionAnchor(std::nullopt);
+  Expect(editor.SelectWordAt(word_end), "a click at the word's end selects it");
+  ExpectEditorState(editor, text, word_end, editor::SingleLineSelection{0, word_end},
+                    "whole non-ASCII word from its end");
+}
+
 void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "SingleLineEditor/SelectsNonAsciiWord", TestSingleLineEditorSelectsNonAsciiWord);
   AddTest(tests, "SingleLineEditor/SupportsInsertBackspaceAndDeleteForward",
           TestSingleLineEditorSupportsInsertBackspaceAndDeleteForward);
   AddTest(tests, "SingleLineEditor/WordStepOverSelectionMovesFromTheCaret",
