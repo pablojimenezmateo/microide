@@ -1123,10 +1123,12 @@ bool AssistService::FindLspReferences(std::string* error_message) {
   if (client != nullptr) {
     operations_.ensure_lsp_document_open(*viewport, *client, language_id);
     operations_.begin_tracked_lsp_request();
+    // Recorded on the merge so the response's columns can be read back in the
+    // same units the request was phrased in.
+    merge->lsp_encoding = LspEncodingForClient(*client);
     client->RequestFindReferencesAsync(
         FileUriForPath(request_path),
-        ByteColumnToLspPosition(*viewport, request_line, request_column,
-                                LspEncodingForClient(*client)),
+        ByteColumnToLspPosition(*viewport, request_line, request_column, merge->lsp_encoding),
         true,
         [this, request_path, merge](LspResult<std::vector<LspClient::Location>> locations) {
           operations_.finish_tracked_lsp_request();
@@ -1163,13 +1165,15 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
     return;
   }
 
-  // Normalize both sources to (path, 1-based line, 1-based column). LSP columns
-  // use the raw code-unit offset: references only show line:col, so a slightly
-  // off non-ASCII column is not worth a per-entry encoding round-trip.
+  // Normalize both sources to (path, 1-based line, column-in-source-units). The
+  // column is resolved to a character column by the emitter, which is the one
+  // place that reads the target line anyway; the union key below therefore
+  // compares raw units, which coincide across sources on an ASCII line (the
+  // only case where a plugin and a server can both report the same location).
   struct RefTarget {
     std::filesystem::path path;
     std::size_t line = 0;
-    std::size_t column = 0;
+    ReferenceColumn column;
   };
   std::vector<RefTarget> lsp_targets;
   lsp_targets.reserve(merge->lsp_locations.size());
@@ -1180,7 +1184,8 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
     }
     lsp_targets.push_back(
         RefTarget{*path, static_cast<std::size_t>(std::max(location.range.start.line, 0)) + 1,
-                  static_cast<std::size_t>(std::max(location.range.start.character, 0)) + 1});
+                  ReferenceColumn::LspCharacter(location.range.start.character,
+                                                merge->lsp_encoding)});
   }
   std::vector<RefTarget> plugin_targets;
   plugin_targets.reserve(merge->plugin_locations.size());
@@ -1188,15 +1193,18 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
     if (location.path.empty()) {
       continue;
     }
-    plugin_targets.push_back(RefTarget{location.path, location.line, location.column});
+    plugin_targets.push_back(RefTarget{location.path, location.line,
+                                       ReferenceColumn::Character1Based(location.column)});
   }
 
   const auto& primary = merge->sources.lsp_authoritative ? lsp_targets : plugin_targets;
   const auto& secondary = merge->sources.lsp_authoritative ? plugin_targets : lsp_targets;
   const std::vector<RefTarget> merged =
       assist_merge::RankedUnion(primary, secondary, [](const RefTarget& target) {
+        const std::size_t units = target.column.lsp_units ? target.column.value + 1
+                                                          : target.column.value;
         return target.path.generic_string() + ":" + std::to_string(target.line) + ":" +
-               std::to_string(target.column);
+               std::to_string(units);
       });
 
   output_channels_->Clear("lsp.references");
@@ -1279,7 +1287,9 @@ bool AssistService::ShowCallHierarchy(bool incoming, std::string* error_message)
         if (!root.detail.empty()) {
           root_label += "  ·  " + root.detail;
         }
-        const auto render = [this, title, root_label, incoming, generation, finish_empty](
+        const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
+        const auto render = [this, title, root_label, incoming, generation, finish_empty,
+                             encoding](
                                 LspResult<std::vector<LspClient::CallHierarchyCall>> calls) {
           operations_.finish_tracked_lsp_request();
           if (generation != call_hierarchy_request_generation_) {
@@ -1318,7 +1328,7 @@ bool AssistService::ShowCallHierarchy(bool incoming, std::string* error_message)
                 EmitReferenceEntry(
                     kChannelId, title, *path,
                     static_cast<std::size_t>(std::max(range.start.line, 0)) + 1,
-                    static_cast<std::size_t>(std::max(range.start.character, 0)) + 1,
+                    ReferenceColumn::LspCharacter(range.start.character, encoding),
                     last && r + 1 >= call.call_ranges.size(), file_line_cache);
               }
               continue;
@@ -1328,8 +1338,8 @@ bool AssistService::ShowCallHierarchy(bool incoming, std::string* error_message)
             EmitReferenceEntry(
                 kChannelId, title, *path,
                 static_cast<std::size_t>(std::max(call.item.selection_range.start.line, 0)) + 1,
-                static_cast<std::size_t>(
-                    std::max(call.item.selection_range.start.character, 0)) + 1,
+                ReferenceColumn::LspCharacter(call.item.selection_range.start.character,
+                                              encoding),
                 !last, file_line_cache);
           }
         };
@@ -1362,9 +1372,10 @@ bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* 
   output_channels_->Clear("lsp.workspaceSymbols");
   output_channels_->AppendLine("lsp.workspaceSymbols", "Workspace Symbols",
                                "Searching for \"" + query + "\"…");
+  const lsp_encoding::PositionEncoding encoding = LspEncodingForClient(*client);
   client->RequestWorkspaceSymbolAsync(
       query,
-      [this, query, request_generation](
+      [this, query, request_generation, encoding](
           LspResult<std::vector<LspClient::WorkspaceSymbol>> symbols) {
         operations_.finish_tracked_lsp_request();
         // Drop a superseded query's response so it can't clear the channel and render
@@ -1400,7 +1411,7 @@ bool AssistService::ShowWorkspaceSymbols(const std::string& query, std::string* 
           EmitReferenceEntry(
               "lsp.workspaceSymbols", "Workspace Symbols", *path,
               static_cast<std::size_t>(std::max(symbol.location.range.start.line, 0)) + 1,
-              static_cast<std::size_t>(std::max(symbol.location.range.start.character, 0)) + 1,
+              ReferenceColumn::LspCharacter(symbol.location.range.start.character, encoding),
               i + 1 < symbols->size(), file_line_cache);
         }
       });
@@ -1880,83 +1891,108 @@ LspClient* AssistService::PrepareLspRequest(editor::TextViewport& viewport,
 
 void AssistService::EmitReferenceEntry(
     const char* channel_id, const char* channel_title, const std::filesystem::path& path,
-    std::size_t line, std::size_t column, bool append_separator,
+    std::size_t line, ReferenceColumn column, bool append_separator,
     std::map<std::filesystem::path, std::vector<std::string>>& file_line_cache) const {
-  const std::string label =
-      context_->current_project_state.root.empty()
-          ? path.generic_string()
-          : RelativePathLabel(context_->current_project_state.root, path);
-  output_channels_->AppendLine(
-      channel_id, channel_title,
-      label + ":" + std::to_string(line) + ":" + std::to_string(column));
-
   const std::size_t target_line = line > 0 ? line : 1;
   const std::size_t first_line = target_line > 1 ? target_line - 1 : 1;
   const std::size_t last_line = target_line + 1;
 
-  const auto append_snippet_line = [&](std::size_t line_number, std::string_view text) {
-    output_channels_->AppendLine(
-        channel_id, channel_title,
-        std::string(line_number == target_line ? " > " : "   ") + std::to_string(line_number) +
-            " | " + std::string(text));
+  // The context block: up to three (line number, text) rows around the target.
+  // Gathered before anything is emitted because the header's column is derived
+  // from the target row's text -- a server's `character` is a byte offset under
+  // utf-8 and a UTF-16 unit count otherwise, and printing either raw named the
+  // wrong character on any non-ASCII line (and the Output click handler, which
+  // reads the printed number as a character column, then jumped past it).
+  struct SnippetRow {
+    std::size_t number = 0;
+    std::string_view text;
+  };
+  SnippetRow rows[3];
+  std::size_t row_count = 0;
+  const auto push_row = [&](std::size_t number, std::string_view text) {
+    if (row_count < std::size(rows)) {
+      rows[row_count++] = SnippetRow{number, text};
+    }
   };
 
   // 1. When the reference lands in the file that is already open as the active
   //    editor buffer, read the snippet straight from the live document via a
   //    zero-copy LineSpan — no file I/O and no whole-file line vector.
+  std::vector<std::string> window;  // owns the bounded-window fallback lines
   const std::filesystem::path normalized_path = path.lexically_normal();
   if (const editor::TextViewport* viewport = operations_.active_editable_viewport();
       viewport != nullptr && util::SameAsNormalizedPath(viewport->path(), normalized_path)) {
     const editor::LineSpan lines = viewport->lines();
     for (std::size_t line_number = first_line;
          line_number <= last_line && line_number <= lines.size(); ++line_number) {
-      append_snippet_line(line_number, lines[line_number - 1]);
+      push_row(line_number, lines[line_number - 1]);
     }
-    if (append_separator) {
-      output_channels_->AppendLine(channel_id, channel_title, "");
-    }
-    return;
-  }
-
-  // 2. On disk. Small files are read+split once and cached, so many references
-  //    into the same file share one read; large files use a bounded line-window
-  //    reader that streams only up to the snippet's last line and never
-  //    materializes (or caches) the whole file. This bounds both the shell-thread
-  //    time and the retained memory for a reference set that spans huge generated
-  //    files.
-  const std::vector<std::string>* file_lines = nullptr;
-  std::vector<std::string> window;  // owns the bounded-window fallback lines
-  const auto cache_it = file_line_cache.find(path);
-  if (cache_it != file_line_cache.end()) {
-    file_lines = &cache_it->second;
   } else {
-    const util::FileSignature signature = util::StatFileSignature(path);
-    if (signature.exists && !signature.error &&
-        signature.size <= kReferenceSnippetWholeReadBytes) {
-      if (const auto text = util::ReadTextFile(path); text.has_value()) {
-        file_lines = &file_line_cache.emplace(path, util::SplitLines(*text)).first->second;
+    // 2. On disk. Small files are read+split once and cached, so many references
+    //    into the same file share one read; large files use a bounded line-window
+    //    reader that streams only up to the snippet's last line and never
+    //    materializes (or caches) the whole file. This bounds both the shell-thread
+    //    time and the retained memory for a reference set that spans huge generated
+    //    files.
+    const std::vector<std::string>* file_lines = nullptr;
+    const auto cache_it = file_line_cache.find(path);
+    if (cache_it != file_line_cache.end()) {
+      file_lines = &cache_it->second;
+    } else {
+      const util::FileSignature signature = util::StatFileSignature(path);
+      if (signature.exists && !signature.error &&
+          signature.size <= kReferenceSnippetWholeReadBytes) {
+        if (const auto text = util::ReadTextFile(path); text.has_value()) {
+          file_lines = &file_line_cache.emplace(path, util::SplitLines(*text)).first->second;
+        }
+      } else {
+        window = util::ReadFileLineWindow(path, first_line, last_line,
+                                          kReferenceSnippetScanBytes);
+      }
+    }
+    if (file_lines != nullptr) {
+      for (std::size_t line_number = first_line;
+           line_number <= last_line && line_number <= file_lines->size(); ++line_number) {
+        push_row(line_number, (*file_lines)[line_number - 1]);
       }
     } else {
-      window = util::ReadFileLineWindow(path, first_line, last_line,
-                                        kReferenceSnippetScanBytes);
+      for (std::size_t i = 0; i < window.size(); ++i) {
+        push_row(first_line + i, window[i]);
+      }
     }
   }
 
-  if (file_lines != nullptr) {
-    if (file_lines->empty()) {
-      return;
+  // The 1-based character column the header prints. A plugin column is already
+  // one; a server offset is mapped through the target row when it was read
+  // (an unreadable target keeps the raw units -- there is nothing to map by).
+  std::size_t display_column = column.lsp_units ? column.value + 1 : column.value;
+  if (column.lsp_units) {
+    for (std::size_t i = 0; i < row_count; ++i) {
+      if (rows[i].number != target_line) {
+        continue;
+      }
+      const std::size_t byte_column =
+          lsp_encoding::LspCharacterToByteColumn(rows[i].text, column.value, column.encoding);
+      display_column = util::Utf8CodepointCount(rows[i].text.substr(0, byte_column)) + 1;
+      break;
     }
-    for (std::size_t line_number = first_line;
-         line_number <= last_line && line_number <= file_lines->size(); ++line_number) {
-      append_snippet_line(line_number, (*file_lines)[line_number - 1]);
-    }
-  } else {
-    if (window.empty()) {
-      return;
-    }
-    for (std::size_t i = 0; i < window.size(); ++i) {
-      append_snippet_line(first_line + i, window[i]);
-    }
+  }
+
+  const std::string label =
+      context_->current_project_state.root.empty()
+          ? path.generic_string()
+          : RelativePathLabel(context_->current_project_state.root, path);
+  output_channels_->AppendLine(
+      channel_id, channel_title,
+      label + ":" + std::to_string(line) + ":" + std::to_string(display_column));
+  if (row_count == 0) {
+    return;  // unreadable target: header only, as before
+  }
+  for (std::size_t i = 0; i < row_count; ++i) {
+    output_channels_->AppendLine(
+        channel_id, channel_title,
+        std::string(rows[i].number == target_line ? " > " : "   ") +
+            std::to_string(rows[i].number) + " | " + std::string(rows[i].text));
   }
   if (append_separator) {
     output_channels_->AppendLine(channel_id, channel_title, "");

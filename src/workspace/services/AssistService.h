@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -291,12 +292,33 @@ class AssistService {
   // request. Returns nullptr after logging/recording an unavailable-server
   // message when no client exists.
   LspClient* PrepareLspRequest(editor::TextViewport& viewport, std::string* error_message);
+  // The column of a reference entry, in whichever units its source spoke. A plugin
+  // provider reports a 1-based character column; a language server reports a
+  // 0-based offset in its negotiated position encoding (bytes for clangd and
+  // rust-analyzer, UTF-16 units by default), which is only a character column on
+  // an ASCII line. The emitter resolves both through the target line's text, so
+  // the printed `path:line:col` names the character the Output click handler
+  // then jumps to.
+  struct ReferenceColumn {
+    std::size_t value = 0;
+    bool lsp_units = false;
+    lsp_encoding::PositionEncoding encoding = lsp_encoding::PositionEncoding::Utf8;
+
+    static ReferenceColumn Character1Based(std::size_t column) {
+      return ReferenceColumn{.value = column, .lsp_units = false};
+    }
+    static ReferenceColumn LspCharacter(int character, lsp_encoding::PositionEncoding encoding) {
+      return ReferenceColumn{.value = static_cast<std::size_t>(std::max(0, character)),
+                             .lsp_units = true,
+                             .encoding = encoding};
+    }
+  };
   // Emit one reference entry (file:line:column header + the ±1-line context block,
   // plus a trailing blank when `append_separator`) into the given channel,
-  // caching file contents in `file_line_cache`. `line`/`column` are 1-based.
+  // caching file contents in `file_line_cache`. `line` is 1-based.
   void EmitReferenceEntry(const char* channel_id, const char* channel_title,
-                          const std::filesystem::path& path, std::size_t line, std::size_t column,
-                          bool append_separator,
+                          const std::filesystem::path& path, std::size_t line,
+                          ReferenceColumn column, bool append_separator,
                           std::map<std::filesystem::path, std::vector<std::string>>&
                               file_line_cache) const;
 

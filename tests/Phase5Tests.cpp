@@ -156,7 +156,10 @@ void TestPhase5LspCommandsDriveDiagnosticsNavigationAndActions() {
   const std::filesystem::path source = project_root / "README.md";
   const std::filesystem::path refs = project_root / "refs.md";
   WriteFile(source, "alpha\nusage\nafter\n");
-  WriteFile(refs, "before-def\ndefinition\nafter-def\n");
+  // The third line opens with a non-BMP glyph (two UTF-16 units, four bytes), so
+  // a reference to the `x` after it is `character: 2` in the server's default
+  // utf-16 encoding but character column 2 -- a raw print says 3.
+  WriteFile(refs, "before-def\ndefinition\n\xf0\x9f\x98\x80x-after-def\n");
   WriteFile(
       server_path,
       R"py(#!/usr/bin/env python3
@@ -340,6 +343,13 @@ while True:
                         "end": {"line": 1, "character": 10},
                     },
                 },
+                {
+                    "uri": file_uri(project_root / "refs.md"),
+                    "range": {
+                        "start": {"line": 2, "character": 2},
+                        "end": {"line": 2, "character": 3},
+                    },
+                },
             ],
         })
     elif method == "workspace/symbol":
@@ -471,6 +481,11 @@ return ide.plugin({
              std::find(references_channel->begin(), references_channel->end(), "README.md:2:1") !=
                  references_channel->end() &&
              std::find(references_channel->begin(), references_channel->end(), "refs.md:2:1") !=
+                 references_channel->end() &&
+             // utf-16 `character: 2` after a two-unit emoji is character column 2.
+             std::find(references_channel->begin(), references_channel->end(), "refs.md:3:2") !=
+                 references_channel->end() &&
+             std::find(references_channel->begin(), references_channel->end(), "refs.md:3:3") ==
                  references_channel->end() &&
              std::find(references_channel->begin(), references_channel->end(), "") !=
                  references_channel->end() &&
