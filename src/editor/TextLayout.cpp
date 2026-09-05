@@ -363,29 +363,78 @@ std::size_t TextLayout::ResolveVisualColumn(const LayoutLine* layout,
   return source_column;
 }
 
+namespace {
+
+// Byte offset of the codepoint that contains byte `index` (a continuation byte
+// snaps back to its lead byte).
+std::size_t CodepointStartAt(std::string_view line, std::size_t index) {
+  while (index > 0 && index < line.size() &&
+         util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[index]))) {
+    --index;
+  }
+  return index;
+}
+
+// Whether the codepoint starting at `start` is identifier content; `*length`
+// receives its byte length. ASCII keeps the [A-Za-z0-9_] rule; anything beyond
+// ASCII goes through the shared identifier classification so `größe`, `変数`
+// or `naïve` are one hover target rather than three fragments (the old
+// byte-wise scan rejected every non-ASCII byte, so a hover over such a name
+// found no identifier at all).
+bool IdentifierCodepointAt(std::string_view line, std::size_t start, std::size_t* length) {
+  if (start >= line.size()) {
+    *length = 0;
+    return false;
+  }
+  const unsigned char lead = static_cast<unsigned char>(line[start]);
+  if (lead < 0x80) {
+    *length = 1;
+    return (lead >= 'a' && lead <= 'z') || (lead >= 'A' && lead <= 'Z') ||
+           (lead >= '0' && lead <= '9') || lead == '_';
+  }
+  *length = std::max<std::size_t>(1, util::Utf8SequenceLength(line, start));
+  return util::Utf8IsIdentifierCodepoint(util::DecodeUtf8Codepoint(line.substr(start, *length)));
+}
+
+// Start of the identifier run ending just before byte `end` (== `end` when the
+// preceding codepoint is not identifier content).
+std::size_t IdentifierRunStartBefore(std::string_view line, std::size_t end) {
+  std::size_t start = end;
+  while (start > 0) {
+    const std::size_t previous = CodepointStartAt(line, start - 1);
+    std::size_t length = 0;
+    if (!IdentifierCodepointAt(line, previous, &length)) {
+      break;
+    }
+    start = previous;
+  }
+  return start;
+}
+
+}  // namespace
+
 TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
                                                     std::size_t text_column) {
-  const auto is_ident = [](unsigned char c) {
-    return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_';
-  };
-  if (text_column >= line.size() || !is_ident(static_cast<unsigned char>(line[text_column]))) {
+  if (text_column >= line.size()) {
     return {};
   }
-  std::size_t start = text_column;
-  while (start > 0 && is_ident(static_cast<unsigned char>(line[start - 1]))) {
-    --start;
+  const std::size_t hit = CodepointStartAt(line, text_column);
+  std::size_t length = 0;
+  if (!IdentifierCodepointAt(line, hit, &length)) {
+    return {};
   }
-  std::size_t end = text_column + 1;
-  while (end < line.size() && is_ident(static_cast<unsigned char>(line[end]))) {
-    ++end;
+  std::size_t start = IdentifierRunStartBefore(line, hit);
+  std::size_t end = hit + length;
+  while (end < line.size() && IdentifierCodepointAt(line, end, &length)) {
+    end += length;
   }
 
   // Extend the range leftward across member-access operators (`.` and `->`) so a
   // hover on the trailing member of `foo.bar` / `ptr->field` / `a.b.c` evaluates the
   // whole chain rather than just the bare word. Only a `.` or `->` immediately
-  // preceding the current start, and itself immediately preceded by an identifier
-  // byte, is absorbed; anything else (whitespace, a stray `>`, a multibyte UTF-8
-  // byte, a second `.`) terminates the walk so the boundary stays deterministic.
+  // preceding the current start, and itself immediately preceded by identifier
+  // content, is absorbed; anything else (whitespace, a stray `>`, a second `.`)
+  // terminates the walk so the boundary stays deterministic.
   for (;;) {
     std::size_t op_start = start;
     if (start >= 2 && line[start - 1] == '>' && line[start - 2] == '-') {
@@ -395,12 +444,9 @@ TextLayout::ByteRange TextLayout::IdentifierRangeAt(std::string_view line,
     } else {
       break;
     }
-    if (op_start == 0 || !is_ident(static_cast<unsigned char>(line[op_start - 1]))) {
+    const std::size_t run_start = IdentifierRunStartBefore(line, op_start);
+    if (run_start == op_start) {
       break;
-    }
-    std::size_t run_start = op_start;
-    while (run_start > 0 && is_ident(static_cast<unsigned char>(line[run_start - 1]))) {
-      --run_start;
     }
     start = run_start;
   }

@@ -2518,6 +2518,25 @@ void TestTextLayoutIdentifierRangeAt() {
   Expect(!rx.empty() && line.substr(rx.start, rx.end - rx.start) == "other->x",
          "member access absorbs the `->` chain to the left of the hovered member");
 
+  // Non-ASCII identifiers are one target: any byte of `größe` (including a
+  // continuation byte of `ö`) resolves to the whole word, and a chain through
+  // `.` keeps working across it. The byte-wise ASCII scan used to reject every
+  // non-ASCII byte, so a hover over such a name found nothing at all.
+  const std::string umlaut = "x = gr\xc3\xb6\xc3\x9fe + 1";  // "x = größe + 1"
+  const std::size_t g = umlaut.find("gr");
+  const std::size_t word_end = g + std::string("gr\xc3\xb6\xc3\x9fe").size();
+  for (std::size_t off = 0; off < word_end - g; ++off) {
+    const auto r = TextLayout::IdentifierRangeAt(umlaut, g + off);
+    Expect(!r.empty() && r.start == g && r.end == word_end,
+           "every byte of a non-ASCII identifier resolves to the whole word");
+  }
+  Expect(TextLayout::IdentifierRangeAt(umlaut, umlaut.find('+')).empty(),
+         "operator after a non-ASCII identifier is not an identifier");
+  const std::string cjk_chain = "obj.\xe5\xa4\x89\xe6\x95\xb0";  // "obj.変数"
+  const auto rc = TextLayout::IdentifierRangeAt(cjk_chain, 4);
+  Expect(!rc.empty() && rc.start == 0 && rc.end == cjk_chain.size(),
+         "a member chain through a CJK member resolves the whole expression");
+
   // Tabs/leading indent do not affect byte-offset resolution.
   const std::string tabbed = "\t\tvalue";
   const auto rt = TextLayout::IdentifierRangeAt(tabbed, 3);
@@ -2572,12 +2591,18 @@ void TestTextLayoutIdentifierRangeAt() {
            "a bare `>` (not `->`) does not extend the identifier range");
   }
   {
-    // A leading UTF-8 byte before the dot terminates the chain deterministically.
+    // A non-ASCII LETTER before the dot is identifier content and joins the chain
+    // (`é.field` is one expression), while a non-ASCII SYMBOL (`→`, U+2192) still
+    // bounds it deterministically.
     const std::string s = std::string("\xC3\xA9") + ".field";  // "é.field"
     const std::size_t pos = s.find("field") + 4;  // last byte of field
     const auto r = TextLayout::IdentifierRangeAt(s, pos);
-    Expect(s.substr(r.start, r.end - r.start) == "field",
-           "a multibyte UTF-8 byte before `.` bounds the chain");
+    Expect(s.substr(r.start, r.end - r.start) == s,
+           "a non-ASCII letter before `.` is part of the chain");
+    const std::string arrow = std::string("\xE2\x86\x92") + ".field";  // "→.field"
+    const auto ra = TextLayout::IdentifierRangeAt(arrow, arrow.find("field") + 4);
+    Expect(arrow.substr(ra.start, ra.end - ra.start) == "field",
+           "a non-ASCII symbol before `.` bounds the chain");
   }
 }
 
