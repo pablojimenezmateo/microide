@@ -4,6 +4,7 @@
 #include "platform/HostIntegration.h"
 
 #include <algorithm>
+#include <functional>
 #include <cctype>
 #include <cmath>
 #include <string_view>
@@ -129,6 +130,88 @@ std::optional<std::string> TerminalUrlAtColumn(std::string_view text, std::size_
   }
 
   return std::nullopt;
+}
+
+// Tokens for file references stop at whitespace, quotes and bracket/list
+// punctuation: `src/a.cpp:12:3:` in "src/a.cpp:12:3: error: x" and `(a/b.py:7)`
+// both isolate the path with its position.
+bool IsTerminalPathTokenTerminator(char character) {
+  return IsTerminalUrlTerminator(character) || character == '(' || character == ')' ||
+         character == '[' || character == ']' || character == ',' || character == ';';
+}
+
+// A file reference under `target_byte` -- `path`, `path:line` or `path:line:col`
+// (1-based, as compilers, linters and grep print them) -- resolved against
+// `root` and kept only when `exists` says the file is there, so an arbitrary
+// word never becomes a link (VS Code's terminal link provider does the same
+// existence check). Returned as a `file://` link with an `#L<line>:<col>`
+// fragment so it travels the same hover / pointer / click path as URLs; the
+// click handler opens file links in the editor rather than externally.
+std::optional<std::string> TerminalFileReferenceAtByte(
+    std::string_view text, std::size_t target_byte, const std::filesystem::path& root,
+    const std::function<bool(const std::filesystem::path&)>& exists) {
+  if (target_byte >= text.size() || IsTerminalPathTokenTerminator(text[target_byte])) {
+    return std::nullopt;
+  }
+  std::size_t start = target_byte;
+  while (start > 0 && !IsTerminalPathTokenTerminator(text[start - 1])) {
+    --start;
+  }
+  std::size_t end = target_byte + 1;
+  while (end < text.size() && !IsTerminalPathTokenTerminator(text[end])) {
+    ++end;
+  }
+  std::string_view token = text.substr(start, end - start);
+  while (!token.empty() && (token.back() == ':' || token.back() == '.' || token.back() == ',')) {
+    token.remove_suffix(1);
+  }
+  if (token.empty() || token.find("://") != std::string_view::npos) {
+    return std::nullopt;
+  }
+  // Peel up to two trailing `:<digits>` groups: column, then line.
+  std::size_t line = 0;
+  std::size_t column = 0;
+  for (int group = 0; group < 2; ++group) {
+    const std::size_t colon = token.rfind(':');
+    if (colon == std::string_view::npos || colon + 1 >= token.size()) {
+      break;
+    }
+    const auto number = util::ParseSize(token.substr(colon + 1));
+    if (!number.has_value()) {
+      break;
+    }
+    column = line;
+    line = *number;
+    token = token.substr(0, colon);
+  }
+  if (line == 0) {
+    column = 0;
+  }
+  // A bare word ("error", "make") is not a path; require a separator or an
+  // extension dot so the existence check only runs for path-shaped tokens.
+  if (token.empty() || token.find_first_of("/.") == std::string_view::npos ||
+      token == "." || token == "..") {
+    return std::nullopt;
+  }
+  std::filesystem::path path(token);
+  if (path.is_relative()) {
+    if (root.empty()) {
+      return std::nullopt;
+    }
+    path = root / path;
+  }
+  path = path.lexically_normal();
+  if (!exists(path)) {
+    return std::nullopt;
+  }
+  std::string url = "file://" + path.generic_string();
+  if (line > 0) {
+    url += "#L" + std::to_string(line);
+    if (column > 0) {
+      url += ":" + std::to_string(column);
+    }
+  }
+  return url;
 }
 
 struct CapturedTerminalInvocation {
@@ -361,8 +444,25 @@ std::optional<std::string> WorkspaceShell::TerminalUrlAtPoint(float x, float y) 
   }
 
   const terminal::TerminalLine& hit_line = lines[position->row - first_row];
-  return TerminalUrlAtColumn(TerminalLineText(hit_line),
-                             TerminalColumnToByteOffset(hit_line, position->column));
+  const std::string line_text = TerminalLineText(hit_line);
+  const std::size_t target_byte = TerminalColumnToByteOffset(hit_line, position->column);
+  if (auto url = TerminalUrlAtColumn(line_text, target_byte); url.has_value()) {
+    return url;
+  }
+  // This runs on every pointer move over the terminal, so the existence check
+  // (a stat) is memoized on the last path it asked about.
+  thread_local std::filesystem::path last_probe;
+  thread_local bool last_probe_exists = false;
+  return TerminalFileReferenceAtByte(
+      line_text, target_byte, context_.current_project_state.root,
+      [](const std::filesystem::path& path) {
+        if (path != last_probe) {
+          std::error_code error;
+          last_probe = path;
+          last_probe_exists = std::filesystem::is_regular_file(path, error) && !error;
+        }
+        return last_probe_exists;
+      });
 }
 
 bool WorkspaceShell::OpenExternalUrl(std::string_view url) const {

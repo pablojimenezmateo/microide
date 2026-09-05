@@ -518,6 +518,11 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return microide::workspace::BottomPanelContentRect(layout);
   }
+  // The link (URL or resolved file reference) under a panel point, or nullopt.
+  static std::optional<std::string> TerminalUrlAtPoint(const WorkspaceShell& shell, float x,
+                                                       float y) {
+    return shell.TerminalUrlAtPoint(x, y);
+  }
   static SDL_FPoint TerminalCellPoint(WorkspaceShell& shell,
                                       std::size_t row,
                                       std::size_t column) {

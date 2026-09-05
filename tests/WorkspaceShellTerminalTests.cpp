@@ -1229,6 +1229,55 @@ void TestWorkspaceShellTerminalLeftClickOpensUrls() {
 // the detection. Previously TerminalUrlAtColumn compared a grid column directly
 // against a byte offset, so an accented/wide glyph ahead of the link shifted the
 // match and a click on the URL start missed.
+
+// A `path:line:col` in terminal output (a compiler error, a grep hit) is a link:
+// clicking it opens the file in the editor at that line and column, as VS Code's
+// terminal link provider does. Only paths that exist link; a plain word or a
+// missing file is not one. The terminal used to link URLs only.
+void TestWorkspaceShellTerminalFileReferenceClickOpensTheFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int x;\nint \xc3\xa9 = y;\nint z;\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "src/main.cpp:2:7: error: y undeclared");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string opened_url;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
+    opened_url = std::string(url);
+    return true;
+  });
+
+  const SDL_FPoint point = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 5);
+  Expect(SendMouseDown(shell, point.x, point.y, SDL_BUTTON_LEFT),
+         "clicking a file reference in the terminal is handled");
+  Expect(opened_url.empty(), "a file reference is not handed to the external opener");
+  const auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(viewport.path().lexically_normal() == source.lexically_normal(),
+         "the referenced file opens in the editor: " + viewport.path().string());
+  // Column 7 (1-based, in characters) on "int é = y;" is the 'y': byte 7 because é
+  // is two bytes.
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 7,
+         "the caret lands on the referenced line and character column");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "the editor takes focus");
+
+  // A word that is not a path, and a path that does not exist, are not links.
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(session, "error nope/missing.cpp:3:1 done");
+  const SDL_FPoint word = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 2);
+  Expect(!WorkspaceShellTestAccess::TerminalUrlAtPoint(shell, word.x, word.y).has_value(),
+         "a bare word is not a link");
+  const SDL_FPoint missing = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 10);
+  Expect(!WorkspaceShellTestAccess::TerminalUrlAtPoint(shell, missing.x, missing.y).has_value(),
+         "a path that does not exist is not a link");
+}
+
 void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1939,6 +1988,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",
           TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix);
+  AddTest(tests, "WorkspaceShellTerminal/FileReferenceClickOpensTheFile",
+          TestWorkspaceShellTerminalFileReferenceClickOpensTheFile);
   AddTest(tests, "WorkspaceShellTerminal/TerminalUrlKeepsBalancedClosingBracket",
           TestWorkspaceShellTerminalUrlKeepsBalancedClosingBracket);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsUppercaseScheme",

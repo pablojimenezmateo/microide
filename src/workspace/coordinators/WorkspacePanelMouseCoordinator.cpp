@@ -1,5 +1,6 @@
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
 
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 
 #include "workspace/coordinators/SelectionAutoscroll.h"
@@ -161,9 +162,46 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     if (Contains(panel_content, event.button.x, event.button.y)) {
       if (const auto url = operations_.terminal_url_at_point(static_cast<float>(event.button.x),
                                                              static_cast<float>(event.button.y));
-          url.has_value() && operations_.open_external_url(*url)) {
-        state_.surface.focus = FocusTarget::Panel;
-        return true;
+          url.has_value()) {
+        // A `file://` link -- a printed file URL, or a `path:line:col` reference
+        // the hit-test resolved to an existing file -- opens in the editor at its
+        // `#L<line>:<col>` fragment (VS Code's terminal links); everything else
+        // goes to the external opener.
+        if (url->starts_with("file://")) {
+          std::string_view rest(*url);
+          rest.remove_prefix(7);
+          std::size_t line = 0;
+          std::size_t column = 0;
+          if (const std::size_t fragment = rest.rfind("#L"); fragment != std::string_view::npos) {
+            std::string_view position = rest.substr(fragment + 2);
+            rest = rest.substr(0, fragment);
+            const std::size_t colon = position.find(':');
+            line = util::ParseSize(position.substr(0, colon)).value_or(0);
+            if (colon != std::string_view::npos) {
+              column = util::ParseSize(position.substr(colon + 1)).value_or(0);
+            }
+          }
+          const std::filesystem::path path(rest);
+          std::error_code error;
+          if (!path.empty() && std::filesystem::is_regular_file(path, error) && !error) {
+            operations_.open_file(path);
+            if (editor::TextViewport* viewport = operations_.active_editor_viewport();
+                viewport != nullptr && line > 0) {
+              const std::size_t target_line = std::min(line - 1, viewport->line_count() - 1);
+              const std::size_t byte_column =
+                  column > 0 ? util::Utf8ByteOffsetForCodepointCount(
+                                   viewport->lines().LineView(target_line), column - 1)
+                             : 0;
+              viewport->JumpCursorTo(target_line, byte_column);
+            }
+            state_.surface.focus = FocusTarget::Editor;
+            return true;
+          }
+        }
+        if (operations_.open_external_url(*url)) {
+          state_.surface.focus = FocusTarget::Panel;
+          return true;
+        }
       }
       const std::size_t line_count = terminal_tab->session.LineCount();
       const auto panel_layout = operations_.compute_bottom_panel_log_layout(layout, line_count);

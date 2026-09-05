@@ -615,6 +615,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `r` in git sidebar | Refresh |
 | `Ctrl+c` in terminal (with selection) | Copy terminal selection |
 | `Ctrl+Shift+v` or `Shift+Insert` in terminal | Paste into terminal |
+| Click a URL or a `path:line:col` in terminal output | Open the link, or the file at that line in the editor |
 | `Ctrl`+click in editor | Go to definition |
 | Middle-click tab | Close tab |
 | Mouse wheel on tab strip | Scroll tab overflow |
