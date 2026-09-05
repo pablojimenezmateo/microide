@@ -372,6 +372,22 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::BreakpointToggle: {
+      if (!context_.DebuggerEnabled()) {
+        return reject("Debugging is disabled (enable it in Settings → Debugger)");
+      }
+      editor::TextViewport* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr || viewport->path().empty()) {
+        return reject("No active file");
+      }
+      // Same store call as the gutter click, on the caret's line (0-based store
+      // coordinates), then the adapter learns about the change the same way.
+      const std::filesystem::path path = viewport->path();
+      context_.MutableBreakpointStore().Toggle(path, viewport->cursor_line());
+      context_.ResendBreakpoints(path);
+      context_.NotifyEditorCaretMoved();
+      return DispatchResult::Handled;
+    }
     case ActionId::BreakpointSet: {
       if (!context_.DebuggerEnabled()) {
         return reject("Debugging is disabled (enable it in Settings → Debugger)");

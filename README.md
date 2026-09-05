@@ -597,6 +597,11 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `PageUp` / `PageDown` | Scroll viewport |
 | `Ctrl+Up` / `Ctrl+Down` | Scroll the view one line without moving the caret |
 | `Ctrl+L` | Select the current line (each press adds the next line) |
+| `Ctrl+]` / `Ctrl+[` | Indent / outdent the caret's line or the selected lines |
+| `Alt+z` | Toggle word wrap |
+| `Ctrl+\` | Split the editor right |
+| `F9` | Toggle a breakpoint on the caret's line (debugger enabled) |
+| `Ctrl+Shift+e` / `Ctrl+Shift+g` / `Ctrl+Shift+m` | Show the project, source control, or problems sidebar |
 | `Shift+PageUp` / `Shift+PageDown` in terminal | Page through the transcript (`Ctrl+Shift+C` copies the selection, `Ctrl+Shift+V` pastes) |
 | `d` on sidebar file | Open compare commit picker |
 | `[` / `]` in compare/merge | Previous / next hunk |
@@ -706,6 +711,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `debug-pane-watch`
 - `debug-pane-breakpoints`
 - `debug-show-output`
+- `breakpoint-toggle`
 - `breakpoint-set <file> <line> [condition]`
 - `breakpoint-remove <file> <line>`
 - `breakpoint-enable <file> <line>`

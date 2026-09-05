@@ -194,6 +194,10 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       }
       return availability.discard;
     }
+    case ActionId::BreakpointToggle:
+      // The caret-line toggle needs a saved editable buffer to put the breakpoint in.
+      return SettingEnabled(operations_, "debug.enabled", false) &&
+             active_editable_viewport != nullptr && !active_editable_viewport->path().empty();
     case ActionId::BreakpointSet:
     case ActionId::BreakpointRemove:
     case ActionId::BreakpointEnable:

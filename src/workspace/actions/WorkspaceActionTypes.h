@@ -259,6 +259,9 @@ enum class ActionId {
   // context-menu modifiers above, these take an explicit `<file> <line>` (1-based
   // line) so an external caller can place/edit breakpoints anywhere. Gated on
   // `debug.enabled`; work with or without a live session.
+  // F9: toggle a line breakpoint on the caret's line of the active file (the
+  // gutter click's keyboard twin; VS Code editor.debug.action.toggleBreakpoint).
+  BreakpointToggle,
   BreakpointSet,
   BreakpointRemove,
   BreakpointEnable,

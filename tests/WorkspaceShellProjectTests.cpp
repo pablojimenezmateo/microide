@@ -2950,6 +2950,60 @@ void TestWorkspaceShellEscapeCancelsTheSelection() {
   Expect(!viewport.has_selection(), "the second Esc cancels the selection");
 }
 
+
+// VS Code parity bindings that used to do nothing: F9 toggles a breakpoint on the
+// caret's line, Alt+Z toggles word wrap, Ctrl+] / Ctrl+[ indent / outdent, and
+// Ctrl+Shift+E / G switch sidebar views.
+void TestWorkspaceShellVsCodeParityBindings() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() {\nreturn 0;\n}\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "fixture project should open");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusEditor(shell);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  // F9 needs the debugger on; it toggles at the caret's line, like the gutter click.
+  WorkspaceShellTestAccess::SetSettingValue(shell, "debug.enabled", "true");
+  viewport.MoveCursorTo(1, 0);
+  Expect(SendKeyDown(shell, SDLK_F9, SDL_KMOD_NONE), "F9 is handled");
+  Expect(WorkspaceShellTestAccess::BreakpointStore(shell).HasBreakpoint(source, 1),
+         "F9 sets a breakpoint on the caret's line");
+  Expect(SendKeyDown(shell, SDLK_F9, SDL_KMOD_NONE), "a second F9 is handled");
+  Expect(!WorkspaceShellTestAccess::BreakpointStore(shell).HasBreakpoint(source, 1),
+         "a second F9 removes it again");
+
+  // Ctrl+] / Ctrl+[ indent and outdent the caret's line.
+  viewport.MoveCursorTo(1, 0);
+  Expect(SendKeyDown(shell, SDLK_RIGHTBRACKET, SDL_KMOD_CTRL), "Ctrl+] is handled");
+  Expect(std::string(viewport.lines().LineView(1)).starts_with(" ") ||
+             std::string(viewport.lines().LineView(1)).starts_with("\t"),
+         "Ctrl+] indents the caret's line");
+  Expect(SendKeyDown(shell, SDLK_LEFTBRACKET, SDL_KMOD_CTRL), "Ctrl+[ is handled");
+  Expect(std::string(viewport.lines().LineView(1)) == "return 0;",
+         "Ctrl+[ outdents it back");
+
+  // Alt+Z toggles word wrap.
+  const bool wrap_before = viewport.soft_wrap();
+  Expect(SendKeyDown(shell, SDLK_Z, SDL_KMOD_ALT), "Alt+Z is handled");
+  Expect(viewport.soft_wrap() != wrap_before, "Alt+Z toggles word wrap");
+  Expect(SendKeyDown(shell, SDLK_Z, SDL_KMOD_ALT), "a second Alt+Z is handled");
+  Expect(viewport.soft_wrap() == wrap_before, "a second Alt+Z toggles it back");
+
+  // Ctrl+Shift+G / E switch the sidebar view.
+  Expect(SendKeyDown(shell, SDLK_G, SDL_KMOD_CTRL | SDL_KMOD_SHIFT), "Ctrl+Shift+G is handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Git,
+         "Ctrl+Shift+G shows source control");
+  Expect(SendKeyDown(shell, SDLK_E, SDL_KMOD_CTRL | SDL_KMOD_SHIFT), "Ctrl+Shift+E is handled");
+  Expect(WorkspaceShellTestAccess::SidebarMode(shell) == WorkspaceShell::SidebarMode::Tree,
+         "Ctrl+Shift+E shows the project tree");
+}
+
 void TestWorkspaceShellSettingsOverlayTrapsKeyboardInput() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6679,6 +6733,7 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCodeActionMenuIsCentered);
   AddTest(tests, "WorkspaceShell/SettingsOverlayRightClickDoesNotOpenEditorContextMenu",
           TestWorkspaceShellSettingsOverlayRightClickDoesNotOpenEditorContextMenu);
+  AddTest(tests, "WorkspaceShell/VsCodeParityBindings", TestWorkspaceShellVsCodeParityBindings);
   AddTest(tests, "WorkspaceShell/EscapeCancelsTheSelection",
           TestWorkspaceShellEscapeCancelsTheSelection);
   AddTest(tests, "WorkspaceShell/CtrlArrowsScrollAndCtrlLSelectsLines",

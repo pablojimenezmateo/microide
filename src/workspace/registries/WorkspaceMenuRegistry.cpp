@@ -156,7 +156,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),
       MenuSeparator(),
-      MenuItem(ActionId::Wrap, {}, {}, {}, 0, true),
+      MenuItem(ActionId::Wrap, {}, "Alt+Z", {}, 0, true),
       MenuSeparator(),
       MenuItem(ActionId::UiScale, "Zoom In", "Ctrl+=", std::array<std::string_view, 2>{"up", {}},
                1),
@@ -188,7 +188,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CallHierarchy),
   });
   static const auto kGitItems = std::to_array<MenuItemSpec>({
-      MenuItem(ActionId::SidebarShow, "Source Control Sidebar", {},
+      MenuItem(ActionId::SidebarShow, "Source Control Sidebar", "Ctrl+Shift+G",
                std::array<std::string_view, 2>{"git", {}}, 1, false),
       MenuItem(ActionId::GitRefresh, "Refresh"),
       MenuSeparator(),
@@ -220,6 +220,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::StopDebugging),
       MenuItem(ActionId::DebugStopAllSessions, "Stop All Sessions"),
       MenuSeparator(),
+      MenuItem(ActionId::BreakpointToggle),
       MenuItem(ActionId::DebugContinue, {}, "F5"),
       MenuItem(ActionId::DebugStepOver, {}, "F10"),
       MenuItem(ActionId::DebugStepIn, {}, "F11"),
@@ -256,7 +257,7 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CompareWithSelected),
       MenuItem(ActionId::CompareWithClipboard),
       MenuSeparator(),
-      MenuItem(ActionId::SplitEditorRight, "Split Right"),
+      MenuItem(ActionId::SplitEditorRight, "Split Right", "Ctrl+\\"),
       MenuItem(ActionId::SplitEditorDown, "Split Down"),
       MenuSeparator(),
       MenuItem(ActionId::CloseActiveTab),
@@ -312,7 +313,7 @@ std::span<const MenuItemSpec> WorkspaceTreeContextMenuItems(TreeContextTargetKin
   static const auto kFileItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::OpenSelectedTreeItem),
       MenuItem(ActionId::OpenSelectedTreeItemInNewTab),
-      MenuItem(ActionId::SplitEditorRight, "Split Right"),
+      MenuItem(ActionId::SplitEditorRight, "Split Right", "Ctrl+\\"),
       MenuItem(ActionId::SplitEditorDown, "Split Down"),
       MenuSeparator(),
       MenuItem(ActionId::CompareHead),
