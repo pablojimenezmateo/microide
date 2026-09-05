@@ -793,9 +793,17 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
   const bool multi = viewport.has_multiple_carets();
   const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
   RegionColumnDeltas deltas;
+  std::size_t total_lines = 0;
+  for (const LineRange& range : ranges) {
+    total_lines += range.line_count();
+  }
+  deltas.flat.reserve(total_lines);
+  deltas.region_offset.reserve(ranges.size());
   LineBlob updated;
   bool changed = false;
-  viewport.BeginUndoGroup();
+  // One region is one undo entry on its own; a group only for several.
+  const bool grouped = ranges.size() > 1;
+  if (grouped) viewport.BeginUndoGroup();
   for (const LineRange& range : ranges) {
     deltas.BeginRegion();
     if (!BuildToggledCommentRegion(lines, range, line_marker, &updated)) {
@@ -813,7 +821,7 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
                                      /*record_undo=*/true);
   }
   if (!changed) {
-    viewport.EndUndoGroup();
+    if (grouped) viewport.EndUndoGroup();
     return false;
   }
   if (multi || !had_selection) {
@@ -822,7 +830,7 @@ bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
     RestoreSelectionAcrossLines(viewport, ranges.front().first, ranges.front().last,
                                 had_selection);
   }
-  viewport.EndUndoGroup();
+  if (grouped) viewport.EndUndoGroup();
   return true;
 }
 
