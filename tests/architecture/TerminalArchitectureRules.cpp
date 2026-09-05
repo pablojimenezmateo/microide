@@ -386,7 +386,17 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
   // `openat` and NEVER plain `open(` — which silently made this rule blind to the
   // exact call form it exists to police (it passed with two real unflagged
   // `open()` sites in the tree). The fixture below is the positive control.
-  const std::array<Form, 7> forms = {
+  const std::array<Form, 10> forms = {
+      // openpty/forkpty cannot request close-on-exec at all (no flags argument),
+      // so every occurrence is a violation, like plain accept(): the terminal
+      // backend used to follow openpty with two fcntl(F_SETFD) calls, and a fork
+      // on another thread in that window inherited both PTY ends anyway.
+      Form{"posix_openpt", "O_CLOEXEC", "pass O_CLOEXEC in posix_openpt()'s flags"},
+      Form{"openpty", "O_CLOEXEC",
+           "use posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC) and open(slave, O_CLOEXEC); "
+           "openpty() cannot set close-on-exec atomically"},
+      Form{"forkpty", "O_CLOEXEC",
+           "use posix_openpt(O_CLOEXEC) + fork; forkpty() cannot set close-on-exec atomically"},
       Form{"socket", "SOCK_CLOEXEC", "pass SOCK_CLOEXEC in socket()'s type argument"},
       Form{"accept4", "SOCK_CLOEXEC",
            "pass SOCK_CLOEXEC to accept4() (and never plain accept())"},
@@ -409,7 +419,7 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
   // longest-first so `accept4` and `openat` win over their prefixes, which is what
   // the old `accept4`-before-`accept` form ordering and the `open(at)?` group did.
   const std::regex creation_pattern(
-      R"((^|[^\w:])(::)?(socket|accept4|accept|openat|open|pipe2|inotify_init1)\s*\()");
+      R"((^|[^\w:])(::)?(posix_openpt|openpty|forkpty|socket|accept4|accept|openat|open|pipe2|inotify_init1)\s*\()");
 
   std::size_t scanned_creation_sites = 0;
   for (const std::filesystem::path& dir : {repo_root / "src"}) {

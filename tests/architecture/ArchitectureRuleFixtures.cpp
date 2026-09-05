@@ -33,10 +33,13 @@ void RunDescriptorCloseOnExecRuleFixtures() {
             "int D(){ return accept4(fd, nullptr, nullptr, 0); }\n"
             "int E(){ return accept(fd, nullptr, nullptr); }\n"
             "int F(int* p){ return pipe2(p, 0); }\n"
-            "int G(){ return inotify_init1(0); }\n");
-  Expect(CheckDescriptorCreationIsCloseOnExec(root).violations.size() == 7,
+            "int G(){ return inotify_init1(0); }\n"
+            "int H(){ return posix_openpt(O_RDWR | O_NOCTTY); }\n"
+            "int I(int* m, int* s){ return openpty(m, s, nullptr, nullptr, nullptr); }\n"
+            "int J(int* m){ return forkpty(m, nullptr, nullptr, nullptr); }\n");
+  Expect(CheckDescriptorCreationIsCloseOnExec(root).violations.size() == 10,
          "close-on-exec rule must flag every unflagged descriptor-creating form, "
-         "including plain open() and plain accept()");
+         "including plain open(), plain accept(), openpty() and forkpty()");
 
   // Positive control: the same call forms carrying the atomic flag must produce
   // ZERO violations. Without this half, a rule that matched nothing at all would
@@ -47,7 +50,8 @@ void RunDescriptorCloseOnExecRuleFixtures() {
             "int C(){ return ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0); }\n"
             "int D(){ return accept4(fd, nullptr, nullptr, SOCK_CLOEXEC); }\n"
             "int F(int* p){ return pipe2(p, O_CLOEXEC); }\n"
-            "int G(){ return inotify_init1(IN_CLOEXEC); }\n");
+            "int G(){ return inotify_init1(IN_CLOEXEC); }\n"
+            "int H(){ return posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC); }\n");
   Expect(CheckDescriptorCreationIsCloseOnExec(root).violations.empty(),
          "close-on-exec rule should accept every atomically-flagged creation form");
 
