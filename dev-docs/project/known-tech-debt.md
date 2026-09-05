@@ -465,7 +465,14 @@ same method:
   chord (`MenuAcceleratorConsistencyTests`), and the README command list must
   follow the action table's ORDER (`ReadmeCommandDocsStayInSync`) -- a `;` in a
   build-test-commit chain let one such failure land and needed an amend.
+- **Terminal links / tab titles**: the terminal linked URL schemes only, so a
+  build error's `src/a.cpp:12:3` was inert (VS Code links existing paths);
+  file references now ride the URL path as `file://…#L<line>:<col>` (one
+  hover/pointer/click route, existence memoized per hovered path, click opens in
+  the editor). Same-name tabs were indistinguishable; the title provider appends
+  the parent folder when another tab in the group shares the file name.
 - **JSON**: an RFC 8259 conformance table (JSONTestSuite-derived). Clean.
+- **SHA-256**: reference vectors around every padding boundary. Clean.
 - **Compare**: a differential test of `BuildLineDiffOps` against a brute-force
   WEIGHTED LCS (the aligner weighs rarity over the trimmed middle; an unweighted
   LCS oracle is the wrong reference and fails on the first common line). Clean.

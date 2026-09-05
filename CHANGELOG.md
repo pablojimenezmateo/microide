@@ -84,6 +84,10 @@ project (see [README](README.md)); versions track meaningful shipped work.
   outdent; Ctrl+\ splits right; Ctrl+Shift+E / G / M open the project, source
   control and problems views. Rename Symbol and Format Document are in the editor
   context menu.
+- **Terminal file links and tab names.** A `path:line:col` in terminal output
+  (compiler errors, grep hits) is a link that opens the file at that position in
+  the editor, and printed `file://` URLs open in the editor too. Two open tabs
+  with the same file name show their parent folder ("index.txt — a").
 - **Command palette and outline.** Palette queries match words in any order
   (`file new` finds "New File"); a typed command line with arguments still runs
   as a command. Outline symbols are in document order (servers may return them
