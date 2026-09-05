@@ -4,6 +4,7 @@
 #include "util/Hex.h"
 #include "util/PerformanceCounters.h"
 #include "util/SaturatingMath.h"
+#include "util/Sha256.h"
 #include "util/StringUtil.h"
 #include "util/PerformanceTrace.h"
 #include "util/TraceChannel.h"
@@ -967,7 +968,52 @@ void TestScopeLabelBuildsNothingWhenTheChannelIsOff() {
   ::unsetenv("MICROIDE_TEST_LABEL_ON");
 }
 
+
+// SHA-256 against reference digests (Python hashlib) for lengths around every
+// padding boundary (55/56/57, 63/64/65, 119/120, 127/128/129) plus the FIPS
+// "abc" and million-'a' vectors. The hash gates downloaded tools and plugin
+// integrity, and it had no reference test at all.
+void TestUtilSha256MatchesReferenceVectors() {
+  using microide::util::Sha256Hex;
+  std::string pattern(200, '\0');
+  for (std::size_t i = 0; i < pattern.size(); ++i) {
+    pattern[i] = static_cast<char>((i * 7 + 3) % 256);
+  }
+  struct Vector {
+    std::size_t length;
+    std::string_view digest;
+  };
+  static constexpr Vector kVectors[] = {
+      {0, "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"},
+      {1, "084fed08b978af4d7d196a7446a86b58009e636b611db16211b65a9aadff29c5"},
+      {3, "6ab0dba1f4f1dfbb37b4f9eeb092c09fca4900ad32bdcd147d8dde35d6c87c35"},
+      {55, "e7313d333c272e639f790978283f9eb392e843d0f29b7016828bb1daa4aac70b"},
+      {56, "4324d65f3c103567f5589c710bc08f8523f929a9272e3af36fc968e52abc6c27"},
+      {57, "35df609437dcfea3279283ab79fd554e2bf78f8f7ae2de532d8ee300b09e8f73"},
+      {63, "81c80242132f230c3bd41b3e63bbcff16107339549214a99614ff26664625055"},
+      {64, "39e3d7b6b5d075d37d053ad89b24b41bef4f3c29760c84447cab3f3be1882241"},
+      {65, "aacca6ff74fdbb296d165a45cecfa04e5127bc008770fbbdd48006f2d2fae95e"},
+      {119, "9ce7368e4daf32341631b492e80359dc9f594b48453cd0dd5bf0b19279cc177e"},
+      {120, "7836b787757e95e58b3ca5aec90b1b004e8deba1e50e9675af9cabf1a13a04b5"},
+      {127, "a8d23e75d936f303d248888d9b165ee543f4cbafcad3c9dd2a79bd84faa11d07"},
+      {128, "d2742f1f4ac6bb7ca2b239ee18402ba8b3f9f8e652d2a72973c2b9ba11c08cf6"},
+      {129, "307f8fc2c1622b92762e818d39a185d4d667ad49a4b07ceae1f4afa008a93ec4"},
+      {200, "2c7e18c942ef065b526a2d4e5546283749cd3ddfb51d8fc71f42717363685f46"},
+  };
+  for (const Vector& vector : kVectors) {
+    const std::string digest = Sha256Hex(std::string_view(pattern).substr(0, vector.length));
+    Expect(digest == vector.digest,
+           "sha256 of " + std::to_string(vector.length) + " pattern bytes: got " + digest);
+  }
+  Expect(Sha256Hex("abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+         "sha256(\"abc\") matches FIPS 180-2");
+  Expect(Sha256Hex(std::string(1000000, 'a')) ==
+             "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0",
+         "sha256 of one million 'a' matches FIPS 180-2");
+}
+
 void RegisterStringUtilTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Util/Sha256MatchesReferenceVectors", TestUtilSha256MatchesReferenceVectors);
   AddTest(tests, "StringUtil/AsciiClassifiersAreLocaleIndependent",
           TestStringUtilAsciiClassifiersAreLocaleIndependent);
   AddTest(tests, "StringUtil/ContainsCaseInsensitiveAscii",
