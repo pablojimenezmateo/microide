@@ -1425,6 +1425,7 @@
   bool HasActiveCodeActionProvider() const;
   bool HasActiveDefinitionProvider() const;
   bool HasActiveReferencesProvider() const;
+  bool PluginServesLspMenuAction(ActionId id) const;
   LspManager& CurrentLspManager();
   const LspManager& CurrentLspManager() const;
   LspManager& EnsureProjectLspManager(ProjectWorkspaceState& state);

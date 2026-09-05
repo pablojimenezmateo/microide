@@ -128,6 +128,12 @@ class LspService {
 
   // Provider-presence queries for the active editable viewport.
   std::string ActiveLanguageIdForProvider() const;
+  // Plugin-only halves of HasActiveDefinitionProvider / HasActiveReferencesProvider:
+  // true when a plugin serves the action for the active language regardless of any
+  // language server. The menus use these to skip the LSP-readiness gate and its
+  // "(LSP: …)" suffix for actions a plugin can answer without a server.
+  bool HasActivePluginDefinitionProvider() const;
+  bool HasActivePluginReferencesProvider() const;
   bool HasActiveCompletionProvider() const;
   bool HasActiveCodeActionProvider() const;
   bool HasActiveDefinitionProvider() const;

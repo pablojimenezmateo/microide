@@ -12,6 +12,7 @@
 
 #include <memory>
 
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdint>
@@ -5741,6 +5742,64 @@ return ide.plugin({
          "the caret lands on the definition (provider line/column are 1-based)");
 }
 
+
+// The Go menu greyed out "Go to Definition (LSP: No LSP server)" for a language a
+// plugin provider serves with no language server, although the command worked.
+void TestWorkspaceShellGoMenuOffersPluginDefinitionWithoutLsp() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.lua";
+  WriteFile(source, "return 1\n");
+
+  WritePluginInit(
+      plugins_root, "defs",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "defs",
+  setup = function(ctx)
+    ctx.definition.add({
+      id = "defs.lua",
+      language_id = "lua",
+      provide = function(buffer, position) return nil end
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "definition menu fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+
+  const std::vector<std::string> labels =
+      WorkspaceShellTestAccess::MenuItemLabels(shell, WorkspaceShell::MenuId::Go);
+  const bool plain_definition =
+      std::find(labels.begin(), labels.end(), "Go to Definition") != labels.end();
+  const bool suffixed_definition = std::any_of(
+      labels.begin(), labels.end(),
+      [](const std::string& label) { return label.starts_with("Go to Definition ("); });
+  Expect(plain_definition && !suffixed_definition,
+         "Go to Definition is offered without an LSP suffix when a plugin serves it");
+  // The server-only siblings keep explaining why they are inert.
+  Expect(std::any_of(labels.begin(), labels.end(),
+                     [](const std::string& label) {
+                       return label.starts_with("Go to Type Definition (LSP: ");
+                     }),
+         "server-only navigation keeps its LSP readiness suffix");
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::GoToDefinition),
+         "Go to Definition is enabled with a plugin-only provider");
+  Expect(!WorkspaceShellTestAccess::IsActionEnabled(shell,
+                                                    WorkspaceShell::ActionId::FindReferences),
+         "Find References stays disabled without any provider");
+}
+
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/EditorPreferencesReachAllSplitGroups",
           TestWorkspaceShellEditorPreferencesReachAllSplitGroups);
@@ -5929,6 +5988,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRestoreEngagesLspForOpenDocument);
   AddTest(tests, "WorkspaceShell/CtrlClickGoesToDefinition",
           TestWorkspaceShellCtrlClickGoesToDefinition);
+  AddTest(tests, "WorkspaceShell/GoMenuOffersPluginDefinitionWithoutLsp",
+          TestWorkspaceShellGoMenuOffersPluginDefinitionWithoutLsp);
 }
 
 }  // namespace microide::tests

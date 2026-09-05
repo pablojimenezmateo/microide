@@ -405,6 +405,9 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
   // are laid out and painted one at a time, each label consumed before the next is
   // resolved. See the header's "ephemeral view" contract.
   const auto lsp_label = [&](std::string_view ready_label) -> std::string_view {
+    if (PluginServesLspMenuAction(effective_action)) {
+      return ready_label;
+    }
     thread_local std::string composed;
     return LspDrivenMenuActionLabel(
         effective_action, ready_label,
@@ -456,6 +459,20 @@ std::string_view WorkspaceShell::MenuItemAccelerator(const MenuItemSpec& item) c
   return {};
 }
 
+// Go to Definition / Find References are the two LSP-driven menu actions a plugin
+// provider can answer with no language server at all. For those the readiness gate
+// (and its "(LSP: No LSP server)" suffix) would grey out a working action.
+bool WorkspaceShell::PluginServesLspMenuAction(ActionId id) const {
+  switch (id) {
+    case ActionId::GoToDefinition:
+      return lsp_service_.HasActivePluginDefinitionProvider();
+    case ActionId::FindReferences:
+      return lsp_service_.HasActivePluginReferencesProvider();
+    default:
+      return false;
+  }
+}
+
 bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
   if (item.separator) {
     return false;
@@ -473,7 +490,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     return plugin_runtime_.Host().HasCommand(item.command_name);
   }
 
-  if (IsLspDrivenMenuAction(effective_action) &&
+  if (IsLspDrivenMenuAction(effective_action) && !PluginServesLspMenuAction(effective_action) &&
       !IsLspMenuActionReady(const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(
           /*ensure_started=*/false))) {
     return false;
