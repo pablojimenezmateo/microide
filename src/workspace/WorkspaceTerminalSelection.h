@@ -39,8 +39,11 @@ std::string TerminalLineSliceText(const terminal::TerminalLine& line,
 // real selection, but bounded so a drag over the full 100k-line scrollback cap cannot
 // materialize an unbounded transcript on the UI thread (TD-2026-07-17A-090).
 inline constexpr std::size_t kDefaultTerminalSelectionCopyMaxBytes = 8u * 1024u * 1024u;
-// Extract the selected text. If the accumulated bytes reach `max_bytes`, the result is
-// truncated on a UTF-8 boundary and a "\n[selection truncated]" marker is appended.
+// Extract the selected text. Each row's trailing blank cells past its last glyph
+// (the padding out to the terminal width) are dropped, except on a row the next
+// row soft-wrap continues; rows meet with '\n' only at real line boundaries. If the
+// accumulated bytes reach `max_bytes`, the result is truncated on a UTF-8 boundary
+// and a "\n[selection truncated]" marker is appended.
 std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLine>& lines,
                                          const TerminalSelectionBounds& selection,
                                          std::size_t max_bytes = kDefaultTerminalSelectionCopyMaxBytes);

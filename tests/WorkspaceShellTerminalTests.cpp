@@ -1325,6 +1325,51 @@ void TestWorkspaceShellSelectionPreservesInternalSpaces() {
          "selection copy should preserve internal spaces exactly like whole-line copy");
 }
 
+// Rows are stored at the full terminal width, so a multi-row selection covers each
+// row's padding. A copy drops that padding (as xterm and VS Code do) but keeps blanks
+// inside a soft-wrapped line and blanks that sit before a glyph.
+void TestWorkspaceShellSelectionCopyDropsRowPaddingButNotWrappedBlanks() {
+  using microide::workspace::ExtractTerminalSelectionText;
+  using microide::workspace::TerminalSelectionBounds;
+  using microide::workspace::TerminalSelectionPoint;
+
+  const auto padded_row = [](std::string_view text, std::size_t width, bool wrapped) {
+    microide::terminal::TerminalLine line;
+    for (const char ch : text) line.cells.push_back(MakeAsciiCell(ch));
+    while (line.cells.size() < width) line.cells.push_back(MakeAsciiCell(' '));
+    line.wrapped_from_previous = wrapped;
+    return line;
+  };
+  const std::vector<microide::terminal::TerminalLine> lines = {
+      padded_row("ab", 8, false),
+      padded_row("cd  ", 8, false),   // continued by the next row: its blanks are real
+      padded_row("ef", 8, true),
+      padded_row(" g h", 8, false),
+  };
+  const TerminalSelectionBounds all{
+      .start = TerminalSelectionPoint{.row = 0, .column = 0},
+      .end = TerminalSelectionPoint{.row = 3, .column = 8},
+  };
+  const std::string copied = ExtractTerminalSelectionText(lines, all);
+  Expect(copied == "ab\ncd      ef\n g h",
+         "row padding is dropped, wrapped blanks and leading blanks kept: [" + copied + "]");
+
+  // A selection ending inside a row's padding is trimmed to the glyphs too.
+  const TerminalSelectionBounds into_padding{
+      .start = TerminalSelectionPoint{.row = 0, .column = 0},
+      .end = TerminalSelectionPoint{.row = 0, .column = 6},
+  };
+  Expect(ExtractTerminalSelectionText(lines, into_padding) == "ab",
+         "a selection that ends in the padding copies only the glyphs");
+  // Blanks BEFORE a glyph within the selection are text, not padding.
+  const TerminalSelectionBounds before_glyph{
+      .start = TerminalSelectionPoint{.row = 3, .column = 0},
+      .end = TerminalSelectionPoint{.row = 3, .column = 3},
+  };
+  Expect(ExtractTerminalSelectionText(lines, before_glyph) == " g ",
+         "blanks followed by a glyph on the row are kept");
+}
+
 void TestWorkspaceShellSelectionSkipsWideTrailingSpacer() {
   using microide::workspace::ExtractTerminalSelectionText;
   using microide::workspace::TerminalLineSliceText;
@@ -1639,6 +1684,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOutputPanelBodyClickFocusesThePanel);
   AddTest(tests, "WorkspaceShell/TerminalSelectionPreservesInternalSpaces",
           TestWorkspaceShellSelectionPreservesInternalSpaces);
+  AddTest(tests, "WorkspaceShell/TerminalSelectionCopyDropsRowPaddingButNotWrappedBlanks",
+          TestWorkspaceShellSelectionCopyDropsRowPaddingButNotWrappedBlanks);
   AddTest(tests, "WorkspaceShell/TerminalSelectionSkipsWideTrailingSpacer",
           TestWorkspaceShellSelectionSkipsWideTrailingSpacer);
   AddTest(tests, "WorkspaceShell/TerminalExitMarkerSurvivesOpenEscape",

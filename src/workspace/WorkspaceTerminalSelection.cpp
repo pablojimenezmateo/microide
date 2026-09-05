@@ -35,6 +35,24 @@ terminal::TerminalSession::MouseButton TerminalMouseButtonFromSdl(Uint8 button) 
   }
 }
 
+namespace {
+
+// One past the last cell that shows a glyph. Everything after it is the row's
+// padding out to the terminal width, not text the program wrote.
+std::size_t TerminalLineContentEnd(const terminal::TerminalLine& line) {
+  std::size_t end = line.cells.size();
+  while (end > 0) {
+    const std::string_view text = line.cells[end - 1].DisplayText();
+    if (!text.empty() && text != " ") {
+      break;
+    }
+    --end;
+  }
+  return end;
+}
+
+}  // namespace
+
 std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLine>& lines,
                                          const TerminalSelectionBounds& selection,
                                          std::size_t max_bytes) {
@@ -49,12 +67,20 @@ std::string ExtractTerminalSelectionText(const std::vector<terminal::TerminalLin
     const std::size_t line_size = line.cells.size();
     const std::size_t start_column =
         row == selection.start.row ? std::min(selection.start.column, line_size) : 0;
-    const std::size_t end_column =
-        row == end_row ? std::min(selection.end.column, line_size) : line_size;
+    std::size_t end_column = row == end_row ? std::min(selection.end.column, line_size) : line_size;
+    // Rows are stored at the full terminal width, so a selection that runs to a
+    // row's end covers its padding. Every terminal (xterm, VS Code's xterm.js)
+    // drops those trailing blanks from a copy -- three selected lines of `ls`
+    // output must not come out padded to 80 columns each. Blanks inside a
+    // soft-wrapped line are real text, so a row the next row continues keeps
+    // them; blanks before a glyph are always kept.
+    const bool continued = row + 1 < lines.size() && lines[row + 1].wrapped_from_previous;
+    if (!continued) {
+      end_column = std::max(start_column, std::min(end_column, TerminalLineContentEnd(line)));
+    }
     // Reuse the whole-line slice logic so selection copy and line copy produce
     // identical text: wide-trailing spacer cells are skipped and empty cells
-    // render as a single space. Trailing blanks are preserved per row because a
-    // mid-selection span may legitimately end on blank cells.
+    // render as a single space.
     text.append(TerminalLineSliceText(line, start_column, end_column, /*trim_trailing=*/false));
     // Cap the copied bytes so a drag over the full scrollback can't materialize an
     // unbounded transcript on the UI thread (TD-2026-07-17A-090). Truncate on a UTF-8
@@ -177,14 +203,7 @@ std::optional<TerminalSelectionBounds> TerminalWordBoundsAt(const terminal::Term
 
 std::optional<TerminalSelectionBounds> TerminalLineBoundsAt(const terminal::TerminalLine& line,
                                                             std::size_t row) {
-  std::size_t end = line.cells.size();
-  while (end > 0) {
-    const std::string_view text = line.cells[end - 1].DisplayText();
-    if (!text.empty() && text != " ") {
-      break;
-    }
-    --end;
-  }
+  const std::size_t end = TerminalLineContentEnd(line);
   if (end == 0) {
     return std::nullopt;
   }
