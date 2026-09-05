@@ -202,8 +202,22 @@ bool GlobMatches(std::string_view pattern, std::string_view text,
     }
     return false;
   }
+  // Text exhausted: the rest of the pattern must be able to match nothing. A
+  // run of '*' can; so can a segment-anchored "**/" (zero directories) -- git's
+  // wildmatch accepts `**/*` against an empty remainder, which is what a rule
+  // like `a**/*` leaves once its literal prefix is stripped off the path `a`, so
+  // that rule ignores the directory `a` itself. A plain '*' followed by '/'
+  // cannot skip the separator (`a*/` does not match `a`).
   while (pi < plen && pattern[pi] == '*') {
-    ++pi;
+    const std::size_t star_start = pi;
+    while (pi < plen && pattern[pi] == '*') {
+      ++pi;
+    }
+    const bool before_ok = star_start == 0 || pattern[star_start - 1] == '/';
+    if (pi - star_start >= 2 && pi < plen && pattern[pi] == '/' &&
+        (double_star_always_crosses || before_ok)) {
+      ++pi;
+    }
   }
   return pi == plen;
 }

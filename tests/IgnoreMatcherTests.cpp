@@ -168,6 +168,20 @@ void TestIgnoreMatcherLiteralPrefixPromotesTheDoubleStarLikeGit() {
   Expect(matcher.Ignored("xaq/d", false), "and still matches within the segment");
 }
 
+// The prefix strip can leave an EMPTY remainder: `a**/*` against the directory
+// `a` hands wildmatch `**/*` and "", which git accepts, so `a` is ignored.
+void TestIgnoreMatcherLiteralPrefixConsumingTheWholePathStillMatches() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  WriteFile(root / ".gitignore", "a**/*\n");
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+  Expect(matcher.Ignored("a", true), "`a**/*` ignores the directory `a` itself");
+  Expect(matcher.Ignored("a", false), "and a file named `a`");
+  Expect(matcher.Ignored("ab/c", false), "and everything it names outright");
+}
+
 // `dir/**` also grays the directory itself (a deliberate display choice, see
 // Rule::Matches), but a negated `!dir/**` must not: git's rule never matches the
 // directory, so `*.c/` followed by `!*.c/**` leaves `x.c` ignored.
@@ -520,6 +534,8 @@ void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
           TestIgnoreMatcherNegationAndDirectoryRules);
   AddTest(tests, "IgnoreMatcher/LiteralPrefixPromotesTheDoubleStarLikeGit",
           TestIgnoreMatcherLiteralPrefixPromotesTheDoubleStarLikeGit);
+  AddTest(tests, "IgnoreMatcher/LiteralPrefixConsumingTheWholePathStillMatches",
+          TestIgnoreMatcherLiteralPrefixConsumingTheWholePathStillMatches);
   AddTest(tests, "IgnoreMatcher/NegatedDoubleStarDoesNotReincludeTheDirectory",
           TestIgnoreMatcherNegatedDoubleStarDoesNotReincludeTheDirectory);
   AddTest(tests, "IgnoreMatcher/DefaultRulesGrayVcsAndBuildDirs",

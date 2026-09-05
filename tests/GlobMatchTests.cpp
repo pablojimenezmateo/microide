@@ -16,6 +16,19 @@ using microide::project::GlobSet;
 // ignore rules and search scope filters share one definition of "what a glob
 // means". Lock in the FNM_PATHNAME semantics directly, independent of the
 // gitignore parsing layered on top in IgnoreMatcherTests.
+// git's wildmatch lets a leading `**/` stand for zero directories even when
+// there is nothing left to match, so `**/*` matches the empty string. That is
+// the remainder a rule like `a**/*` leaves against the directory `a` once the
+// literal prefix is stripped, and git ignores `a` by it. Found against
+// `git check-ignore`.
+void TestGlobDoubleStarSlashMatchesTheEmptyRemainder() {
+  Expect(GlobMatches("**/*", ""), "`**/*` matches an empty remainder");
+  Expect(GlobMatches("**/", ""), "`**/` matches an empty remainder");
+  Expect(!GlobMatches("*/", ""), "a plain `*` cannot skip the separator");
+  Expect(!GlobMatches("**/b", ""), "a literal after the wildcard still needs text");
+  Expect(!GlobMatches("a/**/*", "a"), "a separator before the wildcard still needs its text");
+}
+
 void TestGlobMatchesPathnameSemantics() {
   Expect(GlobMatches("*.cpp", "main.cpp"), "'*' should match within a segment");
   Expect(!GlobMatches("*.cpp", "src/main.cpp"), "'*' must not cross a '/'");
@@ -282,6 +295,8 @@ void TestGlobMatchesAgreesWithRecursiveReference() {
 }  // namespace
 
 void RegisterGlobMatchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "GlobMatch/DoubleStarSlashMatchesTheEmptyRemainder",
+          TestGlobDoubleStarSlashMatchesTheEmptyRemainder);
   AddTest(tests, "GlobMatch/DoubleStarConventions", TestGlobMatchesDoubleStarConventions);
   AddTest(tests, "GlobMatch/DoubleStarConsumesWholeSegments",
           TestGlobMatchesDoubleStarConsumesWholeSegments);
