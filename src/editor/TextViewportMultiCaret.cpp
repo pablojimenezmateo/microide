@@ -350,6 +350,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   // O(carets^2) per typed character with thousands of carets).
   std::vector<detail::MultiCaretRemapSite> sites(carets.size());
   bool changed = false;
+  bool collapsed_no_op = false;
   for (std::size_t i = carets.size(); i-- > 0;) {
     if (footprint_opens_at[i] != kNoFootprint) {
       const Footprint& f = footprints[footprint_opens_at[i]];
@@ -362,7 +363,20 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         planned[i].has_value() ? BuildRangeHistoryEntry(planned[i]->removed, planned[i]->replacement)
                                : std::nullopt;
     if (!entry.has_value()) {
-      sites[i] = detail::MultiCaretRemapSite{.landed = TextPosition{line, column}};
+      // No buffer change. A planned edit that came back empty is an exact no-op
+      // (the replacement reproduces the selected text): the caret still lands
+      // past its replacement, as the single-caret path does.
+      TextPosition landed{line, column};
+      if (planned[i].has_value()) {
+        const detail::ReplacementShape shape =
+            detail::ComputeReplacementShape(planned[i]->replacement);
+        landed = TextPosition{planned[i]->removed.start.line + shape.inserted_newlines,
+                              shape.inserted_newlines == 0
+                                  ? planned[i]->removed.start.column + shape.last_segment_cols
+                                  : shape.last_segment_cols};
+        collapsed_no_op = true;
+      }
+      sites[i] = detail::MultiCaretRemapSite{.landed = landed};
     } else {
       changed = true;
       ApplyHistoryEntry(*entry, true);
@@ -379,7 +393,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     }
   }
 
-  if (!changed) {
+  if (!changed && !collapsed_no_op) {
     return false;
   }
 
@@ -403,6 +417,12 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   SetSecondaryCarets(std::move(updated_secondary_carets));
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   selection_anchor_.reset();
+  if (!changed) {
+    // Every site was an exact no-op: the selections collapsed and the carets
+    // moved, but the buffer is untouched, so nothing to dirty or record.
+    EnsureCursorVisible();
+    return false;
+  }
   document_->placeholder = false;
   document_->dirty = true;
   EnsureCursorVisible();

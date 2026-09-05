@@ -1088,6 +1088,7 @@ add_executable(microide_tests
   tests/PieceTreeTests.cpp
   tests/EditorEssentialsTests.cpp
   tests/EditorWordMotionTests.cpp
+  tests/TextViewportMultiCaretReferenceTests.cpp
   tests/EditorRenderViewModelAllocationTests.cpp
   tests/PluginPresentationAllocationTests.cpp
   tests/PluginPathContainmentTests.cpp

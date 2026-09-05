@@ -874,6 +874,9 @@ class TextViewport {
   // Extract the document text spanned by a normalized (start <= end) range.
   bool ApplyRangeEdit(const SelectionRange& range, std::string_view replacement, bool record_undo,
                       CoalesceHint hint = CoalesceHint{});
+  // After ApplyRangeEdit rejected an exact no-op: if `range` is the current
+  // selection (or the caret point), collapse the selection past `replacement`.
+  void CollapseSelectionAfterNoOpEdit(const SelectionRange& range, std::string_view replacement);
   // Wrap `norm` (normalized, validated) by prepending `open` to its first line at
   // `norm.start.column` and appending `close` to its last line at `norm.end.column`,
   // touching only the boundary lines. Avoids materializing the whole selected text

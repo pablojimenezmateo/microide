@@ -1,4 +1,5 @@
 #include "editor/TextViewport.h"
+#include "editor/TextViewportInternal.h"
 
 #include <algorithm>
 #include <cctype>
@@ -959,6 +960,41 @@ TextViewport::HistoryEntry TextViewport::BuildLineHistoryEntry(
   };
 }
 
+void TextViewport::CollapseSelectionAfterNoOpEdit(const SelectionRange& range,
+                                                  std::string_view replacement) {
+  // BuildRangeHistoryEntry rejects a replacement that reproduces the covered
+  // text byte for byte, so the buffer is not dirtied and no undo entry is made
+  // (TD-2026-07-17A-092). The caret still has to move when the edit IS the
+  // user's own selection: typing `a` over a selected `a`, or Enter over a
+  // selected line break, collapses the selection past the typed text in VS
+  // Code. Left alone, the selection survived and the next keystroke replaced
+  // it, so typing "ab" over a selected "a" produced "b". A programmatic edit
+  // elsewhere in the buffer (an identical LSP or plugin replacement) does not
+  // touch the caret, exactly as before.
+  const std::optional<SelectionRange> selected = selection_range();
+  const SelectionRange normalized = NormalizeRange(range);
+  const TextPosition caret{cursor_line_, cursor_column_};
+  const bool at_selection = selected.has_value() && selected->start == normalized.start &&
+                            selected->end == normalized.end;
+  const bool at_caret = !selected.has_value() && normalized.start == caret &&
+                        normalized.end == caret;
+  if (!at_selection && !at_caret) {
+    return;
+  }
+  const detail::ReplacementShape shape = detail::ComputeReplacementShape(replacement);
+  TextPosition landed{normalized.start.line + shape.inserted_newlines,
+                      shape.inserted_newlines == 0
+                          ? normalized.start.column + shape.last_segment_cols
+                          : shape.last_segment_cols};
+  landed.line = std::min(landed.line, document_->lines.size() - 1);
+  landed.column = TextLayout::ClampTextColumn(document_->lines.LineView(landed.line), landed.column);
+  cursor_line_ = landed.line;
+  cursor_column_ = landed.column;
+  selection_anchor_.reset();
+  preferred_column_ = PreferredColumnForCaret(landed);
+  EnsureCursorVisible();
+}
+
 bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
                                   std::string_view replacement,
                                   bool record_undo,
@@ -971,6 +1007,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
   std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(range, replacement);
   if (!entry.has_value()) {
     ClearLastAppliedEdit();
+    CollapseSelectionAfterNoOpEdit(range, replacement);
     return false;
   }
 

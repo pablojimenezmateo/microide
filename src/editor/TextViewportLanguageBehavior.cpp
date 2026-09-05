@@ -624,7 +624,13 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
       const std::string replacement(1, static_cast<char>(ch));
       const std::optional<HistoryEntry> entry = BuildRangeHistoryEntry(norm, replacement);
       if (!entry.has_value()) {
-        sites[slot_index] = detail::MultiCaretRemapSite{.landed = TextPosition{line, column}};
+        // An exact no-op: the selection IS the typed character. The buffer stays
+        // put, but the selection still collapses past it -- at the end of the
+        // selected text, not at whichever end this caret happened to sit (see
+        // CollapseSelectionAfterNoOpEdit for the single-caret rule).
+        caret_changed = true;
+        sites[slot_index] = detail::MultiCaretRemapSite{
+            .landed = TextPosition{norm.start.line, norm.start.column + replacement.size()}};
         continue;
       }
       text_changed = true;
