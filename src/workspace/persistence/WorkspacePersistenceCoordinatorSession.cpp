@@ -413,6 +413,7 @@ bool PersistenceCoordinator::RestoreSessionState() {
       // LoadContent would SerializeLines(...) then re-split -- two extra full passes
       // over the buffer plus a throwaway joined string.
       restored_view.LoadLines(persisted_tab.buffer_lines, view_path, persisted_tab.line_ending);
+      restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
       // Apply preferences / indent detection first (they re-run EnsureCursorVisible),
       // then restore view state last so scroll survives independent of the caret.
       operations_.apply_editor_preferences(restored_view);
@@ -797,6 +798,7 @@ PersistenceCoordinator::BuildPersistedEditorTabState(std::size_t /*tab_index*/,
   persisted_tab.horizontal_scroll = horizontal_scroll;
   persisted_tab.dirty_snapshot = persist_dirty;
   persisted_tab.line_ending = persisted_viewport->line_ending();
+  persisted_tab.utf8_bom = persist_dirty && persisted_viewport->has_utf8_bom();
   persisted_tab.buffer_lines =
       persist_dirty ? persisted_viewport->lines().Snapshot() : std::vector<std::string>{};
   return persisted_tab;

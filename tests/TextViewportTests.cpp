@@ -5112,6 +5112,58 @@ void TestTextViewportFastLoadEmptyFile() {
          "empty file is a single empty line");
 }
 
+// A UTF-8 byte order mark is file metadata, not text: with it in the buffer the
+// caret sat before an invisible zero-width character at Home, `^`-anchored
+// highlighting and shebang detection missed line 1, and typing at the start of
+// the file put the new text in front of the mark. VS Code strips it on load and
+// writes it back on save; so does this.
+void TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave() {
+  const std::filesystem::path path =
+      WriteScratchFile("bom.txt", "\xEF\xBB\xBF#!/bin/sh\necho hi\n");
+  TextViewport view;
+  Expect(view.OpenFile(path), "BOM file opens");
+  Expect(view.has_utf8_bom(), "the BOM is remembered");
+  Expect(view.lines().LineView(0) == "#!/bin/sh",
+         "line 0 starts at the text, not at the mark");
+  Expect(view.EncodingLabel() == "UTF-8 with BOM", "the status label names the BOM");
+  Expect(view.SerializeDocumentText() == "\xEF\xBB\xBF#!/bin/sh\necho hi\n",
+         "the disk form reproduces the mark");
+
+  view.InsertText("// top\n");
+  Expect(view.Save(), "BOM file saves");
+  Expect(microide::util::ReadTextFile(path).value_or("") ==
+             "\xEF\xBB\xBF// top\n#!/bin/sh\necho hi\n",
+         "the mark is written back ahead of text typed at the start of the file");
+  Expect(view.has_utf8_bom(), "saving keeps the BOM flag");
+
+  // An all-ASCII file behind the mark classifies as ASCII once it is stripped,
+  // and a plain file never grows one.
+  TextViewport plain;
+  Expect(plain.OpenFile(WriteScratchFile("nobom.txt", "plain\n")), "plain file opens");
+  Expect(!plain.has_utf8_bom() && plain.EncodingLabel() == "UTF-8",
+         "a file without a mark reports plain UTF-8");
+  Expect(plain.Save() && microide::util::ReadTextFile(plain.path()).value_or("") == "plain\n",
+         "saving a plain file adds no mark");
+
+  // LoadContent (the compare pane's right side, a merge result) follows the
+  // same rule so a BOM file compared against its own blob has no line-0 change.
+  TextViewport loaded;
+  loaded.LoadContent("\xEF\xBB\xBF" "alpha\r\nbeta\r\n", path);
+  Expect(loaded.has_utf8_bom() && loaded.lines().LineView(0) == "alpha",
+         "LoadContent strips the mark");
+  Expect(loaded.SerializeDocumentText() == "\xEF\xBB\xBF" "alpha\r\nbeta\r\n",
+         "the CRLF disk form round-trips through LoadContent");
+
+  // A file that is only a mark is an empty buffer that still saves as a mark.
+  TextViewport only;
+  const std::filesystem::path only_path = WriteScratchFile("onlybom.txt", "\xEF\xBB\xBF");
+  Expect(only.OpenFile(only_path) && only.line_count() == 1 &&
+             only.lines().LineView(0).empty() && only.has_utf8_bom(),
+         "a BOM-only file is one empty line with the mark remembered");
+  Expect(only.Save() && microide::util::ReadTextFile(only_path).value_or("") == "\xEF\xBB\xBF",
+         "a BOM-only file saves back as the mark");
+}
+
 void TestTextViewportFastLoadDetectsEncoding() {
   TextViewport utf8;
   Expect(utf8.OpenFile(WriteScratchFile("utf8.txt", "café\nrésumé\n")),
@@ -5919,6 +5971,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportFastLoadEmptyFile);
   AddTest(tests, "TextViewport/FastLoadDetectsEncoding",
           TestTextViewportFastLoadDetectsEncoding);
+  AddTest(tests, "TextViewport/Utf8BomIsStrippedOnOpenAndWrittenOnSave",
+          TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave);
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
   AddTest(tests, "TextViewport/SplitSiblingEditRefreshesHighlightTokens",

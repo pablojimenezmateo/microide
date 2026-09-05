@@ -30,6 +30,9 @@ struct PersistedEditorTabState {
   std::size_t horizontal_scroll = 0;
   bool dirty_snapshot = false;
   editor::TextViewport::LineEnding line_ending = editor::TextViewport::LineEnding::LF;
+  // A dirty snapshot of a file that opened with a UTF-8 BOM: the buffer lines
+  // hold the text after the mark, and the restored viewport writes it back.
+  bool utf8_bom = false;
   std::vector<std::string> buffer_lines;
   std::filesystem::path compare_path;
   std::filesystem::path compare_left_path;

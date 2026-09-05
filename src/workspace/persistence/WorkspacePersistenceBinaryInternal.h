@@ -166,6 +166,7 @@ enum class EditorTabTag : std::uint16_t {
   // with defaults (empty string).
   CompareReviewMode = 31,
   CompareStagingView = 32,
+  Utf8Bom = 33,
 };
 
 enum class WorkspaceSessionTag : std::uint16_t {
@@ -313,6 +314,8 @@ bool ReadStringRecord(EnumTag expected_tag,
                       return w.WriteU8(static_cast<std::uint8_t>(tab.line_ending));
                     },
                     out) ||
+      !AppendRecord(EditorTabTag::Utf8Bom,
+                    [&](PrimitiveWriter& w) { return w.WriteBool(tab.utf8_bom); }, out) ||
       !AppendRecord(EditorTabTag::ComparePath,
                     [&](PrimitiveWriter& w) { return w.WritePath(tab.compare_path); }, out) ||
       !AppendRecord(EditorTabTag::CompareLeftPath,
@@ -412,6 +415,8 @@ inline constexpr std::size_t kMaxSessionTabsPerGroup = 4096;
             return ReadSize(reader, &tab->horizontal_scroll) && reader.remaining() == 0;
           case EditorTabTag::DirtySnapshot:
             return reader.ReadBool(&tab->dirty_snapshot) && reader.remaining() == 0;
+          case EditorTabTag::Utf8Bom:
+            return reader.ReadBool(&tab->utf8_bom) && reader.remaining() == 0;
           case EditorTabTag::LineEnding: {
             std::uint8_t line_ending = 0;
             if (!reader.ReadU8(&line_ending) || reader.remaining() != 0 || line_ending > 2) {

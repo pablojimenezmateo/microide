@@ -86,8 +86,7 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
   bool right_exists = true;
   if (compare_tab.right_ref == "WORKTREE") {
     if (compare_tab.right_viewport.dirty()) {
-      right_content = util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
-                                           compare_tab.right_viewport.line_ending());
+      right_content = compare_tab.right_viewport.SerializeDocumentText();
     } else {
       // Only a truly-absent worktree file maps to empty; an unreadable or binary
       // file is an error state, not a whole-file-deleted diff.
@@ -537,8 +536,7 @@ void WorkspaceShell::RefreshCompareTabDerivedState(CompareTabState& compare_tab)
   if (content_changed) {
     util::PerformanceTrace::Scope rebuild_scope(
         "WorkspaceShell::RefreshCompareTabDerivedState::RebuildModel");
-    const std::string right_content =
-        util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()), right_line_ending);
+    std::string right_content = compare_tab.right_viewport.SerializeDocumentText(right_line_ending);
     // In place, recycling the previous build's row storage: a fresh model is two
     // string allocations per row, and this runs on every keystroke in the
     // editable pane (TD-2026-08-13-208).

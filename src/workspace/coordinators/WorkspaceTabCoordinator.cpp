@@ -113,8 +113,7 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
       return false;
     }
     merge_tab.persisted_output_baseline =
-        util::SerializeLinesStreaming(editor::LineSpan(merge_tab.result_viewport.lines()),
-                                      merge_tab.result_line_ending);
+        merge_tab.result_viewport.SerializeDocumentText(merge_tab.result_line_ending);
     // Our own atomic write+rename bumps the mtime; sync disk_result_tick to it and
     // clear any prior external-stale flag so the async file-change event does not
     // misread this save as an external modification. Without this, saving the merge

@@ -125,6 +125,22 @@ std::vector<std::string> SplitOnLineFeedOnly(std::string_view content) {
 
 }  // namespace
 
+// Drop a leading UTF-8 byte order mark from text content, returning whether one
+// was there. Opaque/binary content keeps every byte. The stripped text is what the
+// buffer holds; `has_utf8_bom` remembers to write it back.
+//
+// Detection runs on the stripped text: the three BOM bytes are valid UTF-8, so
+// an otherwise all-ASCII file would classify as UTF8 rather than ASCII, and the
+// ASCII tier is the fast path every per-edit encoding upgrade starts from.
+bool TextViewport::StripUtf8Bom(std::string& content, TextEncoding& encoding) {
+  if (encoding == TextEncoding::Bytes || !util::HasUtf8Bom(content)) {
+    return false;
+  }
+  content.erase(0, util::kUtf8Bom.size());
+  encoding = DetectEncoding(content);
+  return true;
+}
+
 bool TextViewport::OpenFile(const std::filesystem::path& path) {
   util::PerformanceTrace::ScopeLabel perf_label("TextViewport::OpenFile");
   perf_label.Field("path", path);
@@ -144,10 +160,12 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
   // string, so a dense CRLF file could force one allocation per line on open.
   LineEndingMetadata metadata;
   TextEncoding encoding = TextEncoding::UTF8;
+  bool utf8_bom = false;
   {
     util::PerformanceTrace::Scope scope("TextViewport::OpenFile::ClassifyContent");
-    metadata = AnalyzeLineEndings(*content);
     encoding = DetectEncoding(*content);
+    utf8_bom = StripUtf8Bom(*content, encoding);
+    metadata = AnalyzeLineEndings(*content);
   }
   if (encoding == TextEncoding::Bytes) {
     // Opaque/binary content: a 0x0D or 0x0A is data, not a line ending. Split on '\n'
@@ -167,6 +185,7 @@ bool TextViewport::OpenFile(const std::filesystem::path& path) {
     ResetStateFromText(std::move(canonical), path, metadata.line_ending,
                        metadata.mixed_line_endings, encoding, false, false);
   }
+  document_->utf8_bom = utf8_bom;
   return true;
 }
 
@@ -211,9 +230,14 @@ bool TextViewport::Save() {
   // clean-save path streams straight from the live TextBuffer (zero-copy via LineView)
   // instead of materializing a whole-document vector with Snapshot() before the join
   // (TD-2026-07-17A-013).
-  const std::string text =
+  std::string text =
       changed ? util::SerializeLines(normalized, effective_ending)
               : util::SerializeLinesStreaming(LineSpan(document_->lines), effective_ending);
+  if (document_->utf8_bom && !opaque) {
+    // The mark was stripped on open so the buffer's line 0 starts at the text;
+    // the file keeps it.
+    text.insert(0, util::kUtf8Bom);
+  }
   if (!util::WriteTextFileAtomically(document_->path, text)) {
     return false;
   }
@@ -296,8 +320,7 @@ void TextViewport::LoadContent(std::string_view content,
                                const std::filesystem::path& path,
                                std::optional<LineEnding> line_ending) {
   EnsureDocument();
-  const LineEndingMetadata metadata = AnalyzeLineEndings(content);
-  const TextEncoding encoding = DetectEncoding(content);
+  TextEncoding encoding = DetectEncoding(content);
   if (encoding == TextEncoding::Bytes) {
     // Same opaque-bytes handling as OpenFile: preserve CR bytes and force an LF ending so a
     // restored binary buffer saves back byte-for-byte.
@@ -305,10 +328,30 @@ void TextViewport::LoadContent(std::string_view content,
                /*mixed_line_endings=*/false, encoding, /*placeholder=*/false, /*dirty=*/false);
     return;
   }
+  // Same BOM rule as OpenFile, on the view rather than an owned string: the
+  // compare pane's right side and a merge result load through here, and both
+  // serialize back through SerializeDocumentText, which puts the mark back.
+  const bool utf8_bom = util::HasUtf8Bom(content);
+  if (utf8_bom) {
+    content.remove_prefix(util::kUtf8Bom.size());
+    encoding = DetectEncoding(content);
+  }
+  const LineEndingMetadata metadata = AnalyzeLineEndings(content);
   ResetStateFromText(CanonicalizeLineEndingsToLf(content, metadata), path,
                      line_ending.value_or(metadata.line_ending),
                      line_ending.has_value() ? false : metadata.mixed_line_endings,
                      encoding, false, false);
+  document_->utf8_bom = utf8_bom;
+}
+
+std::string TextViewport::SerializeDocumentText(std::optional<LineEnding> line_ending) const {
+  const LineEnding ending = line_ending.value_or(document_->line_ending);
+  if (!document_->utf8_bom) {
+    return util::SerializeLinesStreaming(LineSpan(document_->lines), ending);
+  }
+  std::string text(util::kUtf8Bom);
+  text += util::SerializeLinesStreaming(LineSpan(document_->lines), ending);
+  return text;
 }
 
 void TextViewport::LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,
@@ -356,7 +399,7 @@ std::string TextViewport::EncodingLabel() const {
       // VSCode says UTF-8 for both; the enum keeps the two apart only because
       // ascii_only is the detection fast path that skips the UTF-8 validation.
     case TextEncoding::UTF8:
-      return "UTF-8";
+      return document_->utf8_bom ? "UTF-8 with BOM" : "UTF-8";
     case TextEncoding::Bytes:
     default:
       return "Bytes";

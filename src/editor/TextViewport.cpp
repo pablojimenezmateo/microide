@@ -1274,6 +1274,7 @@ void TextViewport::ResetMetadataAfterContent(const std::filesystem::path& path,
   document_->line_ending = line_ending;
   document_->mixed_line_endings = mixed_line_endings;
   document_->encoding = encoding;
+  document_->utf8_bom = false;
   cursor_line_ = 0;
   cursor_column_ = 0;
   preferred_column_ = 0;

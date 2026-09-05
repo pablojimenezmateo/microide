@@ -318,6 +318,53 @@ void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
          "saving the compare tab should persist the edited current-state text");
 }
 
+// A BOM file's working-tree compare: the blob carries the mark and the editable
+// pane strips it, so the pane's serialization has to put it back or line 1 reads
+// as modified forever, and saving the pane has to write it back.
+void TestWorkspaceShellWorkingTreeCompareKeepsUtf8Bom() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "\xEF\xBB\xBF" "first\nsecond\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add BOM fixture", "BOM fixture");
+  WriteFile(source, "\xEF\xBB\xBF" "first\nsecond\nthird\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_viewport.has_utf8_bom() &&
+             compare.right_viewport.lines().LineView(0) == "first",
+         "the editable pane strips the mark");
+  std::size_t changed_rows = 0;
+  for (const auto& row : compare.model.rows) {
+    if (row.kind != microide::compare::CompareRowKind::Unchanged) {
+      ++changed_rows;
+    }
+  }
+  Expect(changed_rows == 1 && !compare.model.rows.empty() &&
+             compare.model.rows[0].kind == microide::compare::CompareRowKind::Unchanged &&
+             compare.model.rows[0].left_text == compare.model.rows[0].right_text,
+         "only the appended line differs; line 1 is not a phantom change, got " +
+             std::to_string(changed_rows) + " changed rows over " +
+             std::to_string(compare.model.rows.size()) + ", row 0 left [" +
+             std::string(compare.model.rows[0].left_text) + "] right [" +
+             std::string(compare.model.rows[0].right_text) + "]");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "> "),
+         "text input should edit the compare current-state pane");
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, 0), "saving the compare tab should write");
+  // The pane opens on the first change (line 3), so the text lands there; the
+  // saved file still starts with the mark.
+  Expect(ReadFile(source) == "\xEF\xBB\xBF" "first\nsecond\n> third\n",
+         "saving the pane writes the mark back ahead of the text");
+}
+
 // TD-2026-08-13-207: the compare pane's key handling was a hand-maintained subset
 // of the editor's, so it silently lacked whatever nobody remembered to copy —
 // here, Shift+Tab outdent and Tab-indents-a-multi-line-selection. Both surfaces
@@ -2536,6 +2583,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
+  AddTest(tests, "WorkspaceShell/WorkingTreeCompareKeepsUtf8Bom",
+          TestWorkspaceShellWorkingTreeCompareKeepsUtf8Bom);
   AddTest(tests, "WorkspaceShell/CompareWordWrapExpandsRowsAndKeepsPanesAligned",
           TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned);
   AddTest(tests, "WorkspaceShell/MergeWordWrapExpandsRows",

@@ -294,6 +294,33 @@ void TestProjectSearchServiceUnicodeCaseFolding() {
   Expect(sensitive.results.size() == 1, "uppercase É forces a case-sensitive smart search");
 }
 
+// The editor strips a UTF-8 BOM on open, so a hit on the first line has to be
+// reported in the columns of the text behind the mark or jumping to it lands
+// three bytes late (and a query anchored at `^` never matches line 1).
+void TestProjectSearchServiceSkipsUtf8Bom() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  WriteFile(root / "bom.txt", "\xEF\xBB\xBF" "alpha beta\nalpha\n");
+  const auto indexed_files =
+      project::CollectProjectFiles(root, project::ProjectFileScanMode::ExcludeHidden);
+
+  ProjectSearchOptions options;
+  const auto run = RunProjectSearch(root, "alpha", options, indexed_files);
+  Expect(run.finished && run.error.empty(), "the search finishes without error");
+  Expect(run.results.size() == 2, "both lines of the BOM file match");
+  for (const auto& result : run.results) {
+    Expect(result.column == 0,
+           "a hit at the start of a line is column 0 on line " + std::to_string(result.line) +
+               " (got " + std::to_string(result.column) + ")");
+  }
+
+  ProjectSearchOptions regex_options;
+  regex_options.pattern_mode = ProjectSearchPatternMode::Regex;
+  const auto anchored = RunProjectSearch(root, "^alpha", regex_options, indexed_files);
+  Expect(anchored.finished && anchored.results.size() == 2,
+         "a `^`-anchored query matches the first line behind the mark");
+}
+
 void TestProjectSearchServiceNormalizesPreviewWhitespace() {
   TemporaryDirectory temp_dir;
   const auto root = temp_dir.path() / "workspace";
@@ -979,6 +1006,7 @@ void RegisterProjectSearchServiceTests(std::vector<TestCase>& tests) {
           TestProjectSearchServiceLiteralModesAndCaseControls);
   AddTest(tests, "ProjectSearchService/UnicodeCaseFolding",
           TestProjectSearchServiceUnicodeCaseFolding);
+  AddTest(tests, "ProjectSearchService/SkipsUtf8Bom", TestProjectSearchServiceSkipsUtf8Bom);
   AddTest(tests, "ProjectSearchService/NormalizesPreviewWhitespace",
           TestProjectSearchServiceNormalizesPreviewWhitespace);
   AddTest(tests, "ProjectSearchService/RegexModeAndInvalidRegex",

@@ -1,5 +1,7 @@
 #include "util/TextFileIO.h"
 
+#include "util/StringUtil.h"
+
 #include <cstddef>
 #include <cstring>
 #include <fstream>
@@ -252,6 +254,12 @@ bool ReadFileForTextSearch(const std::filesystem::path& path, std::string& out,
     // first NUL, so binaries with an early NUL cost only one scan up to it.
     if (std::memchr(out.data(), '\0', out.size()) != nullptr) {
       return false;
+    }
+    // The editor strips a UTF-8 byte order mark on open, so a match on line 0
+    // must be reported in columns of the text after it or the jump-to-result
+    // lands three bytes late.
+    if (HasUtf8Bom(out)) {
+      out.erase(0, kUtf8Bom.size());
     }
   }
   return true;

@@ -99,9 +99,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
     }
     // The serialized right buffer has to outlive the input: its content fields are
     // views now, so binding the temporary directly would dangle by the next line.
-    const std::string plain_right_content =
-        util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
-                                      compare_tab.right_viewport.line_ending());
+    const std::string plain_right_content = compare_tab.right_viewport.SerializeDocumentText();
     compare::CompareSemanticMetadataInput plain_semantic_input{
         .path = compare_tab.path,
         .left_content = *compare_tab.left_content,
@@ -126,9 +124,7 @@ void ApplyCompareTabReviewMetadata(CompareTabState& compare_tab,
     return;
   }
   // Same lifetime rule as the plain branch above: the input holds views.
-  const std::string right_content =
-      util::SerializeLinesStreaming(editor::LineSpan(compare_tab.right_viewport.lines()),
-                                    compare_tab.right_viewport.line_ending());
+  const std::string right_content = compare_tab.right_viewport.SerializeDocumentText();
   compare::CompareSemanticMetadataInput semantic_input{
       .path = compare_tab.path,
       .left_content = *compare_tab.left_content,

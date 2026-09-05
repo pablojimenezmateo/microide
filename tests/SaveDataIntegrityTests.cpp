@@ -358,8 +358,12 @@ void TestSavePreservesUtf8Bom() {
 
   TextViewport viewport;
   Expect(viewport.OpenFile(path), "opening a UTF-8 BOM file should succeed");
-  Expect(viewport.encoding() == TextViewport::TextEncoding::UTF8,
+  Expect(viewport.encoding() != TextViewport::TextEncoding::Bytes,
          "a UTF-8 BOM is valid UTF-8 and must not be misclassified as binary");
+  // The mark is stripped from the buffer (it is file metadata, not text) and
+  // remembered, so the save writes it back.
+  Expect(viewport.has_utf8_bom() && viewport.lines().LineView(0) == "hello",
+         "the BOM is remembered and kept out of line 0");
   Expect(viewport.Save(), "clean save should succeed");
   Expect(ReadFile(path) == original, "a clean save must preserve the UTF-8 BOM bytes verbatim");
 }

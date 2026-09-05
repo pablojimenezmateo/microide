@@ -14,6 +14,17 @@ namespace microide::util {
 // UTF-8 encoding of U+FFFD REPLACEMENT CHARACTER, emitted for malformed input.
 inline constexpr std::string_view kUtf8ReplacementChar = "\xEF\xBF\xBD";
 
+// UTF-8 encoding of U+FEFF, the byte order mark some Windows tools write at the
+// start of a text file. The editor strips it on load and writes it back on save
+// (see TextViewport::has_utf8_bom); everything that reads a file's bytes for
+// line/column purposes must skip it the same way or its line-0 columns disagree
+// with the buffer's.
+inline constexpr std::string_view kUtf8Bom = "\xEF\xBB\xBF";
+
+[[nodiscard]] inline bool HasUtf8Bom(std::string_view text) {
+  return text.starts_with(kUtf8Bom);
+}
+
 enum class LineEnding {
   LF,
   CRLF,

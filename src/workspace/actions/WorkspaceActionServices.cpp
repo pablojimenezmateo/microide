@@ -491,8 +491,7 @@ std::optional<CompareInput> WorkspaceActionContext::ResolveCurrentCompareInput(
     if (editor::TextViewport* viewport = operations_.active_editor_viewport(); viewport != nullptr) {
       const std::filesystem::path path = viewport->path().lexically_normal();
       CompareInput input;
-      input.content = util::SerializeLinesStreaming(editor::LineSpan(viewport->lines()),
-                                    viewport->line_ending());
+      input.content = viewport->SerializeDocumentText();
       input.path = path;
       input.label = path.empty() ? std::string("Untitled") : path.filename().string();
       input.editable = !path.empty();

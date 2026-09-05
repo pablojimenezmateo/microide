@@ -647,6 +647,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
            a.compare_divider_fraction == b.compare_divider_fraction &&
            a.compare_review_mode == b.compare_review_mode &&
            a.compare_staging_view == b.compare_staging_view &&
+           a.utf8_bom == b.utf8_bom &&
            a.merge_base_path == b.merge_base_path &&
            a.merge_incoming_path == b.merge_incoming_path &&
            a.merge_current_path == b.merge_current_path &&
@@ -694,6 +695,7 @@ void TestPersistedStateProjectSessionRoundTripsRandomContent() {
             tab.scroll_line = random_size();
             tab.horizontal_scroll = random_size();
             tab.dirty_snapshot = next(2) == 0;
+            tab.utf8_bom = next(2) == 0;
             tab.line_ending = next(2) == 0 ? microide::util::LineEnding::LF
                                            : microide::util::LineEnding::CRLF;
             if (tab.dirty_snapshot) {

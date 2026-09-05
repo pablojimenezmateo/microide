@@ -399,6 +399,17 @@ class TextViewport {
   LineEnding line_ending() const { return document_->line_ending; }
   bool has_mixed_line_endings() const { return document_->mixed_line_endings; }
   TextEncoding encoding() const { return document_->encoding; }
+  // True when the file opened with a UTF-8 byte order mark. The BOM is not part
+  // of the buffer (line 0 starts at the first real byte, so Home, `^` regexes
+  // and shebang detection see the text, as in VS Code); Save writes it back and
+  // SerializeDocumentText reproduces the on-disk form for comparisons.
+  bool has_utf8_bom() const { return document_->utf8_bom; }
+  void SetUtf8Bom(bool has_bom) { document_->utf8_bom = has_bom; }
+  // The document as it would be written to disk: the BOM, if any, then the lines
+  // joined with `line_ending` (the document's own by default). Use it wherever
+  // the buffer stands in for the file -- a compare against a git blob, a merge
+  // result baseline -- so a BOM file does not read as modified on line 0.
+  std::string SerializeDocumentText(std::optional<LineEnding> line_ending = std::nullopt) const;
   std::string LineEndingLabel() const;
   std::string EncodingLabel() const;
   LayoutLine VisibleLineLayout(std::size_t line_index) const;
@@ -672,6 +683,7 @@ class TextViewport {
     LineEnding line_ending = LineEnding::LF;
     bool mixed_line_endings = false;
     TextEncoding encoding = TextEncoding::ASCII;
+    bool utf8_bom = false;
     bool placeholder = true;
     bool dirty = false;
     // Four-tier cache-invalidation revisions. Each counter monotonically
@@ -997,6 +1009,7 @@ class TextViewport {
   }
   static TextEncoding DetectEncoding(std::string_view content);
   static TextEncoding DetectEncoding(LineSpan lines);
+  static bool StripUtf8Bom(std::string& content, TextEncoding& encoding);
   static bool IsBefore(const TextPosition& lhs, const TextPosition& rhs);
 
   // Lines that have changed since the folding model last resynced. Consumed (and
