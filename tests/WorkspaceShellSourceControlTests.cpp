@@ -668,6 +668,59 @@ void TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes() {
          "it rather than permanently deleting it with git clean");
 }
 
+// A staged NEW file has no committed content to restore either. Discarding its
+// Staged row used to run `git clean -f` on it -- a permanent deletion behind the
+// same prompt that promises the trash policy, and unlike Discard All, which already
+// trashed such files. It is now unstaged and trashed like the untracked row it is.
+void TestWorkspaceShellGitSidebarDiscardStagedNewFileTrashesNotDeletes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path trash_home = temp_dir.path() / "xdg-data-home";
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
+
+  const std::filesystem::path tracked = root / "tracked.cpp";
+  WriteFile(tracked, "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  const std::filesystem::path added = root / "notes.txt";
+  WriteFile(added, "important staged notes\n");
+  RequireGitCommandSuccess(root, {"add", "notes.txt"}, "stage the new file");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1), "the staged new file should surface as one row");
+  const auto& entries = WorkspaceShellTestAccess::GitSidebarEntries(shell);
+  Expect(!entries.empty() && entries[0].section == WorkspaceShell::GitSidebarEntry::Section::Staged &&
+             entries[0].status == microide::project::GitFileStatus::Added,
+         "the row should be a staged Added file");
+
+  WorkspaceShellTestAccess::RevealGitSidebarEntry(shell, 0);
+  Expect(SendKeyDown(shell, SDLK_X, SDL_KMOD_NONE), "discard shortcut should be handled");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "discard asks for confirmation");
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(WaitForGitSidebarEntryCount(shell, 0), "the discarded row is gone after refresh");
+  Expect(!std::filesystem::exists(added), "the file is gone from the worktree");
+  Expect(RunGitCommand(root, {"diff", "--cached", "--quiet"}) == 0, "nothing stays staged");
+
+  const std::filesystem::path trash_files = trash_home / "Trash" / "files";
+  bool trashed_content_found = false;
+  std::error_code ec;
+  if (std::filesystem::is_directory(trash_files, ec)) {
+    for (const auto& entry : std::filesystem::directory_iterator(trash_files, ec)) {
+      if (entry.is_regular_file(ec) &&
+          ReadFile(entry.path()).find("important staged notes") != std::string::npos) {
+        trashed_content_found = true;
+        break;
+      }
+    }
+  }
+  Expect(trashed_content_found,
+         "the staged new file's content must be recoverable from trash, not git-clean-deleted");
+}
+
 void TestWorkspaceShellGitSidebarKeyboardStageShortcut() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -1107,6 +1160,8 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarDiscardRequiresConfirmation);
   AddTest(tests, "WorkspaceShell/GitSidebarDiscardUntrackedFileTrashesNotDeletes",
           TestWorkspaceShellGitSidebarDiscardUntrackedFileTrashesNotDeletes);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardStagedNewFileTrashesNotDeletes",
+          TestWorkspaceShellGitSidebarDiscardStagedNewFileTrashesNotDeletes);
   AddTest(tests, "WorkspaceShell/GitSidebarKeyboardStageShortcut",
           TestWorkspaceShellGitSidebarKeyboardStageShortcut);
   AddTest(tests, "WorkspaceShell/GitStageFailureSurfacesFeedback",

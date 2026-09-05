@@ -558,7 +558,18 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
   // GitDiscardPath's untracked branch runs `git clean -fd`, which permanently destroys
   // the file despite the prompt — a silent data-loss contract violation. Tracked-path
   // discard stays a git restore.
-  if (entry->section == GitSidebarEntry::Section::Untracked) {
+  // A staged NEW file (status Added, not a rename destination) has no committed
+  // content to restore either: GitDiscardPath would `git clean -f` it, which is the
+  // same permanent deletion, behind the same prompt. Unstage it and trash the file
+  // like the untracked row it becomes -- the policy DiscardAll already applies.
+  const bool staged_new_file = entry->status == project::GitFileStatus::Added &&
+                               !entry->is_staged_rename;
+  if (entry->section == GitSidebarEntry::Section::Untracked || staged_new_file) {
+    if (staged_new_file &&
+        !project::GitUnstagePath(project_root_, entry->path, /*may_be_staged_rename=*/false)) {
+      ReportGitOperationFailure("discard", *entry);
+      return false;
+    }
     if (!project::FileOperationService::TrashPath(entry->path).ok) {
       ReportGitOperationFailure("discard", *entry);
       return false;
