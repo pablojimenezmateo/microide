@@ -1193,16 +1193,20 @@ void AssistService::PublishReferenceMerge(const std::shared_ptr<NavigationMerge>
     if (location.path.empty()) {
       continue;
     }
-    plugin_targets.push_back(RefTarget{location.path, location.line,
-                                       ReferenceColumn::Character1Based(location.column)});
+    plugin_targets.push_back(
+        RefTarget{location.path, location.line, ReferenceColumn::PluginByte(location.column)});
   }
 
   const auto& primary = merge->sources.lsp_authoritative ? lsp_targets : plugin_targets;
   const auto& secondary = merge->sources.lsp_authoritative ? plugin_targets : lsp_targets;
   const std::vector<RefTarget> merged =
       assist_merge::RankedUnion(primary, secondary, [](const RefTarget& target) {
-        const std::size_t units = target.column.lsp_units ? target.column.value + 1
-                                                          : target.column.value;
+        // Both sources count bytes on an ASCII line (a utf-8 server everywhere),
+        // which is the only case where the two can name one location.
+        const std::size_t units =
+            target.column.units == ReferenceColumn::Units::LspCodeUnit0Based
+                ? target.column.value + 1
+                : target.column.value;
         return target.path.generic_string() + ":" + std::to_string(target.line) + ":" +
                std::to_string(units);
       });
@@ -1962,20 +1966,21 @@ void AssistService::EmitReferenceEntry(
     }
   }
 
-  // The 1-based character column the header prints. A plugin column is already
-  // one; a server offset is mapped through the target row when it was read
-  // (an unreadable target keeps the raw units -- there is nothing to map by).
-  std::size_t display_column = column.lsp_units ? column.value + 1 : column.value;
-  if (column.lsp_units) {
-    for (std::size_t i = 0; i < row_count; ++i) {
-      if (rows[i].number != target_line) {
-        continue;
-      }
-      const std::size_t byte_column =
-          lsp_encoding::LspCharacterToByteColumn(rows[i].text, column.value, column.encoding);
-      display_column = util::Utf8CodepointCount(rows[i].text.substr(0, byte_column)) + 1;
-      break;
+  // The 1-based character column the header prints, mapped through the target
+  // row when it was read (an unreadable target keeps the raw units -- there is
+  // nothing to map by).
+  const bool lsp_units = column.units == ReferenceColumn::Units::LspCodeUnit0Based;
+  std::size_t display_column = lsp_units ? column.value + 1 : column.value;
+  for (std::size_t i = 0; i < row_count; ++i) {
+    if (rows[i].number != target_line) {
+      continue;
     }
+    const std::size_t byte_column =
+        lsp_units ? lsp_encoding::LspCharacterToByteColumn(rows[i].text, column.value,
+                                                           column.encoding)
+                  : std::min(column.value > 0 ? column.value - 1 : 0, rows[i].text.size());
+    display_column = util::Utf8CodepointCount(rows[i].text.substr(0, byte_column)) + 1;
+    break;
   }
 
   const std::string label =

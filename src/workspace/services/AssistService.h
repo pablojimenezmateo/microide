@@ -293,23 +293,24 @@ class AssistService {
   // message when no client exists.
   LspClient* PrepareLspRequest(editor::TextViewport& viewport, std::string* error_message);
   // The column of a reference entry, in whichever units its source spoke. A plugin
-  // provider reports a 1-based character column; a language server reports a
-  // 0-based offset in its negotiated position encoding (bytes for clangd and
-  // rust-analyzer, UTF-16 units by default), which is only a character column on
-  // an ASCII line. The emitter resolves both through the target line's text, so
-  // the printed `path:line:col` names the character the Output click handler
-  // then jumps to.
+  // provider reports a 1-based BYTE column (Lua strings are bytes, and that is
+  // what the host hands it); a language server reports a 0-based offset in its
+  // negotiated position encoding (bytes for clangd and rust-analyzer, UTF-16
+  // units by default). Either is only a character column on an ASCII line. The
+  // emitter resolves both through the target line's text, so the printed
+  // `path:line:col` names the character the Output click handler then jumps to.
   struct ReferenceColumn {
+    enum class Units { PluginByte1Based, LspCodeUnit0Based };
     std::size_t value = 0;
-    bool lsp_units = false;
+    Units units = Units::PluginByte1Based;
     lsp_encoding::PositionEncoding encoding = lsp_encoding::PositionEncoding::Utf8;
 
-    static ReferenceColumn Character1Based(std::size_t column) {
-      return ReferenceColumn{.value = column, .lsp_units = false};
+    static ReferenceColumn PluginByte(std::size_t column) {
+      return ReferenceColumn{.value = column, .units = Units::PluginByte1Based};
     }
     static ReferenceColumn LspCharacter(int character, lsp_encoding::PositionEncoding encoding) {
       return ReferenceColumn{.value = static_cast<std::size_t>(std::max(0, character)),
-                             .lsp_units = true,
+                             .units = Units::LspCodeUnit0Based,
                              .encoding = encoding};
     }
   };
