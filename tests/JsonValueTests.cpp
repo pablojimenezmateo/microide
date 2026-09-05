@@ -8,6 +8,7 @@
 #include <cmath>
 #include <limits>
 #include <string>
+#include <string_view>
 
 namespace microide::tests {
 namespace {
@@ -409,7 +410,53 @@ void TestDoubleSerializesInShortestRoundTripForm() {
          "a repeating fraction stays in shortest form");
 }
 
+
+// Grammar conformance table derived from the JSONTestSuite y_/n_ cases (RFC 8259):
+// every accepted text is well-formed JSON and every rejected one is not. The parser
+// feeds LSP/DAP/control-channel decoding, so a lenient accept or a strict reject
+// here is a protocol bug, not a style choice.
+void TestParseJsonConformanceTable() {
+  static constexpr std::string_view kValid[] = {
+      "[]", " [] ", "{}", "[1]", "[1,2]", "{\"a\":1}", "{\"a\":\"b\",\"a\":\"c\"}",
+      "\"\\u0000\"", "\"\\uFFFF\"", "\"\\ud83d\\ude00\"", "[0e1]", "[0e+1]", "[-0]",
+      "[1E22]", "[1e-2]", "[-123]", "[20e1]", "[1.5]", "\"\xe2\x80\xa8\"", "[\"\\/\"]",
+      "\"\\\"\"", "[true,false,null]", "[[[[]]]]", "{\"\":0}", "[ 1 , 2 ]", "\"\\t\"",
+      "123", "\"x\"", "true", "null", "\t\n\r [1]\n", "[1e-400]", "[-1e-400]", "[1e400]",
+      "{\"a\":{\"b\":[{}]}}", "\"\\u00e9\"", "\"caf\xc3\xa9\"",
+  };
+  static constexpr std::string_view kInvalid[] = {
+      "[1,]", "{\"a\":1,}", "[,1]", "[1,,2]", "{1:1}", "{\"a\" 1}", "{\"a\":}", "[\"\\x00\"]",
+      "[\"\\a\"]", "[\"\\uD800\"]", "[\"\\uD800\\n\"]", "[\"\\uDC00\"]", "[\"\\u12\"]",
+      "[\"\"]x", "{\"a\":1} \"x\"", "[1] [2]", "01", "-01", "1.", ".5", "+1", "1e", "1e+",
+      "1eE2", "0x42", "Infinity", "NaN", "- 1", "1 000", "[1", "{\"a\":1", "\"abc", "'a'",
+      "[\f1]", "[\"a\tb\"]", "[\xe2\x80\xa8]", "tru", "nul", "True", "", "  ", "[1]x",
+      "\xe9", "[\"\\", "{\"a\":1}}", "[\"\\u00zz\"]", "{\"a\":1 \"b\":2}", "[1 2]",
+  };
+  for (std::string_view text : kValid) {
+    Expect(ParseJson(text).has_value(), "well-formed JSON must parse: " + std::string(text));
+  }
+  for (std::string_view text : kInvalid) {
+    Expect(!ParseJson(text).has_value(), "malformed JSON must be rejected: " + std::string(text));
+  }
+
+  // Number semantics: an underflowing literal is zero (not infinity, which the
+  // overflow fallback deliberately produces), and -0 keeps the sign as a double
+  // or reads as integer zero.
+  const auto tiny = ParseJson("[1e-400]");
+  Expect(tiny.has_value() && (*tiny)[0].AsDouble(-1.0) == 0.0,
+         "1e-400 underflows to zero, not to infinity");
+  const auto huge = ParseJson("[1e400]");
+  Expect(huge.has_value() && std::isinf((*huge)[0].AsDouble()),
+         "1e400 overflows to infinity (documented fallback)");
+  const auto surrogate = ParseJson("\"\\ud83d\\ude00\"");
+  Expect(surrogate.has_value() && surrogate->AsString() == "\xf0\x9f\x98\x80",
+         "a surrogate pair decodes to one 4-byte UTF-8 scalar");
+  const auto dup = ParseJson("{\"a\":\"b\",\"a\":\"c\"}");
+  Expect(dup.has_value() && (*dup)["a"].AsString() == "c", "the last duplicate key wins");
+}
+
 void RegisterJsonValueTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "JsonValue/ParseConformanceTable", TestParseJsonConformanceTable);
   AddTest(tests, "JsonValue/NumberFormattingIsLocaleIndependent",
           TestNumberFormattingIsLocaleIndependent);
   AddTest(tests, "JsonValue/DoubleSerializesInShortestRoundTripForm",
