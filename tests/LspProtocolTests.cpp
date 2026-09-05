@@ -247,6 +247,10 @@ void TestLspProtocolParsesHoverContents() {
   Expect(codec::ParseHoverContents(Json(R"({"contents":["```\na\n```",{"language":"cpp","value":"b"}]})")) ==
              "a\n\nb",
          "fences are stripped inside a MarkedString array too");
+  Expect(codec::StripMarkdownFences("plain") == "plain" && codec::StripMarkdownFences("") == "" &&
+             codec::StripMarkdownFences("~~~py\nx = 1\n~~~") == "x = 1" &&
+             codec::StripMarkdownFences("  ```\n  code\n  ```\ntail") == "  code\ntail",
+         "the fence stripper handles tildes, indented fences and text without fences");
   // No contents / empty.
   Expect(codec::ParseHoverContents(Json("{}")).empty(), "missing contents yields empty");
   Expect(codec::ParseHoverContents(Json(R"({"contents":[]})")).empty(),

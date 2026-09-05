@@ -22,6 +22,12 @@ std::vector<LspClient::Diagnostic> ParseDiagnostics(const util::JsonValue& array
 // Parse a TextEdit[] (the shape textDocument/formatting and rangeFormatting both
 // return). Non-array input yields no edits; `max_edits` caps the count as a
 // hostile-server backstop (a whole-document reformat legitimately returns many).
+// Drops markdown code-fence lines (``` / ~~~ with their language tag) and keeps
+// what they enclosed. Hover, signature-help and completion documentation are
+// markdown, and the popups have no renderer for it: every real server fences the
+// signature, and the fences used to be painted verbatim.
+std::string StripMarkdownFences(std::string text);
+
 std::vector<LspClient::TextEdit> ParseTextEdits(const util::JsonValue& result,
                                                 std::size_t max_edits = 200000);
 // Accepts DocumentSymbol (range/selectionRange/children) or SymbolInformation

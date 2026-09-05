@@ -95,7 +95,7 @@ void LspClient::RequestCompletionAsync(std::string uri, Position pos, Completion
           ci.label = take(item, "label");
           ci.kind = static_cast<int>(item["kind"].AsInt(1));
           ci.detail = take(item, "detail");
-          ci.documentation = take_markup(item, "documentation");
+          ci.documentation = lsp_protocol::StripMarkdownFences(take_markup(item, "documentation"));
           ci.insert_text = take(item, "insertText");
           ci.sort_text = take(item, "sortText");
           ci.insert_text_format = static_cast<int>(item["insertTextFormat"].AsInt(1));

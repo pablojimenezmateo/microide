@@ -380,7 +380,7 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
     const JsonValue& signature = signatures[i];
     LspClient::SignatureInformation info;
     info.label = signature["label"].AsString();
-    info.documentation = StringOrValueField(signature["documentation"]);
+    info.documentation = StripMarkdownFences(StringOrValueField(signature["documentation"]));
     info.active_parameter =
         signature.HasKey("activeParameter") ? JsonIntInRange(signature["activeParameter"], -1) : -1;
     if (signature.HasKey("parameters") && signature["parameters"].IsArray()) {
@@ -425,8 +425,6 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
   return help;
 }
 
-namespace {
-
 // Hover text is markdown (MarkupContent kind "markdown", and a bare MarkedString
 // is markdown by definition), and every real server wraps the signature in a
 // fenced code block: "```cpp\nint foo(int x)\n```\nReturns x.". The popup has no
@@ -465,8 +463,6 @@ std::string StripMarkdownFences(std::string text) {
   }
   return out;
 }
-
-}  // namespace
 
 std::string ParseHoverContents(const JsonValue& hover_result) {
   constexpr std::size_t kMaxHoverBytes = 32 * 1024;
