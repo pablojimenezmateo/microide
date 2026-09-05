@@ -454,6 +454,18 @@ same method:
 - **Palette / outline / Output**: palette matching required the words in order;
   document symbols were painted in server order; a clicked `path:line:col` row
   applied the column as bytes.
+- **Keyboard parity sweep** (the built-in binding table diffed against VS Code's
+  defaults): Esc did not cancel a selection; Ctrl+Up/Down moved the caret;
+  Ctrl+L, F3/Shift+F3, F9, Alt+Z, Ctrl+]/[, Ctrl+\, Ctrl+Shift+E/G/M and
+  Alt+F8/Shift+Alt+F8 did nothing; Rename Symbol / Format Document were in no
+  menu; there was no diagnostic navigation at all. Deliberately kept: F8 = Start
+  Debugging and F5 = Continue (documented in `dap-integration.md`), Ctrl+Tab
+  cycles surfaces, Ctrl+T (no symbol picker exists), Ctrl+` (no panel toggle
+  action). Adding a bound action to a menu requires the menu item to advertise the
+  chord (`MenuAcceleratorConsistencyTests`), and the README command list must
+  follow the action table's ORDER (`ReadmeCommandDocsStayInSync`) -- a `;` in a
+  build-test-commit chain let one such failure land and needed an amend.
+- **JSON**: an RFC 8259 conformance table (JSONTestSuite-derived). Clean.
 - **Compare**: a differential test of `BuildLineDiffOps` against a brute-force
   WEIGHTED LCS (the aligner weighs rarity over the trimmed middle; an unweighted
   LCS oracle is the wrong reference and fails on the first common line). Clean.

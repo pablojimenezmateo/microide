@@ -74,6 +74,16 @@ project (see [README](README.md)); versions track meaningful shipped work.
   `größgröße_total`, rename/hover took a fragment of the symbol under the caret,
   and a double-click in a prompt selected only the ASCII tail; all four scans now
   walk codepoints.
+- **VS Code parity for the keyboard.** Esc cancels the selection (with several
+  carets the first Esc removes the secondaries, the second deselects); Ctrl+Up /
+  Ctrl+Down scroll a line without moving the caret; Ctrl+L selects the line and
+  grows by a line per press; F3 / Shift+F3 step the find term with the widget open
+  or closed; Alt+F8 / Shift+Alt+F8 step through the file's problems (new
+  `next-diagnostic` / `previous-diagnostic`); F9 toggles a breakpoint on the caret
+  line (new `breakpoint-toggle`); Alt+Z toggles word wrap; Ctrl+] / Ctrl+[ indent /
+  outdent; Ctrl+\ splits right; Ctrl+Shift+E / G / M open the project, source
+  control and problems views. Rename Symbol and Format Document are in the editor
+  context menu.
 - **Command palette and outline.** Palette queries match words in any order
   (`file new` finds "New File"); a typed command line with arguments still runs
   as a command. Outline symbols are in document order (servers may return them
