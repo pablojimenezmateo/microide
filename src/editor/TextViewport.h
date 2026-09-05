@@ -970,7 +970,12 @@ class TextViewport {
   TextPosition WordTargetForCaret(const TextPosition& caret,
                                   int delta,
                                   bool for_deletion) const;
+  // Sorts the secondaries, drops exact duplicates and any that coincide with the
+  // primary, then merges overlapping selections (and a collapsed caret touching
+  // one) the way VS Code normalises its cursor collection. Every caret-set
+  // mutation that can produce an overlap ends here.
   void DedupeSecondaryCaretsAgainstPrimary();
+  void MergeOverlappingCaretRanges();
   std::size_t PreferredColumnForCaret(const TextPosition& caret,
                                       WrapRowAffinity affinity = WrapRowAffinity::kNextRow) const;
   std::size_t CursorVisualRow() const;

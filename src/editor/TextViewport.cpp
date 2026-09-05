@@ -614,6 +614,9 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
                                    .preferred_column = PreferredColumnForCaret(position),
                                    .selection_anchor = std::nullopt,
                                });
+  // A collapsed caret dropped onto or against a selection merges into it (VS
+  // Code); with no selection anywhere the sorted insert above is the whole rule.
+  MergeOverlappingCaretRanges();
 }
 
 void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
@@ -751,6 +754,7 @@ void TextViewport::SetSecondaryCaretsWithRanges(std::span<const SelectionRange> 
     }
     secondary_carets_.push_back(std::move(candidate));
   }
+  MergeOverlappingCaretRanges();
 }
 
 void TextViewport::ClearSecondaryCarets() {

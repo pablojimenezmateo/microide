@@ -1009,25 +1009,44 @@ void TestMultiCaretOutdentPreservesCarets() {
          "the secondary caret survives and shifts left with its line");
 }
 
-// Regression: two carets whose selections OVERLAP must not double-edit shared
-// content. ApplyMultiCaretInsert refuses the edit (leaving the buffer untouched)
-// rather than corrupt it through the reverse-walk apply.
-void TestMultiCaretRefusesOverlappingSelections() {
+// Two carets whose selections OVERLAP merge into one cursor spanning their
+// union before any edit (VS Code's CursorCollection.normalize), so the edit
+// replaces the union once instead of double-editing the shared text -- and
+// instead of being refused, which left a caret set on which every keystroke
+// silently did nothing.
+void TestMultiCaretMergesOverlappingSelections() {
   TextViewport viewport;
   viewport.LoadContent("abcdefghijklmnop\nsecondline\n", "/tmp/overlap.txt");
   // Primary is an empty caret on line 1 (disjoint). Two OVERLAPPING secondary
-  // selections on line 0 — [0,0)-[0,6) and [0,3)-[0,9), overlapping at [3,6) — are
-  // injected via the ranges API, which dedups only by position, not overlap.
+  // selections on line 0 -- [0,0)-[0,6) and [0,3)-[0,9), overlapping at [3,6).
   viewport.MoveCursorTo(1, 0, false);
   viewport.SetSecondaryCaretsWithRanges(std::vector<microide::editor::SelectionRange>{
       microide::editor::SelectionRange{{0, 0}, {0, 6}},
       microide::editor::SelectionRange{{0, 3}, {0, 9}},
   });
-  const std::string before0 = viewport.lines()[0];
-  const std::string before1 = viewport.lines()[1];
+  Expect(viewport.secondary_carets().size() == 1, "the overlapping pair merged into one caret");
   viewport.InsertText("X");
-  Expect(viewport.lines()[0] == before0 && viewport.lines()[1] == before1,
-         "a refused overlapping multi-caret edit must not mutate the buffer at all");
+  Expect(viewport.lines()[0] == "Xjklmnop",
+         "the merged selection [0,9) is replaced once: " + std::string(viewport.lines()[0]));
+  Expect(viewport.lines()[1] == "Xsecondline", "the disjoint primary still edits");
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets()[0].line == 0 && viewport.secondary_carets()[0].column == 1,
+         "the merged caret lands after its replacement");
+}
+
+// A collapsed caret touching a selection merges into it as well (one of the
+// two is empty, so touching counts), which is what keeps Backspace from planning
+// two overlapping removals: the selection's own and the caret's one-before.
+void TestMultiCaretMergesCollapsedCaretTouchingSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\n", "/tmp/touch.txt");
+  viewport.MoveCursorTo(0, 1);
+  viewport.MoveCursorTo(0, 3, /*extend_selection=*/true);  // "bc" selected
+  viewport.AddSecondaryCaret(0, 3);                        // touches the selection's end
+  Expect(!viewport.has_multiple_carets(), "the touching caret merged into the selection");
+  viewport.Backspace();
+  Expect(viewport.lines()[0] == "adef", "one Backspace removes exactly the selection: " +
+                                             std::string(viewport.lines()[0]));
 }
 
 // Positive control: DISJOINT selections still apply, proving the overlap guard does
@@ -1271,8 +1290,10 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretDisjointGroupedInsertNoSnapshotRoundTrips);
   AddTest(tests, "EditorMultiCaret/DisjointGroupedJoinNoSnapshotRoundTrips",
           TestMultiCaretDisjointGroupedJoinNoSnapshotRoundTrips);
-  AddTest(tests, "EditorMultiCaret/RefusesOverlappingSelections",
-          TestMultiCaretRefusesOverlappingSelections);
+  AddTest(tests, "EditorMultiCaret/MergesOverlappingSelections",
+          TestMultiCaretMergesOverlappingSelections);
+  AddTest(tests, "EditorMultiCaret/MergesCollapsedCaretTouchingSelection",
+          TestMultiCaretMergesCollapsedCaretTouchingSelection);
   AddTest(tests, "EditorMultiCaret/DisjointSelectionsStillApply",
           TestMultiCaretDisjointSelectionsStillApply);
   AddTest(tests, "EditorMultiCaret/MultiCaretSoftTabAlignsEachCaretToItsOwnStop",

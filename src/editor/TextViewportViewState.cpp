@@ -2,6 +2,7 @@
 #include "editor/TextViewportInternal.h"
 
 #include <algorithm>
+#include <limits>
 
 #include "editor/WordBoundary.h"
 #include "util/PerformanceCounters.h"
@@ -433,6 +434,12 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
   for (SecondaryCaret& caret : secondary_carets_) {
     caret.preferred_column = PreferredColumnForCaret(caret.position);
   }
+  // A Shift+click can run the primary's selection over a secondary's; merge as
+  // the keyboard motions do. Deliberately not the full dedupe: a plain click
+  // does not clear the secondary set (see the callers that pair this with
+  // ClearSecondaryCarets), and a collapsed secondary the primary lands on is
+  // already dropped by the appliers.
+  MergeOverlappingCaretRanges();
   EnsureCursorVisible();
 }
 
@@ -869,6 +876,118 @@ void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
       std::remove_if(secondary_carets_.begin(), secondary_carets_.end(),
                      [&](const SecondaryCaret& caret) { return caret.position == primary; }),
       secondary_carets_.end());
+  MergeOverlappingCaretRanges();
+}
+
+void TextViewport::MergeOverlappingCaretRanges() {
+  // VS Code's CursorCollection.normalize: two cursors merge when their
+  // selections overlap, or when they touch and one of them is collapsed. The
+  // merged cursor spans the union; the primary keeps its direction and survives
+  // when it is involved, otherwise the lower cursor's direction wins.
+  //
+  // The multi-caret edit paths refuse to run over overlapping sites (each site
+  // edits a disjoint region, so an overlap would double-edit shared text). With
+  // overlaps allowed to exist, Alt+click at the start of a selection or a
+  // Shift+arrow that runs one selection into the next left a caret set on which
+  // every keystroke silently did nothing. Merging here, at the one tail every
+  // caret-set mutation runs through, keeps the invariant the appliers assume.
+  bool any_selection = selection_anchor_.has_value();
+  for (const SecondaryCaret& caret : secondary_carets_) {
+    any_selection = any_selection || caret.selection_anchor.has_value();
+  }
+  if (!any_selection || secondary_carets_.empty()) {
+    return;  // collapsed carets only: the position dedupe above is the whole rule
+  }
+
+  constexpr std::size_t kPrimary = std::numeric_limits<std::size_t>::max();
+  struct Entry {
+    TextPosition start;
+    TextPosition end;
+    bool caret_at_end = true;
+    std::size_t source = kPrimary;
+  };
+  std::vector<Entry> entries;
+  entries.reserve(secondary_carets_.size() + 1);
+  const auto push = [&](const TextPosition& caret, const std::optional<TextPosition>& anchor,
+                        std::size_t source) {
+    if (!anchor.has_value() || *anchor == caret) {
+      entries.push_back(Entry{caret, caret, true, source});
+    } else if (detail::PositionLess(*anchor, caret)) {
+      entries.push_back(Entry{*anchor, caret, true, source});
+    } else {
+      entries.push_back(Entry{caret, *anchor, false, source});
+    }
+  };
+  push(TextPosition{cursor_line_, cursor_column_}, selection_anchor_, kPrimary);
+  for (std::size_t i = 0; i < secondary_carets_.size(); ++i) {
+    push(secondary_carets_[i].position, secondary_carets_[i].selection_anchor, i);
+  }
+  const auto by_start = [](const Entry& lhs, const Entry& rhs) {
+    if (detail::PositionLess(lhs.start, rhs.start)) return true;
+    if (detail::PositionLess(rhs.start, lhs.start)) return false;
+    return detail::PositionLess(lhs.end, rhs.end);
+  };
+  // Carets are sorted by position, which for disjoint ranges is also start
+  // order; a held column-select gesture rebuilds thousands of ranges per
+  // keystroke, so the sort only runs when that order does not already hold.
+  if (!std::is_sorted(entries.begin(), entries.end(), by_start)) {
+    std::sort(entries.begin(), entries.end(), by_start);
+  }
+
+  bool merged_any = false;
+  std::size_t out = 0;
+  for (std::size_t i = 0; i < entries.size(); ++i) {
+    const Entry& entry = entries[i];
+    if (out > 0) {
+      Entry& prev = entries[out - 1];
+      const bool prev_collapsed = prev.start == prev.end;
+      const bool collapsed = entry.start == entry.end;
+      const bool merge = (prev_collapsed || collapsed)
+                             ? !detail::PositionLess(prev.end, entry.start)
+                             : detail::PositionLess(entry.start, prev.end);
+      if (merge) {
+        merged_any = true;
+        if (detail::PositionLess(prev.end, entry.end)) {
+          prev.end = entry.end;
+        }
+        if (entry.source == kPrimary) {
+          prev.source = kPrimary;
+          prev.caret_at_end = entry.caret_at_end;
+        }
+        continue;
+      }
+    }
+    entries[out++] = entry;
+  }
+  if (!merged_any) {
+    return;
+  }
+  entries.resize(out);
+
+  std::vector<SecondaryCaret> rebuilt;
+  rebuilt.reserve(entries.size());
+  for (const Entry& entry : entries) {
+    const bool collapsed = entry.start == entry.end;
+    const TextPosition caret = entry.caret_at_end ? entry.end : entry.start;
+    const std::optional<TextPosition> anchor =
+        collapsed ? std::nullopt
+                  : std::optional<TextPosition>(entry.caret_at_end ? entry.start : entry.end);
+    if (entry.source == kPrimary) {
+      cursor_line_ = caret.line;
+      cursor_column_ = caret.column;
+      selection_anchor_ = anchor;
+      caret_wrap_affinity_ = WrapRowAffinity::kNextRow;
+      preferred_column_ = PreferredColumnForCaret(caret);
+      continue;
+    }
+    rebuilt.push_back(SecondaryCaret{
+        .position = caret,
+        .preferred_column = PreferredColumnForCaret(caret),
+        .selection_anchor = anchor,
+    });
+  }
+  std::sort(rebuilt.begin(), rebuilt.end(), detail::SecondaryCaretPositionLess);
+  secondary_carets_ = std::move(rebuilt);
 }
 
 void TextViewport::AdvanceCaretVertical(TextPosition& caret,
