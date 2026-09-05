@@ -235,6 +235,18 @@ void TestLspProtocolParsesHoverContents() {
              Json(R"({"contents":["one",{"language":"cpp","value":"two"},""]})")) ==
              "one\n\ntwo",
          "MarkedString array joins non-empty blocks");
+  // Fenced code blocks lose their fence lines (with the language tag) and keep
+  // their content; the popup has no markdown renderer, so "```cpp" was painted.
+  Expect(codec::ParseHoverContents(Json(
+             R"({"contents":{"kind":"markdown","value":"```cpp\nint foo(int x)\n```\nReturns x."}})")) ==
+             "int foo(int x)\nReturns x.",
+         "markdown code fences are stripped, their content kept: [" +
+             codec::ParseHoverContents(Json(
+                 R"({"contents":{"kind":"markdown","value":"```cpp\nint foo(int x)\n```\nReturns x."}})")) +
+             "]");
+  Expect(codec::ParseHoverContents(Json(R"({"contents":["```\na\n```",{"language":"cpp","value":"b"}]})")) ==
+             "a\n\nb",
+         "fences are stripped inside a MarkedString array too");
   // No contents / empty.
   Expect(codec::ParseHoverContents(Json("{}")).empty(), "missing contents yields empty");
   Expect(codec::ParseHoverContents(Json(R"({"contents":[]})")).empty(),

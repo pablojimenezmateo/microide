@@ -425,6 +425,49 @@ LspClient::SignatureHelp ParseSignatureHelp(const JsonValue& result) {
   return help;
 }
 
+namespace {
+
+// Hover text is markdown (MarkupContent kind "markdown", and a bare MarkedString
+// is markdown by definition), and every real server wraps the signature in a
+// fenced code block: "```cpp\nint foo(int x)\n```\nReturns x.". The popup has no
+// markdown renderer, so the fence lines were painted verbatim -- "```cpp int
+// foo(int x) ``` Returns x." on one wrapped line. Drop the fence lines and keep
+// what they enclosed; a fence line is one whose trimmed form starts with ``` or
+// ~~~ (the info string after it is the language tag, not content).
+std::string StripMarkdownFences(std::string text) {
+  if (text.find("```") == std::string::npos && text.find("~~~") == std::string::npos) {
+    return text;
+  }
+  std::string out;
+  out.reserve(text.size());
+  std::size_t start = 0;
+  while (start <= text.size()) {
+    const std::size_t end = text.find('\n', start);
+    const std::size_t line_end = end == std::string::npos ? text.size() : end;
+    std::string_view line(text.data() + start, line_end - start);
+    std::string_view trimmed = line;
+    while (!trimmed.empty() && (trimmed.front() == ' ' || trimmed.front() == '\t')) {
+      trimmed.remove_prefix(1);
+    }
+    const bool fence = trimmed.starts_with("```") || trimmed.starts_with("~~~");
+    if (!fence) {
+      if (!out.empty() || start > 0) {
+        // Keep the line structure of what survives, without a leading break
+        // where the opening fence used to be.
+        if (!out.empty()) out.push_back('\n');
+      }
+      out.append(line);
+    }
+    if (end == std::string::npos) {
+      break;
+    }
+    start = end + 1;
+  }
+  return out;
+}
+
+}  // namespace
+
 std::string ParseHoverContents(const JsonValue& hover_result) {
   constexpr std::size_t kMaxHoverBytes = 32 * 1024;
   static constexpr char kTruncationMarker[] = "\n\n… (truncated)";
@@ -433,6 +476,7 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
   // server could push a tens-of-MiB hover payload (inside the 64 MiB frame cap)
   // onto the callback/render path. The array shape already caps below.
   const auto cap_string = [&](std::string s) {
+    s = StripMarkdownFences(std::move(s));
     if (s.size() > kMaxHoverBytes) {
       TruncateUtf8InPlace(s, kMaxHoverBytes);
       s += kTruncationMarker;
@@ -465,7 +509,7 @@ std::string ParseHoverContents(const JsonValue& hover_result) {
         truncated = true;
         break;
       }
-      const std::string piece = StringOrValueField(element);
+      const std::string piece = StripMarkdownFences(StringOrValueField(element));
       if (piece.empty()) {
         continue;
       }
