@@ -1504,12 +1504,19 @@ return ide.plugin({
         draw.name = "draw";
         draw.kind = 6;  // Method
         draw.selection_range.start = {1, 8};
+        workspace::LspClient::DocumentSymbol render;
+        render.name = "render";
+        render.kind = 6;  // Method
+        render.selection_range.start = {3, 8};
+        // Out of document order on purpose, at both levels: the protocol does not
+        // promise an order and the outline sorts siblings by position (VS Code).
+        widget.children.push_back(render);
         widget.children.push_back(draw);
         workspace::LspClient::DocumentSymbol main_fn;
         main_fn.name = "main";
         main_fn.kind = 12;  // Function
         main_fn.selection_range.start = {5, 4};
-        cb(std::vector<workspace::LspClient::DocumentSymbol>{widget, main_fn});
+        cb(std::vector<workspace::LspClient::DocumentSymbol>{main_fn, widget});
       });
   Expect(WorkspaceShellTestAccess::LspManagerForTesting(shell)
              .InstallTestClientIntoExistingForTesting("python", std::move(stub)),
@@ -1523,13 +1530,16 @@ return ide.plugin({
   WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
 
   const auto& items = WorkspaceShellTestAccess::PluginSidebarItems(shell);
-  Expect(items.size() == 3,
-         "outline should flatten the LSP document-symbol fallback into three rows");
+  Expect(items.size() == 4,
+         "outline should flatten the LSP document-symbol fallback into four rows");
   Expect(items[0].label == "Widget" && items[0].depth == 0,
-         "LSP outline should list the class at depth 0");
+         "LSP outline should list the class at depth 0, first by position although the "
+         "server sent it second");
   Expect(items[1].label == "draw" && items[1].depth == 1,
-         "LSP outline should indent the method child to depth 1");
-  Expect(items[2].label == "main" && items[2].depth == 0,
+         "LSP outline should indent the method child to depth 1, sorted by position");
+  Expect(items[2].label == "render" && items[2].depth == 1,
+         "the later method follows although the server listed it first");
+  Expect(items[3].label == "main" && items[3].depth == 0,
          "LSP outline should return to depth 0 after the child subtree");
   // 0-based LSP selection range -> 1-based outline coordinates.
   Expect(items[1].line == 2 && items[1].column == 9,

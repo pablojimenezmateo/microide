@@ -1,5 +1,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include <algorithm>
+
 #include <cctype>
 #include <optional>
 #include <string>
@@ -142,6 +144,18 @@ std::string_view LspSymbolKindName(int kind) {
 // columns, and building rows. Stop adapting past this budget and surface a marker.
 constexpr std::size_t kMaxOutlineSymbolNodes = 5000;
 
+// Siblings in document order, as VS Code's outline shows them by default. Servers
+// usually return them that way, but the protocol does not promise it and the
+// flat SymbolInformation shape in particular often arrives grouped by kind; a
+// stable sort keeps the server's order for symbols that start at one position.
+void SortOutlineSiblingsByPosition(std::vector<plugin::PluginHost::DocumentSymbolNode>& nodes) {
+  std::stable_sort(nodes.begin(), nodes.end(),
+                   [](const plugin::PluginHost::DocumentSymbolNode& lhs,
+                      const plugin::PluginHost::DocumentSymbolNode& rhs) {
+                     return lhs.line != rhs.line ? lhs.line < rhs.line : lhs.column < rhs.column;
+                   });
+}
+
 // Adapt an LSP DocumentSymbol tree onto the plugin DocumentSymbolNode tree the
 // outline flatten path consumes. `line`/`column` become 1-based, and the column is
 // mapped from the server's position encoding to an editor byte column so the
@@ -167,6 +181,7 @@ plugin::PluginHost::DocumentSymbolNode AdaptLspDocumentSymbol(
     --budget;
     node.children.push_back(AdaptLspDocumentSymbol(child, viewport, encoding, budget));
   }
+  SortOutlineSiblingsByPosition(node.children);
   return node;
 }
 
@@ -220,6 +235,7 @@ void WorkspaceShell::QueryLspDocumentSymbolsForOutline(const editor::TextViewpor
             --budget;
             nodes.push_back(AdaptLspDocumentSymbol(symbol, *current, encoding, budget));
           }
+          SortOutlineSiblingsByPosition(nodes);
           if (truncated) {
             // Surface a non-navigable marker row through the normal flatten path so
             // the user knows the outline was capped rather than silently missing tail
