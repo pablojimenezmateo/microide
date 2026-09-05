@@ -359,10 +359,19 @@ bool LspService::HasActiveCodeActionProvider() const {
 
 bool LspService::HasActiveDefinitionProvider() const {
   const std::string language_id = ActiveLanguageIdForProvider();
-  return !language_id.empty() && CurrentLspManager().HasServer(language_id);
+  return !language_id.empty() &&
+         ((operations_.plugin_has_definition_provider &&
+           operations_.plugin_has_definition_provider(language_id)) ||
+          CurrentLspManager().HasServer(language_id));
 }
 
-bool LspService::HasActiveReferencesProvider() const { return HasActiveDefinitionProvider(); }
+bool LspService::HasActiveReferencesProvider() const {
+  const std::string language_id = ActiveLanguageIdForProvider();
+  return !language_id.empty() &&
+         ((operations_.plugin_has_references_provider &&
+           operations_.plugin_has_references_provider(language_id)) ||
+          CurrentLspManager().HasServer(language_id));
+}
 
 LspClient::ReadinessSnapshot LspService::ActiveLspReadinessSnapshot(bool ensure_started) {
   ExpireTrackedLspRequestIfNeeded();

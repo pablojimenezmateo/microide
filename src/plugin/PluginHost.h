@@ -160,6 +160,18 @@ class PluginHost {
     std::string plugin_id;
   };
 
+  // A plugin-native definition/references provider (ctx.definition.add /
+  // ctx.references.add). Published so the UI thread can answer "is Go to
+  // Definition available for this buffer?" without touching the worker-owned
+  // provider table; the provide function itself stays behind the query API.
+  struct ContributedLanguageProvider {
+    enum class Kind { Definition, References };
+    Kind kind = Kind::Definition;
+    std::string id;
+    std::string language_id;
+    std::string plugin_id;
+  };
+
   struct ContributedLanguageServer {
     std::string id;
     // One server process serves every language id in this list (e.g. clangd
@@ -797,6 +809,10 @@ class PluginHost {
   const std::vector<ContributedVirtualDocument>& ContributedVirtualDocuments() const;
   const std::vector<ContributedCompletion>& ContributedCompletions() const;
   const std::vector<ContributedCodeAction>& ContributedCodeActions() const;
+  const std::vector<ContributedLanguageProvider>& ContributedLanguageProviders() const;
+  // Whether any loaded plugin registered a `kind` provider for `language_id`.
+  bool HasLanguageProvider(ContributedLanguageProvider::Kind kind,
+                           std::string_view language_id) const;
   const std::vector<ContributedLanguageServer>& ContributedLanguageServers() const;
   const std::vector<ContributedDebugAdapter>& ContributedDebugAdapters() const;
   const std::vector<ContributedLaunchConfig>& ContributedLaunchConfigs() const;

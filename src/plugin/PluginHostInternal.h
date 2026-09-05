@@ -398,6 +398,9 @@ struct PluginHost::Impl {
     std::vector<PluginHost::ContributedVirtualDocument> virtual_documents;
     std::vector<PluginHost::ContributedCompletion> completions;
     std::vector<PluginHost::ContributedCodeAction> code_actions;
+    // Definition/references providers, derived from language_query_runtimes at
+    // publish time (the runtime entries carry the Lua state and stay worker-owned).
+    std::vector<PluginHost::ContributedLanguageProvider> language_providers;
     std::vector<PluginHost::ContributedLanguageServer> language_servers;
     std::vector<PluginHost::ContributedDebugAdapter> debug_adapters;
     std::vector<PluginHost::ContributedLaunchConfig> launch_configs;
@@ -638,6 +641,20 @@ struct PluginHost::Impl {
     snapshot.virtual_documents = virtual_documents;
     snapshot.completions = completions;
     snapshot.code_actions = code_actions;
+    for (const LanguageQueryRuntime& runtime : language_query_runtimes) {
+      if (runtime.kind != runtime_types::LanguageQueryKind::Definition &&
+          runtime.kind != runtime_types::LanguageQueryKind::References) {
+        continue;
+      }
+      snapshot.language_providers.push_back(PluginHost::ContributedLanguageProvider{
+          .kind = runtime.kind == runtime_types::LanguageQueryKind::Definition
+                      ? PluginHost::ContributedLanguageProvider::Kind::Definition
+                      : PluginHost::ContributedLanguageProvider::Kind::References,
+          .id = runtime.id,
+          .language_id = runtime.language_id,
+          .plugin_id = runtime.plugin_id,
+      });
+    }
     snapshot.language_servers = language_servers;
     snapshot.debug_adapters = debug_adapters;
     snapshot.launch_configs = launch_configs;

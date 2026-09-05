@@ -96,6 +96,13 @@ class LspService {
     // thread (removing a staged directory can be slow). Null → removed
     // synchronously.
     std::function<void(std::vector<std::filesystem::path>)> dispose_staged_paths_async;
+    // Whether a plugin registered a definition / references provider for the
+    // language (PluginHost::HasLanguageProvider). Go to Definition and Find
+    // References are served by plugins as well as language servers, so
+    // availability must consult both or the actions stay disabled (menu,
+    // Ctrl+click) for plugin-only languages. Null in headless setups.
+    std::function<bool(std::string_view)> plugin_has_definition_provider;
+    std::function<bool(std::string_view)> plugin_has_references_provider;
   };
 
   LspService() = default;

@@ -240,6 +240,18 @@ WorkspaceShell::WorkspaceShell() {
                   }
                 });
               },
+          .plugin_has_definition_provider =
+              [this](std::string_view language_id) {
+                return plugin_runtime_.Host().HasLanguageProvider(
+                    plugin::PluginHost::ContributedLanguageProvider::Kind::Definition,
+                    language_id);
+              },
+          .plugin_has_references_provider =
+              [this](std::string_view language_id) {
+                return plugin_runtime_.Host().HasLanguageProvider(
+                    plugin::PluginHost::ContributedLanguageProvider::Kind::References,
+                    language_id);
+              },
       });
   // Live theme pointer for baking semantic-token recolor decorations (theme_'s
   // address is stable; a theme switch mutates it in place).

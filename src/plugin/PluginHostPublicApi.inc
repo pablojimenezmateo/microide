@@ -1349,6 +1349,21 @@ const std::vector<PluginHost::ContributedCodeAction>& PluginHost::ContributedCod
   return impl_->published_.code_actions;
 }
 
+const std::vector<PluginHost::ContributedLanguageProvider>&
+PluginHost::ContributedLanguageProviders() const {
+  return impl_->published_.language_providers;
+}
+
+bool PluginHost::HasLanguageProvider(ContributedLanguageProvider::Kind kind,
+                                     std::string_view language_id) const {
+  for (const auto& provider : impl_->published_.language_providers) {
+    if (provider.kind == kind && provider.language_id == language_id) {
+      return true;
+    }
+  }
+  return false;
+}
+
 const std::vector<PluginHost::ContributedLanguageServer>&
 PluginHost::ContributedLanguageServers() const {
   return impl_->published_.language_servers;

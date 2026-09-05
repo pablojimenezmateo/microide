@@ -1195,6 +1195,17 @@ return ide.plugin({
   host.Reload(temp.path() / "project");
   const std::filesystem::path file = temp.path() / "project" / "src" / "main.lua";
 
+  // The published view the UI thread reads for action availability: plugin-only
+  // definition/references providers used to be invisible here, so Go to Definition
+  // stayed disabled (menu, Ctrl+click) for languages without a language server.
+  using LangKind = PluginHost::ContributedLanguageProvider::Kind;
+  Expect(host.ContributedLanguageProviders().size() == 2,
+         "definition + references providers are published to the UI-thread snapshot");
+  Expect(host.HasLanguageProvider(LangKind::Definition, "lua") &&
+             host.HasLanguageProvider(LangKind::References, "lua") &&
+             !host.HasLanguageProvider(LangKind::Definition, "python"),
+         "HasLanguageProvider answers per kind and language");
+
   std::string error;
   const auto definitions = host.QueryDefinition("lua", file, 12, 5, &error);
   Expect(definitions.size() == 1 && definitions.front().line == 12 &&
