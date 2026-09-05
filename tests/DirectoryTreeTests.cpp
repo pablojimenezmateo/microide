@@ -27,6 +27,31 @@ const TreeEntry* FindEntry(const DirectoryTree& tree, const std::filesystem::pat
   return nullptr;
 }
 
+// Siblings sort folders first, then case-insensitively with numeric-aware digit
+// runs -- the explorer order VS Code and every file manager use. A byte-wise sort
+// put "Zebra.txt" before "apple.txt" and "file10.txt" before "file2.txt".
+void TestDirectoryTreeSortsSiblingsNaturallyAndCaseInsensitively() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  for (const char* name : {"Zebra.txt", "apple.txt", "file10.txt", "file2.txt", "File3.txt"}) {
+    WriteFile(root / name, "x\n");
+  }
+  WriteFile(root / "zdir" / "inner.txt", "x\n");
+  WriteFile(root / "Adir" / "inner.txt", "x\n");
+
+  DirectoryTree tree;
+  Expect(tree.SetRoot(root), "directory tree should open fixture root");
+  std::vector<std::string> labels;
+  for (const auto& entry : tree.entries()) {
+    if (entry.depth == 1) labels.push_back(entry.label);
+  }
+  const std::vector<std::string> expected = {"Adir", "zdir", "apple.txt", "file2.txt",
+                                             "File3.txt", "file10.txt", "Zebra.txt"};
+  std::string got;
+  for (const auto& l : labels) got += l + " ";
+  Expect(labels == expected, "folders first, then natural case-insensitive order: " + got);
+}
+
 void TestDirectoryTreeTracksIgnoredStatusIndependentlyFromVisibility() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -387,6 +412,8 @@ void RegisterDirectoryTreeTests(std::vector<TestCase>& tests) {
           TestDirectoryTreeAmortizesDeletedKeyPruneForLargeSets);
   AddTest(tests, "DirectoryTree/RestoreRejectsOutsideRootExpansionKeys",
           TestDirectoryTreeRestoreRejectsOutsideRootExpansionKeys);
+  AddTest(tests, "DirectoryTree/SortsSiblingsNaturallyAndCaseInsensitively",
+          TestDirectoryTreeSortsSiblingsNaturallyAndCaseInsensitively);
   AddTest(tests, "DirectoryTree/TracksIgnoredStatusIndependentlyFromVisibility",
           TestDirectoryTreeTracksIgnoredStatusIndependentlyFromVisibility);
   AddTest(tests, "DirectoryTree/TracksMaterializationIndependentlyFromIgnoredStatus",

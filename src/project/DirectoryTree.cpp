@@ -455,11 +455,16 @@ void DirectoryTree::AppendDirectory(const std::filesystem::path& directory,
     iterator.increment(error);
   }
 
+  // Folders first, then the explorer order VS Code and every file manager use:
+  // case-insensitive with numeric-aware digit runs ("file2" before "file10",
+  // "Zebra" with the z's). A byte-wise tiebreak keeps names that fold equal
+  // ("a.txt" / "A.txt") in one deterministic order.
   std::sort(children.begin(), children.end(), [](const SortableEntry& lhs, const SortableEntry& rhs) {
     if (lhs.is_directory != rhs.is_directory) {
       return lhs.is_directory > rhs.is_directory;
     }
-    return lhs.sort_key < rhs.sort_key;
+    const int natural = util::NaturalCompareIgnoreCase(lhs.sort_key, rhs.sort_key);
+    return natural != 0 ? natural < 0 : lhs.sort_key < rhs.sort_key;
   });
 
   // Reused across this directory's children (see EntryGitStatus).

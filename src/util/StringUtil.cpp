@@ -966,4 +966,46 @@ std::string SerializeLines(std::span<const std::string> lines, LineEnding line_e
   return JoinLines(lines, LineEndingSeparator(line_ending));
 }
 
+int NaturalCompareIgnoreCase(std::string_view a, std::string_view b) {
+  const auto is_digit = [](char c) { return c >= '0' && c <= '9'; };
+  const auto lower = [](char c) {
+    return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c;
+  };
+  std::size_t i = 0;
+  std::size_t j = 0;
+  while (i < a.size() && j < b.size()) {
+    if (is_digit(a[i]) && is_digit(b[j])) {
+      // Skip leading zeros, remembering how many, so equal magnitudes tie-break
+      // toward fewer leading zeros for a stable, deterministic order.
+      const std::size_t zeros_a_start = i;
+      const std::size_t zeros_b_start = j;
+      while (i < a.size() && a[i] == '0') ++i;
+      while (j < b.size() && b[j] == '0') ++j;
+      const std::size_t digits_a_start = i;
+      const std::size_t digits_b_start = j;
+      while (i < a.size() && is_digit(a[i])) ++i;
+      while (j < b.size() && is_digit(b[j])) ++j;
+      const std::size_t len_a = i - digits_a_start;
+      const std::size_t len_b = j - digits_b_start;
+      if (len_a != len_b) return len_a < len_b ? -1 : 1;  // more significant digits => larger
+      const int cmp = a.substr(digits_a_start, len_a).compare(b.substr(digits_b_start, len_b));
+      if (cmp != 0) return cmp < 0 ? -1 : 1;
+      const std::size_t zeros_a = digits_a_start - zeros_a_start;
+      const std::size_t zeros_b = digits_b_start - zeros_b_start;
+      if (zeros_a != zeros_b) return zeros_a < zeros_b ? -1 : 1;
+      continue;
+    }
+    const char la = lower(a[i]);
+    const char lb = lower(b[j]);
+    if (la != lb) {
+      return static_cast<unsigned char>(la) < static_cast<unsigned char>(lb) ? -1 : 1;
+    }
+    ++i;
+    ++j;
+  }
+  if (i < a.size()) return 1;
+  if (j < b.size()) return -1;
+  return 0;
+}
+
 }  // namespace microide::util

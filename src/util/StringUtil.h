@@ -359,4 +359,13 @@ std::string SerializeLinesStreaming(const LinesLike& lines, LineEnding line_endi
   return out;
 }
 
+// Case-insensitive natural ("human") comparison: ASCII letters compare
+// case-folded and embedded digit runs compare by numeric value, so "item2"
+// precedes "item10" and "Zebra" sorts with the z's. Equal magnitudes tie-break
+// toward fewer leading zeros; otherwise equal strings return 0, so callers that
+// need a total order add a byte-wise tiebreak. Shared by the JSON formatter's
+// key order and the file tree's sibling order (the explorer rule VS Code and
+// every file manager apply). Returns <0, 0 or >0.
+int NaturalCompareIgnoreCase(std::string_view a, std::string_view b);
+
 }  // namespace microide::util
