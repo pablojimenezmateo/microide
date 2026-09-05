@@ -9,6 +9,7 @@
 #include <string_view>
 #include <vector>
 
+#include "editor/EditTypes.h"
 #include "editor/TextLayout.h"
 #include "util/StringUtil.h"
 
@@ -109,6 +110,20 @@ bool ShouldAutoCloseAtNext(bool at_end, char next, const LanguageContractView& v
   return false;
 }
 
+// VS Code's rule for a pair whose open and close are the same quote: it is not
+// auto-closed after a word character (`don'` + `t` must give `don't`, not
+// `don''t`), and not stacked on an identical quote just before the caret.
+bool QuoteAutoCloseSuppressed(const LanguagePair& pair, char ch, const CaretNeighborhood& at) {
+  if (pair.open != pair.close || !at.has_prev) {
+    return false;
+  }
+  if (at.prev == ch) {
+    return true;
+  }
+  const bool quote_like = ch == '\'' || ch == '"' || ch == '`';
+  return quote_like && (IsIdentifierByte(at.prev) || static_cast<unsigned char>(at.prev) >= 0x80);
+}
+
 bool DedentOnCloseTokenMatches(const LanguageContractView& view, char ch) {
   for (const auto& token : view.dedent_on_close_chars) {
     if (token.size() == 1 && token[0] == ch) {
@@ -189,10 +204,7 @@ bool TextViewport::TryAutoCloseInsert(char ch) {
   if (!ShouldAutoCloseAtNext(at.at_end, at.next, language_contract_view())) {
     return false;
   }
-  // Same-character pairs (quotes): avoid stacking when the previous char is
-  // already the same quote (typing inside a comment/string we can't detect
-  // semantically) -- simple heuristic.
-  if (pair->open == pair->close && at.has_prev && at.prev == ch) {
+  if (QuoteAutoCloseSuppressed(*pair, ch, at)) {
     return false;
   }
 
@@ -631,7 +643,7 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     const auto* open_pair = language_contract_view().auto_close_enabled ? FindAutoCloseOpener(language_contract_view(), ch) : nullptr;
     if (open_pair != nullptr && !open_pair->close.empty() && !InInsertionSuppressedScope(line, column) &&
         ShouldAutoCloseAtNext(at.at_end, at.next, language_contract_view())) {
-      if (!(open_pair->open == open_pair->close && at.has_prev && at.prev == ch)) {
+      if (!QuoteAutoCloseSuppressed(*open_pair, ch, at)) {
         replacement = open_pair->open + open_pair->close;
       }
     }

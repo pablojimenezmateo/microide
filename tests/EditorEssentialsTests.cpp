@@ -1569,6 +1569,62 @@ void TestAutoCloseSkipOverClose() {
          "caret should be after the close character");
 }
 
+// A quote typed right after a word character is an apostrophe or the end of
+// a word, not the start of a string: VS Code does not auto-close it there.
+// Every other position still pairs, and brackets are unaffected.
+void TestAutoCloseQuoteNotAfterWordCharacter() {
+  TextViewport viewport;
+  viewport.LoadContent("\n", "/tmp/sample.cpp");
+  const microide::editor::LanguageContractView view = MakeCStyleContractView();
+  viewport.SetLanguageContractView(view);
+  viewport.MoveCursorTo(0, 0);
+  for (const char c : std::string_view("don't")) {
+    viewport.InsertCharacter(c);
+  }
+  Expect(viewport.lines()[0] == "don't",
+         "a quote after a word character is not auto-closed, got: " +
+             std::string(viewport.lines()[0]));
+
+  // (The apostrophe above opens a C++ char literal for the highlighter, so the
+  // rest of that line is a string scope; a fresh buffer checks the other cases.)
+  TextViewport spaced;
+  spaced.LoadContent("x \n", "/tmp/sample.cpp");
+  spaced.SetLanguageContractView(view);
+  spaced.MoveCursorTo(0, 2);
+  spaced.InsertCharacter('"');
+  Expect(spaced.lines()[0] == "x \"\"" && spaced.cursor_column() == 3,
+         "a quote after a space still pairs, got: " + std::string(spaced.lines()[0]));
+  TextViewport bracket;
+  bracket.LoadContent("y\n", "/tmp/sample.cpp");
+  bracket.SetLanguageContractView(view);
+  bracket.MoveCursorTo(0, 1);
+  bracket.InsertCharacter('(');
+  Expect(bracket.lines()[0] == "y()",
+         "a bracket after a word character still pairs (the rule is quotes only), got: " +
+             std::string(bracket.lines()[0]));
+
+  // Non-ASCII letters are word characters too.
+  TextViewport accented;
+  accented.LoadContent("caf\xC3\xA9\n", "/tmp/sample.cpp");
+  accented.SetLanguageContractView(view);
+  accented.MoveCursorTo(0, 5);
+  accented.InsertCharacter('\'');
+  Expect(accented.lines()[0] == "caf\xC3\xA9'",
+         "a quote after a non-ASCII letter is not auto-closed, got: " +
+             std::string(accented.lines()[0]));
+
+  // The multi-caret path applies the same rule per caret.
+  TextViewport multi;
+  multi.LoadContent("don\nwe\n", "/tmp/sample.cpp");
+  multi.SetLanguageContractView(view);
+  multi.MoveCursorTo(0, 3);
+  multi.AddSecondaryCaret(1, 2);
+  multi.InsertCharacter('\'');
+  Expect(multi.lines()[0] == "don'" && multi.lines()[1] == "we'",
+         "multi-caret quotes after word characters are not auto-closed, got: " +
+             std::string(multi.lines()[0]) + " / " + std::string(multi.lines()[1]));
+}
+
 void TestAutoCloseDisabledByDefault() {
   TextViewport viewport;
   viewport.LoadContent("\n", "/tmp/sample.cpp");
@@ -2283,6 +2339,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestAutoClosePairInsertsClose);
   AddTest(tests, "EditorEssentials/AutoClose/SkipOverClose",
           TestAutoCloseSkipOverClose);
+  AddTest(tests, "EditorEssentials/AutoClose/QuoteNotAfterWordCharacter",
+          TestAutoCloseQuoteNotAfterWordCharacter);
   AddTest(tests, "EditorEssentials/AutoClose/DisabledByDefault",
           TestAutoCloseDisabledByDefault);
   AddTest(tests, "EditorEssentials/AutoClose/InsertTextSingleCharUsesPairPath",
