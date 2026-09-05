@@ -11,6 +11,7 @@
 #include <unordered_map>
 #include <unordered_set>
 
+#include "editor/EditBatchOrder.h"
 #include "project/CompileCommandsLocator.h"
 #include "util/JsonValue.h"
 #include "util/PathMatch.h"
@@ -1231,20 +1232,26 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
         edit.end_line >= 1 ? clamp_position(edit.end_line, edit.end_column) : start;
     applied_edits.emplace_back(editor::SelectionRange{start, end}, edit.text);
   }
-  std::sort(applied_edits.begin(), applied_edits.end(),
-            [](const auto& lhs, const auto& rhs) {
-              const editor::SelectionRange a = editor::TextViewport::NormalizeRange(lhs.first);
-              const editor::SelectionRange b = editor::TextViewport::NormalizeRange(rhs.first);
-              if (a.start.line != b.start.line) {
-                return a.start.line > b.start.line;
-              }
-              return a.start.column > b.start.column;
-            });
+  // Highest position first, later array entry first on a tie (see
+  // editor/EditBatchOrder.h): two inserts at one position come out in the order
+  // the plugin listed them. Overlapping ranges have no single meaning, so they
+  // are refused rather than applied in whichever order the sort chose.
+  std::vector<editor::SelectionRange> edit_ranges;
+  edit_ranges.reserve(applied_edits.size());
+  for (const auto& [range, text] : applied_edits) {
+    edit_ranges.push_back(range);
+  }
+  std::vector<std::size_t> apply_order;
+  editor::OrderEditsForApplication(edit_ranges, apply_order);
+  if (editor::EditsOverlap(edit_ranges, apply_order)) {
+    return false;
+  }
 
   if (!applied_edits.empty()) {
     viewport->BeginUndoGroup();
-    for (const auto& [range, text] : applied_edits) {
-      viewport->ReplaceRange(range, text, /*record_undo=*/true);
+    for (const std::size_t idx : apply_order) {
+      viewport->ReplaceRange(applied_edits[idx].first, applied_edits[idx].second,
+                             /*record_undo=*/true);
     }
     viewport->EndUndoGroup();
   }
@@ -1426,41 +1433,19 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
       mark_rejected();
       continue;
     }
-    // Apply highest-position-first so earlier ranges stay valid as later ones are
-    // applied. For edits at the SAME position (e.g. two inserts at (0,0)), apply
-    // the later array entry FIRST: each same-position insert pushes the previous
-    // one right, so this leaves the array order intact left-to-right in the result.
-    // (A plain stable_sort would reverse them.) We sort an index vector so the
-    // original array index is available as the tie-break.
-    std::vector<std::size_t> apply_order(buffer_edits.size());
-    for (std::size_t i = 0; i < apply_order.size(); ++i) {
-      apply_order[i] = i;
+    // Highest position first, with the tie rules in editor/EditBatchOrder.h:
+    // same start -> the replace before the inserts, same range -> later array
+    // entry first, so N inserts at one position keep their array order.
+    // Overlapping edits are rejected whole (see the closed-file applier): two
+    // intersecting ranges double-edit shared bytes order-dependently.
+    std::vector<editor::SelectionRange> buffer_ranges;
+    buffer_ranges.reserve(buffer_edits.size());
+    for (const auto& [range, text] : buffer_edits) {
+      buffer_ranges.push_back(range);
     }
-    std::sort(apply_order.begin(), apply_order.end(), [&](std::size_t lhs, std::size_t rhs) {
-      const editor::SelectionRange a = editor::TextViewport::NormalizeRange(buffer_edits[lhs].first);
-      const editor::SelectionRange b = editor::TextViewport::NormalizeRange(buffer_edits[rhs].first);
-      if (a.start.line != b.start.line) {
-        return a.start.line > b.start.line;
-      }
-      if (a.start.column != b.start.column) {
-        return a.start.column > b.start.column;
-      }
-      return lhs > rhs;
-    });
-    // Reject overlapping edits for this buffer (see the closed-file applier): two
-    // intersecting ranges double-edit shared bytes order-dependently. Consecutive
-    // descending-order entries run higher-start -> lower-start; they overlap when
-    // the lower edit's end passes the higher edit's start (touching is allowed).
-    bool overlapping = false;
-    for (std::size_t i = 1; i < apply_order.size() && !overlapping; ++i) {
-      const editor::SelectionRange hi =
-          editor::TextViewport::NormalizeRange(buffer_edits[apply_order[i - 1]].first);
-      const editor::SelectionRange lo =
-          editor::TextViewport::NormalizeRange(buffer_edits[apply_order[i]].first);
-      overlapping = lo.end.line > hi.start.line ||
-                    (lo.end.line == hi.start.line && lo.end.column > hi.start.column);
-    }
-    if (overlapping) {
+    std::vector<std::size_t> apply_order;
+    editor::OrderEditsForApplication(buffer_ranges, apply_order);
+    if (editor::EditsOverlap(buffer_ranges, apply_order)) {
       mark_rejected();
       continue;
     }

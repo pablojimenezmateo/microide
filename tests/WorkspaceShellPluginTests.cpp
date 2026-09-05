@@ -4456,6 +4456,36 @@ return ide.plugin({
       })
       ctx.log(ok and "applied" or "rejected")
     end)
+    ctx.commands.add("editops.two_inserts_same_position", function()
+      -- Two inserts at one position must land in array order (VS Code's rule).
+      local ok = ctx.editor.apply_edits({
+        edits = {
+          { start_line = 1, start_col = 1, end_line = 1, end_col = 1, text = "A" },
+          { start_line = 1, start_col = 1, end_line = 1, end_col = 1, text = "B" },
+        },
+      })
+      ctx.log(ok and "applied" or "rejected")
+    end)
+    ctx.commands.add("editops.replace_then_insert_same_start", function()
+      -- A replace listed BEFORE an insert at its start must still apply first;
+      -- the insert goes in front of the replacement, never inside it.
+      local ok = ctx.editor.apply_edits({
+        edits = {
+          { start_line = 1, start_col = 1, end_line = 1, end_col = 6, text = "HELLO" },
+          { start_line = 1, start_col = 1, end_line = 1, end_col = 1, text = ">" },
+        },
+      })
+      ctx.log(ok and "applied" or "rejected")
+    end)
+    ctx.commands.add("editops.overlapping", function()
+      local ok = ctx.editor.apply_edits({
+        edits = {
+          { start_line = 1, start_col = 1, end_line = 1, end_col = 4, text = "X" },
+          { start_line = 1, start_col = 3, end_line = 1, end_col = 6, text = "Y" },
+        },
+      })
+      ctx.log(ok and "applied" or "rejected")
+    end)
     ctx.commands.add("editops.select_first_two", function()
       ctx.editor.set_selection({ start_line = 1, start_col = 1, end_line = 1, end_col = 3 })
     end)
@@ -4528,6 +4558,44 @@ void TestWorkspaceShellPluginApplyEditsSingleEditUndo() {
   Expect(editor.lines()[0] == "HELLO", "apply_edits should replace the first word");
   Expect(editor.Undo(), "a plugin edit should be undoable");
   Expect(editor.lines()[0] == "hello", "one undo should revert the plugin edit");
+}
+
+// Two inserts at one position: VS Code applies same-position inserts in array
+// order. The plugin applier sorted on the start alone with std::sort, whose
+// small-range insertion sort is stable, so "A" then "B" at (1,1) produced "BA".
+void TestWorkspaceShellPluginApplyEditsSamePositionInsertsKeepArrayOrder() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.txt";
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  RunEditPluginSetup(shell, plugins_root, project_root, source, "hello\nworld\n");
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.two_inserts_same_position"),
+         "apply_edits command should dispatch");
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.lines()[0] == "ABhello",
+         "two inserts at one position should land in array order, got: " +
+             std::string(editor.lines()[0]));
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell,
+                                                       "editops.replace_then_insert_same_start"),
+         "apply_edits command should dispatch");
+  // The buffer read "ABhello" here, so the replace covers "ABhel".
+  Expect(editor.lines()[0] == ">HELLOlo",
+         "a replace listed before an insert at its start should apply first, got: " +
+             std::string(editor.lines()[0]));
+
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "editops.overlapping"),
+         "apply_edits command should dispatch");
+  Expect(editor.lines()[0] == ">HELLOlo",
+         "overlapping plugin edits should be refused whole, got: " +
+             std::string(editor.lines()[0]));
 }
 
 void TestWorkspaceShellPluginApplyEditsMultiEditAtomicUndo() {
@@ -5535,6 +5603,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestPluginEditorEventTrackerSeparatesCursorAndSelection);
   AddTest(tests, "WorkspaceShell/PluginReceivesBufferChangeEvent",
           TestWorkspaceShellPluginReceivesBufferChangeEvent);
+  AddTest(tests, "WorkspaceShell/PluginApplyEditsSamePositionInsertsKeepArrayOrder",
+          TestWorkspaceShellPluginApplyEditsSamePositionInsertsKeepArrayOrder);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsSingleEditUndo",
           TestWorkspaceShellPluginApplyEditsSingleEditUndo);
   AddTest(tests, "WorkspaceShell/PluginApplyEditsMultiEditAtomicUndo",

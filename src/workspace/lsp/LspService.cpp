@@ -15,6 +15,7 @@
 
 #include "editor/DecoratedTextGridRenderer.h"
 #include "editor/DiagnosticsStore.h"
+#include "editor/EditBatchOrder.h"
 #include "editor/PluginDecorationStore.h"
 #include "editor/SyntaxHighlighter.h"
 #include "render/Theme.h"
@@ -1579,35 +1580,18 @@ LspService::DiskEditResult LspService::RunClosedFileEdits(
       result.any_failed = true;
       continue;
     }
-    // Apply highest-position-first (later array entry first on ties) so earlier
-    // ranges stay valid as later ones apply. No undo is recorded: scratch is discarded.
-    std::vector<std::size_t> apply_order(file_edits.size());
-    for (std::size_t i = 0; i < apply_order.size(); ++i) {
-      apply_order[i] = i;
+    // Highest position first (see editor/EditBatchOrder.h for the tie rules) so
+    // earlier ranges stay valid as later ones apply. No undo is recorded: scratch
+    // is discarded. Overlapping edits are rejected whole: applying two
+    // intersecting ranges double-edits shared bytes in an order-dependent way.
+    std::vector<editor::SelectionRange> file_ranges;
+    file_ranges.reserve(file_edits.size());
+    for (const auto& [range, text] : file_edits) {
+      file_ranges.push_back(range);
     }
-    std::sort(apply_order.begin(), apply_order.end(), [&](std::size_t lhs, std::size_t rhs) {
-      const editor::SelectionRange a = editor::TextViewport::NormalizeRange(file_edits[lhs].first);
-      const editor::SelectionRange b = editor::TextViewport::NormalizeRange(file_edits[rhs].first);
-      if (a.start.line != b.start.line) {
-        return a.start.line > b.start.line;
-      }
-      if (a.start.column != b.start.column) {
-        return a.start.column > b.start.column;
-      }
-      return lhs > rhs;
-    });
-    // Reject overlapping edits: applying two intersecting ranges double-edits shared
-    // bytes in an order-dependent way. Touching endpoints (adjacent edits) are allowed.
-    bool overlapping = false;
-    for (std::size_t i = 1; i < apply_order.size() && !overlapping; ++i) {
-      const editor::SelectionRange hi =
-          editor::TextViewport::NormalizeRange(file_edits[apply_order[i - 1]].first);
-      const editor::SelectionRange lo =
-          editor::TextViewport::NormalizeRange(file_edits[apply_order[i]].first);
-      overlapping = lo.end.line > hi.start.line ||
-                    (lo.end.line == hi.start.line && lo.end.column > hi.start.column);
-    }
-    if (overlapping) {
+    std::vector<std::size_t> apply_order;
+    editor::OrderEditsForApplication(file_ranges, apply_order);
+    if (editor::EditsOverlap(file_ranges, apply_order)) {
       result.any_failed = true;
       continue;
     }
