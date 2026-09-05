@@ -369,7 +369,6 @@ MergeChoiceLineSpans MergeChoiceLineViews(const MergeHunk& hunk, MergeChoice cho
       return {hunk.incoming_lines, {}};
     case MergeChoice::Current:
       return {hunk.current_lines, {}};
-    case MergeChoice::Both:
     case MergeChoice::BothIncomingFirst:
       if (hunk.incoming_lines == hunk.current_lines) {
         return {hunk.incoming_lines, {}};
@@ -381,6 +380,10 @@ MergeChoiceLineSpans MergeChoiceLineViews(const MergeHunk& hunk, MergeChoice cho
         return {hunk.incoming_lines, {}};
       }
       return {hunk.incoming_lines, hunk.current_lines};
+    // Plain "both" (the `b` key) keeps CURRENT first, then incoming: the order of
+    // the file's own conflict markers and of VS Code's "Accept Both Changes". The
+    // explicit incoming-first variant stays available above.
+    case MergeChoice::Both:
     case MergeChoice::BothCurrentFirst:
       if (hunk.incoming_lines == hunk.current_lines) {
         return {hunk.current_lines, {}};

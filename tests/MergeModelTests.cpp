@@ -105,8 +105,15 @@ void TestMergeBothChoiceConcatenatesConflictInsertions() {
   model.hunks.front().choice = MergeChoice::Both;
   const auto lines = MergeChoiceLines(model.hunks.front(), model.hunks.front().choice);
   Expect(lines.size() == 2, "both choice should keep both insertion blocks");
-  Expect(lines[0] == "incoming", "both choice should keep incoming lines first");
-  Expect(lines[1] == "current", "both choice should append current lines");
+  // Current first, then incoming: the file's own conflict-marker order and VS
+  // Code's "Accept Both Changes". The explicit incoming-first variant is separate.
+  Expect(lines[0] == "current", "both choice should keep current lines first");
+  Expect(lines[1] == "incoming", "both choice should append incoming lines");
+  const auto incoming_first =
+      MergeChoiceLines(model.hunks.front(), MergeChoice::BothIncomingFirst);
+  Expect(incoming_first.size() == 2 && incoming_first[0] == "incoming" &&
+             incoming_first[1] == "current",
+         "the explicit incoming-first variant still orders incoming first");
 }
 
 // Two changes that touch — no unchanged base line between them — are ONE
