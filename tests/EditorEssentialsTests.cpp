@@ -679,6 +679,68 @@ void TestShapingInsertLineBelowAndAbove() {
   Expect(above.lines()[0] == "    ", "the new line takes the pushed-down line's indent");
 }
 
+// Backspace in leading whitespace with soft tabs deletes back to the previous
+// indent stop (VS Code's useTabStops), one space elsewhere, and one unit under
+// hard tabs.
+void TestBackspaceInLeadingWhitespaceReachesThePreviousIndentStop() {
+  TextViewport viewport;
+  viewport.LoadContent("        x\n  a b\n", "/tmp/sample.txt");
+  viewport.SetIndentWidth(4);
+  viewport.SetSoftTabs(true);
+  viewport.MoveCursorTo(0, 8);
+  viewport.Backspace();
+  Expect(viewport.lines()[0] == "    x" && viewport.cursor_column() == 4,
+         "Backspace at an indent stop removes a whole indent unit, got: " +
+             std::string(viewport.lines()[0]));
+  viewport.MoveCursorTo(0, 3);
+  viewport.Backspace();
+  Expect(viewport.lines()[0] == " x" && viewport.cursor_column() == 0,
+         "Backspace between stops runs back to the previous stop, got: " +
+             std::string(viewport.lines()[0]));
+  viewport.MoveCursorTo(1, 4);
+  viewport.Backspace();
+  Expect(viewport.lines()[1] == "  ab",
+         "Backspace after text deletes one space, got: " + std::string(viewport.lines()[1]));
+  viewport.MoveCursorTo(1, 1);
+  viewport.Backspace();
+  Expect(viewport.lines()[1] == " ab",
+         "Backspace one space into the indent deletes that space, got: " +
+             std::string(viewport.lines()[1]));
+
+  TextViewport hard;
+  hard.LoadContent("    x\n", "/tmp/sample.txt");
+  hard.SetIndentWidth(4);
+  hard.SetSoftTabs(false);
+  hard.MoveCursorTo(0, 4);
+  hard.Backspace();
+  Expect(hard.lines()[0] == "   x", "under hard tabs Backspace deletes one byte, got: " +
+                                        std::string(hard.lines()[0]));
+
+  TextViewport mixed;
+  mixed.LoadContent("\t  x\n", "/tmp/sample.txt");
+  mixed.SetTabSize(4);
+  mixed.SetIndentWidth(4);
+  mixed.SetSoftTabs(true);
+  mixed.MoveCursorTo(0, 3);
+  mixed.Backspace();
+  Expect(mixed.lines()[0] == "\tx",
+         "the stop after a hard tab is the tab's own boundary, got: " +
+             std::string(mixed.lines()[0]));
+
+  TextViewport multi;
+  multi.LoadContent("    a\n      b\n", "/tmp/sample.txt");
+  multi.SetIndentWidth(4);
+  multi.SetSoftTabs(true);
+  multi.MoveCursorTo(0, 4);
+  multi.AddSecondaryCaret(1, 6);
+  multi.Backspace();
+  Expect(multi.lines()[0] == "a" && multi.lines()[1] == "    b",
+         "multi-caret Backspace applies the stop rule per caret, got: " +
+             std::string(multi.lines()[0]) + " / " + std::string(multi.lines()[1]));
+  Expect(multi.Undo() && multi.lines()[0] == "    a" && multi.lines()[1] == "      b",
+         "one undo restores both indents");
+}
+
 void TestShapingIndentSelection() {
   TextViewport viewport;
   viewport.LoadContent("a\nb\n", "/tmp/sample.txt");
@@ -2395,6 +2457,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestAutoCloseQuoteNotAfterWordCharacter);
   AddTest(tests, "EditorEssentials/AutoClose/BackspaceRemovesThePair",
           TestAutoCloseBackspaceRemovesThePair);
+  AddTest(tests, "EditorEssentials/BackspaceInLeadingWhitespaceReachesThePreviousIndentStop",
+          TestBackspaceInLeadingWhitespaceReachesThePreviousIndentStop);
   AddTest(tests, "EditorEssentials/AutoClose/DisabledByDefault",
           TestAutoCloseDisabledByDefault);
   AddTest(tests, "EditorEssentials/AutoClose/InsertTextSingleCharUsesPairPath",

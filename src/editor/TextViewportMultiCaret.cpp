@@ -215,8 +215,10 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
       }
       case MultiCaretEditKind::Backspace: {
         if (column > 0) {
+          // Same indent-stop rule as the single-caret Backspace.
           const std::size_t erase_start =
-              TextLayout::PreviousTextColumn(document_->lines[line], column);
+              IndentStopBackspaceStart(line, column)
+                  .value_or(TextLayout::PreviousTextColumn(document_->lines[line], column));
           // Same pair rule as the single-caret Backspace: `(|)` loses both.
           const std::size_t erase_end =
               CaretSitsInsideAutoClosedPair(line, column) ? column + 1 : column;

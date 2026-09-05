@@ -902,6 +902,11 @@ class TextViewport {
   // removes both (VS Code's autoClosingDelete) and Enter splits them onto three
   // lines; both read this rather than carrying their own copy of the check.
   bool CaretSitsInsideAutoClosedPair(std::size_t line, std::size_t column) const;
+  // VS Code's useTabStops rule for Backspace: with soft tabs and nothing but
+  // whitespace before the caret, the deletion runs back to the previous indent
+  // stop rather than one space. Returns that start column, or nullopt when the
+  // rule does not apply (hard tabs, text before the caret, column 0).
+  std::optional<std::size_t> IndentStopBackspaceStart(std::size_t line, std::size_t column) const;
   bool MaybeDedentOnClose(char ch);
   bool TryInsertNewlineSplitBraces();
   // Brace-split-on-newline geometry for a single caret position. Returns the

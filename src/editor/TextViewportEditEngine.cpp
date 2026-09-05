@@ -104,6 +104,41 @@ void TextViewport::InsertTab() {
   InsertText(std::string(std::max<std::size_t>(1, spaces), ' '));
 }
 
+std::optional<std::size_t> TextViewport::IndentStopBackspaceStart(std::size_t line,
+                                                                   std::size_t column) const {
+  if (!soft_tabs_ || column == 0 || line >= document_->lines.size()) {
+    return std::nullopt;
+  }
+  // The prefix has to be read to know it is all whitespace. An indent deeper
+  // than this is not a workflow, and reading the caret's whole prefix on every
+  // Backspace is exactly the per-keystroke O(line) cost a file with no line
+  // breaks in it cannot afford (TD-2026-08-05-133); past the cap the ordinary
+  // one-code-point delete applies.
+  constexpr std::size_t kMaxIndentScan = 4096;
+  if (column > kMaxIndentScan) {
+    return std::nullopt;
+  }
+  std::string scratch;
+  const std::string_view prefix = document_->lines.LineWindow(line, 0, column, scratch);
+  if (prefix.size() != column ||
+      prefix.find_first_not_of(" \t") != std::string_view::npos) {
+    return std::nullopt;
+  }
+  const std::size_t width = std::max<std::size_t>(1, indent_width_);
+  const std::size_t visual = TextLayout::VisualColumnForTextColumn(prefix, column, tab_size_);
+  if (visual == 0) {
+    return std::nullopt;
+  }
+  const std::size_t target_visual = ((visual - 1) / width) * width;
+  const std::size_t target = TextLayout::TextColumnForVisualColumn(prefix, target_visual, tab_size_);
+  // A stop that falls inside a hard tab of the prefix resolves to the tab's
+  // own boundary; when that is not before the caret, delete the one unit.
+  if (target >= column) {
+    return std::nullopt;
+  }
+  return target;
+}
+
 void TextViewport::Backspace() {
   util::PerformanceTrace::Scope perf_scope("TextViewport::Backspace");
   if (document_->lines.empty()) {
@@ -129,7 +164,14 @@ void TextViewport::Backspace() {
     // used to read the whole line to find it, which on a file with no line breaks
     // in it is megabytes per backspace (TD-2026-08-05-133).
     const CaretNeighborhood at = ReadCaretNeighborhood(cursor_line_, cursor_column_);
-    const std::size_t erase_start = at.has_prev ? at.prev_column : 0;
+    // In leading whitespace with soft tabs the deletion runs back to the
+    // previous indent stop (VS Code's useTabStops); the byte before the caret
+    // is a space then, so the cheap neighbourhood test gates the prefix read.
+    const bool prev_is_space = at.has_prev && (at.prev_char == ' ' || at.prev_char == '\t');
+    const std::size_t erase_start =
+        prev_is_space
+            ? IndentStopBackspaceStart(cursor_line_, at.clamped_column).value_or(at.prev_column)
+            : (at.has_prev ? at.prev_column : 0);
     // Backspace inside `(|)` removes the pair auto-close put there, as VS Code's
     // autoClosingDelete does; the closer is one byte by the opener rule.
     const std::size_t erase_end = CaretSitsInsideAutoClosedPair(cursor_line_, at.clamped_column)
