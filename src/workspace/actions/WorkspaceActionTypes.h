@@ -98,6 +98,8 @@ enum class ActionId {
   RevealInFileTree,
   Save,
   Search,
+  FindNext,
+  FindPrevious,
   SidebarClose,
   SidebarHide,
   SidebarShow,

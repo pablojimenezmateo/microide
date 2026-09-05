@@ -443,6 +443,28 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .arg_count = 0,
           .command_name = {},
       },
+      // F3 / Shift+F3 step the buffer search from the editor, widget open or not
+      // (VS Code nextMatchFindAction / previousMatchFindAction).
+      KeybindingSpec{
+          .id = "find-next",
+          .action = ActionId::FindNext,
+          .key = SDLK_F3,
+          .modifiers = SDL_KMOD_NONE,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "find-previous",
+          .action = ActionId::FindPrevious,
+          .key = SDLK_F3,
+          .modifiers = SDL_KMOD_SHIFT,
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
       KeybindingSpec{
           .id = "project-search",
           .action = ActionId::ProjectSearch,

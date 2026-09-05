@@ -1261,7 +1261,59 @@ void TestWorkspaceShellContextMenuAnswersHomeAndEnd() {
          "Down should still advance one item from the top");
 }
 
+
+// F3 / Shift+F3 step through the current find term from the editor, whether the
+// widget is open or closed (VS Code nextMatchFindAction); with no term yet F3
+// opens the widget. Neither key did anything before.
+void TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "words.txt";
+  WriteFile(source, "foo one\nfoo two\nfoo three\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE), "F3 with no term is handled");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell), "F3 with no term opens the find widget");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "foo");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3, "three matches");
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Esc closes the widget");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "the widget is closed");
+
+  // Revealing a match parks the caret at its start (the widget's convention). The
+  // caret sits at 0:0, which is match 0, so F3 steps to the next one.
+  const auto caret_at = [&](std::size_t line, std::size_t column) {
+    return viewport.cursor_line() == line && viewport.cursor_column() == column;
+  };
+  Expect(caret_at(0, 0), "the caret starts on the first match");
+  Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE), "F3 with the widget closed is handled");
+  Expect(caret_at(1, 0), "F3 jumps to the next match (line 1)");
+  Expect(!WorkspaceShellTestAccess::OverlayVisible(shell), "F3 does not reopen the widget");
+  Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE), "a second F3 is handled");
+  Expect(caret_at(2, 0), "a second F3 jumps to the match on line 2");
+  Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_SHIFT), "Shift+F3 is handled");
+  Expect(caret_at(1, 0), "Shift+F3 steps back to line 1");
+  Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE) && SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE),
+         "two more F3 presses are handled");
+  Expect(caret_at(0, 0), "F3 wraps from the last match to the first");
+
+  // A caret parked between matches: F3 goes to the first match after it, not past it,
+  // and Shift+F3 to the one before it.
+  viewport.MoveCursorTo(1, 5);
+  Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_NONE), "F3 from between matches is handled");
+  Expect(caret_at(2, 0), "F3 from mid-line 1 jumps to the match on line 2, not line 0");
+  viewport.MoveCursorTo(1, 5);
+  Expect(SendKeyDown(shell, SDLK_F3, SDL_KMOD_SHIFT), "Shift+F3 from between matches is handled");
+  Expect(caret_at(1, 0), "Shift+F3 from mid-line 1 jumps back to the match on line 1");
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/F3StepsMatchesWithTheWidgetClosed",
+          TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed);
   AddTest(tests, "WorkspaceShell/SearchSidebarEscapeCancelsEditBeforeClosing",
           TestWorkspaceShellSearchSidebarEscapeCancelsEditBeforeClosing);
   AddTest(tests, "WorkspaceShell/ContextMenuAnswersHomeAndEnd",

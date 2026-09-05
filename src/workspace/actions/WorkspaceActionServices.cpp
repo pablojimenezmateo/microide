@@ -402,6 +402,44 @@ bool WorkspaceActionContext::ActiveTabIsMerge() const {
          state_.focused_group().open_tabs[state_.focused_group().active_tab_index].kind == TabEntry::Kind::Merge;
 }
 
+void WorkspaceActionContext::StepBufferSearch(int delta) {
+  auto& buffer_search = state_.overlay.workflow.buffer_search;
+  if (buffer_search.query.text().empty()) {
+    operations_.open_buffer_search();
+    return;
+  }
+  const bool widget_open = state_.overlay.visible &&
+                           (state_.overlay.mode == OverlayMode::BufferSearch ||
+                            state_.overlay.mode == OverlayMode::BufferReplace);
+  if (!widget_open) {
+    // The match set is stale once the widget closed (edits, caret moves), so
+    // rebuild it: the refresh selects the first match at or after the caret. If
+    // the caret is not sitting on that match, "next" IS that match; only a caret
+    // already on it (the usual F3 run) steps past it. "Previous" from between
+    // matches is the one before it, which the wrapping step below yields.
+    // Revealing a match parks the caret at its start (the widget's convention),
+    // so "on it" is a caret comparison, not a selection one -- taken BEFORE the
+    // refresh, which itself reveals (and so moves the caret onto) its pick.
+    const editor::TextViewport* viewport = operations_.active_editor_viewport();
+    const std::optional<editor::TextPosition> caret_before =
+        viewport != nullptr
+            ? std::optional<editor::TextPosition>{{viewport->cursor_line(), viewport->cursor_column()}}
+            : std::nullopt;
+    operations_.refresh_buffer_search();
+    if (buffer_search.matches.empty()) {
+      return;
+    }
+    const editor::SelectionRange& current = buffer_search.matches[buffer_search.selected_index];
+    const bool on_current = caret_before.has_value() && caret_before->line == current.start.line &&
+                            caret_before->column == current.start.column;
+    if (!on_current && delta > 0) {
+      operations_.reveal_buffer_search_match(current);
+      return;
+    }
+  }
+  operations_.move_buffer_search_selection(delta);
+}
+
 void WorkspaceActionContext::OpenBufferSearch(std::string query) {
   operations_.open_buffer_search();
   // Only an explicit query (e.g. a `:search foo` command) overrides the term the

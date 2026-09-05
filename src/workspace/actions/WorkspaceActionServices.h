@@ -294,6 +294,10 @@ class WorkspaceActionContext {
         set_function_breakpoint_condition;
     std::function<void(const std::string&, std::optional<std::string>)>
         set_exception_filter_condition;
+    // Buffer-search stepping for F3 / Shift+F3 (StepBufferSearch): move the
+    // selected match by a delta (wrapping) and reveal one match in the editor.
+    std::function<void(int)> move_buffer_search_selection;
+    std::function<void(const editor::SelectionRange&)> reveal_buffer_search_match;
   };
 
   WorkspaceActionContext(ProjectCatalogState& project_catalog,
@@ -392,6 +396,10 @@ class WorkspaceActionContext {
   bool ActiveTabIsCompare() const;
   bool ActiveTabIsMerge() const;
   void OpenBufferSearch(std::string query);
+  // F3 / Shift+F3: step to the next/previous match of the current find term,
+  // whether or not the widget is open (VS Code). With no term yet it opens the
+  // widget; with the widget closed it re-runs the search first.
+  void StepBufferSearch(int delta);
   void OpenBufferReplace();
   std::filesystem::path ResolveComparePath(const std::filesystem::path& requested_path,
                                            ActionSource source) const;

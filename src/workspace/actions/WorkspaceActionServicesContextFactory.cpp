@@ -861,6 +861,12 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](const std::string& filter_id, std::optional<std::string> condition) {
                 debug_service_.SetExceptionFilterCondition(filter_id, std::move(condition));
               },
+          .move_buffer_search_selection = [this](int delta) { MoveBufferSearchSelection(delta); },
+          .reveal_buffer_search_match =
+              [this](const editor::SelectionRange& match) {
+                RevealBufferSearchMatch(match);
+                RequestEditorSurfaceRedraw();
+              },
       });
 }
 

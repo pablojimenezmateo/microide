@@ -577,6 +577,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `Ctrl+w` | Close active tab |
 | `Ctrl+f` | Buffer search |
 | `Ctrl+h` | Replace in buffer |
+| `F3` / `Shift+F3` | Next / previous match of the current find term (widget open or not) |
 | `Ctrl+Shift+f` | Project-wide search in sidebar |
 | `Ctrl+g` | Go to line |
 | `Ctrl+Shift+l` | Add cursor at all matches |
@@ -725,6 +726,8 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `reopen`
 - `save [path]`
 - `search <query>`
+- `find-next`
+- `find-previous`
 - `sidebar-close`
 - `sidebar-hide`
 - `sidebar-show [tool]`

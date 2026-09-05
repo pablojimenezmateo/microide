@@ -79,6 +79,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteSearch(
     case ActionId::ReplaceInBuffer:
       context_.OpenBufferReplace();
       return DispatchResult::Handled;
+    case ActionId::FindNext:
+    case ActionId::FindPrevious:
+      if (context_.ActiveTabIsCompare() || context_.ActiveTabIsMerge()) {
+        return reject("find-next is unavailable in compare and merge tabs");
+      }
+      context_.StepBufferSearch(id == ActionId::FindNext ? 1 : -1);
+      return DispatchResult::Handled;
     case ActionId::Compare: {
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
