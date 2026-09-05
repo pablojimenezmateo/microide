@@ -4,6 +4,7 @@
 #include "util/StringUtil.h"
 
 #include <algorithm>
+#include <random>
 #include <sstream>
 #include <string>
 #include <string_view>
@@ -1356,7 +1357,127 @@ void TestCompareModelRowsSurviveCopyMoveAndTemporaryInputs() {
          "a move leaves the row views pointing at the same bytes");
 }
 
+
+// Differential check of the exact line aligner against a brute-force oracle. The
+// aligner is a WEIGHTED LCS: a matched line scores max(1, (bytes + 8) / occurrences)
+// so rare, informative lines anchor the diff and common ones do not (the weight
+// mirrors LineMatchWeight for single-token lines). On random small documents,
+// well inside the exact-path cap, the ops must replay both inputs exactly and
+// score the same as the optimum the oracle finds.
+void TestCompareLineDiffOpsMatchWeightedLcsOracle() {
+  using microide::compare::BuildLineDiffOps;
+  using microide::compare::DiffOp;
+  using microide::compare::DiffOpKind;
+  static constexpr std::string_view kAlphabet[] = {"a", "bb", "ccc", "dddddddd", "e"};
+  std::mt19937 rng(20260905u);
+  const auto random_doc = [&](std::size_t max_lines) {
+    std::vector<std::string_view> lines(rng() % (max_lines + 1));
+    for (auto& line : lines) {
+      line = kAlphabet[rng() % std::size(kAlphabet)];
+    }
+    return lines;
+  };
+  const auto weight_of = [](std::string_view line, const std::vector<std::string_view>& a,
+                            const std::vector<std::string_view>& b) {
+    const std::size_t occurrences = static_cast<std::size_t>(std::count(a.begin(), a.end(), line)) +
+                                    static_cast<std::size_t>(std::count(b.begin(), b.end(), line));
+    return std::max<std::size_t>(1, (line.size() + 8) / std::max<std::size_t>(1, occurrences));
+  };
+  // The aligner trims the common prefix/suffix first and weighs rarity over the
+  // remaining middle only, so the oracle scores the same middle.
+  const auto trim_common = [](std::vector<std::string_view>& a, std::vector<std::string_view>& b) {
+    std::size_t prefix = 0;
+    while (prefix < a.size() && prefix < b.size() && a[prefix] == b[prefix]) ++prefix;
+    std::size_t suffix = 0;
+    while (a.size() - suffix > prefix && b.size() - suffix > prefix &&
+           a[a.size() - 1 - suffix] == b[b.size() - 1 - suffix]) {
+      ++suffix;
+    }
+    a = std::vector<std::string_view>(a.begin() + static_cast<std::ptrdiff_t>(prefix),
+                                      a.end() - static_cast<std::ptrdiff_t>(suffix));
+    b = std::vector<std::string_view>(b.begin() + static_cast<std::ptrdiff_t>(prefix),
+                                      b.end() - static_cast<std::ptrdiff_t>(suffix));
+    return prefix + suffix;
+  };
+  const auto best_score = [&](const std::vector<std::string_view>& a,
+                              const std::vector<std::string_view>& b) {
+    std::vector<std::vector<std::size_t>> dp(a.size() + 1, std::vector<std::size_t>(b.size() + 1));
+    for (std::size_t i = 1; i <= a.size(); ++i) {
+      for (std::size_t j = 1; j <= b.size(); ++j) {
+        dp[i][j] = std::max(dp[i - 1][j], dp[i][j - 1]);
+        if (a[i - 1] == b[j - 1]) {
+          dp[i][j] = std::max(dp[i][j], dp[i - 1][j - 1] + weight_of(a[i - 1], a, b));
+        }
+      }
+    }
+    return dp[a.size()][b.size()];
+  };
+
+  int mismatches = 0;
+  for (int iteration = 0; iteration < 600 && mismatches == 0; ++iteration) {
+    const std::vector<std::string_view> left = random_doc(18);
+    const std::vector<std::string_view> right = random_doc(18);
+    const std::vector<DiffOp> ops = BuildLineDiffOps(left, right);
+    std::vector<std::string_view> middle_left = left;
+    std::vector<std::string_view> middle_right = right;
+    const std::size_t trimmed = trim_common(middle_left, middle_right);
+
+    std::vector<std::string_view> replayed_left;
+    std::vector<std::string_view> replayed_right;
+    std::size_t score = 0;
+    bool equal_pairs_match = true;
+    for (const DiffOp& op : ops) {
+      switch (op.kind) {
+        case DiffOpKind::Equal:
+          score += weight_of(op.text, middle_left, middle_right);
+          equal_pairs_match = equal_pairs_match && op.text == op.right_text;
+          replayed_left.push_back(op.text);
+          replayed_right.push_back(op.right_text);
+          break;
+        case DiffOpKind::Delete:
+          replayed_left.push_back(op.text);
+          break;
+        case DiffOpKind::Insert:
+          replayed_right.push_back(op.text);
+          break;
+      }
+    }
+    // Trimmed lines are Equal ops too; strip their (middle-relative) weights so
+    // only the aligned middle is scored against the oracle. Each trimmed line
+    // contributed weight_of(line) computed over the middle, exactly once.
+    std::size_t trimmed_score = 0;
+    {
+      // Prefix lines: first `prefix` entries of left; suffix lines: last `suffix`.
+      const std::size_t prefix = [&] {
+        std::size_t p = 0;
+        while (p < left.size() && p < right.size() && left[p] == right[p]) ++p;
+        return p;
+      }();
+      const std::size_t suffix = trimmed - prefix;
+      for (std::size_t i = 0; i < prefix; ++i) trimmed_score += weight_of(left[i], middle_left, middle_right);
+      for (std::size_t i = 0; i < suffix; ++i) {
+        trimmed_score += weight_of(left[left.size() - 1 - i], middle_left, middle_right);
+      }
+    }
+    const std::size_t optimum = best_score(middle_left, middle_right);
+    if (replayed_left != left || replayed_right != right || !equal_pairs_match ||
+        score - trimmed_score != optimum) {
+      ++mismatches;
+      std::string detail = "left=";
+      for (auto l : left) { detail += '['; detail += l; detail += ']'; }
+      detail += " right=";
+      for (auto r : right) { detail += '['; detail += r; detail += ']'; }
+      detail += " score=" + std::to_string(score - trimmed_score) +
+                " optimum=" + std::to_string(optimum);
+      Expect(false, "line diff ops must replay both sides at the optimal weighted score: " + detail);
+    }
+  }
+  Expect(mismatches == 0, "line diff ops agree with the weighted-LCS oracle");
+}
+
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "CompareModel/LineDiffOpsMatchWeightedLcsOracle",
+          TestCompareLineDiffOpsMatchWeightedLcsOracle);
   AddTest(tests, "CompareModel/BuildCompareModelIntoMatchesAFreshBuild",
           TestBuildCompareModelIntoMatchesAFreshBuild);
   AddTest(tests, "CompareModel/BuildCompareModelIntoReusesRowStorage",
