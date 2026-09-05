@@ -17,15 +17,12 @@
 #include <utility>
 #include <vector>
 
-#if defined(__APPLE__)
-#include <util.h>
-#elif defined(__unix__)
-#include <pty.h>
-#endif
-
 #if defined(__unix__) || defined(__APPLE__)
 #include <cerrno>
 #include <fcntl.h>
+#include <climits>
+#include <cstdio>
+#include <cstdlib>
 #include <poll.h>
 #include <signal.h>
 #include <sys/ioctl.h>
@@ -73,12 +70,27 @@ class PosixTerminalBackend final : public TerminalBackend {
                             TerminalBackendCallbacks callbacks) override {
     Stop();
 
-    int master_fd = -1;
-    int slave_fd = -1;
     winsize window_size{};
     window_size.ws_row = static_cast<unsigned short>(std::min<std::size_t>(request.rows, 65535));
     window_size.ws_col = static_cast<unsigned short>(std::min<std::size_t>(request.columns, 65535));
-    if (openpty(&master_fd, &slave_fd, nullptr, nullptr, &window_size) != 0) {
+    // Both PTY ends are opened close-on-exec ON THE CREATING CALL. Without it, any
+    // unrelated child forked by another thread (Subprocess/AsyncSubprocess on the
+    // background executor) inherits copies of the master and slave: the leaked
+    // slave keeps the master from ever seeing EOF/POLLHUP when the shell exits
+    // (the reader poll() hangs and on_exit never fires), and the master leaks into
+    // every such subprocess, pinning the PTY device open past terminal teardown.
+    // `openpty` has no CLOEXEC flag, so it used to be followed by two fcntl(F_SETFD)
+    // calls -- and a fork on another thread in that window inherited both ends
+    // anyway (the invariant every other descriptor-creating site in the tree
+    // already follows). posix_openpt + open(O_CLOEXEC) close the window. The shell
+    // child re-opens its std fds via dup2(slave_fd, 0/1/2) below, which clears
+    // CLOEXEC on those duplicates, so the shell keeps working.
+    int master_fd = -1;
+    int slave_fd = -1;
+    const auto pty_failure = [&]() {
+      if (master_fd >= 0) {
+        close(master_fd);
+      }
       return TerminalStartResult{
           .started = false,
           .running = false,
@@ -86,18 +98,30 @@ class PosixTerminalBackend final : public TerminalBackend {
           .launch_label = request.command.empty() ? "terminal unavailable" : request.command,
           .initial_output = "failed to allocate PTY for terminal session.",
       };
+    };
+    master_fd = posix_openpt(O_RDWR | O_NOCTTY | O_CLOEXEC);
+    if (master_fd < 0 || grantpt(master_fd) != 0 || unlockpt(master_fd) != 0) {
+      return pty_failure();
     }
-
-    // Mark both PTY ends close-on-exec. Without this, any unrelated child forked
-    // by another thread (Subprocess/AsyncSubprocess on the background executor)
-    // inherits copies of the master and slave: the leaked slave keeps the master
-    // from ever seeing EOF/POLLHUP when the shell exits (the reader poll() hangs
-    // and on_exit never fires), and the master leaks into every such subprocess,
-    // pinning the PTY device open past terminal teardown. The shell child re-opens
-    // its std fds via dup2(slave_fd, 0/1/2) below, which clears CLOEXEC on those
-    // duplicates, so the shell keeps working. Mirrors Subprocess.cpp.
-    (void)fcntl(master_fd, F_SETFD, fcntl(master_fd, F_GETFD, 0) | FD_CLOEXEC);
-    (void)fcntl(slave_fd, F_SETFD, fcntl(slave_fd, F_GETFD, 0) | FD_CLOEXEC);
+    char slave_name[PATH_MAX];
+#if defined(__APPLE__)
+    // No ptsname_r on macOS; ptsname's static buffer is the only option there.
+    const char* slave_path = ptsname(master_fd);
+    if (slave_path == nullptr) {
+      return pty_failure();
+    }
+    std::snprintf(slave_name, sizeof(slave_name), "%s", slave_path);
+#else
+    if (ptsname_r(master_fd, slave_name, sizeof(slave_name)) != 0) {
+      return pty_failure();
+    }
+#endif
+    slave_fd = open(slave_name, O_RDWR | O_NOCTTY | O_CLOEXEC);
+    if (slave_fd < 0) {
+      return pty_failure();
+    }
+    // openpty took the initial size as an argument; set it the same way Resize does.
+    (void)ioctl(master_fd, TIOCSWINSZ, &window_size);
 
     const std::string shell_path = request.shell.empty() ? DefaultShellPath() : request.shell;
     const std::string shell_name = ShellProgramName(shell_path);
