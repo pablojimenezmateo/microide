@@ -7,8 +7,12 @@
 #include "terminal/TerminalMouseEncoder.h"
 #include "util/PerformanceCounters.h"
 #include "util/SdlWake.h"
+#include "util/StringUtil.h"
 
+#include <algorithm>
 #include <chrono>
+#include <cstdio>
+#include <string>
 #include <string_view>
 #include <vector>
 
@@ -2693,7 +2697,115 @@ void TestTerminalSessionAsciiRunFastPathMatchesPerByte() {
                  "byte-at-a-time delivery must produce the same row as one bulk write");
 }
 
+// Random escape streams replayed against the screen and cursor pyte (a Python
+// VT emulator) produced for them; tools/gen-terminal-reference.py regenerates
+// the fixture and documents which sequences it steers around. Every case that
+// disagrees is printed with its input so the divergence can be judged against
+// xterm rather than against pyte alone.
+void TestTerminalSessionScreenAgreesWithPyteReference() {
+  const std::string fixture = ReadFile(FixturePath("terminal/pyte-reference.txt"));
+  Expect(!fixture.empty(), "the pyte reference fixture should be present");
+  struct Case {
+    std::string id;
+    std::size_t rows = 0;
+    std::size_t cols = 0;
+    std::string input;
+    std::vector<std::string> screen;
+    std::size_t cursor_row = 0;
+    std::size_t cursor_col = 0;
+  };
+  std::vector<Case> cases;
+  {
+    std::size_t start = 0;
+    while (start < fixture.size()) {
+      std::size_t end = fixture.find('\n', start);
+      if (end == std::string::npos) end = fixture.size();
+      const std::string_view line(fixture.data() + start, end - start);
+      start = end + 1;
+      if (line.starts_with("case ")) {
+        Case c;
+        const auto parts = microide::util::SplitAsciiWhitespace(line);
+        c.id = std::string(parts[1]);
+        c.rows = static_cast<std::size_t>(std::stoul(std::string(parts[2].substr(5))));
+        c.cols = static_cast<std::size_t>(std::stoul(std::string(parts[3].substr(5))));
+        cases.push_back(std::move(c));
+      } else if (line.starts_with("in ")) {
+        const std::string_view hex = line.substr(3);
+        std::string bytes;
+        for (std::size_t i = 0; i + 1 < hex.size(); i += 2) {
+          bytes.push_back(static_cast<char>(std::stoi(std::string(hex.substr(i, 2)), nullptr, 16)));
+        }
+        cases.back().input = std::move(bytes);
+      } else if (line.starts_with("| ")) {
+        cases.back().screen.emplace_back(line.substr(2));
+      } else if (line.starts_with("cursor ")) {
+        const auto parts = microide::util::SplitAsciiWhitespace(line);
+        cases.back().cursor_row = static_cast<std::size_t>(std::stoul(std::string(parts[1])));
+        cases.back().cursor_col = static_cast<std::size_t>(std::stoul(std::string(parts[2])));
+      }
+    }
+  }
+  Expect(cases.size() > 100, "the fixture should carry a few hundred cases");
+
+  const auto rtrim = [](std::string text) {
+    while (!text.empty() && text.back() == ' ') text.pop_back();
+    return text;
+  };
+  std::size_t failures = 0;
+  std::string report;
+  for (const Case& c : cases) {
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, c.rows, c.cols);
+    TerminalSessionTestAccess::AppendOutput(session, c.input);
+    const auto lines = session.SnapshotLines();
+    const std::size_t first_visible = lines.size() > c.rows ? lines.size() - c.rows : 0;
+    std::vector<std::string> got_screen(c.rows);
+    for (std::size_t r = 0; r < c.rows; ++r) {
+      const std::size_t index = first_visible + r;
+      std::string text;
+      if (index < lines.size()) {
+        for (std::size_t col = 0; col < c.cols; ++col) {
+          if (col < lines[index].cells.size() && lines[index].cells[col].length > 0) {
+            text += std::string(lines[index].cells[col].DisplayText());
+          } else {
+            text += ' ';
+          }
+        }
+      }
+      got_screen[r] = rtrim(text);
+    }
+    const std::size_t got_row =
+        session.cursor_row() >= first_visible ? session.cursor_row() - first_visible : 0;
+    const std::size_t got_col = std::min(session.cursor_column(), c.cols - 1);
+    bool same = got_row == c.cursor_row && got_col == c.cursor_col;
+    for (std::size_t r = 0; r < c.rows && same; ++r) {
+      same = got_screen[r] == rtrim(c.screen[r]);
+    }
+    if (same) continue;
+    ++failures;
+    if (failures <= 12) {
+      report += "\ncase " + c.id + " rows=" + std::to_string(c.rows) +
+                " cols=" + std::to_string(c.cols) + " cursor want " +
+                std::to_string(c.cursor_row) + "," + std::to_string(c.cursor_col) + " got " +
+                std::to_string(got_row) + "," + std::to_string(got_col) + "\n  in ";
+      for (const unsigned char b : c.input) {
+        char buf[4];
+        std::snprintf(buf, sizeof(buf), "%02x", b);
+        report += buf;
+      }
+      for (std::size_t r = 0; r < c.rows; ++r) {
+        report += "\n  want |" + rtrim(c.screen[r]) + "|  got |" + got_screen[r] + "|";
+      }
+    }
+  }
+  Expect(failures == 0,
+         "screens agree with the pyte reference; " + std::to_string(failures) + " of " +
+             std::to_string(cases.size()) + " cases differ:" + report);
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/ScreenAgreesWithPyteReference",
+          TestTerminalSessionScreenAgreesWithPyteReference);
   AddTest(tests, "TerminalSession/SwallowsUnknownCsiFinals",
           TestTerminalSessionSwallowsUnknownCsiFinals);
   AddTest(tests, "TerminalSession/AsciiRunFastPathMatchesPerByte",
