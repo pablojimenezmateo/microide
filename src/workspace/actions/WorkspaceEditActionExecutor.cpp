@@ -1,3 +1,4 @@
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/actions/WorkspaceActionServices.h"
 
@@ -159,6 +160,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::RenameSymbol: {
+      // `rename-symbol <new-name>` renames outright (a headless driver cannot
+      // answer a prompt); bare, it opens the prompt prefilled with the symbol.
+      if (!args.empty()) {
+        std::string error_message;
+        if (!context_.RenameSymbol(JoinCommandArguments(args, 0), &error_message)) {
+          return reject(error_message.empty() ? "Rename unavailable" : error_message);
+        }
+        return DispatchResult::Handled;
+      }
       context_.OpenRenameSymbolPrompt();
       return DispatchResult::Handled;
     }

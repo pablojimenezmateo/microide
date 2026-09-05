@@ -18,6 +18,8 @@ project (see [README](README.md)); versions track meaningful shipped work.
   left facing a prompt. `tab <path>` and `open <path>` on a path that is not
   there yet open an empty buffer bound to it, created on save, as `code
   new.txt` does. Save As never overwrites an existing file.
+- **`rename-symbol <new-name>`** renames without the prompt, so a script or
+  headless driver can rename through the language server.
 
 ### Fixed
 

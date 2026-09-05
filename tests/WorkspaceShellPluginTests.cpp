@@ -1866,6 +1866,17 @@ return ide.plugin({
          "rename should apply the edit on the declaration line");
   Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[1] == "print(count)",
          "rename should apply the edit to the second occurrence as well");
+
+  // The command form takes the name and skips the prompt (a headless driver
+  // cannot answer one).
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 2);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "rename-symbol total"),
+         "rename-symbol <name> dispatches");
+  Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell), "and opens no prompt");
+  WorkspaceShellTestAccess::ConsumeLspCallbacks(shell);
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "total = 1" &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).lines()[1] == "print(total)",
+         "the named rename applies the server's edit");
 }
 
 // Regression: a rename that touches files which aren't open confirms first, then
