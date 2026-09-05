@@ -524,21 +524,29 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     interaction_state_.editor_box_selecting = true;
     interaction_state_.editor_box_anchor_line = anchor.line;
     interaction_state_.editor_box_anchor_column = anchor.column;
+  } else if (alt_left_click) {
+    // Alt+click adds a caret at the pointer and keeps every existing selection
+    // (VS Code): the previous primary becomes a secondary WITH its selection
+    // rather than a collapsed caret, so a word selected before the click is
+    // still one of the sites the next keystroke edits. Alt+click on an existing
+    // secondary caret removes it instead.
+    if (!viewport->RemoveSecondaryCaretAt(editor::TextPosition{hit.line, hit.column})) {
+      const std::optional<editor::SelectionRange> previous = viewport->selection_range();
+      viewport->MoveCursorToVisualHit(visual_row, hit_column, /*extend_selection=*/false);
+      if (previous.has_value()) {
+        viewport->AddSecondaryCaretWithRange(*previous);
+      } else {
+        viewport->AddSecondaryCaret(anchor.line, anchor.column);
+      }
+    }
   } else {
-    {
-      util::PerformanceTrace::Scope move_scope(
-          "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
-      // Hit-test and place in one call: under soft wrap a click past a wrapped
-      // row's last glyph resolves to the wrap point, which the plain
-      // MoveCursorTo(line, column) form renders at the start of the row BELOW the
-      // one that was clicked. Same result everywhere else.
-      viewport->MoveCursorToVisualHit(visual_row, hit_column,
-                                      !alt_left_click && (modifiers & SDL_KMOD_SHIFT) != 0);
-    }
-    if (alt_left_click) {
-      viewport->AddSecondaryCaret(anchor.line, anchor.column);
-      viewport->ClearSelection();
-    }
+    util::PerformanceTrace::Scope move_scope(
+        "EditorMouseCoordinator::HandleButtonDown::MoveCursorToVisualColumn");
+    // Hit-test and place in one call: under soft wrap a click past a wrapped
+    // row's last glyph resolves to the wrap point, which the plain
+    // MoveCursorTo(line, column) form renders at the start of the row BELOW the
+    // one that was clicked. Same result everywhere else.
+    viewport->MoveCursorToVisualHit(visual_row, hit_column, (modifiers & SDL_KMOD_SHIFT) != 0);
   }
   // Word/line expansion never applies to a box gesture (it would collapse the
   // rectangular selection back to a single row).

@@ -619,6 +619,18 @@ void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
   MergeOverlappingCaretRanges();
 }
 
+bool TextViewport::RemoveSecondaryCaretAt(TextPosition position) {
+  const auto at = std::find_if(secondary_carets_.begin(), secondary_carets_.end(),
+                               [&](const SecondaryCaret& caret) {
+                                 return caret.position == position;
+                               });
+  if (at == secondary_carets_.end()) {
+    return false;
+  }
+  secondary_carets_.erase(at);
+  return true;
+}
+
 void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
   if (document_->lines.empty()) {
     return;

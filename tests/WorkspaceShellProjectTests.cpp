@@ -3569,6 +3569,43 @@ void TestWorkspaceShellAltClickAddsSecondaryCaret() {
          "Alt+left click should move the primary caret to the clicked column");
 }
 
+void TestWorkspaceShellAltClickKeepsTheExistingSelection() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "main.txt";
+  WriteFile(source, "alpha beta\nsecond line\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);  // "alpha" selected
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  const float y = metrics.first_line_y + metrics.line_height * 0.5f;
+
+  ScopedSdlModState alt_mods(SDL_KMOD_ALT);
+  Expect(SendMouseDown(shell, metrics.text_x + char_width * 8.0f, y, SDL_BUTTON_LEFT),
+         "Alt+left click inside the editor should be handled");
+  Expect(viewport.cursor_column() == 8 && !viewport.selection_range().has_value(),
+         "the clicked position is the new, collapsed primary caret");
+  const auto secondaries = viewport.secondary_caret_ranges();
+  Expect(secondaries.size() == 1 && secondaries[0].position == microide::editor::TextPosition{0, 5} &&
+             secondaries[0].selection_anchor == microide::editor::TextPosition{0, 0},
+         "the previous selection survives as a secondary caret with its range");
+
+  // Alt+click on an existing secondary caret removes it (VS Code toggles).
+  Expect(SendMouseDown(shell, metrics.text_x + char_width * 5.0f, y, SDL_BUTTON_LEFT),
+         "the second Alt+click is handled");
+  Expect(!viewport.has_multiple_carets(), "Alt+click on a secondary caret removes it");
+  Expect(viewport.cursor_column() == 8, "the primary stays where it was");
+}
+
 void TestWorkspaceShellShiftAltClickAddsColumnCarets() {
   EnsureDummySdlVideoInitialized();
   ResetSdlModStateForTests();
@@ -6576,6 +6613,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorDragSelectionTracksPointer);
   AddTest(tests, "WorkspaceShell/AltClickAddsSecondaryCaret",
           TestWorkspaceShellAltClickAddsSecondaryCaret);
+  AddTest(tests, "WorkspaceShell/AltClickKeepsTheExistingSelection",
+          TestWorkspaceShellAltClickKeepsTheExistingSelection);
   AddTest(tests, "WorkspaceShell/ShiftAltClickAddsColumnCarets",
           TestWorkspaceShellShiftAltClickAddsColumnCarets);
   AddTest(tests, "WorkspaceShell/ShiftAltClickOffColumnMakesBoxSelection",

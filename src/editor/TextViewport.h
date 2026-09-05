@@ -548,6 +548,9 @@ class TextViewport {
   std::span<const TextPosition> secondary_caret_positions() const;
   bool has_multiple_carets() const { return !secondary_carets_.empty(); }
   void AddSecondaryCaret(std::size_t line, std::size_t column);
+  // Removes the secondary caret sitting exactly at `position` (Alt+click on an
+  // existing caret takes it away again, as in VS Code). False when none is there.
+  bool RemoveSecondaryCaretAt(TextPosition position);
   // Adds a secondary caret with an active selection (anchor → position). Used
   // by multi-caret surround and by tests; normalizes and clamps the range.
   void AddSecondaryCaretWithRange(SelectionRange range);
