@@ -239,8 +239,11 @@ std::vector<CommitPreCheck> RunCommitPreChecks(
     // The limit is a compile-time constant, so the message is too: spelling it out
     // keeps the check allocation-free and sidesteps a GCC 13 -Warray-bounds false
     // positive on the std::to_string concatenation.
+    // A Warning, not Blocking: git accepts any subject length and VS Code only
+    // decorates the input past 72, so a project whose convention allows longer
+    // subjects can acknowledge the warning and commit rather than being refused.
     static_assert(kCommitSubjectMaxLength == 72, "keep the long-subject message in sync");
-    checks.push_back(MakeCheck(CommitPreCheckKind::LongSubject, CommitPreCheckSeverity::Blocking,
+    checks.push_back(MakeCheck(CommitPreCheckKind::LongSubject, CommitPreCheckSeverity::Warning,
                                "Commit subject exceeds 72 characters"));
   }
 

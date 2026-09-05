@@ -102,10 +102,24 @@ void TestCommitSubjectLengthCountsCharactersNotBytes() {
   Expect(!has_long_subject(RunCommitPreChecks(state, cjk, "", {}, &summary)),
          "a 40-character (120-byte) subject must not be flagged as too long");
 
-  // 80 characters really is over the limit and must still block.
+  // 80 characters really is over the limit and must still be flagged -- as a
+  // WARNING the user can acknowledge, not a block: git accepts any length and VS
+  // Code only decorates the input, so a project with a longer convention commits.
   const std::string too_long(80, 'a');
-  Expect(has_long_subject(RunCommitPreChecks(state, too_long, "", {}, &summary)),
-         "an 80-character subject must still be flagged as too long");
+  const auto checks = RunCommitPreChecks(state, too_long, "", {}, &summary);
+  Expect(has_long_subject(checks), "an 80-character subject must still be flagged as too long");
+  for (const auto& check : checks) {
+    if (check.kind == microide::project::CommitPreCheckKind::LongSubject) {
+      Expect(check.severity == microide::project::CommitPreCheckSeverity::Warning,
+             "a long subject warns rather than blocks");
+      Expect(!microide::project::CommitPreChecksAllowExecution(checks, {}),
+             "unacknowledged, the warning still holds the commit");
+      std::unordered_set<std::string> acknowledged;
+      for (const auto& warning : checks) acknowledged.insert(warning.id);
+      Expect(microide::project::CommitPreChecksAllowExecution(checks, acknowledged),
+             "acknowledged (with the fixture's other warnings), the commit proceeds");
+    }
+  }
 }
 
 void TestWarningsRequireAcknowledgement() {
