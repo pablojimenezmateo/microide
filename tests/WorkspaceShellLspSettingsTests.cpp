@@ -90,6 +90,8 @@ void TestLspMenuItemsHideWhenDisabled() {
         WorkspaceShellTestAccess::MenuItemLabels(shell, WorkspaceShell::MenuId::EditorContext);
     Expect(!LabelsContain(labels, "Go to Definition"),
            "with no server configured, Go to Definition is hidden, not greyed");
+    Expect(!LabelsContain(labels, "Rename Symbol") && !LabelsContain(labels, "Format Document"),
+           "with no server configured, Rename Symbol and Format Document are hidden");
     Expect(LabelsContain(labels, "Cut") || LabelsContain(labels, "Paste"),
            "non-LSP editor items stay present when LSP items are hidden");
   }
@@ -107,6 +109,8 @@ void TestLspMenuItemsHideWhenDisabled() {
            "a configured server makes Go to Definition appear");
     Expect(LabelsContain(labels, "Find References"), "Find References appears too");
     Expect(LabelsContain(labels, "Code Actions"), "Code Actions appears too");
+    Expect(LabelsContain(labels, "Rename Symbol") && LabelsContain(labels, "Format Document"),
+           "a configured server surfaces Rename Symbol and Format Document (VS Code's context menu)");
   }
 
   // Disabling one feature hides only that entry.

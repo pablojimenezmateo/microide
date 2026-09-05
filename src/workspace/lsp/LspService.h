@@ -134,6 +134,9 @@ class LspService {
   // "(LSP: …)" suffix for actions a plugin can answer without a server.
   bool HasActivePluginDefinitionProvider() const;
   bool HasActivePluginReferencesProvider() const;
+  // A language server is registered for the active editable buffer's language
+  // (started or not). Gates the server-only menu entries (rename, format).
+  bool HasActiveLanguageServer() const;
   bool HasActiveCompletionProvider() const;
   bool HasActiveCodeActionProvider() const;
   bool HasActiveDefinitionProvider() const;

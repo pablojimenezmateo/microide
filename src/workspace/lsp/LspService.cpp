@@ -369,6 +369,11 @@ bool LspService::HasActivePluginReferencesProvider() const {
          operations_.plugin_has_references_provider(language_id);
 }
 
+bool LspService::HasActiveLanguageServer() const {
+  const std::string language_id = ActiveLanguageIdForProvider();
+  return !language_id.empty() && CurrentLspManager().HasServer(language_id);
+}
+
 bool LspService::HasActiveDefinitionProvider() const {
   if (HasActivePluginDefinitionProvider()) {
     return true;

@@ -29,7 +29,8 @@ MenuItemSpec MenuSeparator() {
 bool IsLspDrivenMenuAction(ActionId id) {
   return id == ActionId::GoToDefinition || id == ActionId::GoToTypeDefinition ||
          id == ActionId::GoToImplementation || id == ActionId::GoToDeclaration ||
-         id == ActionId::FindReferences || id == ActionId::CallHierarchy;
+         id == ActionId::FindReferences || id == ActionId::CallHierarchy ||
+         id == ActionId::RenameSymbol || id == ActionId::FormatDocument;
 }
 
 std::string_view LspMenuActionFeatureId(ActionId id) {
@@ -44,6 +45,10 @@ std::string_view LspMenuActionFeatureId(ActionId id) {
       return "lsp.find_references.enabled";
     case ActionId::CallHierarchy:
       return "lsp.call_hierarchy.enabled";
+    case ActionId::RenameSymbol:
+      return "lsp.rename.enabled";
+    case ActionId::FormatDocument:
+      return "lsp.formatting.enabled";
     case ActionId::CodeActions:
       return "lsp.code_actions.enabled";
     case ActionId::Completion:
@@ -145,6 +150,8 @@ std::span<const MenuSpec> WorkspaceMenuSpecs() {
       MenuItem(ActionId::CodeActions),
       MenuItem(ActionId::GoToDefinition),
       MenuItem(ActionId::FindReferences),
+      MenuItem(ActionId::RenameSymbol),
+      MenuItem(ActionId::FormatDocument),
   });
   static const auto kViewItems = std::to_array<MenuItemSpec>({
       MenuItem(ActionId::SidebarToggle, {}, {}, {}, 0, true),

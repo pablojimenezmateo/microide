@@ -227,6 +227,10 @@ std::span<const WorkspaceShell::MenuItemSpec> WorkspaceShell::MenuItems(MenuId i
         return !HasActiveCodeActionProvider();
       case ActionId::Completion:
         return !HasActiveCompletionProvider();
+      case ActionId::RenameSymbol:
+      case ActionId::FormatDocument:
+        // Server-only features (no plugin provider kind exists for them).
+        return !lsp_service_.HasActiveLanguageServer();
       default:
         return false;
     }
