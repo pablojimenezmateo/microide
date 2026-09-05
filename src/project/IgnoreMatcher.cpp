@@ -1,5 +1,6 @@
 #include "project/IgnoreMatcher.h"
 
+#include <algorithm>
 #include <cctype>
 #include <fstream>
 #include <string_view>
@@ -232,15 +233,28 @@ bool IgnoreMatcher::Rule::MatchesText(std::string_view text) const {
     case PatternShape::Prefix:
       return text.starts_with(literal);
     case PatternShape::Glob:
-      // Everything before the pattern's first metacharacter is literal, so a text
-      // that does not start with it cannot match however the rest expands. This is
-      // a pure short-circuit of GlobMatches, not a second matching rule.
-      if (!literal.empty() && !text.starts_with(literal)) {
-        return false;
-      }
-      return GlobMatches(pattern, text);
+      return GlobMatchesAfterLiteral(pattern, literal, text);
   }
   return false;
+}
+
+// Everything before the pattern's first metacharacter is literal, so a text that
+// does not start with it cannot match however the rest expands -- and the match
+// itself then runs over the two REMAINDERS, which is what git does
+// (`match_pathname` compares the literal prefix and hands wildmatch the rest).
+// That is not only a short-circuit: it is where a documented git quirk comes
+// from. gitignore(5) says a `**` that is not a whole path segment is a plain
+// `*`, but once the prefix is stripped a `**` that immediately followed it sits
+// at the START of what wildmatch sees and gains its cross-directory meaning, so
+// `x**/b` ignores `x.o/foo/b` in git (`x[a]**/b` does not). Matching the whole
+// pattern here disagreed with git on exactly those rules; found against
+// `git check-ignore` over generated rule sets.
+bool IgnoreMatcher::GlobMatchesAfterLiteral(std::string_view pattern, std::string_view literal,
+                                            std::string_view text) {
+  if (!text.starts_with(literal)) {
+    return false;
+  }
+  return GlobMatches(pattern.substr(literal.size()), text.substr(literal.size()));
 }
 
 bool IgnoreMatcher::Rule::Matches(std::string_view relative_path,
@@ -290,10 +304,15 @@ bool IgnoreMatcher::Rule::Matches(std::string_view relative_path,
   // final `**` then swallows empty), so `git status` shows `logs/` ignored as a
   // whole. Without this the directory stayed un-ignored while every child was,
   // so the tree showed a normal folder full of grayed entries. A directory-only
-  // `logs/**/` does not get this in git, and so not here.
-  if (is_directory && !directory_only && shape == PatternShape::Glob && pattern.size() > 3 &&
-      pattern.ends_with("/**")) {
-    return GlobMatches(std::string_view(pattern).substr(0, pattern.size() - 3), relative_path);
+  // `logs/**/` does not get this in git, and so not here -- nor does a NEGATED
+  // `!logs/**`: it names the children, which an excluded parent keeps excluded
+  // anyway, and letting it reach the directory re-included one that `logs/`
+  // had ignored (found against `git check-ignore`).
+  if (is_directory && !directory_only && !negated && shape == PatternShape::Glob &&
+      pattern.size() > 3 && pattern.ends_with("/**")) {
+    const std::string_view stem = std::string_view(pattern).substr(0, pattern.size() - 3);
+    return GlobMatchesAfterLiteral(stem, std::string_view(literal).substr(0, std::min(literal.size(), stem.size())),
+                                   relative_path);
   }
   return false;
 }

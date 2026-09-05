@@ -111,6 +111,11 @@ class IgnoreMatcher {
   };
 
   static bool ParseRule(std::string base_relative, std::string line, Rule& out_rule);
+  // Glob-shaped rule test: `literal` is the pattern's leading run of literal
+  // characters; the text must start with it, and the wildcard match runs over
+  // the remainders (git's own order of operations, see the definition).
+  static bool GlobMatchesAfterLiteral(std::string_view pattern, std::string_view literal,
+                                      std::string_view text);
   // Shared body of IgnoredEntryNormalized and its parent-chain recursion: every
   // layer reads the same candidate, so the name split is done once by the entry.
   bool IgnoredEntry(std::string_view normalized_relative_path, std::string_view last_component,

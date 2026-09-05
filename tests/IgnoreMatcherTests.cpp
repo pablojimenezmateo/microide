@@ -148,6 +148,42 @@ void TestIgnoreMatcherAncestorVerdictWinsAndNamesMatchTheEntry() {
   Expect(matcher.IgnoredEntryNormalized("ab/a", true), "the entry form still matches the entry");
 }
 
+// git compares a pattern's literal prefix first and runs wildmatch over the
+// remainders, so a `**` that directly follows the prefix is a leading `**` to
+// wildmatch and crosses directories: `x**/b` ignores `x.o/foo/b`. A `**` behind a
+// wildcard (`x[a]**/b`) stays a plain `*`. Found against `git check-ignore`.
+void TestIgnoreMatcherLiteralPrefixPromotesTheDoubleStarLikeGit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  WriteFile(root / ".gitignore", "x**/b\nsrc/y**/c\nx[a]**/d\n");
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  Expect(matcher.Ignored("x.o/foo/b", false), "`x**/b` crosses directories after the prefix");
+  Expect(matcher.Ignored("xfoo/b", false), "`x**/b` still matches within one segment");
+  Expect(!matcher.Ignored("y.o/foo/b", false), "the literal prefix must match");
+  Expect(matcher.Ignored("src/y.o/foo/c", false), "a longer literal prefix works the same way");
+  Expect(!matcher.Ignored("xa/q/d", false), "a `**` behind a wildcard is a plain `*`");
+  Expect(matcher.Ignored("xaq/d", false), "and still matches within the segment");
+}
+
+// `dir/**` also grays the directory itself (a deliberate display choice, see
+// Rule::Matches), but a negated `!dir/**` must not: git's rule never matches the
+// directory, so `*.c/` followed by `!*.c/**` leaves `x.c` ignored.
+void TestIgnoreMatcherNegatedDoubleStarDoesNotReincludeTheDirectory() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  std::filesystem::create_directories(root);
+  WriteFile(root / ".gitignore", "*.c/\n!*.c/**\nlogs/**\n");
+  IgnoreMatcher matcher;
+  matcher.SetRoot(root);
+
+  Expect(matcher.Ignored("x.c", true), "`!*.c/**` does not re-include the directory");
+  Expect(matcher.Ignored("x.c/bar", false), "and its children stay excluded");
+  Expect(matcher.Ignored("logs", true), "a positive `logs/**` still grays the directory");
+}
+
 void TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "repo";
@@ -482,6 +518,10 @@ void RegisterIgnoreMatcherTests(std::vector<TestCase>& tests) {
           TestIgnoreMatcherParentLinkedLayersMatchFlattened);
   AddTest(tests, "IgnoreMatcher/NegationAndDirectoryRules",
           TestIgnoreMatcherNegationAndDirectoryRules);
+  AddTest(tests, "IgnoreMatcher/LiteralPrefixPromotesTheDoubleStarLikeGit",
+          TestIgnoreMatcherLiteralPrefixPromotesTheDoubleStarLikeGit);
+  AddTest(tests, "IgnoreMatcher/NegatedDoubleStarDoesNotReincludeTheDirectory",
+          TestIgnoreMatcherNegatedDoubleStarDoesNotReincludeTheDirectory);
   AddTest(tests, "IgnoreMatcher/DefaultRulesGrayVcsAndBuildDirs",
           TestIgnoreMatcherDefaultRulesGrayVcsAndBuildDirs);
   AddTest(tests, "IgnoreMatcher/AncestorVerdictWinsAndNamesMatchTheEntry",
