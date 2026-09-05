@@ -420,8 +420,33 @@ std::string WorkspaceShell::TabDisplayTitle(std::size_t group_index, std::size_t
   if (tab == nullptr) {
     return {};
   }
-  return BuildWorkspaceTabDisplayTitle(TabLabelPath(*tab), tab->title,
-                                       TabCoordinator::TabStateIsDirty(*tab));
+  std::string title = BuildWorkspaceTabDisplayTitle(TabLabelPath(*tab), tab->title,
+                                                    TabCoordinator::TabStateIsDirty(*tab));
+  // Two tabs in the group with the same file name are told apart by their
+  // parent folder, "index.ts — src" (VS Code's tab description). Without it both
+  // tabs read identically and only the tooltip knew which was which. A linear
+  // scan over the group's tabs, once per strip geometry rebuild per tab.
+  const std::filesystem::path& path = TabLabelPath(*tab);
+  if (path.empty() || !path.has_parent_path()) {
+    return title;
+  }
+  const auto& tabs = context_.current_project_state.editor_groups[group_index].open_tabs;
+  const std::filesystem::path filename = path.filename();
+  for (std::size_t other = 0; other < tabs.size(); ++other) {
+    if (other == index) {
+      continue;
+    }
+    const std::filesystem::path& other_path = TabLabelPath(tabs[other]);
+    if (!other_path.empty() && other_path != path && other_path.filename() == filename) {
+      const std::string parent = path.parent_path().filename().string();
+      if (!parent.empty()) {
+        title += " \xe2\x80\x94 ";  // " — "
+        title += parent;
+      }
+      break;
+    }
+  }
+  return title;
 }
 
 std::string WorkspaceShell::TabTooltipLabel(std::size_t index) const {

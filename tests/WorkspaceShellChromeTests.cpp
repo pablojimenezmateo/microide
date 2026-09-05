@@ -3721,7 +3721,39 @@ void TestWorkspaceShellUnfocusedSplitPaneTabIsDimmed() {
          "the unfocused pane's accent must stay visible against its strip");
 }
 
+
+// Two open tabs with the same file name show their parent folder after the name
+// ("index.txt — a"), as VS Code does; a tab with a unique name stays bare. Both
+// used to read identically, leaving only the tooltip to tell them apart.
+void TestWorkspaceShellSameNameTabsShowTheirParentFolder() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path a = root / "a" / "index.txt";
+  const std::filesystem::path b = root / "b" / "index.txt";
+  const std::filesystem::path other = root / "other.txt";
+  WriteFile(a, "a\n");
+  WriteFile(b, "b\n");
+  WriteFile(other, "o\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, a);
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 0) == "index.txt",
+         "a lone tab shows just its file name");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, b), "the second index.txt opens");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, other), "other.txt opens");
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 0) == "index.txt \xe2\x80\x94 a",
+         "the first same-name tab shows its parent folder: [" +
+             WorkspaceShellTestAccess::TabDisplayTitle(shell, 0) + "]");
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 1) == "index.txt \xe2\x80\x94 b",
+         "the second same-name tab shows its parent folder");
+  Expect(WorkspaceShellTestAccess::TabDisplayTitle(shell, 2) == "other.txt",
+         "a uniquely named tab stays bare");
+}
+
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/SameNameTabsShowTheirParentFolder",
+          TestWorkspaceShellSameNameTabsShowTheirParentFolder);
   AddTest(tests, "WorkspaceShell/TabSwitchDefersLspHydration",
           TestWorkspaceShellTabSwitchDefersLspHydration);
   AddTest(tests, "WorkspaceShell/SettingsKeepSelectionVisibleScrollsToRow",
