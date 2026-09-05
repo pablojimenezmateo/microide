@@ -437,6 +437,21 @@ void TestMultiCaretDistributePasteOneLinePerCaret() {
          "distribute-paste should place line 1 at the first caret, line 2 at the second");
 }
 
+void TestMultiCaretDistributePasteIgnoresOneTrailingLineBreak() {
+  // Three whole lines copied with their final newline still spread over three
+  // carets (VS Code's spread rule strips one trailing line break first); a
+  // payload with a blank last line is a genuine count mismatch.
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc", "/tmp/mc-trailing-paste.txt");
+  viewport.MoveCursorTo(0, 1);
+  viewport.AddSecondaryCaret(1, 1);
+  viewport.AddSecondaryCaret(2, 1);
+  viewport.PasteText("X\nY\nZ\r\n");
+  Expect(viewport.lines().size() == 3 && viewport.lines()[0] == "aX" &&
+             viewport.lines()[1] == "bY" && viewport.lines()[2] == "cZ",
+         "one trailing line break is not a fourth line");
+}
+
 void TestMultiCaretPasteCountMismatchInsertsFullTextAtEachCaret() {
   TextViewport viewport;
   viewport.LoadContent("foo foo", "/tmp/mc-mismatch-paste.cpp");
@@ -1354,6 +1369,8 @@ void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
           TestMultiCaretCopyRequiresAllSelections);
   AddTest(tests, "EditorMultiCaret/DistributePasteOneLinePerCaret",
           TestMultiCaretDistributePasteOneLinePerCaret);
+  AddTest(tests, "EditorMultiCaret/DistributePasteIgnoresOneTrailingLineBreak",
+          TestMultiCaretDistributePasteIgnoresOneTrailingLineBreak);
   AddTest(tests, "EditorMultiCaret/PasteCountMismatchInsertsFullTextAtEachCaret",
           TestMultiCaretPasteCountMismatchInsertsFullTextAtEachCaret);
   AddTest(tests, "EditorMultiCaret/DeleteSelectionsRemovesAllAndUndoesAtomically",

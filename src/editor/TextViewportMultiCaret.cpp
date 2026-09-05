@@ -551,11 +551,21 @@ bool TextViewport::PasteText(std::string_view text, bool record_undo) {
   // Split the clipboard into lines (tolerating CRLF), then distribute one line
   // per caret only when the counts match; otherwise insert the whole payload at
   // every caret (ApplyMultiCaretEdit re-checks the count against the deduped set).
+  // One trailing line break does not count as an extra (empty) line, as in VS
+  // Code's spread rule: three whole lines copied with their final newline
+  // still spread over three carets.
+  std::string_view lines = text;
+  if (lines.ends_with('\n')) {
+    lines.remove_suffix(1);
+  }
+  if (lines.ends_with('\r')) {
+    lines.remove_suffix(1);
+  }
   std::vector<std::string> parts;
   std::size_t start = 0;
-  for (std::size_t i = 0; i <= text.size(); ++i) {
-    if (i == text.size() || text[i] == '\n') {
-      std::string_view line = text.substr(start, i - start);
+  for (std::size_t i = 0; i <= lines.size(); ++i) {
+    if (i == lines.size() || lines[i] == '\n') {
+      std::string_view line = lines.substr(start, i - start);
       if (!line.empty() && line.back() == '\r') {
         line.remove_suffix(1);
       }
