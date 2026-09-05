@@ -591,8 +591,19 @@ bool InsertLineBelow(TextViewport& viewport) {
   if (line >= lines.size()) return false;
   // End-of-line then Enter, which is exactly what the action means and gets the
   // language's smart indent (and its brace bump) for free rather than
-  // reimplementing AutoIndentForNewline here.
+  // reimplementing AutoIndentForNewline here. EVERY caret goes to the end of
+  // its own line first: the multi-caret Enter opens a line below each of them
+  // (VS Code's lineInsertAfter), where moving only the primary left the
+  // secondaries mid-line and Enter split their lines in two.
+  std::vector<TextPosition> secondaries;
+  for (const TextPosition& caret : viewport.secondary_caret_positions()) {
+    const std::size_t caret_line = std::min(caret.line, lines.size() - 1);
+    secondaries.push_back(TextPosition{caret_line, lines.LineLength(caret_line)});
+  }
   viewport.MoveCursorTo(line, lines.LineLength(line));
+  if (!secondaries.empty()) {
+    viewport.SetSecondaryCarets(std::move(secondaries));
+  }
   viewport.InsertNewline();
   return true;
 }
@@ -604,12 +615,45 @@ bool InsertLineAbove(TextViewport& viewport) {
   // The new line takes the indent of the line it is pushing down, which is what
   // makes Ctrl+Shift+Enter inside a block land at the block's depth. Deliberately
   // NOT the smart-indent form: the line below has not been opened by anything.
-  const std::size_t indent_bytes = LeadingWhitespaceCount(lines.LineView(line));
-  std::string inserted(lines.LineView(line).substr(0, indent_bytes));
-  inserted.push_back('\n');
-  viewport.MoveCursorTo(line, 0);
-  viewport.InsertText(inserted);
-  viewport.MoveCursorTo(line, indent_bytes);
+  const auto indent_of = [&](std::size_t at) {
+    return std::string(lines.LineView(at).substr(0, LeadingWhitespaceCount(lines.LineView(at))));
+  };
+  if (!viewport.has_multiple_carets()) {
+    std::string inserted = indent_of(line);
+    const std::size_t indent_bytes = inserted.size();
+    inserted.push_back('\n');
+    viewport.MoveCursorTo(line, 0);
+    viewport.InsertText(inserted);
+    viewport.MoveCursorTo(line, indent_bytes);
+    return true;
+  }
+  // One new line above each caret's line (carets sharing a line share it), each
+  // with that line's own indent. Inserting in ascending order means the k-th
+  // target has slid down k lines by the time it is reached.
+  std::vector<std::size_t> target_lines{line};
+  for (const TextPosition& caret : viewport.secondary_caret_positions()) {
+    target_lines.push_back(std::min(caret.line, lines.size() - 1));
+  }
+  std::sort(target_lines.begin(), target_lines.end());
+  target_lines.erase(std::unique(target_lines.begin(), target_lines.end()), target_lines.end());
+  const std::size_t primary_slot = static_cast<std::size_t>(
+      std::lower_bound(target_lines.begin(), target_lines.end(), line) - target_lines.begin());
+  viewport.BeginUndoGroup();
+  std::vector<TextPosition> landed;
+  landed.reserve(target_lines.size());
+  for (std::size_t k = 0; k < target_lines.size(); ++k) {
+    const std::size_t at = target_lines[k] + k;
+    std::string inserted = indent_of(at);
+    landed.push_back(TextPosition{at, inserted.size()});
+    inserted.push_back('\n');
+    (void)viewport.ReplaceRange(SelectionRange{TextPosition{at, 0}, TextPosition{at, 0}}, inserted,
+                                /*record_undo=*/true);
+  }
+  viewport.ClearSecondaryCarets();
+  viewport.MoveCursorTo(landed[primary_slot].line, landed[primary_slot].column);
+  landed.erase(landed.begin() + static_cast<std::ptrdiff_t>(primary_slot));
+  viewport.SetSecondaryCarets(std::move(landed));
+  viewport.EndUndoGroup();
   return true;
 }
 

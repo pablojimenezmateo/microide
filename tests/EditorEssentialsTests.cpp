@@ -653,6 +653,50 @@ void TestShapingCopyLinesDirections() {
          "a partial selection copies its whole line, not the selected fragment");
 }
 
+// With several carets, Ctrl+Enter / Ctrl+Shift+Enter open a line next to EACH
+// caret's line (VS Code's lineInsertAfter/Before). Only the primary used to be
+// moved to its line end first, so the multi-caret Enter split every secondary
+// caret's line where it stood.
+void TestShapingInsertLineBelowAndAboveAtEveryCaret() {
+  const auto joined = [](const TextViewport& v) {
+    std::string out;
+    for (std::size_t i = 0; i < v.line_count(); ++i) {
+      if (i > 0) out.push_back('\n');
+      out.append(v.lines().LineView(i));
+    }
+    return out;
+  };
+  {
+    TextViewport viewport;
+    viewport.LoadContent("alpha\n  beta\ngamma", "/tmp/sample.txt");
+    viewport.MoveCursorTo(0, 2);
+    viewport.AddSecondaryCaret(1, 3);
+    Expect(microide::editor::InsertLineBelow(viewport), "insert-below should change");
+    Expect(joined(viewport) == "alpha\n\n  beta\n  \ngamma",
+           "a line opens below each caret's line, intact: " + joined(viewport));
+    Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 0 &&
+               viewport.secondary_carets().size() == 1 &&
+               viewport.secondary_carets()[0] == microide::editor::TextPosition{3, 2},
+           "each caret sits on its new line after that line's indent");
+    Expect(viewport.Undo() && joined(viewport) == "alpha\n  beta\ngamma", "one undo step");
+  }
+  {
+    TextViewport viewport;
+    viewport.LoadContent("alpha\n  beta\ngamma", "/tmp/sample.txt");
+    viewport.MoveCursorTo(1, 3);
+    viewport.AddSecondaryCaret(0, 2);
+    viewport.AddSecondaryCaret(0, 4);  // two carets on one line share one new line
+    Expect(microide::editor::InsertLineAbove(viewport), "insert-above should change");
+    Expect(joined(viewport) == "\nalpha\n  \n  beta\ngamma",
+           "a line opens above each caret's line with its indent: " + joined(viewport));
+    Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 2 &&
+               viewport.secondary_carets().size() == 1 &&
+               viewport.secondary_carets()[0] == microide::editor::TextPosition{0, 0},
+           "the primary is on its own new line; the shared line has one caret");
+    Expect(viewport.Undo() && joined(viewport) == "alpha\n  beta\ngamma", "one undo step");
+  }
+}
+
 // Ctrl+Enter / Ctrl+Shift+Enter open a line regardless of where in the line the
 // caret sits -- that is the whole point of them over pressing Enter.
 void TestShapingInsertLineBelowAndAbove() {
@@ -2379,6 +2423,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingDuplicateLine);
   AddTest(tests, "EditorEssentials/Shaping/CopyLinesDirections",
           TestShapingCopyLinesDirections);
+  AddTest(tests, "EditorEssentials/Shaping/InsertLineBelowAndAboveAtEveryCaret",
+          TestShapingInsertLineBelowAndAboveAtEveryCaret);
   AddTest(tests, "EditorEssentials/Shaping/InsertLineBelowAndAbove",
           TestShapingInsertLineBelowAndAbove);
   AddTest(tests, "EditorEssentials/Shaping/IndentSelection",
