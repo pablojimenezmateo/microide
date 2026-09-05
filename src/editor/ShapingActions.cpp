@@ -288,34 +288,6 @@ bool BuildToggledCommentRegion(const TextBuffer& lines,
 
 }  // namespace
 
-bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
-  if (line_marker.empty()) return false;
-  const std::vector<LineRange> ranges = ResolveLineRanges(viewport);
-  if (ranges.empty()) return false;
-  const TextBuffer& lines = viewport.lines();
-
-  LineBlob updated;
-  if (ranges.size() == 1) {
-    // One region is the overwhelmingly common case (any single caret, any single
-    // selection) and it needs no group frame: the replace is already one entry.
-    if (!BuildToggledCommentRegion(lines, ranges[0], line_marker, &updated)) return false;
-    return viewport.ReplaceLines(ranges[0].first, ranges[0].last + 1, std::move(updated),
-                                 /*record_undo=*/true);
-  }
-
-  // Ascending region order: the toggle rewrites each line in place, so the edit
-  // preserves the line count and no region's indices move when another is applied.
-  bool changed = false;
-  viewport.BeginUndoGroup();
-  for (const LineRange& range : ranges) {
-    if (!BuildToggledCommentRegion(lines, range, line_marker, &updated)) continue;
-    changed |= viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
-                                     /*record_undo=*/true);
-  }
-  viewport.EndUndoGroup();
-  return changed;
-}
-
 bool ToggleBlockComment(TextViewport& viewport,
                         std::string_view open,
                         std::string_view close) {
@@ -808,6 +780,51 @@ bool ReindentRegions(TextViewport& viewport, Transform&& transform) {
 }
 
 }  // namespace
+
+bool ToggleLineComment(TextViewport& viewport, std::string_view line_marker) {
+  if (line_marker.empty()) return false;
+  const std::vector<LineRange> ranges = ResolveLineRanges(viewport);
+  if (ranges.empty()) return false;
+  const TextBuffer& lines = viewport.lines();
+  // The carets and selection survive the toggle, columns shifted by what each
+  // line gained or lost (VS Code). ReplaceLines alone snapped the caret to the
+  // start of the region, so a second toggle on a selection acted on one line.
+  const bool had_selection = viewport.has_selection();
+  const bool multi = viewport.has_multiple_carets();
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  RegionColumnDeltas deltas;
+  LineBlob updated;
+  bool changed = false;
+  viewport.BeginUndoGroup();
+  for (const LineRange& range : ranges) {
+    deltas.BeginRegion();
+    if (!BuildToggledCommentRegion(lines, range, line_marker, &updated)) {
+      for (std::size_t i = range.first; i <= range.last; ++i) deltas.flat.push_back(0);
+      continue;
+    }
+    for (std::size_t i = range.first; i <= range.last; ++i) {
+      const std::size_t offset = i - range.first;
+      deltas.flat.push_back(offset < updated.size()
+                                ? static_cast<std::ptrdiff_t>(updated[offset].size()) -
+                                      static_cast<std::ptrdiff_t>(lines.LineLength(i))
+                                : 0);
+    }
+    changed |= viewport.ReplaceLines(range.first, range.last + 1, std::move(updated),
+                                     /*record_undo=*/true);
+  }
+  if (!changed) {
+    viewport.EndUndoGroup();
+    return false;
+  }
+  if (multi || !had_selection) {
+    RestoreCaretsAfterIndentEdit(viewport, snapshot, ranges, deltas);
+  } else {
+    RestoreSelectionAcrossLines(viewport, ranges.front().first, ranges.front().last,
+                                had_selection);
+  }
+  viewport.EndUndoGroup();
+  return true;
+}
 
 bool IndentSelection(TextViewport& viewport) {
   std::string indent_unit;

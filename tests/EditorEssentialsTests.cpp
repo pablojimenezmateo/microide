@@ -712,6 +712,34 @@ void TestShapingToggleLineComment() {
          "second toggle should restore the original text");
 }
 
+// Found by driving the real binary: toggling a selection's line comments
+// collapsed the selection (ReplaceLines snaps the caret), so the second toggle
+// uncommented one line only. VS Code keeps the selection and shifts the caret by
+// the marker it inserted.
+void TestShapingToggleLineCommentKeepsSelectionAndShiftsCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("a\n// b\n", "/tmp/sample.c");
+  viewport.SelectAll();
+  Expect(microide::editor::ToggleLineComment(viewport, "//"), "the first toggle applies");
+  Expect(viewport.lines()[0] == "// a" && viewport.lines()[1] == "// // b",
+         "not all lines were commented, so every line gains a marker");
+  Expect(viewport.has_selection() && viewport.selection_range()->start.line == 0 &&
+             viewport.selection_range()->end.line >= 1,
+         "the selection still covers both lines");
+  Expect(microide::editor::ToggleLineComment(viewport, "//"), "the second toggle applies");
+  Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "// b",
+         "every line loses one marker (got <" + viewport.lines()[0] + "|" + viewport.lines()[1] + ">)");
+
+  viewport.LoadContent("  x = 1\n", "/tmp/sample.c");
+  viewport.MoveCursorTo(0, 5);  // after "x = "
+  Expect(microide::editor::ToggleLineComment(viewport, "//") && viewport.lines()[0] == "  // x = 1",
+         "a caret line is commented at its indent");
+  Expect(viewport.cursor_column() == 8, "the caret moves with the text it sat in");
+  Expect(microide::editor::ToggleLineComment(viewport, "//") && viewport.lines()[0] == "  x = 1" &&
+             viewport.cursor_column() == 5,
+         "and back");
+}
+
 void TestShapingToggleBlockCommentRoundTrips() {
   TextViewport viewport;
   viewport.LoadContent("alpha\n", "/tmp/sample.cpp");
@@ -2181,6 +2209,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingToggleLineComment);
   AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentRoundTrips",
           TestShapingToggleBlockCommentRoundTrips);
+  AddTest(tests, "EditorEssentials/Shaping/ToggleLineCommentKeepsSelectionAndShiftsCaret",
+          TestShapingToggleLineCommentKeepsSelectionAndShiftsCaret);
   AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentSelectionIsAToggle",
           TestShapingToggleBlockCommentSelectionIsAToggle);
   AddTest(tests, "EditorEssentials/Shaping/ToggleBlockCommentSelectionStripsWithWhitespace",
