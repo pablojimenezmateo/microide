@@ -136,6 +136,15 @@ struct TerminalSessionTestAccess {
 #endif
   }
 
+  static void ClearSentBytes(microide::terminal::TerminalSession& session) {
+#ifdef MICROIDE_TESTING
+    std::scoped_lock lock(session.mutex_);
+    session.test_sent_bytes_.clear();
+#else
+    (void)session;
+#endif
+  }
+
   static bool ReserveWakeEvent(const microide::terminal::TerminalSession& session,
                                Uint32& event_type) {
     return session.ReserveWakeEvent(event_type);

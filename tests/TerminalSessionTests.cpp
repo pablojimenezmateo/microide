@@ -986,6 +986,29 @@ void TestTerminalSessionAppliesKittyKeyboardProtocol() {
   session.SendKeyPress(ctrl_a);
   Expect(TerminalSessionTestAccess::SentBytes(session).find("\x1b[97;5u") != std::string::npos,
          "with Kitty disambiguation, Ctrl+A should be CSI 97;5 u");
+  // A bare Esc is what the protocol disambiguates: it must never be a raw 0x1b
+  // (apps would wait out an escape timeout to tell it from an alt/CSI prefix).
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  KeyPress escape;
+  escape.key = KeyPress::Key::Escape;
+  session.SendKeyPress(escape);
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[27u",
+         "with Kitty disambiguation, a bare Esc should be CSI 27 u");
+  // Shift alone on a text key still produces text; only ctrl/alt/super move it
+  // onto CSI u (shift+alt included).
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  KeyPress shift_a;
+  shift_a.key = KeyPress::Key::Char;
+  shift_a.codepoint = 'A';
+  shift_a.shift = true;
+  session.SendKeyPress(shift_a);
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "A",
+         "with Kitty disambiguation, Shift+A should still send the text \"A\"");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  shift_a.alt = true;
+  session.SendKeyPress(shift_a);
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\x1b[97;4u",
+         "with Kitty disambiguation, Shift+Alt+A should be CSI 97;4 u");
 
   // Shift+Enter is unrepresentable in legacy mode but disambiguated under Kitty.
   TerminalSessionTestAccess::SetRunning(session, false);

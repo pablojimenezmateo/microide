@@ -58,6 +58,11 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
   const bool has_mod = mod > 1;
   const bool kitty = kitty_flags != 0;
   const bool report_all = (kitty_flags & 0x08u) != 0;
+  // Kitty "disambiguate" (any flag set) moves Esc, alt+key, ctrl+key and
+  // shift+alt+key onto CSI u; a text key with ONLY shift keeps producing text
+  // ("A"), and Enter/Tab/Backspace keep their legacy bytes until modified (spec:
+  // sw.kovidgoyal.net/kitty/keyboard-protocol, "Disambiguate escape codes").
+  const bool kitty_non_shift_mod = press.ctrl || press.alt || press.super;
 
   // Functional keys that use a trailing letter (CSI <letter> / SS3 <letter>).
   const auto letter_key = [&](char final) -> std::string {
@@ -159,7 +164,9 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
       }
       return press.alt ? std::string("\x1b\x7f") : std::string("\x7f");
     case Key::Escape:
-      if (kitty && (has_mod || report_all)) {
+      // A bare ESC is the ambiguity the protocol exists to remove (is it the key
+      // or the start of an alt/CSI sequence?), so under Kitty it is always CSI 27 u.
+      if (kitty) {
         return CsiU(27, mod);
       }
       return "\x1b";
@@ -170,7 +177,7 @@ std::string FormatTerminalKeyPress(bool application_cursor_keys_mode,
       }
       // Under Kitty, modified printable keys (and everything when "report all"
       // is set) are disambiguated as CSI-u over the base codepoint.
-      if (kitty && (has_mod || report_all)) {
+      if (kitty && (kitty_non_shift_mod || report_all)) {
         char32_t base = (cp >= 'A' && cp <= 'Z') ? cp + 32 : cp;
         return CsiU(base, mod);
       }
