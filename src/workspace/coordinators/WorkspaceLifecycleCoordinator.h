@@ -21,6 +21,10 @@ class LifecycleCoordinator {
     std::function<bool()> restore_workspace_session;
     std::function<void()> reload_plugins_for_current_project;
     std::function<bool(const std::filesystem::path&, bool, bool)> open_project_tab;
+    // A path given at startup that names a FILE opens that file inside its
+    // directory (`microide notes.txt`, as `code notes.txt` does); this is the
+    // second half of that, after open_project_tab has opened the directory.
+    std::function<void(const std::filesystem::path&)> open_file;
     std::function<void()> shutdown_plugin_runtime;
     std::function<void()> save_user_config;
     std::function<void()> stop_git_blame_service;

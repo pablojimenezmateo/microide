@@ -1,5 +1,8 @@
 #include "workspace/coordinators/WorkspaceLifecycleCoordinator.h"
 
+#include <optional>
+#include <system_error>
+
 #include <filesystem>
 #include <utility>
 
@@ -66,9 +69,33 @@ bool LifecycleCoordinator::Initialize(const std::filesystem::path& project_root)
     return true;
   }
 
+  // `microide notes.txt`: a path that names a regular file is not a project
+  // root -- the tree and the index refused it and the whole launch failed with
+  // "Workspace initialization failed". Open its directory as the project and
+  // the file itself as the first tab, which is what `code notes.txt` does.
+  std::filesystem::path root = project_root;
+  std::optional<std::filesystem::path> file_to_open;
+  {
+    std::error_code error;
+    if (std::filesystem::is_regular_file(project_root, error) && !error) {
+      std::filesystem::path absolute = std::filesystem::absolute(project_root, error);
+      if (!error) {
+        absolute = absolute.lexically_normal();
+        root = absolute.parent_path();
+        file_to_open = std::move(absolute);
+      }
+    }
+  }
+
   util::StartupTrace::Scope open_project_scope("WorkspaceShell::OpenProjectTab");
   const bool restore_persistence = !operations_.skip_workspace_session_restore();
-  return operations_.open_project_tab(project_root, restore_persistence, true);
+  if (!operations_.open_project_tab(root, restore_persistence, true)) {
+    return false;
+  }
+  if (file_to_open.has_value() && operations_.open_file) {
+    operations_.open_file(*file_to_open);
+  }
+  return true;
 }
 
 void LifecycleCoordinator::Shutdown() {
@@ -322,6 +349,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
                      bool log_feedback) {
                 return OpenProjectTab(project_root, restore_persistence, log_feedback);
               },
+          .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .shutdown_plugin_runtime = [this]() { plugin_runtime_.Shutdown(); },
           .save_user_config = [this]() { MakePersistenceCoordinator().SaveUserConfig(); },
           .stop_git_blame_service =

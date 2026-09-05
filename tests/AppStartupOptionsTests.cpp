@@ -195,6 +195,33 @@ void TestDisablePluginsSkipsUserPluginsAndSyntax() {
          "plugin syntax should not be loaded when plugins are disabled");
 }
 
+// `microide notes.txt`: a startup path that names a regular file opens its
+// directory as the project and the file as the first tab, as `code notes.txt`
+// does. It used to be handed to the tree and the index as a project root, which
+// refused it, and the launch failed with "Workspace initialization failed".
+void TestFilePathAtStartupOpensItsDirectoryAndTheFile() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  ScopedPluginConfigHomeEnv env(config_home);
+  const std::filesystem::path project = temp_dir.path() / "proj";
+  const std::filesystem::path file = project / "notes.txt";
+  WriteFile(file, "hello\n");
+
+  WorkspaceShell shell;
+  microide::workspace::WorkspaceStartupOptions options;
+  options.project_path = file;
+  shell.SetStartupOptions(std::move(options));
+  Expect(shell.Initialize(file), "a file path must not fail initialization");
+
+  const auto roots = WorkspaceShellTestAccess::ProjectRoots(shell);
+  Expect(roots.size() == 1 && roots.front() == project.lexically_normal(),
+         "the file's directory is the project root");
+  const auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.path().lexically_normal() == file.lexically_normal(),
+         "the file itself is open in the active tab: " + editor.path().string());
+  Expect(editor.line_count() >= 1 && editor.lines()[0] == "hello", "with its content loaded");
+}
+
 void TestSafeModeSurfacesStartupState() {
 #if !MICROIDE_HAS_LUA_PLUGINS
   return;
@@ -256,6 +283,8 @@ void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests) {
           TestParseDapLogBeforeFlagUsesDefault);
   AddTest(tests, "AppStartupOptions/DisablePluginsSkipsPluginsAndSyntax",
           TestDisablePluginsSkipsUserPluginsAndSyntax);
+  AddTest(tests, "AppStartupOptions/FilePathAtStartupOpensItsDirectoryAndTheFile",
+          TestFilePathAtStartupOpensItsDirectoryAndTheFile);
   AddTest(tests, "AppStartupOptions/SafeModeSurfacesStartupState",
           TestSafeModeSurfacesStartupState);
 }
