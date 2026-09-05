@@ -1148,6 +1148,36 @@ void TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix() {
          "URL hit-testing must map the grid column to a byte offset before matching");
 }
 
+// A closing bracket at the end of a URL is prose punctuation only when the URL has
+// no opener for it: a Wikipedia-style `.../Foo_(bar)` keeps its `)`, while the `)`
+// that closes a parenthesised link and a trailing `.` still come off (VS Code).
+void TestWorkspaceShellTerminalUrlKeepsBalancedClosingBracket() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  TerminalSessionTestAccess::AppendOutput(
+      session, "https://en.wikipedia.org/wiki/Foo_(bar). (https://example.com/x)");
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  std::string opened_url;
+  WorkspaceShellTestAccess::SetExternalUrlOpener(shell, [&](std::string_view url) {
+    opened_url = std::string(url);
+    return true;
+  });
+
+  const SDL_FPoint first = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 0);
+  Expect(SendMouseDown(shell, first.x, first.y, SDL_BUTTON_LEFT), "clicking the first URL is handled");
+  Expect(opened_url == "https://en.wikipedia.org/wiki/Foo_(bar)",
+         "the balanced ) stays and the trailing . goes: " + opened_url);
+
+  // "https://en.wikipedia.org/wiki/Foo_(bar). (" is 42 columns; the second URL starts at 42.
+  const SDL_FPoint second = WorkspaceShellTestAccess::TerminalCellPoint(shell, 0, 42);
+  Expect(SendMouseDown(shell, second.x, second.y, SDL_BUTTON_LEFT), "clicking the second URL is handled");
+  Expect(opened_url == "https://example.com/x",
+         "the ) that closes the parenthesised link is stripped: " + opened_url);
+}
+
 // TD-2026-07-17A-027: hover cursor-kind resolution reuses the render frame's cached
 // visible-line snapshot instead of re-snapshotting per pointer move. After a render
 // populates the snapshot, hovering a URL cell must still resolve to the Pointer
@@ -1770,6 +1800,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalLeftClickOpensUrls);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsMultibytePrefix",
           TestWorkspaceShellTerminalUrlHitTestHonorsMultibytePrefix);
+  AddTest(tests, "WorkspaceShellTerminal/TerminalUrlKeepsBalancedClosingBracket",
+          TestWorkspaceShellTerminalUrlKeepsBalancedClosingBracket);
   AddTest(tests, "WorkspaceShellTerminal/UrlHitTestHonorsUppercaseScheme",
           TestWorkspaceShellTerminalUrlHitTestHonorsUppercaseScheme);
   AddTest(tests, "WorkspaceShellTerminal/UrlHoverUsesRenderedSnapshot",

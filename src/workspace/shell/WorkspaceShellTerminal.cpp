@@ -42,11 +42,28 @@ bool IsTerminalUrlTerminator(char character) {
          character == '\'' || character == '<' || character == '>';
 }
 
+// Strips the punctuation prose wraps a link in ("see https://x.org/a." or
+// "(https://x.org/a)"). A closing bracket is punctuation only when the URL has no
+// opener for it: `https://en.wikipedia.org/wiki/Foo_(bar)` keeps its `)`, as VS
+// Code's link detector does, where the old unconditional strip cut it off.
 std::string TrimTerminalUrl(std::string url) {
+  const auto has_unmatched_closer = [&](char open, char close) {
+    std::ptrdiff_t depth = 0;
+    for (const char ch : url) {
+      if (ch == open) ++depth;
+      else if (ch == close) --depth;
+    }
+    return depth < 0;
+  };
   while (!url.empty()) {
     const char tail = url.back();
-    if (tail == '.' || tail == ',' || tail == ';' || tail == ':' || tail == '!' ||
-        tail == '?' || tail == ')' || tail == ']' || tail == '}') {
+    if (tail == '.' || tail == ',' || tail == ';' || tail == ':' || tail == '!' || tail == '?') {
+      url.pop_back();
+      continue;
+    }
+    if ((tail == ')' && has_unmatched_closer('(', ')')) ||
+        (tail == ']' && has_unmatched_closer('[', ']')) ||
+        (tail == '}' && has_unmatched_closer('{', '}'))) {
       url.pop_back();
       continue;
     }
