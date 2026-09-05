@@ -193,6 +193,10 @@ class TextViewport {
   void SetPlaceholderText(std::string text);
   void SetUntitledBuffer();
   void SetViewportSize(std::size_t visible_lines, std::size_t visible_columns);
+  // Scrolls just enough for the caret's row to be on screen (the same rule every
+  // caret motion applies), for callers that changed which rows exist -- e.g. a
+  // fold expanding above the caret -- without moving the caret itself.
+  void RevealCaret();
   void SetScrollLine(std::size_t scroll_line);
   void SetHorizontalScroll(std::size_t horizontal_scroll);
   // Authoritatively re-applies a previously captured view state: cursor (or

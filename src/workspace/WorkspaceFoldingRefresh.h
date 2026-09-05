@@ -35,4 +35,16 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
                              bool fold_enabled,
                              std::size_t visible_rows);
 
+// A caret that has moved into the hidden body of a collapsed fold since the last
+// prepared frame expands every collapsed fold hiding it (VS Code's
+// FoldingController.revealCursor): a goto-line, a definition jump, a diagnostic
+// jump, an undo, or a Backspace that joins onto a fold's last line all land the
+// caret on a line that cannot be seen otherwise. A fold that collapses AROUND a
+// caret standing still is left alone, as in VS Code, so `fold` with the caret
+// inside the region still folds it. Runs once per prepared frame per editor
+// group; returns true when a fold was expanded (the caller re-scrolls to the
+// caret and repaints the editor).
+bool RevealCaretsInsideCollapsedFolds(TabEntry::EditorTabState& tab,
+                                      const editor::TextViewport& viewport);
+
 }  // namespace microide::workspace

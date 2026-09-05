@@ -1,4 +1,5 @@
 #include "TestSupport.h"
+#include "support/SoftwareCanvas.h"
 
 #include "platform/AppDirectories.h"
 #include "persistence/PersistedRecordWriter.h"
@@ -666,6 +667,49 @@ void TestWorkspaceShellReopenClearsFoldCollapseState() {
          "reopened editor should still expose fold ranges");
   Expect(!reopened_model->IsCollapsedAtOpener(0),
          "reopening a clean editor should clear prior collapsed fold state");
+}
+
+// A caret that moves into a collapsed fold's hidden body reveals the fold on the
+// next frame (VS Code's revealCursor); a fold collapsing around a caret that did
+// not move stays collapsed, and the next keystroke inside it reveals it.
+void TestWorkspaceShellCaretMovedIntoCollapsedFoldRevealsIt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.cpp";
+  WriteFile(source, "void f() {\n  body();\n  more();\n}\nafter();\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // A real renderer: frame preparation (where the fold refresh lives) returns
+  // early for the null renderer the plain RenderFrame passes.
+  SoftwareCanvas canvas(1280, 720);
+  const auto frame = [&] { WorkspaceShellTestAccess::RenderFrameWithRenderer(shell, canvas.renderer()); };
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(4, 0);
+  frame();
+
+  auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+  Expect(model != nullptr && model->Collapse(0), "the fixture collapses the top-level fold");
+  frame();
+  Expect(model->IsCollapsedAtOpener(0), "a fold collapsed away from the caret stays collapsed");
+
+  editor.JumpCursorTo(2, 2);  // goto-line / definition jump into the hidden body
+  frame();
+  Expect(!model->IsCollapsedAtOpener(0), "the fold hiding the caret is revealed on the next frame");
+  Expect(editor.cursor_line() == 2 && editor.cursor_column() == 2, "the caret stays where it landed");
+
+  // `fold` with the caret inside: the region folds and the caret, standing still,
+  // does not reveal it again.
+  Expect(model->Collapse(0), "the fold collapses around the caret");
+  frame();
+  frame();
+  Expect(model->IsCollapsedAtOpener(0), "a caret that did not move does not undo the fold");
+
+  editor.InsertCharacter('x');  // typing inside the hidden body moves the caret
+  frame();
+  Expect(!model->IsCollapsedAtOpener(0), "an edit inside the fold reveals it");
 }
 
 void TestWorkspaceShellRefreshClearsFoldCollapseState() {
@@ -2814,6 +2858,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellRefreshReloadsCleanOpenEditorBuffers);
   AddTest(tests, "WorkspaceShell/ReopenClearsFoldCollapseState",
           TestWorkspaceShellReopenClearsFoldCollapseState);
+  AddTest(tests, "WorkspaceShell/CaretMovedIntoCollapsedFoldRevealsIt",
+          TestWorkspaceShellCaretMovedIntoCollapsedFoldRevealsIt);
   AddTest(tests, "WorkspaceShell/RefreshClearsFoldCollapseState",
           TestWorkspaceShellRefreshClearsFoldCollapseState);
   AddTest(tests, "WorkspaceShell/EditorEditInvalidatesFoldingFingerprint",

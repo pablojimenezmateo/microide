@@ -1,5 +1,7 @@
 #include "workspace/WorkspaceFoldingRefresh.h"
 
+#include <vector>
+
 #include <algorithm>
 
 #include "editor/TextViewport.h"
@@ -97,6 +99,45 @@ void EnsureFoldingModelFresh(TabEntry::EditorTabState& tab,
   model.Refresh(viewport.lines(), options, first_line, last_line, kFoldingModelComputeBudget,
                 fold_edit_span, &viewport);
   model.SetFingerprint(fingerprint);
+}
+
+bool RevealCaretsInsideCollapsedFolds(TabEntry::EditorTabState& tab,
+                                      const editor::TextViewport& viewport) {
+  const editor::TextPosition caret{viewport.cursor_line(), viewport.cursor_column()};
+  const std::size_t secondary_count = viewport.secondary_caret_positions().size();
+  const bool moved = !tab.fold_reveal_last_caret.has_value() ||
+                     !(*tab.fold_reveal_last_caret == caret) ||
+                     tab.fold_reveal_last_secondary_count != secondary_count;
+  tab.fold_reveal_last_caret = caret;
+  tab.fold_reveal_last_secondary_count = secondary_count;
+  editor::FoldingModel* model = tab.folding_model.get();
+  if (!moved || model == nullptr || !model->has_any_collapsed_fold()) {
+    return false;
+  }
+
+  bool changed = false;
+  std::vector<editor::FoldRange> hiding;
+  const auto reveal_line = [&](std::size_t line) {
+    if (!model->IsLineHidden(line)) {
+      return;
+    }
+    // Walk the collapsed set, not the resolved window: the fold hiding this line
+    // can be anywhere in the document. Collect first -- expanding mutates the set.
+    hiding.clear();
+    for (const editor::FoldRange& range : model->collapsed_ranges()) {
+      if (line > range.opener_line && line <= range.closer_line) {
+        hiding.push_back(range);
+      }
+    }
+    for (const editor::FoldRange& range : hiding) {
+      changed = model->Expand(range.opener_line) || changed;
+    }
+  };
+  reveal_line(caret.line);
+  for (const editor::TextPosition& secondary : viewport.secondary_caret_positions()) {
+    reveal_line(secondary.line);
+  }
+  return changed;
 }
 
 }  // namespace microide::workspace

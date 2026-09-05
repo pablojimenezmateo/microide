@@ -168,6 +168,10 @@ void TextViewport::SetSoftWrap(bool soft_wrap) {
   }
 }
 
+void TextViewport::RevealCaret() {
+  EnsureCursorVisible();
+}
+
 void TextViewport::SetFoldingModel(const FoldingModel* folding_model) {
   if (folding_model_ == folding_model) {
     return;

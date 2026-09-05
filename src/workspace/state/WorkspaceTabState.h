@@ -374,6 +374,11 @@ struct EditorTabState {
   // language_id)` fingerprint when the buffer or language changes.
   std::unique_ptr<editor::FoldingModel> folding_model =
       std::make_unique<editor::FoldingModel>();
+  // The caret set the last prepared frame saw, so the frame can tell a caret
+  // that MOVED into a collapsed fold (reveal it, as VS Code's revealCursor
+  // does) from a fold that collapsed around a caret standing still (leave it).
+  std::optional<editor::TextPosition> fold_reveal_last_caret;
+  std::size_t fold_reveal_last_secondary_count = 0;
   editor::SnippetSessionState snippet_session;
 };
 

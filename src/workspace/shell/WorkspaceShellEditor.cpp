@@ -243,7 +243,16 @@ void WorkspaceShell::RefreshEditorFoldingModels() {
   // per-pane refresh and fold-disabled clear. The render TUs then only read the
   // resolved model — no state mutation inside RenderClip.
   for (EditorGroup& group : context_.current_project_state.editor_groups) {
-    EnsureFoldingModelFreshForTab(GroupActiveEditorTab(group), GroupActiveViewport(group));
+    TabEntry::EditorTabState* editor_tab = GroupActiveEditorTab(group);
+    editor::TextViewport* viewport = GroupActiveViewport(group);
+    EnsureFoldingModelFreshForTab(editor_tab, viewport);
+    if (editor_tab != nullptr && viewport != nullptr &&
+        RevealCaretsInsideCollapsedFolds(*editor_tab, *viewport)) {
+      // The caret's row changed with the rows above it; this runs before the
+      // frame's layout, so the scroll and the repaint both land in this frame.
+      viewport->RevealCaret();
+      RequestEditorSurfaceRedraw();
+    }
   }
 }
 
