@@ -59,7 +59,26 @@ project (see [README](README.md)); versions track meaningful shipped work.
   URL ending in a balanced `)` lost its last character. Ctrl+Shift+C with
   nothing selected sent ^C to the shell; it is copy-or-nothing now. The PTY
   pair is opened close-on-exec on the creating call, and the architecture lint
-  covers `openpty`/`forkpty`/`posix_openpt`.
+  covers `openpty`/`forkpty`/`posix_openpt`. Shift+PageUp/PageDown scroll the
+  scrollback by a page. Ctrl+/ and Ctrl+2..8 reach the shell as the xterm
+  control bytes (Emacs's C-/ undo, readline, tmux) instead of vanishing. Under
+  the Kitty keyboard protocol a bare Escape is `CSI 27 u` (it was a raw ESC,
+  the ambiguity the protocol exists to remove) and Shift+letter stays text.
+- **Go to Definition works for plugin-provided languages.** A language whose
+  definitions/references come from a plugin provider and no language server had
+  the actions greyed out in the Go and context menus ("(LSP: Idle)") and reported
+  unavailable, although the command itself worked. Ctrl+click on a symbol goes
+  to its definition, as in VS Code.
+- **Non-ASCII identifiers are one word.** Hovering `größe` or `変数` found no
+  identifier at all, accepting a completion at `größe|` produced
+  `größgröße_total`, rename/hover took a fragment of the symbol under the caret,
+  and a double-click in a prompt selected only the ASCII tail; all four scans now
+  walk codepoints.
+- **Command palette and outline.** Palette queries match words in any order
+  (`file new` finds "New File"); a typed command line with arguments still runs
+  as a command. Outline symbols are in document order (servers may return them
+  unsorted). A clicked `path:line:col` Output row took the column as a byte
+  offset; it is a character column.
 - **Git sidebar.** Discarding a single staged new file deleted it permanently
   (Discard All already trashed such files); it is unstaged and trashed. A commit
   subject over 72 characters is a warning to acknowledge, not a refusal. The

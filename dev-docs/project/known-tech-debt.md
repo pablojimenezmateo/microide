@@ -389,7 +389,7 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
-### TD-2026-09-05-288 — the second 2026-09-05 pass: twenty-two defects in the subsystems the earlier passes had not read, found mostly by comparing behaviour with VS Code's rule. [RESOLVED same session — open remainder zero.]
+### TD-2026-09-05-288 — the second 2026-09-05 pass: thirty-one defects in the subsystems the earlier passes had not read, found mostly by comparing behaviour with VS Code's rule. [RESOLVED same session — open remainder zero.]
 
 The earlier passes drove the editor's primitives and the terminal against
 references. This one read the subsystems they had left alone -- multi-caret
@@ -425,6 +425,38 @@ landed as its own commit with a regression test (`git log 26a92d21..`).
 - **Tree / status bar / goto / startup**: raw-byte sibling sort; "Col" was a
   byte offset; `goto line:col` took a byte column; `microide file.txt` failed to
   start.
+
+Continued after the first docs commit of the pass (`git log 264e731b..`),
+same method:
+
+- **Plugin-only navigation providers.** Go to Definition / Find References
+  availability checked only `LspManager::HasServer`, and the menus gated every
+  LSP-driven entry on server readiness, so a language served by
+  `ctx.definition.add` alone had both actions disabled with an "(LSP: Idle)"
+  suffix. The host now publishes its definition/references providers in the
+  UI-thread contribution snapshot (`PluginHost::HasLanguageProvider`), LspService
+  consults them, and `PluginServesLspMenuAction` skips the readiness gate for
+  actions a plugin answers. Ctrl+click go-to-definition (VS Code) landed on top,
+  gated on that availability so plain text keeps plain-click behaviour.
+- **Terminal input**: Kitty disambiguate mode sent a bare ESC and CSI u for
+  Shift+letter (spec checked: `sw.kovidgoyal.net/kitty/keyboard-protocol`);
+  Ctrl+/ and Ctrl+2..8 were not forwarded at all (only Ctrl+letter/[\]/Space
+  were), so C-/ never reached Emacs or readline; Shift+PageUp/PageDown did not
+  scroll the scrollback.
+- **Byte-wise identifier scans.** Four independent `[A-Za-z0-9_]` byte walks
+  (hover `IdentifierRangeAt`, the completion replacement range, `SymbolAtCursor`,
+  `SingleLineEditor::SelectWordAt`) all stopped at the first byte >= 0x80. They
+  now share `util::Utf8IdentifierRunStart/End` (+ `Utf8CodepointStartAt`,
+  `Utf8IdentifierCodepointAt`). Trap found on the way: a `"\x9fe"` literal in a
+  test is ONE out-of-range hex escape, not `ß` + `e` — GCC only warns, and the
+  test compared the string against itself so it passed; split such literals
+  (`"\x9f" "e"`).
+- **Palette / outline / Output**: palette matching required the words in order;
+  document symbols were painted in server order; a clicked `path:line:col` row
+  applied the column as bytes.
+- **Compare**: a differential test of `BuildLineDiffOps` against a brute-force
+  WEIGHTED LCS (the aligner weighs rarity over the trimmed middle; an unweighted
+  LCS oracle is the wrong reference and fails on the first common line). Clean.
 
 Read and found clean this pass: the compare engine's line diff and intraline
 spans, the DAP protocol codec and debug session line-base handling, the blame
