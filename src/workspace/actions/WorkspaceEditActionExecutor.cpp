@@ -153,8 +153,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           }
         }
       }
+      // A whole-document replace snaps the caret to the top; keep the user's
+      // line (clamped) so formatting does not scroll them away from their spot.
+      const std::size_t caret_line = viewport->cursor_line();
+      const std::size_t caret_column = viewport->cursor_column();
       if (viewport->ReplaceLines(0, viewport->line_count(), std::move(new_lines),
                                  /*record_undo=*/true)) {
+        viewport->JumpCursorTo(std::min(caret_line, viewport->line_count() - 1), caret_column);
         context_.NotifyEditorViewportChanged(/*last_change=*/true);
       }
       return DispatchResult::Handled;

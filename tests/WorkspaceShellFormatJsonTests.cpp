@@ -69,6 +69,16 @@ void TestFormatJsonCommandFormatsActiveBufferInMemory() {
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "undo"), "undo should be handled");
   Expect(ViewportText(WorkspaceShellTestAccess::ActiveEditor(shell)) == original,
          "a single undo restores the pre-format buffer");
+
+  // The caret keeps its line (clamped) instead of snapping to the top of the
+  // buffer with the whole-document replace.
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.LoadContent("{\n\"zebra\": 1,\n\"apple\": 2\n}\n", file);
+  viewport.MoveCursorTo(2, 3);
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "format-json"), "format again");
+  Expect(viewport.line_count() > 3 && viewport.cursor_line() == 2,
+         "the caret stays on its line after formatting (got line " +
+             std::to_string(viewport.cursor_line()) + ")");
 }
 
 // Invalid JSON is reported via a toast and leaves the buffer untouched.
