@@ -1106,7 +1106,7 @@ void TestWorkspaceShellStatusBarColumnIsTheVisibleColumn() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
   const std::filesystem::path source = root / "notes.txt";
-  WriteFile(source, "\tab\n\xc3\xa9a\n");
+  WriteFile(source, "\tab\n\xc3\xa9" "a\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);

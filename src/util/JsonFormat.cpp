@@ -19,8 +19,6 @@ namespace {
 // levels, so this never trips on real input.
 constexpr int kMaxDepth = 200;
 
-constexpr bool IsDigit(char c) { return c >= '0' && c <= '9'; }
-constexpr char Lower(char c) { return (c >= 'A' && c <= 'Z') ? static_cast<char>(c - 'A' + 'a') : c; }
 
 struct Formatter {
   std::string_view s;

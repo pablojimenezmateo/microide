@@ -90,6 +90,11 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
       // open. Gated like RenameSymbol, which is what its executor already requires.
       return active_editable_viewport != nullptr && !active_editable_viewport->path().empty() &&
              LspFeatureAvailable(operations_, "lsp.call_hierarchy.enabled");
+    case ActionId::FindNext:
+    case ActionId::FindPrevious:
+      // Steps the buffer find term, or opens the widget when there is none: any
+      // open editor qualifies.
+      return active_viewport != nullptr;
     case ActionId::GoToNextDiagnostic:
     case ActionId::GoToPreviousDiagnostic:
       // Diagnostics come from servers and plugins alike; the executor reports an
