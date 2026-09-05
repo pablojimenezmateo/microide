@@ -897,6 +897,11 @@ class TextViewport {
   bool TryAutoCloseInsert(char ch);
   bool TrySurroundInsert(char ch);
   bool TrySkipOverClose(char ch);
+  // True when the byte before `column` is an auto-close opener and the byte at
+  // `column` is its closer -- the shape auto-close leaves the caret in. Backspace
+  // removes both (VS Code's autoClosingDelete) and Enter splits them onto three
+  // lines; both read this rather than carrying their own copy of the check.
+  bool CaretSitsInsideAutoClosedPair(std::size_t line, std::size_t column) const;
   bool MaybeDedentOnClose(char ch);
   bool TryInsertNewlineSplitBraces();
   // Brace-split-on-newline geometry for a single caret position. Returns the

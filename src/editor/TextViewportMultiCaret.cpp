@@ -217,8 +217,11 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
         if (column > 0) {
           const std::size_t erase_start =
               TextLayout::PreviousTextColumn(document_->lines[line], column);
+          // Same pair rule as the single-caret Backspace: `(|)` loses both.
+          const std::size_t erase_end =
+              CaretSitsInsideAutoClosedPair(line, column) ? column + 1 : column;
           return PlannedCaretEdit{
-              SelectionRange{TextPosition{line, erase_start}, TextPosition{line, column}}, "",
+              SelectionRange{TextPosition{line, erase_start}, TextPosition{line, erase_end}}, "",
               std::nullopt};
         }
         if (line > 0) {

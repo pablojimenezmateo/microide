@@ -130,6 +130,11 @@ void TextViewport::Backspace() {
     // in it is megabytes per backspace (TD-2026-08-05-133).
     const CaretNeighborhood at = ReadCaretNeighborhood(cursor_line_, cursor_column_);
     const std::size_t erase_start = at.has_prev ? at.prev_column : 0;
+    // Backspace inside `(|)` removes the pair auto-close put there, as VS Code's
+    // autoClosingDelete does; the closer is one byte by the opener rule.
+    const std::size_t erase_end = CaretSitsInsideAutoClosedPair(cursor_line_, at.clamped_column)
+                                      ? at.clamped_column + 1
+                                      : cursor_column_;
     const CoalesceHint hint{
         .kind = CoalesceKind::DeleteBackward,
         .changed_is_space =
@@ -138,7 +143,7 @@ void TextViewport::Backspace() {
     (void)ApplyRangeEdit(
         SelectionRange{
             .start = TextPosition{cursor_line_, erase_start},
-            .end = TextPosition{cursor_line_, cursor_column_},
+            .end = TextPosition{cursor_line_, erase_end},
         },
         "", true, hint);
     return;

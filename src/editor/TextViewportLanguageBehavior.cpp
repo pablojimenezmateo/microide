@@ -361,14 +361,7 @@ std::optional<TextViewport::NewlineBraceSplit> TextViewport::ComputeNewlineBrace
   if (line >= document_->lines.size()) {
     return std::nullopt;
   }
-  // Two bytes, read as two bytes: `column` is already a clamped code-point start
-  // at every call site, so the neighbourhood read below re-clamps to itself.
-  const CaretNeighborhood at = ReadCaretNeighborhood(line, column);
-  if (!at.has_prev || at.at_end) {
-    return std::nullopt;
-  }
-  const auto* opener = FindAutoCloseOpener(language_contract_view(), at.prev);
-  if (opener == nullptr || opener->close.size() != 1 || opener->close[0] != at.next) {
+  if (!CaretSitsInsideAutoClosedPair(line, column)) {
     return std::nullopt;
   }
   const std::string base_indent = AutoIndentForNewline(line, column);
@@ -377,6 +370,20 @@ std::optional<TextViewport::NewlineBraceSplit> TextViewport::ComputeNewlineBrace
       .text = std::string("\n") + inner_indent + "\n" + base_indent,
       .inner_indent = inner_indent,
   };
+}
+
+bool TextViewport::CaretSitsInsideAutoClosedPair(std::size_t line, std::size_t column) const {
+  if (!language_contract_view().auto_close_enabled || line >= document_->lines.size()) {
+    return false;
+  }
+  // Two bytes, read as two bytes: `column` is a clamped code-point start at
+  // every call site, so the neighbourhood read re-clamps to itself.
+  const CaretNeighborhood at = ReadCaretNeighborhood(line, column);
+  if (!at.has_prev || at.at_end) {
+    return false;
+  }
+  const auto* opener = FindAutoCloseOpener(language_contract_view(), at.prev);
+  return opener != nullptr && opener->close.size() == 1 && opener->close[0] == at.next;
 }
 
 bool TextViewport::TryInsertNewlineSplitBraces() {

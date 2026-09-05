@@ -1625,6 +1625,58 @@ void TestAutoCloseQuoteNotAfterWordCharacter() {
              std::string(multi.lines()[0]) + " / " + std::string(multi.lines()[1]));
 }
 
+// Backspace between an auto-closed pair removes both characters (VS Code's
+// autoClosingDelete); anywhere else it removes one, and it never fires with a
+// selection or without a contract.
+void TestAutoCloseBackspaceRemovesThePair() {
+  TextViewport viewport;
+  viewport.LoadContent("\n", "/tmp/sample.cpp");
+  viewport.SetLanguageContractView(MakeCStyleContractView());
+  viewport.MoveCursorTo(0, 0);
+  viewport.InsertCharacter('(');
+  viewport.Backspace();
+  Expect(viewport.lines()[0].empty() && viewport.cursor_column() == 0,
+         "Backspace inside () removes both, got: " + std::string(viewport.lines()[0]));
+
+  viewport.InsertText("a\"\"b");
+  viewport.MoveCursorTo(0, 2);
+  viewport.Backspace();
+  Expect(viewport.lines()[0] == "ab", "Backspace inside \"\" removes both, got: " +
+                                          std::string(viewport.lines()[0]));
+
+  viewport.InsertText("()");
+  viewport.MoveCursorTo(0, 3);  // after the ')'
+  viewport.Backspace();
+  Expect(viewport.lines()[0] == "a(b",
+         "Backspace after a closer removes one byte, got: " + std::string(viewport.lines()[0]));
+
+  viewport.MoveCursorTo(0, 1);
+  viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+  viewport.Backspace();
+  Expect(viewport.lines()[0] == "ab",
+         "Backspace over a selection deletes the selection only, got: " +
+             std::string(viewport.lines()[0]));
+
+  TextViewport plain;
+  plain.LoadContent("()\n", "/tmp/sample.cpp");
+  plain.MoveCursorTo(0, 1);
+  plain.Backspace();
+  Expect(plain.lines()[0] == ")", "without a contract Backspace removes one byte, got: " +
+                                      std::string(plain.lines()[0]));
+
+  TextViewport multi;
+  multi.LoadContent("x()\ny[]\n", "/tmp/sample.cpp");
+  multi.SetLanguageContractView(MakeCStyleContractView());
+  multi.MoveCursorTo(0, 2);
+  multi.AddSecondaryCaret(1, 2);
+  multi.Backspace();
+  Expect(multi.lines()[0] == "x" && multi.lines()[1] == "y",
+         "multi-caret Backspace removes each caret's pair, got: " +
+             std::string(multi.lines()[0]) + " / " + std::string(multi.lines()[1]));
+  Expect(multi.Undo() && multi.lines()[0] == "x()" && multi.lines()[1] == "y[]",
+         "one undo restores both pairs");
+}
+
 void TestAutoCloseDisabledByDefault() {
   TextViewport viewport;
   viewport.LoadContent("\n", "/tmp/sample.cpp");
@@ -2341,6 +2393,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestAutoCloseSkipOverClose);
   AddTest(tests, "EditorEssentials/AutoClose/QuoteNotAfterWordCharacter",
           TestAutoCloseQuoteNotAfterWordCharacter);
+  AddTest(tests, "EditorEssentials/AutoClose/BackspaceRemovesThePair",
+          TestAutoCloseBackspaceRemovesThePair);
   AddTest(tests, "EditorEssentials/AutoClose/DisabledByDefault",
           TestAutoCloseDisabledByDefault);
   AddTest(tests, "EditorEssentials/AutoClose/InsertTextSingleCharUsesPairPath",
