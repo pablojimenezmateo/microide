@@ -128,7 +128,11 @@ void ApplyProperty(std::string_view key, std::string_view raw_value,
     return;
   }
   if (key == "max_line_length") {
+    // `off` is a value, recorded as 0 so a later section's `off` overrides an
+    // earlier limit (dropping it left the earlier limit standing); Resolve folds
+    // it back to "no limit".
     if (value == "off") {
+      properties.max_line_length = 0;
       return;
     }
     if (const auto parsed = util::ParseInt(value); parsed.has_value() && *parsed > 0) {
@@ -382,9 +386,18 @@ const EditorConfigProperties& EditorConfigResolver::Resolve(
   if (resolved.indent_width.has_value() && *resolved.indent_width == 0) {
     resolved.indent_width = resolved.tab_size;
   }
+  // `indent_style = tab` with no indent_size means `indent_size = tab` per the
+  // spec (and the reference implementation), so it follows tab_width as well.
+  if (resolved.soft_tabs.has_value() && !*resolved.soft_tabs &&
+      !resolved.indent_width.has_value() && resolved.tab_size.has_value()) {
+    resolved.indent_width = resolved.tab_size;
+  }
   // Per the spec, tab_width defaults to indent_size when unset.
   if (!resolved.tab_size.has_value() && resolved.indent_width.has_value()) {
     resolved.tab_size = resolved.indent_width;
+  }
+  if (resolved.max_line_length.has_value() && *resolved.max_line_length == 0) {
+    resolved.max_line_length.reset();  // `off`
   }
 
   if (resolved_.size() >= kMaxEditorConfigResolvedPaths) {

@@ -128,6 +128,39 @@ indent_size = 8
   Expect(resolver.FoundAnyConfig(), "the resolver should report that it found configs");
 }
 
+// Checked against the reference `editorconfig` library over random trees: two
+// spec rules were missing. `indent_style = tab` with no indent_size means the
+// size follows tab_width (the spec's implicit `indent_size = tab`), and
+// `max_line_length = off` in a later section must override an earlier limit
+// instead of being dropped at parse time.
+void TestResolverDerivesTabIndentSizeAndHonoursMaxLineLengthOff() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "proj";
+  std::filesystem::create_directories(root / "sub");
+  WriteFile(root / ".editorconfig", R"(root = true
+
+[*]
+indent_style = tab
+tab_width = 3
+max_line_length = 80
+
+[sub/*]
+max_line_length = off
+)");
+  WriteFile(root / "a.c", "\n");
+  WriteFile(root / "sub" / "b.c", "\n");
+
+  EditorConfigResolver resolver;
+  resolver.SetProjectRoot(root);
+  const EditorConfigProperties& top = resolver.Resolve(root / "a.c");
+  Expect(top.soft_tabs.has_value() && !*top.soft_tabs, "tab style applies");
+  Expect(top.indent_width.value_or(0) == 3, "indent_size follows tab_width for a tab-indented section");
+  Expect(top.max_line_length.value_or(0) == 80, "the limit applies at the top");
+  const EditorConfigProperties& nested = resolver.Resolve(root / "sub" / "b.c");
+  Expect(!nested.max_line_length.has_value(), "a later `off` switches the limit off");
+  Expect(nested.indent_width.value_or(0) == 3, "the derived size still applies below");
+}
+
 void TestResolverStopsAtRootTrueAndProjectRoot() {
   TemporaryDirectory temp;
   const std::filesystem::path outside = temp.path();
@@ -304,6 +337,8 @@ void TestResolverBoundsSectionCount() {
 
 void RegisterEditorConfigTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorConfig/ParsesCommonProperties", TestParsesCommonProperties);
+  AddTest(tests, "EditorConfig/ResolverDerivesTabIndentSizeAndHonoursMaxLineLengthOff",
+          TestResolverDerivesTabIndentSizeAndHonoursMaxLineLengthOff);
   AddTest(tests, "EditorConfig/ParserIgnoresJunkWithoutFailing",
           TestParserIgnoresJunkWithoutFailing);
   AddTest(tests, "EditorConfig/ParserIsCaseInsensitiveForKeysAndValues",
