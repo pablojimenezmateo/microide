@@ -38,8 +38,7 @@ TextLayout::LineVisualColumnMap::LineVisualColumnMap(std::string_view line,
   visuals_.push_back(0);
   std::size_t visual = 0;
   for (std::size_t i = 0; i < line.size();) {
-    visual = AdvanceVisualColumn(visual, line[i], tab_size);
-    i += util::Utf8SequenceLength(line, i);
+    visual = AdvanceVisualColumnAt(visual, line, i, tab_size, &i);
     boundaries_.push_back(i);
     visuals_.push_back(visual);
   }
@@ -79,8 +78,7 @@ std::size_t TextLayout::VisualColumnForTextColumn(std::string_view line,
   const std::size_t plain_prefix = FirstNonPlainAsciiByte(line.substr(0, clamped_column));
   std::size_t visual_column = plain_prefix;
   for (std::size_t i = plain_prefix; i < clamped_column;) {
-    visual_column = AdvanceVisualColumn(visual_column, line[i], tab_size);
-    i += util::Utf8SequenceLength(line, i);
+    visual_column = AdvanceVisualColumnAt(visual_column, line, i, tab_size, &i);
   }
   return visual_column;
 }
@@ -91,8 +89,7 @@ std::size_t TextLayout::AdvanceVisualColumnsOver(std::size_t visual_column, std:
   const std::size_t plain_prefix = FirstNonPlainAsciiByte(text);
   visual_column += plain_prefix;
   for (std::size_t i = plain_prefix; i < text.size();) {
-    visual_column = AdvanceVisualColumn(visual_column, text[i], tab_size);
-    i += util::Utf8SequenceLength(text, i);
+    visual_column = AdvanceVisualColumnAt(visual_column, text, i, tab_size, &i);
   }
   return visual_column;
 }
@@ -102,14 +99,31 @@ std::size_t TextLayout::TextColumnForVisualColumn(std::string_view line,
                                                   std::size_t tab_size) {
   std::size_t current_visual = 0;
   for (std::size_t i = 0; i < line.size();) {
-    const std::size_t next_text = i + util::Utf8SequenceLength(line, i);
+    std::size_t next_text = i;
     const std::size_t next_visual =
-        AdvanceVisualColumn(current_visual, line[i], tab_size);
+        AdvanceVisualColumnAt(current_visual, line, i, tab_size, &next_text);
+    if (next_visual == current_visual) {
+      // A combining mark (or a mark with nothing to combine with): no cell of
+      // its own, so no position to land on. It rides with the code point before.
+      i = next_text;
+      continue;
+    }
+    // The cluster ends after any zero-width marks that follow, so a hit on the
+    // right half of `e` + U+0301 lands after the mark, never between them.
+    std::size_t cluster_end = next_text;
+    while (cluster_end < line.size()) {
+      std::size_t after_mark = cluster_end;
+      if (AdvanceVisualColumnAt(next_visual, line, cluster_end, tab_size, &after_mark) !=
+          next_visual) {
+        break;
+      }
+      cluster_end = after_mark;
+    }
     if (visual_column < next_visual) {
-      return visual_column - current_visual <= next_visual - visual_column ? i : next_text;
+      return visual_column - current_visual <= next_visual - visual_column ? i : cluster_end;
     }
     current_visual = next_visual;
-    i = next_text;
+    i = cluster_end;
   }
   return line.size();
 }
@@ -179,8 +193,7 @@ LineLayoutFacts TextLayout::MeasureLineFacts(std::string_view line, std::size_t 
       leading_tabs + FirstNonPlainAsciiByte(line.substr(leading_tabs));
   std::size_t visual_column = leading_tabs * tab_size + (plain_prefix - leading_tabs);
   for (std::size_t i = plain_prefix; i < line.size();) {
-    visual_column = AdvanceVisualColumn(visual_column, line[i], tab_size);
-    i += util::Utf8SequenceLength(line, i);
+    visual_column = AdvanceVisualColumnAt(visual_column, line, i, tab_size, &i);
   }
   return LineLayoutFacts{
       .visual_columns = visual_column,
@@ -286,12 +299,35 @@ void TextLayout::BuildVisibleLineWindowInto(const VisibleLineWindow& window,
   // visual column there equals the byte column -- which is what makes starting the
   // walk mid-line exact rather than approximate.
   std::size_t visual_column = base;
+  // Where the bytes of the last glyph that got a cell end in `text`, and the
+  // index of that cell -- so a zero-width mark can join its base glyph's bytes
+  // (a wide glyph's trailing cell sits after them and is bumped along).
+  std::size_t last_glyph_next_byte = std::string_view::npos;
+  std::size_t last_glyph_text_end = 0;
+  std::size_t last_glyph_cell = 0;
   for (std::size_t j = 0; j < bytes.size();) {
     const char character = bytes[j];
-    const std::size_t next_text = j + util::Utf8SequenceLength(bytes, j);
+    std::size_t next_text = j;
     const std::size_t next_visual =
-        AdvanceVisualColumn(visual_column, character, tab_size);
+        AdvanceVisualColumnAt(visual_column, bytes, j, tab_size, &next_text);
     const std::size_t width = next_visual - visual_column;
+
+    if (width == 0) {
+      // A combining mark: no cell of its own. It is drawn with the glyph before
+      // it, so its bytes join that glyph's cell -- when that glyph is on this
+      // row; a mark whose base is scrolled off, or one with no base, is dropped.
+      if (last_glyph_next_byte == j) {
+        const std::size_t mark_bytes = next_text - j;
+        result.text.insert(last_glyph_text_end, bytes, j, mark_bytes);
+        for (std::size_t cell = last_glyph_cell + 1; cell < result.text_offsets.size(); ++cell) {
+          result.text_offsets[cell] += mark_bytes;
+        }
+        last_glyph_text_end += mark_bytes;
+        last_glyph_next_byte = next_text;
+      }
+      j = next_text;
+      continue;
+    }
 
     for (std::size_t cell = 0; cell < width; ++cell) {
       const std::size_t absolute_cell = visual_column + cell;
@@ -304,9 +340,19 @@ void TextLayout::BuildVisibleLineWindowInto(const VisibleLineWindow& window,
       result.text_offsets.push_back(result.text.size());
       if (character == '\t') {
         result.text.push_back(' ');
-      } else {
+      } else if (cell == 0) {
         result.text.append(bytes, j, next_text - j);
+        last_glyph_next_byte = next_text;
+        last_glyph_text_end = result.text.size();
+        last_glyph_cell = result.text_offsets.size() - 1;
+      } else if (absolute_cell == horizontal_scroll) {
+        // The trailing cell of a wide glyph whose lead cell is scrolled off:
+        // a blank keeps the grid aligned where half a glyph cannot be drawn.
+        result.text.push_back(' ');
       }
+      // Otherwise a wide glyph's trailing cell: no text of its own, the lead
+      // cell's glyph spans it. Its offset equals the next cell's, so a run that
+      // covers it adds nothing.
       result.source_columns.push_back(base + j);
     }
 

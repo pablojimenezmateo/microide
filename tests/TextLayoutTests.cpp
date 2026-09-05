@@ -23,8 +23,8 @@ constexpr std::size_t kTabSize = 4;
 
 // Representative rows exercising every width class the display-column service
 // must agree on: pure ASCII, leading tabs, interior tabs, a CJK codepoint
-// (3 UTF-8 bytes, one cell in this model), a combining mark (each codepoint is
-// its own cell), and a mix of all of them.
+// (3 UTF-8 bytes, TWO cells -- util::GridCellWidth), a combining mark (no cell
+// of its own: it rides on the code point before it), and a mix of all of them.
 const char* const kRows[] = {
     "abcdef",             // ASCII
     "\t\tindented",       // leading tabs
@@ -119,11 +119,93 @@ void TestTextVisualRoundTrip() {
       if (!IsBoundary(line, c)) {
         continue;
       }
+      // A boundary that a zero-width mark follows shares its visual column with
+      // the boundary after the mark, and the inverse lands after the mark (a
+      // caret between a base and its accent is not a position the grid has).
+      if (c < line.size() &&
+          TextLayout::VisualColumnForTextColumn(line, TextLayout::NextTextColumn(line, c),
+                                                kTabSize) ==
+              TextLayout::VisualColumnForTextColumn(line, c, kTabSize)) {
+        continue;
+      }
       const std::size_t visual = TextLayout::VisualColumnForTextColumn(line, c, kTabSize);
       Expect(TextLayout::TextColumnForVisualColumn(line, visual, kTabSize) == c,
              "visual(boundary) inverts to the same boundary");
     }
   }
+}
+
+// The grid's cell widths: a wide code point takes two cells, a combining mark
+// none, everything else one -- the model VS Code's editor and the terminal grid
+// share. The editor counted one cell per code point while the renderer shaped
+// non-ASCII text at the font's own advances, so the caret drifted a fraction of
+// a cell for every wide character before it.
+void TestWideAndZeroWidthCodepointsTakeTheirCells() {
+  const std::string_view cjk = "a\xE4\xB8\xAD\x62";  // a 中 b
+  Expect(TextLayout::VisualColumnForTextColumn(cjk, 4, kTabSize) == 3,
+         "`a` + 中 = three cells before the `b`");
+  Expect(TextLayout::VisualColumnForTextColumn(cjk, 5, kTabSize) == 4, "the line is four cells");
+  Expect(TextLayout::TextColumnForVisualColumn(cjk, 1, kTabSize) == 1,
+         "visual 1 is the wide glyph's own boundary");
+  Expect(TextLayout::TextColumnForVisualColumn(cjk, 2, kTabSize) == 1,
+         "visual 2 -- the glyph's midpoint -- rounds to its start, as a tab's midpoint does");
+  Expect(TextLayout::TextColumnForVisualColumn(cjk, 3, kTabSize) == 4,
+         "visual 3 is the boundary after the wide glyph");
+
+  const std::string_view accent = "e\xCC\x81xy";  // e + U+0301 x y
+  Expect(TextLayout::VisualColumnForTextColumn(accent, 1, kTabSize) == 1, "the base is a cell");
+  Expect(TextLayout::VisualColumnForTextColumn(accent, 3, kTabSize) == 1,
+         "the combining mark adds no cell");
+  Expect(TextLayout::VisualColumnForTextColumn(accent, accent.size(), kTabSize) == 3,
+         "e-acute, x, y: three cells");
+  Expect(TextLayout::TextColumnForVisualColumn(accent, 1, kTabSize) == 3,
+         "visual 1 lands after the mark, never between base and mark");
+  Expect(TextLayout::TextColumnForVisualColumn(accent, 0, kTabSize) == 0, "visual 0 is the start");
+
+  const std::string_view emoji = "\xF0\x9F\x98\x80!";  // 😀 !
+  Expect(TextLayout::VisualColumnForTextColumn(emoji, 4, kTabSize) == 2, "an emoji is wide");
+  Expect(TextLayout::MeasureLineFacts(emoji, kTabSize).visual_columns == 3,
+         "MeasureLineFacts agrees");
+  Expect(!TextLayout::MeasureLineFacts(emoji, kTabSize).plain_ascii, "and is not plain ASCII");
+
+  // The layout cells: a wide glyph's trailing cell carries no text and the same
+  // source column; a mark joins its base's cell.
+  const LayoutLine wide = TextLayout::BuildVisibleLine(cjk, 0, 16, kTabSize);
+  Expect(wide.source_columns.size() == 4, "four cells for a 中 b");
+  Expect(wide.source_columns[1] == 1 && wide.source_columns[2] == 1,
+         "both cells of the wide glyph map to its byte");
+  Expect(wide.text == "a\xE4\xB8\xAD\x62", "the row text holds each glyph once");
+  Expect(wide.text_offsets[1] == 1 && wide.text_offsets[2] == 4 && wide.text_offsets[3] == 4,
+         "the trailing cell's offset equals the next cell's (no text of its own)");
+  const LayoutLine marked = TextLayout::BuildVisibleLine(accent, 0, 16, kTabSize);
+  Expect(marked.source_columns.size() == 3, "three cells for e-acute x y");
+  Expect(marked.text == "e\xCC\x81xy" && marked.text_offsets[1] == 3,
+         "the mark's bytes belong to the base's cell");
+  // A mark after a wide glyph: inserted before the trailing cell's (empty) slot.
+  const LayoutLine wide_marked =
+      TextLayout::BuildVisibleLine("\xE4\xB8\xAD\xCC\x81z", 0, 16, kTabSize);
+  Expect(wide_marked.source_columns.size() == 3 && wide_marked.text == "\xE4\xB8\xAD\xCC\x81z" &&
+             wide_marked.text_offsets[1] == 5 && wide_marked.text_offsets[2] == 5,
+         "the mark joins the wide glyph's lead cell, the trailing cell stays empty");
+  // Scrolled so the wide glyph's lead cell is off-screen: the trailing cell is a
+  // blank placeholder, not half a glyph.
+  const LayoutLine scrolled = TextLayout::BuildVisibleLine(cjk, 2, 16, kTabSize);
+  Expect(scrolled.source_columns.size() == 2 && scrolled.text == " b",
+         "a wide glyph cut by the scroll edge leaves a blank trailing cell");
+}
+
+// Soft wrap steps by the same widths: a wide glyph never splits across rows and
+// counts two cells against the row width.
+void TestWrapCountsWideGlyphsAsTwoCells() {
+  const std::string_view line = "ab\xE4\xB8\xAD\xE6\x96\x87";  // ab 中 文 = 6 cells
+  std::vector<std::pair<std::size_t, std::size_t>> rows;
+  TextLayout::WrapLineSegments(line, kTabSize, 5,
+                               [&](std::size_t start, std::size_t end, std::size_t) {
+                                 rows.emplace_back(start, end);
+                               });
+  Expect(rows.size() == 2, "six cells over a five-cell width wrap once");
+  Expect(rows[0].first == 0 && rows[0].second == 4 && rows[1].first == 4 && rows[1].second == 6,
+         "the break falls before the glyph that would not fit whole");
 }
 
 // 023: the inlay-hint column resolver and the row-decoration column resolver are
@@ -167,8 +249,13 @@ void TestVisualColumnFastPathMatchesReferenceWalk() {
     const std::size_t clamped = TextLayout::ClampTextColumn(line, text_column);
     std::size_t visual = 0;
     for (std::size_t i = 0; i < clamped;) {
+      const std::size_t length = util::Utf8SequenceLength(line, i);
       visual = TextLayout::AdvanceVisualColumn(visual, line[i], kTabSize);
-      i += util::Utf8SequenceLength(line, i);
+      if (length > 1) {
+        // The per-byte step charges one cell; the grid charges the code point's.
+        visual += util::GridCellWidth(util::DecodeUtf8Codepoint(line.substr(i, length))) - 1;
+      }
+      i += length;
     }
     return visual;
   };
@@ -218,9 +305,9 @@ void TestBuildVisibleLineMatchesWalkFromColumnZero() {
     std::size_t visual_column = 0;
     for (std::size_t i = 0; i < line.size();) {
       const char character = line[i];
-      const std::size_t next_text = i + util::Utf8SequenceLength(line, i);
+      std::size_t next_text = i;
       const std::size_t next_visual =
-          TextLayout::AdvanceVisualColumn(visual_column, character, kTabSize);
+          TextLayout::AdvanceVisualColumnAt(visual_column, line, i, kTabSize, &next_text);
       for (std::size_t cell = 0; cell < next_visual - visual_column; ++cell) {
         const std::size_t absolute_cell = visual_column + cell;
         if (absolute_cell < horizontal_scroll) {
@@ -232,8 +319,10 @@ void TestBuildVisibleLineMatchesWalkFromColumnZero() {
         out.text_offsets.push_back(out.text.size());
         if (character == '\t') {
           out.text.push_back(' ');
-        } else {
+        } else if (cell == 0) {
           out.text.append(line, i, next_text - i);
+        } else if (absolute_cell == horizontal_scroll) {
+          out.text.push_back(' ');  // a wide glyph's trailing cell with the lead scrolled off
         }
         out.source_columns.push_back(i);
       }
@@ -331,8 +420,8 @@ void TestBuildVisibleLineWindowMatchesWholeLineBuild() {
   std::string four_byte;
   std::string three_byte;
   for (int i = 0; i < 300; ++i) {
-    four_byte += "\xf0\x9f\x98\x80";  // U+1F600, four bytes, one cell
-    three_byte += "\xE4\xB8\xAD";     // U+4E2D, three bytes, one cell
+    four_byte += "\xf0\x9f\x98\x80";  // U+1F600, four bytes, two cells
+    three_byte += "\xE4\xB8\xAD";     // U+4E2D, three bytes, two cells
   }
   lines.push_back(four_byte);
   lines.push_back(three_byte);
@@ -794,6 +883,10 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextLayout/BuildVisibleLineMatchesWalkFromColumnZero",
           TestBuildVisibleLineMatchesWalkFromColumnZero);
   AddTest(tests, "TextLayout/TextVisualRoundTrip", TestTextVisualRoundTrip);
+  AddTest(tests, "TextLayout/WideAndZeroWidthCodepointsTakeTheirCells",
+          TestWideAndZeroWidthCodepointsTakeTheirCells);
+  AddTest(tests, "TextLayout/WrapCountsWideGlyphsAsTwoCells",
+          TestWrapCountsWideGlyphsAsTwoCells);
   AddTest(tests, "TextLayout/ResolveVisualColumnMatchesTextLayout",
           TestResolveVisualColumnMatchesTextLayout);
 }

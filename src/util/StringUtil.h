@@ -189,6 +189,25 @@ namespace detail {
 // 1 otherwise. Matches the layout assumptions of common `wcwidth`/unicode-width
 // implementations so grid alignment agrees with TUI applications.
 int CodepointDisplayWidth(char32_t codepoint);
+// Cells one code point occupies on a fixed-pitch text grid -- the editor's rows,
+// the terminal's screen, a chrome label: 2 for an East Asian wide / fullwidth /
+// emoji-presentation code point, 0 for a combining mark or a format character,
+// 1 for everything else, control characters included (the editor shows a stray
+// C0 byte as a one-cell glyph rather than letting it vanish). Built on the same
+// tables as CodepointDisplayWidth; nothing below U+0300 (ASCII, Latin-1, Latin
+// Extended) needs the lookup, and U+FFFD -- what a malformed sequence decodes
+// to -- is one cell so a bad byte still has somewhere to be.
+[[nodiscard]] inline std::size_t GridCellWidth(char32_t codepoint) {
+  if (codepoint < 0x300 || codepoint == 0xFFFD) {
+    return 1;
+  }
+  const int width = CodepointDisplayWidth(codepoint);
+  return width <= 0 ? 0 : static_cast<std::size_t>(width);
+}
+// Cells a UTF-8 string occupies on that grid: GridCellWidth summed per code
+// point, with a tab counting one (a caller laying out tab stops expands them
+// itself) and a malformed byte one.
+std::size_t GridCellCount(std::string_view text);
 bool IsUtf8ContinuationByte(unsigned char byte);
 std::size_t PreviousUtf8Boundary(std::string_view text, std::size_t offset);
 std::size_t NextUtf8Boundary(std::string_view text, std::size_t offset);

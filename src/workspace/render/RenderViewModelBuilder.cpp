@@ -545,9 +545,9 @@ void CollectWhitespaceGlyphRuns(const editor::TextViewport& viewport,
       // later marker on the line one cell right of the real grid. The renderer's
       // fallback path had this right and the view-model path -- the one actually
       // used -- did not.
-      byte += util::Utf8SequenceLength(line_text, byte);
       const std::size_t cell_start = visual_col;
-      visual_col = editor::TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
+      visual_col = editor::TextLayout::AdvanceVisualColumnAt(cell_start, line_text, byte, tab_size,
+                                                             &byte);
       const std::size_t cell_width = visual_col - cell_start;
       if (cell_start >= row_end_visual) {
         editor::RecordWhitespaceWalkStop(resume, cell_byte, cell_start);

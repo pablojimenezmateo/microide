@@ -734,6 +734,63 @@ void TestAsciiGlyphAtlasCoversPrintableRange() {
   TTF_CloseFont(font);
 }
 
+// Non-ASCII text is measured and drawn on the cell grid: a wide code point is
+// two cells, a combining mark none, and every glyph lands on its cell. The
+// shaper used to answer with the fallback font's own advances (an emoji measured
+// 1.75 cells here; a CJK glyph inside ASCII text nearly 3), which is what
+// dragged the editor's caret off the pixels after any wide character.
+void TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid() {
+  EnsureDummySdlVideo();
+  SoftwareCanvas canvas(320, 120);
+  microide::render::TextRenderer renderer;
+  renderer.EnsureInitialized(canvas.renderer());
+  Expect(renderer.BackendName() == "sdl3_ttf", "exercises the SDL_ttf backend");
+  const float cw = renderer.CharWidth();
+  const auto cells = [&](const char* text) { return renderer.MeasureWidth(text) / cw; };
+  Expect(std::abs(cells("\xE4\xB8\xAD") - 2.0f) <= 0.01f, "a CJK glyph is two cells");
+  Expect(std::abs(cells("\xF0\x9F\x98\x80") - 2.0f) <= 0.01f, "an emoji is two cells");
+  Expect(std::abs(cells("\xC3\xA9") - 1.0f) <= 0.01f, "e-acute is one cell");
+  Expect(std::abs(cells("e\xCC\x81") - 1.0f) <= 0.01f, "e + combining acute is one cell");
+  Expect(std::abs(cells("ab\xE4\xB8\xAD\x63\x64") - 6.0f) <= 0.01f,
+         "ASCII around a wide glyph: 1 + 1 + 2 + 1 + 1");
+
+  // Pixels: draw `a 中 b` and check `b` sits in cell 3 -- the cell the layout puts
+  // it in -- with nothing painted past cell 4.
+  const float x = 16.0f;
+  const float y = 8.0f;
+  const SDL_Color white{255, 255, 255, 255};
+  SDL_SetRenderDrawColor(canvas.renderer(), 0, 0, 0, 255);
+  SDL_RenderClear(canvas.renderer());
+  renderer.DrawString(canvas.renderer(), x, y, white, "a\xE4\xB8\xAD\x62");
+  SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+  Expect(pixels != nullptr, "read back the canvas");
+  if (pixels == nullptr) {
+    return;
+  }
+  const auto ink_in_cell = [&](std::size_t cell) {
+    const int left = static_cast<int>(x + static_cast<float>(cell) * cw);
+    const int right = static_cast<int>(x + static_cast<float>(cell + 1) * cw);
+    for (int px = left; px < right; ++px) {
+      for (int py = 0; py < pixels->h; ++py) {
+        Uint8 r = 0;
+        Uint8 g = 0;
+        Uint8 b = 0;
+        Uint8 a = 0;
+        SDL_ReadSurfacePixel(pixels, px, py, &r, &g, &b, &a);
+        if (r > 64) {
+          return true;
+        }
+      }
+    }
+    return false;
+  };
+  Expect(ink_in_cell(0), "`a` paints cell 0");
+  Expect(ink_in_cell(1) || ink_in_cell(2), "the wide glyph paints its two cells");
+  Expect(ink_in_cell(3), "`b` paints cell 3, after the wide glyph's two cells");
+  Expect(!ink_in_cell(4) && !ink_in_cell(5), "nothing is painted past the string's cells");
+  SDL_DestroySurface(pixels);
+}
+
 void TestSdlTtfAsciiRepeatedGlyphsMeasureByCharWidth() {
   EnsureDummySdlVideo();
   SoftwareCanvas canvas(320, 120);
@@ -2942,6 +2999,8 @@ void TestMeasureWidthDoesNotCacheOversizedStrings() {
 }  // namespace
 
 void RegisterTextRendererTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextRenderer/NonAsciiMeasuresAndDrawsOnTheCellGrid",
+          TestSdlTtfNonAsciiMeasuresAndDrawsOnTheCellGrid);
   AddTest(tests, "TextRenderer/MeasureWidthDoesNotCacheOversizedStrings",
           TestMeasureWidthDoesNotCacheOversizedStrings);
   AddTest(tests, "TextRenderer/TruncateToWidthEphemeralViewIsInvalidatedByNextCall",

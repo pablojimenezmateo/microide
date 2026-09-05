@@ -201,6 +201,10 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   bool CanUseFastAscii(std::string_view text) const;
   void EnsureAsciiAtlas();
   SDL_Surface* BuildAsciiCompositeSurface(std::string_view text, SDL_Color color);
+  // The composite for everything BuildAsciiCompositeSurface does not take: each
+  // glyph cluster rendered on its own cell span (util::GridCellWidth cells), so
+  // the pixels agree with the cell arithmetic every caller positions by.
+  SDL_Surface* BuildGridCompositeSurface(std::string_view text, SDL_Color color);
   CacheEntry* ResolveEntry(std::string_view text, SDL_Color color);
   void LruUnlink(CacheEntry& entry);
   void LruPushBack(CacheEntry& entry);

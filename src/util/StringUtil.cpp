@@ -229,6 +229,21 @@ int CodepointDisplayWidth(char32_t codepoint) {
   return 1;
 }
 
+std::size_t GridCellCount(std::string_view text) {
+  std::size_t cells = 0;
+  for (std::size_t offset = 0; offset < text.size();) {
+    if (static_cast<unsigned char>(text[offset]) < 0x80) {
+      ++cells;
+      ++offset;
+      continue;
+    }
+    const std::size_t length = Utf8SequenceLength(text, offset);
+    cells += GridCellWidth(DecodeUtf8Codepoint(text.substr(offset, length)));
+    offset += length;
+  }
+  return cells;
+}
+
 std::size_t Utf8SequenceLength(std::string_view text, std::size_t offset) {
   if (offset >= text.size()) {
     return 0;

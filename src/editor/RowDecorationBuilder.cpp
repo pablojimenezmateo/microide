@@ -347,9 +347,8 @@ std::size_t AppendWhitespaceMarkers(std::vector<DecoratedTextFill>& fills,
   for (; i < text.size();) {
     const std::size_t cell_byte = i;
     const char c = text[i];
-    i += util::Utf8SequenceLength(text, i);
     const std::size_t cell_start = visual_col;
-    visual_col = TextLayout::AdvanceVisualColumn(cell_start, c, tab_size);
+    visual_col = TextLayout::AdvanceVisualColumnAt(cell_start, text, i, tab_size, &i);
     const std::size_t cell_width = visual_col - cell_start;
     if (cell_start >= row_visual_end) {
       RecordWhitespaceWalkStop(resume, cell_byte, cell_start);

@@ -367,16 +367,14 @@ float SdlTtfTextBackend::MeasureWidth(std::string_view text) const {
     return static_cast<float>(text.size()) * char_width_;
   }
 
-  // Shaped path: the subject can reach a code point the primary has no glyph
-  // for, so this is one of the two places the fallbacks have to exist.
-  EnsureFallbackFontsLoaded();
-  int width = 0;
-  int height = 0;
-  if (TTF_GetStringSize(font_, text.data(), text.size(), &width, &height)) {
-    return static_cast<float>(width) / std::max(kMinPresentationScale, presentation_scale_x_);
-  }
-
-  return static_cast<float>(text.size()) * char_width_;
+  // Every string is laid out on the cell grid, non-ASCII included: a wide code
+  // point takes two cells, a combining mark none (util::GridCellWidth), and
+  // BuildGridCompositeSurface draws each glyph on exactly that cell. This used
+  // to ask the shaper, whose answer was the fallback font's own advances -- 1.75
+  // cells for an emoji, anything for a CJK glyph -- so the editor's caret,
+  // selection and mouse hit-test (which count cells) disagreed with the pixels
+  // by a fraction of a cell per wide character on the line.
+  return static_cast<float>(util::GridCellCount(text)) * char_width_;
 }
 
 void SdlTtfTextBackend::DrawString(SDL_Renderer* renderer,
@@ -501,6 +499,102 @@ SDL_Surface* SdlTtfTextBackend::BuildAsciiCompositeSurface(std::string_view text
       SDL_DestroySurface(composite);
       return nullptr;
     }
+  }
+  return composite;
+}
+
+// The non-ASCII counterpart of BuildAsciiCompositeSurface: the string laid out
+// on the cell grid, one glyph cluster per cell span. A cluster is a base code
+// point plus the zero-width marks that follow it (rendered together, so the
+// mark sits on its base); it lands at lround(cell * cell_width_px) and takes
+// util::GridCellWidth cells. Printable ASCII cells come straight from the atlas
+// when the colour is opaque; everything else is one SDL_ttf render of the
+// cluster, blitted as a straight copy (like the atlas blits, so the coverage
+// alpha stays what the texture blend expects) and clipped to the cluster's own
+// cells so a glyph the fallback font draws wider than its cells cannot paint
+// over a neighbour.
+SDL_Surface* SdlTtfTextBackend::BuildGridCompositeSurface(std::string_view text,
+                                                          SDL_Color color) {
+  if (font_ == nullptr || text.empty()) {
+    return nullptr;
+  }
+  EnsureFallbackFontsLoaded();
+  const bool atlas_ok = color.a == 255;
+  if (atlas_ok) {
+    EnsureAsciiAtlas();
+  }
+
+  const float scale_x = std::max(kMinPresentationScale, presentation_scale_x_);
+  const float cell_width_px = char_width_ * scale_x;
+  const int font_height_px = std::max(1, TTF_GetFontHeight(font_));
+  const std::size_t total_cells = util::GridCellCount(text);
+  const int total_width_px = std::max(
+      1, static_cast<int>(std::ceil(static_cast<float>(std::max<std::size_t>(total_cells, 1)) *
+                                    cell_width_px)));
+
+  SDL_Surface* composite = nullptr;
+  {
+    util::PerformanceTrace::Scope alloc_scope("render::TextBackend::CompositeAllocate");
+    composite = SDL_CreateSurface(total_width_px, font_height_px, texture_format_);
+    if (composite == nullptr) {
+      return nullptr;
+    }
+    if (!SDL_FillSurfaceRect(composite, nullptr, 0)) {
+      SDL_DestroySurface(composite);
+      return nullptr;
+    }
+  }
+
+  util::PerformanceTrace::Scope blit_scope("render::TextBackend::CompositeGlyphBlits");
+  std::size_t cell = 0;
+  for (std::size_t offset = 0; offset < text.size();) {
+    // The cluster: one base code point and any zero-width code points after it.
+    const std::size_t base_length =
+        static_cast<unsigned char>(text[offset]) < 0x80 ? 1 : util::Utf8SequenceLength(text, offset);
+    const char32_t base =
+        base_length == 1 && static_cast<unsigned char>(text[offset]) < 0x80
+            ? static_cast<char32_t>(static_cast<unsigned char>(text[offset]))
+            : util::DecodeUtf8Codepoint(text.substr(offset, base_length));
+    std::size_t width = util::GridCellWidth(base);
+    std::size_t end = offset + base_length;
+    while (end < text.size()) {
+      const std::size_t mark_length =
+          static_cast<unsigned char>(text[end]) < 0x80 ? 1 : util::Utf8SequenceLength(text, end);
+      if (mark_length == 1 && static_cast<unsigned char>(text[end]) < 0x80) {
+        break;
+      }
+      if (util::GridCellWidth(util::DecodeUtf8Codepoint(text.substr(end, mark_length))) != 0) {
+        break;
+      }
+      end += mark_length;
+    }
+    if (width == 0) {
+      // A mark with nothing before it to sit on: give it a cell of its own
+      // rather than drawing it over the cell to the left, which is not ours.
+      width = 1;
+    }
+    const std::string_view cluster = text.substr(offset, end - offset);
+    const int dst_x = static_cast<int>(std::lround(static_cast<float>(cell) * cell_width_px));
+    const int span_px =
+        static_cast<int>(std::lround(static_cast<float>(cell + width) * cell_width_px)) - dst_x;
+    const bool ascii_cell = cluster.size() == 1 && base >= 0x20 && base <= 0x7E;
+    if (ascii_cell && base == ' ') {
+      // Spaces contribute no coverage.
+    } else if (ascii_cell && atlas_ok && ascii_atlas_ != nullptr &&
+               ascii_atlas_->BlitInto(composite, dst_x, static_cast<char>(base), color)) {
+      // Atlas blit, identical pixels to the ASCII composite path.
+    } else {
+      SDL_Surface* glyph = TTF_RenderText_Blended(font_, cluster.data(), cluster.size(), color);
+      if (glyph != nullptr) {
+        SDL_SetSurfaceBlendMode(glyph, SDL_BLENDMODE_NONE);
+        SDL_Rect source{0, 0, std::min(glyph->w, span_px), std::min(glyph->h, font_height_px)};
+        SDL_Rect destination{dst_x, 0, source.w, source.h};
+        SDL_BlitSurface(glyph, &source, composite, &destination);
+        SDL_DestroySurface(glyph);
+      }
+    }
+    cell += width;
+    offset = end;
   }
   return composite;
 }
@@ -1378,11 +1472,9 @@ SdlTtfTextBackend::CacheEntry* SdlTtfTextBackend::ResolveEntry(std::string_view 
       surface = BuildAsciiCompositeSurface(text, color);
     }
     if (surface == nullptr) {
-      // Shaped path (see MeasureWidth): the other place a fallback glyph can be
-      // needed. Reached both for genuinely non-ASCII text and when the ASCII
-      // composite could not be built.
-      EnsureFallbackFontsLoaded();
-      surface = TTF_RenderText_Blended(font_, text.data(), text.size(), color);
+      // Non-ASCII, translucent, or a glyph the atlas could not supply: the
+      // cell-grid composite (see MeasureWidth for why it is not the shaper).
+      surface = BuildGridCompositeSurface(text, color);
     }
   }
   if (surface == nullptr) {

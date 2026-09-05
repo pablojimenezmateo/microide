@@ -214,6 +214,34 @@ class TextLayout {
     return visual_column + (remainder == 0 ? safe_tab_size : safe_tab_size - remainder);
   }
 
+  // The per-CODE-POINT step: the visual column after the code point that starts
+  // at `offset` of `text`, with `*next_offset` set to where the following one
+  // starts. A tab expands to its stop, a wide code point (CJK, fullwidth,
+  // emoji) takes two cells and a combining mark or format character none --
+  // util::GridCellWidth, the same table the terminal grid uses. The editor used
+  // to count one cell per code point whatever the glyph, while the renderer
+  // shaped non-ASCII text at the font's own advances, so every caret, selection
+  // and click drifted a cell for each wide character before it on the line.
+  // A byte below 0x80 takes the AdvanceVisualColumn path without decoding, so
+  // the ASCII walks cost what they did.
+  static std::size_t AdvanceVisualColumnAt(std::size_t visual_column,
+                                           std::string_view text,
+                                           std::size_t offset,
+                                           std::size_t tab_size,
+                                           std::size_t* next_offset) {
+    const unsigned char lead = static_cast<unsigned char>(text[offset]);
+    if (lead < 0x80) {
+      *next_offset = offset + 1;
+      return AdvanceVisualColumn(visual_column, static_cast<char>(lead), tab_size);
+    }
+    // Utf8SequenceLength answers at least 1 for any in-range offset (a bad lead
+    // byte is one byte long), so the walk always advances.
+    const std::size_t length = util::Utf8SequenceLength(text, offset);
+    *next_offset = offset + length;
+    return visual_column +
+           util::GridCellWidth(util::DecodeUtf8Codepoint(text.substr(offset, length)));
+  }
+
   // Soft-wrap a single logical line into visual rows, emitting each one as
   // `emit(visual_start, visual_end, indent)` — a half-open visual-column span plus
   // the hanging indent a continuation row renders under. Always emits at least one
@@ -300,8 +328,10 @@ class TextLayout {
     const std::size_t line_size = line_text.size();
     while (i < line_size) {
       const char ch = line_text[i];
-      const std::size_t seq_len = util::Utf8SequenceLength(line_text, i);
-      const std::size_t next_visual = AdvanceVisualColumn(visual, ch, tab_size);
+      std::size_t next_i = i;
+      const std::size_t next_visual =
+          AdvanceVisualColumnAt(visual, line_text, i, tab_size, &next_i);
+      const std::size_t seq_len = next_i - i;
       const std::size_t effective_wrap =
           wrap_columns - (row_start_visual == 0 ? 0 : hanging_indent);
 
