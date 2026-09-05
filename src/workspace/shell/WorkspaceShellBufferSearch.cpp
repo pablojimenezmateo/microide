@@ -158,10 +158,29 @@ void WorkspaceShell::RefreshBufferSearch() {
   }
   ++buffer_search.matches_revision;
 
+  // The current match is the first one at or after the caret (the selection's
+  // start when there is one), wrapping to the top -- VS Code searches from the
+  // cursor, so find-as-you-type in the middle of a file stays there instead of
+  // jumping to the first hit in the document, a query that keeps matching keeps
+  // its match while it is typed, and a Replace moves on to the NEXT occurrence
+  // (the caret sits after the replacement) rather than back to the first.
   buffer_search.selected_index = 0;
-
   if (!buffer_search.matches.empty()) {
-    RevealBufferSearchMatch(buffer_search.matches.front());
+    const editor::TextPosition seed =
+        viewport->selection_range().has_value()
+            ? viewport->selection_range()->start
+            : editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
+    const auto at_or_after = std::lower_bound(
+        buffer_search.matches.begin(), buffer_search.matches.end(), seed,
+        [](const editor::SelectionRange& match, const editor::TextPosition& position) {
+          return match.start.line < position.line ||
+                 (match.start.line == position.line && match.start.column < position.column);
+        });
+    if (at_or_after != buffer_search.matches.end()) {
+      buffer_search.selected_index =
+          static_cast<std::size_t>(at_or_after - buffer_search.matches.begin());
+    }
+    RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
   }
   ResetOverlayScroll();
   RequestOverlayRedraw();

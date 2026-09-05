@@ -528,6 +528,74 @@ void TestWorkspaceShellBufferSearchSeedsFromSelection() {
          "the seeded query should immediately find both occurrences");
 }
 
+// Find searches from the cursor (VS Code): the current match is the first one at
+// or after the caret, wrapping to the top, not the first in the document.
+void TestWorkspaceShellBufferSearchStartsFromTheCaret() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "alpha\nalpha\nalpha\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  editor.MoveCursorTo(1, 0);
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F should open the find widget");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "alpha"), "the query is typed");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 1,
+         "the match at the caret is the current one, not the first in the file");
+  Expect(editor.cursor_line() == 1, "the caret stays on its line");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the widget");
+  editor.MoveCursorTo(1, 2);  // inside the second occurrence: the next one is current
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F reopens the find widget");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 2,
+         "a match that starts before the caret is not current; the next one is");
+
+  Expect(SendKeyDown(shell, SDLK_ESCAPE, SDL_KMOD_NONE), "Escape closes the widget");
+  editor.MoveCursorTo(2, 3);  // past every match start: wrap to the top
+  Expect(SendKeyDown(shell, SDLK_F, SDL_KMOD_CTRL), "Ctrl+F reopens the find widget");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0,
+         "with no match at or after the caret the search wraps to the first");
+}
+
+// Replace moves on to the NEXT occurrence (the caret sits after the replacement),
+// not back to the first match in the document.
+void TestWorkspaceShellBufferReplaceMovesToTheNextMatch() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "workspace";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "a a a a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.MoveCursorTo(0, 0);
+
+  Expect(SendKeyDown(shell, SDLK_H, SDL_KMOD_CTRL), "Ctrl+H should open the replace widget");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "a");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 4, "four matches");
+  WorkspaceShellTestAccess::SetBufferSearchSelectedIndex(shell, 2);  // the third match is current
+
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "b");
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  Expect(editor.lines()[0] == "a a b a", "the third occurrence was replaced: " +
+                                            std::string(editor.lines()[0]));
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3, "three matches remain");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 2,
+         "the match after the replacement (the old fourth) is current, not the first");
+
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  Expect(editor.lines()[0] == "a a b b", "the last occurrence was replaced next");
+  Expect(WorkspaceShellTestAccess::BufferSearchSelectedIndex(shell) == 0,
+         "past the last match the selection wraps to the first");
+}
+
 }  // namespace
 
 void TestWorkspaceShellProjectSearchSidebarScrollPastSelection() {
@@ -1222,6 +1290,10 @@ void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellBufferSearchReopenKeepsQueryAndRefocuses);
   AddTest(tests, "WorkspaceShell/BufferSearchSeedsFromSelection",
           TestWorkspaceShellBufferSearchSeedsFromSelection);
+  AddTest(tests, "WorkspaceShell/BufferSearchStartsFromTheCaret",
+          TestWorkspaceShellBufferSearchStartsFromTheCaret);
+  AddTest(tests, "WorkspaceShell/BufferReplaceMovesToTheNextMatch",
+          TestWorkspaceShellBufferReplaceMovesToTheNextMatch);
 }
 
 }  // namespace microide::tests
