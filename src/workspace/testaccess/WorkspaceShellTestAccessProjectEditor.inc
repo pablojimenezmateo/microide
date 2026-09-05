@@ -960,6 +960,32 @@
     panel.output.follow_tail = false;
     panel.output.scroll_row = 0;
   }
+  // Same as ShowOutputChannelWithLines, with the caller's own lines (a
+  // `path:line:col` reference row, say) instead of generated filler.
+  static void ShowOutputChannelWithEntries(WorkspaceShell& shell,
+                                           std::string_view id,
+                                           const std::vector<std::string>& lines) {
+    for (const std::string& line : lines) {
+      shell.output_channels_.AppendLine(id, "Test Output", line);
+    }
+    auto& panel = shell.context_.current_project_state.panel;
+    panel.content = WorkspaceShell::PanelContentKind::Output;
+    panel.output.open_channel_ids = {std::string(id)};
+    panel.output.channel_id = std::string(id);
+    panel.output.follow_tail = false;
+    panel.output.scroll_row = 0;
+  }
+  // A point inside Output row `row` (in the active channel), for mouse tests.
+  static SDL_FPoint OutputPanelRowPoint(WorkspaceShell& shell, std::size_t row) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    const auto* entries =
+        shell.OutputChannelEntries(shell.context_.current_project_state.panel.output.channel_id);
+    const std::size_t line_count = entries != nullptr ? entries->size() : 0;
+    const WorkspaceShell::LogSurfaceLayout panel_layout =
+        shell.ComputeBottomPanelLogLayout(layout, line_count);
+    return SDL_FPoint{panel_layout.content_rect.x + 12.0f,
+                      panel_layout.text_y + panel_layout.line_height * (static_cast<float>(row) + 0.5f)};
+  }
   static int OutputPanelScrollRow(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.panel.output.scroll_row;
   }

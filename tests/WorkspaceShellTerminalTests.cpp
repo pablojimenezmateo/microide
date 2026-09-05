@@ -1704,6 +1704,31 @@ void TestWorkspaceShellTerminalFindClipboardShortcutsTargetTheQuery() {
          "neither shortcut should reach the shell as a control byte");
 }
 
+// Clicking a `path:line:col` row in the Output panel (a find-references or
+// diagnostics entry) opens the file at that position. The column is a 1-based
+// CHARACTER column, so a multibyte character before it must not land the caret
+// short -- it used to be applied as a byte offset.
+void TestWorkspaceShellOutputReferenceClickUsesCharacterColumns() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "\xc3\xa9=1\nsecond\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowOutputChannelWithEntries(shell, "lsp.references",
+                                                         {"notes.txt:1:3"});
+  const SDL_FPoint row = WorkspaceShellTestAccess::OutputPanelRowPoint(shell, 0);
+  Expect(SendMouseDown(shell, row.x, row.y, SDL_BUTTON_LEFT),
+         "clicking the reference row is handled");
+  const auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(editor.path().lexically_normal() == source.lexically_normal(),
+         "the referenced file opens: " + editor.path().string());
+  Expect(editor.cursor_line() == 0 && editor.cursor_column() == 3,
+         "column 3 is the \"1\": byte offset 3 after the two-byte letter, not byte 2");
+}
+
 // The bottom panel is one of the four surfaces in the Ctrl+Tab ring, but only its
 // terminal content ever answered a key. With an Output channel showing, every
 // navigation key fell through to the editor behind the panel and scrolled *that*,
@@ -1790,6 +1815,8 @@ void TestWorkspaceShellTerminalClosesFromTheCommandLine() {
 void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/TerminalClosesFromTheCommandLine",
           TestWorkspaceShellTerminalClosesFromTheCommandLine);
+  AddTest(tests, "WorkspaceShell/OutputReferenceClickUsesCharacterColumns",
+          TestWorkspaceShellOutputReferenceClickUsesCharacterColumns);
   AddTest(tests, "WorkspaceShell/OutputPanelIsKeyboardNavigable",
           TestWorkspaceShellOutputPanelIsKeyboardNavigable);
   AddTest(tests, "WorkspaceShell/OutputPanelBodyClickFocusesThePanel",

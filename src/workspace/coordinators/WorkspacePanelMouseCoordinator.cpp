@@ -1,5 +1,7 @@
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
 
+#include "util/StringUtil.h"
+
 #include "workspace/coordinators/SelectionAutoscroll.h"
 
 #include <algorithm>
@@ -224,9 +226,19 @@ bool PanelMouseCoordinator::HandleButtonDown(const SDL_Event& event,
             }
             operations_.open_file(path.lexically_normal());
             if (editor::TextViewport* viewport = operations_.active_editor_viewport();
-                viewport != nullptr) {
-              viewport->JumpCursorTo(parsed->line > 0 ? parsed->line - 1 : 0,
-                                     parsed->column > 0 ? parsed->column - 1 : 0);
+                viewport != nullptr && viewport->line_count() > 0) {
+              // `path:line:col` names a 1-based CHARACTER column (what the
+              // reference and diagnostic emitters print, and what VS Code's
+              // link handler reads); convert through the target line so a
+              // multibyte character before it does not land the caret short.
+              const std::size_t line =
+                  std::min(parsed->line > 0 ? parsed->line - 1 : 0, viewport->line_count() - 1);
+              const std::size_t byte_column =
+                  parsed->column > 0
+                      ? util::Utf8ByteOffsetForCodepointCount(viewport->lines().LineView(line),
+                                                              parsed->column - 1)
+                      : 0;
+              viewport->JumpCursorTo(line, byte_column);
             }
             state_.surface.focus = FocusTarget::Editor;
             return true;
