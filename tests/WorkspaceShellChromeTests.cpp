@@ -858,6 +858,39 @@ void TestWorkspaceShellCommandPaletteRanksExactCommandNameFirst() {
          "a command-name prefix should rank ahead of an incidental substring match");
 }
 
+// The palette matches each query word independently, in any order (VS Code's
+// command palette matches words, not one contiguous substring): `line move` finds
+// "Move Line Down" as well as `move line` does, and a query typed as one run still
+// ranks the row that carries it contiguously ahead of a scattered match.
+void TestWorkspaceShellCommandPaletteMatchesQueryWordsInAnyOrder() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(SendKeyDown(shell, SDLK_P, SDL_KMOD_CTRL | SDL_KMOD_SHIFT),
+         "palette fixture should open the command palette");
+
+  WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "line move");
+  const std::size_t reordered = WorkspaceShellTestAccess::CommandPaletteMatchCount(shell);
+  Expect(reordered >= 2, "'line move' matches the move-line commands although the words are swapped");
+  bool found_move_line_down = false;
+  for (std::size_t i = 0; i < reordered; ++i) {
+    if (WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, i) == "Move Line Down") {
+      found_move_line_down = true;
+    }
+  }
+  Expect(found_move_line_down, "'line move' lists Move Line Down");
+
+  WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "move line");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) >= reordered,
+         "the same words in row order match at least as many rows");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0).rfind("Move Line", 0) == 0,
+         "a contiguous run of the query ranks first: " +
+             WorkspaceShellTestAccess::CommandPaletteMatchLabelAt(shell, 0));
+
+  WorkspaceShellTestAccess::SetCommandPaletteQueryAndRefresh(shell, "zz-no-such-word line");
+  Expect(WorkspaceShellTestAccess::CommandPaletteMatchCount(shell) == 0,
+         "every query word has to appear somewhere in the row");
+}
+
 void TestWorkspaceShellProjectTabsShowBadges() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "alpha-project";
@@ -3768,6 +3801,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCommandPasteShortcutUsesSharedTextInputPath);
   AddTest(tests, "WorkspaceShell/CommandPaletteRanksExactCommandNameFirst",
           TestWorkspaceShellCommandPaletteRanksExactCommandNameFirst);
+  AddTest(tests, "WorkspaceShell/CommandPaletteMatchesQueryWordsInAnyOrder",
+          TestWorkspaceShellCommandPaletteMatchesQueryWordsInAnyOrder);
   AddTest(tests, "WorkspaceShell/ProjectTabsShowBadges",
           TestWorkspaceShellProjectTabsShowBadges);
   AddTest(tests, "WorkspaceShell/ProjectTabBadgeColorStableAcrossSwitch",

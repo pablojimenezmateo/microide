@@ -383,11 +383,23 @@ void WorkspaceShell::RefreshCommandPalette() {
   palette.matches.clear();
   palette.selected_index = 0;
   const std::string query = util::ToLowerAscii(palette.query.text());
+  // Every whitespace-separated word of the query has to appear somewhere in the
+  // row, in any order (VS Code's command palette matches words, not one contiguous
+  // substring), so `line move` and `move line` both find "Move Line Down".
+  const std::vector<std::string_view> query_words = util::SplitAsciiWhitespace(query);
   for (std::size_t i = 0; i < palette.items.size(); ++i) {
     // item.search_text is the lowercased "primary secondary", precomputed when the
     // palette was populated — avoids re-lowercasing + concatenating per item on every
     // keystroke. Store the matching index, not a copy of the row.
-    if (!query.empty() && palette.items[i].search_text.find(query) == std::string::npos) {
+    const std::string& text = palette.items[i].search_text;
+    bool every_word_found = true;
+    for (const std::string_view word : query_words) {
+      if (text.find(word) == std::string::npos) {
+        every_word_found = false;
+        break;
+      }
+    }
+    if (!every_word_found) {
       continue;
     }
     palette.matches.push_back(i);
@@ -407,7 +419,11 @@ void WorkspaceShell::RefreshCommandPalette() {
       if (item.command_name.rfind(query, 0) == 0) {
         return 1;
       }
-      return item.search_text.rfind(query, 0) == 0 ? 2 : 3;
+      if (item.search_text.rfind(query, 0) == 0) {
+        return 2;
+      }
+      // The whole query as one run beats the same words scattered over the row.
+      return item.search_text.find(query) != std::string::npos ? 3 : 4;
     };
     std::stable_sort(palette.matches.begin(), palette.matches.end(),
                      [&](std::size_t lhs, std::size_t rhs) { return rank(lhs) < rank(rhs); });
@@ -443,7 +459,25 @@ void WorkspaceShell::ConfirmCommandPaletteSelection() {
   // path (verb + args, e.g. "colorscheme dark") is the fallback for a query that
   // matched no row, since RefreshCommandPalette matches the *whole* query as a
   // substring of the label.
-  if (!palette.matches.empty() && palette.selected_index < palette.matches.size()) {
+  // A verb that names a command exactly, followed by arguments (`goto 2`,
+  // `colorscheme dark`), is a command line whatever rows the words happen to
+  // match: since the palette matches query words in any order, `goto 2` also
+  // lights up "Go to Line…", and running that row would swallow the argument.
+  bool verb_with_arguments = false;
+  {
+    const ParsedCommandLine parsed = ParseCommandLine(palette.query.text());
+    if (parsed.tokens.size() > 1 && parsed.open_quote == '\0') {
+      const std::string verb = util::ToLowerAscii(parsed.tokens.front().text);
+      for (const CommandPaletteItem& item : palette.items) {
+        if (item.command_name == verb) {
+          verb_with_arguments = true;
+          break;
+        }
+      }
+    }
+  }
+  if (!verb_with_arguments && !palette.matches.empty() &&
+      palette.selected_index < palette.matches.size()) {
     // Copy the selected item before dismissing: the dispatched action may itself open
     // another overlay (e.g. Find File, Settings), so the palette must be gone first and
     // we must not hold a reference into state that the action could mutate.
