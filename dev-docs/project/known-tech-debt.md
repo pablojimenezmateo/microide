@@ -473,6 +473,13 @@ same method:
   the parent folder when another tab in the group shares the file name.
 - **JSON**: an RFC 8259 conformance table (JSONTestSuite-derived). Clean.
 - **SHA-256**: reference vectors around every padding boundary. Clean.
+- **Lanes at the end of the session**: asan, ubsan, tsan (zero warnings) and
+  hardened green on the first run; clang-build failed three times in a row on
+  what GCC lets through -- two helpers orphaned by the comparator hoist, the
+  exhaustive availability switch missing FindNext/FindPrevious, and a PRE-EXISTING
+  test literal `"\xc3\xa9a"` (one out-of-range escape, not "éa"; the status-bar
+  column test had been checking the wrong text). Run the clang lane after adding
+  an ActionId or writing a `\x..` escape followed by a hex letter.
 - **Compare**: a differential test of `BuildLineDiffOps` against a brute-force
   WEIGHTED LCS (the aligner weighs rarity over the trimmed middle; an unweighted
   LCS oracle is the wrong reference and fails on the first common line). Clean.
