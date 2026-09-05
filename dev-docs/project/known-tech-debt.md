@@ -389,6 +389,60 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-05-287 — the 2026-09-05 assessment pass: six behavioural defects across editor input, the workspace-edit appliers, and process spawning, plus a terminal differential oracle. [RESOLVED same session — open remainder zero; full SAN + second-compiler + hardened-stdlib green.]
+
+Same method as [285](#td-2026-09-04-285)/[286](#td-2026-09-05-286): read a
+subsystem, then check it against a reference or the real binary rather than for
+defects. Ten-plus subsystems read; six fixes, each with a regression test, in
+commit order:
+
+- **`apply_edits` reversed two inserts at one position.** The plugin applier
+  sorted on the start alone with `std::sort` (libstdc++'s small-range insertion
+  sort is stable, so "A" then "B" at (1,1) came out "BA"; unspecified elsewhere)
+  and had no overlap check. All three appliers (open buffers, closed files on
+  disk, plugins) now share `editor/EditBatchOrder.h`: highest position first,
+  same start → longer range first (replace before inserts at P), same range →
+  later array entry first, overlaps refused. It had been three byte-similar
+  copies of the sort.
+- **A UTF-8 BOM was the first character of the buffer.** Stripped on open,
+  remembered (`has_utf8_bom`, "UTF-8 with BOM"), written back on save;
+  `SerializeDocumentText` gives the on-disk form for the compare/merge/search
+  paths so a BOM file has no phantom line-1 diff and a line-1 search hit is not
+  three columns late. A new `Utf8Bom` session-tab record carries it across a
+  dirty restore. Confirmed end to end through the real binary over the control
+  channel.
+- **Every child process inherited the editor's ignored SIGPIPE.** An ignored
+  disposition survives exec, so `yes | head` in the terminal printed "Broken
+  pipe" and exited 1, and git/LSP/DAP got EPIPE where they expect the signal.
+  `platform/ChildSignals.h` (`RestoreDefaultSignalsInChild`, async-signal-safe)
+  runs between fork and exec at all three spawn sites, with a probe test per site.
+- **A quote after a word character was auto-closed** (`don't` → `don''t`);
+  VS Code does not pair a same-char quote after a word byte. Single- and
+  multi-caret paths share the rule.
+- **Backspace between an auto-closed pair left the closer,** and Backspace in
+  leading whitespace under soft tabs deleted one space instead of a whole indent
+  stop (autoClosingDelete + useTabStops). Both apply at every caret; the
+  prefix scan is capped so a line with no breaks pays no per-keystroke O(line).
+
+Coverage added with no defect found: **a terminal differential oracle**
+(`TerminalSession/ScreenAgreesWithPyteReference`, 600 random cases from
+`tools/gen-terminal-reference.py`). The generator is deliberately narrow — it
+keeps the cursor off the last column and never scrolls — because a randomized run
+that reached the last column showed every divergence was **pyte** keeping the
+DECAWM pending-wrap flag across a cursor move where xterm (and this emulator)
+clear it. The emulator was correct; pyte is not a faithful oracle there, so the
+test locks in only the CSI editing/erase/addressing agreement that does hold.
+
+Read and found clean this pass (no change): the porcelain-v2 status parser, the
+JSON-RPC message framer, the LSP semantic-tokens delta decoder, the control-
+request parser, `JsonValue`/`JsonFormat`, the piece tree, the gitignore matcher
+(already differential-tested against `git check-ignore`), the merge conflict
+grouping, the fuzzy-finder scorer, `ColorMath`, the DAP value-tree paging,
+`TextFileIO`'s atomic save + symlink resolution, and the external-change
+overwrite ops. `terminal/TerminalBase64` decode verified over 20,000 random
+round trips. No banned `std::sto*`, `luaL_error` in `src/plugin`, or
+`platform::RunSubprocess` in workspace TUs.
+
 ### TD-2026-09-05-286 — the second and third sweeps of the 2026-09-04 pass: stage/merge/terminal/keybinding defects from reference tests, and four editor defects the unit suites had green that driving the real binary found in an hour. [RESOLVED same session — open remainder zero; two deliberate deviations recorded below so they are not re-litigated.]
 
 [285](#td-2026-09-04-285) compared primitives against references. The second

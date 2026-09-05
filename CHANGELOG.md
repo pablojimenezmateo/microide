@@ -23,6 +23,28 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **A UTF-8 byte order mark is treated as file metadata, not the first
+  character.** A file that opened with a BOM kept the three bytes at the start of
+  line 0: the caret sat before an invisible character at Home, typing at the
+  start of the file landed after the mark, `^`-anchored highlighting and shebang
+  detection missed line 1, and a project-search hit on line 1 was reported three
+  columns late. The mark is stripped on open, shown as "UTF-8 with BOM", and
+  written back on save, as in VS Code; a BOM file compared against its own git
+  blob no longer shows a phantom change on line 1.
+- **A quote typed right after a word character is not auto-closed.** `don't`
+  produced `don''t`; VS Code does not pair `'`, `"` or `` ` `` when the previous
+  character is part of a word.
+- **Backspace between an auto-closed pair deletes both characters,** and
+  Backspace in leading whitespace with soft tabs deletes back to the previous
+  indent stop rather than one space (VS Code's autoClosingDelete and useTabStops).
+- **A workspace edit's two inserts at one position keep their order.** A language
+  server or plugin `apply_edits` with two inserts at the same place applied them
+  reversed; all three edit appliers (open buffers, closed files, plugins) now
+  share one ordering that matches VS Code and reject overlapping edits.
+- **Child processes no longer inherit the editor's ignored SIGPIPE.** `yes | head`
+  in the integrated terminal printed a "Broken pipe" error and exited 1 where it
+  should die quietly; the terminal shell, git, formatters and language servers
+  now start with the default signal disposition.
 - **Typing over a snippet placeholder replaces its default text.** A language
   server's `foo(${1:int x})` is typed over now, as in VS Code, instead of having
   the keystroke appended (`int xy`) and the whole field re-selected after every
