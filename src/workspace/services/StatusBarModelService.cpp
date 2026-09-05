@@ -149,10 +149,12 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
     const editor::TextViewport* const viewport = active_viewport;
     if (editor_segments_cache_.viewport != viewport ||
         editor_segments_cache_.cursor_line != viewport->cursor_line() ||
-        editor_segments_cache_.cursor_column != viewport->cursor_column()) {
+        editor_segments_cache_.cursor_column != viewport->cursor_column() ||
+        editor_segments_cache_.content_revision != viewport->content_revision()) {
       editor_segments_cache_.viewport = viewport;
       editor_segments_cache_.cursor_line = viewport->cursor_line();
       editor_segments_cache_.cursor_column = viewport->cursor_column();
+      editor_segments_cache_.content_revision = viewport->content_revision();
       // Composed in place, like the tooltip below: the `+` chain built three
       // temporaries and assigned the last one, so a caret move past column 15
       // (where SSO stops covering "Ln N, Col M") allocated twice per keystroke on
@@ -163,7 +165,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       line_column_text.append("Ln ");
       util::AppendUnsigned(line_column_text, viewport->cursor_line() + 1);
       line_column_text.append(", Col ");
-      util::AppendUnsigned(line_column_text, viewport->cursor_column() + 1);
+      // The VISIBLE column (VS Code's "Col"): a tab counts as its width and a
+      // multibyte character as one, where the raw byte offset put the caret at
+      // "Col 3" after a single accented letter and "Col 2" after a tab.
+      util::AppendUnsigned(line_column_text, viewport->cursor_visual_column() + 1);
     }
     StatusBarService::StatusBarSegmentUpdate line_col;
     line_col.text = editor_segments_cache_.line_column_text;

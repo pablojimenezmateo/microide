@@ -1066,6 +1066,47 @@ void TestWorkspaceShellRenderedFrameIsFullyOpaque() {
 // pixels: moving the caret never updated "Ln 1, Col 1", and opening a second file
 // left the first one's language and indent on screen until an unrelated full
 // redraw happened along. It has to ask for itself, and only when it changed.
+// "Col" is the VISIBLE column, as in VS Code: a tab counts as its width and a
+// multibyte character as one. The raw byte offset put the caret at "Col 2" after
+// a tab and "Col 3" after a single accented letter.
+void TestWorkspaceShellStatusBarColumnIsTheVisibleColumn() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "\tab\n\xc3\xa9a\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  auto& editor = WorkspaceShellTestAccess::ActiveEditor(shell);
+  editor.SetTabSize(4);
+  using microide::workspace::StatusBarSegmentId;
+
+  editor.MoveCursorTo(0, 1);  // after the tab
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+  Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn) ==
+             "Ln 1, Col 5",
+         "a tab counts as its width: " +
+             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn));
+
+  editor.MoveCursorTo(1, 2);  // after the two-byte e-acute
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+  Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn) ==
+             "Ln 2, Col 2",
+         "a multibyte character counts as one column: " +
+             WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn));
+
+  // An edit that leaves the caret's byte column in place but changes the bytes
+  // before it still re-composes: replace the tab with a space.
+  editor.MoveCursorTo(0, 1);
+  editor.ReplaceRange(microide::editor::SelectionRange{{0, 0}, {0, 1}}, " ");
+  editor.MoveCursorTo(0, 1);
+  WorkspaceShellTestAccess::RefreshStatusBar(shell);
+  Expect(WorkspaceShellTestAccess::StatusBarSegmentText(shell, StatusBarSegmentId::LineColumn) ==
+             "Ln 1, Col 2",
+         "the column follows the bytes before the caret, not just the caret");
+}
+
 void TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -3807,6 +3848,8 @@ void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWindowPresentationStateUpdatesChromeAndSize);
   AddTest(tests, "WorkspaceShell/RenderedFrameIsFullyOpaque",
           TestWorkspaceShellRenderedFrameIsFullyOpaque);
+  AddTest(tests, "WorkspaceShell/StatusBarColumnIsTheVisibleColumn",
+          TestWorkspaceShellStatusBarColumnIsTheVisibleColumn);
   AddTest(tests, "WorkspaceShell/StatusBarRepaintsWhenItsValuesChange",
           TestWorkspaceShellStatusBarRepaintsWhenItsValuesChange);
   AddTest(tests, "WorkspaceShell/SettingsAndHelpDimTheEditorBehindThem",

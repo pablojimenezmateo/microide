@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 #include <filesystem>
 #include <functional>
 #include <optional>
@@ -89,6 +91,9 @@ class StatusBarModelService {
     const editor::TextViewport* viewport = nullptr;
     std::size_t cursor_line = 0;
     std::size_t cursor_column = 0;
+    // The visual column depends on the bytes before the caret, so an edit that
+    // leaves the caret where it is (undo, a multi-caret edit) still re-composes.
+    std::uint64_t content_revision = 0;
     bool soft_tabs = false;
     std::size_t tab_size = 0;
     std::size_t errors = 0;
