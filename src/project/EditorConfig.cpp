@@ -174,6 +174,10 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
   // Properties before the first section header are the preamble; only `root`
   // is meaningful there.
   bool in_preamble = true;
+  // True while the current section header was not kept (over the cap, or a
+  // header with no usable pattern such as `[]`): its properties belong to it,
+  // not to the last section that was kept, so they are skipped.
+  bool in_dropped_section = false;
 
   std::size_t position = 0;
   while (position <= text.size()) {
@@ -196,6 +200,7 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
         continue;
       }
       in_preamble = false;
+      in_dropped_section = true;
       if (file.sections.size() >= kMaxEditorConfigSections) {
         continue;
       }
@@ -205,6 +210,7 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
         continue;
       }
       file.sections.push_back(std::move(section));
+      in_dropped_section = false;
       continue;
     }
 
@@ -224,7 +230,7 @@ EditorConfigFile ParseEditorConfig(std::string_view text) {
       }
       continue;
     }
-    if (file.sections.empty()) {
+    if (in_dropped_section || file.sections.empty()) {
       continue;
     }
     ApplyProperty(key, value, file.sections.back().properties);

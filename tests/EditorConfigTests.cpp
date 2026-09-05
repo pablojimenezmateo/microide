@@ -328,9 +328,24 @@ void TestResolverBoundsSectionCount() {
   for (std::size_t index = 0; index < microide::project::kMaxEditorConfigSections + 50; ++index) {
     text += "[*.x" + std::to_string(index) + "]\nindent_size = 2\n";
   }
+  // The sections past the cap carry a property the kept ones do not; it must
+  // not land on the last kept section.
+  text += "[*.overflow]\ntab_width = 9\n";
   const auto file = ParseEditorConfig(text);
   Expect(file.sections.size() <= microide::project::kMaxEditorConfigSections,
          "a pathological section count must be capped");
+  Expect(!file.sections.back().properties.tab_size.has_value(),
+         "a dropped section's properties do not leak into the last kept section");
+}
+
+// `[]` (and a header the cap dropped) opens a section that matches nothing; the
+// properties under it belong to it and must not be folded into the previous one.
+void TestParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious() {
+  const auto file = ParseEditorConfig("[*.py]\nindent_size = 4\n[]\nindent_size = 8\n[*.js]\nindent_size = 2\n");
+  Expect(file.sections.size() == 2, "the empty header is not a section");
+  Expect(file.sections[0].properties.indent_width == 4,
+         "the property under `[]` did not overwrite the previous section's");
+  Expect(file.sections[1].properties.indent_width == 2, "the following section is unaffected");
 }
 
 }  // namespace
@@ -355,6 +370,8 @@ void RegisterEditorConfigTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorConfig/ResolverIsFreeWithoutAnyConfig",
           TestResolverIsFreeWithoutAnyConfig);
   AddTest(tests, "EditorConfig/ResolverBoundsSectionCount", TestResolverBoundsSectionCount);
+  AddTest(tests, "EditorConfig/ParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious",
+          TestParserDoesNotLeakAnEmptySectionsPropertiesIntoThePrevious);
 }
 
 }  // namespace microide::tests
