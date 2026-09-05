@@ -718,7 +718,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `set-setting <id> <value>`
 - `quit`
 - `reopen`
-- `save`
+- `save [path]`
 - `search <query>`
 - `sidebar-close`
 - `sidebar-hide`

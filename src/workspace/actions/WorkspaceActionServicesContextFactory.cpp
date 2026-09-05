@@ -670,6 +670,17 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .move_active_tab_to = [this](std::size_t index) { return MoveActiveTabTo(index); },
           .reopen_active_tab = [this]() { return ReopenActiveTab(); },
           .save_tab = [this](std::size_t index) { return SaveTab(index); },
+          .save_tab_as =
+              [this](std::size_t index, const std::filesystem::path& path, std::string* error) {
+                std::lock_guard<std::mutex> lock(save_tab_mutex_);
+                return MakeEditorTabService().SaveGroupTabAs(
+                    context_.current_project_state.clamped_focused_group_index(), index, path,
+                    error);
+              },
+          .open_new_buffer_in_new_tab =
+              [this](const std::filesystem::path& path) {
+                return MakeEditorTabService().OpenNewBufferInNewTab(path);
+              },
           .reset_caret_blink = [this]() { ResetCaretBlink(); },
           .notify_snippet_session_caret_moved =
               [this]() { assist_service_.NotifySnippetSessionCaretMoved(); },

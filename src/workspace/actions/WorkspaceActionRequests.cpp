@@ -42,16 +42,6 @@ bool ParseLineColumnSpec(std::string_view location,
   return true;
 }
 
-std::filesystem::path NormalizeCommandPath(const std::filesystem::path& project_root,
-                                           std::filesystem::path path) {
-  if (path.empty()) {
-    return {};
-  }
-  if (path.is_relative() && !project_root.empty()) {
-    path = project_root / path;
-  }
-  return path.lexically_normal();
-}
 
 std::optional<float> ParseFloatArgument(const std::string& text) {
   return util::ParseFloat(text);
@@ -72,6 +62,17 @@ std::optional<std::size_t> ParseClampedSizeArgument(const std::string& text,
 }
 
 }  // namespace
+
+std::filesystem::path NormalizeCommandPath(const std::filesystem::path& project_root,
+                                           std::filesystem::path path) {
+  if (path.empty()) {
+    return {};
+  }
+  if (path.is_relative() && !project_root.empty()) {
+    path = project_root / path;
+  }
+  return path.lexically_normal();
+}
 
 ProjectOpenRequest BuildProjectOpenRequest(const std::vector<std::string>& args) {
   if (args.empty()) {

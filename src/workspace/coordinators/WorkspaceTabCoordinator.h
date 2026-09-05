@@ -99,6 +99,11 @@ class TabCoordinator {
   // focused group; the all-groups flush paths (autosave, save-on-quit) call it
   // directly so a buffer dirtied in the non-focused split group is not skipped.
   bool SaveGroupTab(std::size_t group_index, std::size_t index);
+  // Save As / naming an untitled buffer: rebinds the editor tab at `index` to
+  // `path` (refused when another file already sits there) and saves it. On
+  // failure `error` says why.
+  bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
+                      const std::filesystem::path& path, std::string* error);
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
@@ -146,6 +151,10 @@ class TabCoordinator {
                                     const util::FileSignature& signature) const;
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
+  // A path that does not exist yet opens as an empty buffer bound to it, as
+  // `code new.txt` does; the file (and its directories) appear on save. An
+  // existing path opens normally.
+  bool OpenNewBufferInNewTab(const std::filesystem::path& path);
   bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
                                    std::string_view content,
                                    std::string_view title);

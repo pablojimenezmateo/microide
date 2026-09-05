@@ -86,6 +86,8 @@ struct PromptSurfaceState {
     // LSP rename spanning unopened files: confirm before opening every affected
     // file, applying the rename, and saving them all. Message in `detail`.
     ConfirmRenameSave,
+    // Ctrl+S on an untitled buffer: type the path to save as.
+    SaveAs,
   };
 
   Kind kind = Kind::None;

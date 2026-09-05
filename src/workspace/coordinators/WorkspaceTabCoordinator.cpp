@@ -141,7 +141,10 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
     return !candidate->dirty();
   }
   const std::filesystem::path normalized_path = candidate->path().lexically_normal();
-  if (!candidate->dirty()) {
+  // A clean buffer has nothing to write -- unless it has never been on disk (a
+  // path opened before it existed, or just named by Save As): then the save is
+  // what creates the file, empty or not.
+  if (!candidate->dirty() && candidate->HasDiskSignature()) {
     operations_.notify_plugin_buffer_save(normalized_path);
     return true;
   }
@@ -168,6 +171,47 @@ bool TabCoordinator::SaveGroupTab(std::size_t group_index, std::size_t index) {
   operations_.invalidate_editor_blame_path(normalized_path);
   operations_.notify_plugin_buffer_save(normalized_path);
   refresh_directory_tree();
+  return true;
+}
+
+bool TabCoordinator::SaveGroupTabAs(std::size_t group_index, std::size_t index,
+                                    const std::filesystem::path& path, std::string* error) {
+  const auto fail = [&](std::string message) {
+    if (error != nullptr) {
+      *error = std::move(message);
+    }
+    return false;
+  };
+  if (group_index >= state_.editor_groups.size() ||
+      index >= state_.editor_groups[group_index].open_tabs.size()) {
+    return fail("No tab to save");
+  }
+  TabEntry& tab = state_.editor_groups[group_index].open_tabs[index];
+  if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+    return fail("Only an editor tab can be saved as a file");
+  }
+  if (path.empty() || path.filename().empty()) {
+    return fail("save needs a file name");
+  }
+  editor::TextViewport& viewport = tab.editor_state->viewport;
+  const std::filesystem::path normalized = path.lexically_normal();
+  if (normalized != viewport.path().lexically_normal()) {
+    std::error_code exists_error;
+    if (std::filesystem::exists(normalized, exists_error)) {
+      return fail(normalized.string() + " already exists");
+    }
+    const std::filesystem::path previous = viewport.path();
+    viewport.RebindToPath(normalized);
+    tab.path = normalized;
+    tab.title = normalized.filename().string();
+    if (!previous.empty()) {
+      operations_.invalidate_editor_blame_path(previous.lexically_normal());
+    }
+    operations_.notify_plugin_buffer_open(normalized);
+  }
+  if (!SaveGroupTab(group_index, index)) {
+    return fail("Save failed");
+  }
   return true;
 }
 
@@ -625,6 +669,49 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   operations_.request_active_tab_redraw(true);
   return true;
 }
+bool TabCoordinator::OpenNewBufferInNewTab(const std::filesystem::path& path) {
+  if (state_.root.empty() || path.empty() || path.filename().empty()) {
+    return false;
+  }
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  std::error_code exists_error;
+  if (std::filesystem::exists(normalized_path, exists_error)) {
+    return OpenFileInNewTab(normalized_path);
+  }
+  EditorGroup& group = state_.focused_group();
+  auto existing = std::find_if(group.open_tabs.begin(), group.open_tabs.end(),
+                               [&](const TabEntry& tab) {
+                                 return tab.kind == TabEntry::Kind::Editor &&
+                                        tab.path == normalized_path;
+                               });
+  if (existing != group.open_tabs.end()) {
+    Activate(static_cast<std::size_t>(std::distance(group.open_tabs.begin(), existing)));
+    return true;
+  }
+  if (group.open_tabs.size() >= kMaxOpenTabsPerGroup) {
+    return false;
+  }
+  editor::TextViewport opened_view;
+  opened_view.LoadContent("", normalized_path);
+  operations_.apply_editor_preferences(opened_view);
+  group.open_tabs.push_back(TabEntry{
+      .kind = TabEntry::Kind::Editor,
+      .path = normalized_path,
+      .title = normalized_path.filename().string(),
+      .editor_state = operations_.make_editor_tab_state(opened_view),
+      .deferred_handle = std::nullopt,
+      .compare = std::nullopt,
+      .merge = std::nullopt,
+  });
+  group.active_tab_index = group.open_tabs.size() - 1;
+  operations_.ensure_active_tab_visible();
+  state_.surface.focus = FocusTarget::Editor;
+  operations_.reset_caret_blink();
+  operations_.notify_plugin_buffer_open(normalized_path);
+  operations_.request_active_tab_redraw(true);
+  return true;
+}
+
 bool TabCoordinator::OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
                                                  std::string_view content,
                                                  std::string_view title) {

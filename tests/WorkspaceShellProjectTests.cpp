@@ -2656,6 +2656,59 @@ void TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress() {
          "typing replaces every occurrence the presses selected");
 }
 
+// Save As and open-before-it-exists, as VS Code: an untitled buffer is named by
+// `save <path>` (Ctrl+S opens the Save As prompt; the command line is told what
+// to type), `tab`/`open` on a path that is not there yet opens an empty buffer
+// bound to it and `save` creates the file and its directories, and Save As never
+// overwrites a file that already exists.
+void TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  WriteFile(root / "exists.txt", "keep\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  const auto content = [](const std::filesystem::path& path) {
+    std::string text = ReadFile(path);
+    while (!text.empty() && text.back() == '\n') text.pop_back();
+    return text;
+  };
+
+  Expect(RunCommandLine(shell, "tab"), "an untitled tab opens");
+  auto& untitled = WorkspaceShellTestAccess::ActiveEditor(shell);
+  untitled.InsertText("hello");
+  Expect(!RunCommandLine(shell, "save"),
+         "save with no path on an untitled buffer is refused from the command line");
+  Expect(RunCommandLine(shell, "save notes/new.txt"), "save <path> names the buffer");
+  Expect(content(root / "notes" / "new.txt") == "hello", "and writes it, creating the directory");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).path() == (root / "notes" / "new.txt") &&
+             !WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the tab is bound to the path and clean");
+  Expect(!RunCommandLine(shell, "save exists.txt"), "Save As onto an existing file is refused");
+  Expect(ReadFile(root / "exists.txt") == "keep\n", "and the existing file is untouched");
+
+  Expect(RunCommandLine(shell, "tab later.txt"), "a path that does not exist yet opens");
+  auto& later = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(later.path() == root / "later.txt" && !std::filesystem::exists(root / "later.txt"),
+         "as an empty buffer bound to the path, nothing on disk yet");
+  Expect(RunCommandLine(shell, "save"), "save creates it");
+  Expect(std::filesystem::exists(root / "later.txt") && content(root / "later.txt").empty(),
+         "empty");
+  later.InsertText("x");
+  Expect(RunCommandLine(shell, "save") && content(root / "later.txt") == "x", "and keeps saving");
+
+  Expect(RunCommandLine(shell, "open deep/dir/n.txt"), "open does the same");
+  auto& deep = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(deep.path() == root / "deep" / "dir" / "n.txt", "bound to the missing path");
+  deep.InsertText("z");
+  Expect(RunCommandLine(shell, "save") && content(root / "deep" / "dir" / "n.txt") == "z",
+         "created with its directories on save");
+  Expect(RunCommandLine(shell, "open exists.txt") &&
+             WorkspaceShellTestAccess::ActiveEditor(shell).lines()[0] == "keep",
+         "an existing path still opens normally");
+}
+
 void TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -6470,6 +6523,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyIndentsMultiLineSelection);
   AddTest(tests, "WorkspaceShell/TabKeyOnSingleLineInsertsTabCharacter",
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
+  AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
+          TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchWalksForwardEachPress",
           TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress);
   AddTest(tests, "WorkspaceShell/ShapingCapabilityTogglesGateExecutorCommandsAndIndentTab",

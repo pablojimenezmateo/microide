@@ -19,6 +19,8 @@ class EditorTabService {
   std::string ActiveTitle() const;
   bool Save(std::size_t index);
   bool SaveGroupTab(std::size_t group_index, std::size_t index);
+  bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
+                      const std::filesystem::path& path, std::string* error);
   bool IsDirty(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
@@ -41,6 +43,7 @@ class EditorTabService {
                                     const util::FileSignature& signature) const;
   bool OpenUntitled();
   bool OpenFileInNewTab(const std::filesystem::path& path);
+  bool OpenNewBufferInNewTab(const std::filesystem::path& path);
   bool OpenVirtualDocumentInNewTab(const std::filesystem::path& virtual_path,
                                    std::string_view content,
                                    std::string_view title);

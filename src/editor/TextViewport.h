@@ -185,6 +185,10 @@ class TextViewport {
   void LoadLines(std::vector<std::string> lines, const std::filesystem::path& path,
                  LineEnding line_ending);
   void SetPath(const std::filesystem::path& path);
+  // Save As: the buffer now belongs to `path`, which it has never been loaded
+  // from or saved to, so the on-disk identity is forgotten (a conflict check
+  // against the old file's signature would read the new path as vanished).
+  void RebindToPath(const std::filesystem::path& path);
   void SetDirty(bool dirty);
   void SetPlaceholderText(std::string text);
   void SetUntitledBuffer();

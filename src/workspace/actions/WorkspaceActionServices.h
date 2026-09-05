@@ -156,6 +156,8 @@ class WorkspaceActionContext {
     std::function<bool(std::size_t)> move_active_tab_to;
     std::function<bool()> reopen_active_tab;
     std::function<bool(std::size_t)> save_tab;
+    std::function<bool(std::size_t, const std::filesystem::path&, std::string*)> save_tab_as;
+    std::function<bool(const std::filesystem::path&)> open_new_buffer_in_new_tab;
     std::function<void()> reset_caret_blink;
     std::function<void()> notify_snippet_session_caret_moved;
     std::function<void()> clear_active_snippet_session_after_undo;
@@ -434,6 +436,12 @@ class WorkspaceActionContext {
   void MoveActiveTabTo(std::size_t index);
   void ReopenActiveTab();
   bool SaveTab(std::size_t index);
+  // Save As / naming an untitled buffer. `error` says why on failure.
+  bool SaveTabAs(std::size_t index, const std::filesystem::path& path, std::string* error);
+  // A path that does not exist yet opens as an empty buffer bound to it.
+  bool OpenNewBufferInNewTab(const std::filesystem::path& path);
+  // The Save As prompt (Ctrl+S on an untitled buffer).
+  void OpenSaveAsPrompt();
   void ResetCaretBlink();
   // Split the focused editor group in the given orientation, optionally opening
   // `path` in the new group instead of the cloned active document.

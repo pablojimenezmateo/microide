@@ -725,6 +725,29 @@ bool WorkspaceActionContext::SaveTab(std::size_t index) {
   return operations_.save_tab(index);
 }
 
+bool WorkspaceActionContext::SaveTabAs(std::size_t index, const std::filesystem::path& path,
+                                       std::string* error) {
+  if (!operations_.save_tab_as) {
+    if (error != nullptr) {
+      *error = "Save As is unavailable";
+    }
+    return false;
+  }
+  return operations_.save_tab_as(index, path, error);
+}
+
+bool WorkspaceActionContext::OpenNewBufferInNewTab(const std::filesystem::path& path) {
+  return operations_.open_new_buffer_in_new_tab && operations_.open_new_buffer_in_new_tab(path);
+}
+
+void WorkspaceActionContext::OpenSaveAsPrompt() {
+  if (operations_.open_prompt_surface) {
+    operations_.open_prompt_surface(PromptSurfaceState::Action::SaveAs,
+                                    PromptSurfaceState::Kind::TextInput, ProjectRoot(),
+                                    std::string{});
+  }
+}
+
 void WorkspaceActionContext::ResetCaretBlink() {
   operations_.reset_caret_blink();
 }

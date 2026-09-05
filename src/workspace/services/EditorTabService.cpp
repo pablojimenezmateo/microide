@@ -19,6 +19,15 @@ bool EditorTabService::SaveGroupTab(std::size_t group_index, std::size_t index) 
   return coordinator_.SaveGroupTab(group_index, index);
 }
 
+bool EditorTabService::SaveGroupTabAs(std::size_t group_index, std::size_t index,
+                                      const std::filesystem::path& path, std::string* error) {
+  return coordinator_.SaveGroupTabAs(group_index, index, path, error);
+}
+
+bool EditorTabService::OpenNewBufferInNewTab(const std::filesystem::path& path) {
+  return coordinator_.OpenNewBufferInNewTab(path);
+}
+
 bool EditorTabService::IsDirty(std::size_t index) const {
   return coordinator_.IsDirty(index);
 }

@@ -188,6 +188,8 @@ void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
 
 std::string WorkspaceShell::PromptSurfaceTitle() const {
   switch (context_.prompts.surface.action) {
+    case PromptSurfaceState::Action::SaveAs:
+      return "Save As";
     case PromptSurfaceState::Action::CreateFile:
       return "New File";
     case PromptSurfaceState::Action::CreateDirectory:
@@ -240,6 +242,8 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
           ? ProjectLabel()
           : RelativePathLabel(context_.current_project_state.root, context_.prompts.surface.path);
   switch (context_.prompts.surface.action) {
+    case PromptSurfaceState::Action::SaveAs:
+      return "Path to save as, relative to " + ProjectLabel() + " or absolute.";
     case PromptSurfaceState::Action::CreateFile:
       return "Create inside " + (label.empty() ? ProjectLabel() : label) + ".";
     case PromptSurfaceState::Action::CreateDirectory:
@@ -305,6 +309,8 @@ std::string WorkspaceShell::PromptSurfaceDetail() const {
 
 std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
   switch (context_.prompts.surface.action) {
+    case PromptSurfaceState::Action::SaveAs:
+      return {"Save", "Cancel"};
     case PromptSurfaceState::Action::CreateFile:
       return {"Create File", "Cancel"};
     case PromptSurfaceState::Action::CreateDirectory:
@@ -406,6 +412,7 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
       case Action::EvaluateReplInput:
       case Action::GoToLine:
       case Action::RenameSymbol:
+      case Action::SaveAs:
         MakePromptSurfaceService().DismissPromptSurface(true);
         return;
       case Action::ConfirmRenameSave:
@@ -491,6 +498,17 @@ void WorkspaceShell::ConfirmPromptSurface(DirtyPathResolution resolution) {
   if (context_.prompts.surface_visible &&
       context_.prompts.surface.action == PromptSurfaceState::Action::EvaluateReplInput) {
     CommitDebugReplPrompt();
+    return;
+  }
+  if (context_.prompts.surface_visible &&
+      context_.prompts.surface.action == PromptSurfaceState::Action::SaveAs) {
+    // Commit "Save As": the typed path goes through `save <path>` so the prompt
+    // and the command line resolve and refuse the same way.
+    const std::string typed = context_.prompts.surface.input.text();
+    MakePromptSurfaceService().DismissPromptSurface(true);
+    if (!typed.empty()) {
+      ActionCoordinator(MakeActionContext()).Execute(ActionId::Save, {typed}, ActionSource::Shortcut);
+    }
     return;
   }
   if (context_.prompts.surface_visible &&

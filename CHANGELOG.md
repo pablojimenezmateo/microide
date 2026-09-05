@@ -8,6 +8,17 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ## [Unreleased]
 
+### Added
+
+- **Save As, and buffers for paths that do not exist yet.** An untitled buffer
+  had no way to become a file: `save` refused it and nothing else could name it.
+  `save <path>` names (or renames) the active buffer and writes it, creating
+  missing directories; `Ctrl+S` on an untitled buffer opens a Save As prompt;
+  the command line is told to pass a path instead, so a headless driver is not
+  left facing a prompt. `tab <path>` and `open <path>` on a path that is not
+  there yet open an empty buffer bound to it, created on save, as `code
+  new.txt` does. Save As never overwrites an existing file.
+
 ### Fixed
 
 - **Typing over a snippet placeholder replaces its default text.** A language

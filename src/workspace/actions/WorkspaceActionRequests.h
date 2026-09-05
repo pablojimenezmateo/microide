@@ -84,6 +84,11 @@ struct OpenPathRequest {
 std::optional<OpenPathRequest> BuildOpenPathRequest(const std::vector<std::string>& args,
                                                     const std::filesystem::path& project_root);
 
+// A command-line path: relative ones resolve against the project root; the
+// result is lexically normal. Empty in, empty out.
+std::filesystem::path NormalizeCommandPath(const std::filesystem::path& project_root,
+                                           std::filesystem::path path);
+
 struct TabPathsRequest {
   bool open_untitled = false;
   std::vector<std::filesystem::path> paths;

@@ -7,11 +7,23 @@
 #include <utility>
 #include <vector>
 
+#include "workspace/WorkspaceCommandParsing.h"
 #include "workspace/actions/WorkspaceActionRequests.h"
 #include "workspace/WorkspacePathUtils.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
 
 namespace microide::workspace {
+
+namespace {
+
+// `open`/`tab` create a buffer for a path that is not there yet; anything that
+// exists (a file, or a directory the open will refuse) takes the normal route.
+bool PathExistsForOpen(const std::filesystem::path& path) {
+  std::error_code error;
+  return std::filesystem::exists(path, error);
+}
+
+}  // namespace
 
 ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
                                                                 const std::vector<std::string>& args,
@@ -59,6 +71,14 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
       }
+      // A typed path that does not exist yet opens as an empty buffer bound to
+      // it (`code new.txt`); the file is created on save.
+      if (!PathExistsForOpen(request->path)) {
+        if (!context_.OpenNewBufferInNewTab(request->path)) {
+          return reject("Cannot open " + request->path.string());
+        }
+        return DispatchResult::Handled;
+      }
       std::string error_message;
       if (!context_.OpenPath(request->path, &error_message)) {
         return reject(error_message);
@@ -98,7 +118,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
         }
 
         for (const std::filesystem::path& path : request.paths) {
-          if (!context_.OpenPathInNewTab(path)) {
+          const bool opened = PathExistsForOpen(path) ? context_.OpenPathInNewTab(path)
+                                                      : context_.OpenNewBufferInNewTab(path);
+          if (!opened) {
             return reject("Failed to open file in a new tab: " + path.string());
           }
         }
@@ -147,6 +169,28 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
     case ActionId::Save:
       if (!context_.HasProjectRoot()) {
         return reject("No active project");
+      }
+      if (!args.empty()) {
+        // `save <path>`: Save As, and the way an untitled buffer gets its name.
+        std::string error_message;
+        const std::filesystem::path target =
+            NormalizeCommandPath(context_.ProjectRoot(),
+                                 std::filesystem::path(JoinCommandArguments(args, 0)));
+        if (!context_.SaveTabAs(context_.ActiveTabIndex(), target, &error_message)) {
+          return reject(error_message.empty() ? "Save failed" : error_message);
+        }
+        return DispatchResult::Handled;
+      }
+      if (auto* viewport = context_.ActiveEditableViewport();
+          viewport != nullptr && viewport->path().empty()) {
+        // An untitled buffer has nowhere to go: a keystroke or menu opens the
+        // Save As prompt (VS Code); the command line is told what to type so a
+        // headless driver is not left waiting on a prompt it cannot see.
+        if (source == ActionSource::Command) {
+          return reject("Untitled buffer: save <path> names the file");
+        }
+        context_.OpenSaveAsPrompt();
+        return DispatchResult::Handled;
       }
       if (context_.SaveTab(context_.ActiveTabIndex())) {
         if (source == ActionSource::Shortcut) {
