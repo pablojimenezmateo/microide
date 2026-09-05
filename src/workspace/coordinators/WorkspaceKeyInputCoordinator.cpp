@@ -140,6 +140,21 @@ bool KeyInputCoordinator::HandleKeyDown(const SDL_KeyboardEvent& event) {
   if (state_.surface.focus == FocusTarget::Panel &&
       state_.panel.content == PanelContentKind::Terminal &&
       operations_.active_terminal_tab() != nullptr) {
+    // Shift+PageUp/PageDown page through the transcript, as in VS Code and every
+    // Linux terminal; they used to reach the shell as shifted PageUp/PageDown,
+    // which left the terminal with no keyboard scrollback at all. Same pan the
+    // Output panel's PageUp/PageDown perform, so the two contents agree.
+    if ((modifiers & SDL_KMOD_SHIFT) != 0 &&
+        (modifiers & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) == 0 &&
+        (event.key == SDLK_PAGEUP || event.key == SDLK_PAGEDOWN) &&
+        operations_.scroll_bottom_panel_rows && operations_.bottom_panel_visible_rows) {
+      // One page is the panel's visible rows less one, so a line of context
+      // carries over between pages.
+      const int page = std::max(1, operations_.bottom_panel_visible_rows() - 1);
+      operations_.scroll_bottom_panel_rows(event.key == SDLK_PAGEUP ? -page : page);
+      ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
+      return true;
+    }
     const bool handled = operations_.text_input_handle_terminal_key_down(event, modifiers);
     if (handled) {
       ensure_redraw([this]() { operations_.request_bottom_panel_content_redraw(); });
@@ -661,6 +676,11 @@ KeyInputCoordinator WorkspaceShell::MakeKeyInputCoordinator() {
                 return layout.has_value()
                            ? MakePanelMouseCoordinator().ScrollSpanRows(*layout)
                            : 0;
+              },
+          .bottom_panel_visible_rows =
+              [this]() {
+                const auto layout = CurrentWorkspaceLayout();
+                return layout.has_value() ? BottomPanelVisibleRows(layout->bottom_panel.h) : 0;
               },
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .text_input_composition_consumes_key =

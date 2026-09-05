@@ -923,6 +923,43 @@ void TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel() {
          "scrolling the bottom-panel strip should reveal previously hidden terminal tabs");
 }
 
+// Shift+PageUp/PageDown page through the transcript (VS Code and every Linux
+// terminal); they used to reach the shell as shifted PageUp/PageDown, leaving the
+// terminal with no keyboard scrollback. Plain PageUp still goes to the shell.
+void TestWorkspaceShellTerminalShiftPageKeysScrollTheTranscript() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  std::string transcript;
+  for (int i = 0; i < 200; ++i) {
+    transcript += "line " + std::to_string(i) + "\n";
+  }
+  TerminalSessionTestAccess::AppendOutput(session, transcript);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetActiveTerminalFollowTail(shell, false);
+  WorkspaceShellTestAccess::SetActiveTerminalScrollRow(shell, 0);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+
+  const int visible_rows = WorkspaceShellTestAccess::BottomPanelVisibleRowsForTest(shell);
+  Expect(visible_rows > 2, "the fixture needs a panel taller than two rows");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_PAGEDOWN, SDL_KMOD_SHIFT),
+         "Shift+PageDown is handled by the terminal panel");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == visible_rows - 1,
+         "Shift+PageDown scrolls one page (visible rows less one) toward the tail");
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_SHIFT),
+         "Shift+PageUp is handled by the terminal panel");
+  Expect(WorkspaceShellTestAccess::ActiveTerminalScrollRow(shell) == 0,
+         "Shift+PageUp scrolls the page back");
+  Expect(TerminalSessionTestAccess::SentBytes(session).empty(),
+         "neither shifted page key reaches the shell");
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_PAGEUP, SDL_KMOD_NONE),
+         "plain PageUp is handled");
+  Expect(!TerminalSessionTestAccess::SentBytes(session).empty(),
+         "plain PageUp still goes to the shell as a key");
+}
+
 void TestWorkspaceShellBottomPanelWheelScrollsTranscript() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1831,6 +1868,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalTabsDragReorderToStart);
   AddTest(tests, "WorkspaceShell/TerminalTabsOverflowReachableViaHeaderWheel",
           TestWorkspaceShellTerminalTabsOverflowReachableViaHeaderWheel);
+  AddTest(tests, "WorkspaceShell/TerminalShiftPageKeysScrollTheTranscript",
+          TestWorkspaceShellTerminalShiftPageKeysScrollTheTranscript);
   AddTest(tests, "WorkspaceShell/BottomPanelWheelScrollsTranscript",
           TestWorkspaceShellBottomPanelWheelScrollsTranscript);
   AddTest(tests, "WorkspaceShell/TerminalDragAutoscrollsPastTheEdge",

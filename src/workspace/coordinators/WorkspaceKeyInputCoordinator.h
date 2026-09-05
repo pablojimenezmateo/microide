@@ -36,6 +36,9 @@ class KeyInputCoordinator {
     // scroll model the wheel uses; the span only sizes the Home/End jump.
     std::function<void(int)> scroll_bottom_panel_rows;
     std::function<int()> bottom_panel_scroll_span_rows;
+    // Rows the bottom panel shows at once; a terminal Shift+PageUp/PageDown pages
+    // by this rather than the list widgets' fixed eight-row step.
+    std::function<int()> bottom_panel_visible_rows;
     std::function<void()> request_focused_editor_redraw;
     std::function<bool(SDL_Keycode, SDL_Keymod)> text_input_composition_consumes_key;
     std::function<TextInputSurface()> current_text_input_surface;
