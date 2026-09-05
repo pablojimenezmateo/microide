@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 
+#include <cstdint>
 #include <string>
 #include <string_view>
 
@@ -247,7 +248,81 @@ void TestViewportWordVerbsApplyToEveryCaret() {
 
 }  // namespace
 
+// A plain port of VS Code's wordOperations over ASCII (three classes: blank,
+// a run of separators from the default `editor.wordSeparators`, a run of
+// anything else), run against every caret of random lines. The literal tests
+// above pin a handful of phrases; this pins the rule.
+namespace {
+
+int VsCodeClass(char c) {
+  if (c == ' ' || c == '\t') return 0;
+  return std::string_view("`~!@#$%^&*()-=+[{]}\\|;:'\",.<>/?").find(c) != std::string_view::npos ? 1 : 2;
+}
+
+std::size_t VsCodeWordStartLeft(std::string_view line, std::size_t caret) {
+  std::size_t i = caret;
+  while (i > 0 && VsCodeClass(line[i - 1]) == 0) --i;
+  if (i == 0) return 0;
+  const int run = VsCodeClass(line[i - 1]);
+  while (i > 0 && VsCodeClass(line[i - 1]) == run) --i;
+  return i;
+}
+
+std::size_t VsCodeWordEndRight(std::string_view line, std::size_t caret) {
+  std::size_t i = caret;
+  while (i < line.size() && VsCodeClass(line[i]) == 0) ++i;
+  if (i >= line.size()) return line.size();
+  const int run = VsCodeClass(line[i]);
+  while (i < line.size() && VsCodeClass(line[i]) == run) ++i;
+  return i;
+}
+
+std::size_t VsCodeDeleteWordLeft(std::string_view line, std::size_t caret) {
+  // _deleteWordLeftWhitespace: two or more blanks right before the caret go alone.
+  std::size_t blanks = 0;
+  while (caret - blanks > 0 && VsCodeClass(line[caret - blanks - 1]) == 0) ++blanks;
+  if (blanks >= 2) return caret - blanks;
+  return VsCodeWordStartLeft(line, caret);
+}
+
+}  // namespace
+
+void TestEditorWordMotionAgreesWithVsCodeRuleOnRandomAsciiLines() {
+  std::uint64_t state = 0x51ed270b4c6d3a19ULL;
+  const auto next = [&](std::size_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return static_cast<std::size_t>(state % bound);
+  };
+  static constexpr std::string_view kAlphabet = "ab_9 \t=+.(-)/\"'x";
+  for (int round = 0; round < 400; ++round) {
+    std::string line;
+    const std::size_t length = next(14);
+    for (std::size_t i = 0; i < length; ++i) {
+      line.push_back(kAlphabet[next(kAlphabet.size())]);
+    }
+    for (std::size_t caret = 0; caret <= line.size(); ++caret) {
+      const std::size_t left = microide::editor::WordBoundaryLeft(line, caret);
+      const std::size_t right = microide::editor::WordBoundaryRight(line, caret);
+      const std::size_t del = microide::editor::DeleteWordBoundaryLeft(line, caret);
+      if (left != VsCodeWordStartLeft(line, caret) || right != VsCodeWordEndRight(line, caret) ||
+          del != VsCodeDeleteWordLeft(line, caret)) {
+        Expect(false, "word motion disagrees with the VS Code rule on <" + line + "> at " +
+                          std::to_string(caret) + ": left " + std::to_string(left) + "/" +
+                          std::to_string(VsCodeWordStartLeft(line, caret)) + ", right " +
+                          std::to_string(right) + "/" + std::to_string(VsCodeWordEndRight(line, caret)) +
+                          ", delete-left " + std::to_string(del) + "/" +
+                          std::to_string(VsCodeDeleteWordLeft(line, caret)));
+        return;
+      }
+    }
+  }
+}
+
 void RegisterEditorWordMotionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorWordMotion/AgreesWithVsCodeRuleOnRandomAsciiLines",
+          TestEditorWordMotionAgreesWithVsCodeRuleOnRandomAsciiLines);
   AddTest(tests, "EditorWordMotion/BoundaryTreatsSeparatorRunsAsWords",
           TestWordBoundaryTreatsSeparatorRunsAsWords);
   AddTest(tests, "EditorWordMotion/BoundaryKeepsMultibyteWordsWhole",
