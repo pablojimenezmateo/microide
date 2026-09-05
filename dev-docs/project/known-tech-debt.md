@@ -389,6 +389,66 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-05-288 — the second 2026-09-05 pass: twenty-two defects in the subsystems the earlier passes had not read, found mostly by comparing behaviour with VS Code's rule. [RESOLVED same session — open remainder zero.]
+
+The earlier passes drove the editor's primitives and the terminal against
+references. This one read the subsystems they had left alone -- multi-caret
+apply, folding, the find widget, the git sidebar's discard and commit flows,
+the terminal's key and copy paths, LSP completion/hover, the file tree, the
+status bar, startup -- and for each asked what VS Code does. Every finding
+landed as its own commit with a regression test (`git log 26a92d21..`).
+
+- **Multi-caret** (`tests/TextViewportMultiCaretReferenceTests.cpp`): a
+  randomized model of VS Code's `CursorCollection.normalize` + per-cursor edit
+  found that overlapping carets made every edit a silent no-op (now they
+  merge, at the one dedupe tail every caret mutation runs through), and that
+  the exact-no-op rejection (TD-2026-07-17A-092) swallowed the caret move too,
+  so typing the selected character left the selection in place. Also: Alt+click
+  dropped the selection it was adding a caret next to; insert-line-below/above
+  split the secondaries' lines; a paste with a trailing newline did not spread;
+  a word step over a prompt selection collapsed.
+- **Folding**: nothing outside the buffer search revealed a fold the caret
+  landed in. `RevealCaretsInsideCollapsedFolds` runs once per prepared frame
+  per group and fires only when the caret MOVED since the last frame, so a
+  `fold` around a stationary caret is not undone (VS Code's revealCursor).
+- **Find**: every refresh selected match 0; Replace went back to the top; Enter
+  in the replace widget's find field replaced.
+- **Terminal**: multi-row copy padded to width; balanced `)` trimmed off a URL;
+  Ctrl+Shift+C without a selection sent ^C; the PTY pair's CLOEXEC was a
+  follow-up fcntl (the exact window the descriptor invariant exists for; the
+  lint did not list `openpty`, it does now with fixtures).
+- **Git**: single-entry discard of a staged NEW file ran `git clean -f`
+  (Discard All already trashed); a >72-char subject was Blocking; plain "both"
+  was incoming-first.
+- **LSP**: `additionalTextEdits` were neither parsed nor applied (auto-imports
+  never landed); hover/signature/completion docs painted ``` fences.
+- **Tree / status bar / goto / startup**: raw-byte sibling sort; "Col" was a
+  byte offset; `goto line:col` took a byte column; `microide file.txt` failed to
+  start.
+
+Read and found clean this pass: the compare engine's line diff and intraline
+spans, the DAP protocol codec and debug session line-base handling, the blame
+parser, the conflict-marker scanner, `DurableFile`, the ANSI palette, the file
+operation service and path-mutation retargeting, the plugin runtime API and
+process interop (NUL rejection, env validation, sandbox roots), the plugin
+surface/display-list validation, the syntax definition sandbox (no stdlib, an
+instruction budget), the commit executor and workflow service, the git
+operation service and failure classifier, `GitRepository::Discard` for tracked
+paths, the repository metadata tracker (worktrees, packed refs, hostile refs),
+the conflict-kind classifier, the freedesktop trash implementation, the
+surface texture cache, the atomic text writer (permissions, symlink target),
+the file index watcher's overflow recovery, the control socket's bounds, the
+startup option parser, the text drag-and-drop, the file finder ranking, the
+inlay-hint column math, the LSP buffer sync and diagnostic shifting, the
+workspace-edit applier's encoding conversion, the autosave flow, the terminal
+backend spawn, the tree's Left/Right semantics, the settings stepper (its wrap
+is documented), the theme file parser, and the debug watch model.
+
+Deliberately left, recorded so they are not re-derived: closing the active
+tab activates its neighbour (VS Code's MRU order is a preference there); the
+find widget's regex mode still skips empty matches (286's deviation); a
+cross-device trash copies into the home trash rather than `$topdir/.Trash`.
+
 ### TD-2026-09-05-287 — the 2026-09-05 assessment pass: six behavioural defects across editor input, the workspace-edit appliers, and process spawning, plus a terminal differential oracle. [RESOLVED same session — open remainder zero; full SAN + second-compiler + hardened-stdlib green.]
 
 Same method as [285](#td-2026-09-04-285)/[286](#td-2026-09-05-286): read a

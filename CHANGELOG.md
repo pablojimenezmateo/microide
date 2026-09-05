@@ -10,6 +10,14 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Added
 
+- **Accepting a completion applies its `additionalTextEdits`.** The auto-import
+  or `#include` line clangd, pyright and tsserver attach to a symbol from another
+  file is now inserted with the completion, in one undo step, as in VS Code;
+  before, the name was inserted and the file left not compiling.
+- **`microide notes.txt` opens the file.** A path that names a regular file
+  opens its directory as the project and the file as the first tab, as
+  `code notes.txt` does; it used to fail the whole launch as an invalid project
+  root.
 - **Save As, and buffers for paths that do not exist yet.** An untitled buffer
   had no way to become a file: `save` refused it and nothing else could name it.
   `save <path>` names (or renames) the active buffer and writes it, creating
@@ -23,6 +31,47 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Multi-caret editing follows VS Code's cursor rules, checked against a
+  reference model.** Overlapping selections (and a collapsed caret touching one)
+  merge instead of leaving a caret set on which every keystroke silently did
+  nothing; typing the character that is already selected collapses the
+  selection past it (so "ab" over a selected "a" no longer gives "b"); Alt+click
+  keeps the existing selection and removes a caret it lands on; a multi-line
+  paste with a trailing newline still spreads one line per caret;
+  insert-line-below/above open a line next to every caret instead of splitting
+  the secondaries' lines; and a word step over a prompt selection moves
+  word-wise instead of collapsing. A randomized differential test against a
+  model of VS Code's rule now covers typing, Enter, Backspace and Delete.
+- **A caret that moves into a collapsed fold reveals it.** Goto-line, a
+  definition or diagnostic jump, undo, or a Backspace onto a fold's last line
+  left the caret hidden; only the buffer search revealed folds. Frame
+  preparation now applies VS Code's rule: a caret that moved into a hidden body
+  expands the folds hiding it, while a fold collapsing around a stationary caret
+  stays collapsed.
+- **Find searches from the cursor.** Ctrl+F in the middle of a file jumped to
+  the first match in the document, and Replace jumped back to the first match
+  instead of moving on; the current match is now the first at or after the
+  caret, wrapping to the top. In the replace widget, Enter in the find field
+  steps through matches (it replaced with the box's text before); Enter in the
+  replace field replaces.
+- **Terminal copy and keys.** A multi-row copy padded every line to the terminal
+  width; the padding is dropped (blanks inside a soft-wrapped line are kept). A
+  URL ending in a balanced `)` lost its last character. Ctrl+Shift+C with
+  nothing selected sent ^C to the shell; it is copy-or-nothing now. The PTY
+  pair is opened close-on-exec on the creating call, and the architecture lint
+  covers `openpty`/`forkpty`/`posix_openpt`.
+- **Git sidebar.** Discarding a single staged new file deleted it permanently
+  (Discard All already trashed such files); it is unstaged and trashed. A commit
+  subject over 72 characters is a warning to acknowledge, not a refusal. The
+  plain "accept both" merge choice orders current first, then incoming, like
+  the file's conflict markers and VS Code.
+- **Hover, signature help and completion documentation** no longer paint the
+  markdown code fences servers wrap code in.
+- **File tree order** is folders first, then case-insensitive with numeric-aware
+  digit runs (the explorer rule), not raw bytes; the comparator is shared with
+  the JSON formatter.
+- **Status bar "Col"** is the visible column (a tab counts as its width, a
+  multibyte character as one), and `goto line:col` takes a character column.
 - **A UTF-8 byte order mark is treated as file metadata, not the first
   character.** A file that opened with a BOM kept the three bytes at the start of
   line 0: the caret sat before an invisible character at Home, typing at the

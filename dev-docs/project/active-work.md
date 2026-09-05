@@ -1,6 +1,7 @@
 # MicroIDE Active Work
 
-Reviewed 2026-09-03. Shipped baseline: **v2.11.0** — the n-way editor split grid
+Reviewed 2026-09-05 (see `known-tech-debt.md` § TD-2026-09-05-288 for that
+pass). Shipped baseline: **v2.11.0** — the n-way editor split grid
 and drag-to-split shipped in it (see `CHANGELOG.md` § 2.11.0).
 
 This file answers one question: **what should be worked on next, and what is

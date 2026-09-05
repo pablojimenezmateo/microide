@@ -519,7 +519,8 @@ Default build:
 ```bash
 cmake -S . -B build
 cmake --build build -j8
-./build/microide/microide
+./build/microide/microide            # opens the current directory as the project
+./build/microide/microide notes.txt  # opens the file, its directory as the project
 ```
 
 With Nix (flakes), no dependencies to install:
@@ -595,7 +596,7 @@ over. Compare, merge, and the git sidebar add their own single-key actions.
 | `PageUp` / `PageDown` | Scroll viewport |
 | `d` on sidebar file | Open compare commit picker |
 | `[` / `]` in compare/merge | Previous / next hunk |
-| `i` `b` `c` `m` in merge | Apply incoming / base / current / both for selected hunk |
+| `i` `b` `c` `m` in merge | Apply incoming / base / current / both (current first) for selected hunk |
 | `I` `B` `C` `M` in merge | Apply choice to every hunk |
 | `a` in merge | Restore auto choices for all hunks |
 | `o` in compare/merge | Open working-tree file at corresponding line |
