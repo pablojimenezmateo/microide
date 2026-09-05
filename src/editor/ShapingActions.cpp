@@ -902,14 +902,35 @@ bool SortLines(TextViewport& viewport, bool ascending) {
                                  /*record_undo=*/true);
   };
 
+  // The selection (or carets) survive the sort, as in VS Code; ReplaceLines
+  // alone snapped the caret to the region start.
+  const bool had_selection = viewport.has_selection();
+  const bool multi = viewport.has_multiple_carets();
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  const auto restore = [&] {
+    if (multi || !had_selection) {
+      RegionColumnDeltas no_deltas;
+      for (const LineRange& region : regions) {
+        no_deltas.BeginRegion();
+        for (std::size_t i = region.first; i <= region.last; ++i) no_deltas.flat.push_back(0);
+      }
+      RestoreCaretsAfterIndentEdit(viewport, snapshot, regions, no_deltas);
+    } else {
+      RestoreSelectionAcrossLines(viewport, regions.front().first, regions.front().last,
+                                  had_selection);
+    }
+  };
   if (regions.size() == 1) {
-    return sort_region(regions.front());
+    if (!sort_region(regions.front())) return false;
+    restore();
+    return true;
   }
   bool changed = false;
   viewport.BeginUndoGroup();
   for (const LineRange& region : regions) {
     changed |= sort_region(region);
   }
+  if (changed) restore();
   viewport.EndUndoGroup();
   return changed;
 }

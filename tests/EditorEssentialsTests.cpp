@@ -819,6 +819,14 @@ void TestShapingSortLinesAscending() {
   Expect(viewport.lines()[0] == "a" && viewport.lines()[1] == "b" &&
              viewport.lines()[2] == "c",
          "sort ascending should reorder lines");
+  // The selection survives (VS Code), so a second sort -- descending -- acts on
+  // the same lines instead of the caret line alone.
+  Expect(viewport.has_selection() && viewport.selection_range()->start.line == 0 &&
+             viewport.selection_range()->end.line >= 2,
+         "the sorted lines stay selected");
+  Expect(microide::editor::SortLines(viewport, /*ascending=*/false) && viewport.lines()[0] == "c" &&
+             viewport.lines()[2] == "a",
+         "sorting again the other way reorders the same selection");
 }
 
 void TestTextViewportSaveAppliesNormalization() {
