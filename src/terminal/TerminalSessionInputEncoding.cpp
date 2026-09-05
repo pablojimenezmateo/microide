@@ -34,19 +34,38 @@ std::string CsiU(char32_t codepoint, int modifier_param) {
   return out;
 }
 
-// Control byte for a Ctrl+<key> combination (legacy encoding).
+// Control byte for a Ctrl+<key> combination (legacy encoding). The digit and
+// punctuation rows follow xterm: each key yields the control byte of the
+// C0-mapped symbol on the same key (Ctrl+2 = Ctrl+@ = NUL, Ctrl+6 = Ctrl+^ = RS,
+// Ctrl+/ = Ctrl+_ = US, Ctrl+8 = DEL), which is what Emacs's C-/ (undo), readline
+// and tmux bindings expect.
 char ControlByte(char32_t codepoint) {
   char32_t upper = (codepoint >= 'a' && codepoint <= 'z') ? codepoint - 32 : codepoint;
   if (upper >= 0x40 && upper <= 0x5F) {
     return static_cast<char>(upper & 0x1F);
   }
-  if (upper == 0x20) {
-    return '\0';  // Ctrl+Space / Ctrl+@
+  switch (upper) {
+    case 0x20:  // Ctrl+Space / Ctrl+@
+    case '2':
+      return '\0';
+    case '3':
+      return 0x1B;
+    case '4':
+      return 0x1C;
+    case '5':
+      return 0x1D;
+    case '6':
+      return 0x1E;
+    case '7':
+    case '/':
+    case '-':
+      return 0x1F;
+    case '8':
+    case '?':
+      return 0x7F;
+    default:
+      return static_cast<char>(codepoint);
   }
-  if (upper == '?') {
-    return 0x7F;
-  }
-  return static_cast<char>(codepoint);
 }
 
 }  // namespace

@@ -83,11 +83,19 @@ bool TextInputCoordinator::HandleTerminalKeyDown(const SDL_KeyboardEvent& event,
   }
 
   // Control combinations that map to C0 control bytes (or CSI-u under Kitty).
+  // Ctrl+2..8 and Ctrl+/ are the xterm digit/punctuation row (NUL, ESC, FS, GS,
+  // RS, US, DEL and US); they used to be swallowed, so Emacs's C-/ undo and
+  // readline's C-/ never reached the shell. Ctrl+- and Ctrl+0 stay with the
+  // global zoom bindings, as in VS Code.
   if (modifiers & SDL_KMOD_CTRL) {
     if ((event.key >= SDLK_A && event.key <= SDLK_Z) || event.key == SDLK_LEFTBRACKET ||
         event.key == SDLK_BACKSLASH || event.key == SDLK_RIGHTBRACKET ||
-        event.key == SDLK_SPACE) {
+        event.key == SDLK_SPACE || (event.key >= SDLK_2 && event.key <= SDLK_8)) {
       return send_key_press(KeyPress::Key::Char, static_cast<char32_t>(event.key));
+    }
+    if (event.key == SDLK_SLASH) {
+      // Shift+/ is '?': Ctrl+? is DEL, as on a physical terminal.
+      return send_key_press(KeyPress::Key::Char, (modifiers & SDL_KMOD_SHIFT) ? U'?' : U'/');
     }
   }
 

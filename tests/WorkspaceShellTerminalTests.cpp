@@ -1033,6 +1033,30 @@ void TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts() {
          "plain Ctrl+C without a selection reaches the shell as ^C");
 }
 
+
+// Ctrl+/ with the terminal focused must reach the shell as US (0x1f): Emacs's
+// C-/ undo and readline bindings depend on it. The chord is only bound in the
+// EDITOR context (toggle comment), so the terminal is free to forward it; it
+// used to be swallowed by the Ctrl+<letter>-only forwarding filter.
+void TestWorkspaceShellTerminalCtrlSlashReachesTheShell() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::EnsureTerminalTab(shell);
+  auto& session = WorkspaceShellTestAccess::ActiveTerminalSession(shell);
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::SetFocusPanel(shell);
+
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_SLASH, SDL_KMOD_CTRL),
+         "Ctrl+/ in the terminal is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == std::string(1, '\x1f'),
+         "Ctrl+/ reaches the shell as US (0x1f)");
+  TerminalSessionTestAccess::ClearSentBytes(session);
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_2, SDL_KMOD_CTRL),
+         "Ctrl+2 in the terminal is handled");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == std::string(1, '\0'),
+         "Ctrl+2 reaches the shell as NUL");
+}
+
 void TestWorkspaceShellTerminalDragSelectsTranscriptText() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::EnsureTerminalTab(shell);
@@ -1903,6 +1927,8 @@ void RegisterWorkspaceShellTerminalTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTerminalDragAutoscrollsPastTheEdge);
   AddTest(tests, "WorkspaceShell/TerminalCtrlShiftCNeverInterrupts",
           TestWorkspaceShellTerminalCtrlShiftCNeverInterrupts);
+  AddTest(tests, "WorkspaceShell/TerminalCtrlSlashReachesTheShell",
+          TestWorkspaceShellTerminalCtrlSlashReachesTheShell);
   AddTest(tests, "WorkspaceShell/TerminalDragSelectsTranscriptText",
           TestWorkspaceShellTerminalDragSelectsTranscriptText);
   AddTest(tests, "WorkspaceShell/TerminalDoubleClickSelectsWordTripleClickSelectsLine",

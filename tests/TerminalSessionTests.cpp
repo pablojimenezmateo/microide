@@ -941,6 +941,19 @@ void TestTerminalSessionEncodesModifiedAndFunctionKeys() {
   ctrl_a.ctrl = true;
   Expect(sent_after(ctrl_a) == std::string(1, '\x01'),
          "Ctrl+A should send the C0 control byte 0x01 in legacy mode");
+  // The xterm digit/punctuation row: Ctrl+/ is US (Emacs C-/ undo), Ctrl+2 is NUL,
+  // Ctrl+6 is RS, Ctrl+8 is DEL. These used to pass the printable byte through.
+  const auto ctrl_char = [&](char32_t cp) {
+    KeyPress press;
+    press.key = KeyPress::Key::Char;
+    press.codepoint = cp;
+    press.ctrl = true;
+    return sent_after(press);
+  };
+  Expect(ctrl_char(U'/') == std::string(1, '\x1f'), "Ctrl+/ should send US (0x1f)");
+  Expect(ctrl_char(U'2') == std::string(1, '\0'), "Ctrl+2 should send NUL");
+  Expect(ctrl_char(U'6') == std::string(1, '\x1e'), "Ctrl+6 should send RS (0x1e)");
+  Expect(ctrl_char(U'8') == std::string(1, '\x7f'), "Ctrl+8 should send DEL");
 
   // Regression: Meta+Ctrl must prefix the control byte with ESC so M-C-<key>
   // chords reach TUI apps; the ESC was previously dropped in legacy mode.
