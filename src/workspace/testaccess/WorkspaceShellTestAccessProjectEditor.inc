@@ -806,6 +806,11 @@
   static bool ExecuteCommandLine(WorkspaceShell& shell, const std::string& command_line) {
     return shell.MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
   }
+  // Deliver plugin-worker query results (definition/references/...) that were
+  // posted back to the main thread; the frame loop does this once per frame.
+  static void DrainPluginThreadActions(WorkspaceShell& shell) {
+    shell.plugin_runtime_.DrainPluginThreadActions();
+  }
   static const std::vector<std::string>& PluginMessages(const WorkspaceShell& shell) {
     return shell.plugin_runtime_.Host().Messages();
   }

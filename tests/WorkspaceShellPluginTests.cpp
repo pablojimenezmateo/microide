@@ -5669,6 +5669,78 @@ void TestWorkspaceShellEditorPreferencesReachAllSplitGroups() {
          "the NON-focused split group's viewport must also pick up the new tab size");
 }
 
+
+// Ctrl+click goes to the definition of the symbol under the pointer (VS Code): the
+// caret moves to the click first, so the provider is asked about the clicked
+// position, not wherever the caret was. Ctrl+click used to be a plain click.
+void TestWorkspaceShellCtrlClickGoesToDefinition() {
+#if !MICROIDE_HAS_LUA_PLUGINS
+  return;
+#endif
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path config_home = temp_dir.path() / "config";
+  const std::filesystem::path plugins_root = config_home / "microide" / "plugins";
+  const std::filesystem::path project_root = temp_dir.path() / "project";
+  const std::filesystem::path source = project_root / "main.lua";
+  const std::filesystem::path target = project_root / "lib.lua";
+  WriteFile(source, "local x = helper()\nreturn x\n");
+  WriteFile(target, "-- lib\nlocal function helper() end\nreturn helper\n");
+
+  WritePluginInit(
+      plugins_root, "defs",
+      R"(local ide = require("microide")
+return ide.plugin({
+  id = "defs",
+  setup = function(ctx)
+    ctx.definition.add({
+      id = "defs.lua",
+      language_id = "lua",
+      provide = function(buffer, position)
+        if position.line == 1 and position.column >= 11 and position.column <= 17 then
+          return { { path = (buffer.path:gsub("main%.lua$", "lib.lua")), line = 2, column = 16 } }
+        end
+        return nil
+      end
+    })
+  end
+})
+)");
+
+  ScopedPluginConfigHomeEnv scoped_plugin_config_home(config_home);
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, project_root, false, false),
+         "definition fixture should open the project");
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(1, 0);
+
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  const float y = metrics.first_line_y + metrics.line_height * 0.5f;
+  // Column 12 (0-based) is inside "helper".
+  const float x = metrics.text_x + char_width * 12.0f;
+
+  Expect(WorkspaceShellTestAccess::IsActionEnabled(shell, WorkspaceShell::ActionId::GoToDefinition),
+         "Go to Definition is available with a plugin-only provider");
+  {
+    ScopedSdlModState ctrl_mods(SDL_KMOD_CTRL);
+    Expect(SendMouseDown(shell, x, y, SDL_BUTTON_LEFT), "Ctrl+click is handled by the editor");
+  }
+  const bool navigated = WaitUntil(
+      [&] {
+        const auto& active = WorkspaceShellTestAccess::ActiveEditor(shell);
+        return active.path().lexically_normal() == target.lexically_normal();
+      },
+      std::chrono::seconds(2), std::chrono::milliseconds(2),
+      [&] { WorkspaceShellTestAccess::DrainPluginThreadActions(shell); });
+  Expect(navigated, "Ctrl+click on a symbol opens the provider's definition location");
+  const auto& active = WorkspaceShellTestAccess::ActiveEditor(shell);
+  Expect(active.cursor_line() == 1 && active.cursor_column() == 15,
+         "the caret lands on the definition (provider line/column are 1-based)");
+}
+
 void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/EditorPreferencesReachAllSplitGroups",
           TestWorkspaceShellEditorPreferencesReachAllSplitGroups);
@@ -5855,6 +5927,8 @@ void RegisterWorkspaceShellPluginTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOpensDocumentInLspOnFileOpen);
   AddTest(tests, "WorkspaceShell/RestoreEngagesLspForOpenDocument",
           TestWorkspaceShellRestoreEngagesLspForOpenDocument);
+  AddTest(tests, "WorkspaceShell/CtrlClickGoesToDefinition",
+          TestWorkspaceShellCtrlClickGoesToDefinition);
 }
 
 }  // namespace microide::tests

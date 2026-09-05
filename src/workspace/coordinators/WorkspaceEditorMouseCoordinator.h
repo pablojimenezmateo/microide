@@ -41,6 +41,10 @@ class EditorMouseCoordinator {
     // Only invoked on a gutter right-click when `debug.enabled` is ON.
     std::function<void(const std::filesystem::path&, std::size_t, const SDL_FRect&)>
         open_breakpoint_context_menu;
+    // Ctrl+click navigates to the definition of the symbol under the (already
+    // moved) caret, as in VS Code. The shell gates it on the action's
+    // availability so a click in a buffer with no provider stays a plain click.
+    std::function<void()> go_to_definition;
   };
 
   EditorMouseCoordinator(ProjectWorkspaceState& state,

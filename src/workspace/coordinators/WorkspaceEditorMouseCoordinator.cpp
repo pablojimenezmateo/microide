@@ -14,6 +14,7 @@
 #include "util/PathMatch.h"
 #include "util/PerformanceTrace.h"
 #include "editor/TextDragDrop.h"
+#include "workspace/actions/WorkspaceActionCoordinator.h"
 #include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/coordinators/SelectionGranularity.h"
 #include "workspace/ListSelection.h"
@@ -481,6 +482,12 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   const bool plain_left_click =
       event.button.button == SDL_BUTTON_LEFT &&
       (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_CTRL | SDL_KMOD_GUI)) == 0;
+  // Ctrl+click (no other modifier) places the caret and then goes to the
+  // definition under it (VS Code). Ctrl+Shift+click stays a selection extend.
+  const bool ctrl_left_click =
+      event.button.button == SDL_BUTTON_LEFT && event.button.clicks == 1 &&
+      (modifiers & SDL_KMOD_CTRL) != 0 &&
+      (modifiers & (SDL_KMOD_ALT | SDL_KMOD_SHIFT | SDL_KMOD_GUI)) == 0;
   interaction_state_.editor_box_selecting = false;
   interaction_state_.text_drag = InteractionState::TextDragState::None;
   interaction_state_.text_drag_has_drop = false;
@@ -516,7 +523,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
     }
   }
 
-  if (plain_left_click && viewport->has_multiple_carets()) {
+  if ((plain_left_click || ctrl_left_click) && viewport->has_multiple_carets()) {
     viewport->ClearSecondaryCarets();
   }
   if (shift_alt_box) {
@@ -556,6 +563,10 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
   operations_.reset_caret_blink();
   state_.surface.focus = FocusTarget::Editor;
+  if (ctrl_left_click && operations_.go_to_definition) {
+    operations_.go_to_definition();
+    return true;
+  }
   if (event.button.button == SDL_BUTTON_MIDDLE) {
     if (const std::optional<std::string> text = operations_.read_primary_selection_text();
         text.has_value()) {
@@ -880,6 +891,14 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
           .open_breakpoint_context_menu =
               [this](const std::filesystem::path& path, std::size_t line,
                      const SDL_FRect& anchor) { OpenBreakpointContextMenu(path, line, anchor); },
+          .go_to_definition =
+              [this]() {
+                if (!MakeActionAvailability().IsEnabled(ActionId::GoToDefinition)) {
+                  return;
+                }
+                ActionCoordinator(MakeActionContext())
+                    .Execute(ActionId::GoToDefinition, {}, ActionSource::Shortcut);
+              },
       });
 }
 
