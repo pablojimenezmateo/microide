@@ -468,9 +468,35 @@ TD-2026-09-05-286). Every finding is its own commit with a regression test
   protocol, the debug session, the diagnostics and breakpoint stores, the
   file operation service, the directory tree, theme files, the tool
   downloader, `PathMatch`, `RegexUtil`.
+- **After the lanes started** (read-only review while they compiled, fixes
+  committed between them): the status bar's `<gitdir>/HEAD` fallback showed a
+  namespaced branch by its leaf (`stable-sort` for `feature/stable-sort`) and
+  then flipped to git's short name when the first snapshot landed, and never
+  re-read HEAD after a `git checkout` in the terminal (the automatic snapshot
+  refresh is throttled and skipped while one is in flight -- the cache is now
+  keyed on the repository marker generation); the control channel answered a
+  bare "command failed" for a rejection whose message repeated the previous
+  reply (it diffed the panel feedback against a snapshot; it now clears it
+  before dispatch); and a second headless sweep over file I/O found that **a
+  file opened in a second pane was read from disk as an independent buffer**
+  -- the plain split clones the tab and shares its `DocumentState`, but
+  `open`/`tab` from the other group, `split-right <path>`, the tree, replace-
+  all's reload, a rename that discards edits and session restore each built a
+  fresh viewport per tab, so an edit in one pane was invisible in the other
+  and the panes saved over each other. All of them now resolve through
+  `TabCoordinator::OpenEditorViewForPath`. That made the per-view undo stack
+  reachable from more places, and it was already wrong for the split: an entry
+  is a splice recorded against the buffer as it was, so undo in pane B after
+  pane A had typed removed A's bytes. The history now lives in `DocumentState`
+  (VS Code keeps it on the model). Non-defects from that sweep: the saved file
+  gaining a final newline is `editor.save.ensure_final_newline` (default on
+  here, VS Code's default is off); "Save failed" for a save over an externally
+  modified file is the external-change banner's headless spelling.
 - **Lanes**: full ctest green after each commit; `perf-tests` (allocation
-  contracts) green after the cell-model change; clang-build, hardened, asan,
-  ubsan and tsan run once at the end of the session (results below).
+  contracts) green after the cell-model change and again after the shared-
+  buffer change; clang-build, hardened, asan, ubsan and tsan each green once
+  (asan/ubsan on the tree before the shared-buffer commits, tsan on the tree
+  with the shared-buffer commit; nothing after that touches a thread).
 
 #### TD-2026-09-06-289a — a non-ASCII string's texture is composited one glyph cluster per SDL_ttf call. [OPEN — perf follow-up]
 
