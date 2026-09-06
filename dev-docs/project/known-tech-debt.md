@@ -492,9 +492,32 @@ TD-2026-09-05-286). Every finding is its own commit with a regression test
   gaining a final newline is `editor.save.ensure_final_newline` (default on
   here, VS Code's default is off); "Save failed" for a save over an externally
   modified file is the external-change banner's headless spelling.
+- **Enumerations against a second implementation** (the shape that found the
+  cell-width and glob bugs): the find widget's find-as-you-type refine was
+  pinned to the cold literal scan over a small mixed-case alphabet and failed
+  on round 8 -- `previous` was taken as the candidate starts for the longer
+  query, but the cold scan de-overlaps by needle length, so typing `aab` over
+  `aaab` showed no match (the refine now rescans each line that had a hit,
+  equal to a fresh scan by construction); the three literal replace-all paths
+  (project blob, widget default, widget toggled) were pinned to each other and
+  agree; every builtin key chord round-trips through `FormatKeyChord` /
+  `ParseKeyChord` (the old test checked one chord for non-emptiness).
+  `TextViewport::ReplaceAll` copied every document line into a string before
+  looking for the needle; it reads views now.
+- **Two more headless sweeps of the real binary, against the ASAN and UBSAN
+  builds**: every command with adversarial arguments (`0`, `-1`, 20-digit
+  numbers, empty, `/`, a directory, a nonexistent path, junk words, a 100 KB
+  `type`, invalid UTF-8) -- no crash, no sanitizer report, every rejection
+  carries a message, and the one silent acceptance (`colorscheme bogus`
+  answered ok and changed nothing) is fixed; and a Lua plugin that walks `ctx`
+  with `pairs` and calls all 54 API functions with ~160 argument shapes each
+  (wrong types, NaN/inf/2^63, a 1 MiB string, NUL, a 300-deep table, throwing
+  callbacks; `process.*` skipped) -- 8,802 calls, 6,583 clean Lua errors, no
+  crash, no sanitizer report, and the editor still edits and saves afterwards.
+  Recipes in `scratchpad/sweep/sweep7.py` / `sweep8.py`.
 - **Lanes**: full ctest green after each commit; `perf-tests` (allocation
   contracts) green after the cell-model change and again after the shared-
-  buffer change; clang-build, hardened, asan, ubsan and tsan each green once
+  buffer change and the search change; clang-build, hardened, asan, ubsan and tsan each green once
   (asan/ubsan on the tree before the shared-buffer commits, tsan on the tree
   with the shared-buffer commit; nothing after that touches a thread).
 
