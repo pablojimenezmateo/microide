@@ -209,7 +209,8 @@ class WorkspaceActionContext {
     std::function<std::optional<std::string>()> read_clipboard_text;
     std::function<void(std::string)> paste_text_into_terminal;
     std::function<void()> refresh_available_colorscheme_names;
-    std::function<void(std::string_view)> apply_colorscheme;
+    // False when no theme of that name exists (built-in, on disk, or plugin).
+    std::function<bool(std::string_view)> apply_colorscheme;
     std::function<void()> apply_editor_preferences_to_all_tabs;
     std::function<void()> save_config_state;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
@@ -492,7 +493,7 @@ class WorkspaceActionContext {
   void InsertText(std::string text);
 
   void RefreshAvailableColorschemeNames();
-  void ApplyColorscheme(std::string_view name);
+  bool ApplyColorscheme(std::string_view name);
   std::string_view CurrentColorschemeName() const;
   void SetTabSize(std::size_t value);
   void SetIndentWidth(std::size_t value);

@@ -780,7 +780,7 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this]() { MakePersistenceCoordinator().RefreshAvailableColorschemeNames(); },
           .apply_colorscheme =
               [this](std::string_view name) {
-                MakePersistenceCoordinator().ApplyColorscheme(name, true, true);
+                return MakePersistenceCoordinator().ApplyColorscheme(name, true, true);
               },
           .apply_editor_preferences_to_all_tabs = [this]() { ApplyEditorPreferencesToAllTabs(); },
           .save_config_state = [this]() { MakePersistenceCoordinator().SaveConfigState(); },

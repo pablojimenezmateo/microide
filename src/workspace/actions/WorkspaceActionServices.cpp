@@ -1247,11 +1247,14 @@ void WorkspaceActionContext::ToggleWindowFullscreen() {
   }
 }
 
-void WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
-  operations_.apply_colorscheme(name);
+bool WorkspaceActionContext::ApplyColorscheme(std::string_view name) {
+  if (!operations_.apply_colorscheme(name)) {
+    return false;
+  }
   // A theme change repaints with new colors but does not change geometry; the
   // window redraw is what makes it visible (the shell otherwise idles on events).
   RequestLiveConfigRedraw();
+  return true;
 }
 
 std::string_view WorkspaceActionContext::CurrentColorschemeName() const {

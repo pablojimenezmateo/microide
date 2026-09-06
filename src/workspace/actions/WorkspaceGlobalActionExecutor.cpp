@@ -66,7 +66,11 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
         return DispatchResult::Handled;
       }
       context_.RefreshAvailableColorschemeNames();
-      context_.ApplyColorscheme(request->name);
+      // The apply used to report nothing for a name no theme has: the command
+      // answered ok and the colors stayed put.
+      if (!context_.ApplyColorscheme(request->name)) {
+        return reject("Unknown colorscheme: " + request->name + " (colorscheme list)");
+      }
       return DispatchResult::Handled;
     }
     case ActionId::ToggleFullscreen:

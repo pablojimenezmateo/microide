@@ -3493,6 +3493,14 @@ void TestColorschemeChangeRequestsRepaint() {
   Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") !=
              std::optional<std::string>("light"),
          "toggle-theme should switch away from the light theme");
+
+  // A name no theme has is a rejection, not a silent no-op that answers ok.
+  const std::optional<std::string> before =
+      WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme");
+  Expect(!WorkspaceShellTestAccess::ExecuteCommandLine(shell, "colorscheme no-such-theme"),
+         "an unknown colorscheme name must be rejected");
+  Expect(WorkspaceShellTestAccess::GetSettingValue(shell, "editor.colorscheme") == before,
+         "an unknown colorscheme name must leave the active theme alone");
 }
 
 // TD-2026-07-17A-033: switching to an already-open editor tab must SCHEDULE the
