@@ -204,12 +204,51 @@ void TestParseKeyChordInvalid() {
          "ParseKeyChord should fail for unknown key name");
 }
 
+// FormatKeyChord is the only spelling of a chord the user sees (menus, the
+// shortcuts overlay, Help/About) and ParseKeyChord is the only reading of one
+// (plugin contributions, and any chord a user copies from that UI into a
+// keybinding), so every builtin chord must survive the round trip — not just
+// Ctrl+S. This used to check that the formatted string was non-empty.
 void TestFormatKeyChordRoundTrip() {
-  SDL_Keycode key = SDLK_UNKNOWN;
-  SDL_Keymod mods = SDL_KMOD_NONE;
-  Expect(ParseKeyChord("Ctrl+S", &key, &mods), "parse must succeed");
-  const std::string formatted = FormatKeyChord(key, mods);
-  Expect(!formatted.empty(), "FormatKeyChord should produce a non-empty string");
+  std::size_t checked = 0;
+  for (const microide::workspace::KeybindingSpec& spec : BuiltinKeybindingSpecs()) {
+    if (spec.key == SDLK_UNKNOWN) {
+      continue;
+    }
+    const std::string formatted = FormatKeyChord(spec.key, spec.modifiers);
+    SDL_Keycode key = SDLK_UNKNOWN;
+    SDL_Keymod mods = SDL_KMOD_NONE;
+    Expect(ParseKeyChord(formatted, &key, &mods),
+           "the formatted chord of '" + std::string(spec.id) + "' must parse: " + formatted);
+    Expect(key == spec.key,
+           "the formatted chord of '" + std::string(spec.id) + "' must name its key: " + formatted);
+    Expect(microide::workspace::NormalizedKeyModifiers(mods) ==
+               microide::workspace::NormalizedKeyModifiers(spec.modifiers),
+           "the formatted chord of '" + std::string(spec.id) + "' must keep its modifiers: " +
+               formatted);
+    ++checked;
+  }
+  Expect(checked > 50, "the builtin table was enumerated");
+  // Every modifier subset over a named key and a printable key.
+  for (int mask = 0; mask < 16; ++mask) {
+    SDL_Keymod modifiers = SDL_KMOD_NONE;
+    if (mask & 1) modifiers = static_cast<SDL_Keymod>(modifiers | SDL_KMOD_CTRL);
+    if (mask & 2) modifiers = static_cast<SDL_Keymod>(modifiers | SDL_KMOD_SHIFT);
+    if (mask & 4) modifiers = static_cast<SDL_Keymod>(modifiers | SDL_KMOD_ALT);
+    if (mask & 8) modifiers = static_cast<SDL_Keymod>(modifiers | SDL_KMOD_GUI);
+    for (const SDL_Keycode key : {SDLK_RETURN, SDLK_KP_ENTER, SDLK_PAGEUP, SDLK_EQUALS, SDLK_A,
+                                  SDLK_F12, SDLK_SPACE, SDLK_GRAVE, SDLK_ESCAPE}) {
+      const std::string formatted = FormatKeyChord(key, modifiers);
+      SDL_Keycode parsed_key = SDLK_UNKNOWN;
+      SDL_Keymod parsed_mods = SDL_KMOD_NONE;
+      Expect(ParseKeyChord(formatted, &parsed_key, &parsed_mods), "chord parses: " + formatted);
+      // Keypad Enter is spelled "Enter" on purpose (the legend), so it reads back
+      // as the main Enter key.
+      const SDL_Keycode expected_key = key == SDLK_KP_ENTER ? SDLK_RETURN : key;
+      Expect(parsed_key == expected_key && parsed_mods == modifiers,
+             "chord round-trips: " + formatted);
+    }
+  }
 }
 
 void TestFindBuiltinKeybindingByKey() {
