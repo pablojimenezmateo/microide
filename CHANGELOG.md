@@ -30,6 +30,7 @@ project (see [README](README.md)); versions track meaningful shipped work.
   headless driver can rename through the language server.
 
 ### Fixed
+- Compare tabs: the editable working-tree side (and an editable `compare-files` side) is now a view of the same buffer as an editor tab on that file, as in VS Code's diff editor. It used to load its own copy from disk, so it diffed against the file rather than the unsaved buffer, an edit in one was invisible in the other, and saving one raised the external-change banner on the other. The diff model follows edits made through the editor tab, an external reload updates both, and closing one view of a dirty shared buffer no longer asks to discard.
 - Session restore: a dirty file that was open in two panes came back as two independent copies; the second pane now shares the first's restored buffer.
 - `colorscheme <name>` with a name no theme has answered ok and changed nothing; it now rejects with "Unknown colorscheme".
 - Find widget: replace-all copied every line of the document into a fresh string before looking for the needle, one allocation per line for a replace that touches a handful of them; it now reads lines in place and copies only the ones it changes. A new enumeration pins the three literal replace-all paths (project replace over a file, the widget's default replace, and its case/whole-word replace) to the same text and count.

@@ -328,6 +328,23 @@ WorkspaceShell::FrameToken WorkspaceShell::PrepareFrameOnce(SDL_Renderer* render
     util::PerformanceTrace::Scope scope("WorkspaceShell::PrepareFrameOnce::RefreshEditorFoldingModels");
     RefreshEditorFoldingModels();
   }
+  // A compare pane's editable side is a view of a buffer an editor pane may have
+  // just edited; its model is keyed on that buffer's content revision, so a pane
+  // that did not take the keystroke rebuilds here (and only then) rather than
+  // painting stale rows. Settled frames pay one integer compare per pane.
+  for (EditorGroup& group : project_state.editor_groups) {
+    if (!group.has_active_tab() || group.active_tab().kind != TabEntry::Kind::Compare ||
+        !group.active_tab().compare.has_value()) {
+      continue;
+    }
+    CompareTabState& compare_tab = *group.active_tab().compare;
+    if (compare_tab.right_editable &&
+        (!compare_tab.derived_fingerprint_valid ||
+         compare_tab.derived_right_content_revision !=
+             compare_tab.right_viewport.content_revision())) {
+      RefreshCompareTabDerivedState(compare_tab);
+    }
+  }
   prepare_cached_text_input_vm_.emplace(view_models.BuildTextInputSurface());
   // `ComputeLayout` applies these same clamps to whatever it is handed, so the
   // geometry is already correct without this block. What this does is PERSIST the

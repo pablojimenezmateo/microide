@@ -79,6 +79,9 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
                 compare_tab.right_editable = right.editable && !right_path.empty();
                 compare_tab.right_viewport.LoadContent(right.content, tab_path);
                 ApplyEditorPreferences(compare_tab.right_viewport);
+                // An editable real file is one buffer with any editor tab on it.
+                AdoptLiveBufferForCompareRightSide(context_.current_project_state.editor_groups,
+                                                   compare_tab);
                 // plain_compare is set above, so this refresh resolves review_mode
                 // to Plain (sticky) rather than inferring a git mode from the empty
                 // refs.
@@ -120,6 +123,8 @@ DiffTabCoordinator WorkspaceShell::MakeDiffTabCoordinator() {
               [this](MergeTabState& merge_tab, const std::filesystem::path& path) {
                 FinalizeGitMergeTab(merge_tab, path);
               },
+          .refresh_compare_tab_derived_state =
+              [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
       });
 }
 

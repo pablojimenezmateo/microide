@@ -709,11 +709,16 @@
                              std::size_t to_slot) {
     return shell.MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group, to_slot);
   }
-  // The loaded editor viewport of tab `ti` in group `gi`, or nullptr for a
-  // compare/merge tab or a restore-pending one.
+  // The viewport that is the FILE for tab `ti` in group `gi`: a loaded editor
+  // tab's, or a compare tab's editable side. Nullptr for a merge tab, a
+  // read-only compare, or a restore-pending tab.
   static const editor::TextViewport* GroupTabViewport(WorkspaceShell& shell, std::size_t gi,
                                                       std::size_t ti) {
     const auto& tab = shell.context_.current_project_state.editor_groups[gi].open_tabs[ti];
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+        tab.compare->right_editable) {
+      return &tab.compare->right_viewport;
+    }
     if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
         tab.editor_state->needs_restore) {
       return nullptr;

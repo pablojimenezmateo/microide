@@ -63,6 +63,8 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
     compare_tab->compare->right_ref = "WORKTREE";
     compare_tab->compare->right_editable = true;
     compare_tab->compare->right_view_active = true;
+    AdoptLiveBufferForCompareRightSide(context_.current_project_state.editor_groups,
+                                       *compare_tab->compare);
     RefreshCompareTabDerivedState(*compare_tab->compare);
   }
   return compare_tab;
@@ -145,6 +147,10 @@ std::optional<WorkspaceShell::TabEntry> WorkspaceShell::BuildCompareTabEntry(
         rebuilt->compare->model.rows.empty()
             ? 0
             : std::min(compare_tab.selected_row, rebuilt->compare->model.rows.size() - 1);
+    // Rejoin the buffer the file has open elsewhere; the tab being rebuilt is
+    // still in the group, so its own old side is not a candidate.
+    AdoptLiveBufferForCompareRightSide(context_.current_project_state.editor_groups,
+                                       *rebuilt->compare, &compare_tab.right_viewport);
   }
   RefreshCompareTabDerivedState(*rebuilt->compare);
   return rebuilt;

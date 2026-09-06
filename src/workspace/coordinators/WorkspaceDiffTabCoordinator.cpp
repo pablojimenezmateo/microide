@@ -327,6 +327,13 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
   compare_tab->compare->review_mode = compare::CompareReviewMode::WorkingTree;
   compare_tab->compare->staging_view =
       compare::InferWorkingTreeStagingView(left_ref, compare_tab->compare->right_ref);
+  // The editable side is the file: if an editor tab already holds it (unsaved
+  // edits included), this pane shows and edits that buffer, as VS Code's diff
+  // editor does, rather than a copy read from disk that would then save over it.
+  if (AdoptLiveBufferForCompareRightSide(state_.editor_groups, *compare_tab->compare) &&
+      operations_.refresh_compare_tab_derived_state) {
+    operations_.refresh_compare_tab_derived_state(*compare_tab->compare);
+  }
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
     return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.

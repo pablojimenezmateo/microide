@@ -594,6 +594,62 @@ struct EditorGroup {
   const TabEntry& active_tab() const { return open_tabs[active_tab_index]; }
 };
 
+// The live viewport that IS the file `normalized_path` in any pane, or nullptr:
+// a loaded editor tab, or a compare tab's editable working-tree side. A file is
+// one buffer however many panes show it (VS Code's model per resource), so a
+// second view copies this one and shares its DocumentState instead of reading
+// the file again -- an independent copy diverges and the two save over each
+// other. A merge result is synthesized text, never the file. `exclude` skips one
+// viewport (a compare side being rebuilt must not adopt its own old document).
+[[nodiscard]] inline const editor::TextViewport* LiveBufferViewOfPath(
+    const std::vector<EditorGroup>& groups,
+    const std::filesystem::path& normalized_path,
+    const editor::TextViewport* exclude = nullptr) {
+  if (normalized_path.empty()) {
+    return nullptr;
+  }
+  for (const EditorGroup& group : groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          !tab.editor_state->needs_restore && &tab.editor_state->viewport != exclude &&
+          EditorViewPathIs(*tab.editor_state, normalized_path)) {
+        return &tab.editor_state->viewport;
+      }
+      if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+          tab.compare->right_editable && &tab.compare->right_viewport != exclude &&
+          util::SameAsNormalizedPath(tab.compare->right_viewport.path(), normalized_path)) {
+        return &tab.compare->right_viewport;
+      }
+    }
+  }
+  return nullptr;
+}
+
+// Makes a compare tab's editable side a view of the buffer the file already has
+// open elsewhere (see LiveBufferViewOfPath), keeping the side's own caret and
+// scroll. Returns true when it adopted one; the caller then refreshes the
+// derived model, which the invalidated fingerprint forces.
+inline bool AdoptLiveBufferForCompareRightSide(const std::vector<EditorGroup>& groups,
+                                               CompareTabState& compare_tab,
+                                               const editor::TextViewport* exclude = nullptr) {
+  if (!compare_tab.right_editable) {
+    return false;
+  }
+  editor::TextViewport& right = compare_tab.right_viewport;
+  const editor::TextViewport* live =
+      LiveBufferViewOfPath(groups, right.path().lexically_normal(), exclude);
+  if (live == nullptr || live == &right || live->SharesDocumentWith(right)) {
+    return false;
+  }
+  editor::TextViewport adopted = *live;
+  adopted.SetViewportSize(right.visible_lines(), right.visible_columns());
+  adopted.ApplyRestoredViewState(right.cursor_line(), right.cursor_column(), right.scroll_line(),
+                                 right.horizontal_scroll());
+  right = std::move(adopted);
+  compare_tab.derived_fingerprint_valid = false;
+  return true;
+}
+
 // A tab addressed by (group, tab) across ALL editor groups of one project. Used
 // by the all-groups dirty enumerators and the group-aware save primitive so
 // autosave / save-on-quit flush a buffer dirtied in the non-focused split group

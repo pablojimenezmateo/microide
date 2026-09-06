@@ -55,6 +55,7 @@ class DiffTabCoordinator {
                                           bool)>
         build_merge_tab_from_buffers;
     std::function<void(MergeTabState&, const std::filesystem::path&)> finalize_git_merge_tab;
+    std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
   };
 
   DiffTabCoordinator(ProjectWorkspaceState& state, Operations operations);

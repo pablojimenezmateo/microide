@@ -32,19 +32,28 @@ bool TabCoordinator::CloseWouldDiscardEdits(std::size_t index) const {
     return false;
   }
   const TabEntry& closing = state_.focused_group().open_tabs[index];
-  // Only editor tabs share a document; a compare/merge tab's editable side is
-  // its own viewport, so its edits are its own to lose.
-  if (closing.kind != TabEntry::Kind::Editor || !closing.editor_state.has_value()) {
+  // The document a tab is a view of: an editor tab's viewport, or a compare
+  // tab's editable side. A merge result is its own synthesized text, so its
+  // edits are its own to lose.
+  const auto document_view = [](const TabEntry& tab) -> const editor::TextViewport* {
+    if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+        !tab.editor_state->needs_restore) {
+      return &tab.editor_state->viewport;
+    }
+    if (tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+        tab.compare->right_editable) {
+      return &tab.compare->right_viewport;
+    }
+    return nullptr;
+  };
+  const editor::TextViewport* closing_view = document_view(closing);
+  if (closing_view == nullptr) {
     return true;
   }
-  const editor::TextViewport& closing_view = closing.editor_state->viewport;
   for (const EditorGroup& group : state_.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
-      if (&tab == &closing || tab.kind != TabEntry::Kind::Editor ||
-          !tab.editor_state.has_value() || tab.editor_state->needs_restore) {
-        continue;
-      }
-      if (tab.editor_state->viewport.SharesDocumentWith(closing_view)) {
+      const editor::TextViewport* view = &tab == &closing ? nullptr : document_view(tab);
+      if (view != nullptr && view->SharesDocumentWith(*closing_view)) {
         return false;
       }
     }

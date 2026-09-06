@@ -318,6 +318,91 @@ void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
          "saving the compare tab should persist the edited current-state text");
 }
 
+// The compare's editable side IS the file, so it is one buffer with an editor
+// tab on the same path -- VS Code's diff editor edits the same model the text
+// editor shows. Each side used to load its own copy from disk: an edit in one
+// was invisible in the other, the compare diffed against disk rather than the
+// unsaved buffer, and saving one raised the external-change banner on the other.
+void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "int alpha() {\n  return 1;\n}\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add shared-buffer fixture", "shared-buffer fixture");
+  WriteFile(source, "int beta() {\n  return 2;\n}\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+  // Editor tab first, with an unsaved edit; the compare must show THAT buffer.
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  WorkspaceShellTestAccess::ActiveEditor(shell).MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// edited\n"), "edit the editor tab");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(), "the editor tab is dirty");
+
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "the working-tree comparison should open");
+  // Opening the compare tab grew the tab vector; take the editor view afresh.
+  editor::TextViewport& editor = WorkspaceShellTestAccess::FocusedGroupTabEditor(shell, 0);
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable, "the working-tree side is editable");
+  Expect(compare.right_viewport.SharesDocumentWith(editor),
+         "the compare's editable side must be a view of the editor tab's buffer");
+  Expect(compare.right_viewport.lines().LineView(0) == "// edited",
+         "the compare shows the unsaved buffer, not the file on disk");
+  bool first_row_is_edit = false;
+  for (const auto& row : compare.model.rows) {
+    if (row.right_text == "// edited") {
+      first_row_is_edit = true;
+      break;
+    }
+  }
+  Expect(first_row_is_edit, "the diff model is built from the shared buffer");
+
+  // An edit through the compare side shows in the editor tab, and vice versa.
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "edit through the compare side");
+  Expect(editor.lines().LineView(0) == "X// edited", "the editor tab sees the compare's edit");
+  const std::uint64_t model_before = compare.model_revision;
+  editor.MoveCursorTo(0, 0);
+  editor.InsertText("Y");
+  Expect(compare.right_viewport.lines().LineView(0) == "YX// edited",
+         "the compare side sees the editor's edit");
+  // The frame prep resolves the compare model for a pane that did not take the
+  // keystroke; simulate it through the test hook.
+  WorkspaceShellTestAccess::RefreshActiveCompareDerivedState(shell);
+  Expect(compare.model_revision != model_before, "the diff model follows the shared buffer");
+
+  // One save cleans both, writes the buffer, and raises no external-change banner.
+  Expect(WorkspaceShellTestAccess::SaveTab(shell, WorkspaceShellTestAccess::GroupActiveTabIndex(shell, 0)),
+         "saving the compare tab should succeed");
+  Expect(!editor.dirty() && !compare.right_viewport.dirty(), "one save cleans both views");
+  Expect(ReadFile(source).rfind("YX// edited\n", 0) == 0, "the save wrote the shared buffer");
+  Expect(!WorkspaceShellTestAccess::HasExternalChangeBanner(shell, source),
+         "saving one view of the buffer is not an external change to the other");
+
+  // The reverse order: a compare open first, then the editor tab shares its side.
+  WorkspaceShell reverse;
+  WorkspaceShellTestAccess::SetProjectRoot(reverse, root);
+  WorkspaceShellTestAccess::SetWindowSize(reverse, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(reverse, source, "HEAD", "HEAD"),
+         "the comparison should open first");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(reverse, "Z"), "edit the compare side");
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(reverse, source), "then open the editor tab");
+  const editor::TextViewport& late_editor = WorkspaceShellTestAccess::ActiveEditor(reverse);
+  Expect(late_editor.lines().LineView(0) == "ZYX// edited" && late_editor.dirty(),
+         "the editor tab opens on the compare's dirty buffer");
+  bool shares = false;
+  for (std::size_t ti = 0; ti < WorkspaceShellTestAccess::GroupTabCount(reverse, 0); ++ti) {
+    const editor::TextViewport* view = WorkspaceShellTestAccess::GroupTabViewport(reverse, 0, ti);
+    if (view != nullptr && view != &late_editor && view->SharesDocumentWith(late_editor)) {
+      shares = true;
+    }
+  }
+  Expect(shares, "the editor tab and the compare's side are views of one document");
+}
+
 // A BOM file's working-tree compare: the blob carries the mark and the editable
 // pane strips it, so the pane's serialization has to put it back or line 1 reads
 // as modified forever, and saving the pane has to write it back.
@@ -2583,6 +2668,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
+  AddTest(tests, "WorkspaceShell/WorkingTreeCompareSharesTheEditorTabsBuffer",
+          TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareKeepsUtf8Bom",
           TestWorkspaceShellWorkingTreeCompareKeepsUtf8Bom);
   AddTest(tests, "WorkspaceShell/CompareWordWrapExpandsRowsAndKeepsPanesAligned",

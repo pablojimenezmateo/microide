@@ -460,10 +460,18 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
     return tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
            EditorViewPathIs(*tab.editor_state, normalized_path);
   };
+  // A compare tab's editable side is a view of the same file (it shares the
+  // editor tabs' document); it takes the reloaded document too, or the panes
+  // diverge into one buffer per tab again.
+  const auto matches_compare = [&](const TabEntry& tab) {
+    return tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+           tab.compare->right_editable &&
+           util::SameAsNormalizedPath(tab.compare->right_viewport.path(), normalized_path);
+  };
   bool any_match = false;
   for (const EditorGroup& group : state_.editor_groups) {
     for (const TabEntry& tab : group.open_tabs) {
-      if (matches(tab) && !(clean_only && TabStateIsDirty(tab))) {
+      if ((matches(tab) || matches_compare(tab)) && !(clean_only && TabStateIsDirty(tab))) {
         any_match = true;
         break;
       }
@@ -521,6 +529,18 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
     const bool is_focused_group = g == focused_index;
     for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
       TabEntry& tab = group.open_tabs[i];
+      if (matches_compare(tab) && !(clean_only && TabStateIsDirty(tab))) {
+        editor::TextViewport& right = tab.compare->right_viewport;
+        editor::TextViewport restored_view = reopened_view;
+        restored_view.SetViewportSize(right.visible_lines(), right.visible_columns());
+        restored_view.ApplyRestoredViewState(right.cursor_line(), right.cursor_column(),
+                                             right.scroll_line(), right.horizontal_scroll());
+        right = std::move(restored_view);
+        // A fresh document restarts its content revision, which the compare's
+        // model fingerprint would read as "unchanged".
+        tab.compare->derived_fingerprint_valid = false;
+        continue;
+      }
       if (!matches(tab) || (clean_only && TabStateIsDirty(tab))) {
         continue;
       }
@@ -602,20 +622,7 @@ bool TabCoordinator::OpenUntitled() {
 }
 const editor::TextViewport* TabCoordinator::FindOpenEditorViewOfPath(
     const std::filesystem::path& normalized_path) const {
-  if (normalized_path.empty()) {
-    return nullptr;
-  }
-  for (const EditorGroup& group : state_.editor_groups) {
-    for (const TabEntry& tab : group.open_tabs) {
-      // A restore-pending tab has no loaded document to share yet.
-      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-          !tab.editor_state->needs_restore &&
-          EditorViewPathIs(*tab.editor_state, normalized_path)) {
-        return &tab.editor_state->viewport;
-      }
-    }
-  }
-  return nullptr;
+  return LiveBufferViewOfPath(state_.editor_groups, normalized_path);
 }
 
 bool TabCoordinator::OpenEditorViewForPath(const std::filesystem::path& path,
