@@ -285,15 +285,16 @@ void WorkspaceShell::ConsumeControlCallbacks() {
 ControlChannelService::CommandOutcome WorkspaceShell::ExecuteControlCommand(
     const std::string& command_line) {
   ControlChannelService::CommandOutcome outcome;
-  // Snapshot the shared panel feedback before dispatch: it may still hold a message
-  // from a prior unrelated UI action. Only attribute feedback to THIS command if the
-  // command actually changed it, so an ok:true reply does not carry a misleading
-  // stale line.
-  const std::string feedback_before = context_.current_project_state.panel.feedback.text;
+  // The shared panel feedback may still hold a message from a prior unrelated UI
+  // action, so clear it before dispatch: whatever it holds afterwards was produced
+  // by THIS command (ExecuteCommandLine itself wipes it before running any
+  // non-empty line). This used to diff the text against a pre-dispatch snapshot
+  // instead, which mistook a rejection that repeats the previous message — two
+  // `project-next` calls with one project open, or `format-document` after another
+  // "No active file" — for a stale line and answered "command failed".
+  std::string& feedback = context_.current_project_state.panel.feedback.text;
+  feedback.clear();
   outcome.ok = MakeCommandLineCoordinator().ExecuteCommandLine(command_line);
-  const std::string& feedback_after = context_.current_project_state.panel.feedback.text;
-  const std::string feedback =
-      feedback_after != feedback_before ? feedback_after : std::string{};
   if (outcome.ok) {
     outcome.feedback = feedback;
   } else {

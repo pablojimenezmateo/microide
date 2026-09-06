@@ -64,6 +64,12 @@
   static bool IsControlChannelRunning(const WorkspaceShell& shell) {
     return shell.control_channel_service_.IsRunning();
   }
+  // One command line through the control channel's chokepoint, with the outcome a
+  // remote driver would read back.
+  static ControlChannelService::CommandOutcome ExecuteControlCommand(
+      WorkspaceShell& shell, const std::string& command_line) {
+    return shell.ExecuteControlCommand(command_line);
+  }
   // Launch-config picker (Phase 9): seed configs, drive the picker, and read back
   // its filtered matches / the persisted selection on confirm.
   static void SeedLaunchConfigs(WorkspaceShell& shell,

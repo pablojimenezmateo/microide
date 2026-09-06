@@ -257,7 +257,35 @@ void TestRestoredExcludeGlobsDoNotRescanOnFirstLiveSettingsPass() {
          "an actual exclude-glob edit should still re-arm the watcher");
 }
 
+// A control-channel reply attributed feedback to the command by diffing the panel
+// feedback text against a pre-dispatch snapshot, so a rejection repeating the
+// previous message (`project-next` twice with one project open) read as a stale
+// line and came back as a bare "command failed".
+void TestControlCommandRepeatsTheSameRejectionMessage() {
+  TemporaryDirectory temp;
+  ScopedAppHomes homes(temp.path() / "state", temp.path() / "config");
+
+  WorkspaceShell shell;
+  shell.Initialize({});
+
+  const auto first = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "project-next");
+  Expect(!first.ok, "project-next with no project open should be rejected");
+  Expect(first.error == "No active project",
+         "the first rejection should carry its message: " + first.error);
+  const auto second = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "project-prev");
+  Expect(!second.ok, "project-prev with no project open should be rejected");
+  Expect(second.error == first.error,
+         "a rejection repeating the previous message must not read as 'command failed': " +
+             second.error);
+
+  // A success after a rejection must not inherit the rejection's message.
+  const auto ok = WorkspaceShellTestAccess::ExecuteControlCommand(shell, "set-setting control.enabled true");
+  Expect(ok.ok && ok.feedback.empty(), "a silent success reports no feedback: " + ok.feedback);
+}
+
 void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShellControlSettings/ControlCommandRepeatsTheSameRejectionMessage",
+          TestControlCommandRepeatsTheSameRejectionMessage);
   AddTest(tests, "WorkspaceShellControlSettings/ForceStartedControlChannelSurvivesSettingChange",
           TestForceStartedControlChannelSurvivesSettingChange);
   AddTest(tests, "WorkspaceShellControlSettings/SetSettingCommandFlipsAndRejects",
