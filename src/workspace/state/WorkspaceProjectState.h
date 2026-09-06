@@ -864,6 +864,14 @@ struct ProjectCatalogState {
   std::vector<std::unique_ptr<ProjectWorkspaceState>> entries;
   std::size_t active_index = 0;
   int tab_scroll_index = 0;
+  // The exact text the last EMPTY-selection copy or cut put on the clipboard --
+  // a whole line, newline included. A paste that finds this very text on the
+  // clipboard, with one caret and no selection, inserts it as a line above the
+  // caret's line rather than at the caret (VS Code's emptySelectionClipboard
+  // rule), so copying a line and pasting it from mid-line does not split the
+  // line it lands in. Any other copy clears it. Workspace-wide, like the
+  // clipboard it describes.
+  std::string line_clipboard_text;
 };
 
 // The surface keyboard focus lands on when no overlay/prompt owns input — the

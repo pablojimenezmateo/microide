@@ -2662,6 +2662,67 @@ void TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress() {
          "typing replaces every occurrence the presses selected");
 }
 
+// VS Code's emptySelectionClipboard rule: Ctrl+C with nothing selected copies
+// the whole line, and pasting that exact text back with a single caret and no
+// selection puts it on its own line ABOVE the caret's line rather than into the
+// middle of it. The marker is the text itself, so a selection copy (or another
+// application's clipboard) pastes inline as before, and a line CUT pastes the
+// same way.
+void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "lines.txt";
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WriteFile(file, "one\ntwo\n");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto clipboard = std::make_shared<std::string>();
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, [clipboard]() -> std::optional<std::string> { return *clipboard; });
+  WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [clipboard](std::string_view text) {
+    clipboard->assign(text);
+    return true;
+  });
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  viewport.MoveCursorTo(0, 1);
+  Expect(RunCommandLine(shell, "copy"), "copy with no selection dispatches");
+  Expect(*clipboard == "one\n", "it copies the whole line, newline included");
+  viewport.MoveCursorTo(1, 1);
+  Expect(RunCommandLine(shell, "paste"), "paste dispatches");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"one", "one", "two", ""},
+         "the line lands above the caret's line, not inside it");
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+         "the caret is at the start of the line it was on, one line down");
+
+  // A selection copy clears the rule: the same text pastes inline.
+  viewport.MoveCursorTo(0, 0);
+  viewport.SelectWordAtCursor();
+  Expect(RunCommandLine(shell, "copy"), "a selection copy dispatches");
+  Expect(*clipboard == "one", "the selection is what was copied");
+  viewport.MoveCursorTo(2, 1);
+  Expect(RunCommandLine(shell, "paste"), "paste dispatches");
+  Expect(viewport.lines()[2] == "tonewo", "a selection copy pastes at the caret");
+
+  // A line cut pastes on its own line too.
+  viewport.MoveCursorTo(0, 2);
+  Expect(RunCommandLine(shell, "cut"), "cut with no selection dispatches");
+  Expect(*clipboard == "one\n" && viewport.lines()[0] == "one",
+         "cut takes the whole line off the buffer and onto the clipboard");
+  viewport.MoveCursorTo(1, 3);
+  Expect(RunCommandLine(shell, "paste"), "paste dispatches");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"one", "one", "tonewo", ""},
+         "the cut line comes back above the caret's line");
+
+  // Something else on the clipboard (another application, say) is not a line paste.
+  *clipboard = "zzz\n";
+  viewport.MoveCursorTo(0, 1);
+  Expect(RunCommandLine(shell, "paste"), "paste dispatches");
+  Expect(viewport.lines()[0] == "ozzz" && viewport.lines()[1] == "ne",
+         "text the editor did not line-copy pastes at the caret");
+}
+
 // Save As and open-before-it-exists, as VS Code: an untitled buffer is named by
 // `save <path>` (Ctrl+S opens the Save As prompt; the command line is told what
 // to type), `tab`/`open` on a path that is not there yet opens an empty buffer
@@ -6776,6 +6837,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchWalksForwardEachPress",
           TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress);
+  AddTest(tests, "WorkspaceShell/EmptySelectionCopyPastesAsAWholeLine",
+          TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine);
   AddTest(tests, "WorkspaceShell/ShapingCapabilityTogglesGateExecutorCommandsAndIndentTab",
           TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab);
   AddTest(tests, "WorkspaceShell/CodeActionMenuIsCentered",

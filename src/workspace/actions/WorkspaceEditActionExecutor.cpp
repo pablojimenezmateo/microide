@@ -300,10 +300,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       context_.Redo();
       return DispatchResult::Handled;
     case ActionId::CopySelection: {
-      const std::string text = context_.CopySelectionText();
+      bool whole_line = false;
+      const std::string text = context_.CopySelectionText(&whole_line);
       if (!text.empty()) {
         context_.WriteClipboardText(text);
         context_.WritePrimarySelectionText(text);
+        context_.RememberLineClipboardCopy(text, whole_line);
       }
       return DispatchResult::Handled;
     }

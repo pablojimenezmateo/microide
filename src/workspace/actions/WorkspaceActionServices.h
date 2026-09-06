@@ -472,7 +472,12 @@ class WorkspaceActionContext {
   void SelectAll();
   void Undo();
   void Redo();
-  std::string CopySelectionText() const;
+  // `*whole_line` (optional) is set when the text is the caret's whole line,
+  // copied because nothing was selected -- the case a later paste treats as a
+  // line paste (see ProjectCatalogState::line_clipboard_text).
+  std::string CopySelectionText(bool* whole_line = nullptr) const;
+  // Record / clear the empty-selection line copy that a paste keys on.
+  void RememberLineClipboardCopy(std::string_view text, bool whole_line);
   std::optional<std::string> LastTerminalCommandText() const;
   std::optional<std::string> SelectionTextWithContext();
   void CutSelection();

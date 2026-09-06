@@ -1020,7 +1020,10 @@ void WorkspaceActionContext::Undo() { ApplyUndoRedo(/*redo=*/false); }
 
 void WorkspaceActionContext::Redo() { ApplyUndoRedo(/*redo=*/true); }
 
-std::string WorkspaceActionContext::CopySelectionText() const {
+std::string WorkspaceActionContext::CopySelectionText(bool* whole_line) const {
+  if (whole_line != nullptr) {
+    *whole_line = false;
+  }
   // A focused single-line field owns the keystroke even when the panel holds
   // focus: the terminal find bar floats over a terminal that may itself have a
   // selection, and Ctrl+C there must copy the query, not the transcript.
@@ -1045,9 +1048,20 @@ std::string WorkspaceActionContext::CopySelectionText() const {
     if (viewport->has_selection()) {
       return viewport->SelectedText();
     }
+    if (whole_line != nullptr) {
+      *whole_line = true;
+    }
     return viewport->CurrentLineTextForClipboard();
   }
   return {};
+}
+
+void WorkspaceActionContext::RememberLineClipboardCopy(std::string_view text, bool whole_line) {
+  if (whole_line) {
+    project_catalog_.line_clipboard_text.assign(text);
+  } else {
+    project_catalog_.line_clipboard_text.clear();
+  }
 }
 
 std::optional<std::string> WorkspaceActionContext::LastTerminalCommandText() const {
@@ -1092,6 +1106,9 @@ void WorkspaceActionContext::CutSelection() {
     }
     if (!text.empty() && operations_.write_clipboard_text(text)) {
       operations_.write_primary_selection_text(text);
+      // A cut with nothing selected takes the whole line, and pasting it back
+      // elsewhere puts it on its own line (see PasteClipboard).
+      RememberLineClipboardCopy(text, !multi_text.has_value() && !has_selection);
       const std::size_t cursor_before_line = viewport->cursor_line();
       std::optional<editor::SelectionRange> selection_before;
       std::optional<editor::TextPosition> cursor_before;
@@ -1127,10 +1144,32 @@ void WorkspaceActionContext::CutSelection() {
 }
 
 void WorkspaceActionContext::PasteClipboard() {
-  if (std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
-      clipboard_text.has_value()) {
-    InsertTextIntoActiveSurface(std::move(*clipboard_text), /*distribute_across_carets=*/true);
+  std::optional<std::string> clipboard_text = operations_.read_clipboard_text();
+  if (!clipboard_text.has_value()) {
+    return;
   }
+  // VS Code's emptySelectionClipboard rule: the clipboard still holds exactly
+  // the whole line an empty-selection copy or cut put there, and the paste
+  // target is a single caret with nothing selected, so the line goes in ABOVE
+  // the caret's line -- not into the middle of it -- and the caret lands at the
+  // start of the line it was on, one line further down. Anything typed, another
+  // copy, or a paste into a terminal / single-line field takes the ordinary
+  // path; the marker only ever matches its own text, so a clipboard written by
+  // another application never triggers it.
+  const bool line_paste =
+      !project_catalog_.line_clipboard_text.empty() &&
+      *clipboard_text == project_catalog_.line_clipboard_text &&
+      clipboard_text->back() == '\n' &&
+      !(state_.surface.focus == FocusTarget::Panel &&
+        operations_.active_terminal_tab() != nullptr) &&
+      !operations_.has_active_single_line_text_surface();
+  if (line_paste) {
+    if (auto* viewport = operations_.active_editable_viewport();
+        viewport != nullptr && !viewport->has_selection() && !viewport->has_multiple_carets()) {
+      viewport->MoveCursorTo(viewport->cursor_line(), 0);
+    }
+  }
+  InsertTextIntoActiveSurface(std::move(*clipboard_text), /*distribute_across_carets=*/true);
 }
 
 void WorkspaceActionContext::InsertText(std::string text) {
