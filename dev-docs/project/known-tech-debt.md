@@ -535,6 +535,14 @@ TD-2026-09-05-286). Every finding is its own commit with a regression test
   revision moved, and the close prompt counts an editable compare side as a
   view. Confirmed on the real binary: an edit typed into the compare side and
   one typed into the editor tab both reach disk through their own saves.
+  Extending the walk with external changes, renames, deletes, `reopen`, new
+  buffers and project tabs then found two more leaks of the same shape:
+  `reopen` swapped a fresh viewport into the active tab alone (it now goes
+  through the shared clean reload), and the rename retarget keyed each tab on
+  its viewport's path, which the first view's SetPath had already moved for
+  every other view, so those tabs kept the old name (it keys on the tab's own
+  path now). The walk is 5 seeds x 600 steps over 25 operations and runs in
+  about a second and a half.
 - **Lanes**: full ctest green after each commit; `perf-tests` (allocation
   contracts) green after the cell-model change and again after the shared-
   buffer change and the search change; clang-build, hardened, asan, ubsan and tsan each green once
