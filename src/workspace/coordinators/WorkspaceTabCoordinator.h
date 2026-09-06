@@ -105,6 +105,11 @@ class TabCoordinator {
   bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
                       const std::filesystem::path& path, std::string* error);
   bool IsDirty(std::size_t index) const;
+  // Whether closing focused-group tab `index` would drop unsaved edits: it is
+  // dirty AND no other loaded editor tab in any group is a view of the same
+  // document. A dirty buffer another pane still shows lives on when this view
+  // closes (VS Code closes such an editor without a prompt).
+  bool CloseWouldDiscardEdits(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
   // Allocation-free "is anything dirty in this project", for callers that only

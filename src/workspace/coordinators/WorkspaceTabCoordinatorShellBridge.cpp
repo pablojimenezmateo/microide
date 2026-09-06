@@ -528,6 +528,24 @@ void WorkspaceShell::FocusEditorGroup(std::size_t group_index) {
 }
 
 bool WorkspaceShell::CloseEditorGroup() {
+  if (EditorGroupCount() < 2) {
+    return false;
+  }
+  // Closing a pane drops its tabs. A dirty buffer whose only view lives in this
+  // pane used to go with them, silently; it gets the same Save / Discard / Cancel
+  // as closing its tab (VS Code prompts here too). Route through the tab-close
+  // path, which prompts, and collapses the pane once its last tab closes.
+  const std::size_t tab_count = context_.current_project_state.focused_group().open_tabs.size();
+  for (std::size_t index = 0; index < tab_count; ++index) {
+    if (MakeEditorTabService().CloseWouldDiscardEdits(index)) {
+      std::vector<std::size_t> indices(tab_count);
+      for (std::size_t i = 0; i < tab_count; ++i) {
+        indices[i] = i;
+      }
+      RequestCloseTabs(std::move(indices));
+      return true;
+    }
+  }
   return MakeEditorTabService().CloseEditorGroup();
 }
 

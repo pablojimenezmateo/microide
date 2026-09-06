@@ -27,6 +27,31 @@ bool TabCoordinator::IsDirty(std::size_t index) const {
   return index < state_.focused_group().open_tabs.size() && TabStateIsDirty(state_.focused_group().open_tabs[index]);
 }
 
+bool TabCoordinator::CloseWouldDiscardEdits(std::size_t index) const {
+  if (!IsDirty(index)) {
+    return false;
+  }
+  const TabEntry& closing = state_.focused_group().open_tabs[index];
+  // Only editor tabs share a document; a compare/merge tab's editable side is
+  // its own viewport, so its edits are its own to lose.
+  if (closing.kind != TabEntry::Kind::Editor || !closing.editor_state.has_value()) {
+    return true;
+  }
+  const editor::TextViewport& closing_view = closing.editor_state->viewport;
+  for (const EditorGroup& group : state_.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (&tab == &closing || tab.kind != TabEntry::Kind::Editor ||
+          !tab.editor_state.has_value() || tab.editor_state->needs_restore) {
+        continue;
+      }
+      if (tab.editor_state->viewport.SharesDocumentWith(closing_view)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
 std::vector<std::size_t> TabCoordinator::DirtyIndices() const {
   std::vector<std::size_t> dirty_tabs;
   dirty_tabs.reserve(state_.focused_group().open_tabs.size());

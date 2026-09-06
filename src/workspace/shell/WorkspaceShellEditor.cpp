@@ -460,10 +460,13 @@ void WorkspaceShell::RequestCloseTabs(std::vector<std::size_t> indices) {
     return;
   }
 
+  // Prompt for the tabs whose close would actually discard edits. A dirty buffer
+  // another pane still shows lives on when this view closes — VS Code closes
+  // such an editor silently — so it gets no Save / Discard / Cancel here.
   std::vector<std::size_t> dirty_indices;
   dirty_indices.reserve(indices.size());
   for (std::size_t index : indices) {
-    if (TabIsDirty(index)) {
+    if (MakeEditorTabService().CloseWouldDiscardEdits(index)) {
       dirty_indices.push_back(index);
     }
   }

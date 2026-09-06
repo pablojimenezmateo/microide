@@ -328,6 +328,13 @@ class TextViewport {
   // is false for untitled buffers and files that were absent when last sampled.
   const util::FileSignature& disk_signature() const { return document_->disk_signature; }
   bool HasDiskSignature() const { return document_->disk_signature.exists; }
+  // True when `other` is another view of this viewport's document (a split
+  // clone, a second tab on the same file). Views of one document share its
+  // content, dirty state, undo history and disk signature; closing one of them
+  // discards nothing while another remains.
+  bool SharesDocumentWith(const TextViewport& other) const {
+    return document_ == other.document_;
+  }
 
   // Result of comparing the file on disk *now* against the signature we recorded
   // at load/last-save. Used by coordinators to avoid clobbering external edits.

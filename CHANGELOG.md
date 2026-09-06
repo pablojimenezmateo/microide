@@ -30,6 +30,7 @@ project (see [README](README.md)); versions track meaningful shipped work.
   headless driver can rename through the language server.
 
 ### Fixed
+- Editor groups: closing a pane's tab while another pane still shows the same dirty buffer no longer asks to save or discard (the buffer lives on, as in VS Code), and `close-group` on a pane holding the only view of a dirty buffer now prompts instead of silently dropping the edits.
 - Editor groups: undo/redo history now lives on the shared buffer instead of each pane. With a file split across two panes, undo in one pane after typing in the other replayed a stale splice and removed the other pane's bytes. A session restored with the same file in two panes also loads it once and shares it.
 - Editor groups: opening a file that is already open in another pane (`open`/`tab` from the other group, `split-right <path>`, the file tree) read it from disk again as an independent buffer, so an edit in one pane was invisible in the other and the panes saved over each other; a second view now shares the live buffer, as the plain split always did. Replace-all and a rename that discards edits reopen a file once and hand every pane the same buffer instead of one per pane.
 - Control channel: a rejected command whose message repeated the previous reply (`project-next` twice with one project open, `format-document` after another "No active file") came back as a bare "command failed"; the reply now clears the panel feedback before dispatch instead of diffing it against a snapshot.

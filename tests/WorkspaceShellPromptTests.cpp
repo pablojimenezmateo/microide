@@ -1044,7 +1044,8 @@ void TestWorkspaceShellRenameRetargetsAllEditorGroups() {
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
   // Split (clones the active tab) so shared.txt is open in both groups, then focus back.
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
          "split should create a second group showing the same file");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
@@ -1074,7 +1075,8 @@ void TestWorkspaceShellDeleteClosesTabInAllEditorGroups() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, source);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
          "split should create a second group showing the same file");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
   Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus back to group 0");
@@ -1111,7 +1113,8 @@ void TestWorkspaceShellRenameRetargetsBackgroundCompareTab() {
   // Editor tab in group 0; split focuses the new group 1; open the comparison there so it
   // ends up in the eventual BACKGROUND group after we refocus group 0.
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
          "split should create a second group");
   Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "two groups after split");
   Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
@@ -1157,7 +1160,8 @@ void TestWorkspaceShellRenameRetargetsBackgroundMergeTab() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
          "split should create a second group");
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge editor should open in the focused (soon background) group");
@@ -1210,7 +1214,8 @@ void TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs() {
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
   WorkspaceShellTestAccess::OpenSingleEditorTab(shell, scratch);
-  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
          "split should create a second group");
   Expect(WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output),
          "merge editor should open in the focused (soon background) group");
@@ -1233,7 +1238,72 @@ void TestWorkspaceShellDeleteClosesBackgroundCompareAndMergeTabs() {
          "delete must close the background compare and merge tabs, leaving only scratch");
 }
 
+// Closing one pane's view of a dirty buffer another pane still shows discards
+// nothing (the buffer lives on), so it must not prompt — VS Code closes such an
+// editor silently. Closing the LAST view still asks, including through
+// close-group, which used to drop the pane's tabs with no prompt at all.
+void TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::filesystem::create_directories(root);
+  const std::filesystem::path alpha = root / "alpha.txt";
+  const std::filesystem::path beta = root / "beta.txt";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, alpha);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "split-right should clone alpha into a second pane");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "the split is focused");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("X");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
+         "both panes share the dirty buffer");
+
+  // Close the split's tab: the other pane keeps the buffer, so no prompt.
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing one view of a shared dirty buffer must not prompt");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1, "the empty pane collapsed");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).lines().LineView(0) == "Xalpha" &&
+             WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
+         "the surviving pane still holds the edit");
+
+  // close-group on a pane whose view is not the last one: no prompt either.
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(
+             shell, microide::workspace::EditorSplitOrientation::Vertical),
+         "split-right again");
+  Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell), "close-group should succeed");
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing a pane whose buffer another pane shows must not prompt");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1, "back to one pane");
+
+  // close-group on a pane holding the ONLY view of a dirty buffer prompts, and
+  // Discard drops the pane without writing the file.
+  Expect(WorkspaceShellTestAccess::ExecuteCommandLine(shell, "split-right beta.txt"),
+         "split-right beta should succeed");
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("Y");
+  Expect(WorkspaceShellTestAccess::CloseEditorGroup(shell), "close-group should be accepted");
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing the pane holding the last view of a dirty buffer must prompt");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 2, "the pane waits on the prompt");
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 1);
+  Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell), "Discard dismisses the prompt");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 1, "Discard closes the pane");
+  Expect(ReadFile(beta) == "beta\n", "Discard writes nothing");
+
+  // The last view of alpha, closed as a tab, still prompts.
+  WorkspaceShellTestAccess::RequestCloseTab(shell, 0);
+  Expect(WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+         "closing the last view of a dirty buffer prompts");
+  WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 2);
+}
+
 void RegisterWorkspaceShellPromptTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/ClosingOneViewOfASharedDirtyBufferDoesNotPrompt",
+          TestWorkspaceShellClosingOneViewOfASharedDirtyBufferDoesNotPrompt);
   AddTest(tests, "WorkspaceShell/RenameRetargetsAllEditorGroups",
           TestWorkspaceShellRenameRetargetsAllEditorGroups);
   AddTest(tests, "WorkspaceShell/DeleteClosesTabInAllEditorGroups",

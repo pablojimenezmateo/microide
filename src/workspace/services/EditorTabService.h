@@ -22,6 +22,7 @@ class EditorTabService {
   bool SaveGroupTabAs(std::size_t group_index, std::size_t index,
                       const std::filesystem::path& path, std::string* error);
   bool IsDirty(std::size_t index) const;
+  bool CloseWouldDiscardEdits(std::size_t index) const;
   std::vector<std::size_t> DirtyIndices() const;
   std::vector<std::size_t> DirtyIndicesForProject(std::size_t project_index) const;
   bool HasDirtyTabForProject(std::size_t project_index) const;

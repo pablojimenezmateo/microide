@@ -32,6 +32,10 @@ bool EditorTabService::IsDirty(std::size_t index) const {
   return coordinator_.IsDirty(index);
 }
 
+bool EditorTabService::CloseWouldDiscardEdits(std::size_t index) const {
+  return coordinator_.CloseWouldDiscardEdits(index);
+}
+
 std::vector<std::size_t> EditorTabService::DirtyIndices() const {
   return coordinator_.DirtyIndices();
 }
