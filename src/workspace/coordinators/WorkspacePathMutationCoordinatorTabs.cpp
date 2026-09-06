@@ -169,7 +169,12 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
       auto& editor_state = *tab.editor_state;
       bool retargeted = false;
       bool close_tab = false;
-      const std::filesystem::path current_path = operations_.editor_view_path(editor_state);
+      // Keyed on the tab's own path record, not the viewport's: a file open in
+      // several panes is one document, so the first view's SetPath below already
+      // moved every other view's viewport path, and matching on it skipped their
+      // tab records -- a tab titled by the old name over a buffer at the new one.
+      const std::filesystem::path current_path =
+          tab.path.empty() ? operations_.editor_view_path(editor_state) : tab.path.lexically_normal();
       if (!current_path.empty() && PathEqualsOrWithin(current_path, old_path)) {
         const std::filesystem::path updated_path =
             util::ReplacePathPrefix(current_path, old_path, new_path).lexically_normal();
@@ -296,7 +301,12 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         }
         continue;
       }
-      const std::filesystem::path current_path = operations_.editor_view_path(editor_state);
+      // Keyed on the tab's own path record, not the viewport's: a file open in
+      // several panes is one document, so the first view's SetPath below already
+      // moved every other view's viewport path, and matching on it skipped their
+      // tab records -- a tab titled by the old name over a buffer at the new one.
+      const std::filesystem::path current_path =
+          tab.path.empty() ? operations_.editor_view_path(editor_state) : tab.path.lexically_normal();
       if (current_path.empty() || !PathEqualsOrWithin(current_path, old_path)) {
         continue;
       }

@@ -30,6 +30,7 @@ project (see [README](README.md)); versions track meaningful shipped work.
   headless driver can rename through the language server.
 
 ### Fixed
+- `reopen` reloaded only the active tab from disk and left other panes showing the same file on the old buffer; it now reloads the file for every view. Renaming a file open in several panes updated the buffer's path once but left the other panes' tab records on the old name.
 - Compare tabs: an external change to a file, and a project replace-all that rewrites it, now reload the compare's editable side together with the editor tabs on that file, so the panes keep sharing one buffer.
 - Compare tabs: the editable working-tree side (and an editable `compare-files` side) is now a view of the same buffer as an editor tab on that file, as in VS Code's diff editor. It used to load its own copy from disk, so it diffed against the file rather than the unsaved buffer, an edit in one was invisible in the other, and saving one raised the external-change banner on the other. The diff model follows edits made through the editor tab, an external reload updates both, and closing one view of a dirty shared buffer no longer asks to discard.
 - Session restore: a dirty file that was open in two panes came back as two independent copies; the second pane now shares the first's restored buffer.

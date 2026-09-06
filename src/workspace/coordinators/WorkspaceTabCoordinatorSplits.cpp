@@ -219,27 +219,22 @@ bool TabCoordinator::ReopenActive() {
   if (reopen_path.empty() || editor_state.viewport.dirty()) {
     return false;
   }
-
-  editor::TextViewport reopened_view;
-  if (!reopened_view.OpenFile(reopen_path)) {
+  std::error_code exists_error;
+  if (!std::filesystem::is_regular_file(reopen_path, exists_error) || exists_error) {
     return false;
   }
-  operations_.apply_editor_preferences(reopened_view);
-  operations_.apply_detected_indent_on_open(reopened_view);
 
-  // Read the restore metadata before the move — then hand the document over
-  // rather than deep-copying it (a whole-file line copy on a large buffer).
-  editor_state.restored_path = reopen_path;
-  editor_state.restored_cursor_line = reopened_view.cursor_line();
-  editor_state.restored_cursor_column = reopened_view.cursor_column();
-  editor_state.restored_scroll_line = reopened_view.scroll_line();
-  editor_state.restored_horizontal_scroll = reopened_view.horizontal_scroll();
-  editor_state.viewport = std::move(reopened_view);
-  editor_state.needs_restore = false;
-  editor_state.folding_model->Clear();
+  // Re-reading the file is a reload of the DOCUMENT, and a file open in several
+  // panes (or as a compare's editable side) is one document: this used to swap a
+  // fresh viewport into the active tab alone, which left every other view on the
+  // old buffer -- the panes then diverged and saved over each other. The shared
+  // reload re-points every clean view, keeps each one's caret and scroll, clears
+  // their folds and re-syncs the language server once; when the file on disk
+  // still matches what the views loaded it is a no-op, which is what reverting an
+  // unchanged file should be.
+  ReloadEditorTabsForPath(reopen_path, /*clean_only=*/true);
 
   SyncActiveEditorTabMetadata();
-  operations_.invalidate_editor_blame_path(reopen_path);
   state_.surface.focus = FocusTarget::Editor;
   operations_.reset_caret_blink();
   operations_.request_editor_surface_redraw();

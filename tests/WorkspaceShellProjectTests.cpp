@@ -1346,9 +1346,26 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   std::size_t saves_refused = 0;
   std::string last_prompt_message;
 
+  // The files a step can pick: whatever text files the walk's renames, deletes
+  // and new buffers have left in the project (the merge fixture aside).
+  const auto project_files = [&]() {
+    std::vector<std::string> files;
+    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+      const std::string name = entry.path().filename().string();
+      if (entry.is_regular_file() && name.ends_with(".txt") && name != "base.txt" &&
+          name != "incoming.txt" && name != "current.txt" && name != "merged.txt") {
+        files.push_back(name);
+      }
+    }
+    std::sort(files.begin(), files.end());
+    return files;
+  };
+  std::size_t fresh_counter = 0;
   const auto check = [&](const std::string& context) {
     const std::size_t groups = WorkspaceShellTestAccess::EditorGroupCount(shell);
     max_groups_seen = std::max(max_groups_seen, groups);
+    Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+           "no prompt surface survives a step: " + context);
     const auto& tree = WorkspaceShellTestAccess::EditorSplit(shell);
     ExpectSplitTreeWellFormed(tree, context);
     Expect(tree.leaf_count() == groups, "one leaf per group: " + context);
@@ -1418,8 +1435,9 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
     const std::size_t groups = WorkspaceShellTestAccess::EditorGroupCount(shell);
     const std::size_t focused = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
     const std::size_t focused_tabs = WorkspaceShellTestAccess::GroupTabCount(shell, focused);
-    const std::string& file = names[pick(names.size())];
-    const std::size_t op = pick(17);
+    const std::vector<std::string> files = project_files();
+    const std::string file = files.empty() ? names[0] : files[pick(files.size())];
+    const std::size_t op = pick(22);
     std::string context = "seed " + std::to_string(seed) + " step " + std::to_string(step) +
                           " op " + std::to_string(op);
     switch (op) {
@@ -1505,8 +1523,47 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
         context += " tabmove";
         break;
       case 15:
-        RunCommandLine(shell, "compare-files " + file + " " + names[pick(names.size())]);
+        RunCommandLine(shell, "compare-files " + file + " " +
+                                  (files.empty() ? names[0] : files[pick(files.size())]));
         context += " compare-files";
+        break;
+      case 17: {
+        // The file changes on disk under whatever views show it.
+        WriteFile(root / file, "external " + std::to_string(step) + "\n" + file + "\n");
+        WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true);
+        answer_prompt();
+        context += " external change " + file;
+        break;
+      }
+      case 18: {
+        const std::string target = "renamed_" + std::to_string(step) + ".txt";
+        WorkspaceShellTestAccess::PrepareRenamePrompt(shell, root / file, target);
+        WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+        answer_prompt();
+        if (WorkspaceShellTestAccess::PromptSurfaceVisible(shell)) {
+          WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);  // Cancel
+        }
+        context += " rename " + file + " -> " + target;
+        break;
+      }
+      case 19:
+        if (files.size() > 2) {
+          WorkspaceShellTestAccess::PrepareDeletePrompt(shell, root / file);
+          WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+          answer_prompt();
+          if (WorkspaceShellTestAccess::PromptSurfaceVisible(shell)) {
+            WorkspaceShellTestAccess::ConfirmPromptSurface(shell, 1);  // Cancel
+          }
+        }
+        context += " delete " + file;
+        break;
+      case 20:
+        RunCommandLine(shell, "reopen");
+        context += " reopen";
+        break;
+      case 21:
+        RunCommandLine(shell, "tab fresh_" + std::to_string(fresh_counter++) + ".txt");
+        context += " new buffer";
         break;
       case 16:
         RunCommandLine(shell, "merge base.txt incoming.txt current.txt merged.txt");
