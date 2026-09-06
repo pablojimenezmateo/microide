@@ -582,14 +582,20 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
           group_index == context_.current_project_state.focused_group_index;
       for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
         auto& tab = group.open_tabs[i];
-        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
+        const bool compare_side_of_file =
+            tab.kind == TabEntry::Kind::Compare && tab.compare.has_value() &&
+            tab.compare->right_editable &&
+            util::SameAsNormalizedPath(tab.compare->right_viewport.path(), change.absolute_path);
+        if (!compare_side_of_file &&
+            (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value())) {
           continue;
         }
-        auto& editor_state = *tab.editor_state;
-        if (EditorViewPath(editor_state) != change.absolute_path) {
+        if (!compare_side_of_file && EditorViewPath(*tab.editor_state) != change.absolute_path) {
           continue;
         }
-        if (editor_state.viewport.dirty()) {
+        const editor::TextViewport& current_view =
+            compare_side_of_file ? tab.compare->right_viewport : tab.editor_state->viewport;
+        if (current_view.dirty()) {
           continue;  // became dirty mid-flight: keep the user's edits
         }
 
@@ -602,6 +608,13 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
           ApplyDetectedIndentOnOpen(fresh_view);
           reopened_view = std::move(fresh_view);
         }
+        if (compare_side_of_file) {
+          // The compare's editable side is a view of the same file; it takes the
+          // one reopened document too (see RepointCompareRightSideToReloadedBuffer).
+          RepointCompareRightSideToReloadedBuffer(*tab.compare, *reopened_view);
+          continue;
+        }
+        auto& editor_state = *tab.editor_state;
         editor_state.viewport = *reopened_view;
         editor_state.restored_path = change.absolute_path;
         editor_state.restored_cursor_line = reopened_view->cursor_line();

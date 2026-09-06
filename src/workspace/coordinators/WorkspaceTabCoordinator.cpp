@@ -530,15 +530,7 @@ void TabCoordinator::ReloadEditorTabsForPath(const std::filesystem::path& path, 
     for (std::size_t i = 0; i < group.open_tabs.size(); ++i) {
       TabEntry& tab = group.open_tabs[i];
       if (matches_compare(tab) && !(clean_only && TabStateIsDirty(tab))) {
-        editor::TextViewport& right = tab.compare->right_viewport;
-        editor::TextViewport restored_view = reopened_view;
-        restored_view.SetViewportSize(right.visible_lines(), right.visible_columns());
-        restored_view.ApplyRestoredViewState(right.cursor_line(), right.cursor_column(),
-                                             right.scroll_line(), right.horizontal_scroll());
-        right = std::move(restored_view);
-        // A fresh document restarts its content revision, which the compare's
-        // model fingerprint would read as "unchanged".
-        tab.compare->derived_fingerprint_valid = false;
+        RepointCompareRightSideToReloadedBuffer(*tab.compare, reopened_view);
         continue;
       }
       if (!matches(tab) || (clean_only && TabStateIsDirty(tab))) {

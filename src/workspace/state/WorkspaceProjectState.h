@@ -650,6 +650,23 @@ inline bool AdoptLiveBufferForCompareRightSide(const std::vector<EditorGroup>& g
   return true;
 }
 
+// Hands a compare tab's editable side a copy of `reopened_view` -- the document a
+// reload just read for this path -- keeping the side's own size, caret and
+// scroll, and invalidating the model fingerprint a fresh document's restarted
+// content revision would otherwise satisfy. Every reload that re-points editor
+// tabs to a reopened document re-points the compare sides with it, or the panes
+// split into one buffer per tab again.
+inline void RepointCompareRightSideToReloadedBuffer(CompareTabState& compare_tab,
+                                                    const editor::TextViewport& reopened_view) {
+  editor::TextViewport& right = compare_tab.right_viewport;
+  editor::TextViewport restored_view = reopened_view;
+  restored_view.SetViewportSize(right.visible_lines(), right.visible_columns());
+  restored_view.ApplyRestoredViewState(right.cursor_line(), right.cursor_column(),
+                                       right.scroll_line(), right.horizontal_scroll());
+  right = std::move(restored_view);
+  compare_tab.derived_fingerprint_valid = false;
+}
+
 // A tab addressed by (group, tab) across ALL editor groups of one project. Used
 // by the all-groups dirty enumerators and the group-aware save primitive so
 // autosave / save-on-quit flush a buffer dirtied in the non-focused split group

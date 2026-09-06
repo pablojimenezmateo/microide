@@ -403,6 +403,47 @@ void TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer() {
   Expect(shares, "the editor tab and the compare's side are views of one document");
 }
 
+// An external change to a file shown in an editor tab AND a working-tree compare
+// reloads one document and both views take it: the editor reload re-points the
+// compare side, and the compare's own refresh (a rebuild from disk) rejoins the
+// editor's reloaded buffer. Either order leaves the two sharing.
+void TestWorkspaceShellWorkingTreeCompareFollowsAnExternalReload() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "notes.txt";
+  WriteFile(source, "first\nsecond\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add reload fixture", "reload fixture");
+  WriteFile(source, "first\nsecond\nthird\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, source);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "the working-tree comparison should open");
+  Expect(WorkspaceShellTestAccess::GroupTabCount(shell, 0) == 2, "an editor tab and a compare tab");
+  const editor::TextViewport* editor = WorkspaceShellTestAccess::GroupTabViewport(shell, 0, 0);
+  const editor::TextViewport* compare = WorkspaceShellTestAccess::GroupTabViewport(shell, 0, 1);
+  Expect(editor != nullptr && compare != nullptr && compare->SharesDocumentWith(*editor),
+         "the two tabs start as views of one document");
+
+  // Change the file underneath both (clean) views and let the project change
+  // flow reload it.
+  std::this_thread::sleep_for(std::chrono::milliseconds(20));
+  WriteFile(source, "changed on disk\nsecond\nthird\n");
+  Expect(WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true),
+         "the forced project check should notice the modified file");
+  editor = WorkspaceShellTestAccess::GroupTabViewport(shell, 0, 0);
+  compare = WorkspaceShellTestAccess::GroupTabViewport(shell, 0, 1);
+  Expect(editor != nullptr && editor->lines().LineView(0) == "changed on disk",
+         "the editor tab reloads the changed file");
+  Expect(compare != nullptr && compare->lines().LineView(0) == "changed on disk",
+         "the compare's editable side shows the changed file too");
+  Expect(compare != nullptr && editor != nullptr && compare->SharesDocumentWith(*editor),
+         "after the reload the two tabs are still views of ONE document");
+}
+
 // A BOM file's working-tree compare: the blob carries the mark and the editable
 // pane strips it, so the pane's serialization has to put it back or line 1 reads
 // as modified forever, and saving the pane has to write it back.
@@ -2670,6 +2711,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareSharesTheEditorTabsBuffer",
           TestWorkspaceShellWorkingTreeCompareSharesTheEditorTabsBuffer);
+  AddTest(tests, "WorkspaceShell/WorkingTreeCompareFollowsAnExternalReload",
+          TestWorkspaceShellWorkingTreeCompareFollowsAnExternalReload);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareKeepsUtf8Bom",
           TestWorkspaceShellWorkingTreeCompareKeepsUtf8Bom);
   AddTest(tests, "WorkspaceShell/CompareWordWrapExpandsRowsAndKeepsPanesAligned",
