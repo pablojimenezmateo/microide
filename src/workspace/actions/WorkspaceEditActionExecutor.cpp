@@ -626,6 +626,12 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
                   " matches (more remain)");
         }
       }
+      // The carets are in the editor now, so that is where the next keystroke
+      // belongs. Both chords are reachable while the find widget holds focus
+      // (VS Code's Ctrl+D / Alt+Enter from the find input do the same and hand
+      // focus to the editor); leaving it on the widget put the replacement text
+      // into the search box and left every selected occurrence untouched.
+      context_.Focus(FocusRequestTarget::Editor);
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;
     }

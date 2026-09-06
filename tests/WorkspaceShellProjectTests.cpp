@@ -2723,6 +2723,33 @@ void TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine() {
          "text the editor did not line-copy pastes at the caret");
 }
 
+// Ctrl+Shift+L / Ctrl+D with the find widget focused: the carets are in the
+// editor afterwards, so focus goes there too (VS Code's Alt+Enter / Ctrl+D from
+// the find input). It used to stay on the widget, so the replacement went into
+// the search box and every selected occurrence was left as it was.
+void TestWorkspaceShellAddCursorAtAllMatchesFromFindWidgetFocusesTheEditor() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "words.txt";
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WriteFile(file, "foo x foo\nfoo\n");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+
+  Expect(RunCommandLine(shell, "search foo"), "the find widget opens on a query");
+  Expect(WorkspaceShellTestAccess::OverlayVisible(shell) &&
+             WorkspaceShellTestAccess::BufferSearchSurfaceFocused(shell),
+         "the widget has focus, as after Ctrl+F");
+  Expect(RunCommandLine(shell, "add-cursor-all-matches"), "the chord dispatches from the widget");
+  Expect(viewport.secondary_caret_range_view().size() == 2, "every occurrence is a caret");
+  Expect(WorkspaceShellTestAccess::FocusIsEditor(shell), "and the editor holds focus");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "bar"), "typing is accepted");
+  Expect(viewport.lines()[0] == "bar x bar" && viewport.lines()[1] == "bar",
+         "the keystroke replaces every occurrence, not the search query");
+}
+
 // Save As and open-before-it-exists, as VS Code: an untitled buffer is named by
 // `save <path>` (Ctrl+S opens the Save As prompt; the command line is told what
 // to type), `tab`/`open` on a path that is not there yet opens an empty buffer
@@ -6839,6 +6866,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress);
   AddTest(tests, "WorkspaceShell/EmptySelectionCopyPastesAsAWholeLine",
           TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine);
+  AddTest(tests, "WorkspaceShell/AddCursorAtAllMatchesFromFindWidgetFocusesTheEditor",
+          TestWorkspaceShellAddCursorAtAllMatchesFromFindWidgetFocusesTheEditor);
   AddTest(tests, "WorkspaceShell/ShapingCapabilityTogglesGateExecutorCommandsAndIndentTab",
           TestWorkspaceShellShapingCapabilityTogglesGateExecutorCommandsAndIndentTab);
   AddTest(tests, "WorkspaceShell/CodeActionMenuIsCentered",
