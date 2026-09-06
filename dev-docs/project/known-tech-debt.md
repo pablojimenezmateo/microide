@@ -515,6 +515,26 @@ TD-2026-09-05-286). Every finding is its own commit with a regression test
   callbacks; `process.*` skipped) -- 8,802 calls, 6,583 clean Lua errors, no
   crash, no sanitizer report, and the editor still edits and saves afterwards.
   Recipes in `scratchpad/sweep/sweep7.py` / `sweep8.py`.
+- **One buffer per file, finished.** A random operation walk at the shell level
+  (`WorkspaceShell/RandomTabAndGroupOperationsKeepInvariants`: 5 seeds x 600
+  steps over open, split, focus, type, undo, save, close-tab and close-group
+  with prompts answered at random, pane and tab moves, compare and merge tabs;
+  the split tree well formed, one leaf per pane, no empty pane beside another,
+  every tab's path its viewport's, same-path tabs sharing one document, no
+  prompt surviving a step) then exposed the two places the model still leaked:
+  a session restored with a dirty file in two panes rebuilt one document per
+  pane from the same snapshot, and a compare tab's editable working-tree side
+  was its own copy of the file (it diffed against disk rather than the unsaved
+  buffer, an edit in one pane was invisible in the other, and saving either
+  raised the external-change banner on the other -- the walk hit exactly that
+  as a refused Save on the close prompt). `LiveBufferViewOfPath` is now the one
+  lookup for "the buffer this file already has" (editor tabs and editable
+  compare sides; merge results stay their own), `AdoptLiveBufferForCompareRightSide`
+  joins a compare side at every builder, the external reload re-points every
+  view, frame prep rebuilds a visible compare pane's model when the shared
+  revision moved, and the close prompt counts an editable compare side as a
+  view. Confirmed on the real binary: an edit typed into the compare side and
+  one typed into the editor tab both reach disk through their own saves.
 - **Lanes**: full ctest green after each commit; `perf-tests` (allocation
   contracts) green after the cell-model change and again after the shared-
   buffer change and the search change; clang-build, hardened, asan, ubsan and tsan each green once
