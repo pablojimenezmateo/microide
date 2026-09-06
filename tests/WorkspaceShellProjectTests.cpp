@@ -17,6 +17,9 @@
 #include <thread>
 #include <vector>
 #include "WorkspaceShellEventHelpers.h"
+#include "EditorSplitTreeInvariants.h"
+
+#include <random>
 
 namespace microide::tests {
 namespace {
@@ -1298,6 +1301,203 @@ void TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer() {
     Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, gi).lines().LineView(0) ==
                split_line,
            "every pane showing alpha must show the same buffer");
+  }
+}
+
+// The tab/group/buffer model under a random operation sequence. Each step is one
+// of the things a user does to the editor area (open, split with or without a
+// path, focus, type, undo, save, close a tab or a pane and answer its prompt,
+// move a tab or a pane, switch tabs) and after every step the structure has to
+// hold: the split tree is well formed with one leaf per group, the focus index
+// is a group, no pane is empty while another exists, every editor tab's path is
+// its viewport's, and two editor tabs on one file are views of ONE document
+// while tabs on different files are not. No prompt survives a step.
+void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
+  using microide::workspace::EditorGroupDirection;
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::vector<std::string> names = {"alpha.txt", "beta.txt", "gamma.txt", "delta.txt"};
+  for (const std::string& name : names) {
+    WriteFile(root / name, name + "\n");
+  }
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetClipboardTextReader(shell, []() { return std::string("clip"); });
+  WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [](std::string_view) { return true; });
+
+  // Several seeds: the run is a quarter of a second per 600 steps, and every seed
+  // is a different walk through the layout space.
+  for (std::uint32_t seed = 20260906; seed < 20260906 + 5; ++seed) {
+  std::mt19937 rng(seed);
+  const auto pick = [&](std::size_t n) { return n == 0 ? 0 : static_cast<std::size_t>(rng() % n); };
+  // Vacuity guards: the sequence must actually reach split layouts, shared views
+  // and answered prompts, or the invariants are checked over nothing.
+  std::size_t max_groups_seen = 0;
+  std::size_t shared_view_steps = 0;
+  std::size_t prompts_answered = 0;
+
+  const auto check = [&](const std::string& context) {
+    const std::size_t groups = WorkspaceShellTestAccess::EditorGroupCount(shell);
+    max_groups_seen = std::max(max_groups_seen, groups);
+    const auto& tree = WorkspaceShellTestAccess::EditorSplit(shell);
+    ExpectSplitTreeWellFormed(tree, context);
+    Expect(tree.leaf_count() == groups, "one leaf per group: " + context);
+    Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) < groups, "focus is a group: " + context);
+    Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell), "no prompt survives a step: " + context);
+    struct View {
+      std::filesystem::path path;
+      const editor::TextViewport* viewport;
+    };
+    std::vector<View> views;
+    for (std::size_t gi = 0; gi < groups; ++gi) {
+      const std::size_t tabs = WorkspaceShellTestAccess::GroupTabCount(shell, gi);
+      Expect(groups == 1 || tabs > 0, "no empty pane beside another: " + context);
+      Expect(tabs == 0 || WorkspaceShellTestAccess::GroupActiveTabIndex(shell, gi) < tabs,
+             "the active tab index is a tab: " + context);
+      const auto paths = WorkspaceShellTestAccess::GroupTabPaths(shell, gi);
+      for (std::size_t ti = 0; ti < tabs; ++ti) {
+        const editor::TextViewport* viewport = WorkspaceShellTestAccess::GroupTabViewport(shell, gi, ti);
+        if (viewport == nullptr) {
+          continue;
+        }
+        Expect(viewport->path().lexically_normal() == paths[ti].lexically_normal(),
+               "a tab's path is its viewport's: " + context);
+        views.push_back(View{paths[ti].lexically_normal(), viewport});
+      }
+    }
+    for (std::size_t a = 0; a < views.size(); ++a) {
+      for (std::size_t b = a + 1; b < views.size(); ++b) {
+        const bool same_path = views[a].path == views[b].path;
+        Expect(views[a].viewport->SharesDocumentWith(*views[b].viewport) == same_path,
+               std::string(same_path ? "two tabs on one file share its document: "
+                                     : "tabs on different files do not share a document: ") +
+                   context);
+        if (same_path) {
+          ++shared_view_steps;
+          Expect(views[a].viewport->dirty() == views[b].viewport->dirty() &&
+                     views[a].viewport->line_count() == views[b].viewport->line_count(),
+                 "views of one document agree on its state: " + context);
+        }
+      }
+    }
+  };
+  const auto answer_prompt = [&]() {
+    if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
+      ++prompts_answered;
+      WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, static_cast<int>(pick(3)));
+    }
+  };
+
+  check("fresh");
+  for (int step = 0; step < 600; ++step) {
+    const std::size_t groups = WorkspaceShellTestAccess::EditorGroupCount(shell);
+    const std::size_t focused = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+    const std::size_t focused_tabs = WorkspaceShellTestAccess::GroupTabCount(shell, focused);
+    const std::string& file = names[pick(names.size())];
+    const std::size_t op = pick(15);
+    std::string context = "seed " + std::to_string(seed) + " step " + std::to_string(step) +
+                          " op " + std::to_string(op);
+    switch (op) {
+      case 0:
+      case 1:
+        WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / file);
+        context += " open " + file;
+        break;
+      case 2:
+        RunCommandLine(shell, (pick(2) == 0 ? "split-right " : "split-down ") + file);
+        context += " split " + file;
+        break;
+      case 3:
+        WorkspaceShellTestAccess::SplitEditorGroup(
+            shell, pick(2) == 0 ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal);
+        context += " split clone";
+        break;
+      case 4:
+        WorkspaceShellTestAccess::FocusOtherEditorGroup(shell);
+        context += " focus other";
+        break;
+      case 5:
+        WorkspaceShellTestAccess::HandleTextInput(shell, "x");
+        context += " type";
+        break;
+      case 6:
+        RunCommandLine(shell, pick(2) == 0 ? "undo" : "redo");
+        context += " undo/redo";
+        break;
+      case 7:
+        RunCommandLine(shell, "save");
+        context += " save";
+        break;
+      case 8:
+        if (focused_tabs > 0) {
+          WorkspaceShellTestAccess::RequestCloseTab(shell, pick(focused_tabs));
+          answer_prompt();
+        }
+        context += " close tab";
+        break;
+      case 9:
+        RunCommandLine(shell, "close-group");
+        answer_prompt();
+        context += " close-group";
+        break;
+      case 10: {
+        const EditorGroupDirection dirs[] = {EditorGroupDirection::Left, EditorGroupDirection::Right,
+                                             EditorGroupDirection::Up, EditorGroupDirection::Down};
+        WorkspaceShellTestAccess::MoveEditorGroupInDirection(shell, dirs[pick(4)]);
+        context += " move group";
+        break;
+      }
+      case 11: {
+        const std::size_t from = pick(groups);
+        const std::size_t from_tabs = WorkspaceShellTestAccess::GroupTabCount(shell, from);
+        const std::size_t to = pick(groups);
+        if (from_tabs > 0) {
+          WorkspaceShellTestAccess::MoveTabToGroup(
+              shell, from, pick(from_tabs), to,
+              pick(WorkspaceShellTestAccess::GroupTabCount(shell, to) + 1));
+        }
+        context += " move tab";
+        break;
+      }
+      case 12: {
+        const std::size_t from = pick(groups);
+        const std::size_t from_tabs = WorkspaceShellTestAccess::GroupTabCount(shell, from);
+        if (from_tabs > 0) {
+          WorkspaceShellTestAccess::MoveTabToNewGroup(
+              shell, from, pick(from_tabs), pick(groups),
+              pick(2) == 0 ? EditorSplitOrientation::Vertical : EditorSplitOrientation::Horizontal,
+              pick(2) == 0);
+        }
+        context += " move tab to new group";
+        break;
+      }
+      case 13:
+        RunCommandLine(shell, pick(2) == 0 ? "tabswitch +1" : "tabswitch -1");
+        context += " tabswitch";
+        break;
+      case 14:
+        RunCommandLine(shell, "tabmove " + std::to_string(pick(focused_tabs + 1)));
+        context += " tabmove";
+        break;
+    }
+    check(context);
+  }
+  Expect(max_groups_seen >= 3, "the sequence reached a three-pane layout");
+  Expect(shared_view_steps > 0, "the sequence held two views of one file");
+  Expect(prompts_answered > 0, "the sequence answered a dirty prompt");
+  // Close everything so the next seed starts from one empty pane.
+  while (WorkspaceShellTestAccess::EditorGroupCount(shell) > 1) {
+    RunCommandLine(shell, "close-group");
+    answer_prompt();
+    if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
+      WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, 1);
+    }
+  }
+  while (WorkspaceShellTestAccess::GroupTabCount(shell, 0) > 0) {
+    WorkspaceShellTestAccess::CloseTab(shell, 0);
+  }
   }
 }
 
@@ -6863,6 +7063,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab);
   AddTest(tests, "WorkspaceShell/SecondViewOfAnOpenFileSharesItsBuffer",
           TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer);
+  AddTest(tests, "WorkspaceShell/RandomTabAndGroupOperationsKeepInvariants",
+          TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants);
   AddTest(tests, "WorkspaceShell/BreadcrumbIsPerPane", TestWorkspaceShellBreadcrumbIsPerPane);
   AddTest(tests, "WorkspaceShell/SplitPaneRevealsItsNewTab",
           TestWorkspaceShellSplitPaneRevealsItsNewTab);

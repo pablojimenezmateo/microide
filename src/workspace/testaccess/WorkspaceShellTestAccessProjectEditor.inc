@@ -709,6 +709,17 @@
                              std::size_t to_slot) {
     return shell.MakeEditorTabService().MoveTabToGroup(from_group, from_index, to_group, to_slot);
   }
+  // The loaded editor viewport of tab `ti` in group `gi`, or nullptr for a
+  // compare/merge tab or a restore-pending one.
+  static const editor::TextViewport* GroupTabViewport(WorkspaceShell& shell, std::size_t gi,
+                                                      std::size_t ti) {
+    const auto& tab = shell.context_.current_project_state.editor_groups[gi].open_tabs[ti];
+    if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value() ||
+        tab.editor_state->needs_restore) {
+      return nullptr;
+    }
+    return &tab.editor_state->viewport;
+  }
   static std::size_t GroupActiveTabIndex(WorkspaceShell& shell, std::size_t gi) {
     return shell.context_.current_project_state.editor_groups[gi].active_tab_index;
   }
