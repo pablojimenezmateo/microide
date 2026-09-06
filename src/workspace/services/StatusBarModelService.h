@@ -38,10 +38,14 @@ class StatusBarModelService {
  private:
   // `<gitdir>/HEAD` is only consulted while there is no git snapshot, but the
   // status bar rebuilds every frame — so remember the answer per project root
-  // instead of re-reading the file on each one. Any HEAD movement lands a real
-  // snapshot through GitRepositoryMetadataTracker, which supersedes this.
+  // instead of re-reading the file on each one. Keyed on the repository marker
+  // generation too: a HEAD movement is a repository change, and the snapshot it
+  // requests is throttled and can be refused (no root, a refresh in flight), so
+  // the fallback must re-read HEAD itself or a `git checkout` in the terminal
+  // keeps the old branch on screen until something else lands a snapshot.
   struct HeadBranchCache {
     std::filesystem::path project_root;
+    std::uint64_t marker_generation = 0;
     std::string branch;
     bool valid = false;
   };

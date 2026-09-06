@@ -30,6 +30,7 @@ project (see [README](README.md)); versions track meaningful shipped work.
   headless driver can rename through the language server.
 
 ### Fixed
+- Status bar: before the first `git status` snapshot the branch label showed a namespaced branch by its leaf (`stable-sort` for `feature/stable-sort`) and then flipped to git's short name when the snapshot landed; the HEAD fallback now strips only `refs/heads/` and re-reads HEAD on every repository change, so a `git checkout` in the terminal is reflected even when the throttled snapshot refresh is skipped.
 
 - **Wide characters sit on the grid.** A CJK glyph or an emoji takes two
   cells and a combining mark none, as in VS Code and the terminal; the caret,

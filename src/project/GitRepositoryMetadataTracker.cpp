@@ -140,11 +140,21 @@ std::optional<std::string> ReadHeadBranchName(const std::filesystem::path& proje
   if (!ref.has_value()) {
     return std::nullopt;  // detached HEAD — no branch name to show
   }
-  std::string name = std::filesystem::path(*ref).filename().string();
+  // The short name git prints (`git status --porcelain=v2` `# branch.head`,
+  // `git branch --show-current`) is the ref minus its `refs/heads/` namespace,
+  // and it keeps its slashes: `feature/stable-sort`, not `stable-sort`. Taking
+  // the path's leaf here made the status bar flip from one to the other when the
+  // first snapshot landed. A HEAD outside `refs/heads/` (a `refs/remotes/...`
+  // checkout is not a branch) is reported by its full ref, as git does.
+  constexpr std::string_view kHeadsPrefix = "refs/heads/";
+  std::string_view name = *ref;
+  if (name.starts_with(kHeadsPrefix)) {
+    name.remove_prefix(kHeadsPrefix.size());
+  }
   if (name.empty()) {
     return std::nullopt;
   }
-  return name;
+  return std::string(name);
 }
 
 void GitRepositoryMetadataTracker::Reset() {

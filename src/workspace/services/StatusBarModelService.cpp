@@ -86,8 +86,10 @@ void StatusBarModelService::Refresh(StatusBarService& status_bar_service,
       // through to "no-scm" here made a perfectly ordinary git checkout label
       // itself "no-scm [clean]": a contradiction, since only source control can
       // know it is clean. `<gitdir>/HEAD` answers this with one file read.
-      if (!head_branch_cache_.valid || head_branch_cache_.project_root != project_root) {
+      if (!head_branch_cache_.valid || head_branch_cache_.project_root != project_root ||
+          head_branch_cache_.marker_generation != git_state.repository_marker_generation) {
         head_branch_cache_.project_root = project_root;
+        head_branch_cache_.marker_generation = git_state.repository_marker_generation;
         head_branch_cache_.branch = operations.read_head_branch(project_root).value_or(std::string{});
         head_branch_cache_.valid = true;
       }

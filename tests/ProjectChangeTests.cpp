@@ -317,10 +317,12 @@ void TestReadHeadBranchNameResolvesLayouts() {
   Expect(project::ReadHeadBranchName(plain).value_or("") == "main",
          "an ordinary checkout should report its branch");
 
-  // A branch name with slashes keeps only the leaf, matching git's short name.
+  // git's short name drops the `refs/heads/` namespace and keeps the slashes
+  // (`# branch.head feature/stable-sort`); the label must not change when the
+  // first snapshot replaces this fallback.
   WriteFile(plain / ".git" / "HEAD", "ref: refs/heads/feature/stable-sort\n");
-  Expect(project::ReadHeadBranchName(plain).value_or("") == "stable-sort",
-         "a namespaced branch should report its short name");
+  Expect(project::ReadHeadBranchName(plain).value_or("") == "feature/stable-sort",
+         "a namespaced branch should report git's short name, slashes included");
 
   // Detached HEAD: a raw object id, no branch to name.
   WriteFile(plain / ".git" / "HEAD",

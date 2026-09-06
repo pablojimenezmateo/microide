@@ -303,6 +303,21 @@ void TestStatusBarNamesBranchFromHeadBeforeFirstGitSnapshot() {
   model.Refresh(service, ops, context.current_project_state, nullptr);
   Expect(head_reads == 1, "the HEAD branch must be cached per project root, not re-read per frame");
 
+  // A `git checkout` in the terminal is a repository change (the marker
+  // generation moves) but not necessarily a snapshot: the automatic refresh is
+  // throttled and skipped while one is in flight. The fallback must re-read HEAD.
+  ++context.current_project_state.sidebar.git.repository_marker_generation;
+  ops.read_head_branch = [&](const std::filesystem::path&) -> std::optional<std::string> {
+    ++head_reads;
+    return std::string("feature/stable-sort");
+  };
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(head_reads == 2, "a repository change must re-read HEAD");
+  Expect(service.Segment(StatusBarSegmentId::Project).text == "feature/stable-sort [clean]",
+         "a checkout with no snapshot yet should show the new branch");
+  model.Refresh(service, ops, context.current_project_state, nullptr);
+  Expect(head_reads == 2, "the re-read is cached until the next repository change");
+
   // A detached HEAD has no branch name, but it is still a repository.
   WorkspaceContext detached;
   detached.current_project_state.root = "/tmp/statusbar-head-detached";
