@@ -1039,15 +1039,31 @@ std::string TextViewport::SelectedText() const {
   return TextInRange(*range);
 }
 
+std::size_t TextViewport::CollapsedFoldEndAt(std::size_t line) const {
+  if (folding_model_ == nullptr || !folding_model_->has_any_collapsed_fold() ||
+      document_->lines.empty()) {
+    return line;
+  }
+  for (const FoldRange& range : folding_model_->collapsed_ranges()) {
+    if (range.opener_line == line) {
+      return std::max(line, std::min(range.closer_line, document_->lines.size() - 1));
+    }
+  }
+  return line;
+}
+
 std::string TextViewport::CurrentLineTextForClipboard() const {
   if (document_->lines.empty()) {
     return {};
   }
 
+  const std::size_t last = CollapsedFoldEndAt(cursor_line_);
   std::string text;
   text.reserve(document_->lines.LineLength(cursor_line_) + 1);
-  text += document_->lines.LineView(cursor_line_);
-  text.push_back('\n');
+  for (std::size_t line = cursor_line_; line <= last; ++line) {
+    text += document_->lines.LineView(line);
+    text.push_back('\n');
+  }
   return text;
 }
 
@@ -1119,18 +1135,20 @@ bool TextViewport::DeleteCurrentLine() {
     return true;
   }
 
-  if (document_->lines.size() == 1) {
+  // A collapsed fold under the caret is deleted whole (see CollapsedFoldEndAt).
+  const std::size_t last = CollapsedFoldEndAt(cursor_line_);
+  if (cursor_line_ == 0 && last + 1 == document_->lines.size()) {
     return ApplyRangeEdit(SelectionRange{
                               .start = TextPosition{0, 0},
-                              .end = TextPosition{0, document_->lines.LineLength(0)},
+                              .end = TextPosition{last, document_->lines.LineLength(last)},
                           },
                           "", true);
   }
 
-  if (cursor_line_ + 1 < document_->lines.size()) {
+  if (last + 1 < document_->lines.size()) {
     return ApplyRangeEdit(SelectionRange{
                               .start = TextPosition{cursor_line_, 0},
-                              .end = TextPosition{cursor_line_ + 1, 0},
+                              .end = TextPosition{last + 1, 0},
                           },
                           "", true);
   }
@@ -1141,7 +1159,7 @@ bool TextViewport::DeleteCurrentLine() {
                                 previous_line,
                                 document_->lines.LineLength(previous_line),
                             },
-                            .end = TextPosition{cursor_line_, document_->lines.LineLength(cursor_line_)},
+                            .end = TextPosition{last, document_->lines.LineLength(last)},
                         },
                         "", true);
 }

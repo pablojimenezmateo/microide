@@ -53,16 +53,24 @@ LineRange RangeForCaret(TextPosition anchor, TextPosition cursor) {
 // Touching ranges are merged so two carets on adjacent lines produce one edit
 // rather than two abutting ones, and so two carets on the SAME line collapse
 // instead of applying an op to that line twice.
-std::vector<LineRange> ResolveLineRanges(const TextViewport& viewport) {
+// `expand_collapsed_folds`: a bare caret on the opener of a collapsed fold names
+// the whole fold, as it does for the verbs that move, duplicate, cut or delete
+// "the line" in VS Code -- the block is one row on screen. Indent, comment and
+// sort keep acting on the opener alone, as VS Code's do.
+std::vector<LineRange> ResolveLineRanges(const TextViewport& viewport,
+                                         bool expand_collapsed_folds = false) {
   const std::size_t line_count = viewport.line_count();
   std::vector<LineRange> ranges;
   const std::span<const SecondaryCaret> secondaries = viewport.secondary_caret_range_view();
   ranges.reserve(secondaries.size() + 1);
+  const auto caret_range = [&](std::size_t line) {
+    return LineRange{line, expand_collapsed_folds ? viewport.CollapsedFoldEndAt(line) : line};
+  };
 
   if (auto sel = viewport.selection_range()) {
     ranges.push_back(RangeForCaret(sel->start, sel->end));
   } else {
-    ranges.push_back(LineRange{viewport.cursor_line(), viewport.cursor_line()});
+    ranges.push_back(caret_range(viewport.cursor_line()));
   }
   // A ranged secondary contributes the lines its anchor spans as well as the ones
   // under its cursor (A-120): a Ctrl-D selection whose anchor sits on a different
@@ -70,7 +78,7 @@ std::vector<LineRange> ResolveLineRanges(const TextViewport& viewport) {
   for (const SecondaryCaret& secondary : secondaries) {
     ranges.push_back(secondary.selection_anchor.has_value()
                          ? RangeForCaret(*secondary.selection_anchor, secondary.position)
-                         : LineRange{secondary.position.line, secondary.position.line});
+                         : caret_range(secondary.position.line));
   }
 
   if (line_count == 0) {
@@ -494,7 +502,7 @@ LineBlob BuildLineMoveReplacement(const TextBuffer& lines, LineRange range, bool
 // in the direction of travel, so no two region edits overlap and the line count is
 // preserved. That is what lets them be applied in plain ascending order.
 bool MoveLines(TextViewport& viewport, bool downward) {
-  std::vector<LineRange> regions = ResolveLineRanges(viewport);
+  std::vector<LineRange> regions = ResolveLineRanges(viewport, /*expand_collapsed_folds=*/true);
   const TextBuffer& lines = viewport.lines();
   const std::size_t line_count = lines.size();
   std::erase_if(regions, [&](const LineRange& r) {
@@ -531,7 +539,8 @@ bool MoveLineUp(TextViewport& viewport) { return MoveLines(viewport, /*downward=
 bool MoveLineDown(TextViewport& viewport) { return MoveLines(viewport, /*downward=*/true); }
 
 bool CopyLines(TextViewport& viewport, bool downward) {
-  const std::vector<LineRange> regions = ResolveLineRanges(viewport);
+  const std::vector<LineRange> regions =
+      ResolveLineRanges(viewport, /*expand_collapsed_folds=*/true);
   const TextBuffer& lines = viewport.lines();
   if (regions.empty() || lines.size() == 0) return false;
 

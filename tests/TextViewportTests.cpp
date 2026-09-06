@@ -2085,6 +2085,68 @@ void TestTextViewportSoftWrapMoveCursorVerticalUsesWrappedRows() {
          "moving back onto the short continuation row should clamp again while preserving the target column");
 }
 
+// A collapsed fold is one row on screen, so the verbs that act on "the caret's
+// line" act on the whole hidden block (VS Code): copy/cut with nothing selected,
+// delete line, move line, duplicate line. Acting on the opener alone deleted a
+// function's signature and left its body behind.
+void TestTextViewportLineVerbsTreatACollapsedFoldAsOneLine() {
+  const auto make = [](TextViewport& viewport, FoldingModel& folding_model) {
+    viewport.LoadContent("a\n{\n  b\n}\nc\n", "/tmp/fold-line-verbs.c");
+    FoldingModel::ComputeOptions fold_options;
+    fold_options.bracket_pairs = {{'{', '}'}};
+    fold_options.tab_size = 4;
+    Expect(folding_model.Compute(viewport.lines().Snapshot(), fold_options), "folds compute");
+    Expect(folding_model.Collapse(1), "the brace block collapses");
+    viewport.SetFoldingModel(&folding_model);
+    viewport.MoveCursorTo(1, 0);
+  };
+  {
+    TextViewport viewport;
+    FoldingModel folding_model;
+    make(viewport, folding_model);
+    Expect(viewport.CollapsedFoldEndAt(1) == 3 && viewport.CollapsedFoldEndAt(0) == 0 &&
+               viewport.CollapsedFoldEndAt(2) == 2,
+           "only the opener of a collapsed fold names its end");
+    Expect(viewport.CurrentLineTextForClipboard() == "{\n  b\n}\n",
+           "a line copy of the opener copies the whole block");
+    Expect(viewport.DeleteCurrentLine(), "delete line dispatches");
+    Expect(viewport.lines().Snapshot() == std::vector<std::string>{"a", "c", ""},
+           "delete line removes the whole block");
+    Expect(viewport.Undo(), "undo");
+    Expect(viewport.lines().Snapshot() == std::vector<std::string>{"a", "{", "  b", "}", "c", ""},
+           "undo restores the block");
+  }
+  {
+    TextViewport viewport;
+    FoldingModel folding_model;
+    make(viewport, folding_model);
+    Expect(MoveLineDown(viewport), "move line down dispatches");
+    Expect(viewport.lines().Snapshot() == std::vector<std::string>{"a", "c", "{", "  b", "}", ""},
+           "the whole block moves down past the next line");
+    Expect(viewport.cursor_line() == 2, "the caret stays on the opener");
+  }
+  {
+    TextViewport viewport;
+    FoldingModel folding_model;
+    make(viewport, folding_model);
+    Expect(CopyLines(viewport, /*downward=*/true), "duplicate line dispatches");
+    Expect(viewport.lines().Snapshot() ==
+               std::vector<std::string>{"a", "{", "  b", "}", "{", "  b", "}", "c", ""},
+           "the whole block is duplicated");
+  }
+  {
+    // An expanded fold is ordinary lines again.
+    TextViewport viewport;
+    FoldingModel folding_model;
+    make(viewport, folding_model);
+    Expect(folding_model.Expand(1), "expand");
+    Expect(viewport.CurrentLineTextForClipboard() == "{\n", "an expanded opener is one line");
+    Expect(viewport.DeleteCurrentLine(), "delete line dispatches");
+    Expect(viewport.lines().Snapshot() == std::vector<std::string>{"a", "  b", "}", "c", ""},
+           "and deletes just itself");
+  }
+}
+
 // Regression: with soft-wrap on, a collapsed fold whose opener line wraps into
 // multiple visual rows used to report a single-row range ({R, R}) for the opener,
 // so vertical motion got stuck on it and never crossed the fold.
@@ -5928,6 +5990,8 @@ void TestTextViewportUndoRedoRoundTripRandomEdits() {
 }
 
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TextViewport/LineVerbsTreatACollapsedFoldAsOneLine",
+          TestTextViewportLineVerbsTreatACollapsedFoldAsOneLine);
   AddTest(tests, "TextViewport/VerticalMovePreservesColumnWhenScrolled",
           TestTextViewportVerticalMovePreservesColumnWhenScrolled);
   AddTest(tests, "TextViewport/ReloadPreservingViewStateKeepsScrollUnderSelection",

@@ -637,6 +637,13 @@ class TextViewport {
   // back to the single-caret SelectedText()/line-copy behavior.
   std::optional<std::string> MultiCaretSelectedText() const;
   std::string CurrentLineTextForClipboard() const;
+  // The last line of the collapsed fold that opens at `line`, or `line` itself
+  // when none does. A collapsed fold is one row on screen, so the verbs that act
+  // on "the caret's line" -- copy and cut with nothing selected, delete line,
+  // move and duplicate line -- act on the whole hidden block, as VS Code's do.
+  // Acting on the opener alone deleted a function's signature and left its
+  // body behind, or moved the header out from over it.
+  std::size_t CollapsedFoldEndAt(std::size_t line) const;
   bool DeleteSelectedText();
   // Delete every caret's selection atomically (one undo entry). The caller must
   // guarantee every caret has a selection (pairs with MultiCaretSelectedText for
