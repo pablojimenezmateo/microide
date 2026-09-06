@@ -31,6 +31,36 @@ project (see [README](README.md)); versions track meaningful shipped work.
 
 ### Fixed
 
+- **Wide characters sit on the grid.** A CJK glyph or an emoji takes two
+  cells and a combining mark none, as in VS Code and the terminal; the caret,
+  selection, whitespace markers and mouse clicks used to drift a fraction of a
+  cell for every wide character before them on the line, because the layout
+  counted one cell per code point while the glyphs were drawn at the font's
+  own advances. Soft wrap counts the same widths.
+- **Find References, call hierarchy and workspace symbols print a real
+  character column.** With a utf-8 server (clangd, rust-analyzer) the column
+  was a byte offset, and clicking the row landed the caret past the target on
+  any non-ASCII line.
+- **`.gitignore` verdicts match `git check-ignore`** on three shapes found by
+  a generated comparison: `x**/b` ignores `x.o/foo/b` (git promotes a `**`
+  right after the literal prefix), `!dir/**` no longer re-includes a directory
+  that `dir/` ignored, and `a**/*` ignores the directory `a` itself.
+- **`.editorconfig`**: properties under an empty `[]` header (or one past the
+  section cap) no longer overwrite the previous section's.
+- **Copying a line with nothing selected and pasting it mid-line inserts it
+  above the caret's line** (VS Code's rule) instead of splitting the line the
+  caret is in.
+- **Ctrl+D / Ctrl+Shift+L from the find widget move focus to the editor**, so
+  the next keystroke replaces the selected occurrences instead of typing into
+  the search box.
+- **Line verbs on a collapsed fold act on the whole block**: delete line, a
+  copy or cut with nothing selected, move line and duplicate line took the
+  header line alone and left the hidden body behind.
+- **A multi-caret paste with one clipboard line per caret spreads one line to
+  each** from the editor too; it only ever did so in the unit tests.
+- **The editor split layout survives a divider drag round trip** through the
+  session file without drifting.
+
 - **Multi-caret editing follows VS Code's cursor rules, checked against a
   reference model.** Overlapping selections (and a collapsed caret touching one)
   merge instead of leaving a caret set on which every keystroke silently did

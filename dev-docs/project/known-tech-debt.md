@@ -389,6 +389,101 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-06-289 — the 2026-09-06 pass: the editor grid's cell model, three reference-tested primitives, and a headless sweep of the real binary. [RESOLVED same session — open remainder: one perf follow-up, 289a.]
+
+The 2026-09-05 passes had read the editor's primitives, the terminal, git, LSP
+and the tree. This one took the subsystems they had not -- the ignore matcher,
+EditorConfig, the split tree, file I/O, persistence, the debug session, the
+subprocess and work-queue primitives -- and then drove the real binary over the
+control channel with a save + disk read after every step (the technique of
+TD-2026-09-05-286). Every finding is its own commit with a regression test
+(`git log 39f3d2ea..`).
+
+- **The editor grid and the renderer disagreed about wide text.** The layout
+  counted one cell per code point whatever the glyph, while the SDL_ttf backend
+  drew any non-ASCII run through the shaper at the fallback font's own advances
+  -- measured on this box, an emoji was 1.75 cells and a CJK glyph between
+  ASCII letters nearly three. Every caret, selection fill, whitespace marker and
+  mouse hit is computed in cells, so all of them drifted a fraction of a cell
+  per wide character before them on the line. Both halves now use one model,
+  VS Code's and the terminal grid's: a wide code point (CJK, fullwidth, emoji
+  presentation) is two cells, a combining mark or format character none,
+  everything else one (`util::GridCellWidth`, on the terminal's width tables).
+  `TextLayout::AdvanceVisualColumnAt` is the per-code-point step every layout
+  walk takes; a wide glyph's trailing cell carries no text of its own and a
+  mark joins its base's cell; the backend measures every string in cells and
+  composites non-ASCII text one glyph cluster per cell span. The ASCII fast
+  paths are untouched. The compare/merge panes render through the same cell
+  grid, so they inherited it. A randomized wrap property test written for the
+  change then found that a row a single wide glyph had overflowed broke again
+  before a following combining mark and emitted an empty row; fixed with it.
+- **The LSP references / call-hierarchy / workspace-symbol list printed the
+  server's raw code-unit offset as a column**, which is a byte offset under a
+  utf-8 server (clangd, rust-analyzer) and a UTF-16 unit count otherwise; the
+  Output click handler reads the printed number as a character column, so on
+  any non-ASCII line it landed the caret past the target. The emitter maps the
+  offset through the target row it already reads for the snippet (plugin
+  providers' byte columns too), and the references path now records the
+  negotiated encoding on its merge record -- it had read every response as
+  utf-8.
+- **Ignore matcher vs `git check-ignore`** over 4,000 generated rule sets,
+  nested `.gitignore` files included: git compares a rule's literal prefix
+  first and runs wildmatch over the remainders, so a `**` that directly follows
+  the prefix is a LEADING `**` to wildmatch and crosses directories (`x**/b`
+  ignores `x.o/foo/b`); a negated `!dir/**` reached the directory itself
+  through the `dir/**`-grays-the-directory special case; and a trailing `**/`
+  could not match an empty remainder (`a**/*` against the directory `a`). The
+  remaining deliberate deviation -- a positive `dir/**` grays the directory --
+  is unchanged. The differential driver is `scratchpad`-only; the three cases
+  are pinned as unit tests.
+- **EditorConfig**: properties under a section the parser dropped (`[]`, or one
+  past the section cap) were merged into the last kept section.
+- **The split tree did not equal its own persisted form after a divider
+  drag** (a float ulp per drag, then normalised on load). Its first unit test:
+  3,000 random inserts, removals, moves and drags checked for canonical form,
+  reachability, weight normalisation, ordinal/node bijection and
+  `Flatten()`/`Load()` round trip.
+- **Headless sweep of the real binary** (`scratchpad/sweep/*.py`; the driver
+  passes each command word as its own `control-send` argument -- one joined
+  string is quoted into a single token and fails as "Unknown command"): a
+  whole-line copy pasted into the middle of another line (VS Code's
+  emptySelectionClipboard rule inserts it above); `add-cursor-*` from the find
+  widget left focus on the widget, so the replacement went into the search
+  box; the line verbs (delete line, no-selection copy/cut, move, duplicate)
+  acted on the opener of a collapsed fold alone and left the hidden body
+  behind; and a multi-caret paste never spread one line per caret from the
+  shell, because the text-input coordinator claimed the editor surface ahead
+  of `PasteText` (the viewport-level tests were green). Non-defects the sweep
+  surfaced, recorded so they are not re-litigated: moving the last line past
+  the phantom empty line is what VS Code does with select-all too; the default
+  indent here is tabs; auto-detect picks a 2-space indent from a 2-space line;
+  `compare <path>` with no commit opens the picker, so a following `save` has
+  no compare tab to save.
+- **Read clean**: `util/TextFileIO`, `DurableFile`, `Parse`, `Hex`,
+  `StringUtil`, JSON-RPC framing, control protocol/spec, Trash, the bracket
+  scanner, the persisted-record reader/writer/queue, `TextViewportFileIO`, the
+  git porcelain v2 and blame parsers (and every git invocation carries `--` or
+  `--end-of-options`), `Subprocess`, `SerialWorkQueue`, `MainThreadMailbox`,
+  the undo history, session restore, the file finder, the merge model, the DAP
+  protocol, the debug session, the diagnostics and breakpoint stores, the
+  file operation service, the directory tree, theme files, the tool
+  downloader, `PathMatch`, `RegexUtil`.
+- **Lanes**: full ctest green after each commit; `perf-tests` (allocation
+  contracts) green after the cell-model change; clang-build, hardened, asan,
+  ubsan and tsan run once at the end of the session (results below).
+
+#### TD-2026-09-06-289a — a non-ASCII string's texture is composited one glyph cluster per SDL_ttf call. [OPEN — perf follow-up]
+
+`SdlTtfTextBackend::BuildGridCompositeSurface` renders each cluster of a
+non-ASCII string with its own `TTF_RenderText_Blended` so it can land on its
+cell; a row of 80 CJK glyphs is 80 rasterizations on its first paint, then a
+texture-cache hit like any other string. The ASCII cells inside such a string
+already come from the atlas. The next step, when a CJK-heavy file measurably
+pays for it, is a per-glyph coverage cache for non-ASCII code points beside
+`AsciiGlyphAtlas`, so a cache miss is N blits rather than N rasterizations.
+`render::TextBackend::RasterizeString` is the trace scope that says whether it
+matters.
+
 ### TD-2026-09-05-288 — the second 2026-09-05 pass: thirty-one defects in the subsystems the earlier passes had not read, found mostly by comparing behaviour with VS Code's rule. [RESOLVED same session — open remainder zero.]
 
 The earlier passes drove the editor's primitives and the terminal against
