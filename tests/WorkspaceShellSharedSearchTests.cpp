@@ -7,6 +7,7 @@
 #include "workspace/WorkspaceTextSearch.h"
 
 #include <filesystem>
+#include <random>
 #include <string>
 #include <unordered_set>
 #include <vector>
@@ -646,6 +647,86 @@ void TestWorkspaceIncrementalLiteralSearch() {
 
 }  // namespace
 
+// The find-as-you-type refine path runs on every keystroke that extends the
+// query: it filters the previous match set instead of rescanning the buffer, and
+// it is only correct if that filter reproduces the cold scan exactly — the same
+// hits, the same de-overlap, in the same order — over any buffer and any
+// extension, under either case mode. Enumerate that against the cold scan over a
+// small alphabet where self-overlapping needles and mixed case are the norm.
+void TestWorkspaceSharedRefineMatchesTheColdScan() {
+  using microide::editor::SelectionRange;
+  using microide::editor::TextBuffer;
+  using microide::workspace::BufferSearchOptions;
+
+  const auto same = [](const std::vector<SelectionRange>& a, const std::vector<SelectionRange>& b) {
+    if (a.size() != b.size()) {
+      return false;
+    }
+    for (std::size_t i = 0; i < a.size(); ++i) {
+      if (a[i].start.line != b[i].start.line || a[i].start.column != b[i].start.column ||
+          a[i].end.line != b[i].end.line || a[i].end.column != b[i].end.column) {
+        return false;
+      }
+    }
+    return true;
+  };
+  // ASCII letters in both cases, a two-byte letter with a case pair (é/É, folded
+  // length-preserving), and separators.
+  const std::vector<std::string> alphabet = {"a", "A", "b", "B", "\xc3\xa9", "\xc3\x89", " ", "_"};
+  std::mt19937 rng(20260906);
+  std::size_t checked = 0;
+  for (int round = 0; round < 3000; ++round) {
+    std::vector<std::string> lines(1 + rng() % 4);
+    for (std::string& line : lines) {
+      const std::size_t length = rng() % 12;
+      for (std::size_t i = 0; i < length; ++i) {
+        line += alphabet[rng() % alphabet.size()];
+      }
+    }
+    const TextBuffer buffer(lines);
+    std::string query;
+    const std::size_t query_length = 1 + rng() % 4;
+    for (std::size_t i = 0; i < query_length; ++i) {
+      query += alphabet[rng() % (alphabet.size() - 2)];  // letters only
+    }
+    const BufferSearchOptions options{.case_sensitive = (rng() % 2) == 0, .whole_word = false};
+    // Type the query one unit at a time: each step's set refined from the last must
+    // equal a cold scan of the longer query.
+    std::vector<SelectionRange> previous;
+    std::string typed;
+    std::size_t offset = 0;
+    while (offset < query.size()) {
+      const std::size_t unit = static_cast<unsigned char>(query[offset]) >= 0x80 ? 2 : 1;
+      typed += query.substr(offset, unit);
+      offset += unit;
+      const std::vector<SelectionRange> cold = FindLiteralSearchMatches(buffer, typed, options);
+      if (!previous.empty() || typed.size() == unit) {
+        // A refine over an empty previous set is the shell's cold-path case (it
+        // only refines a non-empty prior query); the first unit seeds it.
+      }
+      if (typed.size() > unit) {
+        Expect(options.case_sensitive || QueryExtendsCaseInsensitive(typed.substr(0, typed.size() - unit), typed),
+               "the typed query extends the previous one");
+        const std::vector<SelectionRange> refined =
+            RefineLiteralSearchMatches(buffer, typed, previous, options);
+        if (!same(refined, cold)) {
+          std::string dump = "refine != cold scan for query '" + typed + "' (case " +
+                             (options.case_sensitive ? "on" : "off") + ") over lines:";
+          for (const std::string& line : lines) {
+            dump += " [" + line + "]";
+          }
+          dump += " refined=" + std::to_string(refined.size()) + " cold=" + std::to_string(cold.size());
+          Expect(false, dump);
+          return;
+        }
+        ++checked;
+      }
+      previous = cold;
+    }
+  }
+  Expect(checked > 2000, "the enumeration exercised the refine path");
+}
+
 void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceGitSidebarPresentation/LineHelpers",
           TestWorkspaceSharedGitSidebarLineHelpers);
@@ -659,6 +740,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedLiteralSearchHelpers);
   AddTest(tests, "WorkspaceTextSearch/LiteralSearchDoesNotOverlap",
           TestWorkspaceSharedLiteralSearchDoesNotOverlap);
+  AddTest(tests, "WorkspaceTextSearch/RefineMatchesTheColdScan",
+          TestWorkspaceSharedRefineMatchesTheColdScan);
   AddTest(tests, "WorkspaceTextSearch/LiteralSearchUtf8Fold",
           TestWorkspaceSharedLiteralSearchUtf8Fold);
   AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",

@@ -97,11 +97,15 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
 
 // Find-as-you-type fast path. `previous` must be the complete match set for some
 // query that `query` extends (see `QueryExtendsCaseInsensitive`), taken over the
-// *current* buffer contents. Because every occurrence of the longer `query` is
-// also an occurrence of the shorter prefix, the new match set is a subset of
-// `previous`: this returns that subset in O(|previous| * |query|), independent of
-// document size. Every kept match is re-validated against the buffer, so a stale
-// `previous` can only drop matches, never invent them.
+// *current* buffer contents. Every occurrence of the longer `query` starts at an
+// occurrence of the shorter prefix, so only lines holding a `previous` hit can
+// match: those lines are rescanned from their first hit with the cold scan's own
+// loop (the hits themselves are not a candidate set — the cold scan's de-overlap
+// skips prefix occurrences inside a kept hit, and the longer query may start
+// there), so the result equals `FindLiteralSearchMatches(buffer, query, options)`
+// by construction while lines with no hit are never read. Every match is found
+// against the buffer, so a stale `previous` can only drop matches, never invent
+// them.
 std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
     const editor::TextBuffer& buffer,
     std::string_view query,

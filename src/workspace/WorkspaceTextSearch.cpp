@@ -387,6 +387,40 @@ std::optional<editor::TextPosition> FindNextLiteralMatchAfterSeedWrapOnce(
 
 namespace {
 
+// The one per-line scan every literal match set is built from. Appends the
+// non-overlapping occurrences of `needle` in `haystack` (already folded when the
+// search is case-insensitive) from `start_offset` on. Returns false once the
+// retained set hits its cap, which the caller reports as truncation.
+bool AppendLineLiteralMatches(std::size_t line_index,
+                              std::string_view haystack,
+                              std::size_t start_offset,
+                              std::string_view needle,
+                              BufferSearchOptions options,
+                              std::vector<editor::SelectionRange>& matches) {
+  std::size_t offset = haystack.find(needle, start_offset);
+  while (offset != std::string_view::npos) {
+    if (options.whole_word && !util::SearchMatchStandsAlone(haystack, offset, offset + needle.size())) {
+      offset = haystack.find(needle, offset + 1);
+      continue;
+    }
+    // TD-2026-07-17A-029: cap the retained match set so a one-character query in a
+    // huge minified buffer cannot allocate millions of ranges. Navigation re-scans
+    // via FindNextLiteralMatchAfterSeedWrapOnce, so it stays correct past the cap.
+    if (matches.size() >= kMaxBufferSearchMatches) {
+      return false;
+    }
+    matches.push_back(editor::SelectionRange{
+        .start = editor::TextPosition{line_index, offset},
+        .end = editor::TextPosition{line_index, offset + needle.size()},
+    });
+    // Advance past the whole match so self-overlapping needles (e.g. "aa" in
+    // "aaaa") yield non-overlapping ranges, matching find-next/replace which
+    // advance by the needle length (see ReplaceLiteralMatchesInText).
+    offset = haystack.find(needle, offset + needle.size());
+  }
+  return true;
+}
+
 // Shared all-occurrences case-insensitive scan. `line_at(i)` yields line `i` as a
 // string_view; the same body serves both the vector<string> and TextBuffer
 // overloads so the two cannot drift.
@@ -406,7 +440,7 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
 
   // Case-sensitive search compares the raw bytes; case-insensitive folds both
   // sides. The fold is length-preserving, so match offsets are byte offsets into
-  // the raw line either way (which is what the whole-word check below needs).
+  // the raw line either way (which is what the whole-word check needs).
   std::string folded_query;
   if (!options.case_sensitive) {
     util::Utf8CaseFoldInto(query, folded_query);
@@ -420,29 +454,11 @@ std::vector<editor::SelectionRange> FindLiteralMatchesImpl(std::size_t line_coun
       util::Utf8CaseFoldInto(raw_line, folded_line);
       haystack = folded_line;
     }
-    std::size_t offset = haystack.find(needle);
-    while (offset != std::string_view::npos) {
-      if (options.whole_word && !util::SearchMatchStandsAlone(haystack, offset, offset + needle.size())) {
-        offset = haystack.find(needle, offset + 1);
-        continue;
+    if (!AppendLineLiteralMatches(line_index, haystack, 0, needle, options, matches)) {
+      if (truncated != nullptr) {
+        *truncated = true;
       }
-      // TD-2026-07-17A-029: cap the retained match set so a one-character query in a
-      // huge minified buffer cannot allocate millions of ranges. Navigation re-scans
-      // via FindNextLiteralMatchAfterSeedWrapOnce, so it stays correct past the cap.
-      if (matches.size() >= kMaxBufferSearchMatches) {
-        if (truncated != nullptr) {
-          *truncated = true;
-        }
-        return matches;
-      }
-      matches.push_back(editor::SelectionRange{
-          .start = editor::TextPosition{line_index, offset},
-          .end = editor::TextPosition{line_index, offset + needle.size()},
-      });
-      // Advance past the whole match so self-overlapping needles (e.g. "aa" in
-      // "aaaa") yield non-overlapping ranges, matching find-next/replace which
-      // advance by the needle length (see ReplaceLiteralMatchesInText).
-      offset = haystack.find(needle, offset + needle.size());
+      return matches;
     }
   }
 
@@ -550,55 +566,41 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   if (!options.case_sensitive) {
     util::Utf8CaseFoldInto(query, folded_query);
   }
-  const std::string_view expected =
+  const std::string_view needle =
       options.case_sensitive ? query : std::string_view(folded_query);
-  const std::size_t needle = expected.size();
   matches.reserve(previous.size());
-  // Reproduce the cold path's advance-by-needle de-overlap: `previous` (the shorter
-  // prefix query's match set) holds a hit at EVERY offset, so a self-overlapping
-  // longer needle (e.g. "aa" over "aaaa") would keep overlapping ranges here while a
-  // fresh scan yields non-overlapping ones — inflating the count and desyncing
-  // next/prev/replace. `previous` is ordered ascending by (line, column), so skip any
-  // candidate that would start inside the last kept match on the same line.
+  // Every occurrence of the longer query starts at an occurrence of the prefix,
+  // and the prefix's FIRST occurrence on a line is always in `previous` — but the
+  // later ones are not: the cold scan advances past each hit by the needle length,
+  // so with "aa" over "aaab" the occurrence at column 1 was never recorded, and a
+  // refine that only re-checked the recorded columns lost the "aab" at column 1
+  // (the widget showed no match for text that was right there). So the unit of
+  // reuse is the LINE, not the hit: a line with no prefix hit cannot hold the
+  // longer query and is skipped without a read, and a line with one is rescanned
+  // by the cold scan's own loop from its first hit — equal to a fresh scan by
+  // construction, at the cost of touching only the lines that matched.
   std::size_t last_line = std::numeric_limits<std::size_t>::max();
-  std::size_t last_end = 0;
+  std::string folded_line;
   for (const editor::SelectionRange& match : previous) {
     const std::size_t line = match.start.line;
-    const std::size_t column = match.start.column;
-    if (line >= buffer.LineCount()) {
+    if (line == last_line || line >= buffer.LineCount()) {
       continue;
     }
-    if (line == last_line && column < last_end) {
-      continue;  // would overlap the previously kept match
-    }
+    last_line = line;
     const std::string_view text = buffer.LineView(line);
-    if (column > text.size() || needle > text.size() - column) {
-      continue;
+    if (match.start.column > text.size()) {
+      continue;  // a stale hit past the line's end can only drop, never invent
     }
-    // Fold the candidate slice (length-preserving) and compare to the folded query,
-    // so a growing non-ASCII case-insensitive query refines correctly. The slice
-    // starts/ends on scalar boundaries (match offsets came from a length-preserving
-    // folded find). (TD-2026-07-16-58.)
-    thread_local std::string folded_slice;
-    std::string_view slice = text.substr(column, needle);
+    std::string_view haystack = text;
     if (!options.case_sensitive) {
-      util::Utf8CaseFoldInto(slice, folded_slice);
-      slice = folded_slice;
+      util::Utf8CaseFoldInto(text, folded_line);
+      haystack = folded_line;
     }
-    const bool still_matches = slice == expected;
-    if (still_matches) {
-      if (matches.size() >= kMaxBufferSearchMatches) {
-        if (truncated != nullptr) {
-          *truncated = true;
-        }
-        return matches;
+    if (!AppendLineLiteralMatches(line, haystack, match.start.column, needle, options, matches)) {
+      if (truncated != nullptr) {
+        *truncated = true;
       }
-      matches.push_back(editor::SelectionRange{
-          .start = editor::TextPosition{line, column},
-          .end = editor::TextPosition{line, column + needle},
-      });
-      last_line = line;
-      last_end = column + needle;
+      return matches;
     }
   }
 
