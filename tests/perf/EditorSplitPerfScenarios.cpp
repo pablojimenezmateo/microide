@@ -55,6 +55,10 @@ bool SplitInto(ScenarioContext& context, std::string_view command, std::string_v
 // horizontal split inside each column. That is two orientations and a branch of
 // branches, so the layout walk is exercised at depth rather than in its
 // single-branch fast case.
+// Tabs this scenario ever opens in one pane; the collapse below closes at most
+// this many per pane before closing the pane itself.
+constexpr int kMaxTabsPerPane = 8;
+
 bool BuildFourPaneGrid(ScenarioContext& context) {
   return SplitInto(context, "split-right", "src/unit_02.cpp") &&
          SplitInto(context, "split-down", "src/unit_03.cpp") &&
@@ -71,7 +75,20 @@ void RunEditorSplitGridWorkout(ScenarioContext& context) {
   // still standing. Collapse back to a single pane first: without this the second
   // iteration measures a seven-pane grid against a four-pane baseline, which the
   // harness would happily report as a PASS on a number that means nothing.
+  // Drop each pane's tabs before closing it. The last phase below types 120
+  // characters into the focused pane, so on every iteration after the first that
+  // pane holds a dirty buffer whose only view it is -- and `close-group` now
+  // raises Save / Discard / Cancel rather than dropping those edits silently
+  // (the VS Code behaviour this shell adopted). That command reports success
+  // having only ASKED, so the loop below ran its guard out against a prompt and
+  // left the four-pane grid standing: the scenario skipped, and a skipped
+  // baseline-gated scenario fails the gate. `CloseActiveTab` is the
+  // no-prompt close, which is what setup wants -- the edits are throwaway
+  // keystrokes in a shared fixture that must never be saved.
   for (int guard = 0; context.EditorGroupCount() > 1 && guard < 16; ++guard) {
+    for (int tab_guard = 0; tab_guard < kMaxTabsPerPane; ++tab_guard) {
+      context.CloseActiveTab();
+    }
     if (!context.ExecuteCommand("close-group")) {
       break;
     }
