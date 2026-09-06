@@ -335,10 +335,19 @@ class TextLayout {
       const std::size_t effective_wrap =
           wrap_columns - (row_start_visual == 0 ? 0 : hanging_indent);
 
-      if (next_visual - row_start_visual > effective_wrap && i > row_start_text) {
+      // Break only before a code point that adds a cell, and only when the row
+      // already holds one. A zero-width mark never needs room of its own, so it
+      // stays with its base even on a row a single wide glyph has overflowed;
+      // and the byte test this used (`i > row_start_text`) was true after such
+      // a mark at the row start had consumed bytes without adding a cell, so a
+      // wide glyph behind it forced a break that emitted an EMPTY row.
+      if (next_visual > visual && next_visual - row_start_visual > effective_wrap &&
+          visual > row_start_visual) {
         std::size_t break_visual;
         std::size_t break_text;
-        if (last_break_text > row_start_text) {
+        // A remembered break opportunity is only usable when the row before it
+        // holds at least one cell.
+        if (last_break_text > row_start_text && last_break_visual > row_start_visual) {
           break_visual = last_break_visual;
           break_text = last_break_text;
         } else {
@@ -355,10 +364,16 @@ class TextLayout {
         continue;
       }
 
+      const bool zero_width = next_visual == visual;
       visual = next_visual;
       i += seq_len;
       if (ch == ' ' || ch == '\t') {
         last_break_visual = visual;
+        last_break_text = i;
+      } else if (zero_width && last_break_text == i - seq_len) {
+        // A combining mark right after a break opportunity belongs with the
+        // character before it: move the opportunity past the mark so a break
+        // there never separates a base from its accent.
         last_break_text = i;
       }
     }

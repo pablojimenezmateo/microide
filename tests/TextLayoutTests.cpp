@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include <cstdint>
+
 #include "editor/LineSpan.h"
 #include "editor/TextBuffer.h"
 #include "editor/TextLayout.h"
@@ -196,6 +198,107 @@ void TestWideAndZeroWidthCodepointsTakeTheirCells() {
 
 // Soft wrap steps by the same widths: a wide glyph never splits across rows and
 // counts two cells against the row width.
+// Soft wrap over random lines of tabs, wide glyphs, combining marks and ASCII:
+// the rows partition the line's cells, every break sits on a code-point
+// boundary, no row overflows its width unless it holds a single code point,
+// and restarting the wrap from any row boundary (WrapLineSegmentsFrom, which
+// the incremental layout cache relies on) reproduces the rows that follow.
+void TestWrapRowsPartitionTheLineAndResumeFromAnyBoundary() {
+  std::uint64_t state = 0x9E3779B97F4A7C15ull;
+  const auto next = [&state](std::uint64_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return bound == 0 ? 0 : static_cast<std::size_t>(state % bound);
+  };
+  static constexpr const char* kAtoms[] = {"a", "b", " ", "  ", "\t", "\xE4\xB8\xAD",
+                                           "\xC3\xA9", "e\xCC\x81", "\xF0\x9F\x98\x80",
+                                           "word", "longerword", "-", "\xCC\x81"};
+  struct Row {
+    std::size_t start;
+    std::size_t end;
+    std::size_t indent;
+  };
+  for (int trial = 0; trial < 400; ++trial) {
+    std::string line;
+    const std::size_t atoms = next(30);
+    for (std::size_t i = 0; i < atoms; ++i) {
+      line += kAtoms[next(std::size(kAtoms))];
+    }
+    const std::size_t tab_size = 2 + next(7);
+    const std::size_t wrap_columns = 1 + next(24);
+    const std::string context = "trial " + std::to_string(trial) + " wrap=" +
+                                std::to_string(wrap_columns) + " tab=" +
+                                std::to_string(tab_size) + " line=[" + line + "]";
+
+    std::vector<Row> rows;
+    TextLayout::WrapLineSegments(line, tab_size, wrap_columns,
+                                 [&](std::size_t start, std::size_t end, std::size_t indent) {
+                                   rows.push_back(Row{start, end, indent});
+                                 });
+    const std::size_t width = TextLayout::VisualColumnForTextColumn(line, line.size(), tab_size);
+    Expect(!rows.empty() && rows.front().start == 0 && rows.back().end == width,
+           "rows span the whole line: " + context);
+    const TextLayout::LineVisualColumnMap map(line, tab_size);
+    const auto is_boundary = [&](std::size_t visual) {
+      // A visual column is a boundary when some code-point boundary maps to it.
+      for (std::size_t c = 0; c <= line.size(); ++c) {
+        if (TextLayout::ClampTextColumn(line, c) == c && map.VisualColumnFor(c) == visual) {
+          return true;
+        }
+      }
+      return false;
+    };
+    for (std::size_t r = 0; r < rows.size(); ++r) {
+      const Row& row = rows[r];
+      Expect(row.start <= row.end, "a row does not run backwards: " + context);
+      if (r > 0) {
+        Expect(rows[r - 1].end == row.start, "rows are contiguous: " + context);
+        Expect(row.indent == TextLayout::HangingIndentFor(line, tab_size, wrap_columns),
+               "a continuation row carries the hanging indent: " + context);
+        Expect(row.end > row.start, "a continuation row is never empty: " + context);
+      } else {
+        Expect(row.indent == 0, "the first row has no hanging indent: " + context);
+      }
+      Expect(is_boundary(row.start) && is_boundary(row.end),
+             "a break sits on a code-point boundary: " + context);
+      const std::size_t budget = wrap_columns - row.indent;
+      if (row.end - row.start > budget) {
+        // Only a single code point wider than the row can overflow it.
+        const std::size_t start_byte =
+            TextLayout::TextColumnForVisualColumn(line, row.start, tab_size);
+        std::size_t after = start_byte;
+        TextLayout::AdvanceVisualColumnAt(row.start, line, start_byte, tab_size, &after);
+        Expect(map.VisualColumnFor(after) >= row.end,
+               "a row overflows its width only for one indivisible code point: " + context);
+      }
+    }
+
+    // Resume from every row boundary: the tail must wrap into the same rows.
+    for (std::size_t r = 1; r < rows.size(); ++r) {
+      const std::size_t boundary_byte =
+          TextLayout::TextColumnForVisualColumn(line, rows[r].start, tab_size);
+      Expect(map.VisualColumnFor(boundary_byte) == rows[r].start,
+             "the boundary maps back to a byte offset: " + context);
+      std::vector<Row> resumed;
+      TextLayout::WrapLineSegmentsFrom(
+          std::string_view(line).substr(boundary_byte), tab_size, wrap_columns, rows[r].start,
+          TextLayout::HangingIndentFor(line, tab_size, wrap_columns),
+          [&](std::size_t start, std::size_t end, std::size_t indent) {
+            resumed.push_back(Row{start, end, indent});
+          });
+      Expect(resumed.size() == rows.size() - r, "resuming yields the remaining rows: " + context);
+      for (std::size_t k = 0; k < resumed.size() && r + k < rows.size(); ++k) {
+        Expect(resumed[k].start == rows[r + k].start && resumed[k].end == rows[r + k].end &&
+                   resumed[k].indent == rows[r + k].indent,
+               "a resumed row equals the whole-line row: " + context);
+      }
+    }
+    Expect(TextLayout::WrapLineRowCount(line, tab_size, wrap_columns) == rows.size(),
+           "WrapLineRowCount agrees: " + context);
+  }
+}
+
 void TestWrapCountsWideGlyphsAsTwoCells() {
   const std::string_view line = "ab\xE4\xB8\xAD\xE6\x96\x87";  // ab 中 文 = 6 cells
   std::vector<std::pair<std::size_t, std::size_t>> rows;
@@ -885,6 +988,8 @@ void RegisterTextLayoutTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextLayout/TextVisualRoundTrip", TestTextVisualRoundTrip);
   AddTest(tests, "TextLayout/WideAndZeroWidthCodepointsTakeTheirCells",
           TestWideAndZeroWidthCodepointsTakeTheirCells);
+  AddTest(tests, "TextLayout/WrapRowsPartitionTheLineAndResumeFromAnyBoundary",
+          TestWrapRowsPartitionTheLineAndResumeFromAnyBoundary);
   AddTest(tests, "TextLayout/WrapCountsWideGlyphsAsTwoCells",
           TestWrapCountsWideGlyphsAsTwoCells);
   AddTest(tests, "TextLayout/ResolveVisualColumnMatchesTextLayout",
