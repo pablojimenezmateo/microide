@@ -1115,6 +1115,19 @@ class TextViewport {
   // keystroke instead of allocating twice per keystroke.
   std::vector<SelectionRange> box_ranges_scratch_;
   std::vector<SecondaryCaret> secondary_caret_candidates_scratch_;
+  // One range per caret, the working set of MergeOverlappingCaretRanges. That
+  // merge is the tail of EVERY caret-set mutation, so it runs once per keystroke
+  // of a held column-select gesture over a span that grows with the gesture --
+  // and the overwhelmingly common outcome is that nothing merges. Keeping the
+  // capacity here makes that outcome allocation-free; a fresh vector cost one
+  // allocation per keystroke, sized by the whole caret set.
+  struct CaretMergeEntry {
+    TextPosition start;
+    TextPosition end;
+    bool caret_at_end = true;
+    std::size_t source = 0;
+  };
+  std::vector<CaretMergeEntry> caret_merge_scratch_;
   mutable TextLayoutCache layout_cache_;
   // Per-line token cache. Entries carry the generation they were computed in
   // rather than being erased when the document changes: an edit bumps

@@ -61,12 +61,14 @@ TextViewport::TextViewport(const TextViewport& other)
       secondary_carets_(other.secondary_carets_),
       column_selection_(other.column_selection_),
       secondary_caret_positions_cache_(other.secondary_caret_positions_cache_),
-      // box_ranges_scratch_ and secondary_caret_candidates_scratch_ are deliberately
-      // left empty rather than copied. They hold no state between calls — every use
-      // clears them on entry — so copying their contents would allocate to carry
-      // bytes the next call throws away. The capacity rebuilds on first use.
+      // box_ranges_scratch_, secondary_caret_candidates_scratch_ and
+      // caret_merge_scratch_ are deliberately left empty rather than copied. They
+      // hold no state between calls — every use clears them on entry — so copying
+      // their contents would allocate to carry bytes the next call throws away.
+      // The capacity rebuilds on first use.
       box_ranges_scratch_(),
       secondary_caret_candidates_scratch_(),
+      caret_merge_scratch_(),
       layout_cache_(other.layout_cache_),
       highlight_cache_(other.highlight_cache_),
       highlight_cache_generation_(other.highlight_cache_generation_),
@@ -148,6 +150,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       // viewport's first box-selection rebuild allocation-free.
       box_ranges_scratch_(std::move(other.box_ranges_scratch_)),
       secondary_caret_candidates_scratch_(std::move(other.secondary_caret_candidates_scratch_)),
+      caret_merge_scratch_(std::move(other.caret_merge_scratch_)),
       layout_cache_(std::move(other.layout_cache_)),
       highlight_cache_(std::move(other.highlight_cache_)),
       highlight_cache_generation_(other.highlight_cache_generation_),
@@ -212,6 +215,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   secondary_caret_positions_cache_ = std::move(other.secondary_caret_positions_cache_);
   box_ranges_scratch_ = std::move(other.box_ranges_scratch_);
   secondary_caret_candidates_scratch_ = std::move(other.secondary_caret_candidates_scratch_);
+  caret_merge_scratch_ = std::move(other.caret_merge_scratch_);
   layout_cache_ = std::move(other.layout_cache_);
   highlight_cache_ = std::move(other.highlight_cache_);
   highlight_cache_generation_ = other.highlight_cache_generation_;

@@ -904,14 +904,19 @@ void TextViewport::MergeOverlappingCaretRanges() {
   }
 
   constexpr std::size_t kPrimary = std::numeric_limits<std::size_t>::max();
-  struct Entry {
-    TextPosition start;
-    TextPosition end;
-    bool caret_at_end = true;
-    std::size_t source = kPrimary;
-  };
-  std::vector<Entry> entries;
-  entries.reserve(secondary_carets_.size() + 1);
+  using Entry = CaretMergeEntry;
+  // Reused scratch, not a local: this runs at the tail of every caret-set
+  // mutation, so a held column-select gesture allocated one growing vector per
+  // keystroke for a merge that almost never has anything to merge.
+  std::vector<Entry>& entries = caret_merge_scratch_;
+  entries.clear();
+  // Grow geometrically. reserve() takes the exact count, so reserving size()+1
+  // against a set that gains one caret per keystroke reallocated on EVERY
+  // keystroke -- the reused buffer above would have bought nothing.
+  const std::size_t needed = secondary_carets_.size() + 1;
+  if (entries.capacity() < needed) {
+    entries.reserve(std::max(needed, entries.capacity() * 2));
+  }
   const auto push = [&](const TextPosition& caret, const std::optional<TextPosition>& anchor,
                         std::size_t source) {
     if (!anchor.has_value() || *anchor == caret) {
@@ -968,8 +973,14 @@ void TextViewport::MergeOverlappingCaretRanges() {
   }
   entries.resize(out);
 
-  std::vector<SecondaryCaret> rebuilt;
-  rebuilt.reserve(entries.size());
+  // Write the merged set back over `secondary_carets_` rather than into a fresh
+  // vector: exactly one entry carries the primary, so the secondaries written
+  // are `out - 1` <= the size the vector already has, and nothing below reads
+  // `secondary_carets_` (the entries hold their own copies of every position and
+  // anchor, and PreferredColumnForCaret does not consult the caret set). A fresh
+  // vector cost one allocation per merge, and the merge runs at the tail of
+  // every caret-set mutation.
+  std::size_t written = 0;
   for (const Entry& entry : entries) {
     const bool collapsed = entry.start == entry.end;
     const TextPosition caret = entry.caret_at_end ? entry.end : entry.start;
@@ -984,14 +995,15 @@ void TextViewport::MergeOverlappingCaretRanges() {
       preferred_column_ = PreferredColumnForCaret(caret);
       continue;
     }
-    rebuilt.push_back(SecondaryCaret{
+    secondary_carets_[written++] = SecondaryCaret{
         .position = caret,
         .preferred_column = PreferredColumnForCaret(caret),
         .selection_anchor = anchor,
-    });
+    };
   }
-  std::sort(rebuilt.begin(), rebuilt.end(), detail::SecondaryCaretPositionLess);
-  secondary_carets_ = std::move(rebuilt);
+  secondary_carets_.resize(written);
+  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
+            detail::SecondaryCaretPositionLess);
 }
 
 void TextViewport::AdvanceCaretVertical(TextPosition& caret,
