@@ -2628,6 +2628,55 @@ void TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit() {
          "group 0 should restore its independent scroll position");
 }
 
+// A dirty file open in two panes is one buffer, and both tabs persist the same
+// snapshot. The restore rebuilt each tab from its own lines, so the session came
+// back with two independent documents for one file: an edit in one pane no
+// longer showed in the other. The second restored tab must share the first's.
+void TestWorkspaceShellRestoreSessionSharesADirtyBufferAcrossPanes() {
+  using microide::workspace::EditorSplitOrientation;
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file_a = root / "a.txt";
+  WriteFile(file_a, "alpha\n");
+
+  const std::filesystem::path home = temp_dir.path() / "home";
+  const std::filesystem::path xdg_state_home = temp_dir.path() / "xdg-state-home";
+  const std::filesystem::path xdg_config_home = temp_dir.path() / "xdg-config-home";
+  std::filesystem::create_directories(home);
+  std::filesystem::create_directories(xdg_state_home);
+  std::filesystem::create_directories(xdg_config_home);
+  ScopedEnvVar scoped_home("HOME", home.string());
+  ScopedSessionAppHomes scoped_app_homes(xdg_state_home, xdg_config_home);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::OpenFile(shell, file_a);
+  Expect(WorkspaceShellTestAccess::SplitEditorGroup(shell, EditorSplitOrientation::Vertical),
+         "split-right should clone a.txt into a second pane");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "typing dirties the shared buffer");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty() &&
+             WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(),
+         "both panes are views of the dirty buffer before the save");
+  WorkspaceShellTestAccess::SaveSessionState(shell);
+
+  WorkspaceShell restored;
+  WorkspaceShellTestAccess::SetProjectRoot(restored, root);
+  Expect(WorkspaceShellTestAccess::RestoreSessionState(restored), "the session should restore");
+  WorkspaceShellTestAccess::ActivateCurrentTabAfterStateLoad(restored);
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(restored) == 2, "both panes come back");
+  const auto& left = WorkspaceShellTestAccess::GroupActiveViewport(restored, 0);
+  const auto& right = WorkspaceShellTestAccess::GroupActiveViewport(restored, 1);
+  Expect(left.lines().LineView(0) == "Xalpha" && right.lines().LineView(0) == "Xalpha",
+         "both panes restore the unsaved text");
+  Expect(left.SharesDocumentWith(right),
+         "the two restored panes must be views of ONE document, not two copies");
+
+  // And the buffer stays one: an edit through the focused pane shows in the other.
+  Expect(WorkspaceShellTestAccess::HandleTextInput(restored, "Y"), "typing after the restore");
+  Expect(left.lines().LineView(0) == right.lines().LineView(0),
+         "an edit in one restored pane shows in the other");
+}
+
 // A three-pane grid (two columns, the second stacked) must come back with its
 // SHAPE, not just its group count: the split tree is what the session carries now.
 void TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape() {
@@ -2844,6 +2893,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellAfterDelayAutosaveSurvivesTabSwitch);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesEditorGroupSplit",
           TestWorkspaceShellRestoreSessionPreservesEditorGroupSplit);
+  AddTest(tests, "WorkspaceShell/RestoreSessionSharesADirtyBufferAcrossPanes",
+          TestWorkspaceShellRestoreSessionSharesADirtyBufferAcrossPanes);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesNestedEditorSplitShape",
           TestWorkspaceShellRestoreSessionPreservesNestedEditorSplitShape);
   AddTest(tests, "WorkspaceShell/RestoreSessionPreservesBranchCompareState",

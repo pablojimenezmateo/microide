@@ -5,6 +5,8 @@
 #include <cmath>
 #include <filesystem>
 #include <limits>
+#include <string>
+#include <unordered_map>
 
 #include "util/JsonValue.h"
 #include "util/PathMatch.h"
@@ -233,6 +235,14 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
   {
     util::PerformanceTrace::Scope scope("WorkspaceShell::RestoreSessionState::RebuildTabs");
+    // A file open in two panes is ONE buffer, and both of its tabs persisted the
+    // same dirty snapshot. Rebuilding each from its own lines gave the restored
+    // session two independent documents for one file — an edit in one pane no
+    // longer showed in the other, and each pane saved its own copy. The first
+    // restored view of a path is kept here (a copy shares its DocumentState) and
+    // every later dirty tab on that path copies it. Clean tabs restore lazily
+    // through OpenEditorViewForPath, which finds the live view the same way.
+    std::unordered_map<std::string, editor::TextViewport> restored_dirty_views;
     // Rebuild one persisted tab into a runtime TabEntry. `should_eager_hydrate`
     // controls whether an editor tab is opened immediately or left deferred;
     // compare/merge tabs are always materialized fully.
@@ -409,15 +419,24 @@ bool PersistenceCoordinator::RestoreSessionState() {
 
     if (persisted_tab.dirty_snapshot) {
       editor::TextViewport restored_view;
-      // Load the already line-split snapshot straight in (dirty=true baked in).
-      // LoadContent would SerializeLines(...) then re-split -- two extra full passes
-      // over the buffer plus a throwaway joined string.
-      restored_view.LoadLines(persisted_tab.buffer_lines, view_path, persisted_tab.line_ending);
-      restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
-      // Apply preferences / indent detection first (they re-run EnsureCursorVisible),
-      // then restore view state last so scroll survives independent of the caret.
-      operations_.apply_editor_preferences(restored_view);
-      operations_.apply_detected_indent_on_open(restored_view);
+      const std::string view_key = view_path.generic_string();
+      if (const auto shared = restored_dirty_views.find(view_key);
+          !view_key.empty() && shared != restored_dirty_views.end()) {
+        restored_view = shared->second;  // a second pane on the same dirty buffer
+      } else {
+        // Load the already line-split snapshot straight in (dirty=true baked in).
+        // LoadContent would SerializeLines(...) then re-split -- two extra full passes
+        // over the buffer plus a throwaway joined string.
+        restored_view.LoadLines(persisted_tab.buffer_lines, view_path, persisted_tab.line_ending);
+        restored_view.SetUtf8Bom(persisted_tab.utf8_bom);
+        // Apply preferences / indent detection first (they re-run EnsureCursorVisible),
+        // then restore view state last so scroll survives independent of the caret.
+        operations_.apply_editor_preferences(restored_view);
+        operations_.apply_detected_indent_on_open(restored_view);
+        if (!view_key.empty()) {
+          restored_dirty_views.emplace(view_key, restored_view);
+        }
+      }
       restored_view.ApplyRestoredViewState(persisted_tab.cursor_line,
                                            persisted_tab.cursor_column,
                                            persisted_tab.scroll_line,

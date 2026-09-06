@@ -30,6 +30,7 @@ project (see [README](README.md)); versions track meaningful shipped work.
   headless driver can rename through the language server.
 
 ### Fixed
+- Session restore: a dirty file that was open in two panes came back as two independent copies; the second pane now shares the first's restored buffer.
 - `colorscheme <name>` with a name no theme has answered ok and changed nothing; it now rejects with "Unknown colorscheme".
 - Find widget: replace-all copied every line of the document into a fresh string before looking for the needle, one allocation per line for a replace that touches a handful of them; it now reads lines in place and copies only the ones it changes. A new enumeration pins the three literal replace-all paths (project replace over a file, the widget's default replace, and its case/whole-word replace) to the same text and count.
 - Find widget: typing a query whose text overlaps itself could show no match for text that was there (`aab` over `aaab`): the find-as-you-type refine only re-checked the previous query's de-overlapped hits, and the needed start had been skipped as an overlap. The refine now rescans each line that had a hit with the cold scan's own loop, so it equals a fresh scan by construction; found by a new enumeration test against the cold scan.
