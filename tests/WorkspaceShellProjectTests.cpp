@@ -1321,6 +1321,11 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   for (const std::string& name : names) {
     WriteFile(root / name, name + "\n");
   }
+  // Compare and merge tabs live in the same panes and take the same close,
+  // move and focus verbs, with their own editable viewports.
+  WriteFile(root / "base.txt", "a\nb\nc\n");
+  WriteFile(root / "incoming.txt", "a\nB\nc\n");
+  WriteFile(root / "current.txt", "a\nb\nC\n");
 
   WorkspaceShell shell;
   WorkspaceShellTestAccess::SetProjectRoot(shell, root);
@@ -1337,6 +1342,9 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   std::size_t max_groups_seen = 0;
   std::size_t shared_view_steps = 0;
   std::size_t prompts_answered = 0;
+  int last_prompt_action = -1;
+  std::size_t saves_refused = 0;
+  std::string last_prompt_message;
 
   const auto check = [&](const std::string& context) {
     const std::size_t groups = WorkspaceShellTestAccess::EditorGroupCount(shell);
@@ -1345,7 +1353,10 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
     ExpectSplitTreeWellFormed(tree, context);
     Expect(tree.leaf_count() == groups, "one leaf per group: " + context);
     Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) < groups, "focus is a group: " + context);
-    Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell), "no prompt survives a step: " + context);
+    Expect(!WorkspaceShellTestAccess::DirtyPromptVisible(shell),
+           "no prompt survives a step: " + context + " (answered " +
+               std::to_string(last_prompt_action) + " to '" + last_prompt_message +
+               "', now '" + WorkspaceShellTestAccess::DirtyPromptMessage(shell) + "')");
     struct View {
       std::filesystem::path path;
       const editor::TextViewport* viewport;
@@ -1386,7 +1397,19 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   const auto answer_prompt = [&]() {
     if (WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
       ++prompts_answered;
-      WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, static_cast<int>(pick(3)));
+      last_prompt_action = static_cast<int>(pick(3));
+      last_prompt_message = WorkspaceShellTestAccess::DirtyPromptMessage(shell);
+      WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, last_prompt_action);
+      // "Save" is refused (and the prompt kept) when the file changed on disk
+      // under an independent viewport of the same path -- a compare tab's right
+      // side after the editor tab saved, or the reverse -- which raises the
+      // external-change banner instead. The prompt then still has to answer
+      // Discard / Cancel.
+      if (last_prompt_action == 0 && WorkspaceShellTestAccess::DirtyPromptVisible(shell)) {
+        ++saves_refused;
+        last_prompt_action = 1 + static_cast<int>(pick(2));
+        WorkspaceShellTestAccess::ConfirmDirtyPrompt(shell, last_prompt_action);
+      }
     }
   };
 
@@ -1396,7 +1419,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
     const std::size_t focused = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
     const std::size_t focused_tabs = WorkspaceShellTestAccess::GroupTabCount(shell, focused);
     const std::string& file = names[pick(names.size())];
-    const std::size_t op = pick(15);
+    const std::size_t op = pick(17);
     std::string context = "seed " + std::to_string(seed) + " step " + std::to_string(step) +
                           " op " + std::to_string(op);
     switch (op) {
@@ -1481,12 +1504,21 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
         RunCommandLine(shell, "tabmove " + std::to_string(pick(focused_tabs + 1)));
         context += " tabmove";
         break;
+      case 15:
+        RunCommandLine(shell, "compare-files " + file + " " + names[pick(names.size())]);
+        context += " compare-files";
+        break;
+      case 16:
+        RunCommandLine(shell, "merge base.txt incoming.txt current.txt merged.txt");
+        context += " merge";
+        break;
     }
     check(context);
   }
   Expect(max_groups_seen >= 3, "the sequence reached a three-pane layout");
   Expect(shared_view_steps > 0, "the sequence held two views of one file");
   Expect(prompts_answered > 0, "the sequence answered a dirty prompt");
+  (void)saves_refused;
   // Close everything so the next seed starts from one empty pane.
   while (WorkspaceShellTestAccess::EditorGroupCount(shell) > 1) {
     RunCommandLine(shell, "close-group");
