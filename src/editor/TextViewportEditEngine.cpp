@@ -371,7 +371,10 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
   std::string new_line;
   std::string lowered_line;  // reused across lines to avoid a per-line allocation
   for (std::size_t line_index = 0; line_index < document_->lines.size(); ++line_index) {
-    std::string current_line(document_->lines.LineView(line_index));
+    // A view until the line is known to change: this copied EVERY line of the
+    // document into a fresh string before looking for the needle, one allocation
+    // per line for a replace that touches a handful of them.
+    const std::string_view current_line = document_->lines.LineView(line_index);
     util::Utf8CaseFoldInto(current_line, lowered_line);
     std::size_t offset = lowered_line.find(lowered_needle);
     if (offset == std::string::npos) {
@@ -406,7 +409,7 @@ std::size_t TextViewport::ReplaceAll(std::string_view needle, std::string_view r
         after_changed_lines.push_back(gap_line);
       }
     }
-    before_changed_lines.push_back(std::move(current_line));
+    before_changed_lines.push_back(current_line);
     if (replacement_has_break) {
       // Views: the blob copies the bytes in, so owning a string per piece first
       // was one allocation per produced line for nothing.

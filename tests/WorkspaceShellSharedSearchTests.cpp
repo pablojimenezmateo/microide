@@ -727,6 +727,78 @@ void TestWorkspaceSharedRefineMatchesTheColdScan() {
   Expect(checked > 2000, "the enumeration exercised the refine path");
 }
 
+// Three literal replace-all implementations must agree on any text: the project
+// replace over a file blob (`ReplaceLiteralMatchesInText`), the find widget's
+// default path (`TextViewport::ReplaceAll`, always case-insensitive) and its
+// toggled path (`ReplaceAllRanges` over `FindLiteralSearchMatches`). VS Code has one
+// answer for "replace all occurrences"; here there are three code paths, so pin
+// them to each other over a small mixed-case alphabet where self-overlapping
+// needles, multi-line replacements and folded two-byte letters are the norm.
+void TestWorkspaceSharedReplaceAllPathsAgree() {
+  using microide::editor::TextViewport;
+  using microide::workspace::BufferSearchOptions;
+  using microide::workspace::ReplaceLiteralMatchesInText;
+
+  const auto join = [](const TextViewport& viewport) {
+    std::string out;
+    for (std::size_t i = 0; i < viewport.lines().LineCount(); ++i) {
+      if (i > 0) {
+        out += '\n';
+      }
+      out += viewport.lines().LineView(i);
+    }
+    return out;
+  };
+  const std::vector<std::string> letters = {"a", "A", "b", "\xc3\xa9", "\xc3\x89"};
+  const std::vector<std::string> content_units = {"a", "A", "b", "\xc3\xa9", "\xc3\x89", " ", "\n"};
+  const std::vector<std::string> replacement_units = {"x", "Y", "", "\n", "a"};
+  std::mt19937 rng(20260906);
+  std::size_t compared = 0;
+  for (int round = 0; round < 2000; ++round) {
+    std::string content;
+    const std::size_t content_length = rng() % 24;
+    for (std::size_t i = 0; i < content_length; ++i) {
+      content += content_units[rng() % content_units.size()];
+    }
+    std::string query;
+    const std::size_t query_length = 1 + rng() % 3;
+    for (std::size_t i = 0; i < query_length; ++i) {
+      query += letters[rng() % letters.size()];
+    }
+    std::string replacement;
+    const std::size_t replacement_length = rng() % 3;
+    for (std::size_t i = 0; i < replacement_length; ++i) {
+      replacement += replacement_units[rng() % replacement_units.size()];
+    }
+    for (const bool case_sensitive : {false, true}) {
+      std::string blob = content;
+      const std::size_t blob_count =
+          ReplaceLiteralMatchesInText(blob, query, replacement, case_sensitive);
+
+      TextViewport ranged;
+      ranged.LoadContent(content, "/tmp/replace-equivalence.txt");
+      const BufferSearchOptions options{.case_sensitive = case_sensitive, .whole_word = false};
+      const auto matches = FindLiteralSearchMatches(ranged.lines(), query, options);
+      const std::optional<std::size_t> ranged_count = ranged.ReplaceAllRanges(matches, replacement);
+      const std::string context = " for query '" + query + "' -> '" + replacement + "' (case " +
+                                  (case_sensitive ? "on" : "off") + ") over '" + content + "'";
+      Expect(ranged_count.has_value() && *ranged_count == blob_count,
+             "the range replace counts what the blob replace counts" + context);
+      Expect(join(ranged) == blob, "the range replace produces the blob replace's text" + context);
+      ++compared;
+
+      if (!case_sensitive) {
+        TextViewport whole;
+        whole.LoadContent(content, "/tmp/replace-equivalence.txt");
+        const std::size_t whole_count = whole.ReplaceAll(query, replacement);
+        Expect(whole_count == blob_count, "ReplaceAll counts what the blob replace counts" + context);
+        Expect(join(whole) == blob, "ReplaceAll produces the blob replace's text" + context);
+      }
+    }
+  }
+  Expect(compared == 4000, "every round compared both case modes");
+}
+
 void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceGitSidebarPresentation/LineHelpers",
           TestWorkspaceSharedGitSidebarLineHelpers);
@@ -742,6 +814,8 @@ void RegisterWorkspaceShellSharedSearchTests(std::vector<TestCase>& tests) {
           TestWorkspaceSharedLiteralSearchDoesNotOverlap);
   AddTest(tests, "WorkspaceTextSearch/RefineMatchesTheColdScan",
           TestWorkspaceSharedRefineMatchesTheColdScan);
+  AddTest(tests, "WorkspaceTextSearch/ReplaceAllPathsAgree",
+          TestWorkspaceSharedReplaceAllPathsAgree);
   AddTest(tests, "WorkspaceTextSearch/LiteralSearchUtf8Fold",
           TestWorkspaceSharedLiteralSearchUtf8Fold);
   AddTest(tests, "WorkspaceTextSearch/LiteralReplaceModeHelpers",
