@@ -1326,9 +1326,15 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   WriteFile(root / "base.txt", "a\nb\nc\n");
   WriteFile(root / "incoming.txt", "a\nB\nc\n");
   WriteFile(root / "current.txt", "a\nb\nC\n");
+  // A second project: project tabs switch the whole editor area in and out.
+  const std::filesystem::path other_root = temp_dir.path() / "other";
+  WriteFile(other_root / "omega.txt", "omega\n");
 
   WorkspaceShell shell;
-  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  // Through the catalog (not SetProjectRoot) so the project ops below have a
+  // first project tab to switch away from and back to.
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "the first project should open as a project tab");
   WorkspaceShellTestAccess::SetClipboardTextReader(shell, []() { return std::string("clip"); });
   WorkspaceShellTestAccess::SetClipboardTextWriter(shell, [](std::string_view) { return true; });
 
@@ -1340,6 +1346,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   // Vacuity guards: the sequence must actually reach split layouts, shared views
   // and answered prompts, or the invariants are checked over nothing.
   std::size_t max_groups_seen = 0;
+  std::size_t max_projects_seen = 0;
   std::size_t shared_view_steps = 0;
   std::size_t prompts_answered = 0;
   int last_prompt_action = -1;
@@ -1348,9 +1355,14 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
 
   // The files a step can pick: whatever text files the walk's renames, deletes
   // and new buffers have left in the project (the merge fixture aside).
+  const auto active_root = [&]() -> std::filesystem::path {
+    const auto roots = WorkspaceShellTestAccess::ProjectRoots(shell);
+    const std::size_t active = WorkspaceShellTestAccess::ActiveProjectIndex(shell);
+    return active < roots.size() ? roots[active] : root;
+  };
   const auto project_files = [&]() {
     std::vector<std::string> files;
-    for (const auto& entry : std::filesystem::directory_iterator(root)) {
+    for (const auto& entry : std::filesystem::directory_iterator(active_root())) {
       const std::string name = entry.path().filename().string();
       if (entry.is_regular_file() && name.ends_with(".txt") && name != "base.txt" &&
           name != "incoming.txt" && name != "current.txt" && name != "merged.txt") {
@@ -1364,6 +1376,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   const auto check = [&](const std::string& context) {
     const std::size_t groups = WorkspaceShellTestAccess::EditorGroupCount(shell);
     max_groups_seen = std::max(max_groups_seen, groups);
+    max_projects_seen = std::max(max_projects_seen, WorkspaceShellTestAccess::ProjectCount(shell));
     Expect(!WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
            "no prompt surface survives a step: " + context);
     const auto& tree = WorkspaceShellTestAccess::EditorSplit(shell);
@@ -1437,13 +1450,13 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
     const std::size_t focused_tabs = WorkspaceShellTestAccess::GroupTabCount(shell, focused);
     const std::vector<std::string> files = project_files();
     const std::string file = files.empty() ? names[0] : files[pick(files.size())];
-    const std::size_t op = pick(22);
+    const std::size_t op = pick(25);
     std::string context = "seed " + std::to_string(seed) + " step " + std::to_string(step) +
                           " op " + std::to_string(op);
     switch (op) {
       case 0:
       case 1:
-        WorkspaceShellTestAccess::OpenFileInNewTab(shell, root / file);
+        WorkspaceShellTestAccess::OpenFileInNewTab(shell, active_root() / file);
         context += " open " + file;
         break;
       case 2:
@@ -1529,7 +1542,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
         break;
       case 17: {
         // The file changes on disk under whatever views show it.
-        WriteFile(root / file, "external " + std::to_string(step) + "\n" + file + "\n");
+        WriteFile(active_root() / file, "external " + std::to_string(step) + "\n" + file + "\n");
         WorkspaceShellTestAccess::ReloadProjectIfFilesChanged(shell, true);
         answer_prompt();
         context += " external change " + file;
@@ -1537,7 +1550,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
       }
       case 18: {
         const std::string target = "renamed_" + std::to_string(step) + ".txt";
-        WorkspaceShellTestAccess::PrepareRenamePrompt(shell, root / file, target);
+        WorkspaceShellTestAccess::PrepareRenamePrompt(shell, active_root() / file, target);
         WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
         answer_prompt();
         if (WorkspaceShellTestAccess::PromptSurfaceVisible(shell)) {
@@ -1548,7 +1561,7 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
       }
       case 19:
         if (files.size() > 2) {
-          WorkspaceShellTestAccess::PrepareDeletePrompt(shell, root / file);
+          WorkspaceShellTestAccess::PrepareDeletePrompt(shell, active_root() / file);
           WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
           answer_prompt();
           if (WorkspaceShellTestAccess::PromptSurfaceVisible(shell)) {
@@ -1565,6 +1578,32 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
         RunCommandLine(shell, "tab fresh_" + std::to_string(fresh_counter++) + ".txt");
         context += " new buffer";
         break;
+      case 22:
+        if (WorkspaceShellTestAccess::ProjectCount(shell) < 2) {
+          // Whichever of the two projects is not open: a close may have taken
+          // the first one, in which case reopening the other only re-activates it.
+          const auto roots = WorkspaceShellTestAccess::ProjectRoots(shell);
+          for (const std::filesystem::path& candidate : {root, other_root}) {
+            if (std::find(roots.begin(), roots.end(), candidate.lexically_normal()) == roots.end()) {
+              WorkspaceShellTestAccess::OpenProjectTab(shell, candidate, false, false);
+              break;
+            }
+          }
+        }
+        context += " open second project";
+        break;
+      case 23:
+        RunCommandLine(shell, pick(2) == 0 ? "project-next" : "project-prev");
+        context += " project switch";
+        break;
+      case 24:
+        if (WorkspaceShellTestAccess::ProjectCount(shell) > 1) {
+          WorkspaceShellTestAccess::RequestCloseProject(
+              shell, WorkspaceShellTestAccess::ActiveProjectIndex(shell));
+          answer_prompt();
+        }
+        context += " close project";
+        break;
       case 16:
         RunCommandLine(shell, "merge base.txt incoming.txt current.txt merged.txt");
         context += " merge";
@@ -1575,7 +1614,13 @@ void TestWorkspaceShellRandomTabAndGroupOperationsKeepInvariants() {
   Expect(max_groups_seen >= 3, "the sequence reached a three-pane layout");
   Expect(shared_view_steps > 0, "the sequence held two views of one file");
   Expect(prompts_answered > 0, "the sequence answered a dirty prompt");
+  Expect(max_projects_seen >= 2, "the sequence opened a second project");
   (void)saves_refused;
+  // Back to the first project alone before the next seed.
+  while (WorkspaceShellTestAccess::ProjectCount(shell) > 1) {
+    WorkspaceShellTestAccess::CloseProject(shell, WorkspaceShellTestAccess::ProjectCount(shell) - 1);
+  }
+  WorkspaceShellTestAccess::SwitchProject(shell, 0);
   // Close everything so the next seed starts from one empty pane.
   while (WorkspaceShellTestAccess::EditorGroupCount(shell) > 1) {
     RunCommandLine(shell, "close-group");
