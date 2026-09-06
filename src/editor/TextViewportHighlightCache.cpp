@@ -617,7 +617,7 @@ TextViewportDerivedCacheBytes TextViewport::DerivedCacheBytes() const {
   out.caret_caches += box_ranges_scratch_.capacity() * sizeof(SelectionRange);
   out.caret_caches += secondary_caret_candidates_scratch_.capacity() * sizeof(SecondaryCaret);
 
-  out.undo_history = undo_history_.ApproximateResidentBytes();
+  out.undo_history = document_->undo_history.ApproximateResidentBytes();
   return out;
 }
 

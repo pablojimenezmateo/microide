@@ -87,8 +87,7 @@ TextViewport::TextViewport(const TextViewport& other)
       selection_anchor_(other.selection_anchor_),
       last_applied_edit_(other.last_applied_edit_),
       last_applied_edit_line_span_(other.last_applied_edit_line_span_),
-      folding_model_(nullptr),
-      undo_history_(other.undo_history_) {
+      folding_model_(nullptr) {
   // Drop ONLY the fold-dependent half of the layout cache. This used to be a
   // full InvalidateVisualColumnCache(), which threw away the per-line width
   // table the copy had just deep-copied -- so every viewport copy handed the new
@@ -169,11 +168,9 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       selection_anchor_(std::move(other.selection_anchor_)),
       last_applied_edit_(std::move(other.last_applied_edit_)),
       last_applied_edit_line_span_(std::move(other.last_applied_edit_line_span_)),
-      folding_model_(nullptr),
-      undo_history_(std::move(other.undo_history_)) {
+      folding_model_(nullptr) {
   other.folding_model_ = nullptr;
   other.layout_cache_ = TextLayoutCache{};
-  other.undo_history_ = TextViewportUndoHistory{};
   // See the copy constructor: the moved-in width table describes the same
   // document at the same tab size, so only the fold-dependent half goes.
   layout_cache_.DropWrappedRowLayouts();
@@ -236,10 +233,8 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   last_applied_edit_ = std::move(other.last_applied_edit_);
   last_applied_edit_line_span_ = std::move(other.last_applied_edit_line_span_);
   folding_model_ = nullptr;
-  undo_history_ = std::move(other.undo_history_);
   other.folding_model_ = nullptr;
   other.layout_cache_ = TextLayoutCache{};
-  other.undo_history_ = TextViewportUndoHistory{};
   // See the copy constructor: the moved-in width table describes the same
   // document at the same tab size, so only the fold-dependent half goes.
   layout_cache_.DropWrappedRowLayouts();
@@ -489,7 +484,7 @@ void TextViewport::MoveCursorToVisualHit(int visual_row, int visual_col, bool ex
     return;
   }
   const VisualHit hit = ResolveVisualHit(visual_row, visual_col);
-  undo_history_.NotifyCursorMoved();
+  document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const std::size_t clamped_line = std::min(hit.position.line, document_->lines.size() - 1);
   const std::size_t line_length = document_->lines.LineLength(clamped_line);
@@ -1316,7 +1311,7 @@ void TextViewport::ResetMetadataAfterContent(const std::filesystem::path& path,
   horizontal_scroll_ = 0;
   selection_anchor_.reset();
   secondary_carets_.clear();
-  undo_history_.Clear();
+  document_->undo_history.Clear();
   document_->placeholder = placeholder;
   document_->dirty = dirty;
   // Capture the file's on-disk identity as our conflict-detection baseline. For

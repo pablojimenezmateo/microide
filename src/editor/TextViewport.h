@@ -286,7 +286,7 @@ class TextViewport {
   // While a group is active, individual `PushHistoryEntry` calls are suppressed.
   void BeginUndoGroup();
   void EndUndoGroup();
-  bool UndoGroupActive() const { return undo_history_.IsGroupActive(); }
+  bool UndoGroupActive() const { return document_->undo_history.IsGroupActive(); }
   bool ReplaceRange(const SelectionRange& range,
                     std::string_view replacement,
                     bool record_undo = true);
@@ -721,6 +721,12 @@ class TextViewport {
     // detect that the file changed underneath us (external editor, VCS checkout)
     // and to recognize our own writes when the file watcher echoes them back.
     util::FileSignature disk_signature;
+    // Undo/redo history is a property of the DOCUMENT, not of a view of it (VS
+    // Code keeps it on the model). Every pane showing a file shares this state,
+    // so it must also share the history: an entry records a splice against the
+    // buffer as it was, and a per-view stack applied it blind — undo in one pane
+    // after the other pane had typed removed the other pane's bytes.
+    TextViewportUndoHistory undo_history;
   };
 
   // WrappedRowLayout is now owned by TextLayoutCache; keep the alias so the
@@ -1160,7 +1166,6 @@ class TextViewport {
   std::optional<AppliedEdit> last_applied_edit_;
   std::optional<AppliedEditLineSpan> last_applied_edit_line_span_;
   const FoldingModel* folding_model_ = nullptr;
-  TextViewportUndoHistory undo_history_;
 
 #ifndef NDEBUG
  public:

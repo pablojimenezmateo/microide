@@ -195,7 +195,7 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
     return;
   }
 
-  undo_history_.NotifyCursorMoved();
+  document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
   WrapRowAffinity primary_affinity = EffectiveCaretAffinity();
@@ -214,7 +214,7 @@ void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
     return;
   }
 
-  undo_history_.NotifyCursorMoved();
+  document_->undo_history.NotifyCursorMoved();
 
   // VSCode: a plain (non-extending) Left/Right over a selection collapses to that
   // selection's edge -- the left edge for Left, the right edge for Right -- WITHOUT
@@ -310,7 +310,7 @@ void TextViewport::MoveCursorWord(int delta, bool extend_selection) {
     return;
   }
 
-  undo_history_.NotifyCursorMoved();
+  document_->undo_history.NotifyCursorMoved();
   // Unlike the character form, a word step over a selection does NOT merely
   // collapse to the selection's edge: VS Code's cursorWordStartLeft /
   // cursorWordEndRight move word-wise from the active caret and let the anchor
@@ -376,7 +376,7 @@ std::size_t TextViewport::FirstNonWhitespaceColumnInView(std::size_t line,
 // and to the first non-whitespace character, toggling to the row's true start
 // when the caret is already there (TD-2026-08-12-188).
 void TextViewport::MoveCursorLineStart(bool extend_selection) {
-  undo_history_.NotifyCursorMoved();
+  document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const auto home_target = [&](const TextPosition& caret, WrapRowAffinity affinity) {
     const ViewLineBounds bounds = ViewLineBoundsForCaret(caret, affinity);
@@ -399,7 +399,7 @@ void TextViewport::MoveCursorLineStart(bool extend_selection) {
 // wrap point takes kPreviousRow affinity, or the caret would render at the start
 // of the NEXT row -- the one position two rows both claim.
 void TextViewport::MoveCursorLineEnd(bool extend_selection) {
-  undo_history_.NotifyCursorMoved();
+  document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const ViewLineBounds primary_bounds =
       ViewLineBoundsForCaret(TextPosition{cursor_line_, cursor_column_}, EffectiveCaretAffinity());
@@ -428,7 +428,7 @@ void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool exten
   // the path for mouse-click positioning, goto-line, bracket-match, find-nav, and
   // snippet/tabstop jumps. Without this, typing after a click that lands on the exact
   // column the previous run ended at merges both edits into one undo step.
-  undo_history_.NotifyCursorMoved();
+  document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const std::size_t clamped_line = std::min(line, document_->lines.size() - 1);
   const std::size_t line_length = document_->lines.LineLength(clamped_line);

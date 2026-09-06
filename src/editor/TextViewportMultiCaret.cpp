@@ -447,7 +447,7 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   if (record_undo) {
     PushHistoryEntry(std::move(aggregate_entry));
   } else {
-    undo_history_.ClearRedo();
+    document_->undo_history.ClearRedo();
   }
   return true;
 }

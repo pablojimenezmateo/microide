@@ -25,15 +25,16 @@ bool TabCoordinator::RestoreEditorTab(TabEntry::EditorTabState& editor_state) {
   editor::TextViewport loaded_view;
   {
     util::PerformanceTrace::Scope open_scope("TabCoordinator::RestoreEditorTab::OpenFile");
-    if (!loaded_view.OpenFile(editor_state.restored_path)) {
+    // A restored session can hold the same file in two panes; the second one to
+    // load shares the first's buffer rather than reading the file again.
+    // Preferences / indent detection (applied in there for a fresh read)
+    // internally re-run EnsureCursorVisible, so they come BEFORE the view-state
+    // restore — otherwise they snap scroll back onto the caret (the "reopen
+    // lands on line 1 after scrolling" bug).
+    if (!OpenEditorViewForPath(editor_state.restored_path, loaded_view)) {
       return false;
     }
   }
-  // Preferences / indent detection internally re-run EnsureCursorVisible, so apply
-  // them BEFORE restoring view state — otherwise they snap scroll back onto the
-  // caret (the "reopen lands on line 1 after scrolling" bug).
-  operations_.apply_editor_preferences(loaded_view);
-  operations_.apply_detected_indent_on_open(loaded_view);
   loaded_view.ApplyRestoredViewState(editor_state.restored_cursor_line,
                                      editor_state.restored_cursor_column,
                                      editor_state.restored_scroll_line,

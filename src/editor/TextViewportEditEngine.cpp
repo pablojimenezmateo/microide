@@ -280,14 +280,14 @@ void TextViewport::DeleteForward() {
 
 bool TextViewport::ApplyHistoryStep(bool redo) {
   util::PerformanceTrace::Scope perf_scope(redo ? "TextViewport::Redo" : "TextViewport::Undo");
-  if (undo_history_.IsGroupActive()) {
+  if (document_->undo_history.IsGroupActive()) {
     FlushActiveUndoGroup();
   }
-  if (redo ? !undo_history_.CanRedo() : !undo_history_.CanUndo()) {
+  if (redo ? !document_->undo_history.CanRedo() : !document_->undo_history.CanUndo()) {
     return false;
   }
 
-  HistoryEntry entry = redo ? undo_history_.PopRedo() : undo_history_.PopUndo();
+  HistoryEntry entry = redo ? document_->undo_history.PopRedo() : document_->undo_history.PopUndo();
   // Stamp the view state for the side we are leaving, so stepping back lands the
   // caret and scroll where they were.
   (redo ? entry.before_state : entry.after_state) = CaptureViewState();
@@ -302,15 +302,15 @@ bool TextViewport::ApplyHistoryStep(bool redo) {
     SetLastAppliedEditFromEntry(entry, redo);
   }
   if (redo) {
-    undo_history_.PushUndo(std::move(entry));
+    document_->undo_history.PushUndo(std::move(entry));
   } else {
-    undo_history_.PushRedo(std::move(entry));
+    document_->undo_history.PushRedo(std::move(entry));
   }
   return true;
 }
 
 bool TextViewport::TopUndoEntryIsColumnScopedForTesting() const {
-  const HistoryEntry* top = undo_history_.TopUndoEntry();
+  const HistoryEntry* top = document_->undo_history.TopUndoEntry();
   return top != nullptr && top->is_inline;
 }
 
@@ -433,7 +433,7 @@ void TextViewport::CommitLineRangeEdit(std::size_t first_changed_line,
   document_->lines.ReplaceLineRange(first_changed_line, before_changed_lines.size(),
                                     after_changed_lines);
   document_->dirty = true;
-  undo_history_.ClearRedo();
+  document_->undo_history.ClearRedo();
   RefreshEncoding();
   InvalidateLayoutCaches();
   EnsureCursorVisible();
@@ -571,7 +571,7 @@ bool TextViewport::SurroundRangeBoundaries(const SelectionRange& norm,
 
   document_->lines.ReplaceLineRange(first, span, after_lines);
   document_->dirty = true;
-  undo_history_.ClearRedo();
+  document_->undo_history.ClearRedo();
   RefreshEncoding();
   InvalidateLayoutCaches();
   EnsureCursorVisible();
@@ -620,7 +620,7 @@ TextViewport::ViewState TextViewport::CaptureViewState() const {
 }
 
 TextViewport::ViewState TextViewport::CaptureViewStateForGroupedEntry() const {
-  return CaptureViewStateImpl(/*with_secondary_carets=*/!undo_history_.IsGroupActive());
+  return CaptureViewStateImpl(/*with_secondary_carets=*/!document_->undo_history.IsGroupActive());
 }
 
 void TextViewport::RestoreViewState(const ViewState& state) {
@@ -643,20 +643,20 @@ void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
   // recorded entry can still be inline, which is why the widening lives here
   // rather than inside TextViewportUndoHistory (which has no buffer to read the
   // line from).
-  if (entry.is_inline && undo_history_.IsGroupActive()) {
+  if (entry.is_inline && document_->undo_history.IsGroupActive()) {
     WidenInlineEntryToLines(entry);
   }
-  undo_history_.RecordEntry(std::move(entry), hint);
+  document_->undo_history.RecordEntry(std::move(entry), hint);
 }
 
 
-void TextViewport::BeginUndoGroup() { undo_history_.BeginGroup(CaptureViewState()); }
+void TextViewport::BeginUndoGroup() { document_->undo_history.BeginGroup(CaptureViewState()); }
 
 void TextViewport::EndUndoGroup() { FlushActiveUndoGroup(); }
 
 void TextViewport::FlushActiveUndoGroup() {
   std::optional<HistoryEntry> aggregate =
-      undo_history_.FinishActiveGroup(CaptureViewState());
+      document_->undo_history.FinishActiveGroup(CaptureViewState());
   if (!aggregate.has_value()) {
     return;
   }
@@ -1021,7 +1021,7 @@ bool TextViewport::ApplyRangeEdit(const SelectionRange& range,
     saved_entry.after_state = CaptureViewStateForGroupedEntry();
     PushHistoryEntry(std::move(saved_entry), hint);
   } else {
-    undo_history_.ClearRedo();
+    document_->undo_history.ClearRedo();
   }
   return true;
 }
@@ -1057,7 +1057,7 @@ bool TextViewport::ApplyLineEdit(std::size_t start_line,
     saved_entry.after_state = CaptureViewStateForGroupedEntry();
     PushHistoryEntry(std::move(saved_entry));
   } else {
-    undo_history_.ClearRedo();
+    document_->undo_history.ClearRedo();
   }
   return true;
 }

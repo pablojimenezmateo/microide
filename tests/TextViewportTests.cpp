@@ -70,6 +70,41 @@ void TestTextViewportSplitSiblingEditRefreshesHighlightTokens() {
          "the split sibling pane must recompute tokens after the shared buffer changed");
 }
 
+// Two panes on one buffer share ONE undo history (VS Code keeps it on the model).
+// Each view used to carry its own stack, and an entry is a splice against the
+// buffer as it was when recorded: undo in pane B after pane A had typed replayed
+// B's splice at a stale offset and removed A's bytes instead of B's.
+void TestTextViewportSplitSiblingsShareOneUndoHistory() {
+  TextViewport pane_a;
+  pane_a.LoadContent("alpha\n", "/tmp/split-undo.txt");
+  TextViewport pane_b = pane_a;
+
+  pane_a.MoveCursorTo(0, 0);
+  pane_a.InsertText("X");
+  pane_b.MoveCursorTo(0, 0);
+  pane_b.InsertText("Y");
+  pane_a.MoveCursorTo(0, 0);
+  pane_a.InsertText("Z");
+  Expect(pane_b.lines().LineView(0) == "ZYXalpha", "both panes see every edit");
+
+  // Undo from pane B takes back the LAST edit on the document — pane A's "Z".
+  Expect(pane_b.Undo(), "pane B can undo");
+  Expect(pane_b.lines().LineView(0) == "YXalpha",
+         "undo from either pane steps the shared history: got " +
+             std::string(pane_b.lines().LineView(0)));
+  Expect(pane_a.Undo(), "pane A can undo pane B's edit");
+  Expect(pane_a.lines().LineView(0) == "Xalpha", "the history is one stack");
+  Expect(pane_b.Redo(), "redo is shared too");
+  Expect(pane_a.lines().LineView(0) == "YXalpha", "pane A sees pane B's redo");
+  Expect(pane_a.dirty(), "the buffer is dirty");
+
+  // A fresh copy (a third pane) inherits the same history rather than none.
+  TextViewport pane_c = pane_a;
+  Expect(pane_c.Undo() && pane_c.Undo(), "a new pane can undo edits made before it existed");
+  Expect(pane_b.lines().LineView(0) == "alpha", "the document is back to its loaded text");
+  Expect(!pane_b.dirty(), "undoing to the saved point cleans every pane");
+}
+
 // The per-line token cache stopped ERASING invalidated entries -- it stamps them
 // with a generation and retokenizes into the buffer they already hold, so typing
 // no longer frees and reallocates a screenful of token vectors per keystroke.
@@ -6039,6 +6074,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave);
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
+  AddTest(tests, "TextViewport/SplitSiblingsShareOneUndoHistory",
+          TestTextViewportSplitSiblingsShareOneUndoHistory);
   AddTest(tests, "TextViewport/SplitSiblingEditRefreshesHighlightTokens",
           TestTextViewportSplitSiblingEditRefreshesHighlightTokens);
   AddTest(tests, "TextViewport/EditStalesTokenCacheSuffixOnly",
