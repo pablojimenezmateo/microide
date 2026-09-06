@@ -389,6 +389,64 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-06-290 — running the perf gate after three weeks: two allocation regressions that rode in on correctness fixes, and a scenario that had gone silently stale. [RESOLVED same session — open remainder: one non-gating allocation drift, 290a.]
+
+The gate had last run on 2026-08-17 at `8400ad13`, 138 commits back. Nothing
+re-ran it, which is the failure mode TD-2026-08-06-141 describes: gates trip on
+increases, so what lands between runs is invisible until someone looks. Four
+scenarios failed their committed baselines, and every one of them was a
+deterministic allocation count — the half that is runner-independent, so machine
+state explains none of it.
+
+- **The caret overlap merge allocated on every caret-set mutation.** The merge
+  added by the "overlapping carets merge instead of making every edit a no-op"
+  fix runs at the tail of every mutation and built a fresh `std::vector` of one
+  range per caret each time — then reserved it to the exact caret count, so once
+  the vector was reused it still reallocated on every keystroke of a gesture
+  that adds a caret at a time, and rebuilt the surviving set into a second fresh
+  vector. A 400-step column select paid 400 allocations where the baseline paid
+  0, and 96 Ctrl+D presses paid 190. It is one reused member now (the idiom the
+  two scratch buffers beside it already used), grown geometrically, with the
+  merged set written back over `secondary_carets_` in place. Both scenarios
+  returned to their baselines exactly: 678 -> 214 and 859 -> 669.
+- **Find-as-you-type refolded and rescanned every matched line, per keystroke.**
+  The "lost matches whose start the previous query had de-overlapped" fix made
+  the unit of reuse the line rather than the hit, which is correct but costs a
+  cold scan per character when the query matches most lines: 48 ms a pass on the
+  50k-line fixture against a 16 ms baseline, plus one allocation per call for a
+  fold buffer. The rescan is only NEEDED when the previous needle has a proper
+  border — that is the only way the cold scan's advance-by-length can skip an
+  occurrence — so with no border `previous` holds every occurrence of the prefix
+  and the recorded columns are exact. Fast path restored the timing (15.5 ms) and
+  the allocation count (263 -> 239); the fold buffer on the fallback path is
+  reused. The existing 3,000-round refine-vs-cold-scan enumeration exercises
+  both branches (its alphabet makes self-overlapping prefixes routine) and a new
+  case pins them at their boundary.
+- **`editor_split_grid_workout` had stopped measuring anything.** Its last phase
+  types 120 characters into the focused pane, so from the second iteration that
+  pane holds a dirty buffer whose only view it is — and `close-group` had, that
+  same day, correctly started raising Save / Discard / Cancel instead of dropping
+  those edits. The command reports success having only ASKED, so the scenario's
+  collapse loop spun its guard out against a prompt and skipped. The harness was
+  right to skip and right to call a skipped baseline-gated scenario a failed run
+  (a four-pane grid measured against a one-pane baseline is the vacuous green it
+  exists to prevent); the scenario now drops each pane's tabs through the
+  no-prompt close first. Worth noting the shape: a product change made a
+  scenario stale on the same day, and only the gate said so.
+- **Lanes**: tests, clang-build, perf-canary, hardened, asan, ubsan and tsan each
+  green before the fixes (at `5687d8ec`) and again after, with zero suppressed
+  findings in any sanitizer log; `perf-tests` green; the gate green at the end
+  with no allocation drift up. The architecture lint caught the new scratch
+  member missing from `TextViewport`'s hand-written copy/move on the first run —
+  that rule earned its keep.
+
+#### TD-2026-09-06-290a — `editor_toggle_comment_large_selection` allocates 32 more than its baseline. [OPEN — non-gating]
+
+Real deterministic drift (727 -> 759, +4.4%) that passes its +10% gate, so it is
+not blocking. The phase's dominant site is `PieceTree::InsertText` under
+`ReplaceLineRangeFrom`, which is the edit itself; the extra 32 are not attributed
+yet. Worth a look before the gate's slack absorbs them, per TD-2026-08-06-139.
+
 ### TD-2026-09-06-289 — the 2026-09-06 pass: the editor grid's cell model, three reference-tested primitives, and a headless sweep of the real binary. [RESOLVED same session — open remainder: one perf follow-up, 289a.]
 
 The 2026-09-05 passes had read the editor's primitives, the terminal, git, LSP
