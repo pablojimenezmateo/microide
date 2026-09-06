@@ -600,6 +600,40 @@ bool TabCoordinator::OpenUntitled() {
   operations_.request_active_tab_redraw(false);
   return true;
 }
+const editor::TextViewport* TabCoordinator::FindOpenEditorViewOfPath(
+    const std::filesystem::path& normalized_path) const {
+  if (normalized_path.empty()) {
+    return nullptr;
+  }
+  for (const EditorGroup& group : state_.editor_groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      // A restore-pending tab has no loaded document to share yet.
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          !tab.editor_state->needs_restore &&
+          EditorViewPathIs(*tab.editor_state, normalized_path)) {
+        return &tab.editor_state->viewport;
+      }
+    }
+  }
+  return nullptr;
+}
+
+bool TabCoordinator::OpenEditorViewForPath(const std::filesystem::path& path,
+                                           editor::TextViewport& view) const {
+  const std::filesystem::path normalized_path = path.lexically_normal();
+  if (const editor::TextViewport* live = FindOpenEditorViewOfPath(normalized_path);
+      live != nullptr) {
+    view = *live;  // shares the DocumentState; caret/scroll are the view's own
+    return true;
+  }
+  if (!view.OpenFile(normalized_path)) {
+    return false;
+  }
+  operations_.apply_editor_preferences(view);
+  operations_.apply_detected_indent_on_open(view);
+  return true;
+}
+
 bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   util::PerformanceTrace::ScopeLabel perf_label("TabCoordinator::OpenFileInNewTab");
   perf_label.Field("path", path);
@@ -644,12 +678,10 @@ bool TabCoordinator::OpenFileInNewTab(const std::filesystem::path& path) {
   editor::TextViewport opened_view;
   {
     util::PerformanceTrace::Scope open_scope("TabCoordinator::OpenFileInNewTab::OpenFile");
-    if (!opened_view.OpenFile(normalized_path)) {
+    if (!OpenEditorViewForPath(normalized_path, opened_view)) {
       return false;
     }
   }
-  operations_.apply_editor_preferences(opened_view);
-  operations_.apply_detected_indent_on_open(opened_view);
 
   state_.focused_group().open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
@@ -691,8 +723,13 @@ bool TabCoordinator::OpenNewBufferInNewTab(const std::filesystem::path& path) {
     return false;
   }
   editor::TextViewport opened_view;
-  opened_view.LoadContent("", normalized_path);
-  operations_.apply_editor_preferences(opened_view);
+  if (const editor::TextViewport* live = FindOpenEditorViewOfPath(normalized_path);
+      live != nullptr) {
+    opened_view = *live;  // the not-yet-saved buffer another group already holds
+  } else {
+    opened_view.LoadContent("", normalized_path);
+    operations_.apply_editor_preferences(opened_view);
+  }
   group.open_tabs.push_back(TabEntry{
       .kind = TabEntry::Kind::Editor,
       .path = normalized_path,

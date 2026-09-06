@@ -1245,6 +1245,62 @@ void TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab() {
   Expect(beta_survives, "beta's dirty tab must survive a split elsewhere, untouched");
 }
 
+// A file open in two panes is ONE buffer (VS Code's model per resource, and what
+// the plain split's clone already guarantees). `open` from the other pane and
+// `split-right <path>` on an open file used to read it from disk again, so an
+// edit in one pane was invisible in the other and each pane saved its own copy
+// over the other's.
+void TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path alpha = root / "alpha.txt";
+  const std::filesystem::path beta = root / "beta.txt";
+  WriteFile(alpha, "alpha\n");
+  WriteFile(beta, "beta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open in group 0");
+  Expect(RunCommandLine(shell, "split-right beta.txt"), "split-right beta should succeed");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 1, "focus should be on the new group");
+
+  // Opening alpha from group 1 is a second view of the buffer group 0 holds.
+  Expect(WorkspaceShellTestAccess::OpenFileInNewTab(shell, alpha), "alpha should open in group 1");
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "typing into group 1's alpha");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).lines().LineView(0) == "Xalpha",
+         "group 1's view should carry the edit");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).lines().LineView(0) == "Xalpha",
+         "group 0's view of the same file must show the edit");
+  Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, 0).dirty(),
+         "both views are dirty together");
+
+  // Saving from group 0 writes the shared buffer and cleans both views.
+  Expect(WorkspaceShellTestAccess::FocusOtherEditorGroup(shell), "focus should wrap to group 0");
+  Expect(WorkspaceShellTestAccess::FocusedGroupIndex(shell) == 0, "group 0 should be focused");
+  Expect(RunCommandLine(shell, "save"), "save should succeed");
+  Expect(ReadFile(alpha) == "Xalpha\n", "the save should write the shared buffer");
+  Expect(!WorkspaceShellTestAccess::GroupActiveViewport(shell, 1).dirty(),
+         "group 1's view is clean once the buffer is saved");
+
+  // `split-right <path>` on a file open elsewhere shares it too.
+  Expect(RunCommandLine(shell, "split-right alpha.txt"), "split-right alpha should succeed");
+  Expect(WorkspaceShellTestAccess::EditorGroupCount(shell) == 3, "a third pane should exist");
+  const std::size_t split_group = WorkspaceShellTestAccess::FocusedGroupIndex(shell);
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "Y"), "typing into the split's alpha");
+  const std::string_view split_line =
+      WorkspaceShellTestAccess::GroupActiveViewport(shell, split_group).lines().LineView(0);
+  Expect(split_line.find('Y') != std::string_view::npos, "the split's view should carry the edit");
+  for (std::size_t gi = 0; gi < WorkspaceShellTestAccess::EditorGroupCount(shell); ++gi) {
+    const auto paths = WorkspaceShellTestAccess::GroupTabPaths(shell, gi);
+    if (std::find(paths.begin(), paths.end(), alpha.lexically_normal()) == paths.end()) {
+      continue;
+    }
+    Expect(WorkspaceShellTestAccess::GroupActiveViewport(shell, gi).lines().LineView(0) ==
+               split_line,
+           "every pane showing alpha must show the same buffer");
+  }
+}
+
 // The editor area holds `kMaxEditorGroups` panes; the split action refuses past
 // that rather than silently rendering only the panes that fit.
 // The breadcrumb band belongs to the PANE it sits over, not to the window: with a
@@ -6805,6 +6861,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabMoveCommandSupportsRelativeForwardOffset);
   AddTest(tests, "WorkspaceShell/SplitDoesNotClobberAnotherGroupsDirtyTab",
           TestWorkspaceShellSplitDoesNotClobberAnotherGroupsDirtyTab);
+  AddTest(tests, "WorkspaceShell/SecondViewOfAnOpenFileSharesItsBuffer",
+          TestWorkspaceShellSecondViewOfAnOpenFileSharesItsBuffer);
   AddTest(tests, "WorkspaceShell/BreadcrumbIsPerPane", TestWorkspaceShellBreadcrumbIsPerPane);
   AddTest(tests, "WorkspaceShell/SplitPaneRevealsItsNewTab",
           TestWorkspaceShellSplitPaneRevealsItsNewTab);

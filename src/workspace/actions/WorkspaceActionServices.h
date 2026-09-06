@@ -147,6 +147,10 @@ class WorkspaceActionContext {
     std::function<TabEntry::EditorTabState*()> active_editor_tab;
     std::function<editor::FoldingModel*()> ensure_active_folding_model_fresh;
     std::function<bool(const editor::TextViewport&)> replace_active_editor_view;
+    // A view of the path for a new pane: shares the live buffer when the file is
+    // open anywhere, else reads disk (TabCoordinator::OpenEditorViewForPath).
+    std::function<bool(const std::filesystem::path&, editor::TextViewport&)>
+        open_editor_view_for_path;
     std::function<void(const std::filesystem::path&)> open_file;
     std::function<bool(const std::filesystem::path&)> open_file_in_new_tab;
     std::function<bool()> open_untitled_tab;

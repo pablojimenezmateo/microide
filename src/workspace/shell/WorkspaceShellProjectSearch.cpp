@@ -570,6 +570,11 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
     // A tab that became dirty AFTER the pre-dispatch snapshot is left alone (its
     // buffer keeps the user's unsaved edits; the on-disk replace is overridden when
     // they next save) rather than clobbered by a reload.
+    //
+    // Read the file ONCE and hand every view a copy of that one viewport: copies
+    // share the DocumentState, which is what keeps two panes on the same file one
+    // buffer. Reopening per view split them into independent documents.
+    std::optional<editor::TextViewport> reopened_view;
     for (std::size_t group_index = 0;
          group_index < context_.current_project_state.editor_groups.size(); ++group_index) {
       EditorGroup& group = context_.current_project_state.editor_groups[group_index];
@@ -588,18 +593,21 @@ void WorkspaceShell::ApplyProjectReplaceOutcome(ProjectReplaceOutcome outcome) {
           continue;  // became dirty mid-flight: keep the user's edits
         }
 
-        editor::TextViewport reopened_view;
-        if (!reopened_view.OpenFile(change.absolute_path)) {
-          continue;
+        if (!reopened_view.has_value()) {
+          editor::TextViewport fresh_view;
+          if (!fresh_view.OpenFile(change.absolute_path)) {
+            continue;
+          }
+          ApplyEditorPreferences(fresh_view);
+          ApplyDetectedIndentOnOpen(fresh_view);
+          reopened_view = std::move(fresh_view);
         }
-        ApplyEditorPreferences(reopened_view);
-        ApplyDetectedIndentOnOpen(reopened_view);
-        editor_state.viewport = reopened_view;
+        editor_state.viewport = *reopened_view;
         editor_state.restored_path = change.absolute_path;
-        editor_state.restored_cursor_line = reopened_view.cursor_line();
-        editor_state.restored_cursor_column = reopened_view.cursor_column();
-        editor_state.restored_scroll_line = reopened_view.scroll_line();
-        editor_state.restored_horizontal_scroll = reopened_view.horizontal_scroll();
+        editor_state.restored_cursor_line = reopened_view->cursor_line();
+        editor_state.restored_cursor_column = reopened_view->cursor_column();
+        editor_state.restored_scroll_line = reopened_view->scroll_line();
+        editor_state.restored_horizontal_scroll = reopened_view->horizontal_scroll();
         editor_state.needs_restore = false;
         if (is_focused_group && i == group.active_tab_index) {
           SyncActiveEditorTabMetadata();

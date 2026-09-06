@@ -30,6 +30,7 @@ project (see [README](README.md)); versions track meaningful shipped work.
   headless driver can rename through the language server.
 
 ### Fixed
+- Editor groups: opening a file that is already open in another pane (`open`/`tab` from the other group, `split-right <path>`, the file tree) read it from disk again as an independent buffer, so an edit in one pane was invisible in the other and the panes saved over each other; a second view now shares the live buffer, as the plain split always did. Replace-all and a rename that discards edits reopen a file once and hand every pane the same buffer instead of one per pane.
 - Control channel: a rejected command whose message repeated the previous reply (`project-next` twice with one project open, `format-document` after another "No active file") came back as a bare "command failed"; the reply now clears the panel feedback before dispatch instead of diffing it against a snapshot.
 - Status bar: before the first `git status` snapshot the branch label showed a namespaced branch by its leaf (`stable-sort` for `feature/stable-sort`) and then flipped to git's short name when the snapshot landed; the HEAD fallback now strips only `refs/heads/` and re-reads HEAD on every repository change, so a `git checkout` in the terminal is reflected even when the throttled snapshot refresh is skipped.
 

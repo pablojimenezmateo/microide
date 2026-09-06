@@ -658,6 +658,10 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
               [this](const editor::TextViewport& viewport) {
                 return ReplaceActiveEditorView(viewport);
               },
+          .open_editor_view_for_path =
+              [this](const std::filesystem::path& path, editor::TextViewport& view) {
+                return MakeTabCoordinator().OpenEditorViewForPath(path, view);
+              },
           .open_file = [this](const std::filesystem::path& path) { OpenFile(path); },
           .open_file_in_new_tab =
               [this](const std::filesystem::path& path) { return OpenFileInNewTab(path); },

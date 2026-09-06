@@ -842,9 +842,10 @@ bool WorkspaceActionContext::SplitEditorGroup(EditorSplitOrientation orientation
   // A split always carves a NEW group holding a clone of the source tab, so
   // replacing that clone's view is safe: it shares the source buffer and no
   // distinct edits are lost. Open the file first so a failure aborts before
-  // mutating the group layout.
+  // mutating the group layout. A path already open in some pane resolves to a
+  // view of THAT buffer, not a second copy read from disk.
   editor::TextViewport opened_view;
-  if (open_path && !opened_view.OpenFile(path)) {
+  if (open_path && !operations_.open_editor_view_for_path(path, opened_view)) {
     if (error_message != nullptr) {
       *error_message = "Failed to open file: " + path.string();
     }

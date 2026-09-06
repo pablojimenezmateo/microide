@@ -150,6 +150,19 @@ class TabCoordinator {
   bool DiskSignatureMatchesOpenView(const std::filesystem::path& path,
                                     const util::FileSignature& signature) const;
   bool OpenUntitled();
+  // The live editor view of `normalized_path` in ANY group, or nullptr. A file is
+  // one buffer however many panes show it (VS Code's model per resource, and the
+  // contract the plain split's clone already keeps): a second tab on an open file
+  // copies this view, sharing its DocumentState, instead of reading disk again —
+  // otherwise an edit in one pane is invisible in the other and the two panes
+  // save over each other.
+  const editor::TextViewport* FindOpenEditorViewOfPath(
+      const std::filesystem::path& normalized_path) const;
+  // Fills `view` with a view of `path`: a copy of the live view when the file is
+  // open anywhere (shared buffer, preferences already applied), else a fresh read
+  // from disk with the editor preferences and indent detection applied. False
+  // when the read fails.
+  bool OpenEditorViewForPath(const std::filesystem::path& path, editor::TextViewport& view) const;
   bool OpenFileInNewTab(const std::filesystem::path& path);
   // A path that does not exist yet opens as an empty buffer bound to it, as
   // `code new.txt` does; the file (and its directories) appear on save. An

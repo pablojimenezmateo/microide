@@ -3,6 +3,8 @@
 #include <algorithm>
 #include <filesystem>
 #include <memory>
+#include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "editor/SyntaxHighlighter.h"
@@ -136,6 +138,26 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
     const std::filesystem::path& new_path,
     bool preserve_unsaved_state) {
   auto& state = CurrentProjectState();
+  // Discarding a dirty buffer reopens it from disk at the new path. Every view of
+  // that file (a split, a second pane) shares one DocumentState and so is dirty
+  // together; reopen the file ONCE and give each view a copy of the same viewport,
+  // or the panes come back as independent documents. Keyed on the new path,
+  // spanning the focused-group loop and the background-group loop below.
+  std::unordered_map<std::string, editor::TextViewport> reopened_by_path;
+  const auto reopen_discarded_view =
+      [&](const std::filesystem::path& updated_path) -> const editor::TextViewport* {
+    auto it = reopened_by_path.find(updated_path.generic_string());
+    if (it == reopened_by_path.end()) {
+      editor::TextViewport reopened_view;
+      if (!reopened_view.OpenFile(updated_path)) {
+        return nullptr;
+      }
+      operations_.apply_editor_preferences(reopened_view);
+      operations_.apply_detected_indent_on_open(reopened_view);
+      it = reopened_by_path.emplace(updated_path.generic_string(), std::move(reopened_view)).first;
+    }
+    return &it->second;
+  };
   if (editor_tabs_.ActiveTabIsEditor()) {
     editor_tabs_.SyncActiveEditorTab();
   }
@@ -158,16 +180,14 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
           const std::size_t cursor_column = editor_state.viewport.cursor_column();
           const std::size_t scroll_line = editor_state.viewport.scroll_line();
           const std::size_t horizontal_scroll = editor_state.viewport.horizontal_scroll();
-          editor::TextViewport reopened_view;
-          if (!reopened_view.OpenFile(updated_path)) {
+          if (const editor::TextViewport* reopened_view = reopen_discarded_view(updated_path);
+              reopened_view == nullptr) {
             close_tab = true;
           } else {
-            operations_.apply_editor_preferences(reopened_view);
-            operations_.apply_detected_indent_on_open(reopened_view);
-            reopened_view.MoveCursorTo(cursor_line, cursor_column);
-            reopened_view.SetScrollLine(scroll_line);
-            reopened_view.SetHorizontalScroll(horizontal_scroll);
-            editor_state.viewport = std::move(reopened_view);
+            editor_state.viewport = *reopened_view;
+            editor_state.viewport.MoveCursorTo(cursor_line, cursor_column);
+            editor_state.viewport.SetScrollLine(scroll_line);
+            editor_state.viewport.SetHorizontalScroll(horizontal_scroll);
           }
         } else if (!editor_state.needs_restore) {
           editor_state.viewport.SetPath(updated_path);
@@ -292,14 +312,12 @@ void PathMutationCoordinator::RetargetOpenTabsForRename(
         const std::size_t cursor_column = editor_state.viewport.cursor_column();
         const std::size_t scroll_line = editor_state.viewport.scroll_line();
         const std::size_t horizontal_scroll = editor_state.viewport.horizontal_scroll();
-        editor::TextViewport reopened_view;
-        if (reopened_view.OpenFile(updated_path)) {
-          operations_.apply_editor_preferences(reopened_view);
-          operations_.apply_detected_indent_on_open(reopened_view);
-          reopened_view.MoveCursorTo(cursor_line, cursor_column);
-          reopened_view.SetScrollLine(scroll_line);
-          reopened_view.SetHorizontalScroll(horizontal_scroll);
-          editor_state.viewport = std::move(reopened_view);
+        if (const editor::TextViewport* reopened_view = reopen_discarded_view(updated_path);
+            reopened_view != nullptr) {
+          editor_state.viewport = *reopened_view;
+          editor_state.viewport.MoveCursorTo(cursor_line, cursor_column);
+          editor_state.viewport.SetScrollLine(scroll_line);
+          editor_state.viewport.SetHorizontalScroll(horizontal_scroll);
         } else {
           editor_state.viewport.SetPath(updated_path);
         }
