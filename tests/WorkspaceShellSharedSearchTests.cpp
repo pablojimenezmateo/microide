@@ -643,6 +643,28 @@ void TestWorkspaceIncrementalLiteralSearch() {
   Expect(same(overlap_refined, overlap_fresh),
          "refine of a self-overlapping needle must de-overlap to equal a fresh scan");
   Expect(!overlap_refined.empty(), "self-overlapping refine should still find matches");
+
+  // The two refine strategies, pinned at their boundary. A prefix that cannot
+  // occur inside itself ("ab" has no proper border) means the cold scan's
+  // advance-by-length skipped nothing, so `previous` holds every occurrence and
+  // refine may check just those columns -- the fast path. A prefix that can
+  // ("aa") means it did skip some, so refine must rescan the matched lines. Both
+  // must equal the cold scan; the second buffer is one where the naive
+  // column-only refine loses a match ("aab" starts at column 1 of "aaab", an
+  // offset the "aa" scan never recorded).
+  const microide::editor::TextBuffer border_buffer(
+      std::vector<std::string>{"abab abc", "ab", "xabc"});
+  const auto border_prev = FindLiteralSearchMatches(border_buffer, "ab");
+  Expect(same(RefineLiteralSearchMatches(border_buffer, "abc", border_prev),
+              FindLiteralSearchMatches(border_buffer, "abc")),
+         "refine from a prefix that cannot self-overlap must equal a fresh scan");
+  const microide::editor::TextBuffer skipped_buffer(
+      std::vector<std::string>{"aaab", "aab", "baaab"});
+  const auto skipped_prev = FindLiteralSearchMatches(skipped_buffer, "aa");
+  const auto skipped_refined = RefineLiteralSearchMatches(skipped_buffer, "aab", skipped_prev);
+  Expect(same(skipped_refined, FindLiteralSearchMatches(skipped_buffer, "aab")),
+         "refine from a self-overlapping prefix must still find hits it de-overlapped away");
+  Expect(!skipped_refined.empty(), "the de-overlapped hits are really there");
 }
 
 }  // namespace

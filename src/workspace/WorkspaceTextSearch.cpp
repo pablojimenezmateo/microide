@@ -579,6 +579,81 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   // longer query and is skipped without a read, and a line with one is rescanned
   // by the cold scan's own loop from its first hit — equal to a fresh scan by
   // construction, at the cost of touching only the lines that matched.
+  // The rescan below folds and re-reads every line that held a hit. For a query
+  // that matches most lines -- the find-as-you-type case this path exists for --
+  // that is a whole cold scan per keystroke. It is only NEEDED because the cold
+  // scan's advance-by-length de-overlap can skip a prefix occurrence, and it can
+  // only skip one that starts strictly inside another: that requires the prefix
+  // to have a proper border ("aa" recurs at offset 1 of itself, "perfocc" never
+  // does). With no border, `previous` holds EVERY occurrence of the prefix, so
+  // the longer query can only start at a recorded column and checking those
+  // columns is exact -- |previous| slice compares instead of a document rescan.
+  //
+  // The prefix is `query`'s own leading bytes (a refine's precondition is that
+  // the query extends it, and the fold is length-preserving), and its length is
+  // the width of any `previous` range.
+  if (previous.empty()) {
+    return matches;  // nothing to refine from (the caller cold-scans instead)
+  }
+  const std::size_t previous_needle_size =
+      previous.front().end.column >= previous.front().start.column
+          ? previous.front().end.column - previous.front().start.column
+          : 0;
+  const bool previous_can_self_overlap = [&] {
+    if (previous_needle_size == 0 || previous_needle_size > needle.size()) {
+      return true;  // not the prefix we can reason about; take the safe path
+    }
+    const std::string_view prefix = needle.substr(0, previous_needle_size);
+    for (std::size_t offset = 1; offset < prefix.size(); ++offset) {
+      if (prefix.compare(offset, prefix.size() - offset, prefix, 0, prefix.size() - offset) == 0) {
+        return true;
+      }
+    }
+    return false;
+  }();
+  if (!previous_can_self_overlap && !options.whole_word) {
+    // Reproduce the cold scan's own de-overlap over the candidate columns: skip a
+    // candidate that would start inside the match just kept on the same line.
+    std::size_t kept_line = std::numeric_limits<std::size_t>::max();
+    std::size_t kept_end = 0;
+    thread_local std::string folded_slice;
+    for (const editor::SelectionRange& match : previous) {
+      const std::size_t line = match.start.line;
+      const std::size_t column = match.start.column;
+      if (line >= buffer.LineCount()) {
+        continue;
+      }
+      if (line == kept_line && column < kept_end) {
+        continue;
+      }
+      const std::string_view text = buffer.LineView(line);
+      if (column > text.size() || needle.size() > text.size() - column) {
+        continue;
+      }
+      std::string_view slice = text.substr(column, needle.size());
+      if (!options.case_sensitive) {
+        util::Utf8CaseFoldInto(slice, folded_slice);
+        slice = folded_slice;
+      }
+      if (slice != needle) {
+        continue;
+      }
+      if (matches.size() >= kMaxBufferSearchMatches) {
+        if (truncated != nullptr) {
+          *truncated = true;
+        }
+        return matches;
+      }
+      matches.push_back(editor::SelectionRange{
+          .start = editor::TextPosition{line, column},
+          .end = editor::TextPosition{line, column + needle.size()},
+      });
+      kept_line = line;
+      kept_end = column + needle.size();
+    }
+    return matches;
+  }
+
   std::size_t last_line = std::numeric_limits<std::size_t>::max();
   // Reused across calls, like `lowered_haystack` above: refine runs once per
   // typed character, and a fresh string here allocated on every keystroke to
