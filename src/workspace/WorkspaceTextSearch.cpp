@@ -580,7 +580,10 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   // by the cold scan's own loop from its first hit — equal to a fresh scan by
   // construction, at the cost of touching only the lines that matched.
   std::size_t last_line = std::numeric_limits<std::size_t>::max();
-  std::string folded_line;
+  // Reused across calls, like `lowered_haystack` above: refine runs once per
+  // typed character, and a fresh string here allocated on every keystroke to
+  // fold a line the previous keystroke had already folded.
+  thread_local std::string folded_line;
   for (const editor::SelectionRange& match : previous) {
     const std::size_t line = match.start.line;
     if (line == last_line || line >= buffer.LineCount()) {
