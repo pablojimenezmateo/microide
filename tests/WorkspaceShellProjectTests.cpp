@@ -2750,6 +2750,40 @@ void TestWorkspaceShellAddCursorAtAllMatchesFromFindWidgetFocusesTheEditor() {
          "the keystroke replaces every occurrence, not the search query");
 }
 
+// A paste with one clipboard line per caret puts one line at each caret (VS
+// Code's spread rule). The rule lives in TextViewport::PasteText, and the
+// shell's paste never reached it: the text-input coordinator claimed the editor
+// surface and inserted the whole payload at every caret, so a two-caret paste of
+// "1\n2\n" put both lines at both carets.
+void TestWorkspaceShellPasteSpreadsOneLinePerCaret() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "x.txt";
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WriteFile(file, "a\nb\n");
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, []() -> std::optional<std::string> { return std::string("1\n2\n"); });
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({editor::TextPosition{1, 0}});
+  Expect(viewport.has_multiple_carets(), "two carets");
+  Expect(RunCommandLine(shell, "paste"), "paste dispatches");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"1a", "2b", ""},
+         "each caret receives its own line of the clipboard");
+
+  // A payload whose line count does not match goes whole to every caret.
+  WorkspaceShellTestAccess::SetClipboardTextReader(
+      shell, []() -> std::optional<std::string> { return std::string("Z"); });
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({editor::TextPosition{1, 0}});
+  Expect(RunCommandLine(shell, "paste"), "paste dispatches");
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"Z1a", "Z2b", ""},
+         "a single-line payload is inserted at every caret");
+}
+
 // Save As and open-before-it-exists, as VS Code: an untitled buffer is named by
 // `save <path>` (Ctrl+S opens the Save As prompt; the command line is told what
 // to type), `tab`/`open` on a path that is not there yet opens an empty buffer
@@ -6864,6 +6898,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchWalksForwardEachPress",
           TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress);
+  AddTest(tests, "WorkspaceShell/PasteSpreadsOneLinePerCaret",
+          TestWorkspaceShellPasteSpreadsOneLinePerCaret);
   AddTest(tests, "WorkspaceShell/EmptySelectionCopyPastesAsAWholeLine",
           TestWorkspaceShellEmptySelectionCopyPastesAsAWholeLine);
   AddTest(tests, "WorkspaceShell/AddCursorAtAllMatchesFromFindWidgetFocusesTheEditor",

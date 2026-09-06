@@ -1191,7 +1191,7 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     operations_.paste_text_into_terminal(std::move(text));
     return;
   }
-  if (operations_.insert_text_into_active_text_surface(text)) {
+  if (operations_.insert_text_into_active_text_surface(text, distribute_across_carets)) {
     return;
   }
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {

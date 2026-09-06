@@ -81,7 +81,10 @@ class TextInputCoordinator {
   bool HandleTerminalKeyDown(const SDL_KeyboardEvent& event, SDL_Keymod modifiers);
   bool PasteClipboardIntoTerminal();
   bool PasteTextIntoTerminal(std::string text);
-  bool InsertTextAtActiveSurface(std::string_view input);
+  // `distribute_across_carets` is the paste rule: a multi-line payload with one
+  // line per caret goes one line to each (TextViewport::PasteText); typed and
+  // composed text always goes whole to every caret.
+  bool InsertTextAtActiveSurface(std::string_view input, bool distribute_across_carets = false);
   bool HasSelectionAtActiveSingleLineSurface() const;
   // True when a single-line text surface (file finder, buffer/project search,
   // commit subject, pickers, ...) is the active text input. Lets Cut/Copy/SelectAll

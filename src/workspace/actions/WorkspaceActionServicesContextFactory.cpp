@@ -708,8 +708,9 @@ WorkspaceActionContext WorkspaceShell::MakeActionContext() {
           .request_focused_editor_redraw = [this]() { RequestFocusedEditorRedraw(); },
           .active_editable_viewport = [this]() { return ActiveEditableViewport(); },
           .insert_text_into_active_text_surface =
-              [this](std::string_view text) {
-                return MakeTextInputCoordinator().InsertTextAtActiveSurface(text);
+              [this](std::string_view text, bool distribute_across_carets) {
+                return MakeTextInputCoordinator().InsertTextAtActiveSurface(
+                    text, distribute_across_carets);
               },
           .has_active_single_line_text_surface =
               [this]() {

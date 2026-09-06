@@ -296,7 +296,8 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
   return InsertTextAtActiveSurface(event.text);
 }
 
-bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
+bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input,
+                                                     bool distribute_across_carets) {
   if (input.empty()) {
     return false;
   }
@@ -363,7 +364,16 @@ bool TextInputCoordinator::InsertTextAtActiveSurface(std::string_view input) {
           selection_before = viewport->selection_range();
           cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
         }
-        viewport->InsertText(input);
+        // A paste spreads a matching multi-line payload over the carets; every
+        // other insert goes whole to each. This branch used to call InsertText
+        // for both, so the spread rule (which lives in PasteText) was only ever
+        // reached when no text surface claimed the editor -- i.e. never from a
+        // paste with the editor focused.
+        if (distribute_across_carets) {
+          viewport->PasteText(input);
+        } else {
+          viewport->InsertText(input);
+        }
         if (operations_.mark_active_editor_folding_dirty) {
           operations_.mark_active_editor_folding_dirty();
         }
