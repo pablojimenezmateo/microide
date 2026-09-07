@@ -152,6 +152,41 @@ void TestTrashFinalMoveRefusesExistingFilesDestination() {
   Expect(ReadFile(trashed.resulting_path) == "new content",
          "the newly trashed content lands at the retried slot");
 }
+
+// A DANGLING symlink occupying the trash slot must be treated as occupied, so the
+// delete retries the next suffix. The final move already classified the slot by the
+// node (it refuses a dangling link); the retry test beside it used `exists()`, which
+// follows the link and reported the slot free — the two disagreed, the retry was
+// skipped, and deleting the file failed outright.
+void TestTrashRetriesPastADanglingSlot() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+
+  const auto trash_home = temp_dir.path() / "xdg-data-home";
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
+
+  const auto files_dir = trash_home / "Trash" / "files";
+  std::filesystem::create_directories(files_dir);
+  const auto dangling_slot = files_dir / "collide.txt";
+  std::error_code ec;
+  std::filesystem::create_symlink(files_dir / "no_such_target", dangling_slot, ec);
+  Expect(!ec, "dangling trash-slot fixture created");
+  Expect(!std::filesystem::exists(dangling_slot), "the slot's symlink target is absent");
+
+  const auto trash_target = root / "collide.txt";
+  WriteFile(trash_target, "new content");
+  const auto trashed = FileOperationService::TrashPath(trash_target);
+
+  Expect(trashed.ok, "trash must succeed by retrying past the occupied slot");
+  Expect(std::filesystem::symlink_status(dangling_slot).type() !=
+             std::filesystem::file_type::not_found,
+         "the dangling entry that occupied the slot must be left alone");
+  Expect(trashed.resulting_path.filename().string() == "collide 2.txt",
+         "the delete must land on the next free suffix");
+  Expect(ReadFile(trashed.resulting_path) == "new content",
+         "the trashed content lands at the retried slot");
+}
 #endif
 
 }  // namespace
@@ -270,6 +305,7 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
           TestTrashReservationDoesNotOverwriteExistingMetadata);
   AddTest(tests, "Project/TrashFinalMoveRefusesExistingFilesDestination",
           TestTrashFinalMoveRefusesExistingFilesDestination);
+  AddTest(tests, "Project/TrashRetriesPastADanglingSlot", TestTrashRetriesPastADanglingSlot);
 #endif
 }
 

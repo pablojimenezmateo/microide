@@ -185,8 +185,16 @@ TrashOperationResult MovePathToTrashLinux(const std::filesystem::path& source) {
     if (MovePathNoOverwrite(source, trashed_path)) {
       return Success(trashed_path);
     }
-    std::error_code dest_exists_error;
-    if (std::filesystem::exists(trashed_path, dest_exists_error)) {
+    // Classify the slot the way MovePathNoOverwrite just did — by the NODE, not by
+    // what it points at. `exists()` follows a symlink, so a dangling link occupying
+    // the slot made the two disagree: the move refused ("destination present") while
+    // this read "absent", so the retry was skipped and the delete failed outright
+    // instead of taking the next suffix. Any stat error also counts as occupied,
+    // which is the same fail-closed rule the move uses.
+    std::error_code dest_status_error;
+    const std::filesystem::file_status dest_status =
+        std::filesystem::symlink_status(trashed_path, dest_status_error);
+    if (dest_status_error || dest_status.type() != std::filesystem::file_type::not_found) {
       std::filesystem::remove(candidate_info, error);
       continue;  // Slot taken during the window — reserve the next one.
     }
