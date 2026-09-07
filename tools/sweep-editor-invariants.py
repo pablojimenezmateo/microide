@@ -92,6 +92,21 @@ FIXTURES: dict[str, str] = {
     "single.txt": "only line",
     # Two lines, the second empty: the "last line is empty" boundary.
     "twoline.txt": "first\n",
+    # CRLF throughout. A save writes the buffer's own line ending, so every one of
+    # these properties is also a claim that the command did not quietly convert the
+    # file to LF -- which is exactly what a line op that rebuilds rows from split
+    # views and rejoins them with '\n' would do.
+    "crlf.txt": "one\r\ntwo\r\nthree\r\n",
+    # A UTF-8 BOM on the first line: the byte that line ops most often eat or
+    # duplicate, because it is part of line 0's text but not part of its content.
+    "bom.txt": "\ufeffalpha\nbravo\ncharlie\n",
+    # One very long line among short ones: the layout path's long-line branch, and
+    # the shape where a per-line scratch buffer that is sized once shows up.
+    "longline.txt": "short\n" + ("x" * 5000) + "\nalso short\n",
+    # A single empty line -- the smallest buffer that is not the empty one.
+    "blank.txt": "\n",
+    # The degenerate buffer. Every line op has to survive having nothing to act on.
+    "empty.txt": "",
 }
 
 # Caret positions probed per fixture, as 1-based (line, column). `None` means
@@ -175,13 +190,28 @@ class Driver:
         return self.request({"command": text})
 
 
+def write_fixture(path: Path, text: str) -> None:
+    """Bytes, not text mode.
+
+    `Path.write_text`/`read_text` run universal-newline translation, which would
+    turn the CRLF fixture into LF on the way back in -- so a command that quietly
+    converted the file's line endings would read as "unchanged" and every property
+    here would pass over it.
+    """
+    path.write_bytes(text.encode("utf-8"))
+
+
+def read_fixture(path: Path) -> str:
+    return path.read_bytes().decode("utf-8", "replace")
+
+
 def run_case(driver: Driver, path: Path, original: str, steps: list[str]) -> list[str]:
     """Apply `steps` to a freshly opened `path`, returning the file after each.
 
     Each entry is the file's bytes on disk after that step's `save`, so nothing
     here trusts the app's own account of its buffer.
     """
-    path.write_text(original)
+    write_fixture(path, original)
     reply = driver.command(f"open {path}")
     # Never assume the open landed. A refused open used to answer ok=true and
     # leave the previously-active tab in place, so every command after it edited
@@ -197,7 +227,7 @@ def run_case(driver: Driver, path: Path, original: str, steps: list[str]) -> lis
     for step in steps:
         driver.command(step)
         driver.command("save")
-        contents.append(path.read_text())
+        contents.append(read_fixture(path))
     return contents
 
 
@@ -278,7 +308,7 @@ def check_read_only(driver: Driver, path: Path, original: str, command: str,
     reply = run_case_reply(driver, path, original, command)
     if reply.get("ok"):
         accepted.add(command)
-    after = path.read_text()
+    after = read_fixture(path)
     if after == original:
         return
     failures.append(
@@ -287,7 +317,7 @@ def check_read_only(driver: Driver, path: Path, original: str, command: str,
 
 
 def run_case_reply(driver: Driver, path: Path, original: str, command: str) -> dict:
-    path.write_text(original)
+    write_fixture(path, original)
     open_reply = driver.command(f"open {path}")
     if not open_reply.get("ok"):
         raise Failure(f"`open {path.name}` was refused: "
@@ -309,21 +339,21 @@ def check_undo(driver: Driver, path: Path, original: str, prefix: list[str],
         driver.command("undo")
         driver.command("save")
         undos += 1
-        if path.read_text() == original:
+        if read_fixture(path) == original:
             break
     else:
         failures.append(
             f"UNDO {label}: `{command}` on {path.name} after {prefix} did not restore "
             f"the file within {max_undo} undos\n"
             f"  after the command:\n{diff(original, after)}"
-            f"  after the undos:\n{diff(original, path.read_text())}")
+            f"  after the undos:\n{diff(original, read_fixture(path))}")
         return
     # Redo is the other half of the same contract and nothing else here covers it:
     # replaying the undos must land back on exactly what the command produced.
     for _ in range(undos):
         driver.command("redo")
     driver.command("save")
-    redone = path.read_text()
+    redone = read_fixture(path)
     if redone != after:
         failures.append(
             f"REDO {label}: `{command}` on {path.name} after {prefix} did not come "
@@ -349,7 +379,7 @@ def check_inverse(driver: Driver, path: Path, original: str, prefix: list[str],
     # editor promises (press Alt+Down then Alt+Up).
     driver.command(inverse)
     driver.command("save")
-    restored = path.read_text()
+    restored = read_fixture(path)
     if restored == original:
         return
     failures.append(
@@ -365,7 +395,7 @@ def check_idempotent(driver: Driver, path: Path, original: str, prefix: list[str
     once = run_case(driver, path, original, prefix + [command])[-1]
     driver.command(command)
     driver.command("save")
-    twice = path.read_text()
+    twice = read_fixture(path)
     if once == twice:
         return
     failures.append(
