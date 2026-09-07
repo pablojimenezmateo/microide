@@ -1,6 +1,8 @@
 #include "TestSupport.h"
 
+#include <algorithm>
 #include <cmath>
+#include <cstdint>
 #include <limits>
 #include <string_view>
 #include <vector>
@@ -13,6 +15,90 @@ namespace {
 using microide::app::AnalyzeDirtyRegions;
 using microide::app::DirtyRegionAnalysis;
 using microide::app::ShouldPromotePartialFrameToFull;
+
+// Property: the merged clip rects COVER every damaged pixel.
+//
+// This is the analysis that decides what a partial frame repaints. Merging
+// overlapping damage into fewer clips is a pure win right up to the moment a
+// merge loses a pixel — and a lost pixel is a stale glyph on screen, which no
+// test that only counts rects or checks a coverage ratio would notice. Padding
+// makes it sharper: every rect is grown by the backend's clip padding before
+// merging, so the covering set must contain the PADDED rect, not the raw one.
+//
+// Checked on a coarse grid rather than per pixel: the rects here are small and a
+// merge that drops a region drops far more than one pixel.
+bool DirtyPointCovered(const std::vector<SDL_Rect>& rects, int x, int y) {
+  for (const SDL_Rect& rect : rects) {
+    if (x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h) {
+      return true;
+    }
+  }
+  return false;
+}
+
+void TestDirtyRegionMergeCoversEveryDamagedPixel() {
+  constexpr int kWidth = 400;
+  constexpr int kHeight = 300;
+  const render::TextClipPadding padding{
+      .left = 2.0f, .right = 3.0f, .top = 1.0f, .bottom = 1.0f};
+
+  std::uint64_t seed = 0x9B05688C2B3E6C1FULL;
+  const auto next = [&seed]() {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<std::size_t>(seed >> 33);
+  };
+
+  std::size_t checked_points = 0;
+  for (int iteration = 0; iteration < 300; ++iteration) {
+    std::vector<SDL_FRect> dirty;
+    const std::size_t count = 1 + next() % 8;
+    for (std::size_t i = 0; i < count; ++i) {
+      // Include degenerate and out-of-bounds rects: a zero-size rect, one that
+      // starts off-screen, one that runs past the edge. All three reach this
+      // function in practice (a collapsed pane, a scrolled-away row).
+      const float x = static_cast<float>(static_cast<int>(next() % 500) - 50);
+      const float y = static_cast<float>(static_cast<int>(next() % 400) - 50);
+      const float w = static_cast<float>(next() % 120);
+      const float h = static_cast<float>(next() % 90);
+      dirty.push_back(SDL_FRect{x, y, w, h});
+    }
+
+    const app::DirtyRegionAnalysis analysis =
+        app::AnalyzeDirtyRegions(dirty, padding, kWidth, kHeight);
+    if (app::ShouldPromotePartialFrameToFull(analysis)) {
+      continue;  // the frame repaints whole; there is nothing to cover
+    }
+
+    for (const SDL_FRect& rect : dirty) {
+      if (rect.w <= 0.0f || rect.h <= 0.0f) {
+        continue;
+      }
+      // The padded, screen-clamped rect is what has to be repainted.
+      const int left =
+          std::max(0, static_cast<int>(std::floor(rect.x - padding.left)));
+      const int top = std::max(0, static_cast<int>(std::floor(rect.y - padding.top)));
+      const int right = std::min(
+          kWidth, static_cast<int>(std::ceil(rect.x + rect.w + padding.right)));
+      const int bottom = std::min(
+          kHeight, static_cast<int>(std::ceil(rect.y + rect.h + padding.bottom)));
+      for (int y = top; y < bottom; y += 3) {
+        for (int x = left; x < right; x += 3) {
+          Expect(DirtyPointCovered(analysis.merged_clip_rects, x, y),
+                 "every padded, on-screen damaged pixel must be inside a merged clip rect");
+          ++checked_points;
+        }
+      }
+    }
+
+    for (const SDL_Rect& rect : analysis.merged_clip_rects) {
+      Expect(rect.x >= 0 && rect.y >= 0 && rect.x + rect.w <= kWidth &&
+                 rect.y + rect.h <= kHeight,
+             "a merged clip rect must stay inside the target");
+      Expect(rect.w > 0 && rect.h > 0, "a merged clip rect must be non-empty");
+    }
+  }
+  Expect(checked_points > 10000, "the sweep must actually have damaged pixels to check");
+}
 
 void ExpectRectEquals(const SDL_Rect& actual,
                       const SDL_Rect& expected,
@@ -135,6 +221,8 @@ void RegisterDirtyRegionPolicyTests(std::vector<TestCase>& tests) {
           TestDirtyCoverageStaysBounded);
   AddTest(tests, "DirtyRegionPolicy/PromotionUsesCoalescedClipCount",
           TestPromotionUsesCoalescedClipCount);
+  AddTest(tests, "DirtyRegionPolicy/MergeCoversEveryDamagedPixel",
+          TestDirtyRegionMergeCoversEveryDamagedPixel);
 }
 
 }  // namespace microide::tests
