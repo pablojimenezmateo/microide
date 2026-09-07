@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <system_error>
 #include <vector>
 
 // LSP WorkspaceEdit file resource ops (TD-2026-07-17-011): validate-first apply
@@ -211,6 +212,51 @@ void TestTargetsOutsideTheProjectRootAreRejected() {
          "a ..-traversal target must fail the batch");
 }
 
+// A SYMLINK inside the project pointing out of it is spelled entirely within the
+// root, so a lexical containment check accepts it — and creating through a
+// symlinked parent lands wherever the link points. The link does not have to be
+// planted by the attacker: it is an ordinary thing for a checkout to contain, so a
+// compromised server only has to name a path the repository already provides.
+#if defined(__unix__) || defined(__APPLE__)
+void TestTargetsEscapingThroughASymlinkAreRejected() {
+  Fixture fx;
+  const std::filesystem::path outside_dir = fx.dir.path().parent_path() / "outside-root";
+  std::error_code ec;
+  std::filesystem::remove_all(outside_dir, ec);
+  std::filesystem::create_directories(outside_dir, ec);
+  Expect(!ec, "outside-the-root fixture directory created");
+  std::filesystem::create_symlink(outside_dir, fx.At("link"), ec);
+  Expect(!ec, "symlink fixture created");
+
+  // Creating through the symlinked parent: the leaf does not exist yet, which is
+  // exactly the case a lexical check cannot see through.
+  const std::filesystem::path through_link = fx.At("link") / "escaped.rs";
+  Expect(!fx.service.ApplyWorkspaceResourceOps({Create(through_link)}).ok,
+         "a create through a symlink out of the project must fail the batch");
+  Expect(!std::filesystem::exists(outside_dir / "escaped.rs"),
+         "nothing may be written outside the project root");
+
+  // And the rename destination, which is the other half of the same check.
+  WriteText(fx.At("inside.rs"), "inside\n");
+  Expect(!fx.service.ApplyWorkspaceResourceOps({Rename(fx.At("inside.rs"), through_link)}).ok,
+         "a rename destination through a symlink out of the project must fail");
+  Expect(std::filesystem::exists(fx.At("inside.rs")),
+         "the rejected rename must leave the source in place");
+
+  // A symlink that stays INSIDE the project is still usable — the check bounds
+  // where writes land, it does not ban links.
+  std::filesystem::create_directories(fx.At("real"), ec);
+  std::filesystem::create_symlink(fx.At("real"), fx.At("inner_link"), ec);
+  Expect(!ec, "inside-the-root symlink fixture created");
+  Expect(fx.service.ApplyWorkspaceResourceOps({Create(fx.At("inner_link") / "ok.rs")}).ok,
+         "a create through a symlink that stays inside the project must succeed");
+  Expect(std::filesystem::exists(fx.At("real") / "ok.rs"),
+         "the file lands at the link's real location inside the project");
+
+  std::filesystem::remove_all(outside_dir, ec);
+}
+#endif
+
 void TestNonRecursiveDirectoryDeleteIsRefused() {
   Fixture fx;
   WriteText(fx.At("pkg/mod.rs"), "mod\n");
@@ -290,6 +336,10 @@ void RegisterLspResourceOpsTests(std::vector<TestCase>& tests) {
           TestOverwriteWinsOverIgnoreIfExists);
   AddTest(tests, "LspResourceOps/TargetsOutsideTheProjectRootAreRejected",
           TestTargetsOutsideTheProjectRootAreRejected);
+#if defined(__unix__) || defined(__APPLE__)
+  AddTest(tests, "LspResourceOps/TargetsEscapingThroughASymlinkAreRejected",
+          TestTargetsEscapingThroughASymlinkAreRejected);
+#endif
   AddTest(tests, "LspResourceOps/NonRecursiveDirectoryDeleteIsRefused",
           TestNonRecursiveDirectoryDeleteIsRefused);
   AddTest(tests, "LspResourceOps/MidBatchFailureRollsBackCompletedOps",

@@ -1721,7 +1721,12 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
     // text-edit containment check; a compromised server must not create/rename/
     // delete arbitrary user files). One bad op fails the whole batch — skipping
     // it would desync every subsequent edit keyed to the op's outcome.
-    if (target.empty() || !util::PathEqualsOrWithin(target, project_root)) {
+    // Resolving containment, not lexical: a symlink INSIDE the root pointing out
+    // of it is spelled entirely within the root, and creating through a symlinked
+    // parent (`link/new.txt`) lands wherever the link points. The repository being
+    // edited is where such a link comes from, so this is not a check the server has
+    // to defeat — it only has to name a path the checkout already provides.
+    if (target.empty() || !util::PathEqualsOrWithinResolvingSymlinks(target, project_root)) {
       return fail("resource op target escapes the project root");
     }
     switch (op.kind) {
@@ -1739,7 +1744,7 @@ LspService::ResourceOpsResult LspService::ApplyWorkspaceResourceOps(
         break;
       case Kind::Rename: {
         const fs::path dest = op.new_path.lexically_normal();
-        if (dest.empty() || !util::PathEqualsOrWithin(dest, project_root)) {
+        if (dest.empty() || !util::PathEqualsOrWithinResolvingSymlinks(dest, project_root)) {
           return fail("rename destination escapes the project root");
         }
         if (!target_exists(target)) {
@@ -2032,8 +2037,13 @@ bool LspService::ApplyServerWorkspaceEdit(LspClient& client, LspClient::Workspac
     // account can reach (e.g. file:///etc/passwd on a writable fixture). The disk
     // applier below writes closed targets silently, so the containment check must
     // happen here rather than trusting the URI.
+    // Resolving containment: the disk applier reuses the editor's atomic save,
+    // which deliberately follows a symlink and overwrites its TARGET so that saving
+    // a symlinked file updates the real file. A lexical check therefore does not
+    // bound where a server-initiated edit can write — a link in the checkout is
+    // enough to leave the project.
     const std::filesystem::path normalized = path->lexically_normal();
-    if (!util::PathEqualsOrWithin(normalized, project_root) &&
+    if (!util::PathEqualsOrWithinResolvingSymlinks(normalized, project_root) &&
         !IsPathOpenInProject(normalized)) {
       continue;
     }

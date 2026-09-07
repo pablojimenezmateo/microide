@@ -5,6 +5,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <system_error>
 
 namespace microide::util {
 
@@ -237,6 +238,44 @@ inline bool SameAsNormalizedPath(const std::filesystem::path& candidate,
 // the containment test can reject it.
 [[nodiscard]] inline bool PathEqualsOrWithinNormalized(const std::filesystem::path& candidate,
                                                        const std::filesystem::path& root);
+
+// True when `candidate` is `root` itself or nested under it AFTER symlinks are
+// resolved. Use this — not the lexical form below — wherever the containment check
+// is a SECURITY boundary against a path some other program supplied.
+//
+// The lexical check answers about spelling. A symlink INSIDE the root pointing
+// outside it is spelled entirely within the root, so the lexical check accepts it
+// and a write through that path lands outside — and repositories carry symlinks,
+// so the attacker does not even need to create one. `weakly_canonical` resolves the
+// existing prefix and appends any not-yet-existing leaf lexically, which is what
+// makes it correct for a CREATE as well: `link/new.txt`, where `link` points out of
+// the project, resolves to the real parent before the comparison.
+//
+// Fails CLOSED: if canonicalization errors (a symlink loop, a permission error on
+// an intermediate directory) the answer is false. Returning the lexical result
+// there would silently downgrade this back to the check it exists to replace.
+// Two syscall-ish resolutions per call, so keep it off per-entry scan loops; the
+// lexical form below is what those want.
+[[nodiscard]] inline bool PathEqualsOrWithinResolvingSymlinks(
+    const std::filesystem::path& candidate,
+    const std::filesystem::path& root) {
+  if (candidate.empty() || root.empty()) {
+    return false;
+  }
+  std::error_code candidate_error;
+  const std::filesystem::path canonical_candidate =
+      std::filesystem::weakly_canonical(candidate, candidate_error);
+  if (candidate_error) {
+    return false;
+  }
+  std::error_code root_error;
+  const std::filesystem::path canonical_root = std::filesystem::weakly_canonical(root, root_error);
+  if (root_error) {
+    return false;
+  }
+  return PathEqualsOrWithinNormalized(canonical_candidate.lexically_normal(),
+                                      canonical_root.lexically_normal());
+}
 
 // True when `candidate` is `root` itself or a path nested under it. Purely
 // lexical: it never touches the filesystem (no symlink resolution, no cwd
