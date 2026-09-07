@@ -1048,7 +1048,7 @@ selection path and both reachable with Ctrl+A and one keystroke:
   line short, so the NEXT line op moved less than the last one did. Alt+Down then
   Alt+Up over a select-all left a stray blank line and stranded the last line.
 
-Two things make it work, and dropping either makes it prove nothing:
+Four things make it work, and dropping any of them makes it prove nothing:
 
 - **Condition the inverse property on the command having applied.** At a buffer
   edge a command correctly does nothing (`move-line-up` on line 1, `move-line-down`
@@ -1060,6 +1060,22 @@ Two things make it work, and dropping either makes it prove nothing:
   broken `open`, a `save` that never fires, or a renamed verb would make the whole
   sweep pass while testing nothing. The run prints `applied: <verb> n/m` per command
   and fails on any `0/m`.
+
+- **Check that each `open` actually landed.** A case is one `open`, and a full run
+  is well past `kMaxOpenTabsPerGroup` (512). Past the ceiling the group has no room,
+  and `ActionId::Open` used to answer ok=true anyway and leave the previous tab
+  active — so every later case edited and saved SOMEONE ELSE'S file while its own
+  fixture sat untouched, and passed. The tell was a whole fixture reporting `0/70`
+  applied while the same fixture alone reported `70/70`. The sweep now runs one
+  instance per fixture (~105 opens, well under the cap) and aborts on a refused
+  open; the silent-success half was a real defect and is fixed.
+- **State the inverse contract precisely, or it reports its own imprecision.**
+  `cut`/`paste` is an inverse only over a SELECTION: with nothing selected, cut
+  takes the whole line and paste re-inserts it ABOVE the caret, so cutting the
+  empty line after a file's final newline leaves the caret with nowhere to go back
+  to. And `outdent`/`indent` is not a pair at all — outdent is not injective, so it
+  cannot give back an indent a line never had. The pair that IS an inverse is
+  indent-then-outdent, because indent adds exactly one unit to every line.
 
 A fixture per case, freshly written and freshly opened, so the tab under test has
 exactly one edit in its undo history and an `undo` cannot reach across cases.
