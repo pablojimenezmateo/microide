@@ -996,6 +996,34 @@ always calls the free function, one stat per entry, while `is_directory()` /
 libstdc++, it takes two minutes and the answer is unambiguous. See
 `platform::EntryPathType`.
 
+**Randomized command sequences through the shipped binary**
+(`tools/fuzz-control-commands.py`, against the ASAN build). The unit suites drive
+coordinators and viewports directly, so a defect that needs the *whole shell* --
+a real render loop, real background threads, a viewport that gets COPIED because a
+pane was split -- is invisible to them. A few hundred random control-channel
+commands reach those states. The first run found a heap-use-after-free in the
+editor's visible-line layout cache (TD-2026-09-07-291): a copied cache kept an
+intrusive recency list pointing into the SOURCE map's nodes, and the next repaint
+wrote through it once the source died. Three things the sweep needed, each of
+which is the difference between finding it and not:
+
+- **Run it under ASAN.** Unsanitized, the same bug surfaced as
+  `malloc(): unsorted double linked list corrupted` in two runs out of ten and as
+  nothing at all in the other eight. Under ASAN it is the first write, with the
+  freeing stack attached.
+- **Leave a frame between commands** (`--delay`, default 50 ms). The states worth
+  reaching are the ones a *repaint* reads. A back-to-back stream lands several
+  commands in one event-loop turn and repaints once at the end; the identical
+  command sequence found nothing at full speed.
+- **Emit the interesting sequence as a burst, not as independent draws.** "Split,
+  populate the new pane, focus back, close the original, keep drawing" is five
+  commands in order; at one uniform draw each, a 200-command run essentially never
+  lands them. As a unit (the `editor` profile) it happens several times a run.
+
+Both halves of the vacuity check were done: with the fix reverted the sweep
+reproduces in 2 of 2 seeds, and with it in place 4 of 4 seeds survive. Keep it
+that way -- a sweep nobody has watched fail is a sweep that proves nothing.
+
 **Test comments naming functions that do not exist.** Grep CamelCase identifiers
 followed by `(` inside `//` comments in `tests/`, check each against the tree.
 Found a test claiming to verify `ComputeIdleHint(...)` — a function that exists
