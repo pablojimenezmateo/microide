@@ -3,6 +3,7 @@
 #include "workspace/git/ReviewSessionCoordinator.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 
+#include <algorithm>
 #include <cstddef>
 #include <filesystem>
 #include <string>
@@ -180,9 +181,57 @@ void TestReviewCommitCapsOpenedTabs() {
 
 }  // namespace
 
+// Every review compare tab carries the file list the next/previous-review-file
+// jump walks, and its own position in that list. The position used to be computed
+// by looking for the tab's ABSOLUTE path in a list of PROJECT-RELATIVE ones, which
+// never matched: every tab opened at index 0, so "next review file" went to the
+// second file of the review no matter which one you were looking at.
+void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  WriteFile(repo_path / "a.txt", "a1\n");
+  WriteFile(repo_path / "b.txt", "b1\n");
+  WriteFile(repo_path / "c.txt", "c1\n");
+  InitializeGitRepo(repo_path);
+  CommitAll(repo_path, "first", "first commit");
+
+  WriteFile(repo_path / "a.txt", "a2\n");
+  WriteFile(repo_path / "b.txt", "b2\n");
+  WriteFile(repo_path / "c.txt", "c2\n");
+  CommitAll(repo_path, "second", "second commit");
+
+  WorkspaceShell shell;
+  TestAccess::SetProjectRoot(shell, repo_path);
+  Expect(TestAccess::ExecuteCommandLine(shell, "review-commit"), "review-commit should succeed");
+
+  std::size_t compare_tabs = 0;
+  std::vector<std::size_t> indices;
+  for (const TabEntry& tab : TestAccess::OpenTabs(shell)) {
+    if (tab.kind != TabEntry::Kind::Compare || !tab.compare.has_value()) {
+      continue;
+    }
+    ++compare_tabs;
+    Expect(tab.compare->review_files.size() == 3,
+           "each review tab lists the three files under review");
+    Expect(tab.compare->review_file_index < tab.compare->review_files.size(),
+           "the review index must address the review list");
+    const std::filesystem::path listed =
+        (repo_path / tab.compare->review_files[tab.compare->review_file_index]).lexically_normal();
+    Expect(listed == tab.compare->path,
+           "a tab's review index must point at that tab's own file");
+    indices.push_back(tab.compare->review_file_index);
+  }
+  Expect(compare_tabs == 3, "the fixture opens three compare tabs");
+  std::sort(indices.begin(), indices.end());
+  Expect(indices == std::vector<std::size_t>({0, 1, 2}),
+         "the three tabs occupy three distinct positions, not all of them position 0");
+}
+
 void RegisterReviewSessionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ReviewSession/CommitCapsOpenedTabs",
           TestReviewCommitCapsOpenedTabs);
+  AddTest(tests, "ReviewSession/CommitTabsCarryTheirOwnReviewFileIndex",
+          TestReviewCommitTabsCarryTheirOwnReviewFileIndex);
   AddTest(tests, "ReviewSession/CommitOpensCompareTabsPerChangedFile",
           TestReviewCommitOpensCompareTabsPerChangedFile);
   AddTest(tests, "ReviewSession/BranchOpensAndCleansCompareTabs",

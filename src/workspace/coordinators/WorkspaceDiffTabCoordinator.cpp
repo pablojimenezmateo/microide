@@ -9,6 +9,7 @@
 
 #include "compare/CompareReviewTypes.h"
 #include "project/GitCompareService.h"
+#include "util/PathMatch.h"
 #include "util/TextFileIO.h"
 #include "workspace/git/CompareTabReview.h"
 
@@ -48,6 +49,27 @@ void SelectFirstChangeOnOpen(TabEntry& tab) {
   compare_tab.selected_row = CompareFirstChangePresentationRow(compare_tab);
   NormalizeCompareSelectionToModelRow(compare_tab);
   SyncCompareCaretToSelectedRow(compare_tab);
+}
+
+// `review_files` holds PROJECT-RELATIVE paths — JumpCompareReviewFile resolves an
+// entry as `root / entry` — so locating the file just opened has to compare
+// relative too. Comparing the absolute path against the list (which is what both
+// call sites used to do) never matched, so every review tab opened with
+// review_file_index 0 and "next review file" jumped to the second file of the
+// review no matter which one you were looking at.
+std::size_t IndexOfReviewFile(const std::vector<std::filesystem::path>& review_files,
+                              const std::filesystem::path& absolute_path,
+                              const std::filesystem::path& root) {
+  const std::optional<std::string> relative = util::RelativePathWithin(absolute_path, root);
+  if (!relative.has_value()) {
+    return 0;
+  }
+  const std::filesystem::path relative_path =
+      std::filesystem::path(*relative).lexically_normal();
+  const auto found = std::find(review_files.begin(), review_files.end(), relative_path);
+  return found == review_files.end()
+             ? 0
+             : static_cast<std::size_t>(found - review_files.begin());
 }
 
 }  // namespace
@@ -231,12 +253,8 @@ void DiffTabCoordinator::OpenComparison(const project::GitCommitEntry& commit) {
     opened.compare->opened_from_commit_picker = true;
     opened.compare->review_mode = compare::CompareReviewMode::Commit;
     opened.compare->review_files = review_files;
-    const auto current = std::find(review_files.begin(), review_files.end(),
-                                   util::NormalizedPath(opened.compare->path));
-    if (current != review_files.end()) {
-      opened.compare->review_file_index =
-          static_cast<std::size_t>(current - review_files.begin());
-    }
+    opened.compare->review_file_index =
+        IndexOfReviewFile(review_files, util::NormalizedPath(opened.compare->path), state_.root);
   }
   // After the review metadata, not before: it is an input to the presentation the
   // first-change row is expressed in.
@@ -396,12 +414,8 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
         }
         return paths;
       }();
-  const auto current = std::find(compare_tab->compare->review_files.begin(),
-                                 compare_tab->compare->review_files.end(), normalized_path);
-  if (current != compare_tab->compare->review_files.end()) {
-    compare_tab->compare->review_file_index =
-        static_cast<std::size_t>(current - compare_tab->compare->review_files.begin());
-  }
+  compare_tab->compare->review_file_index =
+      IndexOfReviewFile(compare_tab->compare->review_files, normalized_path, state_.root);
 
   if (state_.focused_group().open_tabs.size() >= kMaxOpenTabsPerGroup) {
     return false;  // Per-group tab ceiling; see kMaxOpenTabsPerGroup.
