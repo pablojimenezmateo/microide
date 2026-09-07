@@ -105,6 +105,30 @@ class GitRepository {
   // testable without spawning git.
   static std::optional<BlobLookup> InterpretBatchBlobResult(const CommandResult& result);
 
+  // Consumes ONE reply from `output` starting at `offset`, advancing `offset` past
+  // it. False when the remaining bytes do not hold a whole reply — the end of the
+  // stream, or a capture-ceiling kill that clipped one mid-payload.
+  static bool ReadNextBatchBlob(std::string_view output, std::size_t& offset, BlobLookup& out);
+
+  // One `<revision, relative path>` blob request and its answer.
+  struct BlobRequest {
+    std::string revision;
+    std::filesystem::path relative_path;
+  };
+
+  // Resolves MANY blobs per git spawn: `cat-file --batch` reads every object name
+  // from one stdin stream and answers them in order. This is what makes opening a
+  // review cheap — a per-file lookup is one fork+exec each, and a conflict review
+  // asks for three stages of every conflicted file.
+  //
+  // The returned vector is index-aligned with `requests`; an entry is nullopt when
+  // that request could not be answered (its name could not be sent, or the stream
+  // ended early because git was killed at the capture ceiling). Callers treat a
+  // nullopt as "not prefetched" and fall back to the single-blob path, so this stays
+  // a pure optimization: no outcome depends on the batch succeeding.
+  std::vector<std::optional<BlobLookup>> LookupBlobsAtRevisions(
+      const std::vector<BlobRequest>& requests) const;
+
   std::optional<BlobAtRevision> ReadBlobAtRevision(const std::filesystem::path& relative_path,
                                                    std::string_view revision = "HEAD") const;
   // Content-only convenience wrapper over ReadBlobAtRevision; drops the truncation

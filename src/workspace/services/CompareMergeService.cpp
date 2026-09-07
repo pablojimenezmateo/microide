@@ -33,22 +33,28 @@ bool CompareMergeService::OpenMergeEditor(const std::filesystem::path& base_path
   return diff_tabs_.OpenMergeEditor(base_path, incoming_path, current_path, output_path);
 }
 
-bool CompareMergeService::OpenWorkingTreeComparison(const std::filesystem::path& path,
-                                                    const std::string& left_ref,
-                                                    const std::string& left_label) {
-  return diff_tabs_.OpenWorkingTreeComparison(path, left_ref, left_label);
+bool CompareMergeService::OpenWorkingTreeComparison(
+    const std::filesystem::path& path,
+    const std::string& left_ref,
+    const std::string& left_label,
+    const project::GitRevisionBlobCache* prefetched) {
+  return diff_tabs_.OpenWorkingTreeComparison(path, left_ref, left_label, prefetched);
 }
 
-bool CompareMergeService::OpenBranchHeadComparison(const std::filesystem::path& path,
-                                                   const std::string& left_ref,
-                                                   const std::string& left_label,
-                                                   const std::string& right_ref,
-                                                   const std::string& right_label) {
-  return diff_tabs_.OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
+bool CompareMergeService::OpenBranchHeadComparison(
+    const std::filesystem::path& path,
+    const std::string& left_ref,
+    const std::string& left_label,
+    const std::string& right_ref,
+    const std::string& right_label,
+    const project::GitRevisionBlobCache* prefetched) {
+  return diff_tabs_.OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label,
+                                             prefetched);
 }
 
-bool CompareMergeService::OpenGitConflictMerge(const std::filesystem::path& path) {
-  return diff_tabs_.OpenGitConflictMerge(path);
+bool CompareMergeService::OpenGitConflictMerge(const std::filesystem::path& path,
+                                               const project::GitRevisionBlobCache* prefetched) {
+  return diff_tabs_.OpenGitConflictMerge(path, prefetched);
 }
 
 void CompareMergeService::OpenPicker() {

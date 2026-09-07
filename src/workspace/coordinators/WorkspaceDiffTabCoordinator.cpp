@@ -286,9 +286,11 @@ bool DiffTabCoordinator::OpenMergeEditor(const std::filesystem::path& base_path,
   return true;
 }
 
-bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& path,
-                                                   const std::string& left_ref,
-                                                   const std::string& left_label) {
+bool DiffTabCoordinator::OpenWorkingTreeComparison(
+    const std::filesystem::path& path,
+    const std::string& left_ref,
+    const std::string& left_label,
+    const project::GitRevisionBlobCache* prefetched) {
   const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, "WORKTREE");
       existing_index.has_value()) {
@@ -298,7 +300,8 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
     return true;
   }
 
-  const auto left_content = project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref);
+  const auto left_content =
+      project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref, prefetched);
   if (!left_content.has_value() || left_content->truncated) {
     // Absent revision, or a blob clipped at the subprocess capture ceiling: refuse
     // rather than diff partial bytes as if they were the file's full content.
@@ -346,11 +349,13 @@ bool DiffTabCoordinator::OpenWorkingTreeComparison(const std::filesystem::path& 
   return true;
 }
 
-bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& path,
-                                                  const std::string& left_ref,
-                                                  const std::string& left_label,
-                                                  const std::string& right_ref,
-                                                  const std::string& right_label) {
+bool DiffTabCoordinator::OpenBranchHeadComparison(
+    const std::filesystem::path& path,
+    const std::string& left_ref,
+    const std::string& left_label,
+    const std::string& right_ref,
+    const std::string& right_label,
+    const project::GitRevisionBlobCache* prefetched) {
   const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, right_ref);
       existing_index.has_value()) {
@@ -360,8 +365,10 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
     return true;
   }
 
-  const auto left_content = project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref);
-  const auto right_content = project::ReadGitFileAtCommit(state_.root, normalized_path, right_ref);
+  const auto left_content =
+      project::ReadGitFileAtCommit(state_.root, normalized_path, left_ref, prefetched);
+  const auto right_content =
+      project::ReadGitFileAtCommit(state_.root, normalized_path, right_ref, prefetched);
   if (!left_content.has_value() || !right_content.has_value() || left_content->truncated ||
       right_content->truncated) {
     // A truncated blob was clipped at the subprocess capture ceiling; refuse rather
@@ -407,7 +414,8 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(const std::filesystem::path& p
   return true;
 }
 
-bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path) {
+bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path,
+                                              const project::GitRevisionBlobCache* prefetched) {
   const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (const auto existing_index = FindOpenMergeTabIndex(normalized_path);
       existing_index.has_value() && state_.focused_group().open_tabs[*existing_index].merge.has_value() &&
@@ -417,9 +425,12 @@ bool DiffTabCoordinator::OpenGitConflictMerge(const std::filesystem::path& path)
     return true;
   }
 
-  const auto base_content = project::ReadGitFileAtCommit(state_.root, normalized_path, ":1");
-  const auto current_content = project::ReadGitFileAtCommit(state_.root, normalized_path, ":2");
-  const auto incoming_content = project::ReadGitFileAtCommit(state_.root, normalized_path, ":3");
+  const auto base_content =
+      project::ReadGitFileAtCommit(state_.root, normalized_path, ":1", prefetched);
+  const auto current_content =
+      project::ReadGitFileAtCommit(state_.root, normalized_path, ":2", prefetched);
+  const auto incoming_content =
+      project::ReadGitFileAtCommit(state_.root, normalized_path, ":3", prefetched);
   if (!current_content.has_value() || !incoming_content.has_value() ||
       current_content->truncated || incoming_content->truncated ||
       (base_content.has_value() && base_content->truncated)) {

@@ -200,11 +200,93 @@ std::vector<GitBranchReference> CollectGitBranches(const std::filesystem::path& 
   return branches;
 }
 
+namespace {
+
+// `<revision>\0<absolute path>` — see GitRevisionBlobCache's key comment.
+std::string BlobCacheKey(const std::string& revision, const std::filesystem::path& absolute_path) {
+  std::string key = revision;
+  key.push_back('\0');
+  key += absolute_path.generic_string();
+  return key;
+}
+
+}  // namespace
+
+void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
+                                    const std::vector<std::string>& revisions,
+                                    const std::vector<std::filesystem::path>& absolute_paths) {
+  util::PerformanceTrace::Scope perf_scope("git::PrefetchRevisionBlobs");
+  root_ = root;
+  if (root.empty() || revisions.empty() || absolute_paths.empty()) {
+    return;
+  }
+  const GitRepository repo(root);
+  if (!repo.IsValid()) {
+    return;
+  }
+
+  std::vector<GitRepository::BlobRequest> requests;
+  std::vector<const std::filesystem::path*> request_paths;
+  std::vector<const std::string*> request_revisions;
+  requests.reserve(revisions.size() * absolute_paths.size());
+  request_paths.reserve(requests.capacity());
+  request_revisions.reserve(requests.capacity());
+  for (const std::string& revision : revisions) {
+    if (revision.empty()) {
+      continue;
+    }
+    for (const std::filesystem::path& absolute_path : absolute_paths) {
+      const auto relative = repo.ToRelative(absolute_path);
+      if (!relative.has_value()) {
+        continue;
+      }
+      requests.push_back(GitRepository::BlobRequest{.revision = revision,
+                                                    .relative_path = *relative});
+      request_paths.push_back(&absolute_path);
+      request_revisions.push_back(&revision);
+    }
+  }
+
+  const std::vector<std::optional<GitRepository::BlobLookup>> answers =
+      repo.LookupBlobsAtRevisions(requests);
+  entries_.reserve(answers.size());
+  for (std::size_t i = 0; i < answers.size(); ++i) {
+    if (!answers[i].has_value()) {
+      continue;  // unanswered: the caller falls back to the single-file read
+    }
+    entries_.emplace(BlobCacheKey(*request_revisions[i], *request_paths[i]),
+                     GitFileContentAtCommit{.exists = answers[i]->exists,
+                                            .content = std::move(answers[i]->content),
+                                            .truncated = answers[i]->truncated});
+  }
+}
+
+const GitFileContentAtCommit* GitRevisionBlobCache::Find(
+    const std::string& revision,
+    const std::filesystem::path& absolute_path) const {
+  if (entries_.empty()) {
+    return nullptr;
+  }
+  const auto found = entries_.find(BlobCacheKey(revision, absolute_path));
+  return found == entries_.end() ? nullptr : &found->second;
+}
+
 std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
                                                           const std::filesystem::path& absolute_path,
-                                                          const std::string& hash) {
+                                                          const std::string& hash,
+                                                          const GitRevisionBlobCache* prefetched) {
   if (root.empty() || absolute_path.empty() || hash.empty()) {
     return std::nullopt;
+  }
+
+  if (prefetched != nullptr) {
+    if (const GitFileContentAtCommit* hit = prefetched->Find(hash, absolute_path); hit != nullptr) {
+      if (hit->exists) {
+        util::AddPerformanceCounter(util::PerfCounterId::GitDiffLoads);
+        util::AddPerformanceCounter(util::PerfCounterId::GitDiffBytesRead, hit->content.size());
+      }
+      return *hit;
+    }
   }
 
   const GitRepository repo(root);

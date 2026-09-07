@@ -4,6 +4,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <unordered_map>
 #include <vector>
 
 #include "project/DirectoryTree.h"
@@ -43,9 +44,43 @@ struct GitFileContentAtCommit {
   bool truncated = false;
 };
 
-std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem::path& root,
-                                                          const std::filesystem::path& absolute_path,
-                                                          const std::string& hash);
+// Blobs read ahead in bulk so a multi-file open does not pay one git spawn per
+// file per side. `Prefetch` asks for the cross product of `revisions` x `paths`
+// in as few `git cat-file --batch` spawns as the chunk size allows; the result
+// is then handed to `ReadGitFileAtCommit` as an optional hint.
+//
+// Deliberately advisory: a lookup that misses (never prefetched, a path the batch
+// could not express, a stream clipped at the capture ceiling) simply falls back to
+// the single-file read, so no outcome depends on the prefetch having worked. It
+// caches nothing across turns either — it is built and consumed inside one command,
+// which is why a revision as mutable as "HEAD" is safe to key on.
+class GitRevisionBlobCache {
+ public:
+  void Prefetch(const std::filesystem::path& root,
+                const std::vector<std::string>& revisions,
+                const std::vector<std::filesystem::path>& absolute_paths);
+
+  // The prefetched content, or nullptr when this pair was not prefetched.
+  const GitFileContentAtCommit* Find(const std::string& revision,
+                                     const std::filesystem::path& absolute_path) const;
+
+  bool empty() const { return entries_.empty(); }
+
+ private:
+  std::filesystem::path root_;
+  // Key is `<revision>\0<absolute path>`; the NUL keeps a revision that ends in
+  // path characters from colliding with a shorter one.
+  std::unordered_map<std::string, GitFileContentAtCommit> entries_;
+};
+
+// `prefetched` is an optional hint (see GitRevisionBlobCache); nullptr, a cache
+// that does not hold this pair, and a cache built for another root all behave
+// exactly as if it were absent.
+std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(
+    const std::filesystem::path& root,
+    const std::filesystem::path& absolute_path,
+    const std::string& hash,
+    const GitRevisionBlobCache* prefetched = nullptr);
 
 struct GitBranchReference {
   std::string ref;

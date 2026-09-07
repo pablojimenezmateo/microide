@@ -45,12 +45,17 @@ class ReviewSessionCoordinator {
   ReviewOpenOutcome OpenCommitReview(const std::string& ref);
 
  private:
+  // `prefetch` runs once the reconciliation has decided which files will actually
+  // be opened (dedup and the open cap applied), so the bulk blob read asks git for
+  // exactly that set and nothing more. Optional: with no prefetch every side is
+  // read by its own git spawn, which is what the non-batch callers do.
   ReviewOpenOutcome RunReviewSession(
       std::string_view verb,
       const std::vector<std::filesystem::path>& targets,
       const std::function<std::optional<std::filesystem::path>(const TabEntry&)>& scoped_path_of,
       const std::function<bool(const std::filesystem::path&)>& open_one,
-      std::string_view empty_message);
+      std::string_view empty_message,
+      const std::function<void(const std::vector<std::filesystem::path>&)>& prefetch = {});
 
   ProjectWorkspaceState& state_;
   CompareMergeService compare_merge_;

@@ -151,6 +151,59 @@ std::optional<GitRepository::BlobAtRevision> GitRepository::InterpretBlobResult(
   return BlobAtRevision{.content = result.output, .truncated = result.truncated};
 }
 
+bool GitRepository::ReadNextBatchBlob(std::string_view output,
+                                     std::size_t& offset,
+                                     BlobLookup& out) {
+  if (offset >= output.size()) {
+    return false;
+  }
+  const std::size_t header_end = output.find('\n', offset);
+  if (header_end == std::string_view::npos) {
+    return false;
+  }
+  const std::string_view header = output.substr(offset, header_end - offset);
+
+  // A resolved blob's header is `<oid> <type> <size>`. Anything else is git
+  // declining the name — `<name> missing`, `<name> ambiguous`, and the other
+  // one-word verdicts — which is an absent file, not a failure. Parsing the
+  // success shape and treating every non-match as "absent" covers those without
+  // having to enumerate git's verdict vocabulary. A declined name's reply is the
+  // header line alone, with no payload.
+  const std::size_t size_space = header.rfind(' ');
+  const std::size_t type_space =
+      size_space == std::string_view::npos ? std::string_view::npos
+                                           : header.rfind(' ', size_space - 1);
+  std::optional<std::size_t> size;
+  if (type_space != std::string_view::npos) {
+    const std::string_view type = header.substr(type_space + 1, size_space - type_space - 1);
+    if (type == "blob") {
+      size = util::ParseSize(header.substr(size_space + 1));
+    }
+  }
+  if (!size.has_value()) {
+    // A tree (a directory named at that revision), a tag, or a declined name.
+    offset = header_end + 1;
+    out = BlobLookup{};
+    return true;
+  }
+
+  // The payload is exactly `size` bytes after the header newline, then one LF that
+  // is framing rather than content. A capture-ceiling kill leaves fewer bytes than
+  // the header promised; hand back what arrived and let `truncated` say so — but a
+  // clipped payload ends the stream, because the next reply's framing is gone.
+  const std::size_t payload_start = header_end + 1;
+  const std::size_t available = output.size() - payload_start;
+  const std::size_t taken = std::min(*size, available);
+  out = BlobLookup{
+      .exists = true,
+      .content = std::string(output.substr(payload_start, taken)),
+      .truncated = taken < *size,
+  };
+  // Skip the payload and git's trailing LF (absent when the payload was clipped).
+  offset = std::min(payload_start + taken + 1, output.size());
+  return true;
+}
+
 std::optional<GitRepository::BlobLookup> GitRepository::InterpretBatchBlobResult(
     const CommandResult& result) {
   // A capture-ceiling kill is a non-zero exit with `truncated` set; anything else
@@ -158,43 +211,70 @@ std::optional<GitRepository::BlobLookup> GitRepository::InterpretBatchBlobResult
   if (!result.success() && !result.truncated) {
     return std::nullopt;
   }
-  const std::string& output = result.output;
-  const std::size_t header_end = output.find('\n');
-  if (header_end == std::string::npos) {
+  std::size_t offset = 0;
+  BlobLookup lookup;
+  if (!ReadNextBatchBlob(result.output, offset, lookup)) {
     return std::nullopt;
   }
-  const std::string_view header(output.data(), header_end);
+  lookup.truncated = lookup.truncated || (result.truncated && lookup.exists);
+  return lookup;
+}
 
-  // A resolved blob's header is `<oid> <type> <size>`. Anything else is git
-  // declining the name — `<name> missing`, `<name> ambiguous`, and the other
-  // one-word verdicts — which is an absent file, not a failure. Parsing the
-  // success shape and treating every non-match as "absent" covers those without
-  // having to enumerate git's verdict vocabulary.
-  const std::size_t size_space = header.rfind(' ');
-  if (size_space == std::string_view::npos) {
-    return BlobLookup{};
-  }
-  const std::size_t type_space = header.rfind(' ', size_space - 1);
-  if (type_space == std::string_view::npos) {
-    return BlobLookup{};
-  }
-  const std::string_view type = header.substr(type_space + 1, size_space - type_space - 1);
-  const std::optional<std::size_t> size = util::ParseSize(header.substr(size_space + 1));
-  if (type != "blob" || !size.has_value()) {
-    // A tree (a directory named at that revision) or a tag is not a file to diff.
-    return BlobLookup{};
+std::vector<std::optional<GitRepository::BlobLookup>> GitRepository::LookupBlobsAtRevisions(
+    const std::vector<BlobRequest>& requests) const {
+  std::vector<std::optional<BlobLookup>> answers(requests.size());
+  if (requests.empty()) {
+    return answers;
   }
 
-  // The payload is exactly `size` bytes after the header newline, then one LF that
-  // is framing rather than content. A capture-ceiling kill leaves fewer bytes than
-  // the header promised; hand back what arrived and let `truncated` say so.
-  const std::size_t available = output.size() - (header_end + 1);
-  const std::size_t taken = std::min(*size, available);
-  return BlobLookup{
-      .exists = true,
-      .content = output.substr(header_end + 1, taken),
-      .truncated = result.truncated || taken < *size,
+  // Chunked rather than one giant batch: the whole reply is captured as a single
+  // string before it is split up, so an unbounded batch peaks at two copies of
+  // every blob it asked for. A chunk still collapses 128 fork+execs into one,
+  // which is where essentially all of the win is.
+  constexpr std::size_t kBlobsPerSpawn = 128;
+
+  std::vector<std::size_t> chunk_indices;
+  chunk_indices.reserve(std::min(requests.size(), kBlobsPerSpawn));
+  std::string stdin_text;
+
+  const auto flush = [&]() {
+    if (chunk_indices.empty()) {
+      return;
+    }
+    const CommandResult result =
+        ExecuteWithStdin({"cat-file", "--batch"}, std::move(stdin_text));
+    stdin_text.clear();
+    if (result.success() || result.truncated) {
+      std::size_t offset = 0;
+      for (const std::size_t index : chunk_indices) {
+        BlobLookup lookup;
+        if (!ReadNextBatchBlob(result.output, offset, lookup)) {
+          break;  // stream ended early (capture ceiling): the rest stay unanswered
+        }
+        answers[index] = std::move(lookup);
+      }
+    }
+    chunk_indices.clear();
   };
+
+  for (std::size_t index = 0; index < requests.size(); ++index) {
+    const BlobRequest& request = requests[index];
+    std::string spec = request.revision + ":" + request.relative_path.generic_string();
+    // `--batch` reads newline-delimited names; a path carrying one cannot be asked
+    // for this way (`--batch -z` is git 2.42+). Leave it unanswered — the caller
+    // falls back to the single-blob path for it.
+    if (spec.find('\n') != std::string::npos) {
+      continue;
+    }
+    stdin_text += spec;
+    stdin_text.push_back('\n');
+    chunk_indices.push_back(index);
+    if (chunk_indices.size() >= kBlobsPerSpawn) {
+      flush();
+    }
+  }
+  flush();
+  return answers;
 }
 
 std::optional<GitRepository::BlobLookup> GitRepository::LookupBlobAtRevision(

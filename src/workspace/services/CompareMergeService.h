@@ -28,15 +28,19 @@ class CompareMergeService {
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,
                        const std::filesystem::path& output_path);
+  // `prefetched` — see DiffTabCoordinator's identically-named parameter.
   bool OpenWorkingTreeComparison(const std::filesystem::path& path,
                                  const std::string& left_ref,
-                                 const std::string& left_label);
+                                 const std::string& left_label,
+                                 const project::GitRevisionBlobCache* prefetched = nullptr);
   bool OpenBranchHeadComparison(const std::filesystem::path& path,
                                 const std::string& left_ref,
                                 const std::string& left_label,
                                 const std::string& right_ref,
-                                const std::string& right_label);
-  bool OpenGitConflictMerge(const std::filesystem::path& path);
+                                const std::string& right_label,
+                                const project::GitRevisionBlobCache* prefetched = nullptr);
+  bool OpenGitConflictMerge(const std::filesystem::path& path,
+                            const project::GitRevisionBlobCache* prefetched = nullptr);
 
   void OpenPicker();
   bool OpenPickerForPath(const std::filesystem::path& path, std::string_view commit_spec = {});

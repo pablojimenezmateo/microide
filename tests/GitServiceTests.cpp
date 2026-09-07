@@ -1135,6 +1135,123 @@ void TestGitBlobLookupMatchesExistenceAndContent() {
          "the old existence probe did accept a tree — this is the intended divergence");
 }
 
+// The streaming half of the batch reader: several replies packed into one buffer,
+// which is what a bulk prefetch actually parses.
+void TestGitBatchBlobStreamFraming() {
+  using GitRepository = microide::project::GitRepository;
+
+  const std::string stream =
+      "1111111111111111111111111111111111111111 blob 3\nabc\n"
+      "HEAD:gone.txt missing\n"
+      "2222222222222222222222222222222222222222 blob 0\n\n"
+      "3333333333333333333333333333333333333333 blob 5\nx\ny\nz\n";
+  std::size_t offset = 0;
+  GitRepository::BlobLookup lookup;
+
+  Expect(GitRepository::ReadNextBatchBlob(stream, offset, lookup) && lookup.exists &&
+             lookup.content == "abc",
+         "the first reply is read whole");
+  Expect(GitRepository::ReadNextBatchBlob(stream, offset, lookup) && !lookup.exists,
+         "a declined name in mid-stream must not desynchronize the reader");
+  Expect(GitRepository::ReadNextBatchBlob(stream, offset, lookup) && lookup.exists &&
+             lookup.content.empty(),
+         "an empty blob mid-stream is read as present and empty");
+  Expect(GitRepository::ReadNextBatchBlob(stream, offset, lookup) && lookup.exists &&
+             lookup.content == "x\ny\nz",
+         "a payload containing newlines is framed by its byte count, not by lines");
+  Expect(!GitRepository::ReadNextBatchBlob(stream, offset, lookup),
+         "the reader reports the end of the stream");
+
+  // A clipped payload (capture ceiling) ends the stream: the next reply's framing
+  // is gone, so nothing after it may be attributed to a request.
+  const std::string clipped =
+      "1111111111111111111111111111111111111111 blob 3\nabc\n"
+      "2222222222222222222222222222222222222222 blob 100\nshort";
+  offset = 0;
+  Expect(GitRepository::ReadNextBatchBlob(clipped, offset, lookup) && lookup.exists,
+         "the complete reply before a clip is still usable");
+  Expect(GitRepository::ReadNextBatchBlob(clipped, offset, lookup) && lookup.truncated,
+         "a clipped payload is flagged truncated");
+  Expect(!GitRepository::ReadNextBatchBlob(clipped, offset, lookup),
+         "nothing is read past a clipped payload");
+}
+
+// The bulk read must answer exactly what N single reads would have, in order —
+// that equivalence is the whole safety argument for using it as a prefetch.
+void TestGitBulkBlobLookupMatchesSingleReads() {
+  using microide::project::GitRepository;
+  using microide::project::GitRevisionBlobCache;
+  using microide::project::ReadGitFileAtCommit;
+
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "a.txt", "first\n");
+  WriteFile(repo_path / "b.txt", "second\n");
+  WriteFile(repo_path / "spaced name.txt", "spaced\n");
+  CommitAll(repo_path, "base", "base");
+  WriteFile(repo_path / "a.txt", "first changed\n");
+  WriteFile(repo_path / "c.txt", "third\n");
+  CommitAll(repo_path, "second", "second");
+
+  const GitRepository repo(repo_path);
+  const std::vector<std::string> revisions = {"HEAD", "HEAD~1"};
+  const std::vector<std::filesystem::path> relatives = {"a.txt", "b.txt", "c.txt",
+                                                        "spaced name.txt", "absent.txt"};
+
+  std::vector<GitRepository::BlobRequest> requests;
+  for (const std::string& revision : revisions) {
+    for (const std::filesystem::path& relative : relatives) {
+      requests.push_back(GitRepository::BlobRequest{.revision = revision,
+                                                    .relative_path = relative});
+    }
+  }
+  const auto bulk = repo.LookupBlobsAtRevisions(requests);
+  Expect(bulk.size() == requests.size(), "the bulk answer is index-aligned with its requests");
+  for (std::size_t i = 0; i < requests.size(); ++i) {
+    const auto single = repo.LookupBlobAtRevision(requests[i].relative_path,
+                                                  requests[i].revision);
+    Expect(bulk[i].has_value() && single.has_value(),
+           "every request in a healthy repository must be answered both ways");
+    Expect(bulk[i]->exists == single->exists && bulk[i]->content == single->content,
+           "a bulk answer must be identical to the single read for the same name");
+  }
+  // c.txt exists only at HEAD; absent.txt at neither. Pin that the ordering is
+  // really per-request and not, say, all-present-then-all-missing.
+  Expect(bulk[2]->exists && !bulk[4]->exists && !bulk[7]->exists,
+         "each answer belongs to its own request");
+
+  // And through the cache the review verbs actually use.
+  std::vector<std::filesystem::path> absolute;
+  for (const std::filesystem::path& relative : relatives) {
+    absolute.push_back(repo_path / relative);
+  }
+  GitRevisionBlobCache cache;
+  cache.Prefetch(repo_path, revisions, absolute);
+  for (const std::string& revision : revisions) {
+    for (const std::filesystem::path& path : absolute) {
+      const auto prefetched = ReadGitFileAtCommit(repo_path, path, revision, &cache);
+      const auto direct = ReadGitFileAtCommit(repo_path, path, revision, nullptr);
+      Expect(prefetched.has_value() == direct.has_value(),
+             "the prefetched read must agree with the direct read on reachability");
+      Expect(!prefetched.has_value() ||
+                 (prefetched->exists == direct->exists &&
+                  prefetched->content == direct->content &&
+                  prefetched->truncated == direct->truncated),
+             "the prefetched read must agree with the direct read byte for byte");
+    }
+  }
+
+  // A cache that holds nothing for the pair is exactly as good as no cache: this
+  // is what keeps the prefetch advisory rather than load-bearing.
+  GitRevisionBlobCache unrelated;
+  unrelated.Prefetch(repo_path, {"HEAD"}, {repo_path / "b.txt"});
+  const auto miss = ReadGitFileAtCommit(repo_path, repo_path / "a.txt", "HEAD~1", &unrelated);
+  const auto miss_direct = ReadGitFileAtCommit(repo_path, repo_path / "a.txt", "HEAD~1", nullptr);
+  Expect(miss.has_value() && miss_direct.has_value() && miss->content == miss_direct->content,
+         "a cache miss falls back to the single read");
+}
+
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/ReadFileAtRevisionSurfacesTruncation",
           TestGitReadFileAtRevisionSurfacesTruncation);
@@ -1145,6 +1262,9 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/BatchBlobResultFraming", TestGitBatchBlobResultFraming);
   AddTest(tests, "Git/BlobLookupMatchesExistenceAndContent",
           TestGitBlobLookupMatchesExistenceAndContent);
+  AddTest(tests, "Git/BatchBlobStreamFraming", TestGitBatchBlobStreamFraming);
+  AddTest(tests, "Git/BulkBlobLookupMatchesSingleReads",
+          TestGitBulkBlobLookupMatchesSingleReads);
   AddTest(tests, "Git/PorcelainParserBoundsHostileStatus",
           TestGitPorcelainParserBoundsHostileStatus);
   AddTest(tests, "Git/PorcelainParserNormalizedRecordMatchesPathWalk",

@@ -75,7 +75,8 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
     const std::vector<std::filesystem::path>& targets,
     const std::function<std::optional<std::filesystem::path>(const TabEntry&)>& scoped_path_of,
     const std::function<bool(const std::filesystem::path&)>& open_one,
-    std::string_view empty_message) {
+    std::string_view empty_message,
+    const std::function<void(const std::vector<std::filesystem::path>&)>& prefetch) {
   // Always reveal Source Control so the review surface is in view, even when the
   // target set is empty (e.g. "no conflicts" still lands the user there).
   if (operations_.show_git_sidebar) {
@@ -110,6 +111,16 @@ ReviewOpenOutcome ReviewSessionCoordinator::RunReviewSession(
   const std::size_t open_budget =
       std::min(plan.to_open.size(), kMaxReviewSessionOpenTabs);
   opened.reserve(open_budget);
+
+  // Read every side this session will need in bulk BEFORE opening anything: each
+  // open would otherwise spawn git once per side per file, on the shell thread, and
+  // that is what made a review of a large change stall.
+  if (prefetch) {
+    prefetch(std::vector<std::filesystem::path>(plan.to_open.begin(),
+                                                plan.to_open.begin() +
+                                                    static_cast<std::ptrdiff_t>(open_budget)));
+  }
+
   std::size_t attempted = 0;
   for (const std::filesystem::path& path : plan.to_open) {
     if (attempted >= kMaxReviewSessionOpenTabs) {
@@ -140,6 +151,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
     targets.push_back((root / entry.relative_path).lexically_normal());
   }
 
+  project::GitRevisionBlobCache prefetched;
   return RunReviewSession(
       "review-conflicts", targets,
       [](const TabEntry& tab) -> std::optional<std::filesystem::path> {
@@ -152,10 +164,15 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
         }
         return std::nullopt;
       },
-      [this](const std::filesystem::path& path) {
-        return compare_merge_.OpenGitConflictMerge(path);
+      [this, &prefetched](const std::filesystem::path& path) {
+        return compare_merge_.OpenGitConflictMerge(path, &prefetched);
       },
-      "no merge conflicts");
+      "no merge conflicts",
+      [this, root, &prefetched](const std::vector<std::filesystem::path>& paths) {
+        // Three index stages per conflicted file — the worst per-file spawn count
+        // in the app before this.
+        prefetched.Prefetch(root, {":1", ":2", ":3"}, paths);
+      });
 }
 
 ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& ref_arg) {
@@ -179,6 +196,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& 
   }
 
   const std::string verb_label = "review-branch " + label;
+  project::GitRevisionBlobCache prefetched;
   return RunReviewSession(
       verb_label, targets,
       [ref](const TabEntry& tab) -> std::optional<std::filesystem::path> {
@@ -188,10 +206,14 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& 
         }
         return std::nullopt;
       },
-      [this, ref, label](const std::filesystem::path& path) {
-        return compare_merge_.OpenWorkingTreeComparison(path, ref, label);
+      [this, ref, label, &prefetched](const std::filesystem::path& path) {
+        return compare_merge_.OpenWorkingTreeComparison(path, ref, label, &prefetched);
       },
-      "no differences");
+      "no differences",
+      [this, root, ref, &prefetched](const std::vector<std::filesystem::path>& paths) {
+        // Only the left side is a revision; the right is the working tree on disk.
+        prefetched.Prefetch(root, {ref}, paths);
+      });
 }
 
 ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& ref_arg) {
@@ -207,6 +229,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
   }
 
   const std::string verb_label = "review-commit " + ref;
+  project::GitRevisionBlobCache prefetched;
   return RunReviewSession(
       verb_label, targets,
       [left_ref, right_ref](const TabEntry& tab) -> std::optional<std::filesystem::path> {
@@ -216,11 +239,15 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
         }
         return std::nullopt;
       },
-      [this, left_ref, right_ref](const std::filesystem::path& path) {
+      [this, left_ref, right_ref, &prefetched](const std::filesystem::path& path) {
         return compare_merge_.OpenBranchHeadComparison(path, left_ref, left_ref, right_ref,
-                                                       right_ref);
+                                                       right_ref, &prefetched);
       },
-      "no changes in commit");
+      "no changes in commit",
+      [this, root, left_ref, right_ref,
+       &prefetched](const std::vector<std::filesystem::path>& paths) {
+        prefetched.Prefetch(root, {left_ref, right_ref}, paths);
+      });
 }
 
 }  // namespace microide::workspace

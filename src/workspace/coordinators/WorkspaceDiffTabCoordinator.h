@@ -74,15 +74,22 @@ class DiffTabCoordinator {
                        const std::filesystem::path& incoming_path,
                        const std::filesystem::path& current_path,
                        const std::filesystem::path& output_path);
+  // `prefetched` is an optional bulk-read hint (project::GitRevisionBlobCache);
+  // omitting it, or passing one that does not hold a side, just reads that side
+  // with its own git spawn. A multi-file review passes one so the whole set costs
+  // a couple of spawns instead of two or three per file.
   bool OpenWorkingTreeComparison(const std::filesystem::path& path,
                                  const std::string& left_ref,
-                                 const std::string& left_label);
+                                 const std::string& left_label,
+                                 const project::GitRevisionBlobCache* prefetched = nullptr);
   bool OpenBranchHeadComparison(const std::filesystem::path& path,
                                 const std::string& left_ref,
                                 const std::string& left_label,
                                 const std::string& right_ref,
-                                const std::string& right_label);
-  bool OpenGitConflictMerge(const std::filesystem::path& path);
+                                const std::string& right_label,
+                                const project::GitRevisionBlobCache* prefetched = nullptr);
+  bool OpenGitConflictMerge(const std::filesystem::path& path,
+                            const project::GitRevisionBlobCache* prefetched = nullptr);
 
  private:
   void ActivateCompareTab(std::size_t index, bool dismiss_overlay);
