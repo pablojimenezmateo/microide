@@ -761,9 +761,34 @@ ReviewOpenOutcome WorkspaceActionContext::ReviewCommit(const std::string& ref) {
 }
 
 bool WorkspaceActionContext::OpenPath(const std::filesystem::path& path,
-                                      std::string* /*error_message*/) {
-  operations_.open_file(path);
-  return true;
+                                      std::string* error_message) {
+  // Reports whether the file ACTUALLY opened. `operations_.open_file` returns
+  // void — it is the fire-and-forget entry the mouse/menu surfaces use — so this
+  // answered `true` unconditionally and an open that did not happen came back as
+  // silence: `ActionId::Open` reported success, the editor stayed on the
+  // previously active tab, and the caller's next edit and save landed in a
+  // DIFFERENT file. Reachable without a fuzzer: fill an editor group to
+  // `kMaxOpenTabsPerGroup`, then `open` anything.
+  //
+  // `WorkspaceShell::OpenFile` is literally `(void)OpenFileInNewTab(path)`, so
+  // routing through the result-returning sibling is the same work with its answer
+  // kept. `OpenFileAtLocation` already refuses to move a caret after exactly this
+  // failure; it was only the plain open that stayed quiet about it.
+  if (!operations_.open_file_in_new_tab) {
+    operations_.open_file(path);
+    return true;
+  }
+  if (operations_.open_file_in_new_tab(path)) {
+    return true;
+  }
+  if (error_message != nullptr) {
+    *error_message =
+        OpenTabCount() >= kMaxOpenTabsPerGroup
+            ? "Cannot open " + path.string() + ": this editor group already holds " +
+                  std::to_string(kMaxOpenTabsPerGroup) + " tabs"
+            : "Cannot open " + path.string();
+  }
+  return false;
 }
 
 bool WorkspaceActionContext::OpenPathInNewTab(const std::filesystem::path& path) {

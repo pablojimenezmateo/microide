@@ -6777,6 +6777,37 @@ void TestWorkspaceShellUntitledTabFloodIsBounded() {
          "untitled-tab flood must be bounded by the per-group tab ceiling");
 }
 
+// `open <path>` at the per-group tab ceiling used to report SUCCESS while doing
+// nothing: WorkspaceActionContext::OpenPath called the void-returning
+// `operations_.open_file` and answered `true` unconditionally. The editor stayed
+// on the previously active tab, so the caller's next edit and save landed in a
+// different file than the one it asked to open — silently, over the control
+// channel, where there is no tab strip to notice.
+void TestWorkspaceShellOpenAtTheTabCeilingIsRejected() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path target = root / "target.txt";
+  WriteFile(root / "src" / "main.cpp", "int main() { return 0; }\n");
+  WriteFile(target, "target contents\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+
+  // Untitled tabs, so the fill costs no disk reads.
+  while (WorkspaceShellTestAccess::OpenTabs(shell).size() <
+         microide::workspace::kMaxOpenTabsPerGroup) {
+    Expect(RunCommandLine(shell, "tab"), "filling the group must keep succeeding");
+  }
+  const std::size_t filled = WorkspaceShellTestAccess::OpenTabs(shell).size();
+
+  Expect(!RunCommandLine(shell, "open " + target.string()),
+         "an open the group has no room for must be reported as a failure, not as "
+         "success with the previous tab still active");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() == filled,
+         "the refused open must not have added a tab");
+}
+
 }  // namespace
 
 void TestWorkspaceShellEditorGroupSplitFocusCloseSemantics() {
@@ -7109,6 +7140,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellOpenBufferViewCountsAcrossGroups);
   AddTest(tests, "WorkspaceShell/UntitledTabFloodIsBounded",
           TestWorkspaceShellUntitledTabFloodIsBounded);
+  AddTest(tests, "WorkspaceShell/OpenAtTheTabCeilingIsRejected",
+          TestWorkspaceShellOpenAtTheTabCeilingIsRejected);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
   AddTest(tests, "WorkspaceShell/ProjectOpenCommandUsesNativePickerAtActiveProjectRoot",
