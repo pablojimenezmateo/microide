@@ -83,6 +83,28 @@ void TestSingleLineEditorStripsLineBreaksOnInsert() {
   ExpectEditorState(editor, "keep", 4, std::nullopt, "newline-only paste is a no-op");
 }
 
+// SetText is the door EXTERNAL text comes through -- a debug adapter's variable
+// value, a persisted commit subject, a stored setting, a search term seeded from a
+// selection -- and it was the one text-entering path that did not enforce the
+// field's "must never hold CR/LF" rule. Insert/Append/Paste all did.
+void TestSingleLineEditorStripsLineBreaksOnSetText() {
+  editor::SingleLineEditor editor;
+
+  // The shape a DAP adapter produces for a std::string with an embedded newline.
+  editor.SetText("line one\nline two");
+  ExpectEditorState(editor, "line one line two", 17, std::nullopt, "SetText collapses a newline");
+
+  editor.SetText("a\r\nb\nc\rd");
+  ExpectEditorState(editor, "a b c d", 7, std::nullopt, "SetText collapses every break run");
+
+  // Text with no breaks is stored verbatim, caret at the end, as before.
+  editor.SetText("plain");
+  ExpectEditorState(editor, "plain", 5, std::nullopt, "SetText leaves break-free text alone");
+
+  editor.SetText("\n\r\n");
+  ExpectEditorState(editor, "", 0, std::nullopt, "SetText of only breaks yields an empty field");
+}
+
 void TestSingleLineKeyHandlerDispatchesClipboardShortcuts() {
   editor::SingleLineEditor editor("hello");
   std::string clipboard;
@@ -286,6 +308,8 @@ void RegisterSingleLineEditorTests(std::vector<TestCase>& tests) {
           TestSingleLineEditorSupportsSelectAllCopyCutPaste);
   AddTest(tests, "SingleLineEditor/StripsLineBreaksOnInsert",
           TestSingleLineEditorStripsLineBreaksOnInsert);
+  AddTest(tests, "SingleLineEditor/StripsLineBreaksOnSetText",
+          TestSingleLineEditorStripsLineBreaksOnSetText);
   AddTest(tests, "SingleLineEditor/KeyHandlerDispatchesClipboardShortcuts",
           TestSingleLineKeyHandlerDispatchesClipboardShortcuts);
   AddTest(tests, "SingleLineEditor/SupportsSnapshotAndAppend",

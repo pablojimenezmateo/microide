@@ -64,6 +64,16 @@ SingleLineSnapshot SingleLineEditor::Snapshot() const {
 }
 
 void SingleLineEditor::SetText(std::string text) {
+  // Same sanitization Insert/Append/Paste apply: a single-line field must never
+  // hold CR/LF, whichever door the text came through. This one is the door
+  // EXTERNAL text uses -- a debug adapter's variable value, a persisted commit
+  // subject, a setting's stored value, a search term seeded from a selection --
+  // so it is the one that most needs the rule, and it was the one that skipped it.
+  // A caller compensating on its own (TerminalFindService's seed truncates at the
+  // first newline) is a workaround for this, not a substitute.
+  if (text.find_first_of("\r\n") != std::string::npos) {
+    text = CollapseLineBreaksToSpaces(text);
+  }
   text_ = std::move(text);
   caret_ = text_.size();
   selection_anchor_.reset();
