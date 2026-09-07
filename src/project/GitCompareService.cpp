@@ -262,9 +262,10 @@ void GitRevisionBlobCache::Prefetch(const std::filesystem::path& root,
 }
 
 const GitFileContentAtCommit* GitRevisionBlobCache::Find(
+    const std::filesystem::path& root,
     const std::string& revision,
     const std::filesystem::path& absolute_path) const {
-  if (entries_.empty()) {
+  if (entries_.empty() || root != root_) {
     return nullptr;
   }
   const auto found = entries_.find(BlobCacheKey(revision, absolute_path));
@@ -280,7 +281,8 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
   }
 
   if (prefetched != nullptr) {
-    if (const GitFileContentAtCommit* hit = prefetched->Find(hash, absolute_path); hit != nullptr) {
+    if (const GitFileContentAtCommit* hit = prefetched->Find(root, hash, absolute_path);
+        hit != nullptr) {
       if (hit->exists) {
         util::AddPerformanceCounter(util::PerfCounterId::GitDiffLoads);
         util::AddPerformanceCounter(util::PerfCounterId::GitDiffBytesRead, hit->content.size());

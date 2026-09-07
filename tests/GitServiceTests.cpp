@@ -1250,6 +1250,10 @@ void TestGitBulkBlobLookupMatchesSingleReads() {
   const auto miss_direct = ReadGitFileAtCommit(repo_path, repo_path / "a.txt", "HEAD~1", nullptr);
   Expect(miss.has_value() && miss_direct.has_value() && miss->content == miss_direct->content,
          "a cache miss falls back to the single read");
+
+  // A cache filled from another repository must not answer for this one.
+  Expect(cache.Find(repo_path / "elsewhere", "HEAD", repo_path / "a.txt") == nullptr,
+         "a cache built for another root reads as a miss");
 }
 
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {

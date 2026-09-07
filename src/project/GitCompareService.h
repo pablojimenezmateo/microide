@@ -60,8 +60,11 @@ class GitRevisionBlobCache {
                 const std::vector<std::string>& revisions,
                 const std::vector<std::filesystem::path>& absolute_paths);
 
-  // The prefetched content, or nullptr when this pair was not prefetched.
-  const GitFileContentAtCommit* Find(const std::string& revision,
+  // The prefetched content, or nullptr when this pair was not prefetched. `root`
+  // must be the repository the cache was filled from; a mismatch reads as a miss
+  // rather than answering with another repository's blob.
+  const GitFileContentAtCommit* Find(const std::filesystem::path& root,
+                                     const std::string& revision,
                                      const std::filesystem::path& absolute_path) const;
 
   bool empty() const { return entries_.empty(); }
