@@ -5,6 +5,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <chrono>
+#include <cstdio>
 #include <cstdlib>
 
 #include "util/PerformanceCounters.h"
@@ -304,6 +305,36 @@ bool PumpChildIo(UniqueFd* stdin_fd,
 extern "C" char** environ;
 
 // Build the child's environment (the current environ with overrides applied) in
+// Fold one spawn phase into the ranked summary, labelled under the RunSubprocess
+// row so the three phases sit together. Reads the clock only when the summary is
+// on: an untraced run must not pay a steady_clock read per phase.
+void RecordSpawnPhaseNs(const char* phase, std::chrono::steady_clock::time_point start) {
+  if (!util::PerformanceTrace::SummaryEnabled()) {
+    return;
+  }
+  const auto elapsed = std::chrono::steady_clock::now() - start;
+  char label[48];
+  std::snprintf(label, sizeof(label), "platform::RunSubprocess::%s", phase);
+  util::PerformanceTrace::RecordSampleNs(
+      label,
+      static_cast<std::uint64_t>(
+          std::chrono::duration_cast<std::chrono::nanoseconds>(elapsed).count()));
+}
+
+// Minimal scope guard: the reap block below returns from several places and the
+// phase must be recorded on each.
+template <typename Fn>
+class ScopeExit {
+ public:
+  explicit ScopeExit(Fn fn) : fn_(std::move(fn)) {}
+  ~ScopeExit() { fn_(); }
+  ScopeExit(const ScopeExit&) = delete;
+  ScopeExit& operator=(const ScopeExit&) = delete;
+
+ private:
+  Fn fn_;
+};
+
 // the PARENT, before fork. The child then only assigns `environ` to point at it —
 // a single async-signal-safe pointer store. This replaces calling setenv/unsetenv
 // in the child, which are NOT async-signal-safe: `RunSubprocess` runs on
@@ -564,6 +595,14 @@ SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& arg
   raw_argv.push_back(nullptr);
   const std::string cwd_string = options.cwd.empty() ? std::string() : options.cwd.string();
 
+  // Split the spawn into its three phases. `RunSubprocess(program=..)` ranks
+  // "git costs 6 ms here" but not WHY, and the three answers want opposite fixes:
+  // fork() copying this process's page tables is the app's own weight (fix: spawn
+  // fewer children, or spawn them from a smaller address space), the pump is the
+  // child's real work plus our capture, and the reap is pure latency after the
+  // work is done. Measured, not sampled: these are recorded from the PARENT only,
+  // because the forked child must not touch the trace channel's mutex/allocator.
+  const auto fork_start = std::chrono::steady_clock::now();
   const pid_t pid = fork();
   if (pid < 0) {
     return result;
@@ -605,6 +644,8 @@ SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& arg
     _exit(errno == ENOENT ? 127 : 126);
   }
 
+  RecordSpawnPhaseNs("Fork", fork_start);
+
   stdout_pipe[1].Reset();
   stderr_pipe[1].Reset();
   stdin_pipe[0].Reset();
@@ -616,6 +657,11 @@ SubprocessResult RunSubprocessUninstrumented(const std::vector<std::string>& arg
                   options.capture_stdout ? &stdout_pipe[0] : nullptr, &result.stdout_text,
                   options.capture_stderr ? &stderr_pipe[0] : nullptr, &result.stderr_text,
                   options.timeout_ms, &output_truncated);
+  RecordSpawnPhaseNs("Pump", wait_start);
+  const auto reap_start = std::chrono::steady_clock::now();
+  // Records the reap phase on every return path out of the block below.
+  const ScopeExit reap_scope([&reap_start]() { RecordSpawnPhaseNs("Reap", reap_start); });
+
   stdin_pipe[1].Reset();
   stdout_pipe[0].Reset();
   stderr_pipe[0].Reset();
