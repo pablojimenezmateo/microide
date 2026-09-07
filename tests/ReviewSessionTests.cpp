@@ -211,8 +211,10 @@ void TestReviewCommitTabsCarryTheirOwnReviewFileIndex() {
       continue;
     }
     ++compare_tabs;
+    // The review list is the COMMIT's files — not `<commit>~1...HEAD`, which for a
+    // historical commit is everything committed since.
     Expect(tab.compare->review_files.size() == 3,
-           "each review tab lists the three files under review");
+           "each review tab lists exactly the commit's changed files");
     Expect(tab.compare->review_file_index < tab.compare->review_files.size(),
            "the review index must address the review list");
     const std::filesystem::path listed =

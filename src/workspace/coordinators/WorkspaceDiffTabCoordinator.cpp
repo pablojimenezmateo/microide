@@ -55,8 +55,8 @@ void SelectFirstChangeOnOpen(TabEntry& tab) {
 // entry as `root / entry` — so locating the file just opened has to compare
 // relative too. Comparing the absolute path against the list (which is what both
 // call sites used to do) never matched, so every review tab opened with
-// review_file_index 0 and "next review file" jumped to the second file of the
-// review no matter which one you were looking at.
+// review_file_index 0 and "next review file" jumped to the second file no matter
+// which one you were on.
 std::size_t IndexOfReviewFile(const std::vector<std::filesystem::path>& review_files,
                               const std::filesystem::path& absolute_path,
                               const std::filesystem::path& root) {
@@ -373,7 +373,8 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
     const std::string& left_label,
     const std::string& right_ref,
     const std::string& right_label,
-    const project::GitRevisionBlobCache* prefetched) {
+    const project::GitRevisionBlobCache* prefetched,
+    const std::vector<std::filesystem::path>* review_files) {
   const std::filesystem::path normalized_path = util::NormalizedPath(path);
   if (const auto existing_index = FindOpenCompareTabIndex(normalized_path, left_ref, right_ref);
       existing_index.has_value()) {
@@ -406,7 +407,10 @@ bool DiffTabCoordinator::OpenBranchHeadComparison(
   compare_tab->compare->right_path = normalized_path;
   compare_tab->compare->review_mode = compare::CompareReviewMode::Branch;
   compare_tab->compare->review_files =
-      [&]() {
+      review_files != nullptr ? *review_files : [&]() {
+        // Only reached when the caller does not already know the set — the sidebar's
+        // single-file branch compare. Every bulk caller passes its list, because
+        // running this diff once per opened tab is what froze a large review.
         std::vector<std::filesystem::path> paths;
         for (const project::GitBranchFileEntry& entry :
              project::CollectGitBranchOutgoingFiles(state_.root, left_ref)) {

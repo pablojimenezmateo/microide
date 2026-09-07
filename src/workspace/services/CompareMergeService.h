@@ -33,12 +33,14 @@ class CompareMergeService {
                                  const std::string& left_ref,
                                  const std::string& left_label,
                                  const project::GitRevisionBlobCache* prefetched = nullptr);
+  // `review_files` — see DiffTabCoordinator's identically-named parameter.
   bool OpenBranchHeadComparison(const std::filesystem::path& path,
                                 const std::string& left_ref,
                                 const std::string& left_label,
                                 const std::string& right_ref,
                                 const std::string& right_label,
-                                const project::GitRevisionBlobCache* prefetched = nullptr);
+                                const project::GitRevisionBlobCache* prefetched = nullptr,
+                                const std::vector<std::filesystem::path>* review_files = nullptr);
   bool OpenGitConflictMerge(const std::filesystem::path& path,
                             const project::GitRevisionBlobCache* prefetched = nullptr);
 

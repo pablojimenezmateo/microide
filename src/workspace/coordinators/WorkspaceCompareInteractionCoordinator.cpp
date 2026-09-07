@@ -421,8 +421,10 @@ void CompareInteractionCoordinator::JumpCompareReviewFile(int delta) {
   const std::filesystem::path next_path =
       (state_.root / review_files[next_index]).lexically_normal();
   if (review_mode == compare::CompareReviewMode::Branch) {
+    // Pass the list we already hold: without it the open re-derives it with a git
+    // diff, and the assignment below then overwrites it with this same vector.
     if (!operations_.open_branch_head_comparison(next_path, commit_hash, left_label, right_ref,
-                                                 right_label)) {
+                                                 right_label, &review_files)) {
       return;
     }
   } else if (right_ref == "WORKTREE") {

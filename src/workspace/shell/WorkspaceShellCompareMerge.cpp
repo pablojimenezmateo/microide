@@ -246,8 +246,10 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
           .open_branch_head_comparison =
               [this](const std::filesystem::path& path, const std::string& left_ref,
                      const std::string& left_label, const std::string& right_ref,
-                     const std::string& right_label) {
-                return OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label);
+                     const std::string& right_label,
+                     const std::vector<std::filesystem::path>* review_files) {
+                return OpenBranchHeadComparison(path, left_ref, left_label, right_ref,
+                                                right_label, nullptr, review_files);
               },
           .refresh_compare_tab_derived_state =
               [this](CompareTabState& compare_tab) { RefreshCompareTabDerivedState(compare_tab); },
@@ -312,13 +314,16 @@ bool WorkspaceShell::OpenWorkingTreeComparison(const std::filesystem::path& path
   return MakeCompareMergeService().OpenWorkingTreeComparison(path, left_ref, left_label);
 }
 
-bool WorkspaceShell::OpenBranchHeadComparison(const std::filesystem::path& path,
-                                              const std::string& left_ref,
-                                              const std::string& left_label,
-                                              const std::string& right_ref,
-                                              const std::string& right_label) {
+bool WorkspaceShell::OpenBranchHeadComparison(
+    const std::filesystem::path& path,
+    const std::string& left_ref,
+    const std::string& left_label,
+    const std::string& right_ref,
+    const std::string& right_label,
+    const project::GitRevisionBlobCache* prefetched,
+    const std::vector<std::filesystem::path>* review_files) {
   return MakeCompareMergeService().OpenBranchHeadComparison(path, left_ref, left_label, right_ref,
-                                                            right_label);
+                                                            right_label, prefetched, review_files);
 }
 
 bool WorkspaceShell::OpenGitConflictMerge(const std::filesystem::path& path) {

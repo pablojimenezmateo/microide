@@ -223,8 +223,16 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
   const std::string left_ref = ref + "~1";
   const std::string right_ref = ref;
 
+  // The commit's own changed files, project-relative. This is BOTH the set of tabs
+  // to open and the review file list each of those tabs navigates — deriving the
+  // latter inside the open would spend a `git diff` spawn per tab to answer the
+  // same question, and would answer it with `<commit>~1...HEAD` (everything since
+  // the commit) instead of the commit itself.
+  const std::vector<std::filesystem::path> review_files =
+      project::CollectGitCommitChangedFiles(root, ref);
   std::vector<std::filesystem::path> targets;
-  for (const std::filesystem::path& relative : project::CollectGitCommitChangedFiles(root, ref)) {
+  targets.reserve(review_files.size());
+  for (const std::filesystem::path& relative : review_files) {
     targets.push_back((root / relative).lexically_normal());
   }
 
@@ -239,9 +247,10 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
         }
         return std::nullopt;
       },
-      [this, left_ref, right_ref, &prefetched](const std::filesystem::path& path) {
+      [this, left_ref, right_ref, &prefetched,
+       &review_files](const std::filesystem::path& path) {
         return compare_merge_.OpenBranchHeadComparison(path, left_ref, left_ref, right_ref,
-                                                       right_ref, &prefetched);
+                                                       right_ref, &prefetched, &review_files);
       },
       "no changes in commit",
       [this, root, left_ref, right_ref,

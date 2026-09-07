@@ -82,12 +82,19 @@ class DiffTabCoordinator {
                                  const std::string& left_ref,
                                  const std::string& left_label,
                                  const project::GitRevisionBlobCache* prefetched = nullptr);
+  // `review_files` is the project-relative file list this comparison is one entry
+  // of, used by the next/previous-review-file jump. Pass it whenever the caller
+  // already knows the set: deriving it here costs a whole `git diff` spawn per
+  // opened tab, which is per-file work for a per-review answer, and for a commit
+  // review the derived list is the wrong set anyway (`<commit>~1...HEAD`, i.e.
+  // everything since that commit, rather than the commit's own files).
   bool OpenBranchHeadComparison(const std::filesystem::path& path,
                                 const std::string& left_ref,
                                 const std::string& left_label,
                                 const std::string& right_ref,
                                 const std::string& right_label,
-                                const project::GitRevisionBlobCache* prefetched = nullptr);
+                                const project::GitRevisionBlobCache* prefetched = nullptr,
+                                const std::vector<std::filesystem::path>* review_files = nullptr);
   bool OpenGitConflictMerge(const std::filesystem::path& path,
                             const project::GitRevisionBlobCache* prefetched = nullptr);
 

@@ -1288,11 +1288,11 @@
   bool OpenWorkingTreeComparison(const std::filesystem::path& path,
                                  const std::string& left_ref,
                                  const std::string& left_label);
-  bool OpenBranchHeadComparison(const std::filesystem::path& path,
-                                const std::string& left_ref,
-                                const std::string& left_label,
-                                const std::string& right_ref,
-                                const std::string& right_label);
+  bool OpenBranchHeadComparison(const std::filesystem::path& path, const std::string& left_ref,
+                                const std::string& left_label, const std::string& right_ref,
+                                const std::string& right_label,
+                                const project::GitRevisionBlobCache* prefetched = nullptr,
+                                const std::vector<std::filesystem::path>* review_files = nullptr);
   std::optional<TabEntry> BuildMergeTabFromBuffers(const std::filesystem::path& output_path,
                                                    std::string base_content,
                                                    std::string incoming_content,

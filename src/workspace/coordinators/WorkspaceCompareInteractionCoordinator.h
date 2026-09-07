@@ -45,8 +45,11 @@ class CompareInteractionCoordinator {
     std::function<bool(std::string_view)> write_clipboard_text;
     std::function<bool(const std::filesystem::path&, const std::string&, const std::string&)>
         open_working_tree_comparison;
+    // The trailing list is the review file set the caller already holds; see
+    // DiffTabCoordinator::OpenBranchHeadComparison's `review_files`.
     std::function<bool(const std::filesystem::path&, const std::string&, const std::string&,
-                       const std::string&, const std::string&)>
+                       const std::string&, const std::string&,
+                       const std::vector<std::filesystem::path>*)>
         open_branch_head_comparison;
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void()> stage_compare_hunk;

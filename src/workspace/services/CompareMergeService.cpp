@@ -47,9 +47,10 @@ bool CompareMergeService::OpenBranchHeadComparison(
     const std::string& left_label,
     const std::string& right_ref,
     const std::string& right_label,
-    const project::GitRevisionBlobCache* prefetched) {
+    const project::GitRevisionBlobCache* prefetched,
+    const std::vector<std::filesystem::path>* review_files) {
   return diff_tabs_.OpenBranchHeadComparison(path, left_ref, left_label, right_ref, right_label,
-                                             prefetched);
+                                             prefetched, review_files);
 }
 
 bool CompareMergeService::OpenGitConflictMerge(const std::filesystem::path& path,
