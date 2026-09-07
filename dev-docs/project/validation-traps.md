@@ -1024,6 +1024,46 @@ Both halves of the vacuity check were done: with the fix reverted the sweep
 reproduces in 2 of 2 seeds, and with it in place 4 of 4 seeds survive. Keep it
 that way -- a sweep nobody has watched fail is a sweep that proves nothing.
 
+**Algebraic invariants of the editing commands, against the shipped binary**
+(`tools/sweep-editor-invariants.py`). The unit suites assert what one command does
+to one fixture, so they only cover what someone thought to write down. This asserts
+properties that hold for EVERY command at EVERY caret position and need no model of
+the expected output at all: a command followed by `undo` restores the file byte for
+byte; a command that changed the file is undone exactly by its inverse
+(move-line-down/up, indent/outdent, each comment toggle applied twice); sorting an
+already-sorted buffer changes nothing. Every comparison is against the bytes ON DISK
+after a `save`, never the app's own account of its state.
+
+The first run found two defects the suite was structurally blind to, both on the
+selection path and both reachable with Ctrl+A and one keystroke:
+
+- `delete-line` was the only line op that did not read the selection. Every sibling
+  resolves its lines through `ResolveLineRanges`; `DeleteLine` called
+  `TextViewport::DeleteCurrentLine`, which understands multiple carets but not a
+  range — so Ctrl+A then Ctrl+Shift+K deleted the single phantom line after the
+  final newline and left the whole buffer standing.
+- A whole-line selection names its exclusive end as column 0 of the line AFTER the
+  block. Move the block against the bottom of the buffer and there is no such line:
+  the restore clamped the row and kept column 0, which `RangeForCaret` reads as one
+  line short, so the NEXT line op moved less than the last one did. Alt+Down then
+  Alt+Up over a select-all left a stray blank line and stranded the last line.
+
+Two things make it work, and dropping either makes it prove nothing:
+
+- **Condition the inverse property on the command having applied.** At a buffer
+  edge a command correctly does nothing (`move-line-up` on line 1, `move-line-down`
+  with the last line selected), and then the "inverse" is just a first move the
+  other way. Asserting the pair unconditionally reports every edge as a failure and
+  buries the one case that matters — it did, on the first run.
+- **Count how many probes actually moved a byte, and fail when a command never
+  did.** Every property here is trivially true of a command that did nothing, so a
+  broken `open`, a `save` that never fires, or a renamed verb would make the whole
+  sweep pass while testing nothing. The run prints `applied: <verb> n/m` per command
+  and fails on any `0/m`.
+
+A fixture per case, freshly written and freshly opened, so the tab under test has
+exactly one edit in its undo history and an `undo` cannot reach across cases.
+
 **Test comments naming functions that do not exist.** Grep CamelCase identifiers
 followed by `(` inside `//` comments in `tests/`, check each against the tree.
 Found a test claiming to verify `ComputeIdleHint(...)` — a function that exists
