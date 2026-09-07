@@ -4,9 +4,12 @@
 #include "workspace/debug/DapProtocol.h"
 #include "workspace/JsonRpcMessageFraming.h"
 
+#include <algorithm>
 #include <cstdint>
 #include <optional>
 #include <string>
+#include <string_view>
+#include <vector>
 
 namespace microide::tests {
 namespace {
@@ -14,7 +17,145 @@ namespace {
 using microide::util::JsonValue;
 using microide::util::ParseJson;
 using microide::util::SerializeJson;
+namespace util = microide::util;
 namespace codec = microide::workspace::dap_protocol;
+
+// Property: framing is independent of how the stream is CHOPPED, and a bad frame
+// resyncs rather than desyncs.
+//
+// This codec is fed by a socket read loop, so the byte boundaries it sees are
+// whatever the kernel handed over — a header split across two reads, a body
+// split mid-way, several whole messages in one chunk. The existing tests append
+// well-formed inputs in convenient pieces. The property that actually protects
+// the two clients is stronger and is the reason the codec is a value type at all:
+// for ANY chunking of the same byte stream, `Next()` must yield exactly the same
+// sequence of messages.
+//
+// The second property is the one the comments in the header care about: a frame
+// the codec refuses (oversized, malformed header) must leave the stream aligned
+// so the NEXT well-formed message is still delivered. A desync there tears down a
+// live language server or debug adapter.
+
+std::string FramedMessage(const std::string& body) {
+  return "Content-Length: " + std::to_string(body.size()) + "\r\n\r\n" + body;
+}
+
+// Drains exactly the way the shared transport does. `Next()` returning nullopt is
+// OVERLOADED: it means either "no complete frame yet" or "a frame was consumed
+// that could not be surfaced" (oversized, malformed header, non-JSON body). Only
+// the buffered-byte count separates them, so a loop that stops at the first
+// nullopt stalls behind a bad frame instead of resyncing past it — which is the
+// behaviour these tests are here to pin.
+std::vector<std::string> DrainFramer(microide::workspace::JsonRpcMessageFramer& framer) {
+  std::vector<std::string> out;
+  while (true) {
+    const std::size_t buffered_before = framer.BufferedBytes();
+    if (std::optional<util::JsonValue> message = framer.Next(); message.has_value()) {
+      out.push_back(util::SerializeJson(*message));
+      continue;
+    }
+    if (framer.BufferedBytes() == buffered_before) {
+      return out;
+    }
+  }
+}
+
+void TestFramingIsIndependentOfChunkBoundaries() {
+  std::uint64_t seed = 0x510E527FADE682D1ULL;
+  const auto next = [&seed]() {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<std::size_t>(seed >> 33);
+  };
+
+  for (int iteration = 0; iteration < 200; ++iteration) {
+    // A stream of a few messages, with bodies whose length spans the header's
+    // digit boundaries and whose content includes the bytes that look like
+    // framing (CR, LF, "Content-Length:") so a length-ignoring scan would break.
+    std::vector<std::string> bodies;
+    std::string stream;
+    const std::size_t message_count = 1 + next() % 4;
+    for (std::size_t i = 0; i < message_count; ++i) {
+      util::JsonObject object;
+      object["jsonrpc"] = util::JsonValue(std::string("2.0"));
+      object["id"] = util::JsonValue(static_cast<std::int64_t>(next() % 10000));
+      static const char* const kTexts[] = {
+          "", "x", "Content-Length: 99\r\n\r\n", "line\r\nline", "\xc3\xa9\xf0\x9f\x98\x80",
+          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      };
+      object["text"] = util::JsonValue(std::string(kTexts[next() % 6]));
+      const std::string body = util::SerializeJson(util::JsonValue(std::move(object)));
+      bodies.push_back(body);
+      stream += FramedMessage(body);
+    }
+
+    // Reference: the whole stream in one chunk.
+    microide::workspace::JsonRpcMessageFramer whole;
+    whole.Append(stream);
+    const std::vector<std::string> expected = DrainFramer(whole);
+    Expect(expected.size() == bodies.size(),
+           "one chunk must yield exactly the messages that were written");
+
+    // Same bytes, arbitrary chunking — including one byte at a time.
+    for (int trial = 0; trial < 4; ++trial) {
+      microide::workspace::JsonRpcMessageFramer chopped;
+      std::vector<std::string> got;
+      std::size_t offset = 0;
+      while (offset < stream.size()) {
+        const std::size_t chunk = trial == 0 ? 1 : 1 + next() % 17;
+        const std::size_t take = std::min(chunk, stream.size() - offset);
+        chopped.Append(std::string_view(stream).substr(offset, take));
+        offset += take;
+        for (std::vector<std::string> more = DrainFramer(chopped); !more.empty();) {
+          got.insert(got.end(), more.begin(), more.end());
+          break;
+        }
+      }
+      Expect(got == expected, "framing must not depend on where the reads split");
+    }
+  }
+}
+
+void TestFramerResyncsAfterABadFrame() {
+  const std::string good = FramedMessage(R"({"jsonrpc":"2.0","id":1})");
+
+  // An oversized frame is skipped whole; the message after it must still arrive.
+  {
+    microide::workspace::JsonRpcMessageFramer framer;
+    framer.max_message_bytes = 64;
+    const std::string big_body(500, 'x');
+    framer.Append("Content-Length: " + std::to_string(big_body.size()) + "\r\n\r\n" + big_body);
+    framer.Append(good);
+    const std::vector<std::string> got = DrainFramer(framer);
+    Expect(got.size() == 1, "an oversized frame must be skipped, not desync the stream");
+  }
+
+  // Garbage header lines are skipped for resync.
+  {
+    microide::workspace::JsonRpcMessageFramer framer;
+    framer.Append("not a header\r\nalso not a header\r\n");
+    framer.Append(good);
+    const std::vector<std::string> got = DrainFramer(framer);
+    Expect(got.size() == 1, "header garbage must be skipped, not desync the stream");
+  }
+
+  // A Content-Length that is not a number must not be believed.
+  {
+    microide::workspace::JsonRpcMessageFramer framer;
+    framer.Append("Content-Length: not-a-number\r\n\r\n");
+    framer.Append(good);
+    const std::vector<std::string> got = DrainFramer(framer);
+    Expect(got.size() == 1, "a non-numeric Content-Length must not desync the stream");
+  }
+
+  // A body that is not JSON is dropped, and the next frame still arrives.
+  {
+    microide::workspace::JsonRpcMessageFramer framer;
+    framer.Append(FramedMessage("{not json"));
+    framer.Append(good);
+    const std::vector<std::string> got = DrainFramer(framer);
+    Expect(got.size() == 1, "a non-JSON body must not take the following frame with it");
+  }
+}
 
 JsonValue Json(std::string_view text) {
   std::optional<JsonValue> parsed = ParseJson(text);
@@ -526,6 +667,9 @@ void RegisterDapProtocolTests(std::vector<TestCase>& tests) {
           TestDapProtocolEncodesFunctionBreakpoints);
   AddTest(tests, "DapProtocol/EncodesExceptionFilterOptions",
           TestDapProtocolEncodesExceptionFilterOptions);
+  AddTest(tests, "JsonRpcFraming/IndependentOfChunkBoundaries",
+          TestFramingIsIndependentOfChunkBoundaries);
+  AddTest(tests, "JsonRpcFraming/ResyncsAfterABadFrame", TestFramerResyncsAfterABadFrame);
 }
 
 }  // namespace microide::tests
