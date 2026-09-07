@@ -145,6 +145,23 @@ class Effect:
     def inert_commands(self) -> list[str]:
         return sorted(name for name in self.probed if not self.applied.get(name))
 
+    def under_applied(self) -> list[tuple[str, int, int]]:
+        """Canary verbs that did not change the file in EVERY probe.
+
+        `0/m` is too weak a vacuity check on its own: a run can lose half its
+        coverage and still report a count. It did -- the read-only pass's
+        capability toggles persisted into later sessions and switched the line ops
+        off, and delete-line went 50/55 -> 25/55 while every property still
+        passed. These five insert or duplicate text unconditionally, on every
+        fixture including the empty one, so anything less than m/m means something
+        stopped the edits rather than the fixture not needing them.
+        """
+        always = ("type xyz", "insert-line-below", "insert-line-above",
+                  "copy-line-down", "copy-line-up")
+        return [(name, self.applied.get(name, 0), self.probed[name])
+                for name in always
+                if name in self.probed and self.applied.get(name, 0) != self.probed[name]]
+
 
 class Driver:
     """One connection to a running instance, request/response in lock step."""
@@ -293,13 +310,27 @@ READ_ONLY_COMMANDS = [
     "search alpha", "find-next", "find-previous",
     "select-all", "add-cursor-all-matches", "add-cursor-next-match",
     "fold", "unfold", "fold-all", "unfold-all", "toggle-fold",
-    "wrap", "tab-size 4", "indent-width 4", "soft-tabs",
-    "copy",
-    "sidebar-toggle", "status-bar-toggle", "tree", "tree-refresh", "git-refresh",
+    "wrap", "tab-size 4", "indent-width 4", "soft-tabs", "ui-scale 1.25",
+    "copy", "reopen",
+    "sidebar-toggle", "sidebar-show", "sidebar-hide", "sidebar-width 300",
+    "status-bar-toggle", "tree", "tree-refresh", "git-refresh",
     "next-diagnostic", "previous-diagnostic",
     "code-actions", "completion", "signature-help", "workspace-symbol",
     "colorscheme list", "toggle-theme", "layout-mode-toggle", "reveal-in-tree",
+    # The editor-capability toggles: settings flips, every one of which must leave
+    # the buffer alone. Deliberately NOT here: toggle-editor-save-trim and
+    # toggle-editor-save-ensure-newline, which change what the following `save`
+    # writes -- the fixture with trailing whitespace would then legitimately change
+    # and read as a violation.
+    "toggle-editor-folding", "toggle-editor-sticky-scroll",
+    "toggle-editor-indent-guides", "toggle-editor-render-whitespace",
+    "toggle-editor-auto-close", "toggle-editor-surround",
+    "toggle-editor-smart-indent", "toggle-editor-toggle-comment",
+    "toggle-editor-line-ops", "toggle-editor-sort-lines",
+    "toggle-editor-add-cursor-at-match", "toggle-editor-snippets",
+    "toggle-editor-auto-detect-indent",
 ]
+
 
 
 def check_read_only(driver: Driver, path: Path, original: str, command: str,
@@ -417,9 +448,9 @@ def wait_for_socket(log_path: Path, timeout_s: int) -> str | None:
     return None
 
 
-def start_app(binary: Path, project: Path, scratch: Path, log_path: Path,
-              startup_timeout: int):
-    home = scratch / "xdg"
+def start_app(binary: Path, project: Path, log_path: Path, startup_timeout: int,
+              home: Path):
+    """`home` is per-session on purpose -- see open_session()."""
     for part in ("config", "state", "data", "cache"):
         (home / part).mkdir(parents=True, exist_ok=True)
     environment = dict(os.environ)
@@ -474,14 +505,6 @@ def sweep(open_session, project: Path, only: str | None,
         # well past `kMaxOpenTabsPerGroup` (512) -- past which the group has no
         # room and every later case would be measured against a stale tab.
         with open_session() as driver:
-          for command in READ_ONLY_COMMANDS:
-              if only and only not in command:
-                  continue
-              case_index += 1
-              stem = Path(fixture_name).stem
-              suffix = Path(fixture_name).suffix
-              check_read_only(driver, project / f"case{case_index:04d}r_{stem}{suffix}",
-                              original, command, failures, accepted_read_only)
           for caret in CARETS:
               prefix = caret_steps(caret)
               for label, command, inverse, needs_selection in EDIT_COMMANDS:
@@ -501,11 +524,29 @@ def sweep(open_session, project: Path, only: str | None,
                       path3 = project / f"case{case_index:04d}c_{stem}{suffix}"
                       check_idempotent(driver, path3, original, prefix, command, label,
                                        failures)
+          # LAST in the session, because several of these toggles switch OFF the
+          # capabilities the editing properties above exercise
+          # (`toggle-editor-line-ops` alone would make delete-line and the line
+          # moves no-ops for everything after it).
+          for command in READ_ONLY_COMMANDS:
+              if only and only not in command:
+                  continue
+              case_index += 1
+              stem = Path(fixture_name).stem
+              suffix = Path(fixture_name).suffix
+              check_read_only(driver, project / f"case{case_index:04d}r_{stem}{suffix}",
+                              original, command, failures, accepted_read_only)
     for command in effect.inert_commands():
         failures.append(
             f"VACUOUS: `{command}` never changed the file in "
             f"{effect.probed[command]} probes, so every invariant checked on it "
             f"passed without testing anything (open/save/verb wiring?)")
+    for command, applied, probed in effect.under_applied():
+        failures.append(
+            f"VACUOUS: `{command}` changed the file in only {applied} of {probed} "
+            f"probes. It inserts or duplicates text unconditionally, so the rest "
+            f"were measured against a buffer nothing edited -- a disabled "
+            f"capability, a leaked setting, or a stale tab.")
     if verbose:
         print("inert probes (the command changed nothing):")
         for where in effect.inert:
@@ -562,13 +603,21 @@ def main() -> int:
         `kMaxOpenTabsPerGroup` (512): each case is one `open`, past the ceiling
         the group has no room, and every later case would then be measured
         against whatever tab happened to stay active.
+
+        Each session also gets its OWN XDG home. Settings are PERSISTED, so a
+        shared one let the read-only pass's capability toggles leak forward:
+        `toggle-editor-line-ops` at the end of one fixture switched the line ops
+        off for every fixture after it, and those commands then did nothing --
+        which every property here passes trivially. The `applied` counters are
+        what caught it (delete-line fell from 50/55 to 25/55); the isolation is
+        what fixes it.
         """
         nonlocal session_count
         session_count += 1
         log_path = scratch / f"app{session_count}.log"
         session_logs.append(log_path)
-        app, sock_path = start_app(args.binary, project, scratch, log_path,
-                                   args.startup_timeout)
+        app, sock_path = start_app(args.binary, project, log_path, args.startup_timeout,
+                                   scratch / f"xdg{session_count}")
         driver = Driver(sock_path)
         try:
             yield driver
