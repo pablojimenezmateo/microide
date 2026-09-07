@@ -1,5 +1,7 @@
 #include "platform/ControlSocketServer.h"
 
+#include "platform/RuntimePaths.h"
+
 #include "util/SdlWake.h"
 
 #include <atomic>
@@ -438,8 +440,17 @@ struct ControlSocketServer::Impl {
     if (path_string.size() + 1 > sizeof(sockaddr_un::sun_path)) {
       return;
     }
-    std::error_code ec;
-    std::filesystem::create_directories(socket_path.parent_path(), ec);
+    // The SAME hardening the initial bind gets. `ControlChannelService::Start`
+    // runs `EnsureSecurePrivateDirectory` over this directory before the first
+    // bind precisely because the `/tmp/microide` fallback has a world-writable
+    // parent — but a rebind recreates the directory from the I/O thread, where
+    // that caller is nowhere in sight, and `create_directories` grants whatever
+    // the umask allows and trusts a pre-existing leaf. Refuse to rebind rather
+    // than re-advertise a socket under a directory we have not re-verified is a
+    // real, owner-only, non-symlink directory we own.
+    if (!EnsureSecurePrivateDirectory(socket_path.parent_path())) {
+      return;
+    }
     ::unlink(path_string.c_str());
 
     const int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);

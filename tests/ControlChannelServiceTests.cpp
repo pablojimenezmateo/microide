@@ -16,6 +16,7 @@
 
 #if defined(__unix__) || defined(__APPLE__)
 #include <sys/socket.h>
+#include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
 #endif
@@ -577,6 +578,66 @@ void TestSocketSelfHealsAfterExternalDeletion() {
   std::filesystem::remove_all(runtime, ec);
 }
 
+// The self-heal rebind must apply the SAME directory hardening the initial bind
+// gets. `ControlChannelService::Start` runs `EnsureSecurePrivateDirectory` over the
+// runtime directory before the first bind precisely because the `/tmp/microide`
+// fallback has a world-writable parent -- but the rebind happens on the I/O thread,
+// where that caller is nowhere in sight, and it used a plain `create_directories`
+// that grants whatever the umask allows and trusts a pre-existing leaf. A rebind
+// must not re-advertise a socket under a directory it has not re-verified.
+void TestSocketRebindRehardensTheRuntimeDirectory() {
+  const std::filesystem::path runtime =
+      std::filesystem::temp_directory_path() /
+      ("microide-control-reharden-" + std::to_string(::getpid()));
+  std::error_code ec;
+  std::filesystem::remove_all(runtime, ec);
+  std::filesystem::create_directories(runtime, ec);
+  ::setenv("XDG_RUNTIME_DIR", runtime.string().c_str(), 1);
+
+  microide::workspace::WorkspaceContext context;
+  context.current_project_state.root = "/tmp/proj";
+
+  microide::workspace::ControlChannelService service;
+  service.Configure(
+      context, microide::workspace::ControlChannelService::Operations{
+                   .execute_command_line =
+                       [](const std::string&) {
+                         return microide::workspace::ControlChannelService::CommandOutcome{.ok =
+                                                                                               true};
+                       }});
+  service.SetWakeEventType(0);
+  Expect(service.Start("/tmp/proj"), "control service should start");
+
+  const std::filesystem::path base = runtime / "microide";
+  const std::filesystem::path socket_path =
+      base / (std::to_string(::getpid()) + ".sock");
+
+  // Simulate the hostile/degraded state a rebind can be handed: the socket gone
+  // and the directory left group/other accessible.
+  ::unlink(socket_path.string().c_str());
+  Expect(::chmod(base.string().c_str(), 0777) == 0, "the fixture can loosen the directory");
+
+  int healed_fd = -1;
+  const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+  while (healed_fd < 0 && std::chrono::steady_clock::now() < deadline) {
+    healed_fd = ConnectUnix(socket_path.string());
+    if (healed_fd < 0) {
+      std::this_thread::sleep_for(std::chrono::milliseconds(20));
+    }
+  }
+  Expect(healed_fd >= 0, "the listener still self-heals");
+
+  struct stat st{};
+  Expect(::stat(base.string().c_str(), &st) == 0, "the runtime directory exists after the rebind");
+  Expect((st.st_mode & (S_IRWXG | S_IRWXO)) == 0,
+         "the rebind must re-harden the runtime directory to owner-only, not "
+         "re-advertise a socket under a group/world-accessible one");
+
+  ::close(healed_fd);
+  service.Stop();
+  std::filesystem::remove_all(runtime, ec);
+}
+
 // A breakpoint-/debug- command over the channel auto-enables the debugger (no
 // `set-setting debug.enabled true` prelude); a non-debug command does not.
 void TestDebugCommandAutoEnablesDebugger() {
@@ -652,6 +713,7 @@ void TestQueryResponseIsBounded() {}
 void TestControlListFiltersDeadPids() {}
 void TestLaunchConfigsAndAdaptersOverSocket() {}
 void TestSocketSelfHealsAfterExternalDeletion() {}
+void TestSocketRebindRehardensTheRuntimeDirectory() {}
 void TestDebugCommandAutoEnablesDebugger() {}
 void TestControlDiscoveryIgnoresForgedSocketAndPid() {}
 void TestControlListPrintsCanonicalSingleLineJson() {}
@@ -805,6 +867,8 @@ void RegisterControlChannelServiceTests(std::vector<TestCase>& tests) {
           TestStopBeganEmitsImmediatePendingEvent);
   AddTest(tests, "ControlChannelService/SocketSelfHealsAfterExternalDeletion",
           TestSocketSelfHealsAfterExternalDeletion);
+  AddTest(tests, "ControlChannelService/SocketRebindRehardensTheRuntimeDirectory",
+          TestSocketRebindRehardensTheRuntimeDirectory);
   AddTest(tests, "ControlChannelService/DebugCommandAutoEnablesDebugger",
           TestDebugCommandAutoEnablesDebugger);
   AddTest(tests, "ControlChannelService/DiscoveryIgnoresForgedSocketAndPid",
