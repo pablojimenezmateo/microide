@@ -432,8 +432,23 @@ void RestoreCaretsAfterLineTransform(TextViewport& viewport,
   if (selection_covers_block) {
     viewport.MoveCursorTo(shift(snapshot.selection->start.line),
                           snapshot.selection->start.column);
-    viewport.MoveCursorTo(shift_boundary(snapshot.selection->end.line),
-                          snapshot.selection->end.column, /*extend_selection=*/true);
+    std::size_t end_line = shift_boundary(snapshot.selection->end.line);
+    std::size_t end_column = snapshot.selection->end.column;
+    // A whole-line selection names its exclusive end as column 0 of the line
+    // AFTER the block. When the transform lands the block against the bottom of
+    // the buffer there is no such line, and `MoveCursorTo` clamps the row to the
+    // last line while keeping column 0 — which reads back through RangeForCaret
+    // as "the selection stops one line short", so the NEXT line op acts on one
+    // line less than the last one moved. Select all in a file that ends with a
+    // newline, then Alt+Down / Alt+Up: the buffer came back with a stray blank
+    // line and its last line stranded below the block. Express the same
+    // selection the only way the buffer can — through the end of its last line.
+    const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
+    if (end_line > last_line) {
+      end_line = last_line;
+      end_column = viewport.lines().LineLength(last_line);
+    }
+    viewport.MoveCursorTo(end_line, end_column, /*extend_selection=*/true);
   } else {
     viewport.MoveCursorTo(shift(snapshot.primary_line), snapshot.primary_column);
   }

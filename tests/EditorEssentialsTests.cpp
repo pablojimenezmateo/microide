@@ -326,6 +326,32 @@ void TestShapingMoveLineDownKeepsWholeLineSelection() {
          "the selection follows the moved block (now lines 1..2, exclusive end at line 3)");
 }
 
+// A whole-line selection names its exclusive end as column 0 of the line AFTER
+// the block. Move the block against the BOTTOM of the buffer and there is no such
+// line: the restore clamped the row to the last line and kept column 0, which
+// RangeForCaret reads as "the selection stops one line short", so the next line
+// op moved one line less than the last one did. Select all in a file ending with a
+// newline, then Alt+Down / Alt+Up, and the buffer came back with a stray blank line
+// and its last line stranded. Found by tools/sweep-editor-invariants.py.
+void TestShapingMoveLineDownThenUpRestoresABufferEndingInANewline() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\n", "/tmp/moveline-roundtrip.txt");
+  viewport.SelectAll();
+  Expect(microide::editor::MoveLineDown(viewport),
+         "the whole-buffer block still has the trailing empty line to move past");
+  const auto moved = viewport.selection_range();
+  Expect(moved.has_value(), "the selection must survive the move");
+  Expect(moved->start == microide::editor::TextPosition{1, 0} &&
+             moved->end == microide::editor::TextPosition{3, 1},
+         "the selection must still cover all three moved lines, through the end of "
+         "the last one -- column 0 of line 3 would name only two of them");
+  Expect(microide::editor::MoveLineUp(viewport), "moving the block back up must apply");
+  Expect(viewport.lines().size() == 4 && viewport.lines()[0] == "a" &&
+             viewport.lines()[1] == "b" && viewport.lines()[2] == "c" &&
+             viewport.lines()[3].empty(),
+         "Alt+Down then Alt+Up over a whole-buffer selection must restore the buffer");
+}
+
 // Delete Line with a selection deletes every line the selection TOUCHES, the way
 // VS Code's Ctrl+Shift+K does and the way every other line op in ShapingActions
 // already reads a selection (through ResolveLineRanges). DeleteLine was the one
@@ -2471,6 +2497,8 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingLineOpAppliesOneDocumentSplice);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",
           TestShapingMoveLineDown);
+  AddTest(tests, "EditorEssentials/Shaping/MoveLineDownThenUpRestoresTrailingNewline",
+          TestShapingMoveLineDownThenUpRestoresABufferEndingInANewline);
   AddTest(tests, "EditorEssentials/Shaping/DeleteLineRemovesEverySelectedLine",
           TestShapingDeleteLineRemovesEverySelectedLine);
   AddTest(tests, "EditorEssentials/Shaping/DeleteLineRemovesOnlyTheTouchedLines",
