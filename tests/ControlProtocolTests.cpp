@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include <cstdint>
+#include <optional>
 #include <string>
 
 #include "util/JsonValue.h"
@@ -18,6 +20,140 @@ using microide::workspace::ControlResponse;
 using microide::workspace::ControlSpecKeys;
 using microide::workspace::ParseControlRequest;
 using microide::workspace::SerializeControlResponse;
+using microide::util::JsonValue;
+
+// Property: a response always survives its own wire format, and no input line
+// can make the parser lie or throw.
+//
+// The control channel is the surface an external tool — an LLM driver, a script
+// — talks to, so its inputs are the least trusted in the app and its outputs are
+// the ones a machine parses. Two properties cover the ways that goes wrong:
+//
+//   * ROUND TRIP. A serialized response must parse back as JSON and carry the
+//     same id / ok / feedback / error / result. Feedback and error are built
+//     from arbitrary product text — file paths, git output, error messages — so
+//     they routinely contain quotes, backslashes, newlines, control bytes and
+//     raw UTF-8. Any of those escaped wrongly produces a line the client cannot
+//     parse, or worse, one that parses into something else.
+//   * TOTALITY. `ParseControlRequest` is documented to never throw and to report
+//     malformed input as {valid=false}. Feed it structurally hostile lines and
+//     require exactly that: it returns, and a request it calls valid really does
+//     carry exactly one of command/query.
+
+std::string ControlRoundTripBody(std::size_t choice) {
+  static const char* const kBodies[] = {
+      "",
+      "plain feedback",
+      "with \"quotes\" and \\backslash\\",
+      "line1\nline2\r\nline3",
+      "tab\there and \x01 control",
+      "\xc3\xa9 non-ascii \xe4\xb8\xad \xf0\x9f\x98\x80",
+      "trailing backslash \\",
+      "json-looking {\"id\":7,\"ok\":false}",
+      "very long ................................................................",
+  };
+  return kBodies[choice % (sizeof(kBodies) / sizeof(kBodies[0]))];
+}
+
+void TestControlResponseSurvivesItsOwnWireFormat() {
+  std::uint64_t seed = 0xCBBB9D5DC1059ED8ULL;
+  const auto next = [&seed]() {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<std::size_t>(seed >> 33);
+  };
+  for (int iteration = 0; iteration < 300; ++iteration) {
+    ControlResponse response;
+    if (next() % 4 != 0) {
+      response.id = static_cast<std::int64_t>(next()) - 1000;
+    }
+    response.ok = (next() % 2) == 0;
+    response.feedback = ControlRoundTripBody(next());
+    response.error = ControlRoundTripBody(next());
+    if (next() % 3 == 0) {
+      util::JsonObject object;
+      object["text"] = util::JsonValue(ControlRoundTripBody(next()));
+      object["count"] = util::JsonValue(static_cast<std::int64_t>(next() % 1000));
+      response.result = util::JsonValue(std::move(object));
+    }
+
+    const std::string line = SerializeControlResponse(response);
+    Expect(line.find('\n') == std::string::npos,
+           "a response must be one line — the socket layer frames on newlines");
+
+    const std::optional<util::JsonValue> parsed = util::ParseJson(line);
+    Expect(parsed.has_value() && parsed->IsObject(),
+           "a serialized response must parse back as a JSON object");
+    const util::JsonValue& value = *parsed;
+    Expect(value["ok"].IsBool() && value["ok"].AsBool(!response.ok) == response.ok,
+           "ok must survive the round trip");
+    if (response.id.has_value()) {
+      Expect(value["id"].AsInt(*response.id + 1) == *response.id, "id must survive");
+    }
+    // feedback/error are only emitted when non-empty; when emitted they must be
+    // byte-identical, which is what the escaping has to get right.
+    if (!response.feedback.empty()) {
+      Expect(value["feedback"].AsString() == response.feedback,
+             "feedback must survive the round trip byte for byte");
+    }
+    if (!response.error.empty()) {
+      Expect(value["error"].AsString() == response.error,
+             "error must survive the round trip byte for byte");
+    }
+  }
+}
+
+void TestControlRequestParserIsTotal() {
+  static const char* const kHostileLines[] = {
+      "", " ", "\n", "{", "}", "[]", "null", "true", "42", "\"string\"",
+      "{}", "{\"id\":1}", "{\"command\":\"\"}", "{\"query\":\"\"}",
+      "{\"command\":\"open\",\"query\":\"tabs\"}",           // both set
+      "{\"command\":null}", "{\"query\":null}", "{\"id\":null,\"command\":\"open\"}",
+      "{\"id\":\"not-a-number\",\"command\":\"open\"}",
+      "{\"id\":9223372036854775807,\"command\":\"open\"}",
+      "{\"id\":-9223372036854775808,\"command\":\"open\"}",
+      "{\"id\":1.5,\"command\":\"open\"}",
+      "{\"command\":123}", "{\"command\":[\"open\"]}", "{\"command\":{\"a\":1}}",
+      "{\"command\":\"open \\u0000 nul\"}",
+      "{\"command\":\"\\ud800\"}",                            // lone surrogate
+      "{\"args\":{\"a\":1},\"query\":\"tabs\"}",
+      "{\"query\":\"tabs\",\"args\":[1,2,3]}",
+      "{\"query\":\"tabs\",\"args\":\"not-an-object\"}",
+      "  {\"command\":\"open\"}  ",
+      "{\"command\":\"open\"}trailing",
+      "{\"command\":\"open\"}\n{\"command\":\"save\"}",       // two objects on a line
+  };
+  for (const char* line : kHostileLines) {
+    const ControlRequest request = ParseControlRequest(line);
+    if (!request.valid) {
+      Expect(!request.parse_error.empty(),
+             "an invalid request must say why — the client prints this");
+      continue;
+    }
+    Expect(request.is_command() != request.is_query(),
+           "a valid request carries exactly one of command / query");
+  }
+
+  // And over generated junk, including embedded NULs and arbitrary bytes: the
+  // contract is that it returns at all.
+  std::uint64_t seed = 0x629A292A367CD507ULL;
+  const auto next = [&seed]() {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<std::size_t>(seed >> 33);
+  };
+  static const char kAlphabet[] = "{}[]\",:\\ \t\n0123456789abctruefalsnl\x01\x7f\xc3\xa9";
+  for (int iteration = 0; iteration < 2000; ++iteration) {
+    std::string line;
+    const std::size_t length = next() % 40;
+    for (std::size_t i = 0; i < length; ++i) {
+      line.push_back(kAlphabet[next() % (sizeof(kAlphabet) - 1)]);
+    }
+    const ControlRequest request = ParseControlRequest(line);
+    Expect(!request.valid || (request.is_command() != request.is_query()),
+           "a valid request carries exactly one of command / query");
+    Expect(request.valid || !request.parse_error.empty(),
+           "an invalid request must report a reason");
+  }
+}
 
 void TestParseCommandRequest() {
   const ControlRequest request = ParseControlRequest(R"({"id":7,"command":"debug-step-over"})");
@@ -128,6 +264,9 @@ void RegisterControlProtocolTests(std::vector<TestCase>& tests) {
           TestHelpTextLeadsWithControlSend);
   AddTest(tests, "ControlProtocol/ManPageMatchesGenerator", TestManPageMatchesGenerator);
   AddTest(tests, "ControlProtocol/DocsHaveNoSocatRecipe", TestDocsHaveNoSocatRecipe);
+  AddTest(tests, "ControlProtocol/ResponseSurvivesItsOwnWireFormat",
+          TestControlResponseSurvivesItsOwnWireFormat);
+  AddTest(tests, "ControlProtocol/RequestParserIsTotal", TestControlRequestParserIsTotal);
 }
 
 }  // namespace microide::tests
