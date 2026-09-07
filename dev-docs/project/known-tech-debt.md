@@ -1,5 +1,9 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-09-07 (see § TD-2026-09-07-291 for that pass: a heap-use-after-free
+in the editor's layout cache that only the whole shell could reach, and the review
+verbs' per-file git spawns). The 2026-08-13 review below is kept for its finding.
+
 Reviewed 2026-08-13. An **editor UI/UX pass**, taken by walking VS Code's editor
 verbs against this one rather than by reading for defects. Most of what it found
 was not a bug in something that exists — it was something that does not exist at
@@ -388,6 +392,112 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-09-07-291 — the 2026-09-07 pass: a use-after-free the whole shell was needed to reach, and the review verbs' per-file git spawns. [RESOLVED same session — open remainder zero.]
+
+The recent passes had worked over the editor primitives, search, compare and the
+split grid. This one deliberately went elsewhere: the git service boundary, the
+review/diff verbs, and the app driven as a whole. Every finding is its own commit
+with a regression test (`git log 6b00dd17..`).
+
+**The use-after-free, and why nothing had caught it.** `TextLayoutCache` keeps the
+visible-line cache's recency order as an intrusive doubly-linked list threaded
+through the `unordered_map`'s own nodes — deliberately, because a node's address
+survives rehash and extract/insert, which is what lets eviction recycle a node
+with no allocation. But the cache is copyable on purpose (splitting a pane copies
+its sibling's caches, and the copy constructor keeps them warm rather than
+dropping them), and a copied map has its OWN nodes: the two list ends and every
+entry's `lru_prev`/`lru_next` came across pointing into the SOURCE's nodes. Split
+a pane, open a file in the new one, focus back, close the original — and the
+survivor's next repaint writes through freed pointers, on the shell thread, in
+`VisibleLineLruUnlink` under `EditorViewRenderer::Render`.
+
+The list ends now live in a wrapper whose copy is empty (the idiom the node pool
+beside it already used) and `RelinkVisibleLineLruIfDetached` rebuilds the list
+from the live map on the first read. `VisibleLineLruIsConsistentForTesting` makes
+the invariant checkable — same length both ways, no cycle, and every linked node
+really is this map's node for its own key — and that last clause is the one a
+copied list fails, so the regression test asserts it on the copy while the source
+is still alive and reports instead of aborting.
+
+Worth recording is what it took to find, because none of it was reading code:
+
+- **Unit tests could not reach it.** They drive viewports and coordinators
+  directly; this needs a real render loop reading a cache whose source has been
+  destroyed by an unrelated pane closing.
+- **Unsanitized, it is a coin flip.** Ten runs of randomized commands against the
+  release build: two died (`malloc(): unsorted double linked list corrupted`,
+  `free(): invalid next size (fast)`), eight were clean, and neither death named
+  anything. Under ASAN the first write reports, with the freeing stack.
+- **The sweep had to leave a frame between commands.** The states worth reaching
+  are the ones a *repaint* reads; a back-to-back stream lands several commands in
+  one event-loop turn and repaints once at the end. The same command sequence
+  found nothing at full speed.
+- **And it had to emit the sequence as a burst.** Split / open / focus-other /
+  close / draw is five commands in order; independent uniform draws essentially
+  never land them.
+
+The sweep is committed as `tools/fuzz-control-commands.py` with those three
+requirements in its docstrings, and vacuity-checked both ways (fix reverted: 2 of
+2 seeds reproduce; fix in place: 4 of 4 survive). A shell-level test of the same
+user sequence was written and then DELETED: it passed with the fix reverted, so it
+was not a regression test for anything. `dev-docs/project/validation-traps.md`
+§ Mechanical Sweeps carries the technique.
+
+**The review verbs spawned git per file, and one of them per file squared.**
+Driving `review-branch` and `review-commit` over the control channel with
+`MICROIDE_PERF_SUMMARY=1` put the whole cost on one screen, and it was all shell
+thread:
+
+- `ReadGitFileAtCommit` ran `cat-file -e` and then `show` — two blocking child
+  processes per side, per file. One `cat-file --batch` with the object name on
+  stdin does both, and it separates "no such file at that revision" from "git
+  failed" more sharply than the exit-code-only probe did (a missing git binary
+  read as "file absent"). A directory named at a revision now reads as absent
+  rather than `git show` printing a tree listing that the compare tab rendered as
+  file content.
+- Then the whole review's sides in ONE spawn: `cat-file --batch` answers many
+  names from one stdin stream, so `GitRevisionBlobCache` prefetches exactly the
+  files the reconciliation decided to open. It is advisory by construction — a
+  pair it does not hold falls back to the single read — and the test pins that
+  equivalence request by request. 14-file `review-branch`: 28 spawns / ~175 ms of
+  shell thread → **1 spawn / 13 ms**.
+- `OpenBranchHeadComparison` derived its `review_files` list with a whole
+  `git diff --name-status <ref>...HEAD` **inside the per-file open**, so a review
+  ran it once per tab for the same answer. On a 169-file merge commit that was
+  **170 spawns, 3.68 s, 3.67 s of it on the shell thread** — the window frozen for
+  three and a half seconds, and the only thing that noticed was the control
+  client's 5 s reply timeout. The list is passed in now: 1 spawn, 5.1 ms, none of
+  it on the shell thread, and the command answers in 0.3 s. `JumpCompareReviewFile`
+  paid that diff on every next-file keystroke and then overwrote the result with
+  the list it was already holding.
+- That also fixed what the derived list WAS for a commit review: `<commit>~1...HEAD`
+  is everything committed since that commit, not the commit's own files.
+
+**Two correctness finds beside them.** `review-commit` reported "no changes in
+commit" for a repository's FIRST commit and for any MERGE commit — `diff-tree`
+prints nothing for both without `--root` and `-m --first-parent`. And every review
+compare tab opened at review file 1 whatever file it was: the index was computed by
+looking for the tab's ABSOLUTE path in a list of PROJECT-RELATIVE ones, so the
+search never matched and every tab fell back to 0. Open the seventh file of a
+review, press next-review-file, land on the second.
+
+**Instrumentation added.** `RunSubprocess` is split into Fork / Pump / Reap. The
+`RunSubprocess(program=git,sub=..)` row ranked git at ~6 ms a call on the shell
+thread but could not say what the 6 ms was, and the three answers want opposite
+fixes. Measured over 28 spawns: fork 1.83 ms each (this process copying its own
+page tables), pump 8.43 ms, reap 0.03 ms — so a third of a small git command's
+cost here is the fork, the reap is already free, and spawning fewer children is
+worth more than making the children faster. That is what pointed at batching.
+
+**Read clean**: the terminal escape/CSI parser and its search, `TerminalBase64`,
+the porcelain-v2 parser, `PatchGenerator`, `SmallVector`/`InlineVector`,
+`PieceTree`'s node storage (index-based, so copy-safe), `CompareModel`'s shared
+text buffer (already designed against exactly the aliasing bug found in the layout
+cache), and `DebugValueTree`'s row views (owned strings). `clone-scan` at
+`--min-lines=5` found no new cross-file clone. The move traits of `TabEntry` /
+`EditorGroup` / `TextViewport` are all nothrow, so vector growth moves rather than
+deep-copying viewports.
 
 ### TD-2026-09-06-290 — running the perf gate after three weeks: two allocation regressions that rode in on correctness fixes, and a scenario that had gone silently stale. [RESOLVED same session — open remainder: one non-gating allocation drift, 290a.]
 
