@@ -168,7 +168,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenConflictReview() {
         return compare_merge_.OpenGitConflictMerge(path, &prefetched);
       },
       "no merge conflicts",
-      [this, root, &prefetched](const std::vector<std::filesystem::path>& paths) {
+      [root, &prefetched](const std::vector<std::filesystem::path>& paths) {
         // Three index stages per conflicted file — the worst per-file spawn count
         // in the app before this.
         prefetched.Prefetch(root, {":1", ":2", ":3"}, paths);
@@ -210,7 +210,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenBranchReview(const std::string& 
         return compare_merge_.OpenWorkingTreeComparison(path, ref, label, &prefetched);
       },
       "no differences",
-      [this, root, ref, &prefetched](const std::vector<std::filesystem::path>& paths) {
+      [root, ref, &prefetched](const std::vector<std::filesystem::path>& paths) {
         // Only the left side is a revision; the right is the working tree on disk.
         prefetched.Prefetch(root, {ref}, paths);
       });
@@ -253,7 +253,7 @@ ReviewOpenOutcome ReviewSessionCoordinator::OpenCommitReview(const std::string& 
                                                        right_ref, &prefetched, &review_files);
       },
       "no changes in commit",
-      [this, root, left_ref, right_ref,
+      [root, left_ref, right_ref,
        &prefetched](const std::vector<std::filesystem::path>& paths) {
         prefetched.Prefetch(root, {left_ref, right_ref}, paths);
       });
