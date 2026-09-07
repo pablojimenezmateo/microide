@@ -108,7 +108,17 @@ bool MovePath(const std::filesystem::path& source, const std::filesystem::path& 
   // destination tree already materialized. Capturing whether the destination
   // pre-existed lets us roll back a partial copy without deleting content that was
   // already there before the move.
-  const bool destination_preexisted = std::filesystem::exists(destination, error);
+  //
+  // Classify the destination NODE, not what it points at, and fail closed on a stat
+  // error — the same rule MovePathNoOverwrite states below, for the same reason.
+  // `exists()` follows the link, so a DANGLING destination symlink read as "did not
+  // pre-exist" and the rollback below then deleted it: a move that fails is
+  // supposed to be a no-op, and this one destroyed a directory entry it never
+  // created. `MovePath(<missing source>, <dangling symlink>)` did exactly that.
+  const std::filesystem::file_status destination_status =
+      std::filesystem::symlink_status(destination, error);
+  const bool destination_preexisted =
+      error || destination_status.type() != std::filesystem::file_type::not_found;
   error.clear();
   if (!CopyPath(source, destination)) {
     // Copy failed after possibly creating part of the destination. Leaving that

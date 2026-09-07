@@ -224,6 +224,33 @@ void TestRenamePathAcceptsDanglingSymlinkSource() {
 }
 #endif
 
+// A move that FAILS must be a no-op. The rollback that removes a partially copied
+// destination is gated on whether the destination pre-existed, and that check used
+// `exists()`, which follows a symlink — so a DANGLING destination symlink read as
+// "did not pre-exist" and the rollback deleted a directory entry the move never
+// created. MovePathNoOverwrite already classified with symlink_status for exactly
+// this reason (TD-2026-07-17A-132); MovePath did not.
+#if defined(__unix__) || defined(__APPLE__)
+void TestFailedMovePathLeavesADanglingDestinationSymlinkAlone() {
+  TemporaryDirectory temp_dir;
+  const auto root = temp_dir.path() / "workspace";
+  std::filesystem::create_directories(root);
+  const auto dangling = root / "link";
+  std::error_code ec;
+  std::filesystem::create_symlink(root / "no_such_target", dangling, ec);
+  Expect(!ec, "dangling symlink fixture created");
+  Expect(!std::filesystem::exists(dangling), "the symlink target is absent (dangling)");
+
+  // A source that does not exist makes the rename fail and the copy fallback fail,
+  // which is the shortest path to the rollback.
+  Expect(!microide::platform::MovePath(root / "does_not_exist", dangling),
+         "moving a missing source must fail");
+  Expect(std::filesystem::symlink_status(dangling).type() !=
+             std::filesystem::file_type::not_found,
+         "a failed move must not delete the destination entry it found there");
+}
+#endif
+
 void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Project/FileOperationService", TestFileOperationService);
   AddTest(tests, "Project/RenamePathRefusesToOverwriteExistingDestination",
@@ -235,6 +262,8 @@ void RegisterFileOperationServiceTests(std::vector<TestCase>& tests) {
 #if defined(__unix__) || defined(__APPLE__)
   AddTest(tests, "Project/RenamePathAcceptsDanglingSymlinkSource",
           TestRenamePathAcceptsDanglingSymlinkSource);
+  AddTest(tests, "Project/FailedMovePathLeavesADanglingDestinationSymlinkAlone",
+          TestFailedMovePathLeavesADanglingDestinationSymlinkAlone);
 #endif
 #if defined(__linux__)
   AddTest(tests, "Project/TrashReservationDoesNotOverwriteExistingMetadata",
