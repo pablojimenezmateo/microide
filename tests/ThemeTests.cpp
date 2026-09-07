@@ -281,6 +281,45 @@ void ExpectDeepThemeIncludeChainIsBounded() {
          "the failure should name the include-depth limit: " + error);
 }
 
+// A colorscheme is NAMED, never pathed. `theme_directory / name` replaces the whole
+// path when `name` is absolute, and `..` walks out of the directory, so an
+// `include` in a shared or downloaded `.microide` file could read any `*.microide`
+// on the filesystem — outside this function's stated contract, and outside what the
+// include-cycle guard (which keys on the file stem) can reason about.
+void ExpectThemeIncludesCannotEscapeTheThemeDirectory() {
+  const std::filesystem::path root =
+      std::filesystem::temp_directory_path() / "microide_theme_escape_test";
+  std::error_code ec;
+  std::filesystem::remove_all(root, ec);
+  const std::filesystem::path themes = root / "themes";
+  const std::filesystem::path outside = root / "outside";
+  std::filesystem::create_directories(themes, ec);
+  std::filesystem::create_directories(outside, ec);
+  Expect(!ec, "should be able to create the temp theme directories");
+
+  { std::ofstream out(outside / "secret.microide"); out << "color-link default \"#abcdef\"\n"; }
+  { std::ofstream out(themes / "relative.microide"); out << "include \"../outside/secret\"\n"; }
+  {
+    std::ofstream out(themes / "absolute.microide");
+    out << "include \"" << (outside / "secret").generic_string() << "\"\n";
+  }
+  { std::ofstream out(themes / "plain.microide"); out << "color-link default \"#112233\"\n"; }
+
+  const auto load = [&](const char* name, std::string* error) {
+    render::ThemeStyleMap styles;
+    std::vector<std::string> include_stack;
+    return render::LoadThemeStyles(themes, name, styles, include_stack, *error);
+  };
+
+  std::string error;
+  Expect(!load("relative", &error), "a `..` include must not resolve outside the directory");
+  Expect(!load("absolute", &error), "an absolute include must not resolve outside the directory");
+  // And a plain name still loads, so the guard did not just break includes.
+  Expect(load("plain", &error), "an ordinary named colorscheme must still load");
+
+  std::filesystem::remove_all(root, ec);
+}
+
 void ExpectBuiltinLightThemeIsSelectableAndReadable() {
   // The built-in light theme resolves by name without any bundled assets.
   microide::render::Theme theme;
@@ -404,6 +443,8 @@ void RegisterThemeTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Theme self-including colorscheme loads without recursion",
           ExpectSelfIncludingThemeLoadsWithoutRecursion);
   AddTest(tests, "Theme deep include chain is bounded", ExpectDeepThemeIncludeChainIsBounded);
+  AddTest(tests, "Theme includes cannot escape the theme directory",
+          ExpectThemeIncludesCannotEscapeTheThemeDirectory);
   AddTest(tests, "Theme default foregrounds preserve readable contrast",
           ExpectReadableDefaultThemeForegrounds);
   AddTest(tests, "Theme default decoration underlays stay readable",

@@ -178,6 +178,23 @@ std::filesystem::path FindThemeFile(const std::filesystem::path& theme_directory
     return {};
   }
 
+  // A colorscheme is named, never pathed. Without this the resolution below is
+  // `theme_directory / name`, and `operator/` REPLACES the whole path when `name`
+  // is absolute — so `include "/etc/x"` read /etc/x.microide and `include "../y"`
+  // walked out of the theme directory. Both break this function's stated contract
+  // (resolve `<theme_directory>/<name>.microide`) and both are reachable from a
+  // shared or downloaded `.microide` file, which is the kind of thing users copy
+  // from the internet.
+  //
+  // It also repairs the include-cycle guard, which keys on the file STEM: that is
+  // an identity only while every candidate lives in one directory. With traversal
+  // allowed, two different files could share a stem and be treated as the same
+  // include, and one file could be visited twice under different spellings.
+  if (name.empty() || name == "." || name == ".." ||
+      name.find('/') != std::string_view::npos || name.find('\\') != std::string_view::npos) {
+    return {};
+  }
+
   const std::filesystem::path direct_path = theme_directory / (std::string(name) + ".microide");
   if (platform::ReadPathType(direct_path) == platform::PathType::RegularFile) {
     return direct_path.lexically_normal();
