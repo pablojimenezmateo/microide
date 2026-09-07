@@ -499,6 +499,7 @@ class WorkspaceActionContext {
   void SetIndentWidth(std::size_t value);
   float UiScale() const;
   void ApplyUiScale(float scale);
+  bool SoftTabsEnabled() const;
   void SetSoftTabs(bool enabled);
   bool SoftWrapEnabled() const;
   void SetSoftWrap(bool enabled);

@@ -1865,6 +1865,18 @@ void TestWorkspaceShellGlobalCommandsApplyTypedRequests() {
   Expect(!WorkspaceShellTestAccess::SoftWrapEnabled(shell),
          "wrap without args should invert the current soft-wrap setting");
 
+  // `soft-tabs [on|off]` declares the same optional argument `wrap [on|off]` does,
+  // and its palette row dispatches with NO arguments — so a bare invocation has to
+  // do the same thing wrap's does, or "Soft Tabs" is a row that can only answer
+  // "soft-tabs expects on or off".
+  Expect(ExecuteCommand(shell, "soft-tabs"),
+         "soft-tabs should toggle when invoked without explicit args");
+  Expect(!WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "soft-tabs without args should invert the current soft-tabs setting");
+  Expect(ExecuteCommand(shell, "soft-tabs"), "a second bare soft-tabs toggles back");
+  Expect(WorkspaceShellTestAccess::SoftTabsEnabled(shell),
+         "soft-tabs without args should invert it again");
+
   Expect(ExecuteCommand(shell, "focus panel"),
          "focus should execute with a typed focus target");
   Expect(WorkspaceShellTestAccess::FocusIsPanel(shell),

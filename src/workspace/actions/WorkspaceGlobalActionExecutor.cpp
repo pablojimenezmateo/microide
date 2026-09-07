@@ -124,6 +124,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::SoftTabs: {
+      // Bare `soft-tabs` toggles, exactly as its sibling `wrap` does below. Both
+      // usages declare the argument optional (`soft-tabs [on|off]`), and both are
+      // palette rows -- which dispatch with NO arguments, so rejecting here made
+      // "Soft Tabs" a row that could only ever answer "soft-tabs expects on or
+      // off". Same dead-entry shape the bare `open` fix repaired.
+      if (args.empty()) {
+        context_.SetSoftTabs(!context_.SoftTabsEnabled());
+        return DispatchResult::Handled;
+      }
       const std::optional<SoftTabsRequest> request = BuildSoftTabsRequest(args);
       if (!request.has_value()) {
         return reject("soft-tabs expects on or off");

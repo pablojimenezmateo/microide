@@ -1323,6 +1323,10 @@ void WorkspaceActionContext::ApplyUiScale(float scale) {
   RequestLiveConfigRedraw();
 }
 
+bool WorkspaceActionContext::SoftTabsEnabled() const {
+  return state_.editor_preferences.soft_tabs;
+}
+
 void WorkspaceActionContext::SetSoftTabs(bool enabled) {
   if (operations_.set_setting_value) {
     operations_.set_setting_value("editor.soft_tabs", enabled ? "true" : "false");
