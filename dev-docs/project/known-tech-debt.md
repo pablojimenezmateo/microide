@@ -490,6 +490,13 @@ page tables), pump 8.43 ms, reap 0.03 ms — so a third of a small git command's
 cost here is the fork, the reap is already free, and spawning fewer children is
 worth more than making the children faster. That is what pointed at batching.
 
+**Lanes**: `tests`, `perf-tests`, `clang-build`, `hardened`, `asan`, `ubsan` and
+`tsan` each green at the end, with zero suppressed or tolerated findings in any
+log (no `runtime error`, no sanitizer `WARNING:`/`SUMMARY:` line anywhere). The
+clang lane earned its keep again mid-session: three prefetch lambdas captured
+`this` and never used it, which GCC accepts silently and clang rejects under
+-Werror — the whole tree stopped compiling there while every GCC lane was green.
+
 **Read clean**: the terminal escape/CSI parser and its search, `TerminalBase64`,
 the porcelain-v2 parser, `PatchGenerator`, `SmallVector`/`InlineVector`,
 `PieceTree`'s node storage (index-based, so copy-safe), `CompareModel`'s shared
