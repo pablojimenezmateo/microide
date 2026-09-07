@@ -213,11 +213,25 @@ std::optional<GitFileContentAtCommit> ReadGitFileAtCommit(const std::filesystem:
     return std::nullopt;
   }
 
-  if (!repo.FileExistsAtRevision(*relative, hash)) {
-    return GitFileContentAtCommit{.exists = false, .content = ""};
+  // One spawn for existence AND content. Every compare, merge and review tab
+  // loads its sides through here, and this used to be `cat-file -e` followed by
+  // `show` — two blocking git processes per side, on the shell thread, per file.
+  // See GitRepository::LookupBlobAtRevision.
+  std::optional<GitRepository::BlobAtRevision> blob;
+  if (const auto lookup = repo.LookupBlobAtRevision(*relative, hash); lookup.has_value()) {
+    if (!lookup->exists) {
+      return GitFileContentAtCommit{.exists = false, .content = ""};
+    }
+    blob = GitRepository::BlobAtRevision{.content = lookup->content,
+                                        .truncated = lookup->truncated};
+  } else {
+    // `--batch` could not express the name (a path containing a newline) or git
+    // failed outright; fall back to the pair so the rare case keeps working.
+    if (!repo.FileExistsAtRevision(*relative, hash)) {
+      return GitFileContentAtCommit{.exists = false, .content = ""};
+    }
+    blob = repo.ReadBlobAtRevision(*relative, hash);
   }
-
-  const auto blob = repo.ReadBlobAtRevision(*relative, hash);
   if (!blob.has_value()) {
     return std::nullopt;
   }

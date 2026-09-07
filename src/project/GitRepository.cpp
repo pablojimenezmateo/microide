@@ -2,9 +2,12 @@
 
 #include "project/GitCommandUtil.h"
 #include "project/GitPorcelainParser.h"
+#include "util/Parse.h"
 #include "util/StringUtil.h"
 
+#include <algorithm>
 #include <filesystem>
+#include <string_view>
 #include <system_error>
 
 namespace microide::project {
@@ -146,6 +149,71 @@ std::optional<GitRepository::BlobAtRevision> GitRepository::InterpretBlobResult(
     return std::nullopt;
   }
   return BlobAtRevision{.content = result.output, .truncated = result.truncated};
+}
+
+std::optional<GitRepository::BlobLookup> GitRepository::InterpretBatchBlobResult(
+    const CommandResult& result) {
+  // A capture-ceiling kill is a non-zero exit with `truncated` set; anything else
+  // non-zero is a real git failure. Same policy as InterpretBlobResult.
+  if (!result.success() && !result.truncated) {
+    return std::nullopt;
+  }
+  const std::string& output = result.output;
+  const std::size_t header_end = output.find('\n');
+  if (header_end == std::string::npos) {
+    return std::nullopt;
+  }
+  const std::string_view header(output.data(), header_end);
+
+  // A resolved blob's header is `<oid> <type> <size>`. Anything else is git
+  // declining the name — `<name> missing`, `<name> ambiguous`, and the other
+  // one-word verdicts — which is an absent file, not a failure. Parsing the
+  // success shape and treating every non-match as "absent" covers those without
+  // having to enumerate git's verdict vocabulary.
+  const std::size_t size_space = header.rfind(' ');
+  if (size_space == std::string_view::npos) {
+    return BlobLookup{};
+  }
+  const std::size_t type_space = header.rfind(' ', size_space - 1);
+  if (type_space == std::string_view::npos) {
+    return BlobLookup{};
+  }
+  const std::string_view type = header.substr(type_space + 1, size_space - type_space - 1);
+  const std::optional<std::size_t> size = util::ParseSize(header.substr(size_space + 1));
+  if (type != "blob" || !size.has_value()) {
+    // A tree (a directory named at that revision) or a tag is not a file to diff.
+    return BlobLookup{};
+  }
+
+  // The payload is exactly `size` bytes after the header newline, then one LF that
+  // is framing rather than content. A capture-ceiling kill leaves fewer bytes than
+  // the header promised; hand back what arrived and let `truncated` say so.
+  const std::size_t available = output.size() - (header_end + 1);
+  const std::size_t taken = std::min(*size, available);
+  return BlobLookup{
+      .exists = true,
+      .content = output.substr(header_end + 1, taken),
+      .truncated = result.truncated || taken < *size,
+  };
+}
+
+std::optional<GitRepository::BlobLookup> GitRepository::LookupBlobAtRevision(
+    const std::filesystem::path& relative_path,
+    std::string_view revision) const {
+  std::string spec;
+  spec.reserve(revision.size() + 1 + relative_path.native().size() + 1);
+  spec.append(revision);
+  spec.push_back(':');
+  spec.append(relative_path.generic_string());
+  // `--batch` reads newline-delimited names; a path carrying one cannot be asked
+  // for this way (`--batch -z` is git 2.42+). Caller falls back to the two-spawn
+  // path for that.
+  if (spec.find('\n') != std::string::npos) {
+    return std::nullopt;
+  }
+  spec.push_back('\n');
+  return InterpretBatchBlobResult(
+      ExecuteWithStdin({"cat-file", "--batch"}, std::move(spec)));
 }
 
 std::optional<GitRepository::BlobAtRevision> GitRepository::ReadBlobAtRevision(

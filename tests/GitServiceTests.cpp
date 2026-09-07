@@ -1035,6 +1035,106 @@ void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
          "an ordinary commit still lists exactly the paths it touched");
 }
 
+// The `git cat-file --batch` reply framing that replaced the cat-file -e + show
+// pair: header, exact byte count, git's one-word verdicts, and a capture-ceiling
+// kill. Pure, so it pins the contract without spawning git.
+void TestGitBatchBlobResultFraming() {
+  using GitRepository = microide::project::GitRepository;
+  using CommandResult = GitRepository::CommandResult;
+
+  const auto ok = GitRepository::InterpretBatchBlobResult(
+      CommandResult{.exit_code = 0,
+                    .output = "0123456789abcdef0123456789abcdef01234567 blob 6\nab\ncd\n"});
+  Expect(ok.has_value() && ok->exists && !ok->truncated,
+         "a blob header must resolve to an existing, untruncated blob");
+  Expect(ok->content == "ab\ncd\n",
+         "the payload is exactly the header's byte count, embedded newlines included");
+
+  // A blob whose content is empty is NOT an absent file.
+  const auto empty = GitRepository::InterpretBatchBlobResult(
+      CommandResult{.exit_code = 0,
+                    .output = "0123456789abcdef0123456789abcdef01234567 blob 0\n\n"});
+  Expect(empty.has_value() && empty->exists && empty->content.empty(),
+         "an empty blob exists and has empty content");
+
+  // git's verdicts for a name it declines are one word after the name.
+  for (const std::string_view verdict : {"missing", "ambiguous"}) {
+    const auto declined = GitRepository::InterpretBatchBlobResult(
+        CommandResult{.exit_code = 0, .output = std::string("HEAD:nope.txt ") +
+                                                std::string(verdict) + "\n"});
+    Expect(declined.has_value() && !declined->exists,
+           "a declined object name is an absent file, not a git failure");
+  }
+
+  // A tree (a directory named at a revision) is not a file to diff.
+  const auto tree = GitRepository::InterpretBatchBlobResult(
+      CommandResult{.exit_code = 0,
+                    .output = "0123456789abcdef0123456789abcdef01234567 tree 42\n"});
+  Expect(tree.has_value() && !tree->exists, "a tree object is not a readable file");
+
+  // A real git failure stays distinguishable from an absent file.
+  const auto failure = GitRepository::InterpretBatchBlobResult(
+      CommandResult{.exit_code = 128, .output = ""});
+  Expect(!failure.has_value(), "a non-zero exit that was not a truncation is a failure");
+
+  // A capture-ceiling kill: fewer bytes arrived than the header promised.
+  const auto clipped = GitRepository::InterpretBatchBlobResult(
+      CommandResult{.exit_code = 137,
+                    .output = "0123456789abcdef0123456789abcdef01234567 blob 100\npartial",
+                    .truncated = true});
+  Expect(clipped.has_value() && clipped->exists && clipped->truncated,
+         "a clipped blob is surfaced with the truncation flag, not as a failure");
+  Expect(clipped->content == "partial", "the partial prefix is preserved");
+}
+
+// The single-spawn lookup must agree with the two-spawn pair it replaced on every
+// outcome that reaches a compare tab.
+void TestGitBlobLookupMatchesExistenceAndContent() {
+  using microide::project::GitRepository;
+
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "present.txt", "one\ntwo\n");
+  WriteFile(repo_path / "empty.txt", "");
+  WriteFile(repo_path / "spaced name.txt", "spaced\n");
+  std::filesystem::create_directories(repo_path / "dir");
+  WriteFile(repo_path / "dir" / "nested.txt", "nested\n");
+  CommitAll(repo_path, "base", "base");
+
+  const GitRepository repo(repo_path);
+  const auto check = [&](const std::filesystem::path& relative, bool expect_exists) {
+    const auto lookup = repo.LookupBlobAtRevision(relative, "HEAD");
+    Expect(lookup.has_value(), "the batch lookup must reach git for a valid repository");
+    Expect(lookup->exists == expect_exists,
+           "the batch lookup must agree with cat-file -e on existence");
+    Expect(lookup->exists == repo.FileExistsAtRevision(relative, "HEAD"),
+           "existence must match the probe the lookup replaced");
+    if (!expect_exists) {
+      return;
+    }
+    const auto blob = repo.ReadBlobAtRevision(relative, "HEAD");
+    Expect(blob.has_value() && blob->content == lookup->content,
+           "the batch payload must be byte-identical to the show output");
+  };
+
+  check("present.txt", true);
+  check("empty.txt", true);
+  check("spaced name.txt", true);
+  check("dir/nested.txt", true);
+  check("absent.txt", false);
+
+  // A directory named at a revision resolves to a TREE. This is the one place the
+  // lookup deliberately disagrees with the pair it replaced: `cat-file -e` says the
+  // object exists, and `git show` then prints a tree listing that the compare tab
+  // rendered as if it were file content. A tree is not a file to diff.
+  const auto tree_lookup = repo.LookupBlobAtRevision("dir", "HEAD");
+  Expect(tree_lookup.has_value() && !tree_lookup->exists,
+         "a directory at a revision must read as absent, not as a listing");
+  Expect(repo.FileExistsAtRevision("dir", "HEAD"),
+         "the old existence probe did accept a tree — this is the intended divergence");
+}
+
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/ReadFileAtRevisionSurfacesTruncation",
           TestGitReadFileAtRevisionSurfacesTruncation);
@@ -1042,6 +1142,9 @@ void RegisterGitServiceTests(std::vector<TestCase>& tests) {
           TestGitExplicitRevisionArgsUseEndOfOptions);
   AddTest(tests, "Git/CommitChangedFilesCoversRootAndMergeCommits",
           TestGitCommitChangedFilesCoversRootAndMergeCommits);
+  AddTest(tests, "Git/BatchBlobResultFraming", TestGitBatchBlobResultFraming);
+  AddTest(tests, "Git/BlobLookupMatchesExistenceAndContent",
+          TestGitBlobLookupMatchesExistenceAndContent);
   AddTest(tests, "Git/PorcelainParserBoundsHostileStatus",
           TestGitPorcelainParserBoundsHostileStatus);
   AddTest(tests, "Git/PorcelainParserNormalizedRecordMatchesPathWalk",

@@ -73,6 +73,38 @@ class GitRepository {
   // be unit-tested without spawning git.
   static std::optional<BlobAtRevision> InterpretBlobResult(const CommandResult& result);
 
+  // The outcome of resolving `<revision>:<relative_path>` to a blob. `exists` is
+  // false when git resolved the name to nothing (or to a tree/tag rather than a
+  // file); `content`/`truncated` mean what they do on BlobAtRevision.
+  struct BlobLookup {
+    bool exists = false;
+    std::string content;
+    bool truncated = false;
+  };
+
+  // Existence AND content in ONE git spawn, via `cat-file --batch` with the object
+  // name on stdin. The pair this replaces (`cat-file -e` then `show`) cost two
+  // process spawns per side of every compare/merge/review tab — ~12 ms of shell
+  // thread per file on a warm cache here — and opening a review is N of those in a
+  // row, so the stall scaled with the size of the change being reviewed.
+  //
+  // `--batch` reports a missing name in its own output and still exits 0, so this
+  // separates "no such file at that revision" (exists=false) from "git itself
+  // failed" (nullopt) more sharply than the exit-code-only probe did: `cat-file -e`
+  // failing because git was missing or the repo was broken read as "file absent".
+  // Feeding the name on stdin also keeps it out of argv entirely.
+  //
+  // nullopt when git failed, the reply was unparseable, or the object name cannot
+  // be expressed on `--batch`'s newline-delimited stdin (a path containing a
+  // newline; `--batch -z` is too new to require).
+  std::optional<BlobLookup> LookupBlobAtRevision(const std::filesystem::path& relative_path,
+                                                 std::string_view revision = "HEAD") const;
+
+  // Parses one `git cat-file --batch` reply. Pure and static so the framing
+  // contract (header, exact byte count, missing marker, truncation) is unit
+  // testable without spawning git.
+  static std::optional<BlobLookup> InterpretBatchBlobResult(const CommandResult& result);
+
   std::optional<BlobAtRevision> ReadBlobAtRevision(const std::filesystem::path& relative_path,
                                                    std::string_view revision = "HEAD") const;
   // Content-only convenience wrapper over ReadBlobAtRevision; drops the truncation
