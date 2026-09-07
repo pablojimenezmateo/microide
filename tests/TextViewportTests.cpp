@@ -6024,6 +6024,68 @@ void TestTextViewportUndoRedoRoundTripRandomEdits() {
   }
 }
 
+// The visible-line layout cache keeps an intrusive recency list threaded through
+// its `unordered_map`'s own nodes. A COPIED map has its own nodes at their own
+// addresses, so the raw entry pointers copied alongside it point into the SOURCE's
+// nodes — and a viewport is copied whenever a pane is split or a tab vector
+// reallocates. Once the source dies, the copy's next repaint writes through freed
+// pointers: a heap-use-after-free on the shell thread, which is how this was
+// found (ASAN, while driving the real binary).
+void TestTextViewportCopiedLayoutCacheDoesNotAliasTheSource() {
+  std::string content;
+  for (int line = 0; line < 400; ++line) {
+    content += "line " + std::to_string(line) + " with some text to lay out\n";
+  }
+
+  // The oracle: an independently built viewport that was never copied.
+  TextViewport reference;
+  reference.LoadContent(content);
+  reference.SetViewportSize(40, 80);
+
+  TextViewport copy;
+  {
+    TextViewport source;
+    source.LoadContent(content);
+    source.SetViewportSize(40, 80);
+    // Fill the cache past nothing in particular — enough entries that the list
+    // has real interior links to dangle.
+    for (std::size_t line = 0; line < 200; ++line) {
+      (void)source.VisibleLineLayoutRef(line);
+    }
+    copy = source;
+    Expect(source.VisibleLineLruIsConsistentForTesting(),
+           "the source's own recency list must be well formed to begin with");
+    // Checked while the source is still ALIVE: the copy's list must already be
+    // this map's own nodes, not the source's. Under ASAN the check after the
+    // source dies would abort before it could report; this one just fails.
+    Expect(copy.VisibleLineLruIsConsistentForTesting(),
+           "a copied cache's recency list must link its OWN map nodes");
+  }  // The source's map nodes are freed here.
+
+  // Well past the 256-entry cache limit, so eviction walks the recency list —
+  // the exact read that used to follow a copied pointer into freed memory.
+  for (std::size_t round = 0; round < 3; ++round) {
+    for (std::size_t line = 0; line < 400; ++line) {
+      const microide::editor::LayoutLine& laid_out = copy.VisibleLineLayoutRef(line);
+      const microide::editor::LayoutLine& expected = reference.VisibleLineLayoutRef(line);
+      Expect(laid_out.text == expected.text && laid_out.visual_columns == expected.visual_columns,
+             "a copied viewport must lay out every line exactly as an uncopied one");
+    }
+  }
+
+  // And the invalidation path, which UNLINKS entries: an edit after a copy walked
+  // the same dangling links.
+  copy.MoveCursorTo(10, 0);
+  copy.InsertText("x");
+  for (std::size_t line = 0; line < 400; ++line) {
+    (void)copy.VisibleLineLayoutRef(line);
+  }
+  Expect(copy.lines().size() == reference.lines().size(),
+         "the edit above must not have disturbed the document shape");
+  Expect(copy.VisibleLineLruIsConsistentForTesting(),
+         "eviction and invalidation must leave the recency list well formed");
+}
+
 void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/LineVerbsTreatACollapsedFoldAsOneLine",
           TestTextViewportLineVerbsTreatACollapsedFoldAsOneLine);
@@ -6050,6 +6112,8 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextViewport/ColumnCaretsAreCapped", TestTextViewportColumnCaretsAreCapped);
   AddTest(tests, "TextViewport/UndoHistoryEnforcesByteBudget",
           TestUndoHistoryEnforcesByteBudget);
+  AddTest(tests, "TextViewport/CopiedLayoutCacheDoesNotAliasTheSource",
+          TestTextViewportCopiedLayoutCacheDoesNotAliasTheSource);
   AddTest(tests, "TextViewport/LoadLinesMatchesSerializeRoundTrip",
           TestTextViewportLoadLinesMatchesSerializeRoundTrip);
   AddTest(tests, "TextViewport/OpenNormalizesEveryLineEndingMix",

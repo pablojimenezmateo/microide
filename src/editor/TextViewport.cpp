@@ -99,8 +99,11 @@ TextViewport::TextViewport(const TextViewport& other)
   // rebuilds per open (TD-2026-08-06-138).
   //
   // Widths are a function of the document's bytes and the tab size; the copy
-  // shares `document_` and `tab_size_`, so the table and the visible-line LRU
-  // keyed on them are still exactly right. Only `folding_model_` is reset here,
+  // shares `document_` and `tab_size_`, so the table and the visible-line cache
+  // ENTRIES keyed on them are still exactly right. Their recency LIST is not —
+  // it is threaded through the map's own nodes, and the copy's map has its own —
+  // so TextLayoutCache drops it on copy and rebuilds it lazily. Only
+  // `folding_model_` is reset here,
   // and the one product that depends on it is the wrapped-row table. Same
   // reasoning as SetFoldingModel, which already refuses to wipe widths.
   layout_cache_.DropWrappedRowLayouts();

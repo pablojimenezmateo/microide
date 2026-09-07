@@ -260,6 +260,17 @@ class TextLayoutCache {
   // the perf scenario and WorkspaceShell::TestAccess.
   std::size_t ApproximateResidentBytes() const;
 
+  // Walks the visible-line recency list and checks it against the map: same
+  // length, consistent both ways, and every linked node really is the map node
+  // for its own key. That last clause is the one that matters — it is what a
+  // list left pointing into a COPY's source nodes fails, and the reason this is
+  // a callable check rather than a comment (see VisibleLineLruEnds).
+  //
+  // Compiled unconditionally, like every other `*ForTesting` seam here, so the
+  // regression that needs it runs in the default Release lane too. O(entries),
+  // bounded by kVisibleLineCacheLimit; no product path calls it.
+  bool VisibleLineLruIsConsistentForTesting() const;
+
 #ifndef NDEBUG
   std::size_t wrapped_row_layout_build_count_for_debug() const {
     return wrapped_row_layout_build_count_;
@@ -471,13 +482,51 @@ class TextLayoutCache {
     std::vector<VisibleLineCacheMap::node_type> nodes_;
   };
 
+  // The ends of the intrusive recency list, in a wrapper whose COPY is empty.
+  //
+  // This cache is copyable on purpose (a split pane copies its sibling's caches,
+  // and a tab vector that reallocates copies every viewport in it). A copied
+  // `unordered_map` has its OWN nodes at their own addresses, so every raw entry
+  // pointer copied alongside it — these two ends, and every entry's `lru_prev` /
+  // `lru_next` — points into the SOURCE's nodes. The copy then walks the
+  // source's list, writing through those pointers; when the source dies, which
+  // for a vector reallocation is immediately, the next repaint writes into freed
+  // nodes. That is a heap-use-after-free on the shell thread, and it is what this
+  // wrapper exists to make impossible.
+  //
+  // Copying empty rather than fixing up, because a defaulted copy cannot see the
+  // source: `RelinkVisibleLineLruIfDetached` rebuilds the list from the map the
+  // first time anything needs it. Recency is not carried across the copy, which
+  // costs nothing real — the copy's first paint touches every visible row and
+  // moves it to the tail, so the "victim is older than anything touched since"
+  // invariant holds from that frame on, and only never-touched entries can be
+  // evicted before it.
+  struct VisibleLineLruEnds {
+    VisibleLineCacheEntry* head = nullptr;
+    VisibleLineCacheEntry* tail = nullptr;
+
+    VisibleLineLruEnds() = default;
+    VisibleLineLruEnds(const VisibleLineLruEnds&) {}
+    VisibleLineLruEnds& operator=(const VisibleLineLruEnds&) {
+      head = nullptr;
+      tail = nullptr;
+      return *this;
+    }
+    // A MOVED map keeps its node addresses, so moving the ends is correct as is.
+    VisibleLineLruEnds(VisibleLineLruEnds&&) = default;
+    VisibleLineLruEnds& operator=(VisibleLineLruEnds&&) = default;
+  };
+
   // Move every live entry into the pool, up to its cap. The caller is about to
   // drop the map itself.
   void RetireVisibleLineNodes();
+  // Rebuilds the recency list over the live map when a copy left it detached.
+  // Cheap (one branch) and idempotent; call it before ANY read of the links.
+  void RelinkVisibleLineLruIfDetached() const;
   void VisibleLineLruUnlink(VisibleLineCacheEntry& entry) const;
   void VisibleLineLruPushBack(VisibleLineCacheEntry& entry) const;
   void VisibleLineLruTouch(VisibleLineCacheEntry& entry) const {
-    if (visible_line_lru_tail_ == &entry) {
+    if (visible_line_lru_.tail == &entry) {
       return;
     }
     VisibleLineLruUnlink(entry);
@@ -488,9 +537,7 @@ class TextLayoutCache {
   // Bounded by the cache limit, so this never holds more than the live cache
   // could have.
   mutable VisibleLineNodePool visible_line_node_pool_;
-  // Least / most recently used ends of the intrusive list above.
-  mutable VisibleLineCacheEntry* visible_line_lru_head_ = nullptr;
-  mutable VisibleLineCacheEntry* visible_line_lru_tail_ = nullptr;
+  mutable VisibleLineLruEnds visible_line_lru_;
   mutable std::size_t visible_line_queries_ = 0;
   mutable std::size_t visible_line_hits_ = 0;
   mutable std::size_t visible_line_evictions_ = 0;

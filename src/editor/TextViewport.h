@@ -439,6 +439,10 @@ class TextViewport {
   // render paths bind this to avoid copying the LayoutLine (string + 2 vectors)
   // per visible row; pair it with CaretForLine for caret drawing.
   const LayoutLine& VisibleLineLayoutRef(std::size_t line_index) const;
+  // See TextLayoutCache::VisibleLineLruIsConsistentForTesting.
+  bool VisibleLineLruIsConsistentForTesting() const {
+    return layout_cache_.VisibleLineLruIsConsistentForTesting();
+  }
 
   // Full visual width of a logical line. Under soft wrap this is read off the
   // wrapped-row table (a line's last row ends at its width) rather than built as

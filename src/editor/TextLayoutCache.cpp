@@ -127,6 +127,9 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
                                                               std::uint64_t content_revision,
                                                               LineLayoutFacts facts_hint) const {
   ++visible_line_queries_;
+  // Before anything reads a recency link: a cache that was just COPIED has a
+  // populated map and no list (see VisibleLineLruEnds).
+  RelinkVisibleLineLruIfDetached();
   const VisibleLineCacheKey cache_key{
       .line_index = line_index,
       .horizontal_scroll = horizontal_scroll,
@@ -241,8 +244,8 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
     //
     // The victim is the LRU head, so it is older than every entry any caller has
     // read since — including the ones this frame merely HIT.
-    assert(visible_line_lru_head_ != nullptr);
-    VisibleLineCacheEntry& victim = *visible_line_lru_head_;
+    assert(visible_line_lru_.head != nullptr);
+    VisibleLineCacheEntry& victim = *visible_line_lru_.head;
     VisibleLineLruUnlink(victim);
     auto node = visible_line_cache_.extract(victim.key);
     if (!node.empty()) {
@@ -280,27 +283,27 @@ const LayoutLine& TextLayoutCache::VisibleLineLayoutRefCached(LineSpan lines,
 void TextLayoutCache::VisibleLineLruUnlink(VisibleLineCacheEntry& entry) const {
   if (entry.lru_prev != nullptr) {
     entry.lru_prev->lru_next = entry.lru_next;
-  } else if (visible_line_lru_head_ == &entry) {
-    visible_line_lru_head_ = entry.lru_next;
+  } else if (visible_line_lru_.head == &entry) {
+    visible_line_lru_.head = entry.lru_next;
   }
   if (entry.lru_next != nullptr) {
     entry.lru_next->lru_prev = entry.lru_prev;
-  } else if (visible_line_lru_tail_ == &entry) {
-    visible_line_lru_tail_ = entry.lru_prev;
+  } else if (visible_line_lru_.tail == &entry) {
+    visible_line_lru_.tail = entry.lru_prev;
   }
   entry.lru_prev = nullptr;
   entry.lru_next = nullptr;
 }
 
 void TextLayoutCache::VisibleLineLruPushBack(VisibleLineCacheEntry& entry) const {
-  entry.lru_prev = visible_line_lru_tail_;
+  entry.lru_prev = visible_line_lru_.tail;
   entry.lru_next = nullptr;
-  if (visible_line_lru_tail_ != nullptr) {
-    visible_line_lru_tail_->lru_next = &entry;
+  if (visible_line_lru_.tail != nullptr) {
+    visible_line_lru_.tail->lru_next = &entry;
   } else {
-    visible_line_lru_head_ = &entry;
+    visible_line_lru_.head = &entry;
   }
-  visible_line_lru_tail_ = &entry;
+  visible_line_lru_.tail = &entry;
 }
 
 
@@ -1013,8 +1016,8 @@ void TextLayoutCache::ClearVisibleLineAndMaxColumns() {
   // allocator one call before the repaint asked for them again. `InvalidateAll`
   // is the wipe that actually releases them.
   RetireVisibleLineNodes();
-  visible_line_lru_head_ = nullptr;
-  visible_line_lru_tail_ = nullptr;
+  visible_line_lru_.head = nullptr;
+  visible_line_lru_.tail = nullptr;
 }
 
 void TextLayoutCache::RetireVisibleLineNodes() {
@@ -1031,7 +1034,46 @@ void TextLayoutCache::RetireVisibleLineNodes() {
   visible_line_cache_.clear();
 }
 
+bool TextLayoutCache::VisibleLineLruIsConsistentForTesting() const {
+  // A reader would relink first, so check what a reader would actually walk.
+  RelinkVisibleLineLruIfDetached();
+  std::size_t forward = 0;
+  const VisibleLineCacheEntry* previous = nullptr;
+  for (const VisibleLineCacheEntry* entry = visible_line_lru_.head; entry != nullptr;
+       entry = entry->lru_next) {
+    if (entry->lru_prev != previous) {
+      return false;
+    }
+    const auto it = visible_line_cache_.find(entry->key);
+    if (it == visible_line_cache_.end() || &it->second != entry) {
+      return false;  // the node is not this map's node for that key
+    }
+    previous = entry;
+    if (++forward > visible_line_cache_.size()) {
+      return false;  // a cycle
+    }
+  }
+  return forward == visible_line_cache_.size() && previous == visible_line_lru_.tail;
+}
+
+void TextLayoutCache::RelinkVisibleLineLruIfDetached() const {
+  if (visible_line_lru_.head != nullptr || visible_line_cache_.empty()) {
+    return;
+  }
+  // Only a copy can leave live entries with no list; every other path that drops
+  // entries unlinks them (or clears the map and both ends together). The order is
+  // the map's own, not the source's recency — see VisibleLineLruEnds for why that
+  // is enough.
+  for (auto& [key, entry] : visible_line_cache_) {
+    entry.lru_prev = nullptr;
+    entry.lru_next = nullptr;
+    VisibleLineLruPushBack(entry);
+  }
+}
+
 void TextLayoutCache::InvalidateVisibleLineCacheFrom(std::size_t start_line) {
+  // Unlinks below; a copied cache's links point at the source's freed nodes.
+  RelinkVisibleLineLruIfDetached();
   for (auto it = visible_line_cache_.begin(); it != visible_line_cache_.end();) {
     if (it->first.line_index >= start_line) {
       VisibleLineLruUnlink(it->second);
