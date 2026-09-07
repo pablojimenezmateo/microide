@@ -325,7 +325,11 @@ void EditorSplitTree::Rebuild() {
     }
   }
   nodes_ = compacted;
-  root_ = nodes_.empty() ? 0 : 0;
+  // The walk starts at the old root, so the old root is the first node pushed and
+  // the compacted root is always index 0. (This was written as a ternary whose two
+  // arms were both 0 — it read as if empty and non-empty differed here, and they do
+  // not; the empty case is handled by the Reset below.)
+  root_ = 0;
   if (nodes_.empty()) {
     Reset();
     return;

@@ -669,7 +669,12 @@ endif()
 # in via $<TARGET_OBJECTS:microide_core> and keep their own link libraries, so the
 # library only needs the usage requirements to *compile* these sources.
 add_library(microide_core OBJECT ${MICROIDE_CORE_SOURCES})
-target_include_directories(microide_core PRIVATE src third_party/stb)
+target_include_directories(microide_core PRIVATE src)
+# SYSTEM: stb_image.h is vendored upstream code. Its warnings (35 of them under a
+# broad -W set) are not ours to fix, and leaving them in the stream is what makes a
+# real one — like the dead ternary -Wduplicated-branches found in EditorSplitTree —
+# invisible in the noise. This is also what lets that flag be permanent below.
+target_include_directories(microide_core SYSTEM PRIVATE third_party/stb)
 target_precompile_headers(microide_core PRIVATE ${MICROIDE_PCH_HEADERS})
 target_link_libraries(microide_core PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
@@ -708,7 +713,13 @@ endif()
 # so all three use the default /usr/bin/c++ (GCC).
 set(MICROIDE_EXTRA_WARNINGS -Wmissing-declarations)
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  list(APPEND MICROIDE_EXTRA_WARNINGS -Wduplicated-cond)
+  # Both are dead-code shapes rather than style: a condition whose arms are
+  # identical, or an else-if repeating an earlier test, is a decision that was
+  # written and then does not happen. The sweep that added -Wduplicated-cond found
+  # dead ternaries; the one that added -Wduplicated-branches found another
+  # (EditorSplitTree::Rebuild). GCC-only — clang has neither, and turns an unknown
+  # -W into an error under -Werror.
+  list(APPEND MICROIDE_EXTRA_WARNINGS -Wduplicated-cond -Wduplicated-branches)
 endif()
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
@@ -749,7 +760,8 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   endif()
 endif()
 
-target_include_directories(microide PRIVATE src third_party/stb)
+target_include_directories(microide PRIVATE src)
+target_include_directories(microide SYSTEM PRIVATE third_party/stb)
 target_precompile_headers(microide PRIVATE ${MICROIDE_PCH_HEADERS})
 target_link_libraries(microide PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
@@ -1153,7 +1165,8 @@ if(NOT MICROIDE_SDL3_TTF_TARGET STREQUAL "")
   endif()
 endif()
 
-target_include_directories(microide_tests PRIVATE src tests third_party/stb)
+target_include_directories(microide_tests PRIVATE src tests)
+target_include_directories(microide_tests SYSTEM PRIVATE third_party/stb)
 target_precompile_headers(microide_tests PRIVATE ${MICROIDE_PCH_HEADERS})
 target_link_libraries(microide_tests PRIVATE ${MICROIDE_SDL3_TARGET} ${MICROIDE_PCRE2_TARGET})
 if(NOT MICROIDE_LUA_TARGET STREQUAL "")
@@ -1374,7 +1387,8 @@ if(MICROIDE_FUZZ)
     src/render/RasterDecode.cpp
     tests/fuzz/SurfaceRasterDecodeFuzz.cpp
   )
-  target_include_directories(SurfaceRasterDecodeFuzz PRIVATE src third_party/stb)
+  target_include_directories(SurfaceRasterDecodeFuzz PRIVATE src)
+  target_include_directories(SurfaceRasterDecodeFuzz SYSTEM PRIVATE third_party/stb)
   microide_configure_fuzz_target(SurfaceRasterDecodeFuzz)
 endif()
 
@@ -1415,7 +1429,8 @@ if(MICROIDE_PERF_HARNESS_BUILD)
     endif()
   endif()
 
-  target_include_directories(microide_perf PRIVATE src tests third_party/stb)
+  target_include_directories(microide_perf PRIVATE src tests)
+  target_include_directories(microide_perf SYSTEM PRIVATE third_party/stb)
   target_precompile_headers(microide_perf PRIVATE ${MICROIDE_PCH_HEADERS})
   target_link_libraries(microide_perf PRIVATE
     ${MICROIDE_SDL3_TARGET}
