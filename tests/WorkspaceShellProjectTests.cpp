@@ -338,6 +338,33 @@ void TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails(
          "menu fallback should prefill the typed open-project command");
 }
 
+// `tab-size [n]`, `indent-width [n]` and `ui-scale [n|up|down|reset]` all declare
+// their argument optional and then required it. A palette row dispatches its
+// action with NO arguments, so all three rows could only ever answer their own
+// usage error — the dead-entry shape the bare `open` / `project-open` fixes
+// repaired, and they get the same fallback: seed the palette with the verb so the
+// user types only the value.
+void TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette() {
+  struct Case {
+    WorkspaceShell::ActionId id;
+    std::string_view seed;
+  };
+  const std::array<Case, 3> cases{{
+      {WorkspaceShell::ActionId::TabSize, "tab-size "},
+      {WorkspaceShell::ActionId::IndentWidth, "indent-width "},
+      {WorkspaceShell::ActionId::UiScale, "ui-scale "},
+  }};
+  for (const Case& test_case : cases) {
+    WorkspaceShell shell;
+    Expect(WorkspaceShellTestAccess::ExecuteActionFromMenu(shell, test_case.id),
+           "a palette row must stay handled when it carries no argument");
+    Expect(WorkspaceShellTestAccess::CommandPaletteOpen(shell),
+           "the row should fall back to the prefilled command palette");
+    Expect(WorkspaceShellTestAccess::CommandPaletteQuery(shell) == test_case.seed,
+           "the palette should be prefilled with the verb and a space");
+  }
+}
+
 void TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -7187,6 +7214,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellProjectOpenCommandUsesNativePickerAtActiveProjectRoot);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails",
           TestWorkspaceShellProjectOpenMenuFallsBackToTypedPathWhenNativePickerFails);
+  AddTest(tests, "WorkspaceShell/ValueCommandsFromTheMenuSeedTheCommandPalette",
+          TestWorkspaceShellValueCommandsFromTheMenuSeedTheCommandPalette);
   AddTest(tests, "WorkspaceShell/ProjectOpenMaterializesTreeGitBadgesAfterFirstPaint",
           TestWorkspaceShellProjectOpenMaterializesTreeGitBadgesAfterFirstPaint);
   AddTest(tests, "WorkspaceShell/ProjectOpenDirectoryTreeRefreshDoesNotBlockOnGitStatuses",

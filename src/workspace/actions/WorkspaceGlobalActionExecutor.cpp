@@ -88,6 +88,18 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::TabSize: {
+      // A palette row dispatches its action with NO arguments, so these three
+      // rows ("Tab Size", "Indent Width", "UI Scale") could only ever answer
+      // their own usage error. They take a VALUE rather than a boolean, so there
+      // is nothing to toggle: seed the palette with the verb and let the user type
+      // just the value -- the fallback `open` and `project-open` already use when
+      // they are invoked from a UI surface with nothing to act on. A *typed* bare
+      // verb keeps rejecting: that user is already at a command line with the
+      // value in reach.
+      if (args.empty() && source != ActionSource::Command) {
+        context_.OpenCommandPalette("tab-size ");
+        return DispatchResult::Handled;
+      }
       const std::optional<EditorPreferenceSizeRequest> request =
           BuildEditorPreferenceSizeRequest(args);
       if (!request.has_value()) {
@@ -97,6 +109,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::IndentWidth: {
+      if (args.empty() && source != ActionSource::Command) {  // see TabSize above
+        context_.OpenCommandPalette("indent-width ");
+        return DispatchResult::Handled;
+      }
       const std::optional<EditorPreferenceSizeRequest> request =
           BuildEditorPreferenceSizeRequest(args);
       if (!request.has_value()) {
@@ -106,6 +122,10 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteGlobal(ActionId id,
       return DispatchResult::Handled;
     }
     case ActionId::UiScale: {
+      if (args.empty() && source != ActionSource::Command) {  // see TabSize above
+        context_.OpenCommandPalette("ui-scale ");
+        return DispatchResult::Handled;
+      }
       const std::optional<UiScaleRequest> request = BuildUiScaleRequest(args);
       if (!request.has_value()) {
         return reject("ui-scale requires a preset or numeric value");

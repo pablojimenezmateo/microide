@@ -522,6 +522,13 @@
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Menu);
   }
+  // Generic form of the two above: a palette row and a menu item both dispatch
+  // their ActionId with NO arguments and ActionSource::Menu, which is the only
+  // way to reach the UI-surface branch of a verb whose argument is optional.
+  static bool ExecuteActionFromMenu(WorkspaceShell& shell, WorkspaceShell::ActionId id) {
+    return ActionCoordinator(shell.MakeActionContext())
+        .Execute(id, {}, WorkspaceShell::ActionSource::Menu);
+  }
   static bool ExecuteProjectOpenFromCommand(WorkspaceShell& shell) {
     return ActionCoordinator(shell.MakeActionContext()).Execute(
         WorkspaceShell::ActionId::ProjectOpen, {}, WorkspaceShell::ActionSource::Command);
