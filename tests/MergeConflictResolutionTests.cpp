@@ -493,6 +493,22 @@ void TestDeleteConflictResolvesByDeletion() {
   Expect(!microide::workspace::ResolvedResultShouldExist(merge_tab),
          "an empty existence-choice result should resolve to deletion");
 
+  // The emptiness test reads the buffer by REFERENCE and through `LineView`, so it
+  // neither copies the document nor leaves a materialized line behind. `operator[]`
+  // would put a heap copy of line 0 in the buffer's line cache and keep it until the
+  // next mutation; `materialized_line_count()` is what makes that observable.
+  // A ONE-line buffer, deliberately: the size()==1 arm is the only one that reads
+  // line 0, so a multi-line fixture short-circuits past the accessor under test.
+  merge_tab.result_viewport.LoadContent("kept content", {}, merge_tab.result_line_ending);
+  Expect(merge_tab.result_viewport.lines().size() == 1,
+         "the fixture must reach the single-line arm that reads line 0");
+  Expect(merge_tab.result_viewport.lines().materialized_line_count() == 0,
+         "a freshly loaded buffer has materialized nothing");
+  Expect(microide::workspace::ResolvedResultShouldExist(merge_tab),
+         "a non-empty one-line existence-choice result keeps the file");
+  Expect(merge_tab.result_viewport.lines().materialized_line_count() == 0,
+         "the existence check must not materialize a line copy into the result buffer");
+
   // With result_should_exist=false and no file on disk, validation must pass (the
   // delete path removes the file before staging).
   merge_tab.result_viewport.SetDirty(false);

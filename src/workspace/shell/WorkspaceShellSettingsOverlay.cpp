@@ -648,7 +648,7 @@ void WorkspaceShell::ApplySettingsFontPickerIndex(int dropdown_index) {
     RequestOverlayRedraw();
     return;
   }
-  const auto filtered = settings_overlay_service_.FilteredFontFamilies();
+  const auto& filtered = settings_overlay_service_.FilteredFontFamilies();
   if (dropdown_index < 0 || dropdown_index >= static_cast<int>(filtered.size())) {
     return;
   }

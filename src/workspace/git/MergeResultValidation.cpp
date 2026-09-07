@@ -20,8 +20,18 @@ bool ResolvedResultShouldExist(const MergeTabState& merge_tab) {
   // SerializeLines is empty iff there are no lines or a single empty line (any
   // second line contributes a separator, and a non-empty first line contributes
   // content).
-  const auto lines = merge_tab.result_viewport.lines();
-  const bool result_empty = lines.size() == 0 || (lines.size() == 1 && lines[0].empty());
+  // By REFERENCE. `lines()` returns `const TextBuffer&`, so `const auto` copied the
+  // whole document -- piece tree, buffers and line cache -- to ask whether it holds
+  // a single empty line; on a large merge that is the entire result buffer duplicated
+  // per Mark Resolved. Every other caller in the tree binds it as `const TextBuffer&`.
+  const editor::TextBuffer& lines = merge_tab.result_viewport.lines();
+  // `LineView`, not `operator[]`: the compatibility accessor materializes a heap copy
+  // of the line into the buffer's line cache and keeps it until the next mutation
+  // (TextBuffer counts them in `materialized_line_count`). The by-value binding above
+  // hid that -- it landed on a throwaway copy -- so fixing only the binding would have
+  // traded a whole-buffer copy for a per-line one on the real buffer.
+  const bool result_empty =
+      lines.size() == 0 || (lines.size() == 1 && lines.LineView(0).empty());
   return !result_empty;
 }
 
