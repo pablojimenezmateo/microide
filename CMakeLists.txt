@@ -1295,6 +1295,24 @@ if(MICROIDE_FUZZ)
   )
   microide_configure_fuzz_target(GitPorcelainV2ParserFuzz)
 
+  # `.editorconfig` comes out of the OPENED REPOSITORY, so its bytes are supplied
+  # by whoever wrote the checkout — the same trust level as `.gitignore`. The
+  # parser is hand-rolled: section headers, brace expansion, key=value, an
+  # unknown-property rule, a byte cap and a section cap.
+  add_executable(EditorConfigParseFuzz
+    src/project/EditorConfig.cpp
+    src/project/GlobMatch.cpp
+    src/util/Parse.cpp
+    src/util/PerformanceCounters.cpp
+    src/util/PerformanceTrace.cpp
+    src/util/StringUtil.cpp
+    src/util/DurableFile.cpp
+    src/util/TextFileIO.cpp
+    src/util/TraceChannel.cpp
+    tests/fuzz/EditorConfigParseFuzz.cpp
+  )
+  microide_configure_fuzz_target(EditorConfigParseFuzz)
+
   add_executable(GitBlameParserFuzz
     src/util/Parse.cpp
     src/util/StringUtil.cpp
