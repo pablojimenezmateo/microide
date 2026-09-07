@@ -6777,6 +6777,31 @@ void TestWorkspaceShellUntitledTabFloodIsBounded() {
          "untitled-tab flood must be bounded by the per-group tab ceiling");
 }
 
+// The same silent-success shape one branch over: `tab` (open untitled) discarded
+// OpenUntitledTab's result, so at the ceiling it told the caller a fresh empty
+// buffer was active while the previously active tab still was — and the next
+// keystroke typed into someone else's file. The path branch of the same `case`
+// already reported its failure.
+void TestWorkspaceShellUntitledTabAtTheCeilingIsRejected() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  WriteFile(root / "src" / "main.cpp", "int main() { return 0; }\n");
+
+  WorkspaceShell shell;
+  Expect(WorkspaceShellTestAccess::OpenProjectTab(shell, root, false, false),
+         "project fixture should open");
+
+  while (WorkspaceShellTestAccess::OpenTabs(shell).size() <
+         microide::workspace::kMaxOpenTabsPerGroup) {
+    Expect(RunCommandLine(shell, "tab"), "filling the group must keep succeeding");
+  }
+  Expect(!RunCommandLine(shell, "tab"),
+         "a `tab` the group has no room for must be reported as a failure");
+  Expect(WorkspaceShellTestAccess::OpenTabs(shell).size() ==
+             microide::workspace::kMaxOpenTabsPerGroup,
+         "the refused `tab` must not have added a tab");
+}
+
 // `open <path>` at the per-group tab ceiling used to report SUCCESS while doing
 // nothing: WorkspaceActionContext::OpenPath called the void-returning
 // `operations_.open_file` and answered `true` unconditionally. The editor stayed
@@ -7142,6 +7167,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellUntitledTabFloodIsBounded);
   AddTest(tests, "WorkspaceShell/OpenAtTheTabCeilingIsRejected",
           TestWorkspaceShellOpenAtTheTabCeilingIsRejected);
+  AddTest(tests, "WorkspaceShell/UntitledTabAtTheCeilingIsRejected",
+          TestWorkspaceShellUntitledTabAtTheCeilingIsRejected);
   AddTest(tests, "WorkspaceShell/ProjectOpenMenuUsesNativePickerSelection",
           TestWorkspaceShellProjectOpenMenuUsesNativePickerSelection);
   AddTest(tests, "WorkspaceShell/ProjectOpenCommandUsesNativePickerAtActiveProjectRoot",

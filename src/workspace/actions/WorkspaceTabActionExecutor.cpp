@@ -113,7 +113,16 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteTab(ActionId id,
       {
         const TabPathsRequest request = BuildTabPathsRequest(args, context_.ProjectRoot());
         if (request.open_untitled) {
-          context_.OpenUntitledTab();
+          // Reported, like the path branch below already reports its own failure.
+          // `OpenUntitled` refuses past `kMaxOpenTabsPerGroup`, and swallowing that
+          // told the caller a fresh empty buffer was now active when the previously
+          // active tab still was — so the next keystroke typed into someone else's
+          // file. The per-group ceiling is the only reachable cause here: the empty
+          // root is rejected above.
+          if (!context_.OpenUntitledTab()) {
+            return reject("Cannot open a new tab: this editor group already holds " +
+                          std::to_string(kMaxOpenTabsPerGroup) + " tabs");
+          }
           return DispatchResult::Handled;
         }
 
