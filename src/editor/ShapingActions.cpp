@@ -667,7 +667,71 @@ bool InsertLineAbove(TextViewport& viewport) {
 }
 
 bool DeleteLine(TextViewport& viewport) {
-  return viewport.DeleteCurrentLine();
+  // No caret has a selection: every caret names its own line (and the whole
+  // block when it sits on a collapsed fold's opener), which is exactly what the
+  // viewport's own path deletes. Delegate to it rather than reimplementing its
+  // tuned multi-caret aggregate undo entry -- and because Cut-with-nothing-
+  // selected calls the same method and must keep behaving identically.
+  const std::span<const SecondaryCaret> secondaries = viewport.secondary_caret_range_view();
+  const bool any_selection =
+      viewport.has_selection() ||
+      std::any_of(secondaries.begin(), secondaries.end(),
+                  [](const SecondaryCaret& caret) { return caret.selection_anchor.has_value(); });
+  if (!any_selection) {
+    return viewport.DeleteCurrentLine();
+  }
+
+  // With a selection, Delete Line deletes every line the selection TOUCHES
+  // (VS Code's Ctrl+Shift+K), which is what `ResolveLineRanges` already means and
+  // what every other line op in this file already does with it. DeleteLine was
+  // the one verb that still deleted only `cursor_line_`, so Ctrl+A then
+  // Ctrl+Shift+K removed a single line -- the phantom line after the final
+  // newline -- out of the middle of the selection and left the rest of the
+  // buffer standing.
+  const std::vector<LineRange> regions =
+      ResolveLineRanges(viewport, /*expand_collapsed_folds=*/true);
+  const TextBuffer& lines = viewport.lines();
+  if (regions.empty() || lines.size() == 0) {
+    return false;
+  }
+
+  viewport.BeginUndoGroup();
+  bool changed = false;
+  // Descending, for the same reason CopyLines walks backwards: deleting a region
+  // shifts every line after it, so applying the later regions first leaves the
+  // earlier regions' indices valid. `lines` is the live buffer, so the size and
+  // length reads below see each deletion as it lands.
+  for (auto region = regions.rbegin(); region != regions.rend(); ++region) {
+    const std::size_t last = std::min(region->last, lines.size() - 1);
+    const std::size_t first = std::min(region->first, last);
+    SelectionRange range;
+    if (last + 1 < lines.size()) {
+      // Take the line break that FOLLOWS the block, so everything below moves up.
+      range = SelectionRange{TextPosition{first, 0}, TextPosition{last + 1, 0}};
+    } else if (first > 0) {
+      // Last block in the buffer: take the break that PRECEDES it instead, or the
+      // delete leaves the trailing empty line the block used to end with.
+      range = SelectionRange{TextPosition{first - 1, lines.LineLength(first - 1)},
+                             TextPosition{last, lines.LineLength(last)}};
+    } else {
+      // The block is the whole buffer: there is no break to take, so empty the
+      // text and let the document keep its one remaining (blank) line.
+      range = SelectionRange{TextPosition{0, 0}, TextPosition{last, lines.LineLength(last)}};
+    }
+    changed |= viewport.ReplaceRange(range, "", /*record_undo=*/true);
+  }
+  if (!changed) {
+    viewport.EndUndoGroup();
+    return false;
+  }
+  // The selection and every secondary caret named lines that no longer exist.
+  // Land a single caret at the start of the line that took the first deleted
+  // block's place, which is where the viewport's own delete path leaves it.
+  viewport.ClearSecondaryCarets();
+  viewport.ClearSelection();
+  viewport.MoveCursorTo(std::min(regions.front().first, lines.size() - 1), 0);
+  viewport.EndUndoGroup();
+  return true;
 }
 
 namespace {

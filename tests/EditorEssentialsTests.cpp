@@ -326,6 +326,80 @@ void TestShapingMoveLineDownKeepsWholeLineSelection() {
          "the selection follows the moved block (now lines 1..2, exclusive end at line 3)");
 }
 
+// Delete Line with a selection deletes every line the selection TOUCHES, the way
+// VS Code's Ctrl+Shift+K does and the way every other line op in ShapingActions
+// already reads a selection (through ResolveLineRanges). DeleteLine was the one
+// verb that still deleted `cursor_line_` alone, so Ctrl+A then Delete Line removed
+// the single phantom line after the final newline and left the whole buffer
+// standing. Found by tools/sweep-editor-invariants.py against the shipped binary.
+void TestShapingDeleteLineRemovesEverySelectedLine() {
+  TextViewport viewport;
+  viewport.LoadContent("delta\nalpha\ncharlie\n", "/tmp/deleteline-selectall.txt");
+  viewport.SelectAll();
+  Expect(microide::editor::DeleteLine(viewport),
+         "Delete Line over a whole-buffer selection must report an edit");
+  Expect(viewport.lines().size() == 1 && viewport.lines()[0].empty(),
+         "Ctrl+A then Delete Line must empty the buffer, not delete one line out of it");
+  Expect(viewport.Undo(), "the whole-buffer delete must be one undoable step");
+  Expect(viewport.lines().size() == 4 && viewport.lines()[0] == "delta" &&
+             viewport.lines()[1] == "alpha" && viewport.lines()[2] == "charlie" &&
+             viewport.lines()[3].empty(),
+         "undo must restore every deleted line, trailing newline included");
+}
+
+// The interior case: a selection that touches only some lines deletes only those,
+// and the lines below move up.
+void TestShapingDeleteLineRemovesOnlyTheTouchedLines() {
+  TextViewport viewport;
+  viewport.LoadContent("one\ntwo\nthree\nfour\n", "/tmp/deleteline-partial.txt");
+  viewport.MoveCursorTo(1, 1);
+  viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);  // reaches into lines 1 and 2
+  Expect(microide::editor::DeleteLine(viewport),
+         "Delete Line over a two-line selection must report an edit");
+  Expect(viewport.lines().size() == 3 && viewport.lines()[0] == "one" &&
+             viewport.lines()[1] == "four" && viewport.lines()[2].empty(),
+         "both selected lines go, and only those");
+  Expect(!viewport.has_selection(),
+         "the selection named lines that no longer exist and must not survive");
+}
+
+// A selection ending at column 0 has not reached into that line, which is what
+// makes a whole-line drag of N lines delete N and not N+1 (the RangeForCaret rule
+// every other line op already honours).
+void TestShapingDeleteLineExcludesALineTheSelectionOnlyTouchesAtColumnZero() {
+  TextViewport viewport;
+  viewport.LoadContent("one\ntwo\nthree\nfour\n", "/tmp/deleteline-boundary.txt");
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);  // whole-line drag of lines 0..1
+  Expect(microide::editor::DeleteLine(viewport),
+         "Delete Line over a whole-line drag must report an edit");
+  Expect(viewport.lines().size() == 3 && viewport.lines()[0] == "three" &&
+             viewport.lines()[1] == "four" && viewport.lines()[2].empty(),
+         "a drag ending at column 0 of line 2 deletes lines 0 and 1 only");
+}
+
+// A ranged primary plus a bare secondary: the primary contributes BOTH its
+// selected lines, the secondary contributes its own, and the two disjoint blocks
+// go in one undo step. The multi-caret path this replaces contributed one line per
+// caret, so it dropped the primary selection's first line on the floor.
+void TestShapingDeleteLineRemovesEveryRangedCaretsLines() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\nd\ne\n", "/tmp/deleteline-multicaret.txt");
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(1, 1, /*extend_selection=*/true);  // selection over lines 0..1
+  viewport.SetSecondaryCarets({microide::editor::TextPosition{3, 1}});
+  Expect(microide::editor::DeleteLine(viewport),
+         "Delete Line with a ranged primary and a secondary must report an edit");
+  Expect(viewport.lines().size() == 3 && viewport.lines()[0] == "c" &&
+             viewport.lines()[1] == "e" && viewport.lines()[2].empty(),
+         "both selected lines and the secondary caret's line go");
+  Expect(viewport.Undo(), "the disjoint delete must be one undoable step");
+  Expect(viewport.lines().size() == 6 && viewport.lines()[0] == "a" &&
+             viewport.lines()[1] == "b" && viewport.lines()[3] == "d" &&
+             viewport.lines()[4] == "e",
+         "undo restores both deleted blocks");
+}
+
 // TD-2026-08-07-160: the fidelity claim. `ResolveLineRanges` used to widen to
 // min..max over every caret, so a shaping op rewrote every line BETWEEN the
 // carets — Ctrl+/ with carets on lines 10 and 100 commented all 91. VSCode
@@ -2397,6 +2471,14 @@ void RegisterEditorEssentialsTests(std::vector<TestCase>& tests) {
           TestShapingLineOpAppliesOneDocumentSplice);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDown",
           TestShapingMoveLineDown);
+  AddTest(tests, "EditorEssentials/Shaping/DeleteLineRemovesEverySelectedLine",
+          TestShapingDeleteLineRemovesEverySelectedLine);
+  AddTest(tests, "EditorEssentials/Shaping/DeleteLineRemovesOnlyTheTouchedLines",
+          TestShapingDeleteLineRemovesOnlyTheTouchedLines);
+  AddTest(tests, "EditorEssentials/Shaping/DeleteLineExcludesColumnZeroBoundary",
+          TestShapingDeleteLineExcludesALineTheSelectionOnlyTouchesAtColumnZero);
+  AddTest(tests, "EditorEssentials/Shaping/DeleteLineRemovesEveryRangedCaretsLines",
+          TestShapingDeleteLineRemovesEveryRangedCaretsLines);
   AddTest(tests, "EditorEssentials/Shaping/MoveLineDownKeepsWholeLineSelection",
           TestShapingMoveLineDownKeepsWholeLineSelection);
   AddTest(tests, "EditorEssentials/Shaping/MultiCaretOpsDoNotTouchLinesBetweenCarets",
