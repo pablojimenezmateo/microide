@@ -14,7 +14,10 @@
 #include <cstring>
 #include <optional>
 
+#include <type_traits>
+
 #include "render/AsciiGlyphAtlas.h"
+#include "render/SurfaceTextureCache.h"
 #include "render/GlyphSurfaceFormat.h"
 #include "render/PixelAlign.h"
 #include "render/TextRenderer.h"
@@ -41,6 +44,25 @@
 #endif
 
 namespace microide::tests {
+
+// Every class in src/render that owns a raw SDL/TTF handle must be non-copyable:
+// the implicit copy constructor duplicates the handle (double free on the second
+// destructor) and, for the two glyph caches, also duplicates an INTRUSIVE LRU
+// whose links point into the SOURCE object's map nodes -- the shape that shipped
+// as a use-after-free in the editor's visible-line layout cache
+// (TD-2026-09-07-291). Five of the six deleted the copy; SdlTtfTextBackend was
+// the exception, and a static_assert is the right enforcement because a copy of
+// any of them must not compile in the first place.
+static_assert(!std::is_copy_constructible_v<microide::render::SdlTtfTextBackend>,
+              "SdlTtfTextBackend owns SDL/TTF handles and an intrusive LRU: copying it "
+              "double-frees the handles and strands the LRU in the source's map nodes");
+static_assert(!std::is_copy_assignable_v<microide::render::SdlTtfTextBackend>,
+              "SdlTtfTextBackend must not be copy-assignable either");
+static_assert(!std::is_copy_constructible_v<microide::render::AsciiGlyphAtlas>,
+              "AsciiGlyphAtlas owns an SDL_Texture");
+static_assert(!std::is_copy_constructible_v<microide::render::SurfaceTextureCache>,
+              "SurfaceTextureCache owns SDL_Textures and must stay non-copyable");
+
 
 struct TextRendererTestAccess {
   static void SetBackend(microide::render::TextRenderer& renderer,

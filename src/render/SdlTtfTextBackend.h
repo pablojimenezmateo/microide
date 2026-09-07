@@ -26,6 +26,21 @@ class SdlTtfTextBackend final : public TextRendererBackend {
   static std::unique_ptr<SdlTtfTextBackend> Create(SDL_Renderer* renderer);
   ~SdlTtfTextBackend() override;
 
+  // Non-copyable, stated rather than inherited. It already was -- the
+  // `std::unique_ptr<AsciiGlyphAtlas>` member deletes the implicit copy -- but
+  // that is incidental, and this is the one class in the directory where the
+  // incidental version is not good enough: besides the SDL_Texture and TTF_Font
+  // handles a copy would double-free, the glyph cache is an INTRUSIVE LRU
+  // (`lru_head_`/`lru_tail_` and every entry's `lru_prev`/`lru_next`/`key` point
+  // into this object's own map nodes). A copy would carry those into the SOURCE's
+  // nodes and write through them on its next eviction -- the use-after-free the
+  // editor's visible-line layout cache shipped with (TD-2026-09-07-291). Turning
+  // that member into a shared_ptr is an ordinary refactor and would silently make
+  // this copyable again; the four siblings in this directory
+  // (AsciiGlyphAtlas, SurfaceTextureCache, ScopedRenderClip, SceneTexturePresenter)
+  // all say it outright, and TextRendererTests static_asserts it.
+  SdlTtfTextBackend& operator=(const SdlTtfTextBackend&) = delete;
+
   const char* Name() const override { return "sdl3_ttf"; }
   void SetPresentationScale(float scale_x, float scale_y) override;
   void SetFontPointSize(float points) override;
