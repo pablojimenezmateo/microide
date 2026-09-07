@@ -6,10 +6,12 @@
 
 #include <cmath>
 #include <cstddef>
+#include <cstring>
 #include <cstdint>
 #include <filesystem>
 #include <optional>
 #include <span>
+#include <string>
 #include <string_view>
 #include <system_error>
 #include <vector>
@@ -53,6 +55,203 @@ PersistedRecordReadResult ReadRecordOrFail(const std::filesystem::path& path,
   Expect(result.has_value(), std::string(context) + ": read should succeed");
   Expect(error == PersistedRecordReaderError::None, std::string(context) + ": read error mismatch");
   return *result;
+}
+
+// Property: the primitive codec round-trips exactly, and a truncated buffer is
+// always rejected rather than partly believed.
+//
+// The tests around this one drive whole records through the file layer (header,
+// CRC, backup, crash-recovery). The layer UNDER that — the little-endian
+// primitives every persisted struct is built from — is only ever exercised
+// through whichever fields the higher-level records happen to use, so a type or
+// an input shape no current record contains has no coverage at all. That matters
+// most for the shapes a hand-rolled codec gets wrong: a string with an embedded
+// NUL, a non-UTF-8 byte, a length that is exactly the remaining buffer, a
+// negative integer, ±0.0.
+//
+// Two properties over a randomized value sequence:
+//   * every value reads back identical, in order; and
+//   * for EVERY truncation of the buffer, the same read sequence fails — a codec
+//     that forgets one bounds check reads a value out of bytes that are not there
+//     and silently returns a wrong one, which is the failure this exists to catch.
+
+struct PersistedValue {
+  enum class Kind { U8, U16, U32, I32, I64, U64, F32, Bool, String, Path } kind;
+  std::uint64_t integer = 0;
+  float real = 0.0f;
+  bool boolean = false;
+  std::string text;
+};
+
+std::string GeneratePersistedString(std::size_t choice, std::size_t length) {
+  switch (choice % 7) {
+    case 0: return {};
+    case 1: return "plain";
+    case 2: return std::string("embedded\0null", 13);   // NUL is content, not a terminator
+    case 3: return "\xff\xfe invalid utf8 \x80";        // arbitrary bytes must survive
+    case 4: return "\xc3\xa9\xe4\xb8\xad\xf0\x9f\x98\x80";  // é 中 emoji
+    case 5: return std::string(length % 300, 'x');      // spans the length-prefix path
+    default: return "a/b\\c:d";                          // separator-ish, for paths
+  }
+}
+
+std::vector<PersistedValue> GeneratePersistedValues(std::uint64_t& seed, std::size_t count) {
+  const auto next = [&seed]() {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<std::size_t>(seed >> 33);
+  };
+  static const float kFloats[] = {0.0f, -0.0f, 1.0f, -1.0f, 3.5f, 1e-38f, 3.4e38f, -2.5e-7f};
+  std::vector<PersistedValue> values;
+  values.reserve(count);
+  for (std::size_t i = 0; i < count; ++i) {
+    PersistedValue value;
+    value.kind = static_cast<PersistedValue::Kind>(next() % 10);
+    value.integer = (static_cast<std::uint64_t>(next()) << 31) ^ next();
+    value.real = kFloats[next() % (sizeof(kFloats) / sizeof(kFloats[0]))];
+    value.boolean = (next() % 2) == 0;
+    value.text = GeneratePersistedString(next(), next());
+    values.push_back(std::move(value));
+  }
+  return values;
+}
+
+void WritePersistedValues(microide::persistence::PrimitiveWriter& writer,
+                          const std::vector<PersistedValue>& values,
+                          bool* ok) {
+  for (const PersistedValue& value : values) {
+    switch (value.kind) {
+      case PersistedValue::Kind::U8:
+        *ok = *ok && writer.WriteU8(static_cast<std::uint8_t>(value.integer));
+        break;
+      case PersistedValue::Kind::U16:
+        *ok = *ok && writer.WriteU16(static_cast<std::uint16_t>(value.integer));
+        break;
+      case PersistedValue::Kind::U32:
+        *ok = *ok && writer.WriteU32(static_cast<std::uint32_t>(value.integer));
+        break;
+      case PersistedValue::Kind::I32:
+        *ok = *ok && writer.WriteI32(static_cast<std::int32_t>(value.integer));
+        break;
+      case PersistedValue::Kind::I64:
+        *ok = *ok && writer.WriteI64(static_cast<std::int64_t>(value.integer));
+        break;
+      case PersistedValue::Kind::U64:
+        *ok = *ok && writer.WriteU64(value.integer);
+        break;
+      case PersistedValue::Kind::F32:
+        *ok = *ok && writer.WriteF32(value.real);
+        break;
+      case PersistedValue::Kind::Bool:
+        *ok = *ok && writer.WriteBool(value.boolean);
+        break;
+      case PersistedValue::Kind::String:
+        *ok = *ok && writer.WriteString(value.text);
+        break;
+      case PersistedValue::Kind::Path:
+        *ok = *ok && writer.WritePath(std::filesystem::path(value.text));
+        break;
+    }
+  }
+}
+
+// Reads the sequence back. `strict` compares every value; without it the caller
+// only cares whether the whole sequence could be read at all.
+bool ReadPersistedValues(std::span<const std::byte> bytes,
+                         const std::vector<PersistedValue>& values,
+                         bool strict) {
+  microide::persistence::PrimitiveReader reader(bytes);
+  for (const PersistedValue& value : values) {
+    switch (value.kind) {
+      case PersistedValue::Kind::U8: {
+        std::uint8_t read = 0;
+        if (!reader.ReadU8(&read)) return false;
+        if (strict && read != static_cast<std::uint8_t>(value.integer)) return false;
+        break;
+      }
+      case PersistedValue::Kind::U16: {
+        std::uint16_t read = 0;
+        if (!reader.ReadU16(&read)) return false;
+        if (strict && read != static_cast<std::uint16_t>(value.integer)) return false;
+        break;
+      }
+      case PersistedValue::Kind::U32: {
+        std::uint32_t read = 0;
+        if (!reader.ReadU32(&read)) return false;
+        if (strict && read != static_cast<std::uint32_t>(value.integer)) return false;
+        break;
+      }
+      case PersistedValue::Kind::I32: {
+        std::int32_t read = 0;
+        if (!reader.ReadI32(&read)) return false;
+        if (strict && read != static_cast<std::int32_t>(value.integer)) return false;
+        break;
+      }
+      case PersistedValue::Kind::I64: {
+        std::int64_t read = 0;
+        if (!reader.ReadI64(&read)) return false;
+        if (strict && read != static_cast<std::int64_t>(value.integer)) return false;
+        break;
+      }
+      case PersistedValue::Kind::U64: {
+        std::uint64_t read = 0;
+        if (!reader.ReadU64(&read)) return false;
+        if (strict && read != value.integer) return false;
+        break;
+      }
+      case PersistedValue::Kind::F32: {
+        float read = 0.0f;
+        if (!reader.ReadF32(&read)) return false;
+        // Bit-exact: -0.0 and 0.0 compare equal as floats, and this codec must
+        // preserve the sign of zero like every other bit.
+        if (strict && std::memcmp(&read, &value.real, sizeof(float)) != 0) return false;
+        break;
+      }
+      case PersistedValue::Kind::Bool: {
+        bool read = false;
+        if (!reader.ReadBool(&read)) return false;
+        if (strict && read != value.boolean) return false;
+        break;
+      }
+      case PersistedValue::Kind::String: {
+        std::string read;
+        if (!reader.ReadString(&read)) return false;
+        if (strict && read != value.text) return false;
+        break;
+      }
+      case PersistedValue::Kind::Path: {
+        std::filesystem::path read;
+        if (!reader.ReadPath(&read)) return false;
+        if (strict && read != std::filesystem::path(value.text)) return false;
+        break;
+      }
+    }
+  }
+  return true;
+}
+
+void TestPrimitiveCodecRoundTripsAndRejectsTruncation() {
+  std::uint64_t seed = 0xB5026F5AA96619E9ULL;
+  std::size_t truncations_checked = 0;
+  for (int iteration = 0; iteration < 60; ++iteration) {
+    const std::vector<PersistedValue> values = GeneratePersistedValues(seed, 1 + iteration % 12);
+    std::vector<std::byte> bytes;
+    microide::persistence::PrimitiveWriter writer(&bytes);
+    bool ok = true;
+    WritePersistedValues(writer, values, &ok);
+    Expect(ok, "writing generated primitives must succeed");
+    Expect(ReadPersistedValues(bytes, values, /*strict=*/true),
+           "every primitive must read back exactly as written");
+
+    // Every strict prefix must be rejected. A missing bounds check shows up here
+    // as a read that succeeds off the end of the buffer.
+    for (std::size_t length = 0; length < bytes.size(); ++length) {
+      Expect(!ReadPersistedValues(std::span<const std::byte>(bytes.data(), length), values,
+                                  /*strict=*/false),
+             "a truncated buffer must be rejected, never partly believed");
+      ++truncations_checked;
+    }
+  }
+  Expect(truncations_checked > 2000, "the sweep must actually have truncations to check");
 }
 
 void TestPersistedRecordWriterRoundTripsWithAtomicBackupFlow() {
@@ -500,6 +699,8 @@ void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests) {
           TestPersistedRecordReaderIgnoresUnrenamedTempPayloadAfterSimulatedCrash);
   AddTest(tests, "PersistedRecordIo/ReaderRejectsUnsupportedVersionEvenWithValidCrc",
           TestPersistedRecordReaderRejectsUnsupportedVersionEvenWithValidCrc);
+  AddTest(tests, "PersistedRecordIo/PrimitiveCodecRoundTripsAndRejectsTruncation",
+          TestPrimitiveCodecRoundTripsAndRejectsTruncation);
 }
 
 }  // namespace microide::tests
