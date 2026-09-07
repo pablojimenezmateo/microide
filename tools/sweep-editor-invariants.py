@@ -15,6 +15,8 @@ deliberately changed:
                 comment toggles applied twice (conditioned on the first one
                 applying, because at a buffer edge it correctly does nothing)
     idempotent  sorting an already-sorted buffer changes nothing
+    read-only   a navigation, folding or view-setting verb changes no byte of the
+                buffer at all
     non-vacuous every command must have moved a byte in at least one probe, or
                 the properties above passed without testing anything
 
@@ -247,6 +249,54 @@ EDIT_COMMANDS: list[tuple[str, str, str | None, bool]] = [
 ]
 
 
+# Verbs that read, navigate, fold, or flip a view setting. NONE of them may change
+# a byte of the buffer, so "the file is identical after running it" is a contract
+# with no model attached — and a broad one, since a navigation or folding command
+# that edits the text would be a serious defect that no property above would see.
+#
+# Deliberately excluded: anything that moves the active tab or group (`split-*`,
+# `close-group`, `tabswitch`, `term`, focus moves) — the `save` that follows would
+# then be saving a different buffer, and "the file did not change" would be true
+# for the wrong reason. Overlay openers are excluded for the same reason.
+READ_ONLY_COMMANDS = [
+    "goto 2:2", "jump 3", "jump-to-matching-bracket",
+    "search alpha", "find-next", "find-previous",
+    "select-all", "add-cursor-all-matches", "add-cursor-next-match",
+    "fold", "unfold", "fold-all", "unfold-all", "toggle-fold",
+    "wrap", "tab-size 4", "indent-width 4", "soft-tabs",
+    "copy",
+    "sidebar-toggle", "status-bar-toggle", "tree", "tree-refresh", "git-refresh",
+    "next-diagnostic", "previous-diagnostic",
+    "code-actions", "completion", "signature-help", "workspace-symbol",
+    "colorscheme list", "toggle-theme", "layout-mode-toggle", "reveal-in-tree",
+]
+
+
+def check_read_only(driver: Driver, path: Path, original: str, command: str,
+                    failures: list[str], accepted: set[str]) -> None:
+    """A read-only verb leaves the file byte-identical."""
+    reply = run_case_reply(driver, path, original, command)
+    if reply.get("ok"):
+        accepted.add(command)
+    after = path.read_text()
+    if after == original:
+        return
+    failures.append(
+        f"READ-ONLY {command}: changed {path.name}, which no navigation, folding "
+        f"or view-setting verb may do\n{diff(original, after)}")
+
+
+def run_case_reply(driver: Driver, path: Path, original: str, command: str) -> dict:
+    path.write_text(original)
+    open_reply = driver.command(f"open {path}")
+    if not open_reply.get("ok"):
+        raise Failure(f"`open {path.name}` was refused: "
+                      f"{open_reply.get('error') or open_reply.get('feedback')!r}")
+    reply = driver.command(command)
+    driver.command("save")
+    return reply
+
+
 def check_undo(driver: Driver, path: Path, original: str, prefix: list[str],
                command: str, label: str, failures: list[str], effect: Effect,
                max_undo: int = 8) -> None:
@@ -387,12 +437,21 @@ def sweep(open_session, project: Path, only: str | None,
           verbose: bool = False) -> list[str]:
     failures: list[str] = []
     effect = Effect()
+    accepted_read_only: set[str] = set()
     case_index = 0
     for fixture_name, original in FIXTURES.items():
         # A fresh instance per fixture. One case is one `open`, and a full run is
         # well past `kMaxOpenTabsPerGroup` (512) -- past which the group has no
         # room and every later case would be measured against a stale tab.
         with open_session() as driver:
+          for command in READ_ONLY_COMMANDS:
+              if only and only not in command:
+                  continue
+              case_index += 1
+              stem = Path(fixture_name).stem
+              suffix = Path(fixture_name).suffix
+              check_read_only(driver, project / f"case{case_index:04d}r_{stem}{suffix}",
+                              original, command, failures, accepted_read_only)
           for caret in CARETS:
               prefix = caret_steps(caret)
               for label, command, inverse, needs_selection in EDIT_COMMANDS:
@@ -421,6 +480,15 @@ def sweep(open_session, project: Path, only: str | None,
         print("inert probes (the command changed nothing):")
         for where in effect.inert:
             print("  " + where)
+    never_accepted = [c for c in READ_ONLY_COMMANDS if c not in accepted_read_only
+                      and not (only and only not in c)]
+    if never_accepted:
+        # Not a failure: several of these legitimately refuse with nothing to act on
+        # (find-next with no seeded search, next-diagnostic with no diagnostics).
+        # Printed so a verb that stopped existing is visible rather than silently
+        # contributing a check that never ran.
+        print("read-only verbs that never reported ok (check they still exist): " +
+              ", ".join(never_accepted))
     print("applied: " + ", ".join(
         f"{name} {effect.applied.get(name, 0)}/{effect.probed[name]}"
         for name in sorted(effect.probed)))

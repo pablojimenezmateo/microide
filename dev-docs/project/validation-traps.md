@@ -1031,8 +1031,9 @@ properties that hold for EVERY command at EVERY caret position and need no model
 the expected output at all: a command followed by `undo` restores the file byte for
 byte; a command that changed the file is undone exactly by its inverse
 (move-line-down/up, indent/outdent, each comment toggle applied twice); sorting an
-already-sorted buffer changes nothing. Every comparison is against the bytes ON DISK
-after a `save`, never the app's own account of its state.
+already-sorted buffer changes nothing; and a navigation, folding or view-setting
+verb changes no byte of the buffer at all. Every comparison is against the bytes ON
+DISK after a `save`, never the app's own account of its state.
 
 The first run found two defects the suite was structurally blind to, both on the
 selection path and both reachable with Ctrl+A and one keystroke:
