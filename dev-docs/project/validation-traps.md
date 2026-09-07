@@ -1081,6 +1081,51 @@ Four things make it work, and dropping any of them makes it prove nothing:
 A fixture per case, freshly written and freshly opened, so the tab under test has
 exactly one edit in its undo history and an `undo` cannot reach across cases.
 
+**Read a stated invariant against the code that claims it.** Grep `src/` for
+comments asserting a rule -- "must never", "can never", "always ... before" -- and
+check every path the rule covers, not the one the comment sits on. Two of this
+sweep's hits were real:
+
+- `TerminalSessionInputEncoding.cpp` opens by saying every text key goes through
+  `util::AppendUtf8` so "an invalid codepoint ... can never send malformed bytes
+  to the child". The Ctrl branch's fallback was `char(codepoint)`, which truncates
+  above U+007F.
+- `SingleLineEditor` says in three places that a single-line surface must never
+  hold CR/LF, and `Insert`/`Append`/`Paste` each sanitize. `SetText` -- the path
+  EXTERNAL text arrives through (a debug adapter's variable value, a persisted
+  commit subject, a stored setting) -- did not.
+
+The shape to look for is a rule enforced at N-1 of its N entry points, and the
+tell is often a CALLER compensating on its own: TerminalFindService truncates its
+search seed at the first newline before calling `SetText`, which is a workaround
+for the missing invariant rather than a feature of the seed.
+
+The same lens applied to two functions in one file: `ControlChannelService::Start`
+hardens the runtime directory with `EnsureSecurePrivateDirectory` before binding,
+and documents why; the self-heal rebind in `ControlSocketServer` recreated that
+directory from the I/O thread with a plain `create_directories` and skipped the
+check entirely.
+
+**Discarded bool results from an operation that can fail.** For each
+`std::function<bool(...)>` operation field and each result-returning context
+method, find the call sites that use it as a statement. Most are fine (a "did
+anything change" flag feeding a redraw), so triage matters -- but two were the
+same real defect: `WorkspaceActionContext::OpenPath` called the void-returning
+`operations_.open_file` and then `return true` unconditionally, and
+`ActionId::Tab` dropped `OpenUntitledTab`'s result while the path branch four
+lines below already rejected on its own failure. Both meant an action reporting
+SUCCESS while the editor stayed on the previously active tab -- so the caller's
+next edit and save landed in a different file than the one it asked to open.
+Reachable by filling an editor group to `kMaxOpenTabsPerGroup` (512).
+
+**Verbs whose usage string declares an optional argument, run with no argument.**
+`grep` the command registry for a usage containing `[`, then run each verb bare
+against the shipped binary. A command-palette row dispatches its ActionId with NO
+arguments, so a verb that rejects its own documented bare form is a row that can
+only ever answer its usage error. Four did: `soft-tabs` (whose exact sibling
+`wrap [on|off]` toggles), `tab-size`, `indent-width` and `ui-scale`. This is the
+same dead-entry shape the bare `open` fix repaired for File > Open File.
+
 **Test comments naming functions that do not exist.** Grep CamelCase identifiers
 followed by `(` inside `//` comments in `tests/`, check each against the tree.
 Found a test claiming to verify `ComputeIdleHint(...)` — a function that exists
