@@ -15,6 +15,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <filesystem>
 #include <iterator>
 #include <regex>
@@ -36,6 +37,204 @@ using microide::project::PatchApplyResultCategory;
 using microide::project::PatchLineSelectionFromModelRows;
 using microide::project::PatchLineSelectionHasChanges;
 using microide::project::PatchOperationKind;
+
+// Differential: every patch this generates is fed to REAL `git apply`.
+//
+// The tests around this one assert on the patch TEXT, which pins the format but
+// cannot say whether git accepts it — and the ways a unified diff goes wrong (an
+// off-by-one in a hunk header's start or count, a context line that does not
+// byte-match the blob, a body that lost a CRLF's `\r`, a missing
+// `\ No newline at end of file`) all produce text that still looks like a patch.
+// git is the only authority on that, so ask it: generate over randomized file
+// pairs, apply each hunk on its own, and check the result against what applying
+// exactly that hunk must produce.
+//
+// The second property is the one the staging flow actually rests on: applying
+// EVERY hunk in order must reproduce the right side exactly.
+
+// The left text with only the rows of `hunk` taken from the right side — what
+// `git apply` of that hunk's patch alone must produce.
+// A patch that empties a file is a DELETION patch (git writes the `/dev/null`
+// header for it), so git removes the path rather than truncating it. Both are
+// "the file now has no content" as far as this check is concerned.
+std::string ReadFileOrEmptyIfDeleted(const std::filesystem::path& path) {
+  return std::filesystem::exists(path) ? ReadFile(path) : std::string{};
+}
+
+std::string ExpectedSingleHunkResult(const CompareModel& model,
+                                     const microide::compare::CompareHunk& hunk) {
+  // Collect the lines each side contributes, then JOIN them. Appending "\n" per
+  // line instead would add a spurious trailing newline, because the model's last
+  // row is the empty line that follows a file's final newline — it is a real line
+  // of the reconstruction, just not one that carries a separator after it.
+  std::vector<std::string_view> lines;
+  for (std::size_t row = 0; row < model.rows.size(); ++row) {
+    const CompareRow& compare_row = model.rows[row];
+    const bool in_hunk = static_cast<int>(row) >= hunk.start_row &&
+                         static_cast<int>(row) <= hunk.end_row;
+    if (in_hunk) {
+      if (compare_row.right_line > 0) {
+        lines.push_back(compare_row.right_text);
+      }
+    } else if (compare_row.left_line > 0) {
+      lines.push_back(compare_row.left_text);
+    }
+  }
+  // JOIN with the side's terminator and add no trailing one. A file that ends with
+  // a newline has a trailing EMPTY row in the model — the line after that newline —
+  // so joining reproduces the terminator; a file that does not end with one has no
+  // such row, and joining correctly leaves the last line bare. Appending a
+  // terminator per line instead would add a spurious one in the first case.
+  //
+  // A CRLF file's rows carry bare text (SplitLineViews strips the ending), so the
+  // terminator has to come from the model's flag rather than from the row.
+  const std::string_view terminator = model.left_uses_crlf ? "\r\n" : "\n";
+  std::string out;
+  for (std::size_t i = 0; i < lines.size(); ++i) {
+    if (i > 0) {
+      out.append(terminator);
+    }
+    out.append(lines[i]);
+  }
+  return out;
+}
+
+// A file pair built to hit the shapes a unified diff gets wrong: runs of equal
+// lines long enough to exercise context trimming, adjacent and separated changes,
+// insertions, and whole-line deletions. The alphabet is small on purpose —
+// repeated lines make the aligner's job real.
+void GenerateComparePair(std::uint64_t& seed, std::string* left, std::string* right) {
+  const auto next = [&seed]() {
+    seed = seed * 6364136223846793005ULL + 1442695040888963407ULL;
+    return static_cast<std::size_t>(seed >> 33);
+  };
+  left->clear();
+  right->clear();
+  // The three shapes a unified diff is most often wrong about, mixed in on
+  // purpose: CRLF (git keeps the `\r` in the blob, so every body line of the
+  // patch must carry it), no trailing newline (the `\ No newline at end of file`
+  // marker), and an empty side (a `/dev/null` creation or deletion header).
+  const bool crlf = next() % 5 == 0;
+  const bool left_final_newline = next() % 4 != 0;
+  const bool right_final_newline = next() % 4 != 0;
+  const std::string_view terminator = crlf ? "\r\n" : "\n";
+  std::vector<std::string> left_lines;
+  std::vector<std::string> right_lines;
+  const std::size_t line_count = 1 + next() % 30;
+  for (std::size_t i = 0; i < line_count; ++i) {
+    const std::string line = "line" + std::to_string(next() % 6) + "_" + std::to_string(i % 4);
+    left_lines.push_back(line);
+    switch (next() % 6) {
+      case 0:  // delete
+        break;
+      case 1:  // modify
+        right_lines.push_back(line + "_edited");
+        break;
+      case 2:  // insert before, then keep
+        right_lines.push_back("inserted" + std::to_string(next() % 5));
+        right_lines.push_back(line);
+        break;
+      default:  // keep
+        right_lines.push_back(line);
+        break;
+    }
+  }
+  const auto join = [&](const std::vector<std::string>& lines, bool final_newline,
+                        std::string* out) {
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+      out->append(lines[i]);
+      if (i + 1 < lines.size() || final_newline) {
+        out->append(terminator);
+      }
+    }
+  };
+  join(left_lines, left_final_newline, left);
+  join(right_lines, right_final_newline, right);
+}
+
+void TestGeneratedPatchesApplyWithRealGit() {
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "seed.txt", "seed\n");
+  CommitAll(repo_path, "seed", "seed");
+
+  const std::filesystem::path target = repo_path / "f.txt";
+  const std::filesystem::path patch_path = temp_dir.path() / "generated.patch";
+  std::uint64_t seed = 0x9E3779B97F4A7C15ULL;
+  std::size_t applied_hunks = 0;
+  std::size_t full_applies = 0;
+
+  for (int iteration = 0; iteration < 120; ++iteration) {
+    std::string left;
+    std::string right;
+    GenerateComparePair(seed, &left, &right);
+    if (left == right) {
+      continue;
+    }
+    const CompareModel model = BuildCompareModel(left, right);
+    if (model.hunks.empty()) {
+      continue;
+    }
+
+    // One hunk at a time: each patch must apply to the pristine left side and
+    // produce exactly that hunk's change and nothing else.
+    for (const microide::compare::CompareHunk& hunk : model.hunks) {
+      const auto patch = GenerateComparePatch(model, "f.txt", hunk.index);
+      if (!patch.has_value()) {
+        continue;  // over the byte budget; nothing to check
+      }
+      WriteFile(target, left);
+      WriteFile(patch_path, *patch);
+      Expect(RunGitCommand(repo_path, {"apply", "--check", patch_path.string()}) == 0,
+             "git apply --check must accept a generated hunk patch");
+      Expect(RunGitCommand(repo_path, {"apply", patch_path.string()}) == 0,
+             "git apply must apply a generated hunk patch");
+      if (ReadFileOrEmptyIfDeleted(target) != ExpectedSingleHunkResult(model, hunk)) {
+        // A randomized failure is unactionable without its inputs, and these are
+        // small by construction, so print the case rather than just the verdict.
+        std::fprintf(stderr,
+                     "hunk %d of %zu (rows %d..%d)\n--- LEFT ---\n%s\n--- RIGHT ---\n%s\n"
+                     "--- PATCH ---\n%s\n--- GIT PRODUCED ---\n%s\n--- EXPECTED ---\n%s\n",
+                     hunk.index, model.hunks.size(), hunk.start_row, hunk.end_row, left.c_str(),
+                     right.c_str(), patch->c_str(), ReadFileOrEmptyIfDeleted(target).c_str(),
+                     ExpectedSingleHunkResult(model, hunk).c_str());
+        Expect(false, "applying one hunk must change exactly that hunk's lines");
+      }
+      ++applied_hunks;
+    }
+
+    // Every hunk in order reproduces the right side — the property the whole
+    // stage-hunk-by-hunk flow rests on. Each hunk's patch is generated against
+    // the ORIGINAL left, so the later ones must still apply once earlier ones
+    // have shifted the line numbers; that is what git's offset search is for,
+    // and what a real staging run does.
+    WriteFile(target, left);
+    bool all_applied = true;
+    for (const microide::compare::CompareHunk& hunk : model.hunks) {
+      const auto patch = GenerateComparePatch(model, "f.txt", hunk.index);
+      if (!patch.has_value()) {
+        all_applied = false;
+        break;
+      }
+      WriteFile(patch_path, *patch);
+      if (RunGitCommand(repo_path, {"apply", patch_path.string()}) != 0) {
+        all_applied = false;
+        break;
+      }
+    }
+    if (all_applied) {
+      Expect(ReadFileOrEmptyIfDeleted(target) == right,
+             "applying every hunk must reproduce the right side exactly");
+      ++full_applies;
+    }
+  }
+
+  // Guard against the whole test silently generating nothing to check.
+  Expect(applied_hunks >= 100,
+         "the generator must produce a substantial number of applicable hunks");
+  Expect(full_applies >= 20, "and a substantial number of complete applies");
+}
 
 void TestPatchGeneratorProducesUnifiedDiff() {
   const CompareModel model = BuildCompareModel("alpha\n", "alpha\nbeta\n");
@@ -1327,6 +1526,8 @@ void RegisterPatchApplyTests(std::vector<TestCase>& tests) {
   tests.push_back({"PatchApply/RequestDoesNotCopyModel", TestPatchApplyRequestDoesNotCopyModel});
   tests.push_back({"PatchApply/LineScopeExcludesExclusiveEndLine",
                    TestPatchLineScopeSelectionExcludesExclusiveEndLine});
+  tests.push_back({"PatchApply/GeneratedPatchesApplyWithRealGit",
+                   TestGeneratedPatchesApplyWithRealGit});
 }
 
 }  // namespace microide::tests

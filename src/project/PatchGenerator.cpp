@@ -402,10 +402,33 @@ std::optional<std::string> BuildUnifiedPatch(const compare::CompareModel& model,
       is_new_file ? 0
       : old_range_count == 0 ? PrecedingSideLine(model, start_row, false)
                              : FirstPatchLineNumber(model, start_row, end_row, false);
+  // The post-image start is derived from the PRE-image start, not read off the
+  // model's right side.
+  //
+  // Every patch this function emits is a SINGLE hunk applied on its own — staging
+  // or discarding one hunk, or copying one to the clipboard — so by the time this
+  // hunk is reached nothing before it has changed and the post-image line number
+  // equals the pre-image one. The model's right-side number is the position the
+  // line has once EVERY hunk of the diff is applied, which for hunk N>0 is off by
+  // the net line delta of hunks 0..N-1.
+  //
+  // That is not cosmetic: `git apply` starts its search for a hunk at the
+  // POST-image line, not the pre-image one, and walks outward from there. On a
+  // file with repeating content the first match it finds from the wrong starting
+  // point is the wrong occurrence — it reports "Hunk #1 succeeded at 9 (offset 2
+  // lines)" and stages a different part of the file than the one the user picked.
+  // Found by generating over randomized file pairs and applying each hunk with
+  // real git (PatchApply/GeneratedPatchesApplyWithRealGit).
+  //
+  // The zero-count forms follow git's own `-L,0` / `+M,0` convention: a pure
+  // insertion is `-L,0 +L+1,N` (the new lines land after old line L) and a pure
+  // deletion is `-L,N +L-1,0` (the last surviving line before them).
   const int new_range_start =
       is_deleted_file ? 0
-      : new_range_count == 0 ? PrecedingSideLine(model, start_row, true)
-                             : FirstPatchLineNumber(model, start_row, end_row, true);
+      : is_new_file   ? 1
+      : old_range_count == 0 ? old_range_start + 1
+      : new_range_count == 0 ? (old_range_start > 0 ? old_range_start - 1 : 0)
+                             : old_range_start;
 
   const std::string path = relative_path.generic_string();
   const std::string a_path = QuoteGitHeaderPath("a/", path);
