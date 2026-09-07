@@ -1,6 +1,7 @@
 # MicroIDE Known Tech Debt
 
-Reviewed 2026-09-07 (see § TD-2026-09-07-291 for that pass: a heap-use-after-free
+Reviewed 2026-09-07 (§ TD-2026-09-07-292 for the systematic subsystem sweep, and
+§ TD-2026-09-07-291 for the pass before it: a heap-use-after-free
 in the editor's layout cache that only the whole shell could reach, and the review
 verbs' per-file git spawns). The 2026-08-13 review below is kept for its finding.
 
@@ -392,6 +393,95 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-09-07-292 — the systematic subsystem sweep: one shape (`exists()` / lexical containment answers about the TARGET, not the ENTRY) accounted for four of the six findings. [RESOLVED same session — open remainder: two platform notes below.]
+
+A pass structured as "every subsystem, by a different technique each time, until three
+in a row come back clean" rather than by hunch. Techniques rotated: mechanical N-of-N
+sweeps, differential/oracle tests, deep reads, fuzzing. The N-of-N sweeps are what made
+it efficient — six of them ran over the whole tree at once, and each one either found
+its bug immediately or cleared every subsystem in one pass.
+
+**The finding that repaid the most: one shape, four places.** `std::filesystem::exists()`
+and a lexical path-prefix check both answer about what a path POINTS AT. Every one of
+these was asking about the directory ENTRY, and a symlink separates the two.
+
+- **`MovePath` deleted a dangling symlink it found at the destination.** The
+  cross-device fallback is copy-then-remove, so it records whether the destination
+  pre-existed and rolls back only when it did not — the rule being that a move which
+  fails is a no-op. `exists()` follows the link, so a dangling destination symlink read
+  as "did not pre-exist" and the rollback deleted it. `MovePathNoOverwrite`, ten lines
+  below, already used `symlink_status` and cited TD-2026-07-17A-132 for it.
+- **A dangling symlink in the trash slot failed the delete instead of retrying.** The
+  final move refuses such a slot (it classifies by node); the retry test used `exists()`
+  and reported the slot free, so the two disagreed and the delete gave up rather than
+  taking the next suffix.
+- **A theme `include` could name a path outside the theme directory.** `theme_directory
+  / name` — and `operator/` REPLACES the whole path when `name` is absolute, with
+  nothing rejecting `..`. A shared or downloaded `.microide` file could pull in any
+  `*.microide` on the filesystem. It also repaired the include-cycle guard, which keys
+  on the file STEM: an identity only while every candidate lives in one directory.
+- **A language server could write outside the project through a symlink.** Both
+  containment checks on server-initiated workspace edits were purely lexical, while
+  their own comments state the threat model. A symlink INSIDE the project pointing out
+  of it is spelled entirely within the root, and the disk applier reuses the editor's
+  atomic save, which deliberately resolves the symlink and overwrites its TARGET. A
+  create through a symlinked parent escaped the same way. `plugin::path_interop::
+  ContainPath` already documents and applies the two-tier (lexical + `weakly_canonical`,
+  fail-closed) check for plugin paths; the LSP surface had only tier one. It is
+  `util::PathEqualsOrWithinResolvingSymlinks` now, shared.
+
+**The other two findings.**
+
+- **A staged hunk could land on the wrong part of a file.** Every patch
+  `PatchGenerator` emits is a single hunk applied on its own, but its `@@` header took
+  the post-image start off the model's right side — the position that line has once
+  EVERY hunk is applied. `git apply` starts its search at the POST-image line and walks
+  outward, so on a file with repeating content it found the wrong occurrence, said so
+  ("Hunk #1 succeeded at 9 (offset 2 lines)"), and staged a different part of the file.
+  Found by generating file pairs and applying each hunk with real git.
+- **A dead ternary** (`root_ = nodes_.empty() ? 0 : 0`) in `EditorSplitTree::Rebuild`,
+  from a broad warning sweep. `-Wduplicated-branches` is permanent on the production
+  targets now, which needed `third_party/stb` moved to a SYSTEM include (35 of the 133
+  warnings that sweep produced were stb's, 15 of them this flag).
+
+**What the sweeps cleared.** `.substr(` offset arithmetic (331 sites), `.back()/.front()`
+emptiness (334), unsigned `size() -` underflow (194 candidates), dangerous/non-reentrant
+C APIs (zero hits), discarded `std::error_code`s (194 filesystem calls, 12 unconsulted
+and all of them best-effort cleanup), and `<path> / <variable>` joins (74). Lifetime
+analyses (`-Wuse-after-free=3`, `-Wdangling-pointer=2`, `-Wdangling-reference`) found
+nothing — worth recording next to the layout-cache use-after-free of TD-291, because
+they do not see across a copy constructor into a container's nodes.
+
+**Coverage added where a subsystem had no differential evidence.** JSON reformatting is
+semantics-preserving over 400 generated documents; the persisted-record primitives
+round-trip and reject every truncation (~2,500 per run); a control response survives its
+own wire format and the request parser is total over 2,000 generated lines; JSON-RPC
+framing is independent of where the reads split; the dirty-region merge covers every
+damaged pixel; `.editorconfig` has a fuzz target (342k execs clean) because it comes out
+of the opened repository. Each was vacuity-checked by breaking the thing it tests.
+
+#### Deliberate non-defects, recorded so they are not re-litigated
+
+- **`workspace.open_file` is deliberately NOT containment-checked.** A plugin can open
+  any readable file into the editor. This is not the same hole as the LSP one: the
+  buffer table hands a plugin `path`/`name`/`relative_path` and no text, `files.read_text`
+  and `files.write_text` are contained by an explicit FsAccess level, and a plugin
+  cannot save. Containing it would break the documented case — a definition provider
+  jumping into a system header outside the project.
+- **The file manager's create/rename destination check stays lexical.** It exists to stop
+  a typed `../../x`, and the user creating a file inside a symlinked subdirectory of
+  their own project is a workflow, not an escape.
+
+#### TD-2026-09-07-292a — two platform `exists()` instances left alone. [OPEN — minor]
+
+`Trash.cpp`'s `UniquePathInDirectory` (macOS-only, under `#if defined(__APPLE__)`) picks
+a free trash name with `exists()`, so a dangling link there reads as free. Untestable on
+this platform; per the platform WON'T-DO policy it is recorded rather than blind-edited.
+And `GitRepository::Discard`'s directory-refusal gate fails OPEN on a `symlink_status`
+error (`file_type::none` is not a directory), which is backstopped by the `git clean -f`
+without `-d` that follows — a fix wants a test that induces a stat error, which is
+awkward to write without running as a different user.
 
 ### TD-2026-09-07-291 — the 2026-09-07 pass: a use-after-free the whole shell was needed to reach, and the review verbs' per-file git spawns. [RESOLVED same session — open remainder zero.]
 
