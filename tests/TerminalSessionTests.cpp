@@ -349,6 +349,35 @@ void SendUnmodified(microide::terminal::TerminalSession& session, KeyPress::Key 
   Expect(session.SendKeyPress(press), "an unmodified functional key should encode to bytes");
 }
 
+// This file's encoder routes every text key through util::AppendUtf8 precisely so
+// a codepoint from SDL or a test seam can never send malformed bytes to the child.
+// The Ctrl branch was the exception: with no control mapping for the key it cast
+// the codepoint to a single char, truncating everything above U+007F -- Ctrl with
+// e-acute held became a lone 0xE9 byte, which is not valid UTF-8. xterm sends the
+// key's own characters when there is no control mapping.
+void TestTerminalSessionCtrlWithoutAControlMappingSendsTheKeysUtf8() {
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+
+  KeyPress press;
+  press.key = KeyPress::Key::Char;
+  press.ctrl = true;
+  press.codepoint = U'\u00e9';  // e-acute: no control mapping
+  Expect(session.SendKeyPress(press), "Ctrl with an unmapped key still encodes to bytes");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == "\xc3\xa9",
+         "an unmapped Ctrl key sends the key's own UTF-8, not its truncated low byte");
+
+  // The mapped rows are unchanged: Ctrl+A is still SOH, and Ctrl with an ASCII key
+  // that has no mapping still sends that character.
+  TerminalSessionTestAccess::Reset(session, 24, 80);
+  press.codepoint = U'a';
+  Expect(session.SendKeyPress(press), "Ctrl+A encodes");
+  press.codepoint = U'1';
+  Expect(session.SendKeyPress(press), "Ctrl+1 encodes");
+  Expect(TerminalSessionTestAccess::SentBytes(session) == std::string("\x01") + "1",
+         "Ctrl+A stays SOH and Ctrl+1 stays '1'");
+}
+
 void TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences() {
   microide::terminal::TerminalSession session;
   TerminalSessionTestAccess::Reset(session, 24, 80);
@@ -2928,6 +2957,8 @@ void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
           TestTerminalSessionPasteFallsBackToRawBytesWhenDisabled);
   AddTest(tests, "TerminalSession/ApplicationCursorKeysSs3Mode",
           TestTerminalSessionApplicationCursorKeysModeUsesSs3Sequences);
+  AddTest(tests, "TerminalSession/CtrlWithoutAControlMappingSendsTheKeysUtf8",
+          TestTerminalSessionCtrlWithoutAControlMappingSendsTheKeysUtf8);
   AddTest(tests, "TerminalSession/NormalCursorKeysCsiMode",
           TestTerminalSessionNormalCursorKeysUseCsiSequences);
   AddTest(tests, "TerminalSession/FocusEventsUseCsiInAndOut",
