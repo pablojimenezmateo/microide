@@ -394,8 +394,18 @@ std::vector<std::filesystem::path> CollectGitCommitChangedFiles(const std::files
   // the real path fail (and the wrong file gets opened/diffed/staged).
   // `--end-of-options` guards a commit_hash that could begin with `-` (matches the
   // `--` discipline used by CollectGitBranchOutgoingFiles/WorkingTreeDiffFiles).
+  // `--root` and `-m --first-parent` are what make the two commits git otherwise
+  // reports as empty reviewable: without `--root` a repository's FIRST commit has
+  // no parent to diff against and diff-tree prints nothing, and without
+  // `-m --first-parent` a MERGE commit prints nothing either (diff-tree suppresses
+  // merges by default). Both cases surfaced as `review-commit <ref>: no changes in
+  // commit` on a commit that plainly changed files. First-parent is the diff every
+  // other reviewer shows for a merge, and it matches the `<ref>~1` left side the
+  // compare tab is opened with. Neither flag changes the output for an ordinary
+  // single-parent commit.
   const auto result = repo.Execute({"diff-tree", "--no-commit-id", "--name-only", "-r", "-z",
-                                    "--end-of-options", std::string(commit_hash)});
+                                    "--root", "-m", "--first-parent", "--end-of-options",
+                                    std::string(commit_hash)});
   if (!result.success() || result.output.empty()) {
     return {};
   }

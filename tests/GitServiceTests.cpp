@@ -988,11 +988,60 @@ void TestGitExplicitRevisionArgsUseEndOfOptions() {
          "file content must round-trip through show at an explicit revision");
 }
 
+// A repository's first commit has no parent, and a merge commit's diff is
+// suppressed by diff-tree's default. Both used to come back as an empty
+// changed-file list, which the review verbs reported as "no changes in commit"
+// for a commit that plainly changed files.
+void TestGitCommitChangedFilesCoversRootAndMergeCommits() {
+  using microide::project::CollectGitCommitChangedFiles;
+
+  TemporaryDirectory temp_dir;
+  const auto repo_path = temp_dir.path() / "repo";
+  InitializeGitRepo(repo_path);
+  WriteFile(repo_path / "root_a.txt", "one\n");
+  WriteFile(repo_path / "root_b.txt", "two\n");
+  CommitAll(repo_path, "root", "root commit");
+
+  const auto root_changed = CollectGitCommitChangedFiles(repo_path, "HEAD");
+  Expect(std::find(root_changed.begin(), root_changed.end(),
+                   std::filesystem::path("root_a.txt")) != root_changed.end() &&
+             std::find(root_changed.begin(), root_changed.end(),
+                       std::filesystem::path("root_b.txt")) != root_changed.end(),
+         "the repository's first commit must list the files it introduced");
+
+  // Branch, diverge on both sides, and merge: the merge's own changed-file list
+  // is its first-parent diff, which is what the review tab's `<ref>~1` left side
+  // compares against.
+  RequireGitCommandSuccess(repo_path, {"checkout", "-q", "-b", "feature"},
+                           "create the feature branch");
+  WriteFile(repo_path / "feature.txt", "feature\n");
+  CommitAll(repo_path, "feature", "feature commit");
+  RequireGitCommandSuccess(repo_path, {"checkout", "-q", "-"},
+                           "return to the mainline branch");
+  WriteFile(repo_path / "root_a.txt", "one changed\n");
+  CommitAll(repo_path, "mainline", "mainline commit");
+  RequireGitCommandSuccess(repo_path, {"merge", "--no-ff", "-m", "merge feature", "feature"},
+                           "merge the feature branch");
+
+  const auto merge_changed = CollectGitCommitChangedFiles(repo_path, "HEAD");
+  Expect(std::find(merge_changed.begin(), merge_changed.end(),
+                   std::filesystem::path("feature.txt")) != merge_changed.end(),
+         "a merge commit must list the files it brought in from the merged side");
+
+  // An ordinary single-parent commit is unaffected by the added flags.
+  const auto feature_changed = CollectGitCommitChangedFiles(repo_path, "feature");
+  Expect(feature_changed.size() == 1 && feature_changed.front() ==
+                                            std::filesystem::path("feature.txt"),
+         "an ordinary commit still lists exactly the paths it touched");
+}
+
 void RegisterGitServiceTests(std::vector<TestCase>& tests) {
   AddTest(tests, "Git/ReadFileAtRevisionSurfacesTruncation",
           TestGitReadFileAtRevisionSurfacesTruncation);
   AddTest(tests, "Git/ExplicitRevisionArgsUseEndOfOptions",
           TestGitExplicitRevisionArgsUseEndOfOptions);
+  AddTest(tests, "Git/CommitChangedFilesCoversRootAndMergeCommits",
+          TestGitCommitChangedFilesCoversRootAndMergeCommits);
   AddTest(tests, "Git/PorcelainParserBoundsHostileStatus",
           TestGitPorcelainParserBoundsHostileStatus);
   AddTest(tests, "Git/PorcelainParserNormalizedRecordMatchesPathWalk",
