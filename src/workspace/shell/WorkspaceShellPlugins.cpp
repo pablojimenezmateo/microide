@@ -28,6 +28,13 @@
 // WorkspaceShell's constructor lives here, so this TU must see the complete type
 // of everything the shell holds by unique_ptr.
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
+#include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceMenuCoordinator.h"
+#include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 

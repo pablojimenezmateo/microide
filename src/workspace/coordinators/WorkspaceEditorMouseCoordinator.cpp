@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
 
 #include <algorithm>
@@ -851,8 +853,11 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
   return true;
 }
 
-EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
-  return EditorMouseCoordinator(
+EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
+  if (editor_mouse_coordinator_ != nullptr) {
+    return *editor_mouse_coordinator_;
+  }
+  editor_mouse_coordinator_ = std::make_unique<EditorMouseCoordinator>(
       context_.current_project_state,
       context_.interaction_state,
       text_renderer_,
@@ -900,6 +905,7 @@ EditorMouseCoordinator WorkspaceShell::MakeEditorMouseCoordinator() {
                     .Execute(ActionId::GoToDefinition, {}, ActionSource::Shortcut);
               },
       });
+  return *editor_mouse_coordinator_;
 }
 
 }  // namespace microide::workspace

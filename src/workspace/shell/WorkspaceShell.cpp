@@ -9,6 +9,13 @@
 #include "workspace/actions/WorkspaceActionCoordinator.h"
 // Completes the types the shell holds by unique_ptr, for ~WorkspaceShell.
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
+#include "workspace/coordinators/WorkspaceChromeMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceMenuCoordinator.h"
+#include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"

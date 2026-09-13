@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/coordinators/WorkspaceMenuCoordinator.h"
 
 #include <algorithm>
@@ -240,8 +242,11 @@ int MenuCoordinator::NextEnabledTreeContextMenuItemIndex(int current_index, int 
   return current_index;
 }
 
-MenuCoordinator WorkspaceShell::MakeMenuCoordinator() {
-  return MenuCoordinator(
+MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
+  if (menu_coordinator_ != nullptr) {
+    return *menu_coordinator_;
+  }
+  menu_coordinator_ = std::make_unique<MenuCoordinator>(
       context_.menu_state,
       MenuCoordinator::Operations{
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
@@ -280,6 +285,7 @@ MenuCoordinator WorkspaceShell::MakeMenuCoordinator() {
                 return ExecuteCommandName(command_name, args, source);
               },
       });
+  return *menu_coordinator_;
 }
 
 }  // namespace microide::workspace

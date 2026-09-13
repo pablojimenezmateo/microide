@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "workspace/ProjectSearchPanelLayout.h"
@@ -10,8 +12,11 @@
 
 namespace microide::workspace {
 
-SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
-  return SidebarMouseCoordinator(
+SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
+  if (sidebar_mouse_coordinator_ != nullptr) {
+    return *sidebar_mouse_coordinator_;
+  }
+  sidebar_mouse_coordinator_ = std::make_unique<SidebarMouseCoordinator>(
       context_.current_project_state, context_.interaction_state,
       SidebarMouseCoordinator::Operations{
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
@@ -110,6 +115,7 @@ SidebarMouseCoordinator WorkspaceShell::MakeSidebarMouseCoordinator() {
                 return ComputeTreeSidebarListLayout(rect, count);
               },
       });
+  return *sidebar_mouse_coordinator_;
 }
 
 }  // namespace microide::workspace

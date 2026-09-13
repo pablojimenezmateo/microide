@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/coordinators/WorkspacePanelMouseCoordinator.h"
 
 #include "util/Parse.h"
@@ -580,14 +582,17 @@ bool PanelMouseCoordinator::HandleMouseCaptureButton(const SDL_Event& event, boo
   return true;
 }
 
-PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
+PanelMouseCoordinator& WorkspaceShell::MakePanelMouseCoordinator() {
+  if (panel_mouse_coordinator_ != nullptr) {
+    return *panel_mouse_coordinator_;
+  }
   // The terminal-panel hooks below construct the service INSIDE the lambda rather
   // than capturing one. TerminalPanelService is nine std::functions -- 288 bytes --
   // so capturing it by value overflows std::function's small-object buffer and
   // heap-allocates a copy PER HOOK, seven times here, every time this coordinator
   // is made. It is made per mouse event. Constructing it inside costs nothing:
   // every one of its own hooks is a bare `this` capture and fits inline.
-  return PanelMouseCoordinator(
+  panel_mouse_coordinator_ = std::make_unique<PanelMouseCoordinator>(
       context_.current_project_state, context_.interaction_state,
       PanelMouseCoordinator::Operations{
           .bottom_panel_visible = [this]() { return BottomPanelVisible(); },
@@ -680,6 +685,7 @@ PanelMouseCoordinator WorkspaceShell::MakePanelMouseCoordinator() {
                 ExecuteCommandName(command, {}, ActionSource::Command, &error_message);
               },
       });
+  return *panel_mouse_coordinator_;
 }
 
 }  // namespace microide::workspace

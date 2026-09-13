@@ -481,7 +481,7 @@ bool WorkspaceShell::HandleMouseMotion(const SDL_Event& event) {
     const Uint64 t2 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     invalidate_blocked_hover_visuals(blocked_hover_visuals);
     const Uint64 t3 = menu_hover_trace ? SDL_GetTicksNS() : 0;
-    auto chrome_coordinator = MakeChromeMouseCoordinator();
+    ChromeMouseCoordinator& chrome_coordinator = MakeChromeMouseCoordinator();
     const Uint64 t4 = menu_hover_trace ? SDL_GetTicksNS() : 0;
     chrome_coordinator.HandleMotion(event, layout);
     const Uint64 t5 = menu_hover_trace ? SDL_GetTicksNS() : 0;
