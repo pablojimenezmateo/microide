@@ -556,6 +556,13 @@
       std::span<const MenuItemSpec> items,
       int active_item_index,
       const SDL_FRect& popup_rect) const;
+  // Fill-in-place form for the paint path, which runs this per open popup per
+  // frame; the value-returning overload heap-allocates a vector each time and
+  // exists for the isolated callers (mouse hit-test, tests) that want one.
+  void ComputeVisiblePopupMenuItemsInto(std::span<const MenuItemSpec> items,
+                                        int active_item_index,
+                                        const SDL_FRect& popup_rect,
+                                        std::vector<VisiblePopupMenuItem>& out) const;
   std::vector<VisiblePopupMenuItem> ComputeVisiblePopupMenuItems(MenuId id,
                                                                  const SDL_FRect& popup_rect) const;
   // The label/accelerator a menu row paints. Both return borrowed views: static registry
@@ -2114,6 +2121,9 @@
   // actually looking at, which is the right answer for a click on a painted row.
   // Not the status bar's probe: that one stays live, and it is what pumps
   // ExpireTrackedLspRequestIfNeeded every frame.
+  // Reused across popups and frames by the menu paint path; see
+  // ComputeVisiblePopupMenuItemsInto. Menu popups paint one at a time.
+  mutable std::vector<VisiblePopupMenuItem> menu_popup_rows_scratch_;
   mutable LspClient::ReadinessSnapshot menu_lsp_readiness_{};
   mutable std::uint64_t menu_lsp_readiness_frame_id_ = 0;
   // `BuildFrameSurface` / `BuildOverlaySurface` are shared across `RenderClip` iterations (partial

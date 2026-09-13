@@ -343,12 +343,13 @@ std::optional<SDL_FRect> WorkspaceShell::PopupRowRectByIndex(
   return MakeRect(row_x, row_y, row_w, height);
 }
 
-std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisiblePopupMenuItems(
+void WorkspaceShell::ComputeVisiblePopupMenuItemsInto(
     std::span<const MenuItemSpec> items,
     int active_item_index,
-    const SDL_FRect& popup_rect) const {
-  std::vector<VisiblePopupMenuItem> visible_items;
-  visible_items.reserve(items.size());
+    const SDL_FRect& popup_rect,
+    std::vector<VisiblePopupMenuItem>& out) const {
+  out.clear();
+  out.reserve(items.size());
   // One availability for the whole popup: it reads the same shell state for every
   // row, and constructing it per row was 26 std::functions per visible row per frame.
   const ActionAvailability availability = MakeActionAvailability();
@@ -359,7 +360,7 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
                                         : kWorkspaceMenuPopupItemHeight;
     const SDL_FRect rect =
         MakeRect(popup_rect.x + 6.0f, y, std::max(0.0f, popup_rect.w - 12.0f), height);
-    visible_items.push_back(VisiblePopupMenuItem{
+    out.push_back(VisiblePopupMenuItem{
         .index = i,
         .rect = rect,
         .enabled = IsMenuItemEnabled(item, availability),
@@ -369,6 +370,14 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
     });
     y += height;
   }
+}
+
+std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisiblePopupMenuItems(
+    std::span<const MenuItemSpec> items,
+    int active_item_index,
+    const SDL_FRect& popup_rect) const {
+  std::vector<VisiblePopupMenuItem> visible_items;
+  ComputeVisiblePopupMenuItemsInto(items, active_item_index, popup_rect, visible_items);
   return visible_items;
 }
 
