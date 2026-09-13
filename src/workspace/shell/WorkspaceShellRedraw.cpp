@@ -326,14 +326,6 @@ void WorkspaceShell::RequestEditorLineRangeRedraw(std::size_t start_line, std::s
   RequestFocusedEditorRedraw();
 }
 
-void WorkspaceShell::RequestEditorLineToBottomRedraw(std::size_t start_line) {
-  if (const auto rect = CurrentEditorLineToBottomRect(start_line); rect.has_value()) {
-    RequestRedrawRect(*rect);
-    return;
-  }
-  RequestFocusedEditorRedraw();
-}
-
 void WorkspaceShell::RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                                        const std::vector<std::string>& after_lines) {
   SyncLspForActiveEditableChange(before_lines, after_lines);
@@ -499,20 +491,6 @@ void WorkspaceShell::RequestCompareRightLineRangeRedraw(std::size_t start_line,
           .value_or(end_model_row - 1) +
       1;
   RequestCompareRowRangeRedraw(start_row, std::max(start_row + 1, end_row));
-}
-
-void WorkspaceShell::RequestCompareRightLineToBottomRedraw(std::size_t start_line) {
-  CompareTabState* compare_tab = ActiveCompareTab();
-  if (compare_tab == nullptr) {
-    RequestFocusedEditorRedraw();
-    return;
-  }
-  // A MODEL row is not a presentation row (a collapsed run or a metadata line
-  // shifts them apart), and RequestCompareRowToBottomRedraw names presentation
-  // rows -- so project it rather than passing the model index through.
-  const std::size_t model_row = CompareRowIndexForRightLine(*compare_tab, start_line);
-  RequestCompareRowToBottomRedraw(
-      compare::ComparePresentationRowForModelRow(compare_tab->presentation, model_row));
 }
 
 void WorkspaceShell::RequestMergeResultLineRangeRedraw(std::size_t start_line,

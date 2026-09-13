@@ -385,10 +385,6 @@ SidebarService WorkspaceShell::MakeSidebarService() {
   return SidebarService(MakeSidebarCoordinator());
 }
 
-void WorkspaceShell::ShowSidebarMode(SidebarMode mode, bool temporary) {
-  MakeSidebarService().ShowMode(mode, temporary);
-}
-
 void WorkspaceShell::ShowTreeSidebar(const std::filesystem::path& root) {
   MakeSidebarService().ShowTree(root);
 }

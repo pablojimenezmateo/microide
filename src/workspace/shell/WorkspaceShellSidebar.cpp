@@ -134,11 +134,6 @@ float WorkspaceShell::GitSidebarListTop(const SDL_FRect& sidebar_rect) const {
          (GitSidebarCommitWorkflowHeight() > 0.0f ? kGitSidebarListGap : 0.0f);
 }
 
-float WorkspaceShell::GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const {
-  return std::max(1.0f, (sidebar_rect.y + sidebar_rect.h - GitSidebarListTop(sidebar_rect)) /
-                            kSidebarRowHeight);
-}
-
 ScrollableListLayout WorkspaceShell::ComputeProjectSearchSidebarListLayout(
     const SDL_FRect& sidebar_rect,
     std::size_t line_count) const {
@@ -357,13 +352,6 @@ std::optional<std::size_t> WorkspaceShell::SelectedGitSidebarLineIndex() const {
 
   return FindSelectedGitSidebarLineIndex(BuildGitSidebarLines(),
                                          context_.current_project_state.sidebar.git.selected_index);
-}
-
-const WorkspaceShell::GitSidebarEntry* WorkspaceShell::SelectedGitSidebarEntry() const {
-  if (context_.current_project_state.sidebar.git.selected_index >= context_.current_project_state.sidebar.git.entries.size()) {
-    return nullptr;
-  }
-  return &context_.current_project_state.sidebar.git.entries[context_.current_project_state.sidebar.git.selected_index];
 }
 
 void WorkspaceShell::SetGitOutgoingBaseChoice(OutgoingBaseChoice choice) {

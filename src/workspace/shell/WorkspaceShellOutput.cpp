@@ -7,10 +7,6 @@
 
 namespace microide::workspace {
 
-const std::vector<WorkspaceOutputChannels::ChannelInfo>& WorkspaceShell::OutputChannels() const {
-  return output_channels_.Channels();
-}
-
 const std::vector<std::string>* WorkspaceShell::OutputChannelEntries(std::string_view id) const {
   return output_channels_.Entries(id);
 }

@@ -129,19 +129,6 @@ void WorkspaceShell::OpenBufferSearch() { OpenBufferSearchSurface(OverlayMode::B
 
 void WorkspaceShell::OpenBufferReplace() { OpenBufferSearchSurface(OverlayMode::BufferReplace); }
 
-void WorkspaceShell::OpenProjectSearch() {
-  if (context_.current_project_state.root.empty()) {
-    return;
-  }
-  context_.current_project_state.overlay.workflow.project_search.query.SetText("");
-  context_.current_project_state.overlay.workflow.project_search.results.clear();
-  ++context_.current_project_state.overlay.workflow.project_search.results_revision;
-  context_.current_project_state.overlay.workflow.project_search.selected_index = 0;
-  context_.current_project_state.overlay.workflow.project_search.replace_text.SetText("");
-  ResetOverlayScroll();
-  ShowSearchSidebar("", true);
-}
-
 void WorkspaceShell::ResetOverlayScroll() {
   context_.current_project_state.overlay.scroll_row = 0;
   RequestOverlayRedraw();
@@ -156,10 +143,6 @@ ScrollableListLayout WorkspaceShell::ComputeOverlayListLayout(const SDL_FRect& o
   return ComputeScrollableListLayout(overlay, overlay.y + OverlayListStartOffset(),
                                      OverlayItemCount(), context_.current_project_state.overlay.scroll_row, 18.0f,
                                      22.0f, 18.0f, 16.0f, 8.0f);
-}
-
-int WorkspaceShell::OverlayVisibleRows(const SDL_FRect& overlay) const {
-  return ComputeOverlayListLayout(overlay).visible_rows;
 }
 
 std::size_t WorkspaceShell::OverlayItemCount() const {

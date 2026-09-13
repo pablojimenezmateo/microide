@@ -591,10 +591,6 @@ void WorkspaceShell::StopAllDebugSessions() {
   RequestWindowRedraw();
 }
 
-void WorkspaceShell::DebugFocusSession(int session_id) {
-  debug_service_.FocusSession(session_id);
-}
-
 void WorkspaceShell::DebugSwitchSession(int index) {
   // index < 0 cycles to the next session; index >= 1 selects a 1-based session.
   if (index < 0) {
@@ -633,7 +629,6 @@ void WorkspaceShell::DebugReverseContinue() { debug_service_.ReverseContinue(); 
 void WorkspaceShell::DebugStepBack() { debug_service_.StepBack(); }
 bool WorkspaceShell::DebugSupportsReverse() const { return debug_service_.SupportsStepBack(); }
 void WorkspaceShell::DebugRestart() { debug_service_.Restart(); }
-void WorkspaceShell::DebugFocusThread(int thread_id) { debug_service_.FocusThread(thread_id); }
 
 void WorkspaceShell::AppendDebugConsoleOutput(int session_id, const std::string& label,
                                               const dap_protocol::DapOutputEvent& output) {

@@ -33,8 +33,6 @@ bool DirtyHintSkips(const std::optional<SDL_FRect>& hint, const SDL_FRect& surfa
 
 }  // namespace
 
-WorkspaceRootView WorkspaceShell::MakeRootView() { return Bootstrapper(*this).BuildRootView(); }
-
 void WorkspaceShell::RenderClip(const FrameToken& frame_token,
                                 SDL_Renderer* renderer,
                                 int width,

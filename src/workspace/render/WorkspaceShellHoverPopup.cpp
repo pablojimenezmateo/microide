@@ -789,29 +789,6 @@ std::optional<WorkspaceShell::EditorBlamePopupLayout> WorkspaceShell::ActiveEdit
   };
 }
 
-SDL_FRect WorkspaceShell::EditorBlamePopupCopyShaHitRect(
-    const EditorBlamePopupLayout& popup) const {
-  return MakeRect(
-      popup.copy_sha_rect.x - kEditorHoverPopupPrimaryActionHitPaddingX,
-      popup.copy_sha_rect.y - kEditorHoverPopupPrimaryActionHitPaddingY,
-      popup.copy_sha_rect.w + kEditorHoverPopupPrimaryActionHitPaddingX * 2.0f,
-      popup.copy_sha_rect.h + kEditorHoverPopupPrimaryActionHitPaddingY * 2.0f);
-}
-
-bool WorkspaceShell::EditorBlamePopupCopyShaHovered(float x, float y) const {
-  return EditorHoverPopupPrimaryActionHovered(x, y);
-}
-
-std::vector<std::string> WorkspaceShell::WrapEditorBlamePopupText(std::string_view text,
-                                                                  float max_width,
-                                                                  std::size_t max_lines) const {
-  return WrapEditorHoverPopupText(text, max_width, max_lines);
-}
-
-void WorkspaceShell::UpdateEditorBlameHover(float x, float y) {
-  UpdateEditorHover(x, y);
-}
-
 void WorkspaceShell::ShowSignatureHelpPopup(std::string signature, std::string documentation) {
   const editor::TextViewport* viewport = ActiveEditableViewport();
   if (viewport == nullptr || viewport->path().empty() || signature.empty()) {

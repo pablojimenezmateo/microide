@@ -115,10 +115,6 @@ EditorTabService WorkspaceShell::MakeEditorTabService() {
   return EditorTabService(MakeTabCoordinator());
 }
 
-std::string WorkspaceShell::ActiveTabTitle() const {
-  return const_cast<WorkspaceShell*>(this)->MakeEditorTabService().ActiveTitle();
-}
-
 bool WorkspaceShell::SaveTab(std::size_t index) {
   std::lock_guard<std::mutex> lock(save_tab_mutex_);
   return MakeEditorTabService().Save(index);

@@ -906,7 +906,6 @@
                                    std::size_t visible_columns) const;
   void ClampMergeHorizontalScroll(MergeTabState& merge_tab, std::size_t visible_columns) const;
   void RevealActiveMergeSelection();
-  std::string ActiveTabTitle() const;
   void OpenComparePicker();
   bool OpenComparePickerForPath(const std::filesystem::path& path,
                                 std::string_view commit_spec = {});
@@ -1071,8 +1070,6 @@
   void ResetMergeHunk();
   void JumpNextUnresolvedMergeConflict();
   void ToggleMergeBasePane();
-  void CopyMergeIncomingSnippet();
-  void CopyMergeCurrentSnippet();
   void MarkMergeResolved();
   void OpenMergeResultFile();
   void MoveFileFinderSelection(int delta);
@@ -1086,7 +1083,6 @@
                           const std::filesystem::path& project_root,
                           bool draw_caret,
                           const editor::DiagnosticsStore& diagnostics_store);
-  void ShowSidebarMode(SidebarMode mode, bool temporary = false);
   void ShowTreeSidebar(const std::filesystem::path& root = {});
   void ShowSearchSidebar(std::string query = {}, bool temporary = false);
   void ShowProblemsSidebar();
@@ -1127,7 +1123,6 @@
   std::vector<std::string> GitSidebarSummaryLines() const;
   float GitSidebarSummaryHeight() const;
   float GitSidebarListTop(const SDL_FRect& sidebar_rect) const;
-  float GitSidebarVisibleUnits(const SDL_FRect& sidebar_rect) const;
   ScrollableListLayout ComputeProjectSearchSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                              std::size_t line_count) const;
   ScrollableListLayout ComputeGitSidebarListLayout(const SDL_FRect& sidebar_rect,
@@ -1146,7 +1141,6 @@
   const std::vector<GitSidebarLine>& BuildGitSidebarLines() const;
   bool ToggleGitSidebarDirectoryCollapsed(const std::string& tree_node_key);
   std::optional<std::size_t> SelectedGitSidebarLineIndex() const;
-  const GitSidebarEntry* SelectedGitSidebarEntry() const;
   void RevealSelectedTreeSidebarLine();
   void RevealSelectedGitSidebarLine();
   void RevealSelectedProblemsSidebarLine();
@@ -1257,12 +1251,6 @@
   void MaybeExpireSignatureHelp();
   void RenderSignatureHelpPopup(SDL_Renderer* renderer) const;
   std::optional<EditorBlamePopupLayout> ActiveEditorBlamePopupLayout() const;
-  SDL_FRect EditorBlamePopupCopyShaHitRect(const EditorBlamePopupLayout& popup) const;
-  bool EditorBlamePopupCopyShaHovered(float x, float y) const;
-  std::vector<std::string> WrapEditorBlamePopupText(std::string_view text,
-                                                    float max_width,
-                                                    std::size_t max_lines) const;
-  void UpdateEditorBlameHover(float x, float y);
   // True when the last-known pointer position is inside `rect`. Shared by render
   // paths that lift a surface to its hover style; centralizes the
   // last_mouse_position_valid_ + Contains idiom so hover affordances stay uniform.
@@ -1315,7 +1303,6 @@
   void OpenBufferReplace();
   void OpenBufferSearchSurface(OverlayMode mode);
   std::string SingleLineEditorSelectionSeed() const;
-  void OpenProjectSearch();
   FocusTarget PrimarySurfaceFocusTarget() const;
   void ShowOverlay(OverlayMode mode);
   void DismissOverlay(bool focus_editor = false);
@@ -1332,7 +1319,6 @@
   void ConsumeProjectSearchUpdates();
   void ResetOverlayScroll();
   float OverlayListStartOffset() const;
-  int OverlayVisibleRows(const SDL_FRect& overlay) const;
   std::size_t OverlayItemCount() const;
   std::size_t OverlaySelectedIndex() const;
   ScrollableListLayout ComputeOverlayListLayout(const SDL_FRect& overlay) const;
@@ -1373,7 +1359,6 @@
   bool DiscoverTestsForActiveBuffer(std::string* error_message = nullptr);
   bool RunTests(const std::vector<std::string>& test_ids, std::string* error_message = nullptr);
   bool RunAllDiscoveredTests(std::string* error_message = nullptr);
-  const std::vector<WorkspaceOutputChannels::ChannelInfo>& OutputChannels() const;
   const std::vector<std::string>* OutputChannelEntries(std::string_view id) const;
   void ConsumeLspCallbacks();
   void OpenTerminal(std::string command, bool focus_terminal = true, bool log_feedback = true);
@@ -1490,10 +1475,8 @@
   // Restart the active session (Phase 7); DAP `restart` or terminate+relaunch.
   void DebugRestart();
   // Focus a thread in the Call Stack thread selector (Phase 7 multi-thread).
-  void DebugFocusThread(int thread_id);
   // Make a session active (by id, for the Call Stack session-row click) or switch
   // by 1-based index / cycle (index < 0) for the command (Phase 8 multi-session).
-  void DebugFocusSession(int session_id);
   void DebugSwitchSession(int index);
   // Breakpoint-modifier context menu (Phase 6). Read the breakpoint gutter
   // menu's target path+line; open a seeded prompt for a condition/hit/log field
@@ -1626,7 +1609,6 @@
   bool HandleMouseMotion(const SDL_Event& event);
   bool HandleMouseWheel(const SDL_Event& event);
   ActionAvailability MakeActionAvailability() const;
-  WorkspaceRootView MakeRootView();
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void RenderFrameBase(SDL_Renderer* renderer,
@@ -1801,7 +1783,6 @@
   // all for triple-click. Begins drag-select tracking when the press was a plain click.
   bool HandleSingleLineInputMouseDown(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleSingleLineInputDrag(const SDL_Event& event, const WorkspaceLayout& layout);
-  float MeasureSingleLineTextTail(std::string_view text, float available_width) const;
   void DrawSingleLineTextTail(SDL_Renderer* renderer,
                               float x,
                               float y,
@@ -1891,7 +1872,6 @@
   void RequestActiveTabRedraw(bool include_tree_sidebar = false);
   void RequestFocusedEditorRedraw();
   void RequestEditorLineRangeRedraw(std::size_t start_line, std::size_t end_line);
-  void RequestEditorLineToBottomRedraw(std::size_t start_line);
   void RequestActiveEditableChangeRedraw(const std::vector<std::string>& before_lines,
                                          const std::vector<std::string>& after_lines);
   void RequestActiveEditableBlameNeighborhoodRedraw(std::size_t before_line,
@@ -1899,7 +1879,6 @@
   void RequestCompareRowRangeRedraw(std::size_t start_row, std::size_t end_row);
   void RequestCompareRowToBottomRedraw(std::size_t start_row);
   void RequestCompareRightLineRangeRedraw(std::size_t start_line, std::size_t end_line);
-  void RequestCompareRightLineToBottomRedraw(std::size_t start_line);
   void RequestMergeResultLineRangeRedraw(std::size_t start_line, std::size_t end_line);
   void RequestMergeResultLineToBottomRedraw(std::size_t start_line);
   void RequestMergeConflictRedraw(std::size_t conflict_index);

@@ -62,27 +62,6 @@ bool UsesSharedSingleLineCaret(TextInputSurface surface) {
 
 using namespace detail;
 
-float WorkspaceShell::MeasureSingleLineTextTail(std::string_view text,
-                                                float available_width) const {
-  if (available_width <= 0.0f || text.empty()) {
-    return 0.0f;
-  }
-  if (text_renderer_.MeasureWidth(text) <= available_width) {
-    return text_renderer_.MeasureWidth(text);
-  }
-
-  std::size_t byte_offset = 0;
-  while (byte_offset < text.size()) {
-    const std::string_view suffix = text.substr(byte_offset);
-    const float suffix_width = text_renderer_.MeasureWidth(suffix);
-    if (suffix_width <= available_width) {
-      return suffix_width;
-    }
-    byte_offset += util::Utf8SequenceLength(text, byte_offset);
-  }
-  return 0.0f;
-}
-
 void WorkspaceShell::DrawSingleLineTextTail(SDL_Renderer* renderer,
                                             float x,
                                             float y,
