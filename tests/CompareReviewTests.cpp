@@ -72,8 +72,8 @@ void RegisterCompareReviewTests(std::vector<TestCase>& tests) {
          operations.mark_branch_hunk_reviewed = [&]() { ++marked_hunk; };
          operations.unmark_branch_hunk_reviewed = [&]() { ++unmarked_hunk; };
 
-         ActionCoordinator coordinator(WorkspaceActionContext(
-             catalog, project_state, ui_scale, std::move(operations)));
+         WorkspaceActionContext context(catalog, project_state, ui_scale, std::move(operations));
+         ActionCoordinator coordinator(context);
 
          const std::vector<std::string> no_args;
          Expect(coordinator.Execute(ActionId::MarkBranchFileReviewed, no_args,

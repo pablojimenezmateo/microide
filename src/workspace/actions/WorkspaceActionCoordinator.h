@@ -9,7 +9,11 @@ namespace microide::workspace {
 
 class ActionCoordinator {
  public:
-  explicit ActionCoordinator(WorkspaceActionContext context);
+  // Binds the shell's single long-lived context (see WorkspaceShell::MakeActionContext).
+  // By reference, not by value: the context is ~180 std::functions, so taking it by
+  // value cost two moves of that struct — each a manager call per function — on every
+  // action dispatch, including the ones on the keyboard input path.
+  explicit ActionCoordinator(WorkspaceActionContext& context);
 
   bool Execute(ActionId id, const std::vector<std::string>& args, ActionSource source);
 
@@ -45,7 +49,7 @@ class ActionCoordinator {
                                ActionSource source,
                                std::string* rejection_feedback);
 
-  WorkspaceActionContext context_;
+  WorkspaceActionContext& context_;
 };
 
 }  // namespace microide::workspace

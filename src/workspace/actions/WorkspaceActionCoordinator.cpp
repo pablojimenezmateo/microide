@@ -7,8 +7,7 @@
 
 namespace microide::workspace {
 
-ActionCoordinator::ActionCoordinator(WorkspaceActionContext context)
-    : context_(std::move(context)) {}
+ActionCoordinator::ActionCoordinator(WorkspaceActionContext& context) : context_(context) {}
 
 bool ActionCoordinator::Execute(ActionId id,
                                 const std::vector<std::string>& args,

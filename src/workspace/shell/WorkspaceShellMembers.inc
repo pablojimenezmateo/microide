@@ -204,7 +204,12 @@
   static std::optional<SDL_FRect> PopupRowRectByIndex(
       std::span<const MenuItemSpec> items, const SDL_FRect& popup_rect, std::size_t index);
 
-  WorkspaceActionContext MakeActionContext();
+  // The shell's one action context, built on first use and reused. Its three data
+  // members are references to shell state (project catalog, current project state,
+  // UI scale) whose addresses never move, and every operation lambda captures only
+  // `this`, so the whole struct is invariant for the shell's lifetime — while
+  // rebuilding it cost ~180 std::function constructions per dispatched action.
+  WorkspaceActionContext& MakeActionContext();
 
   // Test seam: the full TestAccess definition lives in the test-only header
   // WorkspaceShellTestAccess.h. Forward-declared + friended unconditionally so
@@ -1996,6 +2001,9 @@
   // keeps the steady-state path allocation-free (no per-frame GetSettingValue).
   std::uint64_t last_applied_terminal_font_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
   editor::EditorViewRenderer editor_view_renderer_;
+  // Built lazily by MakeActionContext; unique_ptr because WorkspaceShell.h only
+  // forward-declares WorkspaceActionContext.
+  std::unique_ptr<WorkspaceActionContext> action_context_;
   WorkspaceContext context_;
   // Single owner of settings resolution + mutation. Binds non-owning pointers to
   // the user / active-project layers in context_ and keeps an O(1) resolved
