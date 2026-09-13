@@ -100,8 +100,12 @@ const std::vector<ResolvedKeybinding>& WorkspaceShell::ResolvedKeybindings() con
   return resolved_keybindings_cache_;
 }
 
-ActionAvailability WorkspaceShell::MakeActionAvailability() const {
-  return Bootstrapper(*const_cast<WorkspaceShell*>(this)).BuildActionAvailability();
+const ActionAvailability& WorkspaceShell::MakeActionAvailability() const {
+  if (!action_availability_.has_value()) {
+    action_availability_.emplace(
+        Bootstrapper(*const_cast<WorkspaceShell*>(this)).BuildActionAvailability());
+  }
+  return *action_availability_;
 }
 
 std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {

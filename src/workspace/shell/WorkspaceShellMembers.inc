@@ -1613,7 +1613,10 @@
   bool HandleMouseButtonUp(const SDL_Event& event);
   bool HandleMouseMotion(const SDL_Event& event);
   bool HandleMouseWheel(const SDL_Event& event);
-  ActionAvailability MakeActionAvailability() const;
+  // Cached for the shell's lifetime, like MakeActionContext: ActionAvailability is
+  // 26 std::functions over a const WorkspaceContext& and holds no per-query state,
+  // and the menu paint path asks for one per open popup per frame.
+  const ActionAvailability& MakeActionAvailability() const;
   void DrawFilledRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void DrawRect(SDL_Renderer* renderer, const SDL_FRect& rect, SDL_Color color) const;
   void RenderFrameBase(SDL_Renderer* renderer,
@@ -2001,6 +2004,7 @@
   // keeps the steady-state path allocation-free (no per-frame GetSettingValue).
   std::uint64_t last_applied_terminal_font_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
   editor::EditorViewRenderer editor_view_renderer_;
+  mutable std::optional<ActionAvailability> action_availability_;
   // Built lazily by MakeActionContext; unique_ptr because WorkspaceShell.h only
   // forward-declares WorkspaceActionContext.
   std::unique_ptr<WorkspaceActionContext> action_context_;

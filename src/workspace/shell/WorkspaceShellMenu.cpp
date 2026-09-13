@@ -352,7 +352,7 @@ void WorkspaceShell::ComputeVisiblePopupMenuItemsInto(
   out.reserve(items.size());
   // One availability for the whole popup: it reads the same shell state for every
   // row, and constructing it per row was 26 std::functions per visible row per frame.
-  const ActionAvailability availability = MakeActionAvailability();
+  const ActionAvailability& availability = MakeActionAvailability();
   float y = popup_rect.y + 6.0f;
   for (std::size_t i = 0; i < items.size(); ++i) {
     const MenuItemSpec& item = items[i];
