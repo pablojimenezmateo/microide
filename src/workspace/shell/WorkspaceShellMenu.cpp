@@ -350,6 +350,10 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
     int active_item_index,
     const SDL_FRect& popup_rect) const {
   std::vector<VisiblePopupMenuItem> visible_items;
+  visible_items.reserve(items.size());
+  // One availability for the whole popup: it reads the same shell state for every
+  // row, and constructing it per row was 26 std::functions per visible row per frame.
+  const ActionAvailability availability = MakeActionAvailability();
   float y = popup_rect.y + 6.0f;
   for (std::size_t i = 0; i < items.size(); ++i) {
     const MenuItemSpec& item = items[i];
@@ -360,7 +364,7 @@ std::vector<WorkspaceShell::VisiblePopupMenuItem> WorkspaceShell::ComputeVisible
     visible_items.push_back(VisiblePopupMenuItem{
         .index = i,
         .rect = rect,
-        .enabled = IsMenuItemEnabled(item),
+        .enabled = IsMenuItemEnabled(item, availability),
         .checked = IsMenuItemChecked(item),
         .hovered = static_cast<int>(i) == active_item_index,
         .separator = item.separator,
@@ -474,6 +478,11 @@ bool WorkspaceShell::PluginServesLspMenuAction(ActionId id) const {
 }
 
 bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
+  return IsMenuItemEnabled(item, MakeActionAvailability());
+}
+
+bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item,
+                                       const ActionAvailability& availability) const {
   if (item.separator) {
     return false;
   }
@@ -516,7 +525,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item) const {
     return FindSidebarView(item.args[0], plugin_runtime_.Host()).has_value();
   }
 
-  return MakeActionAvailability().IsEnabled(effective_action);
+  return availability.IsEnabled(effective_action);
 }
 
 bool WorkspaceShell::IsMenuItemChecked(const MenuItemSpec& item) const {

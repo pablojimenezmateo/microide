@@ -574,6 +574,12 @@
   std::string_view MenuItemLabel(const MenuItemSpec& item) const;
   std::string_view MenuItemAccelerator(const MenuItemSpec& item) const;
   bool IsMenuItemEnabled(const MenuItemSpec& item) const;
+  // Row-loop overload: enablement for a whole popup is resolved against ONE
+  // ActionAvailability. Building it costs 26 std::function constructions plus a
+  // move, and ComputeVisiblePopupMenuItems runs per visible row per frame for as
+  // long as a menu stays open — per-row construction made that O(rows) for a
+  // value that cannot change inside the loop.
+  bool IsMenuItemEnabled(const MenuItemSpec& item, const ActionAvailability& availability) const;
   bool IsMenuItemChecked(const MenuItemSpec& item) const;
   bool ExecuteCustomMenuItem(MenuId id, std::size_t item_index);
   bool ExecuteCommandName(std::string_view command_name,
