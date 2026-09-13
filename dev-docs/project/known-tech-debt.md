@@ -1,5 +1,9 @@
 # MicroIDE Known Tech Debt
 
+Reviewed 2026-09-13 (§ TD-2026-09-13-293 for the per-call glue-objects pass: the
+coordinators and services that were rebuilt at every call, and the three things
+that pass found and left).
+
 Reviewed 2026-09-07 (§ TD-2026-09-07-292 for the systematic subsystem sweep, and
 § TD-2026-09-07-291 for the pass before it: a heap-use-after-free
 in the editor's layout cache that only the whole shell could reach, and the review
@@ -393,6 +397,43 @@ Verified won't-do decisions stay here on purpose, so they are not re-filed.
 Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
+
+### TD-2026-09-13-293 — the per-call glue objects pass: what it fixed, and the three things it found and left.
+
+The pass itself was one shape, found by counting `std::function` fields in every
+`*Coordinator` / `*Service` header and then asking how often each factory runs.
+Twenty-one of them were rebuilt at every call — `KeyInputCoordinator` (149
+std::functions) on every keystroke, four mouse coordinators (39 + 46 + 25 + 38) on
+every motion event, `WorkspaceActionContext` (~180) on every dispatched action, and
+`EditorTabService` (28, wrapping `TabCoordinator`) behind `ActiveEditorViewport`,
+which the paint, hover, status-bar and LSP paths each call several times a frame.
+None held per-call state, so all are cached in `ShellGlueCache` now. Three things
+the pass surfaced and did not fix:
+
+**293a — `WorkspaceShell`'s ≤ 400-line header cap is satisfied by an include.**
+`src/workspace/shell/WorkspaceShell.h` is 158 lines and the lint passes, but the
+class's real declaration surface is `WorkspaceShellMembers.inc` at ~2,400 raw lines
+(~1,670 code lines), included inside the class body. That file has its own cap, so
+the invariant is not blind — but the *stated* invariant ("the shell stays a thin
+orchestrator: `WorkspaceShell.h` ≤ 400 lines") reads as a claim about the class and
+is actually a claim about one of its two halves. Either fold the `.inc` cap into the
+stated invariant or stop stating the 400 as if it bounded the class. The underlying
+problem is real: ~1,670 declarations across 19k lines of `WorkspaceShell*.cpp` is a
+god class, and the companion-TU cap (47) is the only thing holding the line.
+
+**293b — the `WorkspaceShell` constructor lives in `WorkspaceShellPlugins.cpp`.**
+Found because caching a coordinator by `unique_ptr` needs the complete type in
+whichever TU defines the constructor, and that turned out to be the 1,900-line
+plugin TU. The destructor is in `WorkspaceShell.cpp` where you would look for both.
+Nothing is broken; the constructor is simply somewhere nobody would search.
+
+**293c — `ComputeVisiblePopupMenuItems` still has a value-returning overload.**
+The paint path now fills a reused buffer, but the mouse hit-test path
+(`WorkspaceChromeMouseCoordinator`'s `compute_visible_popup_menu_items` hook) still
+takes the vector by value through a `std::function`, so a motion event over an open
+menu allocates one row vector per probe. It is a `std::function` returning
+`std::vector` in the Operations struct, so the fix is a signature change on the
+hook, not a call-site change.
 
 ### TD-2026-09-07-292 — the systematic subsystem sweep: one shape (`exists()` / lexical containment answers about the TARGET, not the ENTRY) accounted for four of the six findings. [RESOLVED same session — open remainder: two platform notes below.]
 
