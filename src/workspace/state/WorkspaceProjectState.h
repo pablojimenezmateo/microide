@@ -625,6 +625,38 @@ struct EditorGroup {
   return nullptr;
 }
 
+// The live viewport of the hydrated EDITOR tab showing `normalized_path` in any
+// pane, or nullptr. Narrower than LiveBufferViewOfPath, which also answers with a
+// compare tab's editable side: the workspace-edit, rename and LSP-document paths
+// address editor buffers specifically, and resolving one of them to a compare
+// side would apply an edit to the wrong surface.
+//
+// `normalized_path` must already be lexically normal — the scan is mostly
+// mismatches, and normalizing each candidate to reject it costs ~12 allocations
+// per tab (TD-2026-08-10-174); EditorViewPathIs compares against the query
+// instead. Four byte-similar copies of this loop existed before it did (two in
+// the workspace-edit paths, one behind IsPathOpenInEditorState, one behind
+// LspService's FindOpenEditorViewport).
+[[nodiscard]] inline const editor::TextViewport* OpenEditorViewOfPath(
+    const std::vector<EditorGroup>& groups, const std::filesystem::path& normalized_path) {
+  for (const EditorGroup& group : groups) {
+    for (const TabEntry& tab : group.open_tabs) {
+      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
+          !tab.editor_state->needs_restore &&
+          EditorViewPathIs(*tab.editor_state, normalized_path)) {
+        return &tab.editor_state->viewport;
+      }
+    }
+  }
+  return nullptr;
+}
+
+[[nodiscard]] inline editor::TextViewport* OpenEditorViewOfPath(
+    std::vector<EditorGroup>& groups, const std::filesystem::path& normalized_path) {
+  return const_cast<editor::TextViewport*>(OpenEditorViewOfPath(
+      static_cast<const std::vector<EditorGroup>&>(groups), normalized_path));
+}
+
 // Makes a compare tab's editable side a view of the buffer the file already has
 // open elsewhere (see LiveBufferViewOfPath), keeping the side's own caret and
 // scroll. Returns true when it adopted one; the caller then refreshes the

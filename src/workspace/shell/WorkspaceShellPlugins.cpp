@@ -1179,24 +1179,7 @@ bool WorkspaceShell::ApplyPluginWorkspaceEdit(
         active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
       viewport = active;
     } else {
-      for (auto& group : context_.current_project_state.editor_groups) {
-        for (auto& tab : group.open_tabs) {
-          if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-            continue;
-          }
-          auto& state = *tab.editor_state;
-          // The scan is mostly mismatches, and a mismatch between two already-normal
-          // paths must not cost a path apiece (TD-2026-08-10-174).
-          if (!state.needs_restore &&
-              util::SameAsNormalizedPath(state.viewport.path(), normalized)) {
-            viewport = &state.viewport;
-            break;
-          }
-        }
-        if (viewport != nullptr) {
-          break;
-        }
-      }
+      viewport = OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized);
     }
   }
   if (viewport == nullptr) {
@@ -1311,19 +1294,7 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
         active != nullptr && util::SameAsNormalizedPath(active->path(), normalized)) {
       return active;
     }
-    for (auto& group : context_.current_project_state.editor_groups) {
-      for (auto& tab : group.open_tabs) {
-        if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-          continue;
-        }
-        auto& state = *tab.editor_state;
-        if (!state.needs_restore &&
-            util::SameAsNormalizedPath(state.viewport.path(), normalized)) {
-          return &state.viewport;
-        }
-      }
-    }
-    return nullptr;
+    return OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized);
   };
 
   // A large rename / code action repeatedly targets the same handful of files, so
@@ -1560,23 +1531,6 @@ bool WorkspaceShell::ApplyLspWorkspaceEdit(const std::vector<CodeActionEdit>& ed
   return applied_any;
 }
 
-namespace {
-// True when `path` is open in a hydrated editor tab of any group.
-bool IsPathOpenInEditorState(const ProjectWorkspaceState& state,
-                            const std::filesystem::path& normalized_path) {
-  for (const auto& group : state.editor_groups) {
-    for (const auto& tab : group.open_tabs) {
-      if (tab.kind == TabEntry::Kind::Editor && tab.editor_state.has_value() &&
-          !tab.editor_state->needs_restore &&
-          util::SameAsNormalizedPath(tab.editor_state->viewport.path(), normalized_path)) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-}  // namespace
-
 void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
                                               const std::vector<CodeActionEdit>& edits,
                                               const std::vector<WorkspaceResourceOp>& resource_ops) {
@@ -1598,7 +1552,7 @@ void WorkspaceShell::ApplyRenameWorkspaceEdit(const std::string& new_name,
       continue;
     }
     affected.push_back(normalized);
-    if (!IsPathOpenInEditorState(context_.current_project_state, normalized)) {
+    if (OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized) == nullptr) {
       ++closed_count;
     }
   }
@@ -1685,7 +1639,7 @@ void WorkspaceShell::CommitPendingRenameSave() {
 
   // Apply the remaining edits to the CLOSED files directly on disk — no tab spam.
   const auto is_open = [this](const std::filesystem::path& normalized) {
-    return IsPathOpenInEditorState(context_.current_project_state, normalized);
+    return OpenEditorViewOfPath(context_.current_project_state.editor_groups, normalized) != nullptr;
   };
   const LspService::DiskEditResult disk =
       lsp_service_.ApplyLspEditsToClosedFilesOnDisk(pending.edits, is_open);

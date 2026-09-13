@@ -94,20 +94,7 @@ const editor::TextViewport* FindOpenEditorViewport(const ProjectWorkspaceState& 
     normalized_storage = path.lexically_normal();
     normalized_ptr = &normalized_storage;
   }
-  const std::filesystem::path& normalized = *normalized_ptr;
-  for (const auto& group : state.editor_groups) {
-    for (const auto& tab : group.open_tabs) {
-      if (tab.kind != TabEntry::Kind::Editor || !tab.editor_state.has_value()) {
-        continue;
-      }
-      const auto& editor_state = *tab.editor_state;
-      if (!editor_state.needs_restore &&
-          util::SameAsNormalizedPath(editor_state.viewport.path(), normalized)) {
-        return &editor_state.viewport;
-      }
-    }
-  }
-  return nullptr;
+  return OpenEditorViewOfPath(state.editor_groups, *normalized_ptr);
 }
 
 // Map an LSP standard semantic-token type name to the editor's lexical token
