@@ -129,13 +129,6 @@
   void PrepareRenderFrame(SDL_Renderer* renderer, int width, int height);
   void Render(SDL_Renderer* renderer, int width, int height);
   void RenderPrepared(SDL_Renderer* renderer, int width, int height);
-  void RootViewRenderFrameBase(SDL_Renderer* renderer, const WorkspaceLayout& layout) const;
-  void RootViewRenderActiveWorkspaceSurface(SDL_Renderer* renderer,
-                                            const WorkspaceLayout& layout,
-                                            const FrameToken& frame_token,
-                                            bool draw_editor_caret,
-                                            std::optional<SDL_FRect>* active_editor_pane_rect);
-  void RootViewRenderOverlaySurface(SDL_Renderer* renderer, const WorkspaceLayout& layout);
   IdleWaitState CurrentIdleWaitState() const;
   std::optional<Uint32> NextAnimationDelayMs() const;
   // The repaint owed after a frame that reflowed the terminal, or nullopt when

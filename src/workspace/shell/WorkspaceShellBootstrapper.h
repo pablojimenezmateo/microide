@@ -12,7 +12,6 @@ class WorkspaceShell::Bootstrapper {
   [[nodiscard]] ActionAvailability BuildActionAvailability() const;
   [[nodiscard]] WorkspaceEventDispatcher BuildEventDispatcher() const;
   [[nodiscard]] WorkspaceWakeController BuildWakeController() const;
-  [[nodiscard]] WorkspaceRootView BuildRootView() const;
 
  private:
   WorkspaceShell& shell_;

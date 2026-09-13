@@ -51,6 +51,10 @@ void WorkspaceShell::RenderClip(const FrameToken& frame_token,
   const Uint64 trace_start_ns =
       menu_hover_trace && context_.menu_state.menu_bar_open ? SDL_GetTicksNS() : 0;
 
+  // "WorkspaceRootView::Render" is trace vocabulary, not a class reference: the
+  // WorkspaceRootView indirection this clip path replaced is gone, but every perf
+  // ledger, baseline and investigation in dev-docs/performance names these scopes,
+  // so the labels stay put. Don't go looking for the class.
   util::PerformanceTrace::Scope trace_scope("WorkspaceRootView::Render");
   util::AddPerformanceCounter(util::PerfCounterId::RenderClipInvocations);
   const WorkspaceLayout& layout = *prepared_frame_layout_;

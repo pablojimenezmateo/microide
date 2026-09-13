@@ -570,7 +570,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/git/WorkspaceGitOutgoingBase.cpp
   src/workspace/git/GitSidebarCommandCenter.cpp
   src/workspace/git/WorkspaceGitSidebarPresentation.cpp
-  src/workspace/shell/WorkspaceRootView.cpp
   src/workspace/shell/WorkspaceShellBootstrapper.cpp
   src/workspace/render/WorkspaceShellRender.cpp
   src/workspace/shell/WorkspaceShellSidebar.cpp
@@ -631,7 +630,6 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/WorkspaceVirtualDocument.cpp
   src/workspace/WorkspaceTerminalSelection.cpp
   src/workspace/WorkspaceTextSearch.cpp
-  src/workspace/WorkspaceViewTree.cpp
   src/workspace/shell/WorkspaceShell.cpp
 )
 

@@ -551,29 +551,6 @@ void WorkspaceShell::EnsureClipFrameAndOverlayViewModels(const WorkspaceLayout& 
   clip_frame_overlay_view_models_valid_ = true;
 }
 
-void WorkspaceShell::RootViewRenderFrameBase(SDL_Renderer* renderer,
-                                             const WorkspaceLayout& layout) const {
-  EnsureClipFrameAndOverlayViewModels(layout);
-  RenderFrameBase(renderer, layout, *clip_cached_frame_vm_);
-}
-
-void WorkspaceShell::RootViewRenderActiveWorkspaceSurface(
-    SDL_Renderer* renderer,
-    const WorkspaceLayout& layout,
-    const FrameToken& frame_token,
-    bool draw_editor_caret,
-    std::optional<SDL_FRect>* active_editor_pane_rect) {
-  EnsureClipFrameAndOverlayViewModels(layout);
-  RenderActiveWorkspaceSurface(renderer, layout, frame_token, draw_editor_caret, active_editor_pane_rect,
-                               *clip_cached_frame_vm_, *clip_cached_overlay_vm_);
-}
-
-void WorkspaceShell::RootViewRenderOverlaySurface(SDL_Renderer* renderer,
-                                                  const WorkspaceLayout& layout) {
-  EnsureClipFrameAndOverlayViewModels(layout);
-  RenderOverlaySurface(renderer, layout, *clip_cached_overlay_vm_);
-}
-
 void WorkspaceShell::RenderFrameBase(SDL_Renderer* renderer,
                                    const WorkspaceLayout& layout,
                                    const FrameSurfaceViewModel& frame_vm) const {
