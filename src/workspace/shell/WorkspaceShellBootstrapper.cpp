@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 
 #include "workspace/coordinators/SelectionAutoscroll.h"
@@ -50,8 +52,11 @@ WorkspaceShell::EventResult WorkspaceShell::HandleEvent(const SDL_Event& event) 
   return result;
 }
 
-TerminalPanelService WorkspaceShell::MakeTerminalPanelService() {
-  return TerminalPanelService(TerminalPanelService::Operations{
+TerminalPanelService& WorkspaceShell::MakeTerminalPanelService() {
+  if (glue_->terminal_panel_service != nullptr) {
+    return *glue_->terminal_panel_service;
+  }
+  glue_->terminal_panel_service = std::make_unique<TerminalPanelService>(TerminalPanelService::Operations{
       .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
       .clear_terminal_selection = [this]() { ClearTerminalSelection(); },
       .append_terminal_pending_input =
@@ -68,10 +73,14 @@ TerminalPanelService WorkspaceShell::MakeTerminalPanelService() {
       .move_active_terminal_tab_to =
           [this](std::size_t index) { return MoveActiveTerminalTabTo(index); },
   });
+  return *glue_->terminal_panel_service;
 }
 
-CommandLineCoordinator WorkspaceShell::MakeCommandLineCoordinator() {
-  return CommandLineCoordinator(
+CommandLineCoordinator& WorkspaceShell::MakeCommandLineCoordinator() {
+  if (glue_->command_line_coordinator != nullptr) {
+    return *glue_->command_line_coordinator;
+  }
+  glue_->command_line_coordinator = std::make_unique<CommandLineCoordinator>(
       context_.current_project_state,
       available_colorscheme_names_,
       CommandLineCoordinator::Operations{
@@ -106,6 +115,7 @@ CommandLineCoordinator WorkspaceShell::MakeCommandLineCoordinator() {
                 return result;
               },
       });
+  return *glue_->command_line_coordinator;
 }
 
 WorkspaceShell::Bootstrapper::Bootstrapper(WorkspaceShell& shell) : shell_(shell) {}

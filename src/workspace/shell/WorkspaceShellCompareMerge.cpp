@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -279,8 +281,12 @@ CompareInteractionCoordinator WorkspaceShell::MakeCompareInteractionCoordinator(
       });
 }
 
-CompareMergeService WorkspaceShell::MakeCompareMergeService() {
-  return CompareMergeService(MakeDiffTabCoordinator(), MakeCompareInteractionCoordinator());
+CompareMergeService& WorkspaceShell::MakeCompareMergeService() {
+  if (glue_->compare_merge_service != nullptr) {
+    return *glue_->compare_merge_service;
+  }
+  glue_->compare_merge_service = std::make_unique<CompareMergeService>(MakeDiffTabCoordinator(), MakeCompareInteractionCoordinator());
+  return *glue_->compare_merge_service;
 }
 
 std::optional<std::size_t> WorkspaceShell::FindOpenCompareTabIndex(

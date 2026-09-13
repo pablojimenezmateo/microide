@@ -44,6 +44,7 @@
 #include "workspace/render/SingleLineViewMetrics.h"
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/actions/WorkspaceActionAvailability.h"
+#include "workspace/shell/ShellGlueCache.h"
 #include "workspace/actions/WorkspaceActionTypes.h"
 #include "workspace/WorkspaceContext.h"
 #include "workspace/registries/WorkspaceKeybindingRegistry.h"

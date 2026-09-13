@@ -639,22 +639,22 @@
                                                int filter);
   void ConsumePendingFontFileDialogResult();
   bool SetProjectRoot(const std::filesystem::path& project_root);
-  ProjectCatalogService MakeProjectCatalogService();
-  PersistenceCoordinator MakePersistenceCoordinator();
+  ProjectCatalogService& MakeProjectCatalogService();
+  PersistenceCoordinator& MakePersistenceCoordinator();
   MenuCoordinator& MakeMenuCoordinator();
-  CommandLineCoordinator MakeCommandLineCoordinator();
-  PromptSurfaceService MakePromptSurfaceService();
+  CommandLineCoordinator& MakeCommandLineCoordinator();
+  PromptSurfaceService& MakePromptSurfaceService();
   DirtyPromptCoordinator MakeDirtyPromptCoordinator(EditorTabService& editor_tabs,
                                                     PromptSurfaceService& prompt_surfaces);
   CompareInteractionCoordinator MakeCompareInteractionCoordinator();
-  CompareMergeService MakeCompareMergeService();
+  CompareMergeService& MakeCompareMergeService();
   PathMutationCoordinator MakePathMutationCoordinator(EditorTabService& editor_tabs,
                                                       PromptSurfaceService& prompt_surfaces);
   DiffTabCoordinator MakeDiffTabCoordinator();
-  LifecycleCoordinator MakeLifecycleCoordinator();
+  LifecycleCoordinator& MakeLifecycleCoordinator();
   SidebarCoordinator MakeSidebarCoordinator();
-  SidebarService MakeSidebarService();
-  DebugPaneService MakeDebugPaneService();
+  SidebarService& MakeSidebarService();
+  DebugPaneService& MakeDebugPaneService();
   // Cached for the shell's lifetime. KeyInputCoordinator is 149 std::functions
   // over three references to stable shell state (current project state, prompts,
   // menu state) and holds no per-event state — and this runs on every keystroke,
@@ -662,12 +662,12 @@
   // struct before a single key was looked at.
   KeyInputCoordinator& MakeKeyInputCoordinator();
   TextInputCoordinator& MakeTextInputCoordinator();
-  EditorTabService MakeEditorTabService();
+  EditorTabService& MakeEditorTabService();
   TabCoordinator MakeTabCoordinator();
   ChromeMouseCoordinator& MakeChromeMouseCoordinator();
   EditorMouseCoordinator& MakeEditorMouseCoordinator();
-  CompareMouseCoordinator MakeCompareMouseCoordinator();
-  MergeMouseCoordinator MakeMergeMouseCoordinator();
+  CompareMouseCoordinator& MakeCompareMouseCoordinator();
+  MergeMouseCoordinator& MakeMergeMouseCoordinator();
   TabMouseCoordinator& MakeTabMouseCoordinator();
   bool HandleTabMouseMotion(const SDL_Event& event, const WorkspaceLayout& layout);
   bool HandleTabMouseButtonDown(const SDL_Event& event, const WorkspaceLayout& layout);
@@ -675,8 +675,8 @@
   bool HandleTabMouseWheel(const SDL_Event& event, const WorkspaceLayout& layout, int vertical_ticks);
   SidebarMouseCoordinator& MakeSidebarMouseCoordinator();
   PanelMouseCoordinator& MakePanelMouseCoordinator();
-  DebugPaneMouseCoordinator MakeDebugPaneMouseCoordinator();
-  TerminalPanelService MakeTerminalPanelService();
+  DebugPaneMouseCoordinator& MakeDebugPaneMouseCoordinator();
+  TerminalPanelService& MakeTerminalPanelService();
   void ResetLifecycleStartupState();
   void RegisterLifecycleWakeEvents();
   void ConsumeHighlightPrefetchResults();  // installs worker prefetch results (main thread)
@@ -2010,25 +2010,11 @@
   std::uint64_t last_applied_terminal_font_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
   editor::EditorViewRenderer editor_view_renderer_;
   WorkspaceContext context_;
-  // Lazily built, then reused for the shell's lifetime. Each of these is a glue
-  // object over references into context_ (and the renderers) plus an Operations
-  // struct of tens of std::functions, with no per-call state of its own -- and
-  // each sat on an input path that rebuilt it per event. Declared AFTER context_
-  // so they are destroyed BEFORE the state they hold references into.
-  //
-  // unique_ptr rather than optional: WorkspaceShell.h only forward-declares these
-  // types, so the shell's constructor and destructor TUs include the headers and
-  // no one else pays for them.
-  mutable std::optional<ActionAvailability> action_availability_;
-  std::unique_ptr<WorkspaceActionContext> action_context_;
-  std::unique_ptr<KeyInputCoordinator> key_input_coordinator_;
-  std::unique_ptr<ChromeMouseCoordinator> chrome_mouse_coordinator_;
-  std::unique_ptr<EditorMouseCoordinator> editor_mouse_coordinator_;
-  std::unique_ptr<SidebarMouseCoordinator> sidebar_mouse_coordinator_;
-  std::unique_ptr<PanelMouseCoordinator> panel_mouse_coordinator_;
-  std::unique_ptr<TabMouseCoordinator> tab_mouse_coordinator_;
-  std::unique_ptr<TextInputCoordinator> text_input_coordinator_;
-  std::unique_ptr<MenuCoordinator> menu_coordinator_;
+  // Every lazily built coordinator / service / action context the shell reuses,
+  // in one holder (see ShellGlueCache.h for what they are and why they are
+  // cached). Declared AFTER context_ so they are destroyed BEFORE the state they
+  // hold references into.
+  std::unique_ptr<ShellGlueCache> glue_ = std::make_unique<ShellGlueCache>();
   // Single owner of settings resolution + mutation. Binds non-owning pointers to
   // the user / active-project layers in context_ and keeps an O(1) resolved
   // index. Bound in the constructor and re-bound on every project switch

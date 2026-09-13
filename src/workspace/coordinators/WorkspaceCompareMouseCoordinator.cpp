@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
 
 #include "workspace/coordinators/SelectionAutoscroll.h"
@@ -438,8 +440,11 @@ bool CompareMouseCoordinator::HandleWheel(const SDL_Event& event,
   return true;
 }
 
-CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
-  return CompareMouseCoordinator(
+CompareMouseCoordinator& WorkspaceShell::MakeCompareMouseCoordinator() {
+  if (glue_->compare_mouse_coordinator != nullptr) {
+    return *glue_->compare_mouse_coordinator;
+  }
+  glue_->compare_mouse_coordinator = std::make_unique<CompareMouseCoordinator>(
       context_.current_project_state,
       context_.interaction_state,
       CompareMouseCoordinator::Operations{
@@ -501,6 +506,7 @@ CompareMouseCoordinator WorkspaceShell::MakeCompareMouseCoordinator() {
               [this](int delta) { MakeCompareMergeService().ScrollCompareColumns(delta); },
           .clear_drag_state = [this]() { ClearDragState(); },
       });
+  return *glue_->compare_mouse_coordinator;
 }
 
 }  // namespace microide::workspace

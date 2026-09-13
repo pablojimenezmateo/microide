@@ -243,10 +243,10 @@ int MenuCoordinator::NextEnabledTreeContextMenuItemIndex(int current_index, int 
 }
 
 MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
-  if (menu_coordinator_ != nullptr) {
-    return *menu_coordinator_;
+  if (glue_->menu_coordinator != nullptr) {
+    return *glue_->menu_coordinator;
   }
-  menu_coordinator_ = std::make_unique<MenuCoordinator>(
+  glue_->menu_coordinator = std::make_unique<MenuCoordinator>(
       context_.menu_state,
       MenuCoordinator::Operations{
           .request_chrome_redraw = [this]() { RequestChromeRedraw(); },
@@ -285,7 +285,7 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
                 return ExecuteCommandName(command_name, args, source);
               },
       });
-  return *menu_coordinator_;
+  return *glue_->menu_coordinator;
 }
 
 }  // namespace microide::workspace

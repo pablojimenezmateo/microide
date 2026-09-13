@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/coordinators/WorkspaceLifecycleCoordinator.h"
 
 #include <optional>
@@ -319,8 +321,11 @@ void WorkspaceShell::RegisterLifecycleWakeEvents() {
   util::SetSdlWakeRegistrationDegraded(any_registration_failed);
 }
 
-LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
-  return LifecycleCoordinator(
+LifecycleCoordinator& WorkspaceShell::MakeLifecycleCoordinator() {
+  if (glue_->lifecycle_coordinator != nullptr) {
+    return *glue_->lifecycle_coordinator;
+  }
+  glue_->lifecycle_coordinator = std::make_unique<LifecycleCoordinator>(
       context_,
       quit_requested_,
       LifecycleCoordinator::Operations{
@@ -370,6 +375,7 @@ LifecycleCoordinator WorkspaceShell::MakeLifecycleCoordinator() {
           .shutdown_project_search_runtime = [this]() { project_search_runtime_.Shutdown(); },
           .stop_control_channel = [this]() { control_channel_service_.Stop(); },
       });
+  return *glue_->lifecycle_coordinator;
 }
 
 bool WorkspaceShell::Initialize(const std::filesystem::path& project_root) {

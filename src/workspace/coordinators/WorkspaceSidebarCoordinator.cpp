@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/coordinators/WorkspaceSidebarCoordinator.h"
 
 #include <utility>
@@ -381,8 +383,12 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
       });
 }
 
-SidebarService WorkspaceShell::MakeSidebarService() {
-  return SidebarService(MakeSidebarCoordinator());
+SidebarService& WorkspaceShell::MakeSidebarService() {
+  if (glue_->sidebar_service != nullptr) {
+    return *glue_->sidebar_service;
+  }
+  glue_->sidebar_service = std::make_unique<SidebarService>(MakeSidebarCoordinator());
+  return *glue_->sidebar_service;
 }
 
 void WorkspaceShell::ShowTreeSidebar(const std::filesystem::path& root) {

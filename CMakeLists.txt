@@ -571,6 +571,7 @@ set(MICROIDE_CORE_SOURCES
   src/workspace/git/GitSidebarCommandCenter.cpp
   src/workspace/git/WorkspaceGitSidebarPresentation.cpp
   src/workspace/shell/WorkspaceShellBootstrapper.cpp
+  src/workspace/shell/ShellGlueCache.cpp
   src/workspace/render/WorkspaceShellRender.cpp
   src/workspace/shell/WorkspaceShellSidebar.cpp
   src/workspace/shell/WorkspaceShellCommitWorkflow.cpp

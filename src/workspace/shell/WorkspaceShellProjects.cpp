@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -11,8 +13,11 @@
 
 namespace microide::workspace {
 
-ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
-  return ProjectCatalogService(
+ProjectCatalogService& WorkspaceShell::MakeProjectCatalogService() {
+  if (glue_->project_catalog_service != nullptr) {
+    return *glue_->project_catalog_service;
+  }
+  glue_->project_catalog_service = std::make_unique<ProjectCatalogService>(
       context_,
       ProjectCatalogService::Operations{
           .initialize_current_project =
@@ -70,6 +75,7 @@ ProjectCatalogService WorkspaceShell::MakeProjectCatalogService() {
           .ensure_active_project_visible = [this]() { tab_strip_chrome_.EnsureActiveProjectVisible(); },
           .request_window_redraw = [this]() { RequestWindowRedraw(); },
       });
+  return *glue_->project_catalog_service;
 }
 
 bool WorkspaceShell::HasActiveProjectCatalogEntry() const {

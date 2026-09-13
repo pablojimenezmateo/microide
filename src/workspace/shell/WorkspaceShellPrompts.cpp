@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "editor/BreakpointStore.h"
@@ -14,13 +16,17 @@
 
 namespace microide::workspace {
 
-PromptSurfaceService WorkspaceShell::MakePromptSurfaceService() {
-  return PromptSurfaceService(
+PromptSurfaceService& WorkspaceShell::MakePromptSurfaceService() {
+  if (glue_->prompt_surface_service != nullptr) {
+    return *glue_->prompt_surface_service;
+  }
+  glue_->prompt_surface_service = std::make_unique<PromptSurfaceService>(
       context_.current_project_state,
       context_.prompts,
       PromptSurfaceService::Operations{
           .request_prompt_redraw = [this]() { RequestPromptRedraw(); },
       });
+  return *glue_->prompt_surface_service;
 }
 
 void WorkspaceShell::ShowDirtyPromptForTab(std::size_t index) {

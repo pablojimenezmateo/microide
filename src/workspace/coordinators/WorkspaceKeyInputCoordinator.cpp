@@ -653,10 +653,10 @@ bool KeyInputCoordinator::HandleSurfaceNavigationKeyDown(const SDL_KeyboardEvent
 }
 
 KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
-  if (key_input_coordinator_ != nullptr) {
-    return *key_input_coordinator_;
+  if (glue_->key_input_coordinator != nullptr) {
+    return *glue_->key_input_coordinator;
   }
-  key_input_coordinator_ = std::make_unique<KeyInputCoordinator>(
+  glue_->key_input_coordinator = std::make_unique<KeyInputCoordinator>(
       context_.current_project_state, context_.prompts, context_.menu_state,
       KeyInputCoordinator::Operations{
           .has_pending_redraw = [this]() { return pending_render_invalidation_.HasAnyRedraw(); },
@@ -998,7 +998,7 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
           .remove_debug_watch_expression =
               [this](std::size_t index) { debug_service_.RemoveWatch(index); },
       });
-  return *key_input_coordinator_;
+  return *glue_->key_input_coordinator;
 }
 
 }  // namespace microide::workspace

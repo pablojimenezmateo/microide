@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/shell/WorkspaceShell.h"
 
 #include "workspace/SettingFlags.h"
@@ -111,8 +113,12 @@ TabCoordinator WorkspaceShell::MakeTabCoordinator() {
       });
 }
 
-EditorTabService WorkspaceShell::MakeEditorTabService() {
-  return EditorTabService(MakeTabCoordinator());
+EditorTabService& WorkspaceShell::MakeEditorTabService() {
+  if (glue_->editor_tab_service != nullptr) {
+    return *glue_->editor_tab_service;
+  }
+  glue_->editor_tab_service = std::make_unique<EditorTabService>(MakeTabCoordinator());
+  return *glue_->editor_tab_service;
 }
 
 bool WorkspaceShell::SaveTab(std::size_t index) {

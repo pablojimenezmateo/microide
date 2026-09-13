@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
 
 #include "workspace/coordinators/SelectionAutoscroll.h"
@@ -552,8 +554,11 @@ bool MergeMouseCoordinator::HandleWheel(const SDL_Event& event,
   return true;
 }
 
-MergeMouseCoordinator WorkspaceShell::MakeMergeMouseCoordinator() {
-  return MergeMouseCoordinator(
+MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
+  if (glue_->merge_mouse_coordinator != nullptr) {
+    return *glue_->merge_mouse_coordinator;
+  }
+  glue_->merge_mouse_coordinator = std::make_unique<MergeMouseCoordinator>(
       context_.current_project_state,
       context_.interaction_state,
       MergeMouseCoordinator::Operations{
@@ -642,6 +647,7 @@ MergeMouseCoordinator WorkspaceShell::MakeMergeMouseCoordinator() {
                 return ComputeMergeSecondaryToolbarButtonRect(rect, surface, label);
               },
       });
+  return *glue_->merge_mouse_coordinator;
 }
 
 }  // namespace microide::workspace

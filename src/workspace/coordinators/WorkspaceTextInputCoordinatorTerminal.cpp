@@ -297,10 +297,10 @@ bool WorkspaceShell::HandleTerminalFindMouseDown(const float x, const float y) {
 }
 
 TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
-  if (text_input_coordinator_ != nullptr) {
-    return *text_input_coordinator_;
+  if (glue_->text_input_coordinator != nullptr) {
+    return *glue_->text_input_coordinator;
   }
-  text_input_coordinator_ = std::make_unique<TextInputCoordinator>(
+  glue_->text_input_coordinator = std::make_unique<TextInputCoordinator>(
       context_.current_project_state, context_.prompts, context_.menu_state,
       context_.text_input,
       TextInputCoordinator::Operations{
@@ -393,7 +393,7 @@ TextInputCoordinator& WorkspaceShell::MakeTextInputCoordinator() {
                 return assist_service_.TrySnippetInsertTextInEditor(viewport, text);
               },
       });
-  return *text_input_coordinator_;
+  return *glue_->text_input_coordinator;
 }
 
 

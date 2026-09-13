@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/shell/WorkspaceShell.h"
 
 #include <algorithm>
@@ -259,12 +261,16 @@ void WorkspaceShell::SetDebugPaneScrollRow(int scroll_row, std::size_t line_coun
   }
 }
 
-DebugPaneService WorkspaceShell::MakeDebugPaneService() {
-  return DebugPaneService(context_.current_project_state,
+DebugPaneService& WorkspaceShell::MakeDebugPaneService() {
+  if (glue_->debug_pane_service != nullptr) {
+    return *glue_->debug_pane_service;
+  }
+  glue_->debug_pane_service = std::make_unique<DebugPaneService>(context_.current_project_state,
                           DebugPaneService::Operations{
                               .request_redraw = [this]() { RequestWindowRedraw(); },
                               .note_layout_inputs_changed = [this]() { NoteLayoutInputsChanged(); },
                           });
+  return *glue_->debug_pane_service;
 }
 
 void WorkspaceShell::ShowDebugPaneMode(DebugPaneMode mode) {
@@ -277,8 +283,11 @@ void WorkspaceShell::CloseDebugPane() { MakeDebugPaneService().Close(); }
 
 void WorkspaceShell::OpenDebugPaneOnStop() { MakeDebugPaneService().OpenOnStop(); }
 
-DebugPaneMouseCoordinator WorkspaceShell::MakeDebugPaneMouseCoordinator() {
-  return DebugPaneMouseCoordinator(
+DebugPaneMouseCoordinator& WorkspaceShell::MakeDebugPaneMouseCoordinator() {
+  if (glue_->debug_pane_mouse_coordinator != nullptr) {
+    return *glue_->debug_pane_mouse_coordinator;
+  }
+  glue_->debug_pane_mouse_coordinator = std::make_unique<DebugPaneMouseCoordinator>(
       context_.current_project_state, context_.interaction_state,
       DebugPaneMouseCoordinator::Operations{
           .compute_debug_pane_list_layout =
@@ -338,6 +347,7 @@ DebugPaneMouseCoordinator WorkspaceShell::MakeDebugPaneMouseCoordinator() {
               [this](const std::filesystem::path& path, std::size_t line,
                      const SDL_FRect& anchor) { OpenBreakpointContextMenu(path, line, anchor); },
       });
+  return *glue_->debug_pane_mouse_coordinator;
 }
 
 WorkspaceShell::LogSurfaceLayout WorkspaceShell::ComputeDebugPaneListLayout(

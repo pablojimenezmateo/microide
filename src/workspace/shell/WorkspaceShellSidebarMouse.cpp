@@ -13,10 +13,10 @@
 namespace microide::workspace {
 
 SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
-  if (sidebar_mouse_coordinator_ != nullptr) {
-    return *sidebar_mouse_coordinator_;
+  if (glue_->sidebar_mouse_coordinator != nullptr) {
+    return *glue_->sidebar_mouse_coordinator;
   }
-  sidebar_mouse_coordinator_ = std::make_unique<SidebarMouseCoordinator>(
+  glue_->sidebar_mouse_coordinator = std::make_unique<SidebarMouseCoordinator>(
       context_.current_project_state, context_.interaction_state,
       SidebarMouseCoordinator::Operations{
           .active_sidebar_mode = [this]() { return ActiveSidebarMode(); },
@@ -115,7 +115,7 @@ SidebarMouseCoordinator& WorkspaceShell::MakeSidebarMouseCoordinator() {
                 return ComputeTreeSidebarListLayout(rect, count);
               },
       });
-  return *sidebar_mouse_coordinator_;
+  return *glue_->sidebar_mouse_coordinator;
 }
 
 }  // namespace microide::workspace

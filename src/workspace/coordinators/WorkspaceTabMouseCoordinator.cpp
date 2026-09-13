@@ -408,13 +408,13 @@ void TabMouseCoordinator::PersistReorderedTabs(TabDragKind kind) {
 }
 
 TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
-  if (tab_mouse_coordinator_ != nullptr) {
-    return *tab_mouse_coordinator_;
+  if (glue_->tab_mouse_coordinator != nullptr) {
+    return *glue_->tab_mouse_coordinator;
   }
   // Constructed inside the hooks, not captured: see MakePanelMouseCoordinator for
   // why a captured TerminalPanelService is a heap allocation per hook, and this
   // coordinator is made per mouse-wheel event.
-  tab_mouse_coordinator_ = std::make_unique<TabMouseCoordinator>(
+  glue_->tab_mouse_coordinator = std::make_unique<TabMouseCoordinator>(
       context_.project_catalog,
       context_.current_project_state,
       context_.interaction_state.tab_drag,
@@ -541,7 +541,7 @@ TabMouseCoordinator& WorkspaceShell::MakeTabMouseCoordinator() {
           .focus_editor_group =
               [this](std::size_t group_index) { FocusEditorGroup(group_index); },
       });
-  return *tab_mouse_coordinator_;
+  return *glue_->tab_mouse_coordinator;
 }
 
 bool WorkspaceShell::HandleTabMouseMotion(const SDL_Event& event, const WorkspaceLayout& layout) {

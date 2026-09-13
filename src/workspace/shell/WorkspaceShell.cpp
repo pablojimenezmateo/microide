@@ -16,6 +16,19 @@
 #include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceTabMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceTextInputCoordinator.h"
+#include "workspace/services/EditorTabService.h"
+#include "workspace/services/SidebarService.h"
+#include "workspace/services/CompareMergeService.h"
+#include "workspace/services/PromptSurfaceService.h"
+#include "workspace/services/TerminalPanelService.h"
+#include "workspace/services/ProjectCatalogService.h"
+#include "workspace/debug/DebugPaneService.h"
+#include "workspace/persistence/WorkspacePersistenceCoordinator.h"
+#include "workspace/coordinators/WorkspaceMergeMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceCompareMouseCoordinator.h"
+#include "workspace/debug/DebugPaneMouseCoordinator.h"
+#include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
+#include "workspace/coordinators/WorkspaceLifecycleCoordinator.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
@@ -110,11 +123,11 @@ const std::vector<ResolvedKeybinding>& WorkspaceShell::ResolvedKeybindings() con
 }
 
 const ActionAvailability& WorkspaceShell::MakeActionAvailability() const {
-  if (!action_availability_.has_value()) {
-    action_availability_.emplace(
+  if (!glue_->action_availability.has_value()) {
+    glue_->action_availability.emplace(
         Bootstrapper(*const_cast<WorkspaceShell*>(this)).BuildActionAvailability());
   }
-  return *action_availability_;
+  return *glue_->action_availability;
 }
 
 std::span<const WorkspaceShell::MenuSpec> WorkspaceShell::MenuSpecs() {

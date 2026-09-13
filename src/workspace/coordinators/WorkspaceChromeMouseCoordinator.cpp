@@ -572,10 +572,10 @@ bool ChromeMouseCoordinator::HandleTreeContextMenuMotion(const SDL_Event& event)
 }
 
 ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
-  if (chrome_mouse_coordinator_ != nullptr) {
-    return *chrome_mouse_coordinator_;
+  if (glue_->chrome_mouse_coordinator != nullptr) {
+    return *glue_->chrome_mouse_coordinator;
   }
-  chrome_mouse_coordinator_ = std::make_unique<ChromeMouseCoordinator>(
+  glue_->chrome_mouse_coordinator = std::make_unique<ChromeMouseCoordinator>(
       context_.current_project_state, context_.menu_state, context_.interaction_state,
       ChromeMouseCoordinator::Operations{
           .close_menu_bar = [this]() { MakeMenuCoordinator().CloseMenuBar(); },
@@ -657,7 +657,7 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
               },
           .close_tree_context_menu = [this]() { MakeMenuCoordinator().CloseTreeContextMenu(); },
       });
-  return *chrome_mouse_coordinator_;
+  return *glue_->chrome_mouse_coordinator;
 }
 
 }  // namespace microide::workspace

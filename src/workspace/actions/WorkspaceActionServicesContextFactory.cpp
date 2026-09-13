@@ -350,8 +350,8 @@ void WorkspaceActionContext::SetExceptionFilterCondition(const std::string& filt
 }
 
 WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
-  if (action_context_ != nullptr) {
-    return *action_context_;
+  if (glue_->action_context != nullptr) {
+    return *glue_->action_context;
   }
   // Builds a fresh review coordinator per verb invocation; it owns no shell
   // access beyond these narrow callbacks (host-owned sidebar + tab lifecycle).
@@ -367,7 +367,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
             .tab_is_dirty = [this](std::size_t index) { return TabIsDirty(index); },
         });
   };
-  action_context_ = std::make_unique<WorkspaceActionContext>(
+  glue_->action_context = std::make_unique<WorkspaceActionContext>(
       context_.project_catalog,
       context_.current_project_state,
       ui_scale_,
@@ -876,7 +876,7 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                 RequestEditorSurfaceRedraw();
               },
       });
-  return *action_context_;
+  return *glue_->action_context;
 }
 
 }  // namespace microide::workspace

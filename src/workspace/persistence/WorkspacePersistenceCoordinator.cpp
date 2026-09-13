@@ -1,3 +1,5 @@
+#include <memory>
+
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 
 #include <utility>
@@ -32,8 +34,11 @@ const ProjectWorkspaceState& PersistenceCoordinator::CurrentProjectState() const
   return context_.current_project_state;
 }
 
-PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
-  return PersistenceCoordinator(
+PersistenceCoordinator& WorkspaceShell::MakePersistenceCoordinator() {
+  if (glue_->persistence_coordinator != nullptr) {
+    return *glue_->persistence_coordinator;
+  }
+  glue_->persistence_coordinator = std::make_unique<PersistenceCoordinator>(
       context_,
       theme_,
       available_colorscheme_names_,
@@ -92,6 +97,7 @@ PersistenceCoordinator WorkspaceShell::MakePersistenceCoordinator() {
           .resolve_plugin_theme =
               [this](std::string_view id) { return theme_registry_.Resolve(id); },
       });
+  return *glue_->persistence_coordinator;
 }
 
 }  // namespace microide::workspace

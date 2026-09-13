@@ -854,10 +854,10 @@ bool EditorMouseCoordinator::HandleWheel(const SDL_Event& event,
 }
 
 EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
-  if (editor_mouse_coordinator_ != nullptr) {
-    return *editor_mouse_coordinator_;
+  if (glue_->editor_mouse_coordinator != nullptr) {
+    return *glue_->editor_mouse_coordinator;
   }
-  editor_mouse_coordinator_ = std::make_unique<EditorMouseCoordinator>(
+  glue_->editor_mouse_coordinator = std::make_unique<EditorMouseCoordinator>(
       context_.current_project_state,
       context_.interaction_state,
       text_renderer_,
@@ -905,7 +905,7 @@ EditorMouseCoordinator& WorkspaceShell::MakeEditorMouseCoordinator() {
                     .Execute(ActionId::GoToDefinition, {}, ActionSource::Shortcut);
               },
       });
-  return *editor_mouse_coordinator_;
+  return *glue_->editor_mouse_coordinator;
 }
 
 }  // namespace microide::workspace
