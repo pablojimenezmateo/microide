@@ -655,7 +655,12 @@
   SidebarCoordinator MakeSidebarCoordinator();
   SidebarService MakeSidebarService();
   DebugPaneService MakeDebugPaneService();
-  KeyInputCoordinator MakeKeyInputCoordinator();
+  // Cached for the shell's lifetime. KeyInputCoordinator is 149 std::functions
+  // over three references to stable shell state (current project state, prompts,
+  // menu state) and holds no per-event state — and this runs on every keystroke,
+  // where rebuilding it was 149 std::function constructions plus two moves of the
+  // struct before a single key was looked at.
+  KeyInputCoordinator& MakeKeyInputCoordinator();
   TextInputCoordinator MakeTextInputCoordinator();
   EditorTabService MakeEditorTabService();
   TabCoordinator MakeTabCoordinator();
@@ -2005,6 +2010,8 @@
   std::uint64_t last_applied_terminal_font_settings_revision_ = std::numeric_limits<std::uint64_t>::max();
   editor::EditorViewRenderer editor_view_renderer_;
   mutable std::optional<ActionAvailability> action_availability_;
+  // unique_ptr, not optional: WorkspaceShell.h only forward-declares the type.
+  std::unique_ptr<KeyInputCoordinator> key_input_coordinator_;
   // Built lazily by MakeActionContext; unique_ptr because WorkspaceShell.h only
   // forward-declares WorkspaceActionContext.
   std::unique_ptr<WorkspaceActionContext> action_context_;

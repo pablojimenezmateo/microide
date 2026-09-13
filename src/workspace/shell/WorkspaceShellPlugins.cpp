@@ -25,6 +25,9 @@
 #include "workspace/lsp/LspViewportPositions.h"
 #include "workspace/SettingFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+// WorkspaceShell's constructor lives here, so this TU must see the complete type
+// of everything the shell holds by unique_ptr.
+#include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 

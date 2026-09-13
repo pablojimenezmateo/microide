@@ -7,6 +7,8 @@
 
 #include "workspace/lsp/LspFeatureFlags.h"
 #include "workspace/actions/WorkspaceActionCoordinator.h"
+// Completes the types the shell holds by unique_ptr, for ~WorkspaceShell.
+#include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellBootstrapper.h"
 #include "workspace/registries/WorkspaceSidebarRegistry.h"
