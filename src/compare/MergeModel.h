@@ -100,7 +100,6 @@ std::vector<std::string> MergeChoiceLines(const MergeHunk& hunk, MergeChoice cho
 // Allocation-free count of what MergeChoiceLines(hunk, choice) would return.
 // Use at size-only callsites to avoid materializing and copying the line vector.
 std::size_t MergeChoiceLineCount(const MergeHunk& hunk, MergeChoice choice);
-std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model);
 std::string BootstrapMergeResultText(const MergeModel& model,
                                      std::string_view separator = "\n");
 std::vector<std::string> MergeResultLines(const MergeModel& model);

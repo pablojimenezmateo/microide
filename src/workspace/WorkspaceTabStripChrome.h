@@ -59,7 +59,6 @@ class WorkspaceTabStripChrome {
                  WorkspaceOutputChannels& output_channels,
                  Operations operations);
 
-  float ProjectTabWidthForIndex(std::size_t index) const;
   void EnsureActiveProjectVisible();
   // Memoized; see ProjectStripSourceCache below for the key. Returned by
   // reference because paint, tooltip, cursor-shape, hit-test and the mouse
@@ -67,7 +66,6 @@ class WorkspaceTabStripChrome {
   const std::vector<VisibleStripTab>& ComputeVisibleProjectTabs(
       const SDL_FRect& project_tab_strip) const;
 
-  float TabWidthForIndex(std::size_t index) const;
   // Editor-tab chrome is per-group. The no-index overloads operate on the
   // currently focused group; the *ForGroup variants target an explicit group so
   // the render/mouse/cursor paths can drive both strips in a split.

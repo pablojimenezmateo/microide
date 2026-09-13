@@ -130,11 +130,6 @@ WorkspaceTabStripChrome::RefreshProjectStripSources() const {
   return sources;
 }
 
-float WorkspaceTabStripChrome::ProjectTabWidthForIndex(std::size_t index) const {
-  const ProjectStripSourceCache& sources = RefreshProjectStripSources();
-  return index < sources.widths.size() ? sources.widths[index] : 156.0f;
-}
-
 void WorkspaceTabStripChrome::EnsureActiveProjectVisible() {
   if (context_->project_catalog.entries.empty()) {
     context_->project_catalog.tab_scroll_index = 0;
@@ -189,17 +184,6 @@ std::size_t ClampGroupIndex(const ProjectWorkspaceState& state, std::size_t grou
 }
 
 }  // namespace
-
-float WorkspaceTabStripChrome::TabWidthForIndex(std::size_t index) const {
-  const std::size_t group_index =
-      ClampGroupIndex(context_->current_project_state,
-                      context_->current_project_state.focused_group_index);
-  if (index >= context_->current_project_state.focused_group().open_tabs.size()) {
-    return 132.0f;
-  }
-  return tab_strip_service_->MeasureEditorTabWidth(
-      operations_.editor_tab_display_title(group_index, index), operations_.measure_width);
-}
 
 void WorkspaceTabStripChrome::EnsureActiveTabVisible() {
   EnsureActiveTabVisibleForGroup(context_->current_project_state.focused_group_index);

@@ -60,19 +60,8 @@ std::size_t MergeTotalVisualRowCount(const MergeTabState& merge_tab) {
   return std::max({MergeSourceVisualRowCount(merge_tab), result_rows, std::size_t{1}});
 }
 
-std::size_t MergeSourceLineForVisualRow(const MergeTabState& merge_tab, std::size_t visual_row) {
-  return merge_tab.wrap_layout.UnitForRow(visual_row);
-}
-
 std::size_t MergeSourceVisualRowForLine(const MergeTabState& merge_tab, std::size_t line) {
   return merge_tab.wrap_layout.FirstRowForUnit(line);
-}
-
-std::size_t MergeResultLineForVisualRow(const MergeTabState& merge_tab, std::size_t visual_row) {
-  if (!merge_tab.wrap_layout.active()) {
-    return visual_row;
-  }
-  return merge_tab.result_viewport.VisualRowLineIndex(visual_row);
 }
 
 std::size_t MergeResultVisualRowForLine(const MergeTabState& merge_tab, std::size_t line) {

@@ -808,9 +808,7 @@ class TextViewport {
   // The entry for `line_index` if it was computed in the current generation,
   // else nullptr. The single place staleness is decided.
   const HighlightCacheEntry* CurrentHighlightCacheEntry(std::size_t line_index) const;
-  void EnsureHighlightCheckpoints() const;
   SyntaxState HighlightStateBeforeLine(std::size_t line_index) const;
-  std::size_t CurrentLineLength() const;
   void ClampCursorColumn();
   void ClampScrollState();
   void EnsureCursorVisible();

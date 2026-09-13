@@ -413,10 +413,6 @@ std::size_t MergeChoiceLineCount(const MergeHunk& hunk, MergeChoice choice) {
   return MergeChoiceLineViews(hunk, choice).size();
 }
 
-std::vector<std::string> BootstrapMergeResultLines(const MergeModel& model) {
-  return CollectMergeResultLines(model, /*bootstrap=*/true);
-}
-
 std::string BootstrapMergeResultText(const MergeModel& model, std::string_view separator) {
   return BuildMergeResultText(model, separator, /*bootstrap=*/true);
 }

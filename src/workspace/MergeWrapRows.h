@@ -36,9 +36,7 @@ std::size_t MergeSourceVisualRowCount(const MergeTabState& merge_tab);
 // result pane, which wrap independently.
 std::size_t MergeTotalVisualRowCount(const MergeTabState& merge_tab);
 
-std::size_t MergeSourceLineForVisualRow(const MergeTabState& merge_tab, std::size_t visual_row);
 std::size_t MergeSourceVisualRowForLine(const MergeTabState& merge_tab, std::size_t line);
-std::size_t MergeResultLineForVisualRow(const MergeTabState& merge_tab, std::size_t visual_row);
 std::size_t MergeResultVisualRowForLine(const MergeTabState& merge_tab, std::size_t line);
 
 // The conflict list in on-screen row space. Returns `merge_tab.conflicts`
