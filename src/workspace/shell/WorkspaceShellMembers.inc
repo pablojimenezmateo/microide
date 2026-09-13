@@ -1525,6 +1525,8 @@
   // Stop every live debug session and close the debug pane (Phase 10).
   void StopAllDebugSessions();
   LspClient::ReadinessSnapshot ActiveLspReadinessSnapshot(bool ensure_started = true);
+  // Frame-memoized, never-starting readiness for the menu paint/hit-test paths.
+  const LspClient::ReadinessSnapshot& MenuLspReadiness() const;
   void ActiveLspStatusStrings(bool ensure_started, std::string& text, std::string& tooltip, StatusBarSegmentTone& tone);
   void BeginTrackedLspRequest();
   void FinishTrackedLspRequest();
@@ -2132,6 +2134,16 @@
   std::size_t prepare_frame_layout_compute_count_ = 0;
   bool prepared_frame_draw_editor_caret_ = false;
   std::uint64_t prepared_frame_id_ = 0;
+  // Frame-scoped memo for the menu's LSP-readiness probe. Menu layout, each row's
+  // label and each row's enablement all asked for readiness independently, and every
+  // ask locks the active LspClient's mutex (shared with its reader thread) and copies
+  // the snapshot's std::string — so an open menu paid O(rows) locks per frame for a
+  // value that is frame-stable. Between frames the memo returns what the user is
+  // actually looking at, which is the right answer for a click on a painted row.
+  // Not the status bar's probe: that one stays live, and it is what pumps
+  // ExpireTrackedLspRequestIfNeeded every frame.
+  mutable LspClient::ReadinessSnapshot menu_lsp_readiness_{};
+  mutable std::uint64_t menu_lsp_readiness_frame_id_ = 0;
   // `BuildFrameSurface` / `BuildOverlaySurface` are shared across `RenderClip` iterations (partial
   // redraw) and between `RenderFrameBase` + `RenderActiveWorkspaceSurface` within one clip.
   mutable bool clip_frame_overlay_view_models_valid_ = false;

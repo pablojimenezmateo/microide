@@ -224,9 +224,7 @@ std::optional<SDL_FRect> WorkspaceShell::ComputePopupMenuRect(
     popup_cache_generation = text_renderer_.MetricsGeneration();
   }
 
-  const auto readiness =
-      const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(
-          /*ensure_started=*/false);
+  const LspClient::ReadinessSnapshot& readiness = MenuLspReadiness();
   const std::uint8_t lsp_state = static_cast<std::uint8_t>(readiness.state);
 
   float raw_width = 172.0f;
@@ -415,8 +413,7 @@ std::string_view WorkspaceShell::MenuItemLabel(const MenuItemSpec& item) const {
     thread_local std::string composed;
     return LspDrivenMenuActionLabel(
         effective_action, ready_label,
-        const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(/*ensure_started=*/false),
-        composed);
+        MenuLspReadiness(), composed);
   };
 
   if (!item.label.empty()) {
@@ -500,8 +497,7 @@ bool WorkspaceShell::IsMenuItemEnabled(const MenuItemSpec& item,
   }
 
   if (IsLspDrivenMenuAction(effective_action) && !PluginServesLspMenuAction(effective_action) &&
-      !IsLspMenuActionReady(const_cast<WorkspaceShell*>(this)->ActiveLspReadinessSnapshot(
-          /*ensure_started=*/false))) {
+      !IsLspMenuActionReady(MenuLspReadiness())) {
     return false;
   }
 

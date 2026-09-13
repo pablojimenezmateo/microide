@@ -70,6 +70,19 @@ LspClient::ReadinessSnapshot WorkspaceShell::ActiveLspReadinessSnapshot(bool ens
   return lsp_service_.ActiveLspReadinessSnapshot(ensure_started);
 }
 
+const LspClient::ReadinessSnapshot& WorkspaceShell::MenuLspReadiness() const {
+  // Frame 0 is "no frame prepared yet", so it can never satisfy the memo: the
+  // menu paths run before the first paint in tests and from hit-tests between
+  // frames, and both must see a live value rather than a default-constructed one.
+  const std::uint64_t frame_id = prepared_frame_id_;
+  if (frame_id == 0 || frame_id != menu_lsp_readiness_frame_id_) {
+    menu_lsp_readiness_ = const_cast<WorkspaceShell*>(this)->lsp_service_.ActiveLspReadinessSnapshot(
+        /*ensure_started=*/false);
+    menu_lsp_readiness_frame_id_ = frame_id;
+  }
+  return menu_lsp_readiness_;
+}
+
 void WorkspaceShell::ActiveLspStatusStrings(bool ensure_started, std::string& text,
                                             std::string& tooltip, StatusBarSegmentTone& tone) {
   LspService::LspStatusSeverity severity = LspService::LspStatusSeverity::Idle;
