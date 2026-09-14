@@ -65,8 +65,15 @@ inline std::size_t LspPositionToByteColumn(const editor::TextViewport& viewport,
 }
 
 // Inbound conversion with the `viewport == nullptr` / utf-8 fast path (the
-// file-not-open case): both short-circuit to the raw byte offset, since utf-8 is
-// pass-through and a missing buffer has no line text to map against.
+// file-not-open case): both short-circuit to the raw byte offset, since utf-8
+// needs no conversion and a missing buffer has no line text to map against.
+//
+// Deliberately NOT routed through LspCharacterToByteColumn's boundary snap. This
+// is the DECORATION path -- semantic tokens (tens of thousands per file),
+// document highlights, inlay hints -- where a column landing inside a UTF-8
+// sequence misplaces a highlight and nothing more. Positions that can become an
+// EDIT go through LspPositionToByteColumn / LspRangeToEditorRange instead, which
+// do snap, because an edit starting mid-sequence corrupts the buffer.
 inline std::size_t LspInboundColumn(const editor::TextViewport* viewport, std::size_t line,
                                     int character, lsp_encoding::PositionEncoding encoding) {
   const std::size_t raw = static_cast<std::size_t>(std::max(0, character));

@@ -38,9 +38,22 @@ PositionEncoding ParsePositionEncoding(std::string_view negotiated) {
 std::size_t LspCharacterToByteColumn(std::string_view line, std::size_t character,
                                      PositionEncoding encoding) {
   if (encoding == PositionEncoding::Utf8) {
-    // The server already counts bytes; a byte offset is a valid boundary in
-    // well-formed input, so just clamp to the line length.
-    return std::min(character, line.size());
+    // The server already counts bytes, so the offset needs no conversion -- but
+    // it still has to be snapped to a codepoint boundary, which is what this
+    // function promises for every encoding. A byte offset landing mid-sequence
+    // is not only a server bug: a position computed against an earlier document
+    // version lands wherever the edits since put it. The result is used to build
+    // edits (rename, code action, formatting), and an edit that starts inside a
+    // UTF-8 sequence splits it and corrupts the buffer.
+    //
+    // The loop runs zero times for ASCII -- the overwhelmingly common case -- so
+    // the hot path pays one predictable branch, and at most three steps ever.
+    std::size_t byte = std::min(character, line.size());
+    while (byte > 0 && byte < line.size() &&
+           util::IsUtf8ContinuationByte(static_cast<unsigned char>(line[byte]))) {
+      --byte;
+    }
+    return byte;
   }
   if (encoding == PositionEncoding::Utf32) {
     return util::Utf8ByteOffsetForCodepointCount(line, character);
