@@ -1090,6 +1090,7 @@ add_executable(microide_tests
   tests/TabStripServiceTests.cpp
   tests/TextDragDropTests.cpp
   tests/SelectionGranularityTests.cpp
+  tests/MergeWrapRowsTests.cpp
   tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp
