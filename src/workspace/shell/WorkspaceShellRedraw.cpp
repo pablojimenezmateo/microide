@@ -374,6 +374,13 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
   // Nothing but a bool test while the widget is closed.
   RefreshBufferSearchAfterBufferEdit();
 
+  // A snippet session's placeholders are LINE:COLUMN ranges that only the snippet
+  // engine's own ops keep in step with the text. Any other edit -- move-line,
+  // sort, paste, format, an LSP workspace edit -- moves the text under them, and
+  // Tab would then jump to whatever inherited their coordinates. Ends the session
+  // in that case; the engine's own edits stamp the revision and are ignored here.
+  assist_service_.NotifySnippetSessionBufferChanged();
+
   const auto& applied_edit = viewport->last_applied_edit();
   // Slide stored line breakpoints through this edit so a line inserted/removed
   // above a breakpoint keeps it on its statement (VSCode-style). Cheap no-op for

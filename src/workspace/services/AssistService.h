@@ -121,6 +121,10 @@ class AssistService {
   bool TrySnippetTabInEditor(bool shift_tab);
   bool TrySnippetEscapeInEditor();
   void NotifySnippetSessionCaretMoved();
+  // An edit landed. Ends an active snippet session unless the edit was the
+  // engine's own -- every other edit moves the text its placeholder ranges point
+  // at (see SnippetSessionState::tracked_content_revision).
+  void NotifySnippetSessionBufferChanged();
   void ClearActiveSnippetSessionAfterUndo();
   bool TrySnippetInsertTextInEditor(editor::TextViewport* viewport, std::string_view text);
   bool TrySnippetBackspaceInEditor(editor::TextViewport* viewport);

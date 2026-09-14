@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <functional>
 #include <optional>
 #include <string>
@@ -33,6 +34,18 @@ struct SnippetSessionState {
   std::unordered_map<int, std::size_t> choice_index_by_tab;
   std::vector<TextPosition> saved_secondary_carets;
   std::vector<SnippetNestedLink> nested_links;
+  // The buffer revision `ranges_by_tab` was computed against. Every placeholder is
+  // a LINE:COLUMN range, and only the engine's own ops (mirror edits, a choice
+  // swap, the expansion itself) keep them in step with the text. Any other edit --
+  // move-line, sort, paste, format, an LSP workspace edit -- moves the text
+  // underneath them, and the session would then navigate to coordinates that had
+  // become somebody else's. Stamped where the ranges are written; a mismatch on
+  // the next announced edit ends the session.
+  //
+  // Note which way this fails: a new engine op that forgets to stamp ends the
+  // session one edit early (visible, and a test catches it), while the absence of
+  // the check is a silent jump into the wrong text.
+  std::uint64_t tracked_content_revision = 0;
 
   void Reset(TextViewport* viewport_restore_secondary_to);
 };
@@ -90,6 +103,9 @@ void CommitSnippetSession(TextViewport& viewport, SnippetSessionState& session);
 bool SnippetNavigateTab(TextViewport& viewport, SnippetSessionState& session, bool backward);
 bool SnippetHandleEscape(TextViewport& viewport, SnippetSessionState& session);
 void SnippetOnCaretMoved(TextViewport& viewport, SnippetSessionState& session);
+// The buffer changed. Ends the session unless the change was the engine's own
+// (see SnippetSessionState::tracked_content_revision).
+void SnippetOnBufferChanged(TextViewport& viewport, SnippetSessionState& session);
 
 bool SnippetTryInsertText(TextViewport& viewport, SnippetSessionState& session, std::string_view text);
 bool SnippetTryBackspace(TextViewport& viewport, SnippetSessionState& session);

@@ -3201,6 +3201,90 @@ void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
   }
 }
 
+// A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
+// engine's own operations (a mirror edit, a choice swap, the expansion) keep them
+// in step with the text. Every other edit -- move-line, sort, paste, format, an
+// LSP workspace edit -- moves the buffer underneath them and nothing told the
+// session, so it stayed ACTIVE describing coordinates that had become somebody
+// else's: Tab then jumped into unrelated text and the next keystroke replaced it.
+//
+// The session now records the revision its ranges were computed against, and an
+// announced edit that is not the engine's ends it. That failure direction is the
+// safe one: a future engine op that forgets to stamp ends the session one edit
+// early, which a test sees, where the absence of the check was silent.
+void TestWorkspaceShellForeignEditEndsTheSnippetSession() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "code.cpp";
+  WriteFile(file, "aaa();\nbbb();\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport != nullptr, "the fixture opens an editor tab");
+  viewport->MoveCursorTo(1, 5);
+  Expect(WorkspaceShellTestAccess::PerfExpandSnippetAtCaret(shell, "for(${1:i};;)$0"),
+         "the snippet should expand");
+  Expect(WorkspaceShellTestAccess::SnippetSessionActive(shell),
+         "the session is live right after expansion");
+  const std::string expanded = std::string(viewport->lines().LineView(1));
+  Expect(expanded.find("for(i;;)") != std::string::npos,
+         "the placeholder text is on line 1: " + expanded);
+
+  // A shaping edit the engine knows nothing about: the snippet's whole line moves
+  // up, so every placeholder range is now one line below its text.
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::MoveLineUp, {}),
+         "move-line-up should dispatch");
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(std::string(viewport->lines().LineView(0)) == expanded,
+         "the snippet's line moved to line 0: " + std::string(viewport->lines().LineView(0)));
+  Expect(!WorkspaceShellTestAccess::SnippetSessionActive(shell),
+         "an edit the engine did not make must end the session rather than leave it "
+         "pointing at moved text");
+
+  // Tab is therefore an ordinary tab, not a jump into whatever now sits at the old
+  // placeholder coordinates.
+  const std::size_t caret_line = viewport->cursor_line();
+  Expect(SendKeyDown(shell, SDLK_TAB, SDL_KMOD_NONE), "Tab is handled");
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport->cursor_line() == caret_line,
+         "Tab must not jump to a stale placeholder; it stayed on line " +
+             std::to_string(caret_line) + " but landed on " +
+             std::to_string(viewport->cursor_line()));
+  Expect(!viewport->selection_range().has_value(),
+         "and it selected nothing, where a stale jump would have selected the text "
+         "that inherited the placeholder's coordinates");
+}
+
+// The other half: the engine's OWN edits must not end the session. Typing into a
+// placeholder is an announced edit like any other, so the revision stamp is the
+// only thing that tells the two apart.
+void TestWorkspaceShellTypingInAPlaceholderKeepsTheSnippetSession() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "code.cpp";
+  WriteFile(file, "aaa();\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  viewport->MoveCursorTo(0, 6);
+  Expect(WorkspaceShellTestAccess::PerfExpandSnippetAtCaret(shell, "${1:name} = ${1:name};$0"),
+         "the mirrored snippet should expand");
+  Expect(WorkspaceShellTestAccess::SnippetSessionActive(shell), "the session is live");
+
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "z"), "typing is handled");
+  Expect(WorkspaceShellTestAccess::SnippetSessionActive(shell),
+         "typing inside the placeholder is the engine's own edit and must keep the "
+         "session alive");
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  const std::string line = std::string(viewport->lines().LineView(0));
+  Expect(line.find("z = z;") != std::string::npos,
+         "and the mirror still follows it: " + line);
+}
+
 // A breakpoint is a LINE NUMBER, and every edit that adds or removes lines above
 // one moves the statement it was set on. VS Code slides them; so does this, from
 // the viewport's applied-edit span -- but only where a code path announces the
@@ -7642,6 +7726,10 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
+  AddTest(tests, "WorkspaceShell/ForeignEditEndsTheSnippetSession",
+          TestWorkspaceShellForeignEditEndsTheSnippetSession);
+  AddTest(tests, "WorkspaceShell/TypingInAPlaceholderKeepsTheSnippetSession",
+          TestWorkspaceShellTypingInAPlaceholderKeepsTheSnippetSession);
   AddTest(tests, "WorkspaceShell/EveryActionKeepsBreakpointsOnTheirLine",
           TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchCountsEveryOccurrence",

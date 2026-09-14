@@ -1071,6 +1071,14 @@
       const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.code_actions;
   }
+  static bool SnippetSessionActive(const WorkspaceShell& shell) {
+    const auto& group = shell.context_.current_project_state.focused_group();
+    if (group.active_tab_index >= group.open_tabs.size()) {
+      return false;
+    }
+    const auto& editor_tab = group.open_tabs[group.active_tab_index].editor_state;
+    return editor_tab.has_value() && editor_tab->snippet_session.active;
+  }
   static bool PerfExpandSnippetAtCaret(WorkspaceShell& shell, std::string_view snippet_body) {
     editor::TextViewport* viewport = shell.ActiveEditorViewport();
     if (viewport == nullptr) {

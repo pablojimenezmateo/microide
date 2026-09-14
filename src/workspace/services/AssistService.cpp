@@ -576,6 +576,15 @@ void AssistService::NotifySnippetSessionCaretMoved() {
   }
 }
 
+void AssistService::NotifySnippetSessionBufferChanged() {
+  TabEntry::EditorTabState* tab = operations_.active_editor_tab();
+  editor::TextViewport* viewport = operations_.active_editable_viewport();
+  if (tab == nullptr || viewport == nullptr || !tab->snippet_session.active) {
+    return;
+  }
+  editor::SnippetOnBufferChanged(*viewport, tab->snippet_session);
+}
+
 void AssistService::ClearActiveSnippetSessionAfterUndo() {
   TabEntry::EditorTabState* tab = operations_.active_editor_tab();
   if (tab == nullptr || !tab->snippet_session.active) {

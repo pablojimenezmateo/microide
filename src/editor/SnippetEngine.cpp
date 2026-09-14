@@ -883,6 +883,12 @@ static void ApplyBatchedMirrorShifts(SnippetSessionState& session, int edited_ta
   }
 }
 
+// The ranges now describe THIS revision of the buffer. Called wherever the engine
+// finishes writing them; see SnippetSessionState::tracked_content_revision.
+static void StampSessionRevision(const TextViewport& viewport, SnippetSessionState& session) {
+  session.tracked_content_revision = viewport.content_revision();
+}
+
 static void ApplyChoiceForTab(TextViewport& viewport,
                               SnippetSessionState& session,
                               int tab,
@@ -916,6 +922,7 @@ static void ApplyChoiceForTab(TextViewport& viewport,
     edits.push_back(AppliedMirrorEdit{idx, r.end.line, r.end.column, delta});
   }
   ApplyBatchedMirrorShifts(session, tab, edits);
+  StampSessionRevision(viewport, session);
 }
 
 bool ExpandSnippetAtSelection(TextViewport& viewport,
@@ -988,6 +995,7 @@ bool ExpandSnippetAtSelection(TextViewport& viewport,
   session.navigate_order = BuildNavigateOrder(parsed.occurrences);
   session.navigate_index = 0;
   session.active = true;
+  StampSessionRevision(viewport, session);
 
   while (session.navigate_index < session.navigate_order.size() &&
          session.navigate_order[session.navigate_index] == 0) {
@@ -1023,6 +1031,16 @@ static bool CaretInsideCurrentTab(const TextViewport& viewport, const SnippetSes
   }
   const TextPosition p{viewport.cursor_line(), viewport.cursor_column()};
   return RangeContaining(it->second, p) != nullptr;
+}
+
+void SnippetOnBufferChanged(TextViewport& viewport, SnippetSessionState& session) {
+  if (!session.active || session.tracked_content_revision == viewport.content_revision()) {
+    return;
+  }
+  // Somebody else edited the buffer. The placeholder ranges describe text that has
+  // moved, so navigating them would select whatever inherited their coordinates --
+  // VS Code likewise drops the session on an edit it did not make.
+  CommitSnippetSession(viewport, session);
 }
 
 void SnippetOnCaretMoved(TextViewport& viewport, SnippetSessionState& session) {
@@ -1199,6 +1217,7 @@ static void ReplaceInMirrors(TextViewport& viewport, SnippetSessionState& sessio
                         std::min(edited.start.column + target.rel_start + text.size(),
                                  edited.end.column),
                         false);
+  StampSessionRevision(viewport, session);
 }
 
 static std::vector<SelectionRange>* FocusedTabRanges(SnippetSessionState& session, int* tab_out) {
