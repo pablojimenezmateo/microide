@@ -11,6 +11,14 @@
 
 namespace microide::project {
 
+// This is the ONE patch formatter in the tree. A second, display-only exporter
+// used to live in `compare/ComparePatchExport.h` and emitted fake `@@ hunk N @@`
+// headers with no real unified line ranges, no /dev/null headers, no mode lines
+// and no no-final-newline markers -- so the text the compare surface put on the
+// clipboard could not be fed back to `git apply`, while the staging path's text
+// could. Copy, stage and discard all route here now. Extend this generator
+// rather than adding a lighter one beside it.
+
 struct PatchGenerationOptions {
   std::size_t context_lines = 3;
   // Upper bound on the generated patch text. A whole-file or huge-selection patch

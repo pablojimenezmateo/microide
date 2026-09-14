@@ -270,7 +270,6 @@ set(MICROIDE_CORE_SOURCES
   src/editor/TextViewportUndoHistory.cpp
   src/editor/TextViewportViewState.cpp
   src/compare/CompareModel.cpp
-  src/compare/ComparePatchExport.cpp
   src/project/PatchApplyTypes.cpp
   src/project/PatchGenerator.cpp
   src/project/GitPatchApply.cpp
