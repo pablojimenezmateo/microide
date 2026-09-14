@@ -52,9 +52,11 @@ class SingleLineEditor {
   bool MoveHome(bool extend_selection = false);
   bool MoveEnd(bool extend_selection = false);
   bool SelectAll();
-  // Word boundaries are alphanumeric plus '_', matching TextViewport::SelectWordAtCursor.
-  // Selects the word straddling byte_offset (or the word ending at byte_offset). Returns
-  // false and leaves state untouched if no word character is adjacent.
+  // What a double-click selects, through the one shared rule
+  // (editor::WordSelectionRunAt, as TextViewport::SelectWordOrRunAtCursor does):
+  // the identifier run straddling byte_offset -- or ending exactly there -- and
+  // otherwise the whitespace or operator run under it. Returns false and leaves
+  // state untouched only when there is nothing at all to select (an empty field).
   bool SelectWordAt(std::size_t byte_offset);
   bool DeleteSelection();
   std::string CopySelection() const;

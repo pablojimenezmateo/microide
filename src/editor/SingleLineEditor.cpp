@@ -301,27 +301,18 @@ bool SingleLineEditor::MoveEnd(bool extend_selection) {
 
 bool SingleLineEditor::SelectWordAt(std::size_t byte_offset) {
   Normalize();
-  // Codepoint-aware: a double-click on `größe` selects the whole word rather
-  // than the ASCII fragment the byte-wise scan stopped at.
-  const std::size_t clamped =
-      util::Utf8CodepointStartAt(text_, std::min(byte_offset, text_.size()));
-  std::size_t anchor = clamped;
-  std::size_t length = 0;
-  if (util::Utf8IdentifierCodepointAt(text_, clamped, &length)) {
-    // primary position straddles a word character
-  } else if (clamped > 0 && util::Utf8IdentifierCodepointAt(
-                                text_, util::Utf8CodepointStartAt(text_, clamped - 1), &length)) {
-    anchor = util::Utf8CodepointStartAt(text_, clamped - 1);
-  } else {
+  // The SAME rule the multi-line editor's double-click uses (WordSelectionRunAt):
+  // the identifier run the caret touches, or the whitespace / operator run when it
+  // touches none. This used to resolve the run with its own scan and give up
+  // entirely off identifier content, so double-clicking an indent or `->` in the
+  // command prompt or the search box selected nothing while the same double-click
+  // in the editor selected the run -- and the header claimed the two matched.
+  const WordSpan span = WordSelectionRunAt(text_, std::min(byte_offset, text_.size()));
+  if (span.empty()) {
     return false;
   }
-  const std::size_t start = util::Utf8IdentifierRunStart(text_, anchor);
-  const std::size_t end = util::Utf8IdentifierRunEnd(text_, anchor);
-  if (start >= end) {
-    return false;
-  }
-  selection_anchor_ = start;
-  caret_ = end;
+  selection_anchor_ = span.start;
+  caret_ = span.end;
   return true;
 }
 

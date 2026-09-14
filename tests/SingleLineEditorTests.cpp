@@ -150,11 +150,25 @@ void TestSingleLineEditorSelectsWordAtOffset() {
   Expect(!editor.SelectWordAt(11) == false,
          "boundary case at 11 selects the preceding word, returns true");
 
-  // Click in pure whitespace returns false and does not mutate state.
+  // Off identifier content, the double-click takes the RUN under the pointer --
+  // the same rule the multi-line editor uses (editor::WordSelectionRunAt), and
+  // what a native text input does. It used to select nothing here, so the same
+  // gesture behaved differently in the command prompt than in the editor.
   editor::SingleLineEditor blanks("   ");
   blanks.SetCaret(2);
-  Expect(!blanks.SelectWordAt(1), "selecting in whitespace should report no word");
-  ExpectEditorState(blanks, "   ", 2, std::nullopt, "no word at whitespace");
+  Expect(blanks.SelectWordAt(1), "a whitespace run is selectable");
+  ExpectEditorState(blanks, "   ", 3, editor::SingleLineSelection{0, 3},
+                    "the whole whitespace run");
+
+  editor::SingleLineEditor operators("a->b");
+  Expect(operators.SelectWordAt(2), "an operator run is selectable");
+  ExpectEditorState(operators, "a->b", 3, editor::SingleLineSelection{1, 3},
+                    "the whole -> run, not one character");
+
+  // Nothing at all to select is still false, and leaves the state untouched.
+  editor::SingleLineEditor empty("");
+  Expect(!empty.SelectWordAt(0), "an empty field has nothing to select");
+  ExpectEditorState(empty, "", 0, std::nullopt, "empty field untouched");
 }
 
 void TestSingleLineEditorSupportsSnapshotAndAppend() {
