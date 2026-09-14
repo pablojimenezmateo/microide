@@ -1137,6 +1137,15 @@ Two things the probe needs to be readable:
   carets) is what says they worked. A probe that "fixed" those would have buried
   the one real finding among four invented ones.
 
+**The same probe, run over a multi-line SELECTION instead of three cursors, found
+a second bug in the same verb** -- and this time the useful column was not "how
+many selected lines changed" but "how many lines OUTSIDE the selection changed".
+A whole-line drag ends at column 0 of the line below its last content line, every
+line op normalizes that away (`RangeForCaret`), and the block toggle did not: the
+closing marker landed at the start of the next line and joined it to the comment.
+Count both sides of the boundary; a verb reaching past its range is as much a
+defect as one not reaching the end of it.
+
 And the fix's own trap, caught by `tools/sweep-editor-invariants.py` rather than
 by any unit test: the multi-caret path must leave each region's inner text
 SELECTED, because that is what the second press acts on. Restoring the carets as
