@@ -3581,6 +3581,103 @@ void TestWorkspaceShellNoActionEditsABackgroundBuffer() {
   }
 }
 
+// Soft wrap is a VIEW setting, so no ACTION may notice it. The viewport-level
+// differential next door (EditorWrapInvarianceTests) proves that of the
+// `editor::` free functions; this proves it of the whole dispatch, which is a
+// different amount of machinery -- the compare refresh, the merge re-tracking,
+// the find refresh, the breakpoint slide, the folding mark and the LSP sync all
+// hang off the same post-edit hook, and each of them has a row-space question of
+// its own. Five sites got that question wrong this session.
+//
+// Two shells over the same file, identical in every way except `editor.wrap`,
+// every registered action run on both, and one requirement: the buffers agree.
+void TestWorkspaceShellNoActionNoticesSoftWrap() {
+  const std::vector<WorkspaceShell::ActionId> skipped = {
+      WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
+      WorkspaceShell::ActionId::CloseTabsToRight, WorkspaceShell::ActionId::CloseTabsToLeft,
+      WorkspaceShell::ActionId::CloseAllTabs,     WorkspaceShell::ActionId::CloseGroup,
+      WorkspaceShell::ActionId::ProjectClose,     WorkspaceShell::ActionId::Quit,
+      WorkspaceShell::ActionId::Open,             WorkspaceShell::ActionId::ProjectOpen,
+      // The wrap toggle itself is the one action whose whole job is to notice.
+      WorkspaceShell::ActionId::Wrap,
+  };
+  // Lines far wider than the pane, so wrap genuinely reflows them, with the
+  // indentation and comment markers the shaping verbs need.
+  const std::string content =
+      "  aaa(" + std::string(200, 'a') + ");\n"
+      "  bbb(" + std::string(200, 'b') + ");\n"
+      "  ccc(" + std::string(200, 'c') + ");\n"
+      "  ddd();\n";
+
+  std::size_t compared_actions = 0;
+  std::size_t wrapped_checks = 0;
+  for (const auto& spec : microide::workspace::WorkspaceCommandSpecs()) {
+    if (std::find(skipped.begin(), skipped.end(), spec.id) != skipped.end()) {
+      continue;
+    }
+    std::array<std::string, 2> results;
+    bool usable = true;
+    for (int wrapped = 0; wrapped < 2 && usable; ++wrapped) {
+      TemporaryDirectory temp_dir;
+      const std::filesystem::path root = temp_dir.path() / "project";
+      const auto file = root / "code.cpp";
+      WriteFile(file, content);
+      WorkspaceShell shell;
+      WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+      // A NARROW window for the wrapped pass would change `visible_rows` too, and
+      // a page verb legitimately depends on that; the width is identical and only
+      // the setting differs.
+      WorkspaceShellTestAccess::SetWindowSize(shell, 640, 480);
+      Expect(WorkspaceShellTestAccess::SetSettingValueTransient(
+                 shell, "editor.wrap", wrapped != 0 ? "word" : "off"),
+             "the wrap setting should be settable");
+      WorkspaceShellTestAccess::OpenFile(shell, file);
+      auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+      if (viewport == nullptr) {
+        usable = false;
+        break;
+      }
+      if (wrapped != 0) {
+        if (viewport->visual_line_count() <= viewport->line_count()) {
+          usable = false;  // nothing wrapped; the comparison would prove nothing
+          break;
+        }
+        ++wrapped_checks;
+      }
+      viewport->MoveCursorTo(1, 4);
+      viewport->MoveCursorTo(2, 6, /*extend_selection=*/true);
+      WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
+      viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+      if (viewport == nullptr) {
+        usable = false;
+        break;
+      }
+      std::string& out = results[static_cast<std::size_t>(wrapped)];
+      for (std::size_t i = 0; i < viewport->line_count(); ++i) {
+        out += viewport->lines().LineView(i);
+        out += '\n';
+      }
+    }
+    if (!usable) {
+      continue;
+    }
+    ++compared_actions;
+    Expect(results[0] == results[1],
+           std::string("`") + std::string(spec.command_name) +
+               "` produced different text with soft wrap on. Wrap is a VIEW "
+               "setting; no action may notice it.\n  unwrapped: " + results[0] +
+               "\n  wrapped:   " + results[1]);
+    if (results[0] != results[1]) {
+      return;
+    }
+  }
+  Expect(compared_actions > 100 && wrapped_checks > 100,
+         "the sweep must have compared essentially the whole registry against a "
+         "genuinely wrapped pane, compared " +
+             std::to_string(compared_actions) + " with " + std::to_string(wrapped_checks) +
+             " wrapped passes");
+}
+
 // A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
 // engine's own operations (a mirror edit, a choice swap, the expansion) keep them
 // in step with the text. Every other edit -- move-line, sort, paste, format, an
@@ -8112,6 +8209,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront);
   AddTest(tests, "WorkspaceShell/TextDragRefusesAStaleSourceRange",
           TestWorkspaceShellTextDragRefusesAStaleSourceRange);
+  AddTest(tests, "WorkspaceShell/NoActionNoticesSoftWrap",
+          TestWorkspaceShellNoActionNoticesSoftWrap);
   AddTest(tests, "WorkspaceShell/NoActionEditsABackgroundBuffer",
           TestWorkspaceShellNoActionEditsABackgroundBuffer);
   AddTest(tests, "WorkspaceShell/ColumnSelectReanchorsAfterAForeignCaretMove",
