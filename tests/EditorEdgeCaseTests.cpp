@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "editor/FoldingModel.h"
 #include "editor/LanguageContractView.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextViewport.h"
@@ -18,6 +19,7 @@
 namespace microide::tests {
 namespace {
 
+using microide::editor::FoldingModel;
 using microide::editor::SelectionRange;
 using microide::editor::TextPosition;
 using microide::editor::TextViewport;
@@ -324,9 +326,186 @@ void TestMultiCaretBackspaceAtColumnZeroJoinsEachLineOnce() {
          std::string("each caret should join its own line once: ") + JoinLines(viewport));
 }
 
+FoldingModel::ComputeOptions CStyleFoldOptions() {
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = true;
+  options.tab_size = 4;
+  return options;
+}
+
+// --- 16. Folding and soft wrap compose: a collapsed fold removes its body's
+// wrapped rows, not one row per hidden LINE. Getting this wrong scrolls the
+// view by the wrong amount and puts the caret on a different row than the one
+// the mouse hit. ---
+void TestCollapsedFoldRemovesEveryWrappedRowOfItsBody() {
+  TextViewport viewport;
+  // Line 2 is long enough to occupy three visual rows at width 8.
+  // The opener is deliberately SHORT enough not to wrap at width 8, so the row
+  // arithmetic below is about the hidden body's height and nothing else.
+  viewport.LoadContent(
+      "head\n"
+      "f() {\n"
+      "  aaaaaaaaaaaaaaaaaaaa;\n"
+      "  b();\n"
+      "}\n"
+      "tail\n",
+      "/tmp/ec-fold-wrap.cpp");
+  viewport.SetViewportSize(/*visible_lines=*/20, /*visible_columns=*/8);
+  viewport.SetSoftWrap(true);
+
+  const std::size_t tail_row_expanded = viewport.VisualRowForLine(5);
+
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), CStyleFoldOptions()),
+         "the fold fixture should compute");
+  Expect(folding_model.Collapse(1), "the function fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+
+  const std::size_t tail_row_collapsed = viewport.VisualRowForLine(5);
+  Expect(tail_row_collapsed < tail_row_expanded,
+         "collapsing a fold must pull the following line up");
+
+  // The whole body -- including the closing brace, as in VS Code, which draws
+  // the fold as `void f() { … }` on the opener's row -- is hidden.
+  for (const std::size_t line : {std::size_t{2}, std::size_t{3}, std::size_t{4}}) {
+    Expect(folding_model.IsLineHidden(line),
+           "line " + std::to_string(line) + " is inside the collapsed fold and must be hidden");
+  }
+  Expect(!folding_model.IsLineHidden(1) && !folding_model.IsLineHidden(5),
+         "the opener and the line after the fold stay visible");
+
+  // The collapsed fold occupies exactly the opener's own rows. Line 1 is short,
+  // so that is one row -- and `tail` follows immediately, even though the hidden
+  // body included a line that wrapped across three rows. A row table that
+  // removed one row per hidden LINE rather than per hidden ROW would leave a
+  // two-row gap here.
+  const std::size_t opener_row = viewport.VisualRowForLine(1);
+  Expect(tail_row_collapsed == opener_row + 1,
+         "the line after a collapsed fold follows its opener with no gap, got row " +
+             std::to_string(tail_row_collapsed) + " after opener row " +
+             std::to_string(opener_row));
+  // And the gap that closed is the wrapped body's full height: line 2 alone took
+  // three rows at width 8, so more than three rows disappeared.
+  Expect(tail_row_expanded - tail_row_collapsed >= 4,
+         "collapsing must remove every wrapped row of the body, removed only " +
+             std::to_string(tail_row_expanded - tail_row_collapsed));
+}
+
+// --- 17. Every visible line's visual row must be strictly increasing and every
+// hidden line must map to a row inside its collapsed opener's span. The row
+// table is what the renderer and every hit test read. ---
+void TestVisualRowsStayMonotonicAcrossAFoldUnderWrap() {
+  TextViewport viewport;
+  viewport.LoadContent(
+      "head\n"
+      "void f() {\n"
+      "  aaaaaaaaaaaaaaaaaaaa;\n"
+      "  void g() {\n"
+      "    bbbbbbbbbbbbbbbbbbbb;\n"
+      "  }\n"
+      "}\n"
+      "tail is also a fairly long line here\n",
+      "/tmp/ec-fold-monotonic.cpp");
+  viewport.SetViewportSize(/*visible_lines=*/30, /*visible_columns=*/9);
+  viewport.SetSoftWrap(true);
+
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), CStyleFoldOptions()),
+         "the nested fold fixture should compute");
+  Expect(folding_model.Collapse(3), "the inner fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+
+  std::size_t previous_row = 0;
+  bool first = true;
+  for (std::size_t line = 0; line < viewport.lines().size(); ++line) {
+    const std::size_t row = viewport.VisualRowForLine(line);
+    if (folding_model.IsLineHidden(line)) {
+      continue;
+    }
+    if (!first) {
+      Expect(row > previous_row,
+             "visible line " + std::to_string(line) + " should sit below the one before it, row " +
+                 std::to_string(row) + " after " + std::to_string(previous_row));
+    }
+    first = false;
+    previous_row = row;
+  }
+
+  // Collapsing the outer fold too must not reorder anything.
+  Expect(folding_model.Collapse(1), "the outer fold should collapse as well");
+  viewport.SetFoldingModel(nullptr);
+  viewport.SetFoldingModel(&folding_model);
+  previous_row = 0;
+  first = true;
+  for (std::size_t line = 0; line < viewport.lines().size(); ++line) {
+    if (folding_model.IsLineHidden(line)) continue;
+    const std::size_t row = viewport.VisualRowForLine(line);
+    if (!first) {
+      Expect(row > previous_row,
+             "nested collapse reordered visible line " + std::to_string(line));
+    }
+    first = false;
+    previous_row = row;
+  }
+}
+
+// --- 18. A multi-caret edit whose carets sit on both sides of a collapsed fold
+// still edits the hidden lines' neighbours correctly, and the fold survives. ---
+void TestMultiCaretEditAcrossACollapsedFoldKeepsBothCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("head\nvoid f() {\n  a();\n}\ntail\n", "/tmp/ec-fold-mc-edit.cpp");
+  viewport.SetViewportSize(20, 40);
+
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), CStyleFoldOptions()),
+         "the fold fixture should compute");
+  Expect(folding_model.Collapse(1), "the function fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{4, 0}});
+  viewport.InsertText("X");
+
+  Expect(viewport.lines()[0] == "Xhead" && viewport.lines()[4] == "Xtail",
+         std::string("both carets should have inserted: ") + JoinLines(viewport));
+  Expect(viewport.lines()[2] == "  a();",
+         "the hidden body must be untouched by an edit outside it");
+  Expect(viewport.secondary_carets().size() == 1,
+         std::string("the caret past the fold should survive: ") + CaretDump(viewport));
+}
+
+// --- 19. Deleting a selection that spans a collapsed fold deletes the hidden
+// lines with it, as in VS Code -- the fold is a display state, not a barrier. ---
+void TestDeletingAcrossACollapsedFoldRemovesTheHiddenLines() {
+  TextViewport viewport;
+  viewport.LoadContent("head\nvoid f() {\n  a();\n}\ntail\n", "/tmp/ec-fold-delete.cpp");
+  viewport.SetViewportSize(20, 40);
+
+  FoldingModel folding_model;
+  Expect(folding_model.Compute(viewport.lines().Snapshot(), CStyleFoldOptions()),
+         "the fold fixture should compute");
+  Expect(folding_model.Collapse(1), "the function fold should collapse");
+  viewport.SetFoldingModel(&folding_model);
+
+  viewport.MoveCursorTo(0, 4);
+  viewport.MoveCursorTo(4, 0, /*extend_selection=*/true);
+  Expect(viewport.DeleteSelectedText(), "the selection across the fold should delete");
+  Expect(JoinLines(viewport) == "headtail\n",
+         std::string("the hidden body should go with the selection: ") + JoinLines(viewport));
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorEdgeCase/CollapsedFoldRemovesEveryWrappedRowOfItsBody",
+          TestCollapsedFoldRemovesEveryWrappedRowOfItsBody);
+  AddTest(tests, "EditorEdgeCase/VisualRowsStayMonotonicAcrossAFoldUnderWrap",
+          TestVisualRowsStayMonotonicAcrossAFoldUnderWrap);
+  AddTest(tests, "EditorEdgeCase/MultiCaretEditAcrossACollapsedFoldKeepsBothCarets",
+          TestMultiCaretEditAcrossACollapsedFoldKeepsBothCarets);
+  AddTest(tests, "EditorEdgeCase/DeletingAcrossACollapsedFoldRemovesTheHiddenLines",
+          TestDeletingAcrossACollapsedFoldRemovesTheHiddenLines);
   AddTest(tests, "EditorEdgeCase/MultiCaretShiftDownThenTypeReplacesEverySelection",
           TestMultiCaretShiftDownThenTypeReplacesEverySelection);
   AddTest(tests, "EditorEdgeCase/MultiCaretTouchingSelectionsStaySeparateAndStillEdit",
