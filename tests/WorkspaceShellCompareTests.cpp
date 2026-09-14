@@ -6,6 +6,7 @@
 
 #include "workspace/render/DiffDividerGeometry.h"
 #include "workspace/git/CompareTabReview.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "render/Theme.h"
 #include "editor/PluginDecorationStore.h"
@@ -2700,6 +2701,135 @@ void TestWorkspaceShellCompareEditActionRefreshesDiffModel() {
          "the diff model must be rebuilt after an action-driven edit, not left stale");
 }
 
+std::string Quoted(std::string_view text) {
+  std::string out = "\"";
+  for (char c : text) {
+    if (c == '\n') {
+      out += "\\n";
+    } else {
+      out.push_back(c);
+    }
+  }
+  return out + "\"";
+}
+
+// EVERY action, not the one somebody remembered. The compare surface paints its
+// right pane from the DIFF MODEL, not from the viewport, so an edit action that
+// mutates the buffer and does not rebuild the model leaves the pane showing the
+// pre-edit text until an unrelated event happens to refresh it. Three action
+// sites had each grown their own copy of that rebuild and every other edit
+// action simply did not do it (TD-2026-08-13-200); the rebuild is centralized in
+// NotifyEditorViewportChanged now, and the test that pins it exercises exactly
+// one verb.
+//
+// This walks the whole command registry instead and asserts the invariant that
+// does not need a list: IF an action changed the editable pane's buffer, THEN
+// the diff model's right side agrees with it afterwards. A new edit action is
+// covered the day it is registered, with nothing to remember.
+void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
+  // Actions that deliberately leave the compare tab -- they replace or close the
+  // active tab, so "the compare tab's model agrees with its viewport" is not a
+  // question about them. Everything else runs.
+  const std::vector<WorkspaceShell::ActionId> skipped = {
+      WorkspaceShell::ActionId::CloseActiveTab,
+      WorkspaceShell::ActionId::CloseOtherTabs,
+      WorkspaceShell::ActionId::CloseTabsToRight,
+      WorkspaceShell::ActionId::CloseTabsToLeft,
+      WorkspaceShell::ActionId::CloseAllTabs,
+      WorkspaceShell::ActionId::CloseGroup,
+      WorkspaceShell::ActionId::ProjectClose,
+      WorkspaceShell::ActionId::Quit,
+  };
+
+  // ONE repository for the whole sweep: a git init + commit per action costs more
+  // than everything else here put together. Each action still gets a fresh shell
+  // and a rewritten working-tree file, which is what isolates them.
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbravo\ncharlie\ndelta\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "compare action sweep fixture", "compare action sweep");
+
+  std::size_t mutating_actions = 0;
+  for (const auto& spec : microide::workspace::WorkspaceCommandSpecs()) {
+    if (std::find(skipped.begin(), skipped.end(), spec.id) != skipped.end()) {
+      continue;
+    }
+    WriteFile(source, "alpha\nbravo\ncharlie\ndelta\n");
+
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    if (!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD")) {
+      Expect(false, std::string("the compare fixture should open for ") +
+                        std::string(spec.command_name));
+      return;
+    }
+    auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+    Expect(compare.right_editable, "the working-tree pane is editable");
+    // A caret in the middle of the buffer with a selection, so the line ops, the
+    // clipboard verbs and the selection verbs all have something to act on.
+    compare.right_viewport.MoveCursorTo(1, 2);
+    compare.right_viewport.MoveCursorTo(2, 3, /*extend_selection=*/true);
+
+    const auto pane_text = [&compare]() {
+      std::string joined;
+      for (std::size_t i = 0; i < compare.right_viewport.line_count(); ++i) {
+        joined += compare.right_viewport.lines().LineView(i);
+        joined += '\n';
+      }
+      return joined;
+    };
+    // What the surface would PAINT down the right pane: the diff model's own
+    // right-side text, in row order.
+    const auto painted_text = [&compare]() {
+      std::string joined;
+      for (const auto& row : compare.model.rows) {
+        if (row.right_line > 0) {
+          joined += row.right_text;
+          joined += '\n';
+        }
+      }
+      return joined;
+    };
+
+    const std::string before = pane_text();
+    Expect(painted_text().rfind(before, 0) == 0 || before.rfind(painted_text(), 0) == 0,
+           std::string("before ") + std::string(spec.command_name) +
+               " the model and the pane already disagree, so this sweep would blame the "
+               "wrong verb");
+
+    WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
+
+    // The action may have swapped the active tab even though it is not in the
+    // skip list (opening a picker, say); only judge it while the compare tab is
+    // still the one in front.
+    auto* still_compare = WorkspaceShellTestAccess::ActiveCompareOrNull(shell);
+    if (still_compare != &compare) {
+      continue;
+    }
+    const std::string after = pane_text();
+    if (after == before) {
+      continue;  // not an edit action for this caret; nothing to require
+    }
+    ++mutating_actions;
+    const std::string painted = painted_text();
+    Expect(painted.rfind(after, 0) == 0,
+           std::string("`") + std::string(spec.command_name) +
+               "` edited the compare pane's buffer but left the diff model stale: the "
+               "pane holds " +
+               Quoted(after) + " and the surface would paint " + Quoted(painted));
+  }
+  // Vacuity guard: if nothing in the registry edited the pane, the sweep asserted
+  // nothing at all -- a disabled capability, a caret with no selection, or a
+  // dispatch that stopped reaching this surface.
+  Expect(mutating_actions >= 8,
+         "the sweep must have found actions that actually edit the compare pane, found "
+         "only " +
+             std::to_string(mutating_actions));
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
           TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
@@ -2719,6 +2849,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned);
   AddTest(tests, "WorkspaceShell/MergeWordWrapExpandsRows",
           TestWorkspaceShellMergeWordWrapExpandsRows);
+  AddTest(tests, "WorkspaceShell/CompareEveryActionKeepsTheDiffModelInSync",
+          TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync);
   AddTest(tests, "WorkspaceShell/CompareEditActionRefreshesDiffModel",
           TestWorkspaceShellCompareEditActionRefreshesDiffModel);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareRejectsBinaryAndUnreadable",

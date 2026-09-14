@@ -476,7 +476,7 @@ def wait_for_socket(log_path: Path, timeout_s: int) -> str | None:
 
 
 def start_app(binary: Path, project: Path, log_path: Path, startup_timeout: int,
-              home: Path):
+              home: Path, soft_wrap: bool = False):
     """`home` is per-session on purpose -- see open_session()."""
     for part in ("config", "state", "data", "cache"):
         (home / part).mkdir(parents=True, exist_ok=True)
@@ -506,6 +506,13 @@ def start_app(binary: Path, project: Path, log_path: Path, startup_timeout: int,
         "--set", "editor.indent_width", "2",
         "--set", "editor.tab_size", "2",
     ]
+    # Soft wrap is a VIEW setting, so every property here must hold identically
+    # with it on -- and wrap is the first feature that makes model rows,
+    # presentation rows and on-screen rows three different things, which is
+    # exactly what a line op that reaches for the wrong one gets wrong. Off by
+    # default so the two runs are separate evidence rather than one blended one.
+    if soft_wrap:
+        settings += ["--set", "editor.wrap", "word"]
     with log_path.open("wb") as log:
         app = subprocess.Popen(
             ["xvfb-run", "-a", str(binary), str(project), "--control", *settings],
@@ -617,6 +624,8 @@ def main() -> int:
     parser.add_argument("--verbose", action="store_true",
                         help="list every probe in which the command changed nothing")
     parser.add_argument("--keep", action="store_true")
+    parser.add_argument("--soft-wrap", action="store_true",
+                        help="run the whole matrix with word wrap ON")
     args = parser.parse_args()
 
     if not args.binary.exists():
@@ -658,7 +667,8 @@ def main() -> int:
         log_path = scratch / f"app{session_count}.log"
         session_logs.append(log_path)
         app, sock_path = start_app(args.binary, project, log_path, args.startup_timeout,
-                                   scratch / f"xdg{session_count}")
+                                   scratch / f"xdg{session_count}",
+                                   soft_wrap=args.soft_wrap)
         driver = Driver(sock_path)
         try:
             yield driver

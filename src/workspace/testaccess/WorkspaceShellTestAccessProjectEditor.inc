@@ -174,6 +174,16 @@
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].compare.value();
   }
+  // Null when the front tab is not a compare tab (or there is none) -- an action
+  // sweep needs to know it is still looking at the same surface before judging it.
+  static WorkspaceShell::CompareTabState* ActiveCompareOrNull(WorkspaceShell& shell) {
+    auto& group = shell.context_.current_project_state.focused_group();
+    if (group.active_tab_index >= group.open_tabs.size()) {
+      return nullptr;
+    }
+    auto& compare = group.open_tabs[group.active_tab_index].compare;
+    return compare.has_value() ? &*compare : nullptr;
+  }
   static void RefreshActiveCompareDerivedState(WorkspaceShell& shell) {
     shell.RefreshCompareTabDerivedState(ActiveCompare(shell));
   }
