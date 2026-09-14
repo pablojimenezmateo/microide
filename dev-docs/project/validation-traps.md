@@ -6,6 +6,30 @@ real time at least once; several were green checkmarks over live defects.
 The theme: **a passing check is only evidence if the check could have failed.**
 Most entries below are ways that stopped being true without anyone noticing.
 
+## One caret is not the shape the bugs are in
+
+`tools/sweep-editor-invariants.py` checks algebraic properties (undo restores it,
+the inverse restores it, sorting twice changes nothing) for every editing command
+at every probed caret -- and until 2026-09-14 every probe reset to a SINGLE
+caret. A command could be correct for one cursor and lose data for three, and the
+run stayed green. That is the exact shape of the multi-caret line cut that
+deleted every cursor's line while copying only the primary's: a cut/paste
+inverse failure, in a suite whose whole job is inverse failures, that the suite
+could not reach.
+
+The `MULTI_CURSOR` caret setup closes it. Two lessons came with it:
+
+- **A new property can be wrong.** It fired immediately on `move-line-up`/`down`,
+  which are genuinely NOT inverse under several cursors -- `MoveLines` drops only
+  the region blocked at the buffer edge and moves the rest, as VS Code does. The
+  fix was to narrow the property and write down why, not to change the product to
+  satisfy a check I had just invented.
+- **Read the applied counts, not just the verdict.** `outdent-lines` applied in 4
+  of 66 cases, because no probed caret sat on an indented line -- so its inverse
+  was very nearly untested while reporting green. The counts are printed for this
+  reason; a low one means the property held vacuously, not that the command is
+  sound.
+
 ## Two files, one question
 
 A constant defined in two files is two answers to one question, and only one of

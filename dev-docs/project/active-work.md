@@ -94,13 +94,19 @@ The emulator covers the full-screen and shell workflows exercised so far.
 ### 4. Editor correctness and scale
 
 - continue UTF-8 and IME hardening over the piece tree's byte-offset storage
-  (32-bit offsets, ~4 GiB per-file ceiling)
+  (32-bit offsets, ~4 GiB per-file ceiling). The composition path now has
+  coverage (`tests/ImeCompositionTests.cpp`): the preview is recorded, replaced,
+  abandoned on an empty update, cleared on commit, committed to every caret, and
+  the conversion keys it swallows are pinned against the buffer. What is still
+  open here is the piece-tree side, not the SDL composition plumbing.
 - validate large-file thresholds on larger repositories; adjust from measured
   behaviour, not guesswork
 - keep blame shadow text asynchronous, viewport-scoped, and cheap enough to
   preserve typing and scrolling latency
 - expand compare/merge coverage — editor-side regressions there are still too
-  easy to miss
+  easy to miss. The shared soft-wrap row table now has direct tests
+  (`tests/DiffWrapLayoutTests.cpp`, `tests/MergeWrapRowsTests.cpp`); the
+  editor-side gap is the surfaces' own edit paths, not the row arithmetic.
 
 ### 5. Project and git service hardening
 
