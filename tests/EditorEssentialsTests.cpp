@@ -983,18 +983,24 @@ void TestShapingToggleBlockCommentSelectionIsAToggle() {
   viewport.LoadContent("int x;\nint y;\n", "/tmp/sample.c");
   viewport.SelectAll();
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the wrap applies");
-  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"/* int x;", "int y;", " */"},
+  // SelectAll ends at column 0 of the phantom line after the final newline, which
+  // is the same shape a whole-line drag produces -- and every line op normalizes
+  // it away (RangeForCaret: "a whole-line drag selects N lines rather than N+1").
+  // The close marker therefore hugs the last line with CONTENT rather than sitting
+  // alone on the empty line below it, which is both what VS Code does and what
+  // stops the drag case from swallowing the line underneath the selection.
+  Expect(viewport.lines().Snapshot() == std::vector<std::string>{"/* int x;", "int y; */", ""},
          "the selection is wrapped once, padded (got <" + viewport.lines()[0] + "|" +
              viewport.lines()[viewport.line_count() - 1] + ">)");
   const auto kept = viewport.selection_range();
-  Expect(kept.has_value() && kept->start == TextPosition{0, 3} && kept->end == TextPosition{2, 0},
+  Expect(kept.has_value() && kept->start == TextPosition{0, 3} && kept->end == TextPosition{1, 6},
          "the wrapped text stays selected, markers outside");
   Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the second toggle applies");
   Expect(viewport.lines().Snapshot() == std::vector<std::string>{"int x;", "int y;", ""},
          "the second toggle unwraps (got <" + viewport.lines()[0] + "|" +
              viewport.lines()[viewport.line_count() - 1] + ">)");
   const auto after = viewport.selection_range();
-  Expect(after.has_value() && after->start == TextPosition{0, 0} && after->end == TextPosition{2, 0},
+  Expect(after.has_value() && after->start == TextPosition{0, 0} && after->end == TextPosition{1, 6},
          "the unwrapped text stays selected");
 
   // A single-line selection: wrap, unwrap, and a selection over the markers.

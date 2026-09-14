@@ -298,6 +298,20 @@ bool BuildToggledCommentRegion(const TextBuffer& lines,
 
 namespace {
 
+// A selection ending at column 0 of the line BELOW its last content line is what a
+// whole-line drag produces, and every line op already normalizes it away
+// (RangeForCaret: "a whole-line drag selects N lines rather than N+1"). The block
+// toggle has to as well, or the closing marker lands at the start of a line the
+// user never selected and joins it to the comment. VS Code shrinks the selection
+// the same way.
+SelectionRange ShrinkTrailingLineStart(const TextViewport& viewport, SelectionRange range) {
+  if (range.end.line > range.start.line && range.end.column == 0) {
+    range.end.line -= 1;
+    range.end.column = viewport.lines().LineLength(range.end.line);
+  }
+  return range;
+}
+
 // Every caret's own target range for a block-comment toggle: its selection when
 // it has one, else its whole line. VS Code toggles each cursor's region
 // independently, and every other shaping verb in this file already unions the
@@ -316,14 +330,19 @@ std::vector<SelectionRange> BlockCommentRegions(const TextViewport& viewport) {
     return SelectionRange{{clamped, 0}, {clamped, viewport.lines().LineLength(clamped)}};
   };
   if (const auto sel = viewport.selection_range()) {
-    regions.push_back(*sel);
+    regions.push_back(ShrinkTrailingLineStart(viewport, *sel));
   } else {
     regions.push_back(whole_line(viewport.cursor_line()));
   }
   for (const SecondaryCaret& caret : viewport.secondary_caret_range_view()) {
     if (caret.selection_anchor.has_value() &&
         !(*caret.selection_anchor == caret.position)) {
-      regions.push_back(SelectionRange{*caret.selection_anchor, caret.position});
+      SelectionRange range{*caret.selection_anchor, caret.position};
+      if (range.end.line < range.start.line ||
+          (range.end.line == range.start.line && range.end.column < range.start.column)) {
+        std::swap(range.start, range.end);
+      }
+      regions.push_back(ShrinkTrailingLineStart(viewport, range));
     } else {
       regions.push_back(whole_line(caret.position.line));
     }
@@ -458,7 +477,11 @@ bool ToggleBlockComment(TextViewport& viewport,
       (n.start.line == n.end.line && n.start.column > n.end.column)) {
     std::swap(n.start, n.end);
   }
-  std::string content = viewport.SelectedText();
+  n = ShrinkTrailingLineStart(viewport, n);
+  // TextInRange, not SelectedText(): the range above may be SHORTER than the live
+  // selection now, and wrapping the text of a range you are not replacing writes
+  // the trailing newline back into the middle of the comment.
+  std::string content = viewport.TextInRange(n);
   if (auto stripped = TryStripBlockComment(content, open, close)) {
     return ReplaceAndSelect(viewport, n, *stripped, 0, stripped->size());
   }

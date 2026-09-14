@@ -880,6 +880,39 @@ void TestToggleBlockCommentWithTwoCaretsOnOneLine() {
          std::string("one line, one wrap: ") + JoinLines(viewport));
 }
 
+// A whole-line drag selects N lines by ending at column 0 of line N+1 -- that is
+// what `RangeForCaret` normalizes for every LINE op ("a whole-line drag selects N
+// lines rather than N+1"). ToggleBlockComment never did, so wrapping three
+// dragged lines put the closing marker at the START of the fourth, joining a line
+// the user never selected:
+//
+//     /* sel1();          instead of      /* sel1();
+//     sel2();                             sel2();
+//     sel3();                             sel3(); */
+//      */keepB();                         keepB();
+//
+// VS Code shrinks such a selection before wrapping. Found by classifying every
+// action by how many lines of a multi-line selection it touched: this was the one
+// that reported touching a line OUTSIDE the selection.
+void TestToggleBlockCommentOnAWholeLineSelection() {
+  TextViewport viewport;
+  viewport.LoadContent("keepA();\nsel1();\nsel2();\nsel3();\nkeepB();\n",
+                       "/tmp/ec-block-whole-lines.cpp");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 0);
+  viewport.MoveCursorTo(4, 0, /*extend_selection=*/true);
+
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the toggle applies");
+  Expect(JoinLines(viewport) ==
+             "keepA();\n/* sel1();\nsel2();\nsel3(); */\nkeepB();\n",
+         std::string("the close marker belongs on the last SELECTED line: ") +
+             JoinLines(viewport));
+
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the second toggle applies");
+  Expect(JoinLines(viewport) == "keepA();\nsel1();\nsel2();\nsel3();\nkeepB();\n",
+         std::string("and toggling twice restores it: ") + JoinLines(viewport));
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -957,6 +990,8 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtWordEnd", TestSelectWordAtCursorAtWordEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtLineEnd", TestSelectWordAtCursorAtLineEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorOnSeparatorRun", TestSelectWordAtCursorOnSeparatorRun);
+  AddTest(tests, "EditorEdgeCase/ToggleBlockCommentOnAWholeLineSelection",
+          TestToggleBlockCommentOnAWholeLineSelection);
   AddTest(tests, "EditorEdgeCase/ToggleBlockCommentReachesEveryCaret",
           TestToggleBlockCommentReachesEveryCaret);
   AddTest(tests, "EditorEdgeCase/ToggleBlockCommentWithTwoCaretsOnOneLine",
