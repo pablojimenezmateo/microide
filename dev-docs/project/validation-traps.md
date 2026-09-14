@@ -1114,6 +1114,21 @@ already published. When a hook takes "what things looked like BEFORE", check
 whether the applied-edit span or the caret's own recorded revision already says
 it; that is usually why the call could not live at the chokepoint.
 
+### What came back clean on 2026-09-14, so it need not be redone
+
+Negative results are cheap to repeat and expensive to rediscover, so: the
+control-channel fuzzer under ASAN ran both profiles (`editor` and `mixed`, eight
+seeds x 400 commands each) and all sixteen seeds survived. That matters
+specifically because the tab-lifetime use-after-free the new action sweeps hit --
+a reference into `open_tabs` that an action reallocates -- is exactly what that
+fuzzer is good at, and it does not reach one in production code.
+
+Also clean: a sweep of every `size() - 1` in `src/editor` and `src/workspace` for
+an unguarded underflow on an empty container (all guarded, several by an
+early-return several frames up), and a sweep for raw `path() ==` comparisons that
+should have been `SameAsNormalizedPath` (both hits compare two paths from the
+same source).
+
 **A last one about the harness, not the product.** A shell poller written as
 `until ! pgrep -f run-checks.sh; do sleep 10; done` never exits: its OWN command
 line contains the pattern, so `pgrep` always matches it. Several of them piled up
