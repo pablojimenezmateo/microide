@@ -835,32 +835,16 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
         Contains(scroll_layout.horizontal_scrollbar->track, x, y)) {
       return CursorKind::Default;
     }
-    const SDL_FRect result_rect = ComputeMergeResultViewportRect(
-        layout.editor_surface, surface_layout.center_x, surface_layout.rows_y,
-        surface_layout.gutter_width, surface_layout.center_width, surface_layout.show_horizontal);
-    const editor::EditorViewMetrics result_metrics =
-        editor::EditorViewRenderer::ComputeMetrics(text_renderer_, merge_tab->result_viewport,
-                                                   result_rect, 0, LineNumbersEnabled());
+    // BuildMergeResultInteractionLayout, not a third hand-written copy of it. The
+    // two copies that grew here and in the render TU both passed `line_count()`
+    // as the grid's row total where the canonical builder passes
+    // `VisualRowCount()` -- and the scroll they pair it with is a visual row, so
+    // the layout clamped it back down and every hit test past
+    // (line_count - visible_rows) named the wrong row on a wrapped result pane.
     const MergeInteractionLayout interaction = {
         .content_bottom = scroll_layout.content_rect.y + scroll_layout.content_rect.h,
-        .result =
-            MergeResultInteractionLayout{
-                .rect = result_rect,
-                .metrics = result_metrics,
-                .lines =
-                    VisibleLineRangeLayout{
-                        .first_line_y = result_metrics.first_line_y,
-                        .line_height = result_metrics.line_height,
-                        .scroll_line = merge_tab->result_viewport.scroll_line(),
-                        .visible_rows = result_metrics.visible_rows,
-                    },
-                .text = ComputeTextGridInteractionLayout(
-                    result_rect, result_metrics.text_x, result_metrics.first_line_y,
-                    result_metrics.line_height, text_renderer_.CharWidth(),
-                    merge_tab->result_viewport.scroll_line(), merge_tab->result_viewport.line_count(),
-                    merge_tab->result_viewport.horizontal_scroll(), result_metrics.visible_rows,
-                    result_metrics.visible_columns),
-            },
+        .result = BuildMergeResultInteractionLayout(layout.editor_surface, surface_layout,
+                                                    *merge_tab),
         .incoming_accept_button_width =
             ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Theirs")),
         .current_accept_button_width =

@@ -244,13 +244,12 @@ TextGridInteractionLayout WorkspaceShell::BuildMergeSourceInteractionLayout(
 WorkspaceShell::MergeResultInteractionLayout WorkspaceShell::BuildMergeResultInteractionLayout(
     const SDL_FRect& rect,
     const MergeSurfaceLayout& surface,
-    MergeTabState& merge_tab) const {
+    const MergeTabState& merge_tab) const {
   const SDL_FRect result_rect = ComputeMergeResultViewportRect(
       rect, surface.center_x, surface.rows_y, surface.gutter_width, surface.center_width,
       surface.show_horizontal);
   const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
       text_renderer_, merge_tab.result_viewport, result_rect, 0, LineNumbersEnabled());
-  merge_tab.result_viewport.SetViewportSize(metrics.visible_rows, metrics.visible_columns);
   const VisibleLineRangeLayout lines = {
       .first_line_y = metrics.first_line_y,
       .line_height = metrics.line_height,
@@ -278,9 +277,18 @@ WorkspaceShell::MergeInteractionLayout WorkspaceShell::BuildMergeInteractionLayo
                                     ? (kWorkspaceScrollbarThickness +
                                        kWorkspaceScrollbarInset)
                                     : 0.0f;
+  const MergeResultInteractionLayout result =
+      BuildMergeResultInteractionLayout(rect, surface, merge_tab);
+  // The layout builder is const now, because the cursor path asks for the same
+  // layout from a const tab and was maintaining its own copy of it rather than
+  // const_casting -- which is how that copy came to disagree with this one about
+  // the grid's row total. The one side effect it used to carry stays here, at the
+  // caller that owns a mutable tab.
+  merge_tab.result_viewport.SetViewportSize(result.metrics.visible_rows,
+                                            result.metrics.visible_columns);
   return MergeInteractionLayout{
       .content_bottom = rect.y + std::max(0.0f, rect.h - bottom_reserved),
-      .result = BuildMergeResultInteractionLayout(rect, surface, merge_tab),
+      .result = result,
       .incoming_accept_button_width =
           ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Accept Theirs")),
       .current_accept_button_width =

@@ -106,27 +106,12 @@ std::optional<WorkspaceShell::TextInputVisual> WorkspaceShell::BuildMergeTextInp
 
   const MergeSurfaceLayout surface_layout =
       ComputeMergeSurfaceLayout(editor_surface, *merge_tab);
-  const SDL_FRect result_rect = ComputeMergeResultViewportRect(
-      editor_surface, surface_layout.center_x, surface_layout.rows_y, surface_layout.gutter_width,
-      surface_layout.center_width, surface_layout.show_horizontal);
-  const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
-      text_renderer_, merge_tab->result_viewport, result_rect, 0, LineNumbersEnabled());
-  const MergeResultInteractionLayout interaction = MergeResultInteractionLayout{
-      .rect = result_rect,
-      .metrics = metrics,
-      .lines =
-          VisibleLineRangeLayout{
-              .first_line_y = metrics.first_line_y,
-              .line_height = metrics.line_height,
-              .scroll_line = merge_tab->result_viewport.scroll_line(),
-              .visible_rows = metrics.visible_rows,
-          },
-      .text = ComputeTextGridInteractionLayout(
-          result_rect, metrics.text_x, metrics.first_line_y, metrics.line_height,
-          text_renderer_.CharWidth(), merge_tab->result_viewport.scroll_line(),
-          merge_tab->result_viewport.line_count(), merge_tab->result_viewport.horizontal_scroll(),
-          metrics.visible_rows, metrics.visible_columns),
-  };
+  // The shared builder rather than the third copy of it. This one passed
+  // `line_count()` as the grid's row total against a scroll that is a visual row,
+  // so on a wrapped result pane it placed the IME/caret rect by a scroll position
+  // the layout had clamped back down.
+  const MergeResultInteractionLayout interaction =
+      BuildMergeResultInteractionLayout(editor_surface, surface_layout, *merge_tab);
   const float cursor_x =
       TextGridCursorX(interaction.text, merge_tab->result_viewport.cursor_visual_column());
   const float cursor_y =

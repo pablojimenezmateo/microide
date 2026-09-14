@@ -880,10 +880,13 @@
   TextGridInteractionLayout BuildMergeSourceInteractionLayout(const MergeSurfaceLayout& surface,
                                                               const MergeTabState& merge_tab,
                                                               bool incoming) const;
+  // Const: the cursor path needs the same layout from a const tab, and the copy
+  // it kept instead is how the two came to disagree about the grid's row total.
+  // Sizing the viewport is the caller's job (see BuildMergeInteractionLayout).
   MergeResultInteractionLayout BuildMergeResultInteractionLayout(
       const SDL_FRect& rect,
       const MergeSurfaceLayout& surface,
-      MergeTabState& merge_tab) const;
+      const MergeTabState& merge_tab) const;
   MergeInteractionLayout BuildMergeInteractionLayout(const SDL_FRect& rect,
                                                      const MergeSurfaceLayout& surface,
                                                      MergeTabState& merge_tab) const;
