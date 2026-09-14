@@ -122,7 +122,14 @@ FIXTURES: dict[str, str] = {
 MULTI_CURSOR = "multi-cursor"
 
 CARETS: list[tuple[int, int] | None | str] = [
-    (1, 1), (2, 1), (3, 3), (99, 1), None, MULTI_CURSOR,
+    (1, 1), (2, 1), (3, 3),
+    # Line 4 is INDENTED in both code fixtures (`  int total = 0;`,
+    # `    total = 0`). Without a probe that lands on an indented line,
+    # `outdent-lines` applied in 4 of 66 cases -- select-all and one clamped
+    # caret -- so the indent/outdent inverse was very nearly untested. Every
+    # other probe sat on a line with no leading whitespace to remove.
+    (4, 1),
+    (99, 1), None, MULTI_CURSOR,
 ]
 
 
