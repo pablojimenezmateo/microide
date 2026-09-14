@@ -1,5 +1,7 @@
 #include "workspace/coordinators/WorkspaceSidebarMouseCoordinator.h"
 
+#include "workspace/SidebarMetrics.h"
+
 #include <utility>
 
 #include "workspace/git/GitSidebarHeaderLayout.h"
@@ -9,8 +11,6 @@
 namespace microide::workspace {
 
 namespace {
-
-constexpr float kSidebarHeaderHeight = 26.0f;
 
 SDL_FRect PointerAnchor(const SDL_Event& event) {
   return MakeRect(static_cast<float>(event.button.x), static_cast<float>(event.button.y), 1.0f,
@@ -35,7 +35,10 @@ bool SidebarMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   }
 
   state_.surface.focus = FocusTarget::Sidebar;
-  const float local_y = event.button.y - (layout.sidebar.y + kSidebarHeaderHeight + 6.0f);
+  // The layout's own origin (SidebarMetrics.h), not a second copy of it: this
+  // used to re-derive `sidebar.y + 26 + 6` here, so the two had to be kept in
+  // step by hand or every click would land on the wrong row.
+  const float local_y = event.button.y - SidebarListTop(layout.sidebar);
   const SidebarMode sidebar_mode = operations_.active_sidebar_mode();
 
   if (sidebar_mode == SidebarMode::Search) {

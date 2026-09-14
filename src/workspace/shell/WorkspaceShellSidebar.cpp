@@ -1,5 +1,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/SidebarMetrics.h"
+
 #include "workspace/git/GitSidebarHeaderLayout.h"
 #include "workspace/ProjectSearchPanelLayout.h"
 
@@ -19,7 +21,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kSidebarHeaderHeight = 26.0f;
 constexpr float kSidebarInset = 10.0f;
 constexpr float kSidebarRowHeight = 20.0f;
 // Mode-switch tab row (replaces the old dropdown) at the top of the sidebar header.
@@ -162,21 +163,21 @@ ScrollableListLayout WorkspaceShell::ComputeTreeSidebarListLayout(const SDL_FRec
 ScrollableListLayout WorkspaceShell::ComputeProblemsSidebarListLayout(
     const SDL_FRect& sidebar_rect,
     std::size_t line_count) const {
-  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kSidebarHeaderHeight + 6.0f,
+  return ComputeScrollableListLayout(sidebar_rect, SidebarListTop(sidebar_rect),
                                      line_count, context_.current_project_state.sidebar.scroll_row,
                                      kSidebarInset, kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
 ScrollableListLayout WorkspaceShell::ComputeTestsSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                                    std::size_t line_count) const {
-  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kSidebarHeaderHeight + 6.0f,
+  return ComputeScrollableListLayout(sidebar_rect, SidebarListTop(sidebar_rect),
                                      line_count, context_.current_project_state.sidebar.scroll_row,
                                      kSidebarInset, kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }
 
 ScrollableListLayout WorkspaceShell::ComputePluginSidebarListLayout(const SDL_FRect& sidebar_rect,
                                                                     std::size_t line_count) const {
-  return ComputeScrollableListLayout(sidebar_rect, sidebar_rect.y + kSidebarHeaderHeight + 6.0f,
+  return ComputeScrollableListLayout(sidebar_rect, SidebarListTop(sidebar_rect),
                                      line_count, context_.current_project_state.sidebar.scroll_row,
                                      kSidebarInset, kSidebarRowHeight, kSidebarRowHeight - 2.0f);
 }

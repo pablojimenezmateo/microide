@@ -6,6 +6,28 @@ real time at least once; several were green checkmarks over live defects.
 The theme: **a passing check is only evidence if the check could have failed.**
 Most entries below are ways that stopped being true without anyone noticing.
 
+## Two files, one question
+
+A constant defined in two files is two answers to one question, and only one of
+them is enforced. `kMaxRequestLineBytes` existed on both sides of the control
+wire -- the client's comment saying it mirrored the server's, at 16x the value --
+so the client framed request lines the server answered by shedding the
+connection, with nothing reporting why. The merge toolbar's button metrics and
+the sidebar list's origin had not drifted yet, but each was re-derived by the
+side that PAINTS and the side that HIT-TESTS, so a change to either copy moves
+the buttons away from the clicks.
+
+`tools/duplicate-constant-scan.py` reports every `constexpr` name defined in more
+than one file and exits 1 for any group not listed in its `ACCEPTED_DUPLICATES`
+with a reason. A shared name is not automatically a bug -- `kInset` means
+different things in three panels -- so the list is the point: it is where
+"deliberately separate" is written down, and a stale entry fails the run too, so
+it cannot rot into a rubber stamp.
+
+The comment form of the same trap is worth grepping by hand: a comment asserting
+that two paths agree ("mirrors", "matching", "same as") is a testable claim, and
+three of the five found this way were false.
+
 ## Build And Test Result Traps
 
 ### A failed build leaves ctest reporting 100%
