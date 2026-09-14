@@ -198,6 +198,7 @@ void RegisterFoldingModelTests(std::vector<TestCase>& tests);
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests);
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests);
 void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests);
+void RegisterEditorWrapInvarianceTests(std::vector<TestCase>& tests);
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests);
 void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
 void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests);
@@ -597,6 +598,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterEditorFoldingTests(tests);
   microide::tests::RegisterEditorEdgeCaseTests(tests);
   microide::tests::RegisterEditorWrapNavigationPropertyTests(tests);
+  microide::tests::RegisterEditorWrapInvarianceTests(tests);
   microide::tests::RegisterEditorMultiCaretTests(tests);
 
   std::size_t selected_count = 0;
