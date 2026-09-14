@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "CompareSummary.h"
+
 #include "compare/CompareModel.h"
 #include "project/GitCompareService.h"
 #include "project/GitPorcelainParser.h"
@@ -35,34 +37,6 @@ using microide::project::ReadGitFileAtCommit;
 using microide::project::ResolveGitBaseReference;
 using microide::workspace::OutgoingBaseChoice;
 using microide::workspace::ResolveGitOutgoingBase;
-
-struct CompareSummary {
-  int unchanged = 0;
-  int added = 0;
-  int deleted = 0;
-  int modified = 0;
-};
-
-CompareSummary Summarize(const CompareModel& model) {
-  CompareSummary summary;
-  for (const auto& row : model.rows) {
-    switch (row.kind) {
-      case CompareRowKind::Unchanged:
-        ++summary.unchanged;
-        break;
-      case CompareRowKind::Added:
-        ++summary.added;
-        break;
-      case CompareRowKind::Deleted:
-        ++summary.deleted;
-        break;
-      case CompareRowKind::Modified:
-        ++summary.modified;
-        break;
-    }
-  }
-  return summary;
-}
 
 void TestGitCompareFixture() {
   TemporaryDirectory temp_dir;
