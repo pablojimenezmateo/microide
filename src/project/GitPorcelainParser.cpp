@@ -183,16 +183,6 @@ void GitPorcelainParser::RecordNormalizedGitStatus(
   }
 }
 
-std::unordered_map<std::string, GitFileStatus> GitPorcelainParser::ParseStatusV1(std::string_view output) {
-  std::unordered_map<std::string, GitFileStatus> statuses;
-  for (const ParsedStatusV1Entry& entry : ParseStatusV1Entries(output)) {
-    RecordGitStatus(statuses, entry.relative_path, entry.status);
-  }
-
-
-  return statuses;
-}
-
 std::vector<GitWorkingTreeEntry> GitPorcelainParser::ParseWorkingTreeEntries(std::string_view output) {
   std::vector<GitWorkingTreeEntry> entries;
   const std::vector<ParsedStatusV1Entry> parsed_entries = ParseStatusV1Entries(output);

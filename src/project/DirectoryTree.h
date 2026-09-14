@@ -111,7 +111,11 @@ class DirectoryTree {
   bool has_dirty_files() const;
 
  private:
-  void RebuildEntries(bool refresh_git_statuses);
+  // Git badges are NOT collected here. They arrive through ApplyGitStatuses from
+  // the porcelain v2 snapshot GitRepositoryService refreshes in the background;
+  // this used to take a `refresh_git_statuses` flag that ran a blocking `git
+  // status` inline, and nothing had passed true since that snapshot path landed.
+  void RebuildEntries();
   void AppendDirectory(const std::filesystem::path& directory,
                        int depth,
                        const std::shared_ptr<const IgnoreMatcher>& matcher,

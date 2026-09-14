@@ -94,14 +94,6 @@ bool GitRepository::ExecuteSucceeds(const std::vector<std::string>& arguments,
   return Execute(arguments, silence_stderr).success();
 }
 
-std::unordered_map<std::string, GitFileStatus> GitRepository::GetStatuses() const {
-  const auto result = Execute({"status", "--porcelain=v1", "-z", "--untracked-files=all"});
-  if (!result.success() || result.output.empty()) {
-    return {};
-  }
-  return GitPorcelainParser::ParseStatusV1(result.output);
-}
-
 std::vector<GitWorkingTreeEntry> GitRepository::GetWorkingTreeEntries() const {
   const auto result = Execute({"status", "--porcelain=v1", "-z", "--untracked-files=all"});
   if (!result.success() || result.output.empty()) {

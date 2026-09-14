@@ -18,11 +18,12 @@ struct GitWorkingTreeEntry {
   bool conflicted = false;
 };
 
-std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
-    const std::filesystem::path& root);
+// Blocking `git status` capture. The sidebar and the file tree do NOT come
+// through here -- they read the porcelain v2 snapshot GitRepositoryService
+// refreshes in the background. This is the one remaining synchronous caller
+// (ReviewSessionCoordinator::OpenConflictReview, which needs the conflict set at
+// the moment the action is invoked).
 std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root);
-std::unordered_map<std::string, GitFileStatus> BuildGitStatusMap(
-    std::span<const GitWorkingTreeEntry> entries);
 bool GitStageAll(const std::filesystem::path& root);
 bool GitStagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path);
 bool GitUnstagePath(const std::filesystem::path& root, const std::filesystem::path& absolute_path,

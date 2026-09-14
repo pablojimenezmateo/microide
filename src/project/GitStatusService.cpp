@@ -11,20 +11,6 @@
 
 namespace microide::project {
 
-std::unordered_map<std::string, GitFileStatus> CollectGitStatuses(
-    const std::filesystem::path& root) {
-  util::StartupTrace::Scope trace_scope("CollectGitStatuses");
-  util::PerformanceTrace::Scope perf_scope("git::CollectGitStatuses");
-  util::AddPerformanceCounter(util::PerfCounterId::GitStatusRefreshCalls);
-  const GitRepository repo(root);
-  if (!repo.IsValid()) {
-    return {};
-  }
-  std::unordered_map<std::string, GitFileStatus> statuses = repo.GetStatuses();
-  util::AddPerformanceCounter(util::PerfCounterId::GitStatusEntriesParsed, statuses.size());
-  return statuses;
-}
-
 std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesystem::path& root) {
   util::PerformanceTrace::Scope perf_scope("git::CollectGitWorkingTreeEntries");
   util::AddPerformanceCounter(util::PerfCounterId::GitStatusRefreshCalls);
@@ -35,21 +21,6 @@ std::vector<GitWorkingTreeEntry> CollectGitWorkingTreeEntries(const std::filesys
   std::vector<GitWorkingTreeEntry> entries = repo.GetWorkingTreeEntries();
   util::AddPerformanceCounter(util::PerfCounterId::GitStatusEntriesParsed, entries.size());
   return entries;
-}
-
-std::unordered_map<std::string, GitFileStatus> BuildGitStatusMap(
-    std::span<const GitWorkingTreeEntry> entries) {
-  // Delegate file + folder aggregation to the canonical GitPorcelainParser helper so the
-  // status-priority ranking stays single-sourced. A previous inline copy ranked
-  // Added == Untracked, diverging from GitStatusPriority (Added > Untracked) and making the
-  // folder-aggregated badge depend on which path produced it.
-  std::unordered_map<std::string, GitFileStatus> statuses;
-  for (const GitWorkingTreeEntry& entry : entries) {
-    GitPorcelainParser::RecordGitStatus(
-        statuses, entry.relative_path,
-        entry.conflicted ? GitFileStatus::Conflicted : entry.status);
-  }
-  return statuses;
 }
 
 bool GitStageAll(const std::filesystem::path& root) {

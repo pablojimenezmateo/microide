@@ -21,6 +21,7 @@ inline constexpr std::size_t kMaxGitStatusEntries = 50000;
 
 class GitPorcelainParser {
  public:
+  // v1 two-letter code -> status.
   static GitFileStatus StatusFromPorcelainCode(std::string_view code);
   static GitFileStatus StatusFromDiffCode(char code);
   // Shared porcelain change-code precedence (Deleted > Added(A|C) > Modified(M|R|T)
@@ -30,7 +31,6 @@ class GitPorcelainParser {
   // from StatusFromDiffCode, where `C` (copy) maps to Modified, not Added.
   static GitFileStatus StatusFromChangeCodeChars(std::string_view code);
 
-  static std::unordered_map<std::string, GitFileStatus> ParseStatusV1(std::string_view output);
   static std::vector<GitWorkingTreeEntry> ParseWorkingTreeEntries(std::string_view output);
   // Parse `git log` porcelain into commit entries. `max_entries` bounds the
   // result so a future caller (or a hostile/corrupt log stream) cannot

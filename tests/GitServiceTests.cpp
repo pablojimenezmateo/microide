@@ -537,7 +537,10 @@ void TestGitRepositoryDirectApi() {
 
   WriteFile(repo_path / "README.md", ReadFile(base_dir / "README.md") + "\nwrapper change\n");
   WriteFile(repo_path / "notes.txt", "wrapper note\n");
-  const auto statuses = repo.GetStatuses();
+  std::unordered_map<std::string, GitFileStatus> statuses;
+  for (const auto& entry : repo.GetWorkingTreeEntries()) {
+    statuses[entry.relative_path.generic_string()] = entry.status;
+  }
   Expect(statuses.at("README.md") == GitFileStatus::Modified,
          "git repository wrapper should report modified files");
   Expect(statuses.at("notes.txt") == GitFileStatus::Untracked,
@@ -587,7 +590,16 @@ void TestGitPorcelainParserStatusV1() {
   output += "?? scratch.txt";
   output.push_back('\0');
 
-  const auto statuses = GitPorcelainParser::ParseStatusV1(output);
+  // Flat per-record classification comes from the live v1 entry parser, and the
+  // folder roll-up from the shared RecordGitStatus helper the v2 parser also
+  // uses -- which is how the map-returning ParseStatusV1 wrapper was built
+  // before it was deleted as unreachable.
+  std::unordered_map<std::string, GitFileStatus> statuses;
+  for (const auto& entry : GitPorcelainParser::ParseWorkingTreeEntries(output)) {
+    GitPorcelainParser::RecordGitStatus(
+        statuses, entry.relative_path,
+        entry.conflicted ? GitFileStatus::Conflicted : entry.status);
+  }
   Expect(!statuses.contains("old/name.cpp"),
          "status parser should report rename targets instead of source paths");
   Expect(statuses.at("src/renamed.cpp") == GitFileStatus::Modified,
@@ -719,11 +731,22 @@ void TestGitBranchDiffNameStatusZParser() {
 }
 
 // Folder-aggregated status must be single-sourced through GitStatusPriority.
-// A previous inline table in BuildGitStatusMap ranked Added == Untracked, so a
-// folder holding both could aggregate to either depending on entry order.
+// An inline table once ranked Added == Untracked, so a folder holding both could
+// aggregate to either depending on entry order. RecordGitStatus is the canonical
+// helper; the porcelain v2 parser builds the sidebar's whole tree-status map
+// through its sibling RecordNormalizedGitStatus.
 void TestBuildGitStatusMapFolderPriorityIsSingleSourced() {
-  using microide::project::BuildGitStatusMap;
   using microide::project::GitWorkingTreeEntry;
+
+  const auto BuildGitStatusMap = [](const std::vector<GitWorkingTreeEntry>& entries) {
+    std::unordered_map<std::string, GitFileStatus> statuses;
+    for (const GitWorkingTreeEntry& entry : entries) {
+      GitPorcelainParser::RecordGitStatus(
+          statuses, entry.relative_path,
+          entry.conflicted ? GitFileStatus::Conflicted : entry.status);
+    }
+    return statuses;
+  };
 
   // Added (priority 2) must outrank Untracked (priority 1) for the shared folder,
   // regardless of which entry is recorded first.
@@ -789,8 +812,8 @@ void TestGitPorcelainParserBoundsHostileStatus() {
       output += ".txt";
       output.push_back('\0');
     }
-    const auto statuses = GitPorcelainParser::ParseStatusV1(output);
-    Expect(statuses.size() <= 50000,
+    const auto entries = GitPorcelainParser::ParseWorkingTreeEntries(output);
+    Expect(entries.size() <= 50000,
            "status parser must cap the number of entries from a hostile repo");
   }
   // Ancestor-badge depth cap: one very deep path must not create a map key per

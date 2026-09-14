@@ -52,7 +52,6 @@ class GitRepository {
   bool ExecuteSucceeds(const std::vector<std::string>& arguments,
                        bool silence_stderr = true) const;
 
-  std::unordered_map<std::string, GitFileStatus> GetStatuses() const;
   std::vector<GitWorkingTreeEntry> GetWorkingTreeEntries() const;
   GitFileHistoryResult GetFileHistory(const std::filesystem::path& relative_path) const;
   bool FileExistsAtRevision(const std::filesystem::path& relative_path,

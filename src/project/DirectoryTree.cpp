@@ -58,7 +58,7 @@ bool DirectoryTree::SetRoot(const std::filesystem::path& root) {
   expanded_paths_.clear();
   expanded_paths_.insert(NormalizePathKey(root_));
   manually_collapsed_paths_.clear();
-  RebuildEntries(false);
+  RebuildEntries();
   return true;
 }
 
@@ -103,7 +103,7 @@ void DirectoryTree::Refresh() {
     return;
   }
   MaybePruneDeletedDirectoryKeys();
-  RebuildEntries(false);
+  RebuildEntries();
 }
 
 
@@ -171,7 +171,7 @@ bool DirectoryTree::SelectPath(const std::filesystem::path& path) {
     manually_collapsed_paths_.erase(NormalizePathKey(current));
   }
 
-  RebuildEntries(false);
+  RebuildEntries();
   for (std::size_t i = 0; i < entries_.size(); ++i) {
     if (entries_[i].path == normalized_path) {
       selected_index_ = i;
@@ -238,7 +238,7 @@ void DirectoryTree::ExpandSelection() {
   const auto key = NormalizePathKey(entry.path);
   if (expanded_paths_.insert(key).second) {
     manually_collapsed_paths_.erase(key);
-    RebuildEntries(false);
+    RebuildEntries();
     return;
   }
 
@@ -256,7 +256,7 @@ void DirectoryTree::CollapseSelection() {
   if (entry.is_directory && entry.expanded && entry.path != root_) {
     manually_collapsed_paths_.insert(NormalizePathKey(entry.path));
     expanded_paths_.erase(NormalizePathKey(entry.path));
-    RebuildEntries(false);
+    RebuildEntries();
     return;
   }
 
@@ -288,7 +288,7 @@ void DirectoryTree::CollapseAll() {
   }
   expanded_paths_.clear();
   expanded_paths_.insert(NormalizePathKey(root_));
-  RebuildEntries(false);
+  RebuildEntries();
 
   std::filesystem::path visible_path = selected_path;
   while (!visible_path.empty()) {
@@ -322,14 +322,14 @@ std::optional<std::filesystem::path> DirectoryTree::ActivateSelection() {
       manually_collapsed_paths_.erase(key);
       expanded_paths_.insert(key);
     }
-    RebuildEntries(false);
+    RebuildEntries();
     return std::nullopt;
   }
 
   return entry.path;
 }
 
-void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
+void DirectoryTree::RebuildEntries() {
   util::StartupTrace::Scope trace_scope("DirectoryTree::RebuildEntries");
   util::PerformanceTrace::Scope perf_scope("DirectoryTree::RebuildEntries");
   ++entries_revision_;
@@ -350,9 +350,6 @@ void DirectoryTree::RebuildEntries(bool refresh_git_statuses) {
   // normal entries — and stay consistent with what the finder indexes.
   matcher->AddDefaultRules();
   matcher->AddExcludeGlobs(exclude_globs_);
-  if (refresh_git_statuses) {
-    git_statuses_ = std::make_shared<const GitTreeStatusMap>(CollectGitStatuses(root_));
-  }
   entries_.push_back(TreeEntry{
       .path = root_,
       .label = DisplayName(root_),
@@ -575,7 +572,7 @@ void DirectoryTree::RestoreExpansionState(const std::vector<std::string>& expand
   for (const auto& relative : collapsed_relative) {
     insert_contained(manually_collapsed_paths_, relative);
   }
-  RebuildEntries(false);
+  RebuildEntries();
 }
 
 bool DirectoryTree::has_dirty_files() const {
