@@ -4,6 +4,7 @@
 #include "util/TextFileIO.h"
 #include "workspace/ListSelection.h"
 #include "workspace/TabReorder.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "platform/FileIndexWatcher.h"
 
@@ -3198,6 +3199,130 @@ void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
       }
     }
   }
+}
+
+// A breakpoint is a LINE NUMBER, and every edit that adds or removes lines above
+// one moves the statement it was set on. VS Code slides them; so does this, from
+// the viewport's applied-edit span -- but only where a code path announces the
+// edit (`RequestActiveEditableLastChangeRedraw`). An edit path that forgets to
+// announce leaves the disc on a line the user never marked, and the debugger
+// then stops somewhere else. That is invisible in a fixture test of one verb.
+//
+// So: every registered action, a breakpoint on the LAST line, a caret on the
+// first, and one requirement -- if the buffer changed, the breakpoint is still on
+// the text it was set on.
+void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
+  const std::vector<WorkspaceShell::ActionId> skipped = {
+      WorkspaceShell::ActionId::CloseActiveTab,
+      WorkspaceShell::ActionId::CloseOtherTabs,
+      WorkspaceShell::ActionId::CloseTabsToRight,
+      WorkspaceShell::ActionId::CloseTabsToLeft,
+      WorkspaceShell::ActionId::CloseAllTabs,
+      WorkspaceShell::ActionId::CloseGroup,
+      WorkspaceShell::ActionId::ProjectClose,
+      WorkspaceShell::ActionId::Quit,
+      // These are ABOUT breakpoints; moving or clearing one is their job.
+      WorkspaceShell::ActionId::BreakpointToggle,
+      WorkspaceShell::ActionId::BreakpointSet,
+      WorkspaceShell::ActionId::BreakpointRemove,
+      WorkspaceShell::ActionId::BreakpointClear,
+      WorkspaceShell::ActionId::DebugBreakpointToggleEnabled,
+      WorkspaceShell::ActionId::DebugBreakpointRemove,
+  };
+  // The marked line's text: unique in the buffer, so "is the breakpoint still on
+  // it" needs no arithmetic about how many lines the action added.
+  const std::string marked = "marked_statement();";
+
+  std::size_t mutating_actions = 0;
+  for (const auto& spec : microide::workspace::WorkspaceCommandSpecs()) {
+    if (std::find(skipped.begin(), skipped.end(), spec.id) != skipped.end()) {
+      continue;
+    }
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "project";
+    const auto file = root / "code.cpp";
+    WriteFile(file, "aaa();\nbbb();\nccc();\n" + marked + "\n");
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+    auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+    auto& breakpoints = WorkspaceShellTestAccess::BreakpointStore(shell);
+
+    const auto line_at = [&viewport](std::size_t line) {
+      return line < viewport.line_count() ? std::string(viewport.lines().LineView(line))
+                                          : std::string("<past end>");
+    };
+    std::size_t marked_line = viewport.line_count();
+    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+      if (line_at(i) == marked) {
+        marked_line = i;
+        break;
+      }
+    }
+    Expect(marked_line < viewport.line_count(), "the fixture contains the marked line");
+    breakpoints.Set(file, marked_line);
+    Expect(breakpoints.HasBreakpoint(file, marked_line), "the breakpoint is set");
+
+    // Caret and a selection on the FIRST line, well above the marked one, so an
+    // action that edits there moves the marked line without touching it.
+    viewport.MoveCursorTo(0, 0);
+    viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+
+    const std::string before = [&] {
+      std::string joined;
+      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+        joined += line_at(i);
+        joined += '\n';
+      }
+      return joined;
+    }();
+
+    WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
+
+    const std::string after = [&] {
+      std::string joined;
+      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+        joined += line_at(i);
+        joined += '\n';
+      }
+      return joined;
+    }();
+    if (after == before) {
+      continue;
+    }
+    ++mutating_actions;
+
+    // Where the marked text actually is now. If the action deleted it there is
+    // nothing to require -- the breakpoint's line is gone with it.
+    std::size_t moved_to = viewport.line_count();
+    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+      if (line_at(i) == marked) {
+        moved_to = i;
+        break;
+      }
+    }
+    if (moved_to >= viewport.line_count()) {
+      continue;
+    }
+    Expect(breakpoints.HasBreakpoint(file, moved_to),
+           std::string("`") + std::string(spec.command_name) + "` moved \"" + marked +
+               "\" to line " + std::to_string(moved_to) +
+               " and left the breakpoint behind: it is on line(s) " +
+               [&] {
+                 std::string lines;
+                 if (const auto* list = breakpoints.FindByPath(file)) {
+                   for (const auto& breakpoint : *list) {
+                     lines += std::to_string(breakpoint.line) + " (\"" +
+                              line_at(breakpoint.line) + "\") ";
+                   }
+                 }
+                 return lines.empty() ? std::string("<none>") : lines;
+               }());
+  }
+  Expect(mutating_actions >= 8,
+         "the sweep must have found actions that actually edit the buffer, found only " +
+             std::to_string(mutating_actions));
 }
 
 // VS Code's emptySelectionClipboard rule: Ctrl+C with nothing selected copies
@@ -7500,6 +7625,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
+  AddTest(tests, "WorkspaceShell/EveryActionKeepsBreakpointsOnTheirLine",
+          TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchCountsEveryOccurrence",
           TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchWalksForwardEachPress",
