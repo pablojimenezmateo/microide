@@ -690,4 +690,86 @@ bool TextViewport::AddCaretsAtSelectedLineEnds() {
   return true;
 }
 
+
+bool TextViewport::ExpandSelectionToWholeLines() {
+  if (document_->lines.empty()) {
+    return false;
+  }
+  document_->undo_history.NotifyCursorMoved();
+  const std::size_t line_count = document_->lines.size();
+
+  // One whole-line range per caret, from ITS own selection (or its bare position).
+  // Doing this per caret is the whole point: the previous implementation lived in
+  // the key handler, read `cursor_line()` and called MoveCursorTo, so three
+  // cursors produced one line selection and two carets with empty anchors --
+  // typing then replaced one line and inserted at two columns.
+  const auto whole_lines = [&](std::size_t first, std::size_t last) {
+    first = std::min(first, line_count - 1);
+    last = std::min(last, line_count - 1);
+    return last + 1 < line_count
+               ? SelectionRange{TextPosition{first, 0}, TextPosition{last + 1, 0}}
+               : SelectionRange{TextPosition{first, 0},
+                                TextPosition{last, document_->lines.LineLength(last)}};
+  };
+  const auto expand = [&](const std::optional<SelectionRange>& selection,
+                          const TextPosition& caret) {
+    if (!selection.has_value()) {
+      return whole_lines(caret.line, caret.line);
+    }
+    const SelectionRange range = NormalizeRange(*selection);
+    // A selection already ending at a line start covers up to the line ABOVE it,
+    // so one more press must take the line it ends on rather than standing still.
+    const std::size_t last = range.end.column == 0 && range.end.line > range.start.line
+                                 ? range.end.line
+                                 : range.end.line + 1;
+    return whole_lines(range.start.line, last);
+  };
+
+  std::vector<SelectionRange> ranges;
+  ranges.reserve(secondary_carets_.size() + 1);
+  ranges.push_back(expand(selection_range(), TextPosition{cursor_line_, cursor_column_}));
+  for (const SecondaryCaret& caret : secondary_carets_) {
+    ranges.push_back(expand(
+        detail::SelectionRangeForSecondaryCaret(caret.position, caret.selection_anchor),
+        caret.position));
+  }
+
+  // Merge expansions that meet. Two line selections over the same line would put
+  // two carets on it and edit it twice, which is what the caret set's own dedupe
+  // prevents for bare carets and nothing prevented for ranged ones.
+  std::sort(ranges.begin(), ranges.end(), [](const SelectionRange& a, const SelectionRange& b) {
+    return detail::PositionLess(a.start, b.start);
+  });
+  std::vector<SelectionRange> merged;
+  for (const SelectionRange& range : ranges) {
+    if (!merged.empty() && !detail::PositionLess(merged.back().end, range.start)) {
+      if (detail::PositionLess(merged.back().end, range.end)) {
+        merged.back().end = range.end;
+      }
+      continue;
+    }
+    merged.push_back(range);
+  }
+
+  // The range covering where the primary was stays the primary, so the view does
+  // not jump to the top of the document on every press.
+  const TextPosition previous{cursor_line_, cursor_column_};
+  std::size_t primary_index = 0;
+  for (std::size_t i = 0; i < merged.size(); ++i) {
+    if (!detail::PositionLess(previous, merged[i].start) &&
+        !detail::PositionLess(merged[i].end, previous)) {
+      primary_index = i;
+      break;
+    }
+  }
+  const SelectionRange primary = merged[primary_index];
+  merged.erase(merged.begin() + static_cast<std::ptrdiff_t>(primary_index));
+
+  MoveCursorTo(primary.start.line, primary.start.column, false);
+  MoveCursorTo(primary.end.line, primary.end.column, true);
+  SetSecondaryCaretsWithRanges(merged);
+  EnsureCursorVisible();
+  return true;
+}
+
 }  // namespace microide::editor

@@ -1413,9 +1413,73 @@ void TestAddCaretsAtLineEndsIgnoresTheTrailingLineStart() {
          std::string("the last one is the end of line 1, not line 2: ") + AddCaretDump(viewport));
 }
 
+// VS Code's Ctrl+L expands EVERY cursor's selection to whole lines. This read
+// `cursor_line()` in the key handler, so three cursors produced one line selection
+// and two carets holding EMPTY anchors -- the next keystroke then replaced one
+// line and inserted a character at two columns. Found by classifying verbs on the
+// caret SET rather than on the buffer, which is the half the edit-coverage probe
+// could not see.
+void TestExpandLineSelectionCoversEveryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa0\nbbb1\nccc2\nddd3\neee4\nfff5\n", "/tmp/mc-expand-line.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 2);
+  viewport.SetSecondaryCarets({{3, 2}, {5, 2}});
+
+  Expect(viewport.ExpandSelectionToWholeLines(), "the expansion applies");
+  const auto primary = viewport.selection_range();
+  Expect(primary.has_value() && primary->start == TextPosition{1, 0} &&
+             primary->end == TextPosition{2, 0},
+         "the primary covers its whole line");
+  Expect(viewport.secondary_caret_range_view().size() == 2,
+         "both secondaries survive, got " +
+             std::to_string(viewport.secondary_caret_range_view().size()));
+  for (const auto& caret : viewport.secondary_caret_range_view()) {
+    Expect(caret.selection_anchor.has_value() && !(*caret.selection_anchor == caret.position),
+           "every secondary holds a REAL selection, not an empty anchor at its old "
+           "position");
+  }
+
+  // The gesture's whole point: typing now replaces each selected line.
+  viewport.InsertText("Z");
+  Expect(JoinViewportLines(viewport) == "aaa0\nZccc2\nZeee4\nZ",
+         std::string("each caret's line is replaced: ") + JoinViewportLines(viewport));
+}
+
+// A second press takes one more line at each caret, and expansions that meet
+// merge -- two line selections over one line would put two carets on it and edit
+// it twice.
+void TestExpandLineSelectionGrowsAndMerges() {
+  TextViewport viewport;
+  viewport.LoadContent("l0\nl1\nl2\nl3\nl4\n", "/tmp/mc-expand-merge.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{1, 0}});
+
+  Expect(viewport.ExpandSelectionToWholeLines(), "the first press applies");
+  // Lines 0 and 1 expand to [0,0)-(1,0) and [1,0)-(2,0), which touch and merge.
+  Expect(viewport.secondary_caret_range_view().empty(),
+         "the two expansions meet and become one selection, got " +
+             std::to_string(viewport.secondary_caret_range_view().size()) + " secondaries");
+  const auto merged = viewport.selection_range();
+  Expect(merged.has_value() && merged->start == TextPosition{0, 0} &&
+             merged->end == TextPosition{2, 0},
+         "the merged selection covers both lines");
+
+  Expect(viewport.ExpandSelectionToWholeLines(), "the second press applies");
+  const auto grown = viewport.selection_range();
+  Expect(grown.has_value() && grown->start == TextPosition{0, 0} &&
+             grown->end == TextPosition{3, 0},
+         "and it grows by one more line rather than standing still");
+}
+
 }  // namespace
 
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/ExpandLineSelectionCoversEveryCaret",
+          TestExpandLineSelectionCoversEveryCaret);
+  AddTest(tests, "EditorMultiCaret/ExpandLineSelectionGrowsAndMerges",
+          TestExpandLineSelectionGrowsAndMerges);
   AddTest(tests, "EditorMultiCaret/AddCaretBelowGrowsOnePerPress", TestAddCaretBelowGrowsOnePerPress);
   AddTest(tests, "EditorMultiCaret/AddCaretBelowAtTheLastLineAddsNothing",
           TestAddCaretBelowAtTheLastLineAddsNothing);

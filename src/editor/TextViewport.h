@@ -588,6 +588,10 @@ class TextViewport {
   // end of every line the selection touches, selection cleared. With no selection
   // that is the caret's own line, which is what VS Code does too.
   bool AddCaretsAtSelectedLineEnds();
+  // VS Code's expandLineSelection (Ctrl+L): grow EVERY caret's selection to whole
+  // lines, one more line per press. Expansions that meet are merged, because two
+  // line selections covering the same line would edit it twice.
+  bool ExpandSelectionToWholeLines();
   // Ranged sibling of SetSecondaryCarets: rebuilds the secondary caret set where
   // each entry carries an active selection (anchor -> cursor). Used by the
   // "add cursor at next/all match" (Ctrl+D) flow so multi-caret typing replaces

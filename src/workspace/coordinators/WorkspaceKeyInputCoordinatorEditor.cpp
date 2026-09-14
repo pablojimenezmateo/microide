@@ -711,26 +711,15 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
       return true;
     case SDLK_L: {
       // Ctrl+L: expand the selection to whole lines, one more line per press
-      // (VS Code expandLineSelection). The selection runs from the start of its
-      // first line to the start of the line after its last one, or to the end of
-      // the document's last line.
+      // (VS Code expandLineSelection). The arithmetic lives on the viewport, where
+      // the caret SET lives: this handler read `cursor_line()` and called
+      // MoveCursorTo, so with three cursors it produced one line selection and two
+      // carets holding empty anchors -- and the next keystroke then replaced one
+      // line and inserted at two columns.
       if (!ctrl_only) {
         return false;
       }
-      std::size_t first_line = viewport->cursor_line();
-      std::size_t last_line = first_line;
-      if (const auto selection = viewport->selection_range(); selection.has_value()) {
-        const editor::SelectionRange range = editor::TextViewport::NormalizeRange(*selection);
-        first_line = range.start.line;
-        last_line = range.end.line;
-      }
-      viewport->MoveCursorTo(first_line, 0);
-      if (last_line + 1 < viewport->line_count()) {
-        viewport->MoveCursorTo(last_line + 1, 0, /*extend_selection=*/true);
-      } else {
-        viewport->MoveCursorTo(last_line, viewport->lines().LineLength(last_line),
-                               /*extend_selection=*/true);
-      }
+      viewport->ExpandSelectionToWholeLines();
       after_editor_caret_motion();
       return true;
     }
