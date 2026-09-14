@@ -1193,7 +1193,10 @@ std::optional<SelectionRange> TextViewport::WordRangeAt(TextPosition position) c
   }
   const std::string_view line = document_->lines.LineView(position.line);
   const std::size_t col = std::min(position.column, line.size());
-  const WordSpan span = IdentifierRunAt(line, col);
+  // Touching, not "at": a caret typed to the end of an identifier still names it
+  // (VS Code's getWordAtPosition is inclusive at both ends). Without that, Ctrl+D
+  // and double-click were no-ops on the trailing half of a word's last character.
+  const WordSpan span = IdentifierRunTouching(line, col);
   if (span.empty()) {
     return std::nullopt;
   }
@@ -1219,8 +1222,24 @@ void TextViewport::SelectWordAtCursor() {
   if (!word.has_value()) {
     return;
   }
-  selection_anchor_ = word->start;
-  cursor_column_ = word->end.column;
+  SelectOnCursorLine(word->start.column, word->end.column);
+}
+
+void TextViewport::SelectWordOrRunAtCursor() {
+  if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
+    return;
+  }
+  const std::string_view line = document_->lines.LineView(cursor_line_);
+  const WordSpan span = WordSelectionRunAt(line, std::min(cursor_column_, line.size()));
+  if (span.empty()) {
+    return;
+  }
+  SelectOnCursorLine(span.start, span.end);
+}
+
+void TextViewport::SelectOnCursorLine(std::size_t start_column, std::size_t end_column) {
+  selection_anchor_ = TextPosition{cursor_line_, start_column};
+  cursor_column_ = end_column;
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   EnsureCursorVisible();
 }
@@ -1251,10 +1270,7 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
   const std::size_t col = std::min(cursor_column_, line.size());
   // A caret sitting just PAST a word still seeds on that word, which is what
   // makes the highlight follow a caret typed to the end of an identifier.
-  WordSpan span = IdentifierRunAt(line, col);
-  if (span.empty() && col > 0) {
-    span = IdentifierRunAt(line, util::PreviousUtf8Boundary(line, col));
-  }
+  const WordSpan span = IdentifierRunTouching(line, col);
   if (span.empty()) {
     return std::nullopt;
   }
@@ -1265,10 +1281,7 @@ void TextViewport::SelectLineAtCursor() {
   if (document_->lines.empty()) {
     return;
   }
-  selection_anchor_ = TextPosition{cursor_line_, 0};
-  cursor_column_ = document_->lines.LineLength(cursor_line_);
-  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
-  EnsureCursorVisible();
+  SelectOnCursorLine(0, document_->lines.LineLength(cursor_line_));
 }
 
 void TextViewport::SetDocumentPath(const std::filesystem::path& path) {

@@ -29,6 +29,30 @@ std::size_t SnapToScalarStart(std::string_view text, std::size_t caret) {
   return index;
 }
 
+// End of the maximal run of same-class code points containing `index`.
+std::size_t SameClassRunEnd(std::string_view text, std::size_t index) {
+  const WordClass cls = ClassifyWordCodepointAt(text, index);
+  std::size_t end = index;
+  while (end < text.size() && ClassifyWordCodepointAt(text, end) == cls) {
+    end += ScalarLengthAt(text, end);
+  }
+  return end;
+}
+
+// Start of the maximal run of same-class code points containing `index`.
+std::size_t SameClassRunStart(std::string_view text, std::size_t index) {
+  const WordClass cls = ClassifyWordCodepointAt(text, index);
+  std::size_t start = index;
+  while (start > 0) {
+    const std::size_t previous = util::PreviousUtf8Boundary(text, start);
+    if (ClassifyWordCodepointAt(text, previous) != cls) {
+      break;
+    }
+    start = previous;
+  }
+  return start;
+}
+
 }  // namespace
 
 WordClass ClassifyWordCodepointAt(std::string_view text, std::size_t index) {
@@ -143,6 +167,54 @@ std::size_t DeleteWordBoundaryRight(std::string_view text, std::size_t caret) {
     return whitespace_end;
   }
   return WordBoundaryRight(text, caret);
+}
+
+WordSpan IdentifierRunTouching(std::string_view text, std::size_t index) {
+  index = SnapToScalarStart(text, index);
+  WordSpan span = IdentifierRunAt(text, index);
+  if (span.empty() && index > 0) {
+    span = IdentifierRunAt(text, util::PreviousUtf8Boundary(text, index));
+    // Only a run that ENDS at the caret counts. A caret two columns past `foo`
+    // touches no word, and reporting `foo` there would highlight an identifier
+    // the caret has left.
+    if (span.end != index) {
+      return WordSpan{};
+    }
+  }
+  return span;
+}
+
+WordSpan WordSelectionRunAt(std::string_view text, std::size_t index) {
+  index = SnapToScalarStart(text, index);
+  if (const WordSpan word = IdentifierRunTouching(text, index); !word.empty()) {
+    return word;
+  }
+  // Not on identifier content: take the gap between the nearest non-whitespace
+  // runs. One scan each way, both bounded by the neighbouring run -- no
+  // whole-line pass, because a double-click on a minified line must not walk it.
+  std::size_t start = 0;
+  for (std::size_t probe = index; probe > 0;) {
+    probe = util::PreviousUtf8Boundary(text, probe);
+    if (ClassifyWordCodepointAt(text, probe) != WordClass::kWhitespace) {
+      start = SameClassRunEnd(text, probe);
+      break;
+    }
+  }
+  std::size_t end = text.size();
+  for (std::size_t probe = index; probe < text.size();) {
+    if (ClassifyWordCodepointAt(text, probe) != WordClass::kWhitespace) {
+      end = SameClassRunStart(text, probe);
+      break;
+    }
+    probe += ScalarLengthAt(text, probe);
+  }
+  // A caret inside a separator run sees the same run on both sides, so the two
+  // bounds come back crossed; normalising them yields that run, which is what
+  // VS Code's `new Range(...)` does with its swapped columns.
+  if (start > end) {
+    std::swap(start, end);
+  }
+  return WordSpan{start, end};
 }
 
 }  // namespace microide::editor

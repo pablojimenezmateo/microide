@@ -72,4 +72,26 @@ struct WordSpan {
 // `café` selected `caf` and highlighted the wrong occurrences with it.
 [[nodiscard]] WordSpan IdentifierRunAt(std::string_view text, std::size_t index);
 
+// The identifier run a CARET at byte `index` touches: the run starting at
+// `index`, or -- when there is none -- the run that ends exactly there. VS Code's
+// `getWordAtPosition` is inclusive at both ends of a word (`start <= column-1 <=
+// end`), so a caret typed to the end of `foo` still names `foo`. `IdentifierRunAt`
+// reads the code point to the RIGHT only, so on its own it answers "nothing" for
+// a caret at a word's end -- which silently made Ctrl+D and double-click no-ops
+// on the trailing half of a word's last character.
+[[nodiscard]] WordSpan IdentifierRunTouching(std::string_view text, std::size_t index);
+
+// What a double-click at byte `index` selects, following VS Code's
+// `WordOperations.word()`: the identifier run the caret touches when there is
+// one, and otherwise the GAP between the nearest non-whitespace runs on either
+// side. Because runs are maximal and same-class, that gap is exactly the
+// whitespace run when the caret sits in whitespace and exactly the operator run
+// when it sits inside one -- so double-clicking `    ` selects the indent and
+// double-clicking `->` selects `->`, instead of selecting nothing.
+//
+// Distinct from `IdentifierRunTouching` on purpose: Ctrl+D and occurrence
+// highlighting seed on identifiers only (VS Code's `getWordAtPosition` returns
+// null in whitespace), while the mouse gesture selects the run under the pointer.
+[[nodiscard]] WordSpan WordSelectionRunAt(std::string_view text, std::size_t index);
+
 }  // namespace microide::editor

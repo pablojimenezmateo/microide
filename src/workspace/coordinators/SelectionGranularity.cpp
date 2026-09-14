@@ -27,7 +27,7 @@ void ApplyClick(InteractionState& interaction_state,
                 int clicks) {
   interaction_state.selection_granularity = InteractionState::SelectionGranularity::Character;
   if (clicks == 2) {
-    viewport.SelectWordAtCursor();
+    viewport.SelectWordOrRunAtCursor();
     RecordSeed(interaction_state, InteractionState::SelectionGranularity::Word, viewport);
     return;
   }

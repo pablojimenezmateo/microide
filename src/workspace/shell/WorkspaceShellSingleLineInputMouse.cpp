@@ -319,7 +319,7 @@ bool WorkspaceShell::HandleSingleLineInputMouseDown(const SDL_Event& event,
     if (event.button.clicks >= 3) {
       body.SelectLineAtCursor();
     } else if (event.button.clicks == 2) {
-      body.SelectWordAtCursor();
+      body.SelectWordOrRunAtCursor();
     }
     ResetCaretBlink();
     return true;

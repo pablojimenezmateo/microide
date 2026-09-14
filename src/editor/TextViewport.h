@@ -663,7 +663,12 @@ class TextViewport {
   bool DeleteCurrentLine();
   void ClearSelection();
   void SelectAll();
+  // Ctrl+D / occurrence seed: identifier content only, as VS Code's
+  // `getWordAtPosition` is -- a caret in whitespace names no word.
   void SelectWordAtCursor();
+  // Double-click: the identifier run under the pointer, or the whitespace /
+  // operator run when the pointer is not on one (VS Code `WordOperations.word`).
+  void SelectWordOrRunAtCursor();
   // The identifier run under `position`, or nullopt when it is not on one. Shared
   // with the double-click-drag path, which needs the range for a position that is
   // not the caret; SelectWordAtCursor is this plus "put the caret on it".
@@ -809,6 +814,9 @@ class TextViewport {
   // else nullptr. The single place staleness is decided.
   const HighlightCacheEntry* CurrentHighlightCacheEntry(std::size_t line_index) const;
   SyntaxState HighlightStateBeforeLine(std::size_t line_index) const;
+  // Anchor..cursor on the caret's own line, with the preferred column restamped.
+  // Shared by the word/line selection verbs, which each open-coded it.
+  void SelectOnCursorLine(std::size_t start_column, std::size_t end_column);
   void ClampCursorColumn();
   void ClampScrollState();
   void EnsureCursorVisible();

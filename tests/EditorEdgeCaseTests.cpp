@@ -495,6 +495,67 @@ void TestDeletingAcrossACollapsedFoldRemovesTheHiddenLines() {
          std::string("the hidden body should go with the selection: ") + JoinLines(viewport));
 }
 
+
+
+
+
+
+
+
+// --- Double-clicking a run of whitespace selects the run (VS Code
+// `WordOperations.word`: with no word under the pointer it takes the gap between
+// the neighbouring runs). Selecting nothing made double-click look broken in
+// indentation, which is most of the left edge of a file. ---
+void TestSelectWordAtCursorOnWhitespaceRun() {
+  TextViewport viewport;
+  viewport.LoadContent("ab    cd\n", "/tmp/ec-word-ws.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 3);
+  viewport.SelectWordOrRunAtCursor();
+  Expect(viewport.SelectedText() == "    ",
+         std::string("whitespace run selects as a word, got: '") + viewport.SelectedText() + "'");
+}
+
+
+
+// --- A caret just PAST a word still names that word. VS Code's
+// getWordAtPosition is inclusive at both ends, and the mouse rounds to the
+// nearest column -- so clicking the right half of `foo`'s last glyph lands here,
+// and reading only the code point to the right selected nothing. ---
+void TestSelectWordAtCursorAtWordEnd() {
+  TextViewport viewport;
+  viewport.LoadContent("foo bar\n", "/tmp/ec-word-end.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 3);
+  viewport.SelectWordAtCursor();
+  Expect(viewport.SelectedText() == "foo",
+         std::string("caret just past a word selects it, got: '") + viewport.SelectedText() + "'");
+}
+
+// --- Same at end-of-line, where there is no code point to the right at all. ---
+void TestSelectWordAtCursorAtLineEnd() {
+  TextViewport viewport;
+  viewport.LoadContent("foo\n", "/tmp/ec-word-lineend.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 3);
+  viewport.SelectWordAtCursor();
+  Expect(viewport.SelectedText() == "foo",
+         std::string("caret at EOL just past a word selects it, got: '") + viewport.SelectedText() + "'");
+}
+
+// --- Double-clicking inside an operator run selects the whole run (`->`), not
+// one character and not nothing: the gap rule sees the same run on both sides
+// and normalises the crossed bounds back into it. ---
+void TestSelectWordAtCursorOnSeparatorRun() {
+  TextViewport viewport;
+  viewport.LoadContent("a->b\n", "/tmp/ec-word-sep.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 2);
+  viewport.SelectWordOrRunAtCursor();
+  Expect(viewport.SelectedText() == "->",
+         std::string("separator run selects whole, got: '") + viewport.SelectedText() + "'");
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -537,6 +598,11 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestMultiCaretDeleteSelectionsUndoRestoresText);
   AddTest(tests, "EditorEdgeCase/MultiCaretBackspaceAtColumnZeroJoinsEachLineOnce",
           TestMultiCaretBackspaceAtColumnZeroJoinsEachLineOnce);
+  AddTest(tests, "EditorEdgeCase/SelectWordAtCursorOnWhitespaceRun",
+          TestSelectWordAtCursorOnWhitespaceRun);
+  AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtWordEnd", TestSelectWordAtCursorAtWordEnd);
+  AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtLineEnd", TestSelectWordAtCursorAtLineEnd);
+  AddTest(tests, "EditorEdgeCase/SelectWordAtCursorOnSeparatorRun", TestSelectWordAtCursorOnSeparatorRun);
 }
 
 }  // namespace microide::tests
