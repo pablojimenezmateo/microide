@@ -1,5 +1,7 @@
 #include "editor/DiagnosticsStore.h"
 
+#include "util/StringUtil.h"
+
 #include "editor/OwnerPathIndexOps.h"
 #include "editor/PathKey.h"
 #include "util/PathMatch.h"
@@ -9,17 +11,34 @@
 
 namespace microide::editor {
 
+bool TryParseDiagnosticSeverity(std::string_view token, DiagnosticSeverity* severity) {
+  if (severity == nullptr) {
+    return false;
+  }
+  const std::string value = util::ToLowerAscii(token);
+  if (value == "error") {
+    *severity = DiagnosticSeverity::Error;
+    return true;
+  }
+  if (value == "warning" || value == "warn") {
+    *severity = DiagnosticSeverity::Warning;
+    return true;
+  }
+  if (value == "info" || value == "information") {
+    *severity = DiagnosticSeverity::Info;
+    return true;
+  }
+  if (value == "hint") {
+    *severity = DiagnosticSeverity::Hint;
+    return true;
+  }
+  return false;
+}
+
 DiagnosticSeverity ParseDiagnosticSeverity(std::string_view token) {
-  if (token == "error") {
-    return DiagnosticSeverity::Error;
-  }
-  if (token == "warning") {
-    return DiagnosticSeverity::Warning;
-  }
-  if (token == "info") {
-    return DiagnosticSeverity::Info;
-  }
-  return DiagnosticSeverity::Hint;
+  DiagnosticSeverity severity = DiagnosticSeverity::Hint;
+  (void)TryParseDiagnosticSeverity(token, &severity);
+  return severity;
 }
 
 std::span<const PublishedDiagnostic> FilterDiagnosticsAtLeastSeverity(

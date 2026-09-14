@@ -238,6 +238,25 @@ void TestDiagnosticsSeverityFilter() {
   Expect(ParseDiagnosticSeverity("hint") == DiagnosticSeverity::Hint, "parse hint");
   Expect(ParseDiagnosticSeverity("nonsense") == DiagnosticSeverity::Hint, "unknown -> hint");
 
+  // `diagnostics.min_severity` is a hand-editable setting, so the spelling a
+  // person writes has to work. A capitalized or abbreviated value used to fall
+  // through to Hint -- "show everything", the opposite of what it asked for, with
+  // nothing reporting the typo.
+  Expect(ParseDiagnosticSeverity("Error") == DiagnosticSeverity::Error, "case-insensitive");
+  Expect(ParseDiagnosticSeverity("WARNING") == DiagnosticSeverity::Warning, "case-insensitive");
+  Expect(ParseDiagnosticSeverity("warn") == DiagnosticSeverity::Warning, "warn alias");
+  Expect(ParseDiagnosticSeverity("Information") == DiagnosticSeverity::Info, "information alias");
+
+  // The Try form is the same table, and it is the one that can tell an unknown
+  // value from a deliberate "hint" -- which is why the plugin path uses it.
+  using microide::editor::TryParseDiagnosticSeverity;
+  DiagnosticSeverity parsed = DiagnosticSeverity::Error;
+  Expect(TryParseDiagnosticSeverity("hint", &parsed) && parsed == DiagnosticSeverity::Hint,
+         "an explicit hint parses as hint");
+  Expect(!TryParseDiagnosticSeverity("nonsense", &parsed),
+         "an unknown value is reported, not silently hinted");
+  Expect(!TryParseDiagnosticSeverity("error", nullptr), "a null out pointer is refused");
+
   std::vector<PublishedDiagnostic> all;
   for (DiagnosticSeverity sev : {DiagnosticSeverity::Error, DiagnosticSeverity::Warning,
                                  DiagnosticSeverity::Info, DiagnosticSeverity::Hint}) {

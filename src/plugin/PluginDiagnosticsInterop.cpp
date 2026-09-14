@@ -25,27 +25,10 @@ constexpr lua_Integer kMaxDiagnosticCoordinate =
     static_cast<lua_Integer>(std::numeric_limits<std::uint32_t>::max());
 
 bool ParseDiagnosticSeverity(std::string_view raw_value, editor::DiagnosticSeverity* severity) {
-  if (severity == nullptr) {
-    return false;
-  }
-  const std::string value = util::ToLowerAscii(raw_value);
-  if (value == "error") {
-    *severity = editor::DiagnosticSeverity::Error;
-    return true;
-  }
-  if (value == "warning" || value == "warn") {
-    *severity = editor::DiagnosticSeverity::Warning;
-    return true;
-  }
-  if (value == "info" || value == "information") {
-    *severity = editor::DiagnosticSeverity::Info;
-    return true;
-  }
-  if (value == "hint") {
-    *severity = editor::DiagnosticSeverity::Hint;
-    return true;
-  }
-  return false;
+  // The editor's table, not a second copy of it: this chain and
+  // editor::ParseDiagnosticSeverity were two spellings of one mapping, and the
+  // editor's was the case-sensitive one reading a user setting.
+  return editor::TryParseDiagnosticSeverity(raw_value, severity);
 }
 
 bool ReadDiagnosticTable(lua_State* state,

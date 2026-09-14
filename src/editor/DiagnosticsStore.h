@@ -54,6 +54,14 @@ struct PublishedDiagnostic {
 
 // Parse a `diagnostics.min_severity` token ("error"/"warning"/"info"/"hint");
 // unknown tokens fall back to Hint (show everything).
+// The one severity table. Case-insensitive, and it accepts the aliases a tool or
+// a plugin actually writes ("warn", "information") -- the plugin interop carried
+// its own chain that did, while this one matched exact lowercase only.
+bool TryParseDiagnosticSeverity(std::string_view token, DiagnosticSeverity* severity);
+// Setting-reader form: an unrecognized value reads as Hint, i.e. show everything,
+// which is the safe direction to fail for `diagnostics.min_severity`. It used to
+// fail that way for "Error" and "warn" too, silently turning a request to hide
+// diagnostics into a request to show them all.
 DiagnosticSeverity ParseDiagnosticSeverity(std::string_view token);
 
 // Returns `in` unchanged when min_severity is Hint (the show-all default, zero
