@@ -3091,6 +3091,115 @@ void TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress() {
          "typing replaces every occurrence the presses selected");
 }
 
+// Ctrl+D as a PROPERTY, not a fixture. The seed/hop walk in the executor is the
+// part with a history: presses used to stop after two carets because the search
+// re-found the previous press's match and the dedupe swallowed it. What must hold
+// for every document is arithmetic, not a caret list:
+//
+//   count       after k presses the buffer has min(k, occurrences) selections
+//   exhaustion  further presses add nothing and remove nothing
+//   shape       every selection spans exactly one occurrence of the needle
+//   disjoint    no two selections overlap, and none is a duplicate
+//
+// The shapes below are the ones a "find the next one after the last one I added"
+// walk gets wrong: occurrences that touch, occurrences that OVERLAP each other,
+// a single occurrence, one per line, and a needle that is the whole line.
+void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
+  struct Case {
+    const char* name;
+    const char* content;
+    // Caret placed here; the first press selects the word under it.
+    std::size_t caret_line;
+    std::size_t caret_column;
+    // What the first press is expected to select, and how many times it occurs.
+    const char* needle;
+    std::size_t occurrences;
+  };
+  // `SelectWordAtCursor` seeds on an identifier run, so every needle here is one.
+  const std::vector<Case> cases = {
+      {"one-per-line", "foo\nbar\nfoo\nfoo\n", 0, 1, "foo", 3},
+      {"several-on-one-line", "foo foo foo\nfoo\n", 0, 0, "foo", 4},
+      {"touching", "foofoofoo\n", 0, 0, "foofoofoo", 1},
+      {"only-one", "alpha bravo\n", 0, 2, "alpha", 1},
+      {"needle-is-the-whole-line", "x\ny\nx\n", 0, 0, "x", 2},
+      {"caret-starts-on-the-last-one", "foo bar foo\n", 0, 9, "foo", 2},
+      {"blank-lines-between", "foo\n\n\nfoo\n\nfoo\n", 3, 1, "foo", 3},
+  };
+
+  for (const Case& test_case : cases) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "project";
+    const auto file = root / "words.txt";
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WriteFile(file, test_case.content);
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+    auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+    viewport.MoveCursorTo(test_case.caret_line, test_case.caret_column);
+
+    const std::string where = std::string(test_case.name) + ": ";
+    const std::string needle = test_case.needle;
+
+    // Two presses past exhaustion, so the "adds nothing more" half is checked
+    // rather than assumed.
+    for (std::size_t press = 1; press <= test_case.occurrences + 2; ++press) {
+      Expect(ExecuteCommand(shell, "add-cursor-next-match"),
+             where + "press " + std::to_string(press) + " should dispatch");
+
+      // Collect every selection: the primary plus each ranged secondary.
+      std::vector<microide::editor::SelectionRange> selections;
+      if (const auto primary = viewport.selection_range()) {
+        selections.push_back(*primary);
+      }
+      for (const auto& caret : viewport.secondary_caret_range_view()) {
+        if (!caret.selection_anchor.has_value()) continue;
+        microide::editor::SelectionRange range{*caret.selection_anchor, caret.position};
+        if (range.end.line < range.start.line ||
+            (range.end.line == range.start.line && range.end.column < range.start.column)) {
+          std::swap(range.start, range.end);
+        }
+        selections.push_back(range);
+      }
+
+      const std::size_t expected = std::min(press, test_case.occurrences);
+      Expect(selections.size() == expected,
+             where + "after " + std::to_string(press) + " press(es) there should be " +
+                 std::to_string(expected) + " selection(s) for " +
+                 std::to_string(test_case.occurrences) + " occurrence(s), got " +
+                 std::to_string(selections.size()));
+      if (selections.size() != expected) break;
+
+      for (const auto& range : selections) {
+        Expect(range.start.line == range.end.line,
+               where + "a Ctrl+D selection never spans lines");
+        const std::string_view line = viewport.lines().LineView(range.start.line);
+        Expect(range.end.column <= line.size() &&
+                   line.substr(range.start.column, range.end.column - range.start.column) == needle,
+               where + "every selection spans exactly the needle \"" + needle + "\", got \"" +
+                   std::string(line.substr(range.start.column,
+                                           range.end.column - range.start.column)) +
+                   "\" at line " + std::to_string(range.start.line) + " column " +
+                   std::to_string(range.start.column));
+      }
+      std::sort(selections.begin(), selections.end(),
+                [](const auto& a, const auto& b) {
+                  return a.start.line < b.start.line ||
+                         (a.start.line == b.start.line && a.start.column < b.start.column);
+                });
+      for (std::size_t i = 1; i < selections.size(); ++i) {
+        const bool disjoint =
+            selections[i - 1].end.line < selections[i].start.line ||
+            (selections[i - 1].end.line == selections[i].start.line &&
+             selections[i - 1].end.column <= selections[i].start.column);
+        Expect(disjoint, where + "two selections overlap at line " +
+                             std::to_string(selections[i].start.line) + " column " +
+                             std::to_string(selections[i].start.column));
+      }
+    }
+  }
+}
+
 // VS Code's emptySelectionClipboard rule: Ctrl+C with nothing selected copies
 // the whole line, and pasting that exact text back with a single caret and no
 // selection puts it on its own line ABOVE the caret's line rather than into the
@@ -7391,6 +7500,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
+  AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchCountsEveryOccurrence",
+          TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence);
   AddTest(tests, "WorkspaceShell/AddCursorAtNextMatchWalksForwardEachPress",
           TestWorkspaceShellAddCursorAtNextMatchWalksForwardEachPress);
   AddTest(tests, "WorkspaceShell/PasteSpreadsOneLinePerCaret",
