@@ -1181,6 +1181,14 @@ specifically because the tab-lifetime use-after-free the new action sweeps hit -
 a reference into `open_tabs` that an action reallocates -- is exactly what that
 fuzzer is good at, and it does not reach one in production code.
 
+Also clean, from the 2026-09-15 continuation: the invariant sweep run with soft
+wrap ON crossed with the dense `add-cursor-all-matches` caret set (every algebraic
+property, 15 verbs x 12 fixtures x 8 caret shapes), the unfocused half of a SPLIT
+(no action edits it), a background TAB (likewise), every action compared wrapped
+against unwrapped, and read-only compare panes -- the last settled by reading
+rather than by a sweep, because all three `ActiveNavigableViewport()` users turn
+out to be navigation, folding and copy.
+
 Also clean: a sweep of every `size() - 1` in `src/editor` and `src/workspace` for
 an unguarded underflow on an empty container (all guarded, several by an
 early-return several frames up), and a sweep for raw `path() ==` comparisons that
