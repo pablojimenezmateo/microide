@@ -967,7 +967,7 @@ See TD-2026-08-15-253.
 
 ## Derived state that must follow an edit, swept over EVERY action
 
-Three bugs on 2026-09-14, all the same shape, none reachable from a fixture test.
+Five bugs on 2026-09-14, all the same shape, none reachable from a fixture test.
 
 The shell keeps several things keyed on LINE NUMBERS into a buffer the user
 edits: the compare tab's diff model, the merge tab's conflict spans, line
@@ -989,9 +989,18 @@ to extend.
   or the navigation changed -- never when the buffer changed. Replace then took a
   stale range and rewrote the line that had inherited its coordinates, leaving the
   real match alone.
+- **A snippet session's placeholders** are ranges only the snippet engine's own
+  operations keep in step with the text. Any other edit moved the buffer under
+  them and left the session active on stale coordinates: expand, Alt+Up, Tab, and
+  the caret jumped into unrelated text that the next keystroke replaced.
 - **A secondary caret on a wrap boundary** was painted by two rows and one at the
   end of a wrapped line by none, because the paint loop decided with a
   first-row-only heuristic instead of the affinity bit the caret already carries.
+- **A multi-caret set on a compare tab** was not painted at all beyond the
+  primary. Ctrl+D resolves through `ActiveEditableViewport()`, which IS the
+  compare right pane, so the set was reachable and edited every occurrence while
+  showing one caret and one selection. The pane runs its own row loop rather than
+  the editor's renderer, and that loop knew about neither.
 
 The technique that found them, and that is cheap to repeat for any new
 line-keyed state: **walk `WorkspaceCommandSpecs()` and assert a property over
@@ -1014,6 +1023,29 @@ Two things keep such a sweep from going vacuous, and both earned their place:
 
 And build the fixture ONCE. A `git init` + commit per action costs more than
 everything else in the sweep put together.
+
+**Two traps the sweeps themselves walked into**, both worth expecting in any test
+that runs every action:
+
+- **A reference into the tab vector does not survive an action.** The sweeps held
+  `auto& viewport = ActiveEditor(shell)` and then ran verbs that open tabs, which
+  `push_back`s onto the group's tab vector and reallocates it. ASAN and TSAN both
+  caught the use-after-free on the first run. Re-resolve through a `*OrNull`
+  accessor on every use; a sweep over every action is precisely the thing that
+  will reach the one action that reshapes the container it is reading.
+- **`open` and `project-open` with no path pop a NATIVE OS dialog.** Headless,
+  SDL's XDG-portal chooser allocates per-call state that only its callback frees,
+  and with no portal nothing ever answers — so the ASAN lane failed with a leak
+  stack of nothing but `SDL_malloc`. `ASAN_OPTIONS=fast_unwind_on_malloc=0` is the
+  difference between "an SDL leak somewhere" and a named call site. Skip both: a
+  test must not open an OS dialog in the first place.
+
+**A last one about the harness, not the product.** A shell poller written as
+`until ! pgrep -f run-checks.sh; do sleep 10; done` never exits: its OWN command
+line contains the pattern, so `pgrep` always matches it. Several of them piled up
+waiting on each other while the lane they were watching had long since finished.
+Watch for a marker the watcher cannot itself contain — a sentinel file, a `$!`
+PID — not a string that is in the watcher's argv.
 
 ## Mechanical Sweeps That Found Real Bugs
 
