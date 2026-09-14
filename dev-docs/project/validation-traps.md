@@ -1153,6 +1153,25 @@ bare positions made the toggle act on whole lines the second time and nest a
 second pair of markers inside the first (`/* also /* short */ */`) -- a
 self-inverse verb that was no longer its own inverse.
 
+### Classify against the SENTENCE, not just against zero
+
+Two of these sweeps assert an exact SET rather than "nothing differs", and that
+turns out to be the more useful shape wherever a rule has deliberate exceptions.
+
+`ResolveLineRanges` states its fold rule in prose -- the verbs that move,
+duplicate, cut or delete "the line" treat a collapsed fold as one line; indent,
+comment and sort act on the opener alone -- and carries it in one bool argument
+passed at each call site. A per-site bool is a list, and a list drifts from the
+sentence describing it. Running every action with the caret on a collapsed opener
+and comparing against no fold produces the observed set directly, so the test can
+require it to equal the documented one; dropping the flag from MoveLines now
+reports "observed: copy-line-down, copy-line-up, cut, delete-line" against the
+expected six and names what changed.
+
+The same run also CONFIRMED the prose was accurate rather than aspirational,
+which is not something a reader can tell by looking -- and is worth knowing
+before trusting any comment that describes a policy spread over several sites.
+
 ### What came back clean on 2026-09-14, so it need not be redone
 
 Negative results are cheap to repeat and expensive to rediscover, so: the
