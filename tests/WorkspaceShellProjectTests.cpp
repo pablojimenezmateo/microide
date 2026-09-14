@@ -3201,6 +3201,69 @@ void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
   }
 }
 
+// A keyboard column-select gesture is anchored to where the caret WAS, so any
+// caret move that is not the gesture's own has to end it -- otherwise the next
+// Ctrl+Shift+Alt+Arrow extends a box from a corner the user has since left. That
+// used to be two hand-placed ClearColumnSelection() calls in the two KEY
+// handlers, which is a list of one input kind: a mouse click, a `goto` from the
+// palette, a control-channel caret move and a jump-to-definition all left the
+// stale box armed. The gesture invalidates itself in PlacePrimaryCaret now, so
+// this test drives the caret the way a click does -- not through a key.
+void TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "grid.txt";
+  WriteFile(file, "aaaa\nbbbb\ncccc\ndddd\neeee\nffff\ngggg\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport != nullptr, "the fixture opens an editor tab");
+
+  const auto step_down = [&]() {
+    Expect(WorkspaceShellTestAccess::ExecuteAction(
+               shell, WorkspaceShell::ActionId::ColumnSelectDown, {}),
+           "the column-select step should dispatch");
+  };
+
+  viewport->MoveCursorTo(0, 2);
+  step_down();
+  step_down();
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport->column_selection().active, "two steps leave the gesture armed");
+  Expect(viewport->secondary_caret_range_view().size() == 2,
+         "a box over lines 0-2 is the primary plus two secondaries, got " +
+             std::to_string(viewport->secondary_caret_range_view().size()));
+
+  // A click, in the only form a test can spell it: MoveCursorTo is the mouse
+  // path's own entry point.
+  viewport->MoveCursorTo(5, 2);
+  Expect(!viewport->column_selection().active,
+         "a caret move outside the gesture must end it, or the next step extends a "
+         "box anchored where the caret no longer is");
+
+  step_down();
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport->secondary_caret_range_view().size() == 1,
+         "the next step re-anchors at the new caret: lines 5-6 is one secondary, got " +
+             std::to_string(viewport->secondary_caret_range_view().size()));
+  for (const auto& caret : viewport->secondary_caret_range_view()) {
+    Expect(caret.position.line >= 5,
+           "no caret may be left up at the old anchor; found one on line " +
+               std::to_string(caret.position.line));
+  }
+
+  // And the gesture still survives its OWN steps, which is what the re-arm
+  // ordering in the executor is for.
+  step_down();
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport->column_selection().active, "the gesture survives its own step");
+  Expect(viewport->secondary_caret_range_view().size() == 2,
+         "and it grew by one more line (5-7, the file's last), got " +
+             std::to_string(viewport->secondary_caret_range_view().size()));
+}
+
 // A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
 // engine's own operations (a mirror edit, a choice swap, the expansion) keep them
 // in step with the text. Every other edit -- move-line, sort, paste, format, an
@@ -7726,6 +7789,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
+  AddTest(tests, "WorkspaceShell/ColumnSelectReanchorsAfterAForeignCaretMove",
+          TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove);
   AddTest(tests, "WorkspaceShell/ForeignEditEndsTheSnippetSession",
           TestWorkspaceShellForeignEditEndsTheSnippetSession);
   AddTest(tests, "WorkspaceShell/TypingInAPlaceholderKeepsTheSnippetSession",

@@ -398,9 +398,13 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       const editor::ColumnSelectionState after = editor::StepColumnSelection(
           before, direction, caret, viewport->line_count(),
           viewport->MaxVisualWidthInSpan(lo, hi));
-      viewport->SetColumnSelection(after);
+      // Placement first, then re-arm: SetBoxSelectionVisual moves the primary
+      // caret, and every caret placement clears the gesture (see
+      // TextViewport::PlacePrimaryCaret). The order is what lets the gesture
+      // survive its own step while any foreign caret move ends it.
       viewport->SetBoxSelectionVisual(after.anchor.line, after.anchor.column, after.cursor.line,
                                       after.cursor.column);
+      viewport->SetColumnSelection(after);
       context_.NotifyEditorCaretMoved();
       return DispatchResult::Handled;
     }

@@ -651,6 +651,20 @@ void TextViewport::PlacePrimaryCaret(std::size_t line,
   }
   caret_navigation_content_revision_ =
       document_ != nullptr ? document_->content_revision : 0;
+  // A keyboard column-select gesture is anchored to where the caret WAS. Any
+  // caret placement that is not the gesture's own therefore ends it, so the next
+  // Ctrl+Shift+Alt+Arrow re-anchors instead of extending a box from a corner the
+  // user has since left. This used to be two hand-placed ClearColumnSelection()
+  // calls in the two key handlers, which covered keys and nothing else: a mouse
+  // click, a `goto` from the palette, a control-channel caret move or a
+  // jump-to-definition all left the stale box armed. Here it cannot be missed --
+  // and it is also more faithful, because a key that moves NO caret (a settings
+  // toggle, F5) no longer breaks a gesture it did not touch.
+  //
+  // The gesture's own step re-arms after placing its carets; see the
+  // ColumnSelect* case in WorkspaceEditActionExecutor, where the SetColumnSelection
+  // call deliberately follows SetBoxSelectionVisual.
+  column_selection_ = ColumnSelectionState{};
 }
 
 void TextViewport::EnsureCursorVisible() {
