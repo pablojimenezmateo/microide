@@ -1077,6 +1077,14 @@ std::string WorkspaceActionContext::CopySelectionText(bool* whole_line) const {
     if (whole_line != nullptr) {
       *whole_line = true;
     }
+    // Several BARE carets: every caret's line, not just the primary's. The
+    // aggregate above only fires when every caret has a non-empty selection, so
+    // without this a multi-caret line copy silently took one line -- and the cut
+    // that shares this fallback deleted all of them.
+    if (std::optional<std::string> lines = viewport->MultiCaretLineTextForClipboard();
+        lines.has_value()) {
+      return *std::move(lines);
+    }
     return viewport->CurrentLineTextForClipboard();
   }
   return {};
@@ -1116,10 +1124,22 @@ void WorkspaceActionContext::CutSelection() {
     const std::optional<std::string> multi_text =
         viewport->has_multiple_carets() ? viewport->MultiCaretSelectedText() : std::nullopt;
     const bool has_selection = viewport->has_selection();
+    // With nothing selected the delete below is DeleteCurrentLine(), which
+    // removes every caret's line -- so the capture has to be every caret's line
+    // too. Taking CurrentLineTextForClipboard() here (the primary's line alone)
+    // destroyed the other carets' lines without ever putting them on the
+    // clipboard, which is exactly what the budget guard below exists to prevent
+    // and could not see.
+    const std::optional<std::string> multi_line_text =
+        (!multi_text.has_value() && !has_selection) ? viewport->MultiCaretLineTextForClipboard()
+                                                    : std::nullopt;
     const std::string text =
         multi_text.has_value()
             ? *multi_text
-            : (has_selection ? viewport->SelectedText() : viewport->CurrentLineTextForClipboard());
+            : (has_selection ? viewport->SelectedText()
+                             : (multi_line_text.has_value()
+                                    ? *multi_line_text
+                                    : viewport->CurrentLineTextForClipboard()));
     // TD-2026-07-17A-119: never delete a selection we cannot fully capture to the
     // clipboard — truncating the copy and then deleting the whole selection would lose
     // data. Refuse an over-budget cut (leave the buffer intact) and notify.

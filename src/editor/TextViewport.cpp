@@ -1054,6 +1054,51 @@ std::size_t TextViewport::CollapsedFoldEndAt(std::size_t line) const {
   return line;
 }
 
+void TextViewport::AppendCaretLineVerbLines(std::vector<std::size_t>* out) const {
+  if (out == nullptr || document_->lines.empty()) {
+    return;
+  }
+  const std::size_t last_line = document_->lines.size() - 1;
+  // A collapsed fold is one row on screen, so a caret on its opener names the
+  // whole block -- the same rule CollapsedFoldEndAt gives the single-caret paths.
+  const auto append_block = [&](std::size_t line) {
+    const std::size_t start = std::min(line, last_line);
+    const std::size_t end = std::min(CollapsedFoldEndAt(start), last_line);
+    for (std::size_t i = start; i <= end; ++i) {
+      out->push_back(i);
+    }
+  };
+  append_block(cursor_line_);
+  for (const SecondaryCaret& caret : secondary_carets_) {
+    append_block(caret.position.line);
+  }
+  std::sort(out->begin(), out->end());
+  out->erase(std::unique(out->begin(), out->end()), out->end());
+}
+
+std::optional<std::string> TextViewport::MultiCaretLineTextForClipboard() const {
+  if (!has_multiple_carets() || document_->lines.empty()) {
+    return std::nullopt;
+  }
+  std::vector<std::size_t> lines;
+  lines.reserve(secondary_carets_.size() + 1);
+  AppendCaretLineVerbLines(&lines);
+  if (lines.empty()) {
+    return std::nullopt;
+  }
+  std::string text;
+  std::size_t bytes = 0;
+  for (const std::size_t line : lines) {
+    bytes += document_->lines.LineLength(line) + 1;
+  }
+  text.reserve(bytes);
+  for (const std::size_t line : lines) {
+    text += document_->lines.LineView(line);
+    text.push_back('\n');
+  }
+  return text;
+}
+
 std::string TextViewport::CurrentLineTextForClipboard() const {
   if (document_->lines.empty()) {
     return {};
@@ -1078,15 +1123,14 @@ bool TextViewport::DeleteCurrentLine() {
     return false;
   }
   if (has_multiple_carets()) {
+    // The SAME set the clipboard reads (AppendCaretLineVerbLines), so a cut puts
+    // on the clipboard exactly what it removes. This branch used to take each
+    // caret's own line and skip the collapsed-fold expansion its single-caret
+    // sibling does -- so two carets, one on a fold's opener, deleted the opener
+    // and orphaned the body, while one caret deleted the block.
     std::vector<std::size_t> lines_to_delete;
     lines_to_delete.reserve(secondary_carets_.size() + 1);
-    lines_to_delete.push_back(cursor_line_);
-    for (const SecondaryCaret& caret : secondary_carets_) {
-      lines_to_delete.push_back(std::min(caret.position.line, document_->lines.size() - 1));
-    }
-    std::sort(lines_to_delete.begin(), lines_to_delete.end());
-    lines_to_delete.erase(std::unique(lines_to_delete.begin(), lines_to_delete.end()),
-                          lines_to_delete.end());
+    AppendCaretLineVerbLines(&lines_to_delete);
     if (lines_to_delete.empty()) {
       return false;
     }

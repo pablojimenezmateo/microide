@@ -648,6 +648,16 @@ class TextViewport {
   // back to the single-caret SelectedText()/line-copy behavior.
   std::optional<std::string> MultiCaretSelectedText() const;
   std::string CurrentLineTextForClipboard() const;
+  // Lines the "act on the caret's line" verbs touch: each caret's line, expanded
+  // through a collapsed fold's body, deduplicated, in document order. ONE answer,
+  // because the cut path has to put on the clipboard exactly what it is about to
+  // delete -- it used to copy the primary caret's line and delete every caret's.
+  void AppendCaretLineVerbLines(std::vector<std::size_t>* out) const;
+  // The clipboard text for a multi-caret line copy/cut: every line of
+  // `AppendCaretLineVerbLines`, each with its terminator, so N bare carets copy N
+  // lines and a paste back across N carets lands one per caret. nullopt for a
+  // single caret, where `CurrentLineTextForClipboard` already answers.
+  std::optional<std::string> MultiCaretLineTextForClipboard() const;
   // The last line of the collapsed fold that opens at `line`, or `line` itself
   // when none does. A collapsed fold is one row on screen, so the verbs that act
   // on "the caret's line" -- copy and cut with nothing selected, delete line,

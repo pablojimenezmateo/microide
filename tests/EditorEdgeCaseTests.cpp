@@ -668,6 +668,93 @@ void TestSelectWordAtCursorOnSeparatorRun() {
          std::string("separator run selects whole, got: '") + viewport.SelectedText() + "'");
 }
 
+
+// A multi-caret CUT must put on the clipboard exactly what it removes. The
+// aggregate copy path only fires when every caret has a non-empty selection, so
+// N BARE carets fell through to the primary caret's line -- and then deleted all
+// N. The other N-1 lines were destroyed and never reached the clipboard.
+void TestMultiCaretBareCaretsCopyEveryCaretsLine() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\ndelta\n", "/tmp/ec-mc-line-copy.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(2, 1);            // primary BELOW the secondary
+  viewport.SetSecondaryCarets({{0, 1}});  // so document order is not caret order
+
+  const auto text = viewport.MultiCaretLineTextForClipboard();
+  Expect(text.has_value(), "two bare carets should produce a line aggregate");
+  Expect(*text == "alpha\ngamma\n",
+         std::string("both lines, in document order, each with its terminator, got: ") + *text);
+}
+
+// The invariant behind the fix: the text the cut captures is exactly the text the
+// cut removes, for whatever caret arrangement.
+void TestMultiCaretLineCutCapturesWhatItDeletes() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\ngamma\ndelta\nepsilon\n", "/tmp/ec-mc-line-cut.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 0);
+  viewport.SetSecondaryCarets({{3, 0}});
+
+  const auto captured = viewport.MultiCaretLineTextForClipboard();
+  Expect(captured.has_value(), "the cut captures a line aggregate");
+  const std::string before = JoinLines(viewport);
+  Expect(viewport.DeleteCurrentLine(), "the cut deletes");
+  const std::string after = JoinLines(viewport);
+  Expect(after == "alpha\ngamma\nepsilon\n",
+         std::string("only the caret lines go, got: ") + after);
+
+  // Every line that disappeared is on the clipboard, and nothing else is.
+  std::string removed;
+  for (const std::string& line : {std::string("beta"), std::string("delta")}) {
+    removed += line;
+    removed.push_back('\n');
+  }
+  Expect(*captured == removed,
+         std::string("captured text equals the removed lines, got: ") + *captured);
+  Expect(before.size() > after.size(), "the buffer actually shrank");
+}
+
+// A caret on a collapsed fold's opener names the whole block -- the rule the
+// single-caret path already followed and the multi-caret path did not, so
+// Ctrl+X with two carets deleted a fold's opener and orphaned its body.
+void TestMultiCaretLineVerbsExpandACollapsedFold() {
+  TextViewport viewport;
+  viewport.LoadContent("head {\n  body\n}\ntail\nlast\n", "/tmp/ec-mc-fold-line.txt");
+  viewport.SetViewportSize(10, 40);
+  FoldingModel folding;
+  Expect(folding.Compute(viewport.lines().Snapshot(), CStyleFoldOptions()),
+         "the fold fixture should compute");
+  Expect(folding.Collapse(0), "the brace fold at line 0 should collapse");
+  viewport.SetFoldingModel(&folding);
+  Expect(viewport.CollapsedFoldEndAt(0) == 2, "the fold at line 0 covers lines 0..2");
+
+  viewport.MoveCursorTo(0, 0);            // on the collapsed fold's opener
+  viewport.SetSecondaryCarets({{4, 0}});  // and a plain line further down
+
+  const auto captured = viewport.MultiCaretLineTextForClipboard();
+  Expect(captured.has_value() && *captured == "head {\n  body\n}\nlast\n",
+         std::string("the whole block is captured, not just the opener, got: ") +
+             (captured.has_value() ? *captured : std::string("<none>")));
+
+  Expect(viewport.DeleteCurrentLine(), "the multi-caret line delete applies");
+  Expect(JoinLines(viewport) == "tail\n",
+         std::string("the fold goes whole and the body is not orphaned, got: ") +
+             JoinLines(viewport));
+}
+
+// One caret is unchanged: the single-caret path still answers, so the line-paste
+// marker and every existing behaviour keep working.
+void TestSingleCaretLineClipboardIsUnchanged() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\nbeta\n", "/tmp/ec-single-line-copy.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 2);
+  Expect(!viewport.MultiCaretLineTextForClipboard().has_value(),
+         "one caret has no multi-caret line aggregate");
+  Expect(viewport.CurrentLineTextForClipboard() == "beta\n",
+         "the single-caret path still takes the caret's own line");
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -710,6 +797,14 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestMultiCaretDeleteSelectionsUndoRestoresText);
   AddTest(tests, "EditorEdgeCase/MultiCaretBackspaceAtColumnZeroJoinsEachLineOnce",
           TestMultiCaretBackspaceAtColumnZeroJoinsEachLineOnce);
+  AddTest(tests, "EditorEdgeCase/MultiCaretBareCaretsCopyEveryCaretsLine",
+          TestMultiCaretBareCaretsCopyEveryCaretsLine);
+  AddTest(tests, "EditorEdgeCase/MultiCaretLineCutCapturesWhatItDeletes",
+          TestMultiCaretLineCutCapturesWhatItDeletes);
+  AddTest(tests, "EditorEdgeCase/MultiCaretLineVerbsExpandACollapsedFold",
+          TestMultiCaretLineVerbsExpandACollapsedFold);
+  AddTest(tests, "EditorEdgeCase/SingleCaretLineClipboardIsUnchanged",
+          TestSingleCaretLineClipboardIsUnchanged);
   AddTest(tests, "EditorEdgeCase/SortLinesDescending",
           TestSortLinesDescending);
   AddTest(tests, "EditorEdgeCase/SortLinesTwoDisjointRegions",
