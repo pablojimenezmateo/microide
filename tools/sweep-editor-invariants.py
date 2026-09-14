@@ -120,6 +120,11 @@ FIXTURES: dict[str, str] = {
 # copying only the primary's, which is exactly an `inverse` (cut/paste) failure
 # this now reaches.
 MULTI_CURSOR = "multi-cursor"
+# Every occurrence at once (Ctrl+Shift+L), which is a DENSER and differently
+# shaped caret set than two Ctrl+D presses: it can put a cursor on every line of
+# the fixture, including the first and the last at the same time, so the line ops
+# meet the both-edges-blocked case that a two-caret set never reaches.
+ALL_MATCHES = "all-matches"
 
 CARETS: list[tuple[int, int] | None | str] = [
     (1, 1), (2, 1), (3, 3),
@@ -129,7 +134,7 @@ CARETS: list[tuple[int, int] | None | str] = [
     # caret -- so the indent/outdent inverse was very nearly untested. Every
     # other probe sat on a line with no leading whitespace to remove.
     (4, 1),
-    (99, 1), None, MULTI_CURSOR,
+    (99, 1), None, MULTI_CURSOR, ALL_MATCHES,
 ]
 
 
@@ -274,6 +279,8 @@ def diff(expected: str, actual: str) -> str:
 
 
 def caret_steps(caret: tuple[int, int] | None | str) -> list[str]:
+    if caret is ALL_MATCHES:
+        return ["goto 1:1", "add-cursor-all-matches"]
     if caret is MULTI_CURSOR:
         # Ctrl+D twice: the first press selects the word under the caret, each
         # later press adds the next occurrence. Every fixture contains a repeated
@@ -561,7 +568,7 @@ def sweep(open_session, project: Path, only: str | None,
                   # file legitimately does not come back. A single caret never
                   # reaches this: one blocked caret leaves no regions at all, the
                   # op is a no-op, and the inverse holds trivially.
-                  skip_inverse = (caret is MULTI_CURSOR
+                  skip_inverse = (caret in (MULTI_CURSOR, ALL_MATCHES)
                                   and command.startswith("move-line"))
                   if inverse is not None and not skip_inverse and not (
                           needs_selection and has_selection):

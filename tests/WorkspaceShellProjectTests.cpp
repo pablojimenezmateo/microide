@@ -3280,6 +3280,66 @@ void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
          "a drag released over a different tab must not move anything: " + after_tab_switch);
 }
 
+// The editor's vertical scrollbar was SIZED in logical lines while the scroll
+// position it shows is a VISUAL row -- `scroll_line()` is what ClampScrollState
+// bounds against `visual_line_count()`. With soft wrap on (or a collapsed fold)
+// the two spaces differ, and the consequences are not cosmetic: the layout clamps
+// the scroll to `total_rows - visible_rows`, and a scrollbar drag maps the pointer
+// back through the same total straight into SetScrollLine. So the thumb was
+// over-sized and dragging it to the bottom of a wrapped file stopped short,
+// leaving the end of the document unreachable by the scrollbar.
+//
+// The merge surface already sized its bar in visual rows; the editor was the one
+// that did not.
+void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "wide.txt";
+  // Twelve lines, each far wider than the pane: with wrap on this is many times
+  // twelve visual rows.
+  std::string content;
+  for (int i = 0; i < 12; ++i) {
+    content += std::string(300, static_cast<char>('a' + i));
+    content += '\n';
+  }
+  WriteFile(file, content);
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport != nullptr, "the fixture opens an editor tab");
+  viewport->SetSoftWrap(true);
+
+  const SDL_FRect pane = microide::workspace::MakeRect(0.0f, 0.0f, 400.0f, 300.0f);
+  const auto layout = WorkspaceShellTestAccess::ActiveEditorScrollLayout(shell, pane);
+  Expect(layout.has_value(), "the pane has a scroll layout");
+  Expect(viewport->visual_line_count() > viewport->line_count() * 2,
+         "the fixture must genuinely wrap, got " +
+             std::to_string(viewport->visual_line_count()) + " rows for " +
+             std::to_string(viewport->line_count()) + " lines");
+
+  // The bar must reach the last visual row, not the last logical line.
+  const std::size_t visible_rows = static_cast<std::size_t>(std::max(1, layout->visible_rows));
+  const std::size_t expected_max = viewport->visual_line_count() > visible_rows
+                                       ? viewport->visual_line_count() - visible_rows
+                                       : 0;
+  Expect(static_cast<std::size_t>(layout->max_vertical_scroll) == expected_max,
+         "the scrollbar's travel should span the wrapped rows: max " +
+             std::to_string(layout->max_vertical_scroll) + ", expected " +
+             std::to_string(expected_max));
+
+  // And a scroll to the very bottom must survive the layout's own clamp, which is
+  // the half that made the end of the document unreachable by dragging.
+  viewport->SetScrollLine(expected_max);
+  const auto at_bottom = WorkspaceShellTestAccess::ActiveEditorScrollLayout(shell, pane);
+  Expect(at_bottom.has_value() &&
+             static_cast<std::size_t>(at_bottom->vertical_scroll) == expected_max,
+         "a scroll to the last visual row must not be clamped back to the line count: " +
+             std::to_string(at_bottom.has_value() ? at_bottom->vertical_scroll : 0));
+}
+
 // The box selection and the plain selection drag carry press-time coordinates
 // too, and while neither EDITS, both are resolved against whichever viewport is
 // active when the motion arrives -- so a tab switch mid-drag (Ctrl+PageDown with
@@ -7913,6 +7973,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
+  AddTest(tests, "WorkspaceShell/EditorScrollbarUsesVisualRows",
+          TestWorkspaceShellEditorScrollbarUsesVisualRows);
   AddTest(tests, "WorkspaceShell/EditorGestureEndsWhenItsBufferLeavesTheFront",
           TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront);
   AddTest(tests, "WorkspaceShell/TextDragRefusesAStaleSourceRange",

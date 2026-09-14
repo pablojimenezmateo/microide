@@ -99,7 +99,15 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
                              std::vector<std::uint32_t>& buckets, std::vector<SDL_Color>& palette) {
   const SDL_FRect lane = overview::LaneRect(track, pane_left);
   const SDL_FRect inner_lane = overview::LaneInnerRect(lane);
-  const std::size_t total_rows = viewport.line_count();
+  // VISUAL rows, and every marker LINE mapped into that space. The lane sits in
+  // the same track as the scrollbar thumb, which is positioned by `scroll_line()`
+  // -- a visual row -- so a ruler measured in logical lines drifts out of step
+  // with the thumb beside it exactly when soft wrap or a collapsed fold makes the
+  // two spaces differ, putting a diagnostic's mark at a fraction of the lane the
+  // thumb never reaches at that scroll position. Off the wrapped/folded path
+  // VisualRowForLine is the identity, so this is the same number it always was.
+  const std::size_t total_rows = viewport.visual_line_count();
+  const auto marker_row = [&viewport](std::size_t line) { return viewport.VisualRowForLine(line); };
 
   const BufferSearchState& buffer_search = project_state.overlay.workflow.buffer_search;
   const bool search_active =
@@ -137,15 +145,16 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
         // (a plugin/LSP coordinate near the host ceiling) would otherwise wrap to a
         // negative/small row and mis-place the overview marker. (TD-2026-07-16-69.)
         constexpr std::size_t kMaxRow = static_cast<std::size_t>(std::numeric_limits<int>::max());
-        const auto clamp_row = [](std::size_t line) {
-          return line > kMaxRow ? std::numeric_limits<int>::max() : static_cast<int>(line);
+        const auto clamp_row = [&](std::size_t line) {
+          const std::size_t row = marker_row(line);
+          return row > kMaxRow ? std::numeric_limits<int>::max() : static_cast<int>(row);
         };
         for (const editor::PublishedDiagnostic& diagnostic : filtered) {
           const int start = clamp_row(diagnostic.range.start.line);
           const std::size_t end_line =
               std::max(diagnostic.range.end.line, diagnostic.range.start.line);
-          const int end =
-              end_line >= kMaxRow ? std::numeric_limits<int>::max() : static_cast<int>(end_line) + 1;
+          const int end = std::max(start, clamp_row(end_line)) +
+                          (clamp_row(end_line) < std::numeric_limits<int>::max() ? 1 : 0);
           inputs.push_back(overview::MarkerInput{.start_row = start,
                                                  .end_row = end,
                                                  .color = OverviewSeverityColor(theme, diagnostic.severity),
@@ -156,7 +165,7 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
     // Search matches (only while the find/replace overlay is open on the active pane).
     if (search_active) {
       for (std::size_t i = 0; i < buffer_search.matches.size(); ++i) {
-        const int line = static_cast<int>(buffer_search.matches[i].start.line);
+        const int line = static_cast<int>(marker_row(buffer_search.matches[i].start.line));
         const bool selected = i == buffer_search.selected_index;
         inputs.push_back(overview::MarkerInput{
             .start_row = line,
@@ -174,8 +183,9 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
 
   // Caret line, drawn live (one rect) so cursor movement never invalidates the cache.
   // Uses the allocation-free single-marker builder so a steady frame never touches the heap.
-  const overview::MarkerInput caret_input{.start_row = static_cast<int>(viewport.cursor_line()),
-                                          .end_row = static_cast<int>(viewport.cursor_line()) + 1,
+  const int caret_row = static_cast<int>(viewport.cursor_visual_row());
+  const overview::MarkerInput caret_input{.start_row = caret_row,
+                                          .end_row = caret_row + 1,
                                           .color = theme.cursor,
                                           .priority = 0};
   overview::Marker caret_marker;

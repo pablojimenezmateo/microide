@@ -308,6 +308,18 @@
                                                             std::size_t end_line) {
     return shell.CurrentEditorLineRangeRect(start_line, end_line);
   }
+  // The editor pane's scrollbar geometry for the active tab, computed the way the
+  // render and mouse paths compute it.
+  static std::optional<ScrollSurfaceLayout> ActiveEditorScrollLayout(WorkspaceShell& shell,
+                                                                     const SDL_FRect& rect) {
+    editor::TextViewport* viewport = shell.ActiveEditorViewport();
+    if (viewport == nullptr) {
+      return std::nullopt;
+    }
+    const editor::EditorViewMetrics metrics = editor::EditorViewRenderer::ComputeMetrics(
+        shell.text_renderer_, *viewport, rect, 0, shell.LineNumbersEnabled());
+    return shell.ComputeEditorScrollLayout(rect, *viewport, metrics);
+  }
   static std::optional<SDL_FRect> ActiveCompareRowRangeRect(WorkspaceShell& shell,
                                                             std::size_t start_row,
                                                             std::size_t end_row) {

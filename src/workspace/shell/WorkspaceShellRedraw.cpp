@@ -1384,7 +1384,18 @@ ScrollSurfaceLayout WorkspaceShell::ComputeEditorScrollLayout(
       viewport.soft_wrap()
           ? metrics.visible_columns
           : std::max<std::size_t>(metrics.visible_columns, MaxVisualColumns(viewport));
-  return ComputeScrollSurfaceLayout(rect, viewport.line_count(),
+  // VISUAL rows, not logical lines. `scroll_line()` is a visual row -- it is what
+  // ClampScrollState bounds against visual_line_count() -- so passing line_count()
+  // here described the thumb in one space and positioned it in another. With soft
+  // wrap on (or a collapsed fold) the two differ, and the consequences were not
+  // cosmetic: ComputeScrollSurfaceLayout clamps the scroll to
+  // `total_rows - visible_rows`, and ScrollUnitsForPointer maps a drag back through
+  // the same total straight into SetScrollLine -- so the thumb was over-sized and
+  // dragging it to the bottom of a wrapped file stopped at visual row
+  // (line_count - visible), leaving the end of the document unreachable by the
+  // scrollbar. The merge surface already sizes its bar in visual rows
+  // (MergeTotalVisualRowCount); the editor was the one that did not.
+  return ComputeScrollSurfaceLayout(rect, viewport.visual_line_count(),
                                     static_cast<int>(metrics.visible_rows),
                                     static_cast<int>(viewport.scroll_line()), total_columns,
                                     metrics.visible_columns, viewport.horizontal_scroll());
