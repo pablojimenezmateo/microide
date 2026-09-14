@@ -3280,6 +3280,51 @@ void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
          "a drag released over a different tab must not move anything: " + after_tab_switch);
 }
 
+// The box selection and the plain selection drag carry press-time coordinates
+// too, and while neither EDITS, both are resolved against whichever viewport is
+// active when the motion arrives -- so a tab switch mid-drag (Ctrl+PageDown with
+// the button still down) selected a rectangle in a file the gesture was never
+// pointed at. The motion handler ends any gesture whose buffer has left the
+// front, which is one check rather than a reset call at each of the nine sites
+// that assign `active_tab_index`.
+void TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto first = root / "a.txt";
+  const auto second = root / "b.txt";
+  WriteFile(first, "aaaa\nbbbb\ncccc\n");
+  WriteFile(second, "wwww\nxxxx\nyyyy\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, first);
+
+  // A box gesture armed in the FIRST file.
+  WorkspaceShellTestAccess::SetTransientMouseSelecting(shell, true);
+  WorkspaceShellTestAccess::SetTransientBoxSelecting(shell);
+  WorkspaceShellTestAccess::SetEditorGestureViewportToActive(shell);
+  Expect(WorkspaceShellTestAccess::TransientBoxSelecting(shell), "the gesture is armed");
+
+  // Then the second file takes the front, still mid-gesture.
+  WorkspaceShellTestAccess::OpenFile(shell, second);
+  const auto* second_viewport = WorkspaceShellTestAccess::EditorViewportForPath(shell, second);
+  Expect(second_viewport != nullptr && second_viewport->line_count() >= 3,
+         "the second file is open");
+
+  // A motion event now must end the gesture rather than extend it here.
+  // Whether the shell reports the motion as handled is a routing detail; what
+  // matters is that the gesture is over and nothing was selected here.
+  SendMouseMotion(shell, 600.0f, 200.0f, SDL_BUTTON_LMASK);
+  Expect(!WorkspaceShellTestAccess::TransientBoxSelecting(shell),
+         "the box gesture must end rather than build a rectangle in a file it was "
+         "never pointed at");
+  Expect(WorkspaceShellTestAccess::TransientTextDragIsIdle(shell),
+         "and the same check ends a text drag");
+  const auto* still_second = WorkspaceShellTestAccess::EditorViewportForPath(shell, second);
+  Expect(still_second != nullptr && !still_second->has_multiple_carets(),
+         "no box carets were placed in the second file");
+}
+
 // A keyboard column-select gesture is anchored to where the caret WAS, so any
 // caret move that is not the gesture's own has to end it -- otherwise the next
 // Ctrl+Shift+Alt+Arrow extends a box from a corner the user has since left. That
@@ -7868,6 +7913,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
+  AddTest(tests, "WorkspaceShell/EditorGestureEndsWhenItsBufferLeavesTheFront",
+          TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront);
   AddTest(tests, "WorkspaceShell/TextDragRefusesAStaleSourceRange",
           TestWorkspaceShellTextDragRefusesAStaleSourceRange);
   AddTest(tests, "WorkspaceShell/ColumnSelectReanchorsAfterAForeignCaretMove",

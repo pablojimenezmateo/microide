@@ -233,6 +233,15 @@ struct InteractionState {
   // at release and a mismatch downgrades the drop to a plain click.
   const void* text_drag_viewport = nullptr;
   std::uint64_t text_drag_content_revision = 0;
+  // Which viewport ANY live editor pointer gesture was pressed in -- the text
+  // drag, the box selection, and the plain/granular selection drag alike. All
+  // three carry coordinates captured at press and are resolved against
+  // `active_editor_viewport()` later, so a tab switch mid-gesture (Ctrl+PageDown
+  // with the button still down) aims them at a different file. A project switch
+  // already ends all three (TD-2026-08-14-216); a tab switch is the same gesture
+  // pointed at a different document, and this is what lets one check at the
+  // motion handler notice it rather than nine tab-activation sites remembering to.
+  const void* editor_gesture_viewport = nullptr;
   // Live drop point while Dragging; drives the insertion-point indicator.
   std::size_t text_drag_drop_line = 0;
   std::size_t text_drag_drop_column = 0;

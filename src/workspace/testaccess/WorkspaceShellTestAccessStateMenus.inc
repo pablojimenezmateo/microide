@@ -927,6 +927,11 @@
   static bool FinishTextDrag(WorkspaceShell& shell, bool copy) {
     return shell.MakeEditorMouseCoordinator().FinishTextDrag(copy);
   }
+  // Marks the armed gesture as belonging to the tab currently in front, which is
+  // what a real press records.
+  static void SetEditorGestureViewportToActive(WorkspaceShell& shell) {
+    shell.context_.interaction_state.editor_gesture_viewport = shell.ActiveEditorViewport();
+  }
   static bool TransientTextDragIsIdle(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.text_drag == InteractionState::TextDragState::None &&
            !shell.context_.interaction_state.text_drag_has_drop;

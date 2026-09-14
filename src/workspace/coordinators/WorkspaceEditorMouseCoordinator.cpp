@@ -493,6 +493,7 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
   interaction_state_.editor_box_selecting = false;
   interaction_state_.text_drag = InteractionState::TextDragState::None;
   interaction_state_.text_drag_has_drop = false;
+  interaction_state_.editor_gesture_viewport = viewport;
 
   // A plain single press INSIDE an existing selection commits to nothing yet: it
   // is either a click that collapses the caret there (what it has always done)
@@ -655,6 +656,17 @@ bool EditorMouseCoordinator::HandleSelectionMotion(const SDL_Event& event,
       active_pane != panes.end() ? active_pane->rect : layout.editor_surface;
   editor::TextViewport* viewport = operations_.active_editor_viewport();
   if (viewport == nullptr) {
+    return false;
+  }
+  // The gesture was pressed in a different buffer -- a tab switch landed while the
+  // button was down. Every coordinate it carries names a document that is no
+  // longer in front, so end it rather than aim it at this one.
+  if (interaction_state_.editor_gesture_viewport != nullptr &&
+      interaction_state_.editor_gesture_viewport != static_cast<const void*>(viewport)) {
+    interaction_state_.mouse_selecting = false;
+    interaction_state_.editor_box_selecting = false;
+    interaction_state_.text_drag = InteractionState::TextDragState::None;
+    interaction_state_.text_drag_has_drop = false;
     return false;
   }
 
