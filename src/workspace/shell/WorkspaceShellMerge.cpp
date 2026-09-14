@@ -1,5 +1,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/MergeToolbarMetrics.h"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -15,8 +17,6 @@ namespace microide::workspace {
 
 namespace {
 
-constexpr float kMergeToolbarButtonHeight = 22.0f;
-constexpr float kMergeToolbarButtonGap = 8.0f;
 constexpr float kMergeToolbarRowGap = 6.0f;
 constexpr float kMergeHeaderRowGap = 6.0f;
 }  // namespace

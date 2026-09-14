@@ -1,5 +1,7 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "workspace/MergeToolbarMetrics.h"
+
 #include <algorithm>
 #include <array>
 #include <charconv>
@@ -28,8 +30,6 @@ namespace {
 
 constexpr float kMergeDiffRowTint = 0.14f;
 constexpr float kMergeDiffRowTintSelected = 0.22f;
-constexpr float kMergeToolbarButtonHeight = 22.0f;
-constexpr float kMergeToolbarButtonGap = 8.0f;
 
 SDL_Color MergeMarkerColor(const render::Theme& theme,
                            compare::MergeChoice choice,
@@ -284,24 +284,17 @@ void WorkspaceShell::RenderMergeSurface(SDL_Renderer* renderer,
   draw_button(toolbar.save_rect, "Save", false, true);
   draw_button(toolbar.open_rect, "Open Result", false, true);
 
-  const SDL_FRect mark_resolved_rect = MakeRect(
-      rect.x + rect.w - 8.0f -
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Mark Resolved")),
-      surface.secondary_button_y,
-      ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Mark Resolved")),
-      kMergeToolbarButtonHeight);
-  const SDL_FRect toggle_base_rect = MakeRect(
-      mark_resolved_rect.x - kMergeToolbarButtonGap -
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Toggle Base")),
-      surface.secondary_button_y,
-      ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Toggle Base")),
-      kMergeToolbarButtonHeight);
-  const SDL_FRect unresolved_rect = MakeRect(
-      toggle_base_rect.x - kMergeToolbarButtonGap -
-          ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Unresolved")),
-      surface.secondary_button_y,
-      ComputeChromeButtonWidth(text_renderer_.MeasureWidth("Unresolved")),
-      kMergeToolbarButtonHeight);
+  // The rects the mouse coordinator hit-tests, not a second derivation of them:
+  // this TU used to rebuild all three from its own copies of the toolbar metrics,
+  // so a change to either copy would have drawn the buttons somewhere the clicks
+  // do not land.
+  const SDL_FRect mark_resolved_rect =
+      ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Mark Resolved")
+          .value_or(SDL_FRect{});
+  const SDL_FRect toggle_base_rect =
+      ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Toggle Base").value_or(SDL_FRect{});
+  const SDL_FRect unresolved_rect =
+      ComputeMergeSecondaryToolbarButtonRect(rect, surface, "Unresolved").value_or(SDL_FRect{});
   const MergeResolverStatus resolver_status = BuildMergeResolverStatus(
       merge_tab->resolver_progress_buffer, *merge_tab, merge_tab->remaining_conflicted_files);
   const std::string_view status_text = merge_tab->status_message.empty()
