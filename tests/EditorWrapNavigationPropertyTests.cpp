@@ -27,11 +27,13 @@
 #include <vector>
 
 #include "editor/EditTypes.h"
+#include "editor/FoldingModel.h"
 #include "editor/TextViewport.h"
 
 namespace microide::tests {
 namespace {
 
+using microide::editor::FoldingModel;
 using microide::editor::TextPosition;
 using microide::editor::TextViewport;
 
@@ -251,6 +253,69 @@ void TestTogglingWrapKeepsTheCaretsTextPosition() {
   }
 }
 
+// The walk again with a COLLAPSED FOLD in the way. This is the combination the
+// row table gets wrong most easily: a hidden line has no row of its own, so the
+// offset table stores the row where the last visible line STARTED -- and under
+// wrap that opener spans several rows, so the naive answer parks a caret at the
+// TOP of the opener and Down has to climb back out of a fold it is not in
+// (TD-2026-08-12-185). The property is unchanged: one press, one visual row, and
+// the caret never lands on a hidden line.
+void TestWrapWalkSkipsACollapsedFoldOneRowPerPress() {
+  TextViewport viewport;
+  viewport.LoadContent(
+      "head\n"
+      "void f() {\n"
+      "  aaaaaaaaaaaaaaaaaaaaaaaaaaaa;\n"
+      "  bbbbbbbbbbbbbbbbbbbbbbbbbbbb;\n"
+      "}\n"
+      "tail is long enough to wrap as well\n",
+      "/tmp/wrap-fold-walk.cpp");
+  viewport.SetViewportSize(/*visible_lines=*/30, /*visible_columns=*/9);
+  viewport.SetSoftWrap(true);
+
+  FoldingModel folding;
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = true;
+  options.tab_size = 4;
+  Expect(folding.Compute(viewport.lines().Snapshot(), options), "the fold fixture computes");
+  const std::size_t rows_expanded = viewport.visual_line_count();
+  Expect(folding.Collapse(1), "the function fold collapses");
+  viewport.SetFoldingModel(&folding);
+
+  const std::size_t rows = viewport.visual_line_count();
+  Expect(rows < rows_expanded,
+         "collapsing must remove rows, or this walks the same view twice: " +
+             std::to_string(rows) + " of " + std::to_string(rows_expanded));
+  Expect(folding.IsLineHidden(2) && folding.IsLineHidden(3),
+         "the wrapped body lines are hidden");
+
+  viewport.MoveCursorTo(0, 0);
+  Expect(viewport.cursor_visual_row() == 0, "the walk starts on row 0, got " + CaretDump(viewport));
+  bool crossed_the_fold = false;
+  for (std::size_t step = 1; step < rows; ++step) {
+    viewport.MoveCursorVertical(1);
+    Expect(viewport.cursor_visual_row() == step,
+           "Down should land on visual row " + std::to_string(step) + " across the fold, got " +
+               CaretDump(viewport));
+    Expect(!folding.IsLineHidden(viewport.cursor_line()),
+           "the caret must never land inside a collapsed fold, got " + CaretDump(viewport));
+    if (viewport.cursor_line() > 3) {
+      crossed_the_fold = true;
+    }
+  }
+  Expect(crossed_the_fold, "the walk must have gone past the fold, or it proved nothing");
+
+  for (std::size_t step = rows - 1; step-- > 0;) {
+    viewport.MoveCursorVertical(-1);
+    Expect(viewport.cursor_visual_row() == step,
+           "Up back across the fold should land on row " + std::to_string(step) + ", got " +
+               CaretDump(viewport));
+    Expect(!folding.IsLineHidden(viewport.cursor_line()),
+           "Up must not land inside the collapsed fold either, got " + CaretDump(viewport));
+  }
+}
+
 }  // namespace
 
 void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests) {
@@ -260,6 +325,8 @@ void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests) {
           TestWrapWalkKeepsEverySecondaryCaretOnItsOwnRow);
   AddTest(tests, "EditorWrapNavigation/VisualRowForLineAgreesWithTheCaretRowAtColumnZero",
           TestVisualRowForLineAgreesWithTheCaretRowAtColumnZero);
+  AddTest(tests, "EditorWrapNavigation/WalkSkipsACollapsedFoldOneRowPerPress",
+          TestWrapWalkSkipsACollapsedFoldOneRowPerPress);
   AddTest(tests, "EditorWrapNavigation/TogglingWrapKeepsTheCaretsTextPosition",
           TestTogglingWrapKeepsTheCaretsTextPosition);
 }
