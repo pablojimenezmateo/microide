@@ -708,9 +708,13 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
         }
         return &*right_visual_map;
       };
-      // Selection, plus up to two bracket-match cells.
-      std::array<editor::RowFillSpan, 3> right_column_fills;
-      std::size_t right_column_fill_count = 0;
+      // The primary selection, every SECONDARY caret's selection that reaches this
+      // row, and up to two bracket-match cells. A reused member rather than a
+      // fixed array: a Ctrl+D or box-select set is unbounded, and the pane used to
+      // paint only the primary -- so a multi-caret set on a compare tab edited
+      // text at places the user could not see.
+      std::vector<editor::RowFillSpan>& right_column_fills = compare_right_fill_scratch_;
+      right_column_fills.clear();
       if (right_selection.has_value()) {
         // Copy out of the optional so GCC's optimizer sees a definitely-initialized
         // SelectionRange instead of complaining about `*right_selection` storage
@@ -725,28 +729,51 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           // Resolution happens in the builder against this map; build it now so the
           // caret below reuses the same table.
           ensure_right_visual_map();
-          right_column_fills[right_column_fill_count++] = editor::RowFillSpan{
+          right_column_fills.push_back(editor::RowFillSpan{
               .start_column = line_start,
               .end_column = line_end,
               .color = theme_.selection_fill,
               .geometry = editor::RowFillSpan::Geometry::kRange,
-          };
+          });
         }
+      }
+      // Every secondary caret's selection, same rule per caret. The set is sorted
+      // by position, so the carets touching this line are one equal_range away
+      // rather than a scan per row -- a box selection can be thousands of carets.
+      const std::span<const editor::TextViewportUndoHistory::SecondaryCaret>
+          right_secondaries = compare_tab->right_view_active
+                                  ? compare_tab->right_viewport.secondary_caret_range_view()
+                                  : std::span<const editor::TextViewportUndoHistory::SecondaryCaret>{};
+      for (const auto& caret : right_secondaries) {
+        if (!caret.selection_anchor.has_value()) continue;
+        editor::SelectionRange sel{*caret.selection_anchor, caret.position};
+        if (sel.end.line < sel.start.line ||
+            (sel.end.line == sel.start.line && sel.end.column < sel.start.column)) {
+          std::swap(sel.start, sel.end);
+        }
+        if (right_line_index < sel.start.line || right_line_index > sel.end.line) continue;
+        ensure_right_visual_map();
+        right_column_fills.push_back(editor::RowFillSpan{
+            .start_column = right_line_index == sel.start.line ? sel.start.column : 0,
+            .end_column = right_line_index == sel.end.line ? sel.end.column
+                                                           : compare_row.right_text.size(),
+            .color = theme_.selection_fill,
+            .geometry = editor::RowFillSpan::Geometry::kRange,
+        });
       }
       if (bracket_match_pair.has_value()) {
         const auto append_bracket_cell = [&](std::size_t bracket_line, std::size_t bracket_column) {
           if (bracket_line != right_line_index ||
-              bracket_column >= compare_row.right_text.size() ||
-              right_column_fill_count >= right_column_fills.size()) {
+              bracket_column >= compare_row.right_text.size()) {
             return;
           }
           ensure_right_visual_map();
-          right_column_fills[right_column_fill_count++] = editor::RowFillSpan{
+          right_column_fills.push_back(editor::RowFillSpan{
               .start_column = bracket_column,
               .end_column = bracket_column + 1,
               .color = theme_.bracket_match_background,
               .geometry = editor::RowFillSpan::Geometry::kSingleCell,
-          };
+          });
         };
         append_bracket_cell(bracket_match_pair->open_line, bracket_match_pair->open_column);
         append_bracket_cell(bracket_match_pair->close_line, bracket_match_pair->close_column);
@@ -791,8 +818,7 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                                                                         : theme_.diff_modified,
         };
       }
-      right_input.column_fills =
-          std::span<const editor::RowFillSpan>(right_column_fills.data(), right_column_fill_count);
+      right_input.column_fills = std::span<const editor::RowFillSpan>(right_column_fills);
       right_input.changed_spans =
           std::span<const compare::CompareTextSpan>(right_changed_spans);
       right_input.changed_span_color = compare_row.kind == compare::CompareRowKind::Added
@@ -888,6 +914,32 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
                           static_cast<std::size_t>(visual_index)
                     : caret_visual >= right_row_start && caret_visual <= right_row_end;
         if (caret_on_this_row) {
+          const std::size_t caret_cell =
+              wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
+          DrawFilledRect(
+              renderer, MakeRect(TextGridCursorX(right_interaction, caret_cell), y - 1.0f, 1.5f,
+                                 surface.line_height),
+              theme_.cursor);
+        }
+      }
+      // Every SECONDARY caret on this line, by the same rule. Ctrl+D and the box
+      // gesture both resolve through ActiveEditableViewport, which IS this pane on
+      // a compare tab, so a multi-caret set here is reachable -- and until this
+      // loop existed it edited text at places with no caret drawn.
+      if (draw_compare_caret && !right_secondaries.empty()) {
+        const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
+        for (const auto& caret : right_secondaries) {
+          if (caret.position.line != right_line_index) continue;
+          const std::size_t caret_visual =
+              caret_map != nullptr
+                  ? caret_map->VisualColumnFor(caret.position.column)
+                  : std::min(caret.position.column, compare_row.right_text.size());
+          const bool on_this_row =
+              wrapped ? compare_tab->wrap_layout.RowForUnitColumn(
+                            presentation_index, caret_visual, /*right_side=*/true) ==
+                            static_cast<std::size_t>(visual_index)
+                      : caret_visual >= right_row_start && caret_visual <= right_row_end;
+          if (!on_this_row) continue;
           const std::size_t caret_cell =
               wrapped ? wrap_row.right_indent + (caret_visual - right_row_start) : caret_visual;
           DrawFilledRect(

@@ -2370,6 +2370,10 @@
   // Reused per-row scratch for compare/merge surface rendering (mirrors
   // EditorViewRenderer::scratch_row_): BuildDecoratedRow clears these before
   // filling, so reuse keeps the per-visible-row path allocation-free.
+  // Row fill spans for one compare right-pane row: the primary selection, each
+  // secondary caret's selection, and the bracket-match cells. Reused so a
+  // multi-caret set costs no per-row allocation.
+  std::vector<editor::RowFillSpan> compare_right_fill_scratch_;
   editor::DecoratedTextRow compare_left_scratch_row_;
   editor::DecoratedTextRow compare_right_scratch_row_;
   // Render-whitespace markers for the compare panes, reused per row like the

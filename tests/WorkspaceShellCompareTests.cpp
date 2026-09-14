@@ -2844,6 +2844,96 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
              std::to_string(mutating_actions));
 }
 
+// Ctrl+D and the box gesture resolve through `ActiveEditableViewport()`, which IS
+// the compare tab's right pane -- so a multi-caret set on a compare tab is
+// reachable, edits every occurrence, and until this test existed was painted at
+// exactly one of them. The pane runs its own row loop (TD-2026-08-13-206) rather
+// than the editor's renderer, and that loop knew only about the primary caret and
+// the primary selection. Text changing where there is no caret is not a cosmetic
+// gap; it is the user editing blind.
+void TestWorkspaceShellCompareMultiCaretIsPainted() {
+#if !MICROIDE_HAS_SDL3_TTF
+  return;
+#endif
+  EnsureDummySdlVideo();
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "foo aaa\nfoo bbb\nfoo ccc\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "Add compare multi-caret fixture", "compare multi-caret fixture");
+  WriteFile(source, "foo aaa\nfoo bbb\nfoo ccc\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "compare multi-caret fixture should open");
+  auto* compare = WorkspaceShellTestAccess::ActiveCompareOrNull(shell);
+  Expect(compare != nullptr && compare->right_editable,
+         "the working-tree pane should be editable");
+
+  const auto theme = microide::render::MakeDefaultTheme();
+  // Count the rows carrying a caret-coloured pixel down the right pane's text
+  // column. One row per caret is the whole claim.
+  const auto rows_with_a_caret = [&]() {
+    SoftwareCanvas canvas(1280, 720);
+    shell.Render(canvas.renderer(), 1280, 720);
+    SDL_Surface* pixels = SDL_RenderReadPixels(canvas.renderer(), nullptr);
+    Expect(pixels != nullptr, "the compare render should read back software pixels");
+    const auto surface = WorkspaceShellTestAccess::ActiveCompareSurfaceLayout(shell);
+    int rows = 0;
+    for (int row = 0; row < 3; ++row) {
+      const int y = static_cast<int>(
+          std::floor(surface.rows_y + surface.line_height * (static_cast<float>(row) + 0.5f)));
+      bool found = false;
+      const int scan_from = static_cast<int>(std::floor(surface.right_x + surface.gutter_width));
+      const int scan_to = scan_from + static_cast<int>(std::floor(surface.right_width));
+      for (int x = scan_from; x < scan_to && !found; ++x) {
+        Uint8 r = 0;
+        Uint8 g = 0;
+        Uint8 b = 0;
+        Uint8 a = 0;
+        if (SDL_ReadSurfacePixel(pixels, x, y, &r, &g, &b, &a) && r == theme.cursor.r &&
+            g == theme.cursor.g && b == theme.cursor.b && a == theme.cursor.a) {
+          found = true;
+        }
+      }
+      if (found) ++rows;
+    }
+    SDL_DestroySurface(pixels);
+    return rows;
+  };
+
+  compare->right_viewport.MoveCursorTo(0, 1);
+  Expect(rows_with_a_caret() == 1, "one caret paints on one row to start with");
+
+  // Ctrl+D three times: the word, then the occurrence on each of the next two
+  // lines.
+  for (int press = 0; press < 3; ++press) {
+    Expect(WorkspaceShellTestAccess::ExecuteAction(
+               shell, WorkspaceShell::ActionId::AddCursorAtNextMatch, {}),
+           "add-cursor-next-match should dispatch to the compare pane");
+  }
+  compare = WorkspaceShellTestAccess::ActiveCompareOrNull(shell);
+  Expect(compare != nullptr &&
+             compare->right_viewport.secondary_caret_range_view().size() == 2,
+         "three presses should leave the primary plus two secondary carets");
+
+  Expect(rows_with_a_caret() == 3,
+         "every caret must be painted, not just the primary: only " +
+             std::to_string(rows_with_a_caret()) + " of 3 rows carried one");
+
+  // And the edit really does reach all three, which is what makes an unpainted
+  // caret dangerous rather than untidy.
+  compare->right_viewport.InsertText("X");
+  Expect(std::string(compare->right_viewport.lines().LineView(0)) == "X aaa" &&
+             std::string(compare->right_viewport.lines().LineView(1)) == "X bbb" &&
+             std::string(compare->right_viewport.lines().LineView(2)) == "X ccc",
+         "typing replaces every selected occurrence: " +
+             std::string(compare->right_viewport.lines().LineView(0)));
+}
+
 void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
   AddTest(tests, "WorkspaceShell/CompareSyntaxReachesDeepCollapsedRows",
           TestWorkspaceShellCompareSyntaxReachesDeepCollapsedRows);
@@ -2863,6 +2953,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareWordWrapExpandsRowsAndKeepsPanesAligned);
   AddTest(tests, "WorkspaceShell/MergeWordWrapExpandsRows",
           TestWorkspaceShellMergeWordWrapExpandsRows);
+  AddTest(tests, "WorkspaceShell/CompareMultiCaretIsPainted",
+          TestWorkspaceShellCompareMultiCaretIsPainted);
   AddTest(tests, "WorkspaceShell/CompareEveryActionKeepsTheDiffModelInSync",
           TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync);
   AddTest(tests, "WorkspaceShell/CompareEditActionRefreshesDiffModel",
