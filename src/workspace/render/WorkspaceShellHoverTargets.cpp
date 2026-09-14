@@ -64,7 +64,11 @@ TextGridInteractionLayout BuildEditorInteractionLayout(
                                                  show_line_numbers);
   return ComputeTextGridInteractionLayout(
       rect, metrics.text_x, metrics.first_line_y, metrics.line_height, text_renderer.CharWidth(),
-      viewport.scroll_line(), viewport.line_count(), viewport.horizontal_scroll(),
+      // visual_line_count(), not line_count(): the layout clamps the scroll it is
+      // handed against this total, and `scroll_line()` is a visual row -- so under
+      // wrap every hover hit test past (line_count - visible_rows) resolved
+      // against a scroll position that had been clamped back down.
+      viewport.scroll_line(), viewport.visual_line_count(), viewport.horizontal_scroll(),
       metrics.visible_rows, metrics.visible_columns);
 }
 

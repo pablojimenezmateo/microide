@@ -135,7 +135,11 @@ bool Step(InteractionState& interaction_state, editor::TextViewport& viewport) {
     return false;
   }
 
-  const std::size_t line_count = viewport.line_count();
+  // VISUAL rows: `scroll_line()` is one, so clamping the autoscroll target against
+  // the LOGICAL line count stopped a selection drag held past the bottom edge at
+  // visual row (line_count - 1) -- in a wrapped file, long before the end of the
+  // document. Same space confusion as the scrollbar's.
+  const std::size_t line_count = viewport.visual_line_count();
   const std::size_t before_scroll = viewport.scroll_line();
   const std::size_t before_horizontal = viewport.horizontal_scroll();
   if (delta->rows != 0) {

@@ -932,6 +932,9 @@
   static void SetEditorGestureViewportToActive(WorkspaceShell& shell) {
     shell.context_.interaction_state.editor_gesture_viewport = shell.ActiveEditorViewport();
   }
+  static InteractionState& InteractionState_(WorkspaceShell& shell) {
+    return shell.context_.interaction_state;
+  }
   static bool TransientTextDragIsIdle(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.text_drag == InteractionState::TextDragState::None &&
            !shell.context_.interaction_state.text_drag_has_drop;

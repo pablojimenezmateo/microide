@@ -4,6 +4,7 @@
 #include "util/TextFileIO.h"
 #include "workspace/ListSelection.h"
 #include "workspace/TabReorder.h"
+#include "workspace/coordinators/SelectionAutoscroll.h"
 #include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "platform/FileIndexWatcher.h"
@@ -3338,6 +3339,31 @@ void TestWorkspaceShellEditorScrollbarUsesVisualRows() {
              static_cast<std::size_t>(at_bottom->vertical_scroll) == expected_max,
          "a scroll to the last visual row must not be clamped back to the line count: " +
              std::to_string(at_bottom.has_value() ? at_bottom->vertical_scroll : 0));
+
+  // The same question, asked of the two other places that pair a total with
+  // `scroll_line()`. A selection drag held past the bottom edge autoscrolls; it
+  // clamped against the LOGICAL line count, so in a wrapped file it stopped long
+  // before the end of the document.
+  viewport->SetScrollLine(0);
+  namespace autoscroll = microide::workspace::selection_autoscroll;
+  autoscroll::Band band;
+  band.rect = pane;
+  band.first_line_y = pane.y;
+  band.line_height = 14.0f;
+  band.visible_rows = visible_rows;
+  auto& interaction = WorkspaceShellTestAccess::InteractionState_(shell);
+  for (int step = 0; step < 2000; ++step) {
+    // Re-armed each tick, as a pointer held past the bottom edge does: the ramp is
+    // recomputed from the live pointer on every motion, and a held pointer sends
+    // none, which is why the wake repeats the step.
+    autoscroll::Arm(interaction, band, pane.x + 10.0f, pane.y + pane.h + 200.0f);
+    autoscroll::Step(interaction, *viewport);
+  }
+  Expect(viewport->scroll_line() > viewport->line_count(),
+         "autoscroll should walk past the logical line count into the wrapped rows, "
+         "reached " +
+             std::to_string(viewport->scroll_line()) + " of " +
+             std::to_string(viewport->visual_line_count()) + " visual rows");
 }
 
 // The box selection and the plain selection drag carry press-time coordinates
