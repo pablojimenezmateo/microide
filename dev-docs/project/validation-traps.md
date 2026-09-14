@@ -967,7 +967,7 @@ See TD-2026-08-15-253.
 
 ## Derived state that must follow an edit, swept over EVERY action
 
-Five bugs on 2026-09-14, all the same shape, none reachable from a fixture test.
+Six bugs on 2026-09-14, all the same shape, none reachable from a fixture test.
 
 The shell keeps several things keyed on LINE NUMBERS into a buffer the user
 edits: the compare tab's diff model, the merge tab's conflict spans, line
@@ -996,6 +996,12 @@ to extend.
 - **A secondary caret on a wrap boundary** was painted by two rows and one at the
   end of a wrapped line by none, because the paint loop decided with a
   first-row-only heuristic instead of the affinity bit the caret already carries.
+- **A keyboard column-select gesture** was ended by two hand-placed
+  `ClearColumnSelection()` calls in the two KEY handlers -- a list with exactly one
+  input kind on it. A mouse click, a `goto` from the palette, a control-channel
+  caret move and a jump-to-definition all left the box armed at an anchor the
+  caret had left, so the next Ctrl+Shift+Alt+Arrow selected a rectangle spanning
+  from the old corner. It invalidates itself in `PlacePrimaryCaret` now.
 - **A multi-caret set on a compare tab** was not painted at all beyond the
   primary. Ctrl+D resolves through `ActiveEditableViewport()`, which IS the
   compare right pane, so the set was reachable and edited every occurrence while
@@ -1039,6 +1045,18 @@ that runs every action:
   stack of nothing but `SDL_malloc`. `ASAN_OPTIONS=fast_unwind_on_malloc=0` is the
   difference between "an SDL leak somewhere" and a named call site. Skip both: a
   test must not open an OS dialog in the first place.
+
+**The generalisation worth keeping.** Every one of the six is the same
+sentence: *state derived from buffer positions, a hook that follows an edit or a
+caret move, and a hand-maintained list of sites that call it.* The bug is never
+in the hook. Three of the six were fixed by deleting the list -- moving the call
+to the single chokepoint everything already passes through
+(`NotifyEditorViewportChanged`, `RequestActiveEditableLastChangeRedraw`,
+`PlacePrimaryCaret`) -- and in two of those the parameters that had forced the
+call out to the callers turned out to be derivable from state the viewport
+already published. When a hook takes "what things looked like BEFORE", check
+whether the applied-edit span or the caret's own recorded revision already says
+it; that is usually why the call could not live at the chokepoint.
 
 **A last one about the harness, not the product.** A shell poller written as
 `until ! pgrep -f run-checks.sh; do sleep 10; done` never exits: its OWN command
