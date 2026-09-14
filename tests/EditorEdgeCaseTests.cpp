@@ -755,6 +755,84 @@ void TestSingleCaretLineClipboardIsUnchanged() {
          "the single-caret path still takes the caret's own line");
 }
 
+
+// Page up/down is a vertical move of `visible_lines - 1`, so under wrap it must
+// step VISUAL rows and carry every caret -- the same contract the single-step
+// move has. Page delegates to MoveCursorVertical for exactly that reason; this
+// pins that it keeps delegating rather than growing its own line arithmetic.
+void TestMultiCaretPageUnderWrapStepsVisualRows() {
+  TextViewport viewport;
+  // Each line wraps into two rows at width 8.
+  viewport.LoadContent("aaaaaaaaaaaa\nbbbbbbbbbbbb\ncccccccccccc\ndddddddddddd\n",
+                       "/tmp/ec-mc-page-wrap.txt");
+  viewport.SetSoftWrap(true);
+  viewport.SetViewportSize(4, 8);  // 4 visible rows -> a page is 3 rows
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{1, 0}});
+
+  const std::size_t primary_line_before = viewport.cursor_line();
+  viewport.Page(1);
+
+  // Three visual rows at two rows per line: line +1 and onto its second row, i.e.
+  // the caret's line advances by at least one and the row offset moved.
+  Expect(viewport.cursor_line() > primary_line_before,
+         "the primary caret advanced past its starting line, got line " +
+             std::to_string(viewport.cursor_line()));
+  Expect(viewport.VisualRowForLine(viewport.cursor_line()) >=
+             viewport.VisualRowForLine(primary_line_before) + 2,
+         "it advanced by visual rows, not by one logical line");
+  Expect(viewport.secondary_carets().size() == 1,
+         "the secondary caret survives the page move");
+  // The secondary started one logical line (two visual rows) below the primary and
+  // must still be there: both moved by the same number of rows.
+  Expect(viewport.secondary_carets().front().line == viewport.cursor_line() + 1,
+         "both carets moved by the same number of rows");
+}
+
+// Paging past the end collapses the carets onto the last row, and the coincident
+// ones dedupe rather than piling up -- N carets on one position would apply an
+// edit N times there.
+void TestMultiCaretPageAtBufferEndDedupes() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\n", "/tmp/ec-mc-page-end.txt");
+  viewport.SetViewportSize(4, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{1, 0}});
+
+  viewport.Page(1);
+  viewport.Page(1);
+
+  const std::size_t total = viewport.secondary_carets().size() + 1;
+  Expect(total <= 2, "carets driven onto the same row collapse, got " + std::to_string(total));
+  for (const TextPosition& caret : viewport.secondary_carets()) {
+    Expect(!(caret.line == viewport.cursor_line() && caret.column == viewport.cursor_column()),
+           "no secondary caret sits exactly on the primary");
+  }
+}
+
+// Select-all then type replaces the whole buffer and leaves ONE caret, with the
+// wrap table rebuilt for the much shorter document -- a stale row table here puts
+// the caret on a row that no longer exists.
+void TestSelectAllThenTypeUnderWrapLeavesOneCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaaaaaaaaaa\nbbbbbbbbbbbb\ncccccccccccc\n", "/tmp/ec-wrap-selectall.txt");
+  viewport.SetSoftWrap(true);
+  viewport.SetViewportSize(6, 8);
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{1, 0}});
+
+  viewport.SelectAll();
+  viewport.InsertText("x");
+
+  Expect(JoinLines(viewport) == "x", std::string("the buffer is replaced, got: ") + JoinLines(viewport));
+  Expect(viewport.secondary_carets().empty(), "select-all collapses to a single caret");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 1,
+         "the caret lands after the typed character");
+  Expect(viewport.VisualRowForLine(0) == 0 && viewport.VisualRowCount() == 1,
+         "the wrap table is rebuilt for the one-line document, rows=" +
+             std::to_string(viewport.VisualRowCount()));
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -805,6 +883,12 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestMultiCaretLineVerbsExpandACollapsedFold);
   AddTest(tests, "EditorEdgeCase/SingleCaretLineClipboardIsUnchanged",
           TestSingleCaretLineClipboardIsUnchanged);
+  AddTest(tests, "EditorEdgeCase/MultiCaretPageUnderWrapStepsVisualRows",
+          TestMultiCaretPageUnderWrapStepsVisualRows);
+  AddTest(tests, "EditorEdgeCase/MultiCaretPageAtBufferEndDedupes",
+          TestMultiCaretPageAtBufferEndDedupes);
+  AddTest(tests, "EditorEdgeCase/SelectAllThenTypeUnderWrapLeavesOneCaret",
+          TestSelectAllThenTypeUnderWrapLeavesOneCaret);
   AddTest(tests, "EditorEdgeCase/SortLinesDescending",
           TestSortLinesDescending);
   AddTest(tests, "EditorEdgeCase/SortLinesTwoDisjointRegions",
