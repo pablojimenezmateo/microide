@@ -1475,7 +1475,47 @@ void TestCompareLineDiffOpsMatchWeightedLcsOracle() {
   Expect(mismatches == 0, "line diff ops agree with the weighted-LCS oracle");
 }
 
+// A file whose ONLY change is its trailing newline produces the one-sided
+// "phantom" row. That row is a hunk (or joins the one above it), and it has to
+// point back at it: staging, discarding, review markers, hunk navigation and
+// context collapse all resolve the hunk from the row under the cursor. Left at
+// -1 the pane drew a hunk no action could reach.
+void TestFinalNewlineOnlyChangeRowPointsAtItsHunk() {
+  const CompareModel added = BuildCompareModel("alpha\nbeta", "alpha\nbeta\n");
+  Expect(added.hunks.size() == 1, "adding a trailing newline is one hunk");
+  const CompareRow& added_row = added.rows[added.hunks[0].start_row];
+  Expect(added_row.kind != CompareRowKind::Unchanged, "the phantom row is a change");
+  Expect(added_row.hunk == 0,
+         "the phantom row must name its hunk, got " + std::to_string(added_row.hunk));
+
+  const CompareModel removed = BuildCompareModel("alpha\nbeta\n", "alpha\nbeta");
+  Expect(removed.hunks.size() == 1, "removing a trailing newline is one hunk");
+  const CompareRow& removed_row = removed.rows[removed.hunks[0].start_row];
+  Expect(removed_row.hunk == 0,
+         "the phantom row must name its hunk, got " + std::to_string(removed_row.hunk));
+}
+
+// The other half of that path: when the phantom row is adjacent to a changed run
+// it EXTENDS that hunk rather than starting one, and must name the hunk it
+// joined -- not -1, and not a fresh index.
+void TestFinalNewlineChangeAdjacentToAHunkJoinsIt() {
+  const CompareModel model = BuildCompareModel("alpha\nbeta\n", "alpha\ngamma");
+  Expect(model.hunks.size() == 1,
+         "the edited last line and the newline change are one hunk, got " +
+             std::to_string(model.hunks.size()));
+  const auto& hunk = model.hunks[0];
+  for (int row = hunk.start_row; row <= hunk.end_row; ++row) {
+    Expect(model.rows[row].hunk == hunk.index,
+           "every row the hunk covers must name it, row " + std::to_string(row) + " said " +
+               std::to_string(model.rows[row].hunk));
+  }
+}
+
 void RegisterCompareModelTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "Compare/FinalNewlineOnlyChangeRowPointsAtItsHunk",
+          TestFinalNewlineOnlyChangeRowPointsAtItsHunk);
+  AddTest(tests, "Compare/FinalNewlineChangeAdjacentToAHunkJoinsIt",
+          TestFinalNewlineChangeAdjacentToAHunkJoinsIt);
   AddTest(tests, "CompareModel/LineDiffOpsMatchWeightedLcsOracle",
           TestCompareLineDiffOpsMatchWeightedLcsOracle);
   AddTest(tests, "CompareModel/BuildCompareModelIntoMatchesAFreshBuild",

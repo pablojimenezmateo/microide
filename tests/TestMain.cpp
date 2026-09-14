@@ -28,6 +28,7 @@ void RegisterAppDirectoriesTests(std::vector<TestCase>& tests);
 void RegisterApplicationTests(std::vector<TestCase>& tests);
 void RegisterAppStartupOptionsTests(std::vector<TestCase>& tests);
 void RegisterTestSupportTests(std::vector<TestCase>& tests);
+void RegisterCompareModelPropertyTests(std::vector<TestCase>& tests);
 void RegisterCompareModelTests(std::vector<TestCase>& tests);
 void RegisterCompareReviewTests(std::vector<TestCase>& tests);
 void RegisterBranchReviewStateTests(std::vector<TestCase>& tests);
@@ -416,6 +417,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterApplicationTests(tests);
   microide::tests::RegisterAppStartupOptionsTests(tests);
   microide::tests::RegisterTestSupportTests(tests);
+  microide::tests::RegisterCompareModelPropertyTests(tests);
   microide::tests::RegisterCompareModelTests(tests);
   microide::tests::RegisterCompareReviewTests(tests);
   microide::tests::RegisterBranchReviewStateTests(tests);

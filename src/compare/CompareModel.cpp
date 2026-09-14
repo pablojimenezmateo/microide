@@ -1784,6 +1784,13 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
             .end_row = row_index,
         });
       }
+      // The row has to point BACK at that hunk too. Everything that acts on a
+      // hunk resolves it from the row under the cursor -- staging, discarding,
+      // review markers, hunk navigation, and the context-collapse run that asks
+      // its neighbours which hunk they belong to. Left at -1 the row is covered
+      // by a hunk that nothing can reach from it, so a file whose only change is
+      // its trailing newline had a visible hunk and no working hunk action.
+      row.hunk = model.hunks.back().index;
     }
   }
   sink.Finish();
