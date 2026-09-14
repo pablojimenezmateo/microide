@@ -561,6 +561,17 @@ std::vector<editor::SelectionRange> RefineLiteralSearchMatches(
   if (query.empty()) {
     return matches;
   }
+  // Whole-word search breaks the premise this whole path rests on. The reuse is
+  // sound because every occurrence of the longer query lies on a line that held
+  // an occurrence of its prefix -- true for a plain substring, false once a
+  // boundary test is applied: "alpha" stands alone on a line where "alph" never
+  // does, so the prefix scan returns nothing and the refine drops a match that is
+  // right there. Answer it with the cold scan rather than a wrong subset. The
+  // rule belongs here and not in the caller, because a caller that forgets it
+  // gets no error -- just silently missing matches.
+  if (options.whole_word) {
+    return FindLiteralSearchMatches(buffer, query, options, truncated);
+  }
 
   std::string folded_query;
   if (!options.case_sensitive) {

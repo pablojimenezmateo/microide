@@ -1135,6 +1135,7 @@ add_executable(microide_tests
   tests/WorkspaceStatusBarTests.cpp
   tests/WorkspaceShellSharedCoreTests.cpp
   tests/WorkspaceShellSharedLayoutTests.cpp
+  tests/SearchDifferentialTests.cpp
   tests/WorkspaceShellSharedSearchTests.cpp
   tests/WorkspaceShellSharedTerminalTests.cpp
   tests/WorkspaceShellTerminalTests.cpp

@@ -97,7 +97,10 @@ std::vector<editor::SelectionRange> FindLiteralSearchMatches(
 
 // Find-as-you-type fast path. `previous` must be the complete match set for some
 // query that `query` extends (see `QueryExtendsCaseInsensitive`), taken over the
-// *current* buffer contents. Every occurrence of the longer `query` starts at an
+// *current* buffer contents. A `whole_word` search cannot be refined at all --
+// "alpha" stands alone where its prefix "alph" never does, so the prefix's match
+// set is not a superset of the lines to rescan -- and is answered by delegating
+// to the cold scan, so the result equals a fresh scan for EVERY option set. Every occurrence of the longer `query` starts at an
 // occurrence of the shorter prefix, so only lines holding a `previous` hit can
 // match: those lines are rescanned from their first hit with the cold scan's own
 // loop (the hits themselves are not a candidate set — the cold scan's de-overlap

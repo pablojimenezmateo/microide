@@ -130,10 +130,10 @@ void WorkspaceShell::RefreshBufferSearch() {
                                 : std::vector<editor::SelectionRange>{};
     incremental.valid = false;
   } else {
-    // Refining is only sound when the options are unchanged AND whole-word is
-    // off: a longer query's whole-word hits are NOT a subset of a shorter
-    // prefix's (typing "alpha" over "al" adds standalone matches the prefix scan
-    // rejected), so whole-word always takes the cold path.
+    // Refining is only sound when the options are unchanged. Whole-word is the
+    // other restriction -- a longer query's whole-word hits are NOT a subset of a
+    // shorter prefix's -- and RefineLiteralSearchMatches now enforces that itself
+    // by falling back to the cold scan, so it is not repeated here.
     const bool options_unchanged = incremental.match_case == buffer_search.match_case &&
                                    incremental.whole_word == buffer_search.whole_word;
     const bool query_extends =
@@ -141,7 +141,6 @@ void WorkspaceShell::RefreshBufferSearch() {
             ? query.size() >= incremental.query.size() && query.starts_with(incremental.query)
             : QueryExtendsCaseInsensitive(incremental.query, query);
     const bool can_refine = incremental.valid && options_unchanged &&
-                            !buffer_search.whole_word &&
                             incremental.viewport == static_cast<const void*>(viewport) &&
                             incremental.content_revision == content_revision &&
                             !incremental.query.empty() && query_extends;
