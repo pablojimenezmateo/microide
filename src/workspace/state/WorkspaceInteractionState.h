@@ -223,6 +223,16 @@ struct InteractionState {
   std::size_t text_drag_source_start_column = 0;
   std::size_t text_drag_source_end_line = 0;
   std::size_t text_drag_source_end_column = 0;
+  // WHICH buffer, and which revision of it, that range describes. The gesture
+  // spans two events with the whole application running in between, so the
+  // release cannot assume the press's document is still in front or still says
+  // the same thing: an async LSP workspace edit, a plugin edit, a reload from
+  // disk, or a Ctrl+PageDown to another tab all land inside it. Applying the
+  // stored range anyway deletes whatever has since inherited those coordinates --
+  // in the tab-switch case, out of a different file entirely. Both are compared
+  // at release and a mismatch downgrades the drop to a plain click.
+  const void* text_drag_viewport = nullptr;
+  std::uint64_t text_drag_content_revision = 0;
   // Live drop point while Dragging; drives the insertion-point indicator.
   std::size_t text_drag_drop_line = 0;
   std::size_t text_drag_drop_column = 0;

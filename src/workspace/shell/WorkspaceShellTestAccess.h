@@ -6,6 +6,7 @@
 #include "workspace/services/EditorTabService.h"
 #include "workspace/git/CompareTabReview.h"
 #include "workspace/coordinators/WorkspaceCommandLineCoordinator.h"
+#include "workspace/coordinators/WorkspaceEditorMouseCoordinator.h"
 #include "workspace/coordinators/WorkspaceKeyInputCoordinator.h"
 #include "workspace/MergeWrapRows.h"
 #include "workspace/WorkspaceLayout.h"

@@ -515,6 +515,8 @@ bool EditorMouseCoordinator::HandleButtonDown(const SDL_Event& event,
       interaction_state_.text_drag_source_start_column = source.start.column;
       interaction_state_.text_drag_source_end_line = source.end.line;
       interaction_state_.text_drag_source_end_column = source.end.column;
+      interaction_state_.text_drag_viewport = viewport;
+      interaction_state_.text_drag_content_revision = viewport->content_revision();
       // The caret is deliberately NOT moved and the selection deliberately NOT
       // cleared: both are what a plain click would do, and the release path does
       // exactly that if the gesture turns out to have been a click.
@@ -780,6 +782,16 @@ bool EditorMouseCoordinator::FinishTextDrag(bool copy) {
   }
 
   if (!has_drop) {
+    return true;
+  }
+  // The source range describes the document as it was at PRESS. If a different
+  // tab is in front now, or the buffer has changed under the gesture, those
+  // coordinates name text nobody selected -- and Apply would delete it. Drop the
+  // gesture instead; a refused drag costs the user a repeat, a wrong one costs
+  // them the text.
+  if (interaction_state_.text_drag_viewport != static_cast<const void*>(viewport) ||
+      interaction_state_.text_drag_content_revision != viewport->content_revision()) {
+    operations_.request_focused_editor_redraw();
     return true;
   }
   const editor::TextPosition drop{interaction_state_.text_drag_drop_line,

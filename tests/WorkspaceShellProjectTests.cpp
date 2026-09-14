@@ -3201,6 +3201,85 @@ void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
   }
 }
 
+// A drag-and-drop of selected text spans two events -- press and release -- with
+// the whole application running in between, and the source range it moves is the
+// one captured at PRESS. The release used to apply it unconditionally, so an
+// async LSP workspace edit, a plugin edit, a reload from disk, or a Ctrl+PageDown
+// to another tab arriving mid-gesture all made it delete whatever had since
+// inherited those coordinates -- in the tab-switch case, out of a different file.
+// A project switch was already guarded (TD-2026-08-14-216); a tab switch and a
+// plain content change were not.
+//
+// A refused drag costs the user a repeat. A wrong one costs them the text.
+void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
+  const auto arm_and_release =
+      [](const std::function<void(WorkspaceShell&, const std::filesystem::path&)>& disturb) {
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "project";
+    const auto file = root / "a.txt";
+    const auto other = root / "b.txt";
+    WriteFile(file, "alpha\nbravo\ncharlie\n");
+    WriteFile(other, "one\ntwo\nthree\n");
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    WorkspaceShellTestAccess::OpenFile(shell, file);
+
+    // Select "alpha" and arm a drag of it onto line 2, exactly as the press does.
+    auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+    Expect(viewport != nullptr, "the fixture opens an editor tab");
+    viewport->MoveCursorTo(0, 0);
+    viewport->MoveCursorTo(0, 5, /*extend_selection=*/true);
+    WorkspaceShellTestAccess::ArmTextDrag(
+        shell,
+        microide::editor::SelectionRange{microide::editor::TextPosition{0, 0},
+                                         microide::editor::TextPosition{0, 5}},
+        microide::editor::TextPosition{2, 0});
+
+    disturb(shell, root);
+    WorkspaceShellTestAccess::FinishTextDrag(shell, /*copy=*/false);
+
+    // The BUFFER, not the file on disk: the drag never saves, so reading the file
+    // would report "unchanged" for a drag that moved the text and the control case
+    // below would pass over a gesture that does nothing at all. The tab in front
+    // may have been switched by `disturb`, so name the file explicitly.
+    std::string out;
+    if (const auto* buffer = WorkspaceShellTestAccess::EditorViewportForPath(shell, file);
+        buffer != nullptr) {
+      for (std::size_t i = 0; i < buffer->line_count(); ++i) {
+        out += buffer->lines().LineView(i);
+        out += '\n';
+      }
+    }
+    return out;
+  };
+
+  // Control: with nothing disturbing it, the drag applies. Without this the two
+  // cases below would pass on a drag that never worked at all.
+  const std::string moved = arm_and_release([](WorkspaceShell&, const std::filesystem::path&) {});
+  Expect(moved.find("alpha") != std::string::npos && moved.rfind("alpha", 0) != 0,
+         "the undisturbed drag should move `alpha` off line 0: " + moved);
+
+  // An edit arriving under the gesture.
+  const std::string after_edit = arm_and_release([](WorkspaceShell& shell,
+                                                    const std::filesystem::path&) {
+    auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+    viewport->MoveCursorTo(0, 0);
+    viewport->InsertText("XX\n");
+  });
+  Expect(after_edit.rfind("XX\nalpha\nbravo\ncharlie\n", 0) == 0,
+         "a drag whose buffer changed under it must not move anything: " + after_edit);
+
+  // Another TAB in front at release. The coordinator re-reads the active viewport,
+  // so without the identity check this applied file a's coordinates to file b.
+  const std::string after_tab_switch = arm_and_release(
+      [](WorkspaceShell& shell, const std::filesystem::path& root) {
+        WorkspaceShellTestAccess::OpenFile(shell, root / "b.txt");
+      });
+  Expect(after_tab_switch.rfind("alpha\nbravo\ncharlie\n", 0) == 0,
+         "a drag released over a different tab must not move anything: " + after_tab_switch);
+}
+
 // A keyboard column-select gesture is anchored to where the caret WAS, so any
 // caret move that is not the gesture's own has to end it -- otherwise the next
 // Ctrl+Shift+Alt+Arrow extends a box from a corner the user has since left. That
@@ -7789,6 +7868,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellTabKeyOnSingleLineInsertsTabCharacter);
   AddTest(tests, "WorkspaceShell/SaveAsAndBuffersForPathsThatDoNotExistYet",
           TestWorkspaceShellSaveAsAndBuffersForPathsThatDoNotExistYet);
+  AddTest(tests, "WorkspaceShell/TextDragRefusesAStaleSourceRange",
+          TestWorkspaceShellTextDragRefusesAStaleSourceRange);
   AddTest(tests, "WorkspaceShell/ColumnSelectReanchorsAfterAForeignCaretMove",
           TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove);
   AddTest(tests, "WorkspaceShell/ForeignEditEndsTheSnippetSession",

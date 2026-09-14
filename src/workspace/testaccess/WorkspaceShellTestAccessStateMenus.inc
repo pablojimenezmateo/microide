@@ -905,6 +905,28 @@
     shell.context_.interaction_state.text_drag = InteractionState::TextDragState::Dragging;
     shell.context_.interaction_state.text_drag_has_drop = true;
   }
+  // Arms a text drag exactly as the press path does -- source range, drop point,
+  // and the viewport identity + content revision the release revalidates against
+  // -- so a test can drive the release without synthesising pointer geometry.
+  static void ArmTextDrag(WorkspaceShell& shell, editor::SelectionRange source,
+                          editor::TextPosition drop) {
+    auto& interaction = shell.context_.interaction_state;
+    const editor::TextViewport* viewport = shell.ActiveEditorViewport();
+    interaction.text_drag = InteractionState::TextDragState::Dragging;
+    interaction.text_drag_has_drop = true;
+    interaction.text_drag_source_start_line = source.start.line;
+    interaction.text_drag_source_start_column = source.start.column;
+    interaction.text_drag_source_end_line = source.end.line;
+    interaction.text_drag_source_end_column = source.end.column;
+    interaction.text_drag_drop_line = drop.line;
+    interaction.text_drag_drop_column = drop.column;
+    interaction.text_drag_viewport = viewport;
+    interaction.text_drag_content_revision =
+        viewport != nullptr ? viewport->content_revision() : 0;
+  }
+  static bool FinishTextDrag(WorkspaceShell& shell, bool copy) {
+    return shell.MakeEditorMouseCoordinator().FinishTextDrag(copy);
+  }
   static bool TransientTextDragIsIdle(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.text_drag == InteractionState::TextDragState::None &&
            !shell.context_.interaction_state.text_drag_has_drop;

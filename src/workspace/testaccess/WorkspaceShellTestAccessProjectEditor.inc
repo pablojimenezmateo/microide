@@ -174,6 +174,21 @@
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].compare.value();
   }
+  // The editor viewport for an OPEN tab on `path`, whichever tab is in front.
+  // A test that switches tabs mid-gesture still has to read the buffer it armed
+  // the gesture against.
+  static editor::TextViewport* EditorViewportForPath(WorkspaceShell& shell,
+                                                     const std::filesystem::path& path) {
+    for (auto& group : shell.context_.current_project_state.editor_groups) {
+      for (auto& tab : group.open_tabs) {
+        if (tab.editor_state.has_value() &&
+            util::SameAsNormalizedPath(tab.editor_state->viewport.path(), path)) {
+          return &tab.editor_state->viewport;
+        }
+      }
+    }
+    return nullptr;
+  }
   // Null when the front tab is not an editor tab (or there is none). An action
   // sweep must re-resolve rather than hold a reference: opening a tab pushes onto
   // the group's tab vector, and a reallocation there dangles every reference into it.
