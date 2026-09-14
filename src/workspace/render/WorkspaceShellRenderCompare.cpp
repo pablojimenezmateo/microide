@@ -246,8 +246,12 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
     const auto upper = std::upper_bound(
         lower, right_secondaries.end(), line,
         [](std::size_t value, const auto& caret) { return value < caret.position.line; });
-    return std::span<const editor::TextViewportUndoHistory::SecondaryCaret>(
-        &*lower, static_cast<std::size_t>(upper - lower));
+    // Pointer arithmetic on the span's data, NOT `&*lower`: the row's line is past
+    // every caret on most rows, so `lower` is usually end() and dereferencing it
+    // to take its address is undefined -- UBSan reports it as a reference bound to
+    // a null SecondaryCaret, which is exactly how this shipped for one commit.
+    return right_secondaries.subspan(static_cast<std::size_t>(lower - right_secondaries.begin()),
+                                     static_cast<std::size_t>(upper - lower));
   };
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
       compare_tab->right_editable && compare_tab->right_view_active
