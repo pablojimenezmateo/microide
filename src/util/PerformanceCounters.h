@@ -176,6 +176,17 @@ namespace microide::util {
   X(TerminalOutputBytesParsed, "terminal.output_bytes_parsed")                                  \
   X(TerminalTrimScrollbackCalls, "terminal.trim_scrollback_calls")                              \
   X(TerminalTrimScrollbackLines, "terminal.trim_scrollback_lines")                              \
+  /* In-file find: how often the match set is recomputed, split by what asked for */            \
+  /* it. `buffer_refreshes` is every recompute; `buffer_refreshes_after_edit` is   */            \
+  /* the subset triggered by an EDIT under an open widget, which is the one that   */            \
+  /* is not paced by a human keystroke in the query box and is therefore the new   */            \
+  /* hot path -- a document scan per edit for as long as the widget stays up.      */            \
+  /* `buffer_refresh_lines_scanned` is what those scans actually cost; the pair    */            \
+  /* answers "is find-while-editing linear in the file, per keystroke?" without    */            \
+  /* anyone having to reproduce it. */                                                          \
+  X(SearchBufferRefreshes, "search.buffer_refreshes")                                           \
+  X(SearchBufferRefreshesAfterEdit, "search.buffer_refreshes_after_edit")                       \
+  X(SearchBufferRefreshLinesScanned, "search.buffer_refresh_lines_scanned")                     \
   X(SearchProjectProgressPublishes, "search.project_progress_publishes")                        \
   X(SearchProjectLowerLineCalls, "search.project_lower_line_calls")                             \
   X(SearchProjectLowerLineBytes, "search.project_lower_line_bytes")                             \

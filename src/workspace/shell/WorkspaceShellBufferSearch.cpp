@@ -1,5 +1,8 @@
 #include "workspace/shell/WorkspaceShell.h"
 
+#include "util/PerformanceCounters.h"
+#include "util/PerformanceTrace.h"
+
 #include <algorithm>
 #include <cstdint>
 #include <optional>
@@ -122,10 +125,14 @@ void WorkspaceShell::RefreshBufferSearchAfterBufferEdit() {
       BufferSearchMatchesAreFresh()) {
     return;
   }
+  util::PerformanceTrace::Scope scope("WorkspaceShell::RefreshBufferSearchAfterBufferEdit");
+  util::AddPerformanceCounter(util::PerfCounterId::SearchBufferRefreshesAfterEdit);
   RefreshBufferSearch(/*reveal=*/false);
 }
 
 void WorkspaceShell::RefreshBufferSearch(bool reveal) {
+  util::PerformanceTrace::Scope scope("WorkspaceShell::RefreshBufferSearch");
+  util::AddPerformanceCounter(util::PerfCounterId::SearchBufferRefreshes);
   editor::TextViewport* viewport = ActiveEditorViewport();
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (viewport == nullptr) {
@@ -188,6 +195,10 @@ void WorkspaceShell::RefreshBufferSearch(bool reveal) {
   ++buffer_search.matches_revision;
   buffer_search.matches_viewport = viewport;
   buffer_search.matches_content_revision = content_revision;
+  // What the scan actually walked. The refine fast path answers from the previous
+  // match set and touches no lines, so a large number here IS the cold scan.
+  util::AddPerformanceCounter(util::PerfCounterId::SearchBufferRefreshLinesScanned,
+                              buffer.LineCount());
 
   // The current match is the first one at or after the caret (the selection's
   // start when there is one), wrapping to the top -- VS Code searches from the
