@@ -133,6 +133,73 @@ void TestCommitReachesEveryCaret() {
   Expect(TestAccess::TextComposition(shell).text.empty(), "and the preview is cleared");
 }
 
+
+SDL_Event KeyDownEvent(SDL_Keycode key, SDL_Keymod modifiers = SDL_KMOD_NONE) {
+  SDL_Event event{};
+  event.type = SDL_EVENT_KEY_DOWN;
+  event.key.key = key;
+  event.key.mod = modifiers;
+  return event;
+}
+
+// While an input method is composing, the keys it uses to drive the conversion
+// belong to IT, not to the editor. Arrows pick a candidate, Enter accepts,
+// Escape cancels, Backspace edits the reading -- if the editor also acts on them
+// the caret walks away from the text being composed, or Enter splits the line
+// under the preview.
+void TestCompositionSwallowsItsConversionKeys() {
+  EditorFixture fixture("ab\n");
+  WorkspaceShell& shell = fixture.shell;
+  fixture.viewport().MoveCursorTo(0, 1);
+  shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));
+
+  const std::size_t lines_before = fixture.viewport().lines().size();
+  for (const SDL_Keycode key : {SDLK_RETURN, SDLK_ESCAPE, SDLK_BACKSPACE, SDLK_DELETE, SDLK_TAB,
+                                SDLK_LEFT, SDLK_RIGHT, SDLK_UP, SDLK_DOWN, SDLK_HOME, SDLK_END,
+                                SDLK_PAGEUP, SDLK_PAGEDOWN}) {
+    shell.HandleEvent(KeyDownEvent(key));
+  }
+
+  Expect(fixture.viewport().lines().size() == lines_before,
+         "no conversion key may split or join a line under the preview");
+  Expect(fixture.viewport().lines()[0] == "ab",
+         "no conversion key may edit the text under the preview, got: " +
+             std::string(fixture.viewport().lines()[0]));
+  Expect(fixture.viewport().cursor_line() == 0 && fixture.viewport().cursor_column() == 1,
+         "the caret stays where the composition is anchored");
+}
+
+// A CHORD is not a conversion key: Ctrl+S during composition is still Save, and
+// swallowing it would make the app stop responding to shortcuts mid-word.
+void TestCompositionDoesNotSwallowChords() {
+  EditorFixture fixture("ab\n");
+  WorkspaceShell& shell = fixture.shell;
+  fixture.viewport().MoveCursorTo(0, 2);
+  shell.HandleEvent(EditingEvent("\xe3\x81\x8b", 0, 1));
+  Expect(!TestAccess::TextComposition(shell).text.empty(), "composition is in flight");
+
+  // The chord has to use a key that IS in the swallow list, or the test proves
+  // nothing about the modifier guard -- Ctrl+A passed even with the guard removed,
+  // because `A` is never swallowed anyway. Ctrl+Shift+Left is word-select-left,
+  // and `Left` is very much on the list.
+  const auto chord = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT);
+  shell.HandleEvent(KeyDownEvent(SDLK_LEFT, chord));
+  Expect(fixture.viewport().has_selection(),
+         "a modified conversion key still reaches the editor");
+}
+
+// With no composition in flight the same keys are ordinary editing keys again --
+// the guard is the composition, not the key.
+void TestConversionKeysWorkNormallyWithoutAComposition() {
+  EditorFixture fixture("ab\n");
+  WorkspaceShell& shell = fixture.shell;
+  fixture.viewport().MoveCursorTo(0, 1);
+
+  shell.HandleEvent(KeyDownEvent(SDLK_RETURN));
+  Expect(fixture.viewport().lines().size() > 1,
+         "Enter splits the line when nothing is being composed");
+}
+
 }  // namespace
 
 void RegisterImeCompositionTests(std::vector<TestCase>& tests) {
@@ -143,6 +210,10 @@ void RegisterImeCompositionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "ImeComposition/UpdateReplacesRatherThanAppends",
           TestCompositionUpdateReplacesRatherThanAppends);
   AddTest(tests, "ImeComposition/CommitReachesEveryCaret", TestCommitReachesEveryCaret);
+  AddTest(tests, "ImeComposition/SwallowsItsConversionKeys", TestCompositionSwallowsItsConversionKeys);
+  AddTest(tests, "ImeComposition/DoesNotSwallowChords", TestCompositionDoesNotSwallowChords);
+  AddTest(tests, "ImeComposition/ConversionKeysWorkNormallyWithoutAComposition",
+          TestConversionKeysWorkNormallyWithoutAComposition);
 }
 
 }  // namespace microide::tests
