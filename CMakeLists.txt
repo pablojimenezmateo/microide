@@ -1005,6 +1005,7 @@ add_executable(microide_tests
   tests/FileIndexTests.cpp
   tests/FileOperationServiceTests.cpp
   tests/GitServiceTests.cpp
+  tests/GitPorcelainDifferentialTests.cpp
   tests/GitRepositoryStateTests.cpp
   tests/GitRepositoryServiceTests.cpp
   tests/CommitWorkflowTests.cpp

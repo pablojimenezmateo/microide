@@ -63,6 +63,7 @@ void RegisterRuntimeSyntaxSkipTests(std::vector<TestCase>& tests);
 void RegisterLineEditSpanTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordWriteQueueTests(std::vector<TestCase>& tests);
 void RegisterSyntaxDefinitionLoaderTests(std::vector<TestCase>& tests);
+void RegisterGitPorcelainDifferentialTests(std::vector<TestCase>& tests);
 void RegisterGitRepositoryStateTests(std::vector<TestCase>& tests);
 void RegisterGitRepositoryServiceTests(std::vector<TestCase>& tests);
 void RegisterCommitWorkflowTests(std::vector<TestCase>& tests);
@@ -540,6 +541,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterLineEditSpanTests(tests);
   microide::tests::RegisterPersistedRecordWriteQueueTests(tests);
   microide::tests::RegisterSyntaxDefinitionLoaderTests(tests);
+  microide::tests::RegisterGitPorcelainDifferentialTests(tests);
   microide::tests::RegisterGitRepositoryStateTests(tests);
   microide::tests::RegisterGitRepositoryServiceTests(tests);
   microide::tests::RegisterCommitWorkflowTests(tests);
