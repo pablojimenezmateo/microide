@@ -1225,16 +1225,25 @@ void TextViewport::SelectWordAtCursor() {
   SelectOnCursorLine(word->start.column, word->end.column);
 }
 
-void TextViewport::SelectWordOrRunAtCursor() {
-  if (document_->lines.empty() || cursor_line_ >= document_->lines.size()) {
-    return;
+std::optional<SelectionRange> TextViewport::WordSelectionRangeAt(TextPosition position) const {
+  if (document_->lines.empty() || position.line >= document_->lines.size()) {
+    return std::nullopt;
   }
-  const std::string_view line = document_->lines.LineView(cursor_line_);
-  const WordSpan span = WordSelectionRunAt(line, std::min(cursor_column_, line.size()));
+  const std::string_view line = document_->lines.LineView(position.line);
+  const WordSpan span = WordSelectionRunAt(line, std::min(position.column, line.size()));
   if (span.empty()) {
+    return std::nullopt;
+  }
+  return SelectionRange{TextPosition{position.line, span.start},
+                        TextPosition{position.line, span.end}};
+}
+
+void TextViewport::SelectWordOrRunAtCursor() {
+  const auto range = WordSelectionRangeAt(TextPosition{cursor_line_, cursor_column_});
+  if (!range.has_value()) {
     return;
   }
-  SelectOnCursorLine(span.start, span.end);
+  SelectOnCursorLine(range->start.column, range->end.column);
 }
 
 void TextViewport::SelectOnCursorLine(std::size_t start_column, std::size_t end_column) {

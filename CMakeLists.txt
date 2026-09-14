@@ -1089,6 +1089,7 @@ add_executable(microide_tests
   tests/DebugPaneTests.cpp
   tests/TabStripServiceTests.cpp
   tests/TextDragDropTests.cpp
+  tests/SelectionGranularityTests.cpp
   tests/EditorGroupStateTests.cpp
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp

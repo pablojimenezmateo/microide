@@ -673,6 +673,11 @@ class TextViewport {
   // with the double-click-drag path, which needs the range for a position that is
   // not the caret; SelectWordAtCursor is this plus "put the caret on it".
   std::optional<SelectionRange> WordRangeAt(TextPosition position) const;
+  // What a double-click at `position` selects: the identifier run it touches, or
+  // the whitespace / operator run when it is not on one. The range form of
+  // `SelectWordOrRunAtCursor`, for the drag that follows the click -- the two must
+  // agree, or dragging out of a double-clicked operator run drops to characters.
+  std::optional<SelectionRange> WordSelectionRangeAt(TextPosition position) const;
   // The whole of `line_index`, end-exclusive at the next line's start so a
   // multi-line line-granular selection joins up across the newlines.
   SelectionRange LineRangeAt(std::size_t line_index) const;

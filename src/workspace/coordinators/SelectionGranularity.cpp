@@ -49,7 +49,10 @@ void ExtendToPointer(const InteractionState& interaction_state,
   editor::TextPosition unit_end = hit_position;
   if (interaction_state.selection_granularity ==
       InteractionState::SelectionGranularity::Word) {
-    if (const auto word = viewport.WordRangeAt(hit_position); word.has_value()) {
+    // The same rule the double-click used (WordSelectionRangeAt, not the
+    // identifier-only WordRangeAt): a drag that started on `===` or on an indent
+    // must keep extending by those runs, not fall back to one character a step.
+    if (const auto word = viewport.WordSelectionRangeAt(hit_position); word.has_value()) {
       unit_start = word->start;
       unit_end = word->end;
     }
