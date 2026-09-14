@@ -219,6 +219,36 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       BuildCompareRightInteractionLayout(surface, *compare_tab);
   const std::optional<editor::SelectionRange> right_selection =
       compare_tab->right_view_active ? compare_tab->right_viewport.selection_range() : std::nullopt;
+  // Secondary carets, sorted by position. A box gesture caps at 10,000 of them, so
+  // the per-row loops below must not scan the whole set: they binary-search the
+  // run whose position is on the row's line. That is exact for every secondary a
+  // gesture can produce -- Ctrl+D, box select and Alt+drag all make single-line
+  // ranges -- and the one shape it would miss, a selection spanning lines (only
+  // reachable through AddSecondaryCaretWithRange), is detected here once per frame
+  // and falls back to the full scan.
+  const std::span<const editor::TextViewportUndoHistory::SecondaryCaret> right_secondaries =
+      compare_tab->right_view_active
+          ? compare_tab->right_viewport.secondary_caret_range_view()
+          : std::span<const editor::TextViewportUndoHistory::SecondaryCaret>{};
+  const bool right_secondaries_span_lines =
+      std::any_of(right_secondaries.begin(), right_secondaries.end(), [](const auto& caret) {
+        return caret.selection_anchor.has_value() &&
+               caret.selection_anchor->line != caret.position.line;
+      });
+  // The carets whose POSITION sits on `line`, as a sub-range of the sorted set.
+  const auto right_secondaries_on_line = [&](std::size_t line) {
+    if (right_secondaries_span_lines) {
+      return right_secondaries;
+    }
+    const auto lower = std::lower_bound(
+        right_secondaries.begin(), right_secondaries.end(), line,
+        [](const auto& caret, std::size_t value) { return caret.position.line < value; });
+    const auto upper = std::upper_bound(
+        lower, right_secondaries.end(), line,
+        [](std::size_t value, const auto& caret) { return value < caret.position.line; });
+    return std::span<const editor::TextViewportUndoHistory::SecondaryCaret>(
+        &*lower, static_cast<std::size_t>(upper - lower));
+  };
   const std::optional<editor::EditorBlameOverlay> blame_overlay =
       compare_tab->right_editable && compare_tab->right_view_active
           ? editor_blame_overlay_service_.BuildCompareOverlay(
@@ -737,14 +767,10 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
           });
         }
       }
-      // Every secondary caret's selection, same rule per caret. The set is sorted
-      // by position, so the carets touching this line are one equal_range away
-      // rather than a scan per row -- a box selection can be thousands of carets.
-      const std::span<const editor::TextViewportUndoHistory::SecondaryCaret>
-          right_secondaries = compare_tab->right_view_active
-                                  ? compare_tab->right_viewport.secondary_caret_range_view()
-                                  : std::span<const editor::TextViewportUndoHistory::SecondaryCaret>{};
-      for (const auto& caret : right_secondaries) {
+      // Every secondary caret's selection, same rule per caret, over the binary-
+      // searched run for this line rather than the whole set.
+      const auto row_secondaries = right_secondaries_on_line(right_line_index);
+      for (const auto& caret : row_secondaries) {
         if (!caret.selection_anchor.has_value()) continue;
         editor::SelectionRange sel{*caret.selection_anchor, caret.position};
         if (sel.end.line < sel.start.line ||
@@ -926,9 +952,9 @@ void WorkspaceShell::RenderCompareSurface(SDL_Renderer* renderer,
       // gesture both resolve through ActiveEditableViewport, which IS this pane on
       // a compare tab, so a multi-caret set here is reachable -- and until this
       // loop existed it edited text at places with no caret drawn.
-      if (draw_compare_caret && !right_secondaries.empty()) {
+      if (draw_compare_caret && !row_secondaries.empty()) {
         const editor::TextLayout::LineVisualColumnMap* caret_map = ensure_right_visual_map();
-        for (const auto& caret : right_secondaries) {
+        for (const auto& caret : row_secondaries) {
           if (caret.position.line != right_line_index) continue;
           const std::size_t caret_visual =
               caret_map != nullptr
