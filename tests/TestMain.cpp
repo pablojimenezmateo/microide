@@ -162,6 +162,7 @@ void RegisterTextFileIOTests(std::vector<TestCase>& tests);
 void RegisterSaveDataIntegrityTests(std::vector<TestCase>& tests);
 void RegisterControlSocketServerTests(std::vector<TestCase>& tests);
 void RegisterControlClientTests(std::vector<TestCase>& tests);
+void RegisterControlProtocolRobustnessTests(std::vector<TestCase>& tests);
 void RegisterControlProtocolTests(std::vector<TestCase>& tests);
 void RegisterControlSpecTests(std::vector<TestCase>& tests);
 void RegisterControlChannelServiceTests(std::vector<TestCase>& tests);
@@ -473,6 +474,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterSaveDataIntegrityTests(tests);
   microide::tests::RegisterControlSocketServerTests(tests);
   microide::tests::RegisterControlClientTests(tests);
+  microide::tests::RegisterControlProtocolRobustnessTests(tests);
   microide::tests::RegisterControlProtocolTests(tests);
   microide::tests::RegisterControlSpecTests(tests);
   microide::tests::RegisterControlChannelServiceTests(tests);

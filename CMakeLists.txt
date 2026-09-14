@@ -971,6 +971,7 @@ add_executable(microide_tests
   tests/BoundedResourceCapsTests.cpp
   tests/ControlSocketServerTests.cpp
   tests/ControlClientTests.cpp
+  tests/ControlProtocolRobustnessTests.cpp
   tests/ControlProtocolTests.cpp
   tests/ControlSpecTests.cpp
   tests/ControlChannelServiceTests.cpp
