@@ -104,9 +104,22 @@ The emulator covers the full-screen and shell workflows exercised so far.
 - keep blame shadow text asynchronous, viewport-scoped, and cheap enough to
   preserve typing and scrolling latency
 - expand compare/merge coverage — editor-side regressions there are still too
-  easy to miss. The shared soft-wrap row table now has direct tests
-  (`tests/DiffWrapLayoutTests.cpp`, `tests/MergeWrapRowsTests.cpp`); the
-  editor-side gap is the surfaces' own edit paths, not the row arithmetic.
+  easy to miss. The shared soft-wrap row table has direct tests
+  (`tests/DiffWrapLayoutTests.cpp`, `tests/MergeWrapRowsTests.cpp`), and the
+  surfaces' own edit paths are now swept over EVERY registered action rather than
+  one remembered verb: `WorkspaceShell/CompareEveryActionKeepsTheDiffModelInSync`
+  and `WorkspaceShell/MergeEveryActionKeepsConflictTrackingHonest`. The merge
+  sweep found the open half of that gap — only five call sites re-tracked the
+  conflict spans, so every shaping verb left them pointing at lines that had
+  moved (fixed 2026-09-14). What remains here is the compare surface's own row
+  loop and key handler ([206](#td-2026-08-13-206)/[207](#td-2026-08-13-207)).
+- soft wrap is checked as a PROPERTY now, not as fixtures:
+  `tests/EditorWrapNavigationPropertyTests.cpp` walks every visual row (with and
+  without a collapsed fold in the way) requiring one press to be one row, and
+  `tests/EditorWrapInvarianceTests.cpp` runs the same random edit sequence on two
+  viewports that differ only in wrap and requires identical bytes and carets. The
+  same pass fixed a secondary caret painted by two rows at a wrap boundary and one
+  painted by none at the end of a wrapped line.
 
 ### 5. Project and git service hardening
 

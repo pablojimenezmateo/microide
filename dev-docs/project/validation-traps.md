@@ -965,6 +965,56 @@ measuring what it says.
 
 See TD-2026-08-15-253.
 
+## Derived state that must follow an edit, swept over EVERY action
+
+Three bugs on 2026-09-14, all the same shape, none reachable from a fixture test.
+
+The shell keeps several things keyed on LINE NUMBERS into a buffer the user
+edits: the compare tab's diff model, the merge tab's conflict spans, line
+breakpoints, LSP diagnostics, and the find widget's match set. Each has a hook
+that follows an edit. The bug is never in the hook -- it is that some edit path
+does not call it, and each of these is a per-verb list somebody has to remember
+to extend.
+
+- **The merge conflict spans** were re-tracked at five call sites (typing, cut,
+  paste, undo/redo, middle-click) because re-tracking took the caret and
+  selection from BEFORE the edit and only a caller could capture them. The entire
+  shaping block -- move-line, copy-line, delete-line, insert-line, indent, the
+  comment toggles, sort -- went through a different path and re-tracked nothing,
+  so accepting a side afterwards overwrote whatever text had inherited the old
+  line numbers. The parameters turned out to be derivable from the applied-edit
+  span the viewport already publishes, which is what let the call move into the
+  shared post-edit hook.
+- **The find widget's match set** was recomputed only when the query, the options
+  or the navigation changed -- never when the buffer changed. Replace then took a
+  stale range and rewrote the line that had inherited its coordinates, leaving the
+  real match alone.
+- **A secondary caret on a wrap boundary** was painted by two rows and one at the
+  end of a wrapped line by none, because the paint loop decided with a
+  first-row-only heuristic instead of the affinity bit the caret already carries.
+
+The technique that found them, and that is cheap to repeat for any new
+line-keyed state: **walk `WorkspaceCommandSpecs()` and assert a property over
+every registered action**, in the form "IF this action changed the buffer, THEN
+the derived state still describes it". No list of verbs, so a new edit action is
+covered the day it is registered. Three of these now exist
+(`CompareEveryActionKeepsTheDiffModelInSync`,
+`MergeEveryActionKeepsConflictTrackingHonest`,
+`EveryActionKeepsBreakpointsOnTheirLine`) and each cost one fixture and one
+`ExecuteAction` loop.
+
+Two things keep such a sweep from going vacuous, and both earned their place:
+
+- **Count the actions that actually edited.** Most registered actions do nothing
+  to a buffer, so the property holds trivially for them; the run fails unless at
+  least eight of them moved a byte. A disabled capability or a caret with nothing
+  to act on otherwise turns the whole sweep green while probing nothing.
+- **Assert the state is consistent BEFORE each action.** Without it the first
+  action after a pre-existing mismatch gets the blame.
+
+And build the fixture ONCE. A `git init` + commit per action costs more than
+everything else in the sweep put together.
+
 ## Mechanical Sweeps That Found Real Bugs
 
 This tree is heavily reviewed, so reading files hunting for bugs has a poor hit
