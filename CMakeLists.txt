@@ -1021,6 +1021,7 @@ add_executable(microide_tests
   tests/DapProtocolTests.cpp
   tests/DebugServiceTests.cpp
   tests/GitBlameServiceTests.cpp
+  tests/MergeModelPropertyTests.cpp
   tests/MergeModelTests.cpp
   tests/SurfaceTokenWindowTests.cpp
   tests/MergeConflictResolutionTests.cpp

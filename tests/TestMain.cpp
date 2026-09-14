@@ -78,6 +78,7 @@ void RegisterDapRealAdapterE2ETests(std::vector<TestCase>& tests);
 void RegisterWorkspaceDapClientTests(std::vector<TestCase>& tests);
 void RegisterDapProtocolTests(std::vector<TestCase>& tests);
 void RegisterDebugServiceTests(std::vector<TestCase>& tests);
+void RegisterMergeModelPropertyTests(std::vector<TestCase>& tests);
 void RegisterMergeModelTests(std::vector<TestCase>& tests);
 void RegisterSurfaceTokenWindowTests(std::vector<TestCase>& tests);
 void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests);
@@ -550,6 +551,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterWorkspaceDapClientTests(tests);
   microide::tests::RegisterDapProtocolTests(tests);
   microide::tests::RegisterDebugServiceTests(tests);
+  microide::tests::RegisterMergeModelPropertyTests(tests);
   microide::tests::RegisterMergeModelTests(tests);
   microide::tests::RegisterSurfaceTokenWindowTests(tests);
   microide::tests::RegisterReviewTabPlanTests(tests);
