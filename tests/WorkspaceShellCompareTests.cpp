@@ -2873,6 +2873,15 @@ void TestWorkspaceShellCompareMultiCaretIsPainted() {
   Expect(compare != nullptr && compare->right_editable,
          "the working-tree pane should be editable");
 
+  // The caret BLINKS: `CaretVisibleNow()` is a function of wall-clock time since
+  // the last blink reset, so a pixel test that renders at the wrong moment sees no
+  // caret at all. It cost a UBSAN-lane failure the day this test landed -- the
+  // slower build simply crossed into an off phase. Turn blinking off so a caret is
+  // solid whenever it is drawn at all.
+  Expect(WorkspaceShellTestAccess::SetSettingValueTransient(shell, "editor.caret_blink.enabled",
+                                                            "false"),
+         "the caret blink setting should be settable");
+
   const auto theme = microide::render::MakeDefaultTheme();
   // Count the rows carrying a caret-coloured pixel down the right pane's text
   // column. One row per caret is the whole claim.
