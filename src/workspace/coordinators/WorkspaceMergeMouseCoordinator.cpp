@@ -255,13 +255,8 @@ bool MergeMouseCoordinator::HandleButtonDown(const SDL_Event& event,
           text.has_value()) {
         const bool was_dirty = merge_tab->result_viewport.dirty();
         const std::size_t cursor_before_line = merge_tab->result_viewport.cursor_line();
-        const std::optional<editor::SelectionRange> selection_before =
-            merge_tab->result_viewport.selection_range();
-        const editor::TextPosition cursor_before{merge_tab->result_viewport.cursor_line(),
-                                                 merge_tab->result_viewport.cursor_column()};
         merge_tab->result_viewport.InsertText(*text);
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
-                                                              cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
         operations_.request_active_editable_last_change_redraw();
         if (merge_tab->result_viewport.dirty() != was_dirty) {
           operations_.request_active_editable_blame_neighborhood_redraw(
@@ -602,10 +597,8 @@ MergeMouseCoordinator& WorkspaceShell::MakeMergeMouseCoordinator() {
               },
           .read_primary_selection_text = [this]() { return ReadPrimarySelectionText(); },
           .update_merge_tracking_after_viewport_edit =
-              [this](MergeTabState& merge_tab,
-                     std::optional<editor::SelectionRange> selection_before,
-                     editor::TextPosition cursor_before) {
-                UpdateMergeTrackingAfterViewportEdit(merge_tab, selection_before, cursor_before);
+              [this](MergeTabState& merge_tab) {
+                UpdateMergeTrackingAfterViewportEdit(merge_tab);
               },
           .request_active_editable_last_change_redraw =
               [this]() { RequestActiveEditableLastChangeRedraw(); },

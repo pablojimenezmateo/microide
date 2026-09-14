@@ -1018,9 +1018,9 @@
   void PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab,
                                           std::size_t visible_start_row,
                                           std::size_t visible_end_row);
-  void UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab,
-                                            std::optional<editor::SelectionRange> selection_before,
-                                            editor::TextPosition cursor_before);
+  // Re-track the conflict spans after the result pane's buffer changed. Reads the
+  // viewport's own last-applied-edit span; the caller captures nothing.
+  void UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab);
   editor::TextViewport* ActiveEditableViewport();
   const editor::TextViewport* ActiveEditableViewport() const;
   // Applies a plugin `ctx.editor.apply_edits` request: resolves the target

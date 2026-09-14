@@ -989,15 +989,9 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
 
   const bool was_dirty = viewport->dirty();
   const std::size_t cursor_before_line = viewport->cursor_line();
-  std::optional<editor::SelectionRange> selection_before;
-  std::optional<editor::TextPosition> cursor_before;
   auto* merge_tab = operations_.active_merge_tab();
   const bool viewport_is_merge_result =
       merge_tab != nullptr && viewport == &merge_tab->result_viewport;
-  if (viewport_is_merge_result) {
-    selection_before = viewport->selection_range();
-    cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
-  }
 
   bool changed = false;
   {
@@ -1027,8 +1021,7 @@ void WorkspaceActionContext::ApplyUndoRedo(bool redo) {
   RefreshActiveCompareAfterViewportEdit();
   if (viewport_is_merge_result) {
     util::PerformanceTrace::Scope scope("WorkspaceActionContext::UndoRedo::UpdateMergeTracking");
-    operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
-                                                          *cursor_before);
+    operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
   }
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);
@@ -1156,13 +1149,6 @@ void WorkspaceActionContext::CutSelection() {
       // elsewhere puts it on its own line (see PasteClipboard).
       RememberLineClipboardCopy(text, !multi_text.has_value() && !has_selection);
       const std::size_t cursor_before_line = viewport->cursor_line();
-      std::optional<editor::SelectionRange> selection_before;
-      std::optional<editor::TextPosition> cursor_before;
-      if (auto* merge_tab = operations_.active_merge_tab();
-          merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        selection_before = viewport->selection_range();
-        cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
-      }
       if (multi_text.has_value()) {
         viewport->DeleteMultiCaretSelections();
       } else if (has_selection) {
@@ -1173,8 +1159,7 @@ void WorkspaceActionContext::CutSelection() {
       RefreshActiveCompareAfterViewportEdit();
       if (auto* merge_tab = operations_.active_merge_tab();
           merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-        operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
-                                                              *cursor_before);
+        operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
       }
       operations_.reset_caret_blink();
       operations_.request_active_tab_redraw(false);
@@ -1243,13 +1228,6 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
   if (auto* viewport = operations_.active_editable_viewport(); viewport != nullptr) {
     const bool was_dirty = viewport->dirty();
     const std::size_t cursor_before_line = viewport->cursor_line();
-    std::optional<editor::SelectionRange> selection_before;
-    std::optional<editor::TextPosition> cursor_before;
-    if (auto* merge_tab = operations_.active_merge_tab();
-        merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      selection_before = viewport->selection_range();
-      cursor_before = editor::TextPosition{viewport->cursor_line(), viewport->cursor_column()};
-    }
     if (distribute_across_carets) {
       viewport->PasteText(text);
     } else {
@@ -1258,8 +1236,7 @@ void WorkspaceActionContext::InsertTextIntoActiveSurface(std::string text,
     RefreshActiveCompareAfterViewportEdit();
     if (auto* merge_tab = operations_.active_merge_tab();
         merge_tab != nullptr && viewport == &merge_tab->result_viewport) {
-      operations_.update_merge_tracking_after_viewport_edit(*merge_tab, selection_before,
-                                                            *cursor_before);
+      operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
     }
     operations_.reset_caret_blink();
     operations_.request_active_tab_redraw(false);
@@ -1406,6 +1383,17 @@ void WorkspaceActionContext::RefreshActiveCompareAfterViewportEdit() {
   operations_.sync_compare_selection_from_viewport(*compare_tab, /*reveal_selection=*/true);
 }
 
+void WorkspaceActionContext::RetrackActiveMergeAfterViewportEdit() {
+  if (!operations_.active_merge_tab || !operations_.update_merge_tracking_after_viewport_edit) {
+    return;
+  }
+  auto* merge_tab = operations_.active_merge_tab();
+  if (merge_tab == nullptr || ActiveEditableViewport() != &merge_tab->result_viewport) {
+    return;
+  }
+  operations_.update_merge_tracking_after_viewport_edit(*merge_tab);
+}
+
 void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
   if (last_change) {
     if (auto* editor_tab = ActiveEditorTab(); editor_tab != nullptr) {
@@ -1420,10 +1408,16 @@ void WorkspaceActionContext::NotifyEditorViewportChanged(bool last_change) {
     // refresh it. Three action sites had grown their own copy of this; they now
     // route here, so a new edit action cannot forget it.
     //
-    // The merge result pane's equivalent (UpdateMergeTrackingAfterViewportEdit)
-    // needs the selection and caret from BEFORE the edit, which this hook does not
-    // have, so it stays at the sites that can capture them.
     RefreshActiveCompareAfterViewportEdit();
+    // The merge result pane's equivalent. It used to need the selection and caret
+    // from BEFORE the edit, so it could not live here and stayed at the handful of
+    // sites that captured them -- which meant the whole shaping block (move-line,
+    // copy-line, delete-line, insert-line, indent, comment toggle, sort) mutated
+    // the result buffer and left the conflict spans pointing at the lines they
+    // used to be on. The next accept then overwrote text that was no longer the
+    // conflict. It reads the viewport's own applied-edit span now, so it belongs
+    // wherever an edit is announced.
+    RetrackActiveMergeAfterViewportEdit();
   }
   operations_.reset_caret_blink();
   operations_.request_active_tab_redraw(false);

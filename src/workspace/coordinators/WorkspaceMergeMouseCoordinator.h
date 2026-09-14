@@ -35,10 +35,7 @@ class MergeMouseCoordinator {
         build_merge_result_action_button_rects;
     std::function<void(compare::MergeChoice)> apply_merge_choice;
     std::function<std::optional<std::string>()> read_primary_selection_text;
-    std::function<void(MergeTabState&,
-                       std::optional<editor::SelectionRange>,
-                       editor::TextPosition)>
-        update_merge_tracking_after_viewport_edit;
+    std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void()> request_active_editable_last_change_redraw;
     std::function<void(std::size_t, std::size_t)> request_active_editable_blame_neighborhood_redraw;
     std::function<void()> request_tab_strip_redraw;

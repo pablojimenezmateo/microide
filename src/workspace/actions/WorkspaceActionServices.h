@@ -192,10 +192,7 @@ class WorkspaceActionContext {
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<MergeTabState*()> active_merge_tab;
-    std::function<void(MergeTabState&,
-                       std::optional<editor::SelectionRange>,
-                       editor::TextPosition)>
-        update_merge_tracking_after_viewport_edit;
+    std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void(bool)> request_active_tab_redraw;
     std::function<void()> request_active_editable_last_change_redraw;
     std::function<void(const std::vector<std::string>&, const std::vector<std::string>&)>
@@ -584,6 +581,9 @@ class WorkspaceActionContext {
   // fingerprint-guarded) and a no-op when the active tab is not a compare tab.
   void RefreshActiveCompareAfterViewportEdit();
   void NotifyEditorViewportChanged(bool last_change);
+  // Re-track the merge result pane's conflict spans after an edit to it. Reads the
+  // viewport's own last-applied-edit span, so the caller captures nothing.
+  void RetrackActiveMergeAfterViewportEdit();
   void NotifyEditorCaretMoved();
   void ToggleEditorEssentialsCapability(ActionId id);
   std::optional<std::string> GetSettingValue(std::string_view id) const;

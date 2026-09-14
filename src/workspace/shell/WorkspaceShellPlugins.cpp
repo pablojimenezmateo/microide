@@ -426,10 +426,8 @@ WorkspaceShell::WorkspaceShell() {
                 SyncCompareSelectionFromViewport(tab, keep_top_line);
               },
           .update_merge_tracking_after_viewport_edit =
-              [this](MergeTabState& tab,
-                     const std::optional<editor::SelectionRange>& selection_before,
-                     const editor::TextPosition& cursor_before) {
-                UpdateMergeTrackingAfterViewportEdit(tab, selection_before, cursor_before);
+              [this](MergeTabState& tab) {
+                UpdateMergeTrackingAfterViewportEdit(tab);
               },
       });
   plugin_runtime_.SetCallbacks(plugin::PluginHost::Callbacks{

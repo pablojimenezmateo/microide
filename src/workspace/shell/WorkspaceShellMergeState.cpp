@@ -542,10 +542,7 @@ void WorkspaceShell::PopulateMergeSyntaxTokensForWindow(MergeTabState& merge_tab
       [&](std::size_t row) -> std::string_view { return merge_tab.model.current_lines[row]; });
 }
 
-void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
-    MergeTabState& merge_tab,
-    std::optional<editor::SelectionRange> selection_before,
-    editor::TextPosition cursor_before) {
+void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(MergeTabState& merge_tab) {
   // TD-2026-07-16-31: derive the changed line span from the viewport's own
   // last-applied-edit metadata instead of snapshotting + diffing the whole result
   // buffer before and after every mutation. The span is whole-line-trimmed to match
@@ -570,33 +567,24 @@ void WorkspaceShell::UpdateMergeTrackingAfterViewportEdit(
   };
   const long long line_delta =
       static_cast<long long>(change.new_end) - static_cast<long long>(change.old_end);
-  // old_start == old_end means no before-line was consumed -> a pure line insertion.
-  // (The old whole-buffer path additionally checked new_size >= old_size, but that
-  // is implied: with old_start == old_end the delta is non-negative.)
-  const bool pure_insertion = !selection_before.has_value() && change.old_start == change.old_end;
-  const std::size_t insertion_anchor_line =
-      selection_before.has_value() ? selection_before->start.line : cursor_before.line;
 
+  // There used to be a second branch here for a "pure insertion", taking its
+  // anchor line from the caret/selection the CALLER captured before the edit --
+  // which is why five call sites each had to remember to snapshot them, and why
+  // every edit action that did not (the whole shaping block: move-line,
+  // copy-line, delete-line, insert-line, indent, comment toggle, sort) left the
+  // conflict spans pointing at the wrong lines, so the next accept overwrote text
+  // that was no longer the conflict.
+  //
+  // The branch was also redundant. A pure insertion is exactly
+  // `old_start == old_end` (no before-line was consumed), the anchor line is then
+  // `old_start`, and substituting those two facts into the branch below makes the
+  // two bodies character-for-character the same test. So the span the viewport
+  // already publishes answers it on its own and the caller has nothing to capture.
   for (auto& conflict : merge_tab.conflicts) {
-    if (pure_insertion) {
-      if (conflict.end_line <= insertion_anchor_line) {
-        continue;
-      }
-      // Use >= (matching the general-edit branch below): an insertion whose anchor
-      // is exactly the conflict's first result line happens BEFORE the conflict
-      // (caret at column 0), so the conflict should shift down, not be invalidated.
-      // With a bare > the boundary case destroyed the conflict's tracking.
-      if (conflict.start_line >= insertion_anchor_line) {
-        conflict.start_line = static_cast<std::size_t>(
-            static_cast<long long>(conflict.start_line) + line_delta);
-        conflict.end_line = static_cast<std::size_t>(
-            static_cast<long long>(conflict.end_line) + line_delta);
-        continue;
-      }
-      conflict.valid = false;
-      continue;
-    }
-
+    // `>=` on the shift test, not `>`: an insertion at exactly the conflict's
+    // first result line happens BEFORE the conflict (caret at column 0), so it
+    // shifts down rather than being invalidated.
     if (conflict.end_line <= change.old_start) {
       continue;
     }

@@ -4,6 +4,7 @@
 #include "platform/AppDirectories.h"
 #include "persistence/PersistedRecordWriter.h"
 #include "workspace/render/DiffDividerGeometry.h"
+#include "workspace/registries/WorkspaceCommandRegistry.h"
 #include "workspace/shell/WorkspaceShellTestAccess.h"
 #include "workspace/persistence/WorkspacePersistenceCoordinator.h"
 #include "workspace/persistence/WorkspacePersistenceFormat.h"
@@ -1893,6 +1894,141 @@ void TestWorkspaceShellInsertionAtConflictStartKeepsTracking() {
          "the conflict span should shift down by the inserted line");
 }
 
+// EVERY action, not the handful that remembered to re-track. The merge result
+// pane's conflict spans are LINE NUMBERS into a buffer the user can edit freely,
+// so any edit that adds or removes lines above a conflict moves it -- and if the
+// span is not moved with it, the next "accept incoming/current" overwrites
+// whatever text now lives at the old line numbers. That is data loss, not a
+// cosmetic drift.
+//
+// Re-tracking used to need the caret and selection from BEFORE the edit, so it
+// could not live in the shared post-edit hook and stayed at the five sites that
+// captured them: typing, cut, paste, undo/redo, middle-click. The whole shaping
+// block -- move-line, copy-line, delete-line, insert-line, indent, comment
+// toggle, sort -- went through a different path and re-tracked nothing.
+//
+// The invariant needs no list of verbs and no arithmetic: a conflict that is
+// still marked VALID must still point at the same text it pointed at before.
+void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
+  const std::vector<WorkspaceShell::ActionId> skipped = {
+      WorkspaceShell::ActionId::CloseActiveTab,
+      WorkspaceShell::ActionId::CloseOtherTabs,
+      WorkspaceShell::ActionId::CloseTabsToRight,
+      WorkspaceShell::ActionId::CloseTabsToLeft,
+      WorkspaceShell::ActionId::CloseAllTabs,
+      WorkspaceShell::ActionId::CloseGroup,
+      WorkspaceShell::ActionId::ProjectClose,
+      WorkspaceShell::ActionId::Quit,
+  };
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path base = root / "base.txt";
+  const std::filesystem::path incoming = root / "incoming.txt";
+  const std::filesystem::path current = root / "current.txt";
+  const std::filesystem::path output = root / "result.txt";
+  // Two lines of plain text above the conflict, so a caret on line 0 can add or
+  // remove a line WITHOUT touching the conflict itself -- which is the shape that
+  // moves a conflict whose span nobody updated.
+  WriteFile(base, "aaa\nbbb\nccc\nddd\n");
+  WriteFile(incoming, "aaa\nbbb\nccc incoming\nddd\n");
+  WriteFile(current, "aaa\nbbb\nccc current\nddd\n");
+  WriteFile(output, "aaa\nbbb\nccc\nddd\n");
+
+  std::size_t mutating_actions = 0;
+  for (const auto& spec : microide::workspace::WorkspaceCommandSpecs()) {
+    if (std::find(skipped.begin(), skipped.end(), spec.id) != skipped.end()) {
+      continue;
+    }
+    WriteFile(output, "aaa\nbbb\nccc\nddd\n");
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+    if (!WorkspaceShellTestAccess::OpenMergeEditor(shell, base, incoming, current, output)) {
+      Expect(false, std::string("the merge fixture should open for ") +
+                        std::string(spec.command_name));
+      return;
+    }
+    auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
+    if (merge.conflicts.empty()) {
+      Expect(false, "the merge fixture must produce a conflict to track");
+      return;
+    }
+    auto& viewport = merge.result_viewport;
+    const auto line_at = [&viewport](std::size_t line) {
+      return line < viewport.line_count() ? std::string(viewport.lines().LineView(line))
+                                          : std::string("<past end>");
+    };
+
+    // Caret on the FIRST line, above every conflict, with a selection inside that
+    // line so the clipboard and selection verbs have something to act on.
+    viewport.MoveCursorTo(0, 0);
+    viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+
+    std::vector<std::pair<std::size_t, std::string>> tracked_before;
+    for (const auto& conflict : merge.conflicts) {
+      if (conflict.valid) {
+        tracked_before.emplace_back(conflict.start_line, line_at(conflict.start_line));
+      }
+    }
+    Expect(!tracked_before.empty(), "the fixture starts with a valid tracked conflict");
+
+    const std::string text_before = [&] {
+      std::string joined;
+      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+        joined += line_at(i);
+        joined += '\n';
+      }
+      return joined;
+    }();
+
+    WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
+
+    auto* still_merge = WorkspaceShellTestAccess::ActiveMergeOrNull(shell);
+    if (still_merge != &merge) {
+      continue;  // the action left the merge tab; not a question about tracking
+    }
+    const std::string text_after = [&] {
+      std::string joined;
+      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+        joined += line_at(i);
+        joined += '\n';
+      }
+      return joined;
+    }();
+    if (text_after == text_before) {
+      continue;  // not an edit for this caret
+    }
+    ++mutating_actions;
+
+    std::size_t index = 0;
+    for (const auto& conflict : merge.conflicts) {
+      if (!conflict.valid) {
+        ++index;
+        continue;  // deliberately dropped: the edit reached into the conflict
+      }
+      if (index >= tracked_before.size()) break;
+      const std::string& expected = tracked_before[index].second;
+      Expect(conflict.start_line < viewport.line_count(),
+             std::string("`") + std::string(spec.command_name) +
+                 "` left conflict " + std::to_string(index) + " tracked at line " +
+                 std::to_string(conflict.start_line) + ", past the end of a " +
+                 std::to_string(viewport.line_count()) + "-line buffer");
+      Expect(line_at(conflict.start_line) == expected,
+             std::string("`") + std::string(spec.command_name) +
+                 "` moved the result buffer but left conflict " + std::to_string(index) +
+                 " tracked at line " + std::to_string(conflict.start_line) + ", which now holds \"" +
+                 line_at(conflict.start_line) + "\" instead of \"" + expected +
+                 "\" -- the next accept would overwrite the wrong lines");
+      ++index;
+    }
+  }
+  Expect(mutating_actions >= 8,
+         "the sweep must have found actions that actually edit the merge result pane, "
+         "found only " +
+             std::to_string(mutating_actions));
+}
+
 void TestWorkspaceShellMergeHoverPreviewDoesNotCommitState() {
   TemporaryDirectory temp_dir;
   const std::filesystem::path root = temp_dir.path() / "project";
@@ -2963,6 +3099,8 @@ void RegisterWorkspaceShellSessionTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellMergeChoicePreservesManualEditsAroundConflicts);
   AddTest(tests, "WorkspaceShell/MergeConflictTrackingShiftsAfterInsertion",
           TestWorkspaceShellMergeConflictTrackingShiftsAfterInsertion);
+  AddTest(tests, "WorkspaceShell/MergeEveryActionKeepsConflictTrackingHonest",
+          TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest);
   AddTest(tests, "WorkspaceShell/MergeHoverPreviewDoesNotCommitState",
           TestWorkspaceShellMergeHoverPreviewDoesNotCommitState);
   AddTest(tests, "WorkspaceShell/MergeHoverPrefersIncomingAcceptButton",

@@ -41,10 +41,7 @@ class TextInputCoordinator {
     std::function<void(CompareTabState&)> refresh_compare_tab_derived_state;
     std::function<void(CompareTabState&, bool)> sync_compare_selection_from_viewport;
     std::function<MergeTabState*()> active_merge_tab;
-    std::function<void(MergeTabState&,
-                       std::optional<editor::SelectionRange>,
-                       editor::TextPosition)>
-        update_merge_tracking_after_viewport_edit;
+    std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void()> reset_caret_blink;
     std::function<void()> mark_active_editor_folding_dirty;
     std::function<void()> request_active_editable_last_change_redraw;

@@ -190,6 +190,15 @@
   static WorkspaceShell::MergeTabState& ActiveMerge(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].merge.value();
   }
+  // Null when the front tab is not a merge tab (or there is none).
+  static WorkspaceShell::MergeTabState* ActiveMergeOrNull(WorkspaceShell& shell) {
+    auto& group = shell.context_.current_project_state.focused_group();
+    if (group.active_tab_index >= group.open_tabs.size()) {
+      return nullptr;
+    }
+    auto& merge = group.open_tabs[group.active_tab_index].merge;
+    return merge.has_value() ? &*merge : nullptr;
+  }
   static bool ActiveMergeHasSelection(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index]
         .merge->result_viewport.selection_range()

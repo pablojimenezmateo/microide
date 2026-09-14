@@ -185,10 +185,7 @@ class KeyInputCoordinator {
     std::function<void()> notify_snippet_session_caret_moved;
     std::function<std::optional<std::string>(std::string_view)> get_setting_value;
     std::function<MergeTabState*()> active_merge_tab;
-    std::function<void(MergeTabState&,
-                       std::optional<editor::SelectionRange>,
-                       editor::TextPosition)>
-        update_merge_tracking_after_viewport_edit;
+    std::function<void(MergeTabState&)> update_merge_tracking_after_viewport_edit;
     std::function<void(int)> move_merge_selection;
     std::function<void(compare::MergeChoice)> apply_merge_choice;
     std::function<void()> open_merge_result_file;

@@ -974,10 +974,8 @@ KeyInputCoordinator& WorkspaceShell::MakeKeyInputCoordinator() {
               [this](std::string_view id) { return GetSettingValue(id); },
           .active_merge_tab = [this]() { return ActiveMergeTab(); },
           .update_merge_tracking_after_viewport_edit =
-              [this](MergeTabState& merge_tab,
-                     std::optional<editor::SelectionRange> selection_before,
-                     editor::TextPosition cursor_before) {
-                UpdateMergeTrackingAfterViewportEdit(merge_tab, selection_before, cursor_before);
+              [this](MergeTabState& merge_tab) {
+                UpdateMergeTrackingAfterViewportEdit(merge_tab);
               },
           .move_merge_selection = [this](int delta) { MoveMergeSelection(delta); },
           .apply_merge_choice = [this](compare::MergeChoice choice) { ApplyMergeChoice(choice); },
