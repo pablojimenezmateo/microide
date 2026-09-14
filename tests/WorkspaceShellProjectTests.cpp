@@ -3783,6 +3783,96 @@ void TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet() {
              " expanding");
 }
 
+// The unfocused half of a SPLIT is a different way to be "not in front" from a
+// background tab, and it resolves through a different path: `focused_group()`
+// rather than an active tab index, with the split tree's leaf order having to
+// agree with `editor_groups` for either to mean anything (the hard invariant
+// CheckEditorGroupsMutateWithTheSplitTree). A verb that reaches for
+// `editor_groups[0]` instead of the focused one edits the pane the user is
+// looking AWAY from -- visibly, in the other half of the window, while their
+// caret sits somewhere else.
+//
+// Same requirement as the background-tab sweep: every registered action, and the
+// buffer in the unfocused group is untouched.
+void TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup() {
+  const std::vector<WorkspaceShell::ActionId> skipped = {
+      WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
+      WorkspaceShell::ActionId::CloseTabsToRight, WorkspaceShell::ActionId::CloseTabsToLeft,
+      WorkspaceShell::ActionId::CloseAllTabs,     WorkspaceShell::ActionId::CloseGroup,
+      WorkspaceShell::ActionId::ProjectClose,     WorkspaceShell::ActionId::Quit,
+      WorkspaceShell::ActionId::Open,             WorkspaceShell::ActionId::ProjectOpen,
+  };
+  const std::string other_text = "other0();\nother1();\nother2();\n";
+
+  std::size_t swept = 0;
+  for (const auto& spec : microide::workspace::WorkspaceCommandSpecs()) {
+    if (std::find(skipped.begin(), skipped.end(), spec.id) != skipped.end()) {
+      continue;
+    }
+    TemporaryDirectory temp_dir;
+    const std::filesystem::path root = temp_dir.path() / "project";
+    const auto other = root / "other.cpp";
+    const auto focused = root / "focused.cpp";
+    WriteFile(other, other_text);
+    WriteFile(focused, "focus0();\nfocus1();\nfocus2();\n");
+
+    WorkspaceShell shell;
+    WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+    WorkspaceShellTestAccess::SetWindowSize(shell, 1600, 900);
+    WorkspaceShellTestAccess::OpenFile(shell, other);
+    if (!WorkspaceShellTestAccess::SplitEditorGroup(
+            shell, microide::workspace::EditorSplitOrientation::Vertical)) {
+      Expect(false, "the fixture should split the editor area");
+      return;
+    }
+    // The split leaves the NEW group focused; open the other file there so the two
+    // groups hold different buffers.
+    WorkspaceShellTestAccess::OpenFile(shell, focused);
+    if (WorkspaceShellTestAccess::EditorGroupCount(shell) < 2) {
+      Expect(false, "the fixture should have two groups");
+      return;
+    }
+
+    const auto other_now = [&]() {
+      std::string out;
+      if (const auto* buffer = WorkspaceShellTestAccess::EditorViewportForPath(shell, other);
+          buffer != nullptr) {
+        for (std::size_t i = 0; i < buffer->line_count(); ++i) {
+          out += buffer->lines().LineView(i);
+          out += '\n';
+        }
+      }
+      return out;
+    };
+    const std::string before = other_now();
+    Expect(before.rfind(other_text, 0) == 0,
+           "the unfocused group's buffer starts as written, got: " + before);
+
+    if (auto* front = WorkspaceShellTestAccess::ActiveEditorOrNull(shell); front != nullptr) {
+      front->MoveCursorTo(1, 1);
+      front->MoveCursorTo(2, 3, /*extend_selection=*/true);
+    }
+
+    WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
+
+    const std::string after = other_now();
+    if (after.empty()) {
+      continue;  // the action closed that view; not this test's question
+    }
+    ++swept;
+    Expect(after == before,
+           std::string("`") + std::string(spec.command_name) +
+               "` edited the buffer in the UNFOCUSED split group: " + after);
+    if (after != before) {
+      return;
+    }
+  }
+  Expect(swept > 100,
+         "the sweep must have run essentially the whole registry against a real "
+         "split, ran " +
+             std::to_string(swept));
+}
+
 // A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
 // engine's own operations (a mirror edit, a choice swap, the expansion) keep them
 // in step with the text. Every other edit -- move-line, sort, paste, format, an
@@ -8318,6 +8408,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet);
   AddTest(tests, "WorkspaceShell/NoActionNoticesSoftWrap",
           TestWorkspaceShellNoActionNoticesSoftWrap);
+  AddTest(tests, "WorkspaceShell/NoActionEditsAnUnfocusedSplitGroup",
+          TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup);
   AddTest(tests, "WorkspaceShell/NoActionEditsABackgroundBuffer",
           TestWorkspaceShellNoActionEditsABackgroundBuffer);
   AddTest(tests, "WorkspaceShell/ColumnSelectReanchorsAfterAForeignCaretMove",
