@@ -186,6 +186,7 @@ void RegisterPluginPathContainmentTests(std::vector<TestCase>& tests);
 void RegisterEditorSnippetTests(std::vector<TestCase>& tests);
 void RegisterFoldingModelTests(std::vector<TestCase>& tests);
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests);
+void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests);
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests);
 void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
 void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests);
@@ -573,6 +574,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterEditorSnippetTests(tests);
   microide::tests::RegisterFoldingModelTests(tests);
   microide::tests::RegisterEditorFoldingTests(tests);
+  microide::tests::RegisterEditorEdgeCaseTests(tests);
   microide::tests::RegisterEditorMultiCaretTests(tests);
 
   std::size_t selected_count = 0;
