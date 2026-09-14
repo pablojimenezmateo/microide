@@ -1046,6 +1046,33 @@ that runs every action:
   difference between "an SDL leak somewhere" and a named call site. Skip both: a
   test must not open an OS dialog in the first place.
 
+### The second seam: coordinates captured at PRESS, applied at RELEASE
+
+Two more on the same day, from the same question asked of pointer gestures
+instead of edits. A drag spans two events with the whole application running in
+between, and the coordinates it carries were resolved against the document as it
+was at press.
+
+- **Drag-and-drop of selected text** applied its captured source range at release
+  with no revalidation, so an async LSP workspace edit, a plugin edit, a reload
+  from disk, or a Ctrl+PageDown to another tab all made it delete whatever had
+  inherited those coordinates. The tab case is the worst: the release re-reads
+  `active_editor_viewport()`, so file A's range was applied to file B.
+- **The box selection and the plain selection drag** had the same tab exposure.
+  Neither edits, so they are recoverable -- but the text-drag fix only covered the
+  destructive third of the class.
+
+A project switch already ended all three by resetting the transient state
+(TD-2026-08-14-216), which is why the tab case survived: `active_tab_index` is
+assigned at nine sites and none of them is that reset. The fix is the same shape
+as the edit-side ones -- one check where the gesture is USED (the release, and the
+motion handler) instead of a reset call at every site that could invalidate it.
+The press records which viewport it was pressed in, and for the destructive one
+which revision of it too.
+
+**A refused gesture costs the user a repeat; a wrong one costs them the text.**
+That is the tie-breaker whenever a stale gesture is ambiguous.
+
 **The generalisation worth keeping.** Every one of the six is the same
 sentence: *state derived from buffer positions, a hook that follows an edit or a
 caret move, and a hand-maintained list of sites that call it.* The bug is never
