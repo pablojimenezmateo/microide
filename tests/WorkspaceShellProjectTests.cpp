@@ -3474,6 +3474,113 @@ void TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove() {
              std::to_string(viewport->secondary_caret_range_view().size()));
 }
 
+// An action may edit the buffer in FRONT. It may not edit one that is not.
+//
+// That sounds obvious until you count the ways a verb can name a viewport:
+// `ActiveEditableViewport()` (the compare right pane on a compare tab),
+// `ActiveEditorViewport()` (editor tabs only), `ActiveNavigableViewport()`, and
+// the LSP/plugin appliers that resolve a PATH to whichever tab holds it. A verb
+// that reaches for the wrong one edits a file the user is not looking at, and
+// nothing on screen changes to say so -- the class the merge-layout copies and
+// the drag's tab switch were both instances of.
+//
+// So: a background editor tab holding a marked buffer, a different tab in front,
+// every registered action, and one requirement -- the background buffer is
+// untouched. Run twice, once with an editor tab in front and once with a compare
+// tab, because those two resolve `ActiveEditableViewport()` differently.
+void TestWorkspaceShellNoActionEditsABackgroundBuffer() {
+  const std::vector<WorkspaceShell::ActionId> skipped = {
+      WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
+      WorkspaceShell::ActionId::CloseTabsToRight, WorkspaceShell::ActionId::CloseTabsToLeft,
+      WorkspaceShell::ActionId::CloseAllTabs,     WorkspaceShell::ActionId::CloseGroup,
+      WorkspaceShell::ActionId::ProjectClose,     WorkspaceShell::ActionId::Quit,
+      // Native OS dialogs; see the other sweeps.
+      WorkspaceShell::ActionId::Open,             WorkspaceShell::ActionId::ProjectOpen,
+  };
+  const std::string background_text = "keep0();\nkeep1();\nkeep2();\nkeep3();\n";
+
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const auto background = root / "background.cpp";
+  const auto foreground = root / "foreground.cpp";
+  WriteFile(background, background_text);
+  WriteFile(foreground, "front0();\nfront1();\nfront2();\nfront3();\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "background sweep fixture", "background sweep");
+
+  for (const bool compare_in_front : {false, true}) {
+    std::size_t mutating_actions = 0;
+    for (const auto& spec : microide::workspace::WorkspaceCommandSpecs()) {
+      if (std::find(skipped.begin(), skipped.end(), spec.id) != skipped.end()) {
+        continue;
+      }
+      WriteFile(background, background_text);
+      WriteFile(foreground, "front0();\nfront1();\nfront2();\nfront3();\n");
+      WorkspaceShell shell;
+      WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+      WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+
+      // The buffer that must not move, opened FIRST and then left behind.
+      WorkspaceShellTestAccess::OpenFile(shell, background);
+      if (compare_in_front) {
+        if (!WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, foreground, "HEAD",
+                                                                 "HEAD")) {
+          Expect(false, "the compare tab should open");
+          return;
+        }
+      } else {
+        WorkspaceShellTestAccess::OpenFile(shell, foreground);
+      }
+
+      const auto background_now = [&]() {
+        std::string out;
+        if (const auto* buffer =
+                WorkspaceShellTestAccess::EditorViewportForPath(shell, background);
+            buffer != nullptr) {
+          for (std::size_t i = 0; i < buffer->line_count(); ++i) {
+            out += buffer->lines().LineView(i);
+            out += '\n';
+          }
+        }
+        return out;
+      };
+      const std::string before_background = background_now();
+      Expect(before_background.rfind(background_text, 0) == 0,
+             "the background buffer starts as written");
+
+      // A caret and a selection in whatever is in front, so the edit verbs have
+      // something to act on THERE.
+      if (auto* front = WorkspaceShellTestAccess::ActiveEditorOrNull(shell); front != nullptr) {
+        front->MoveCursorTo(1, 1);
+        front->MoveCursorTo(2, 3, /*extend_selection=*/true);
+      } else if (auto* compare = WorkspaceShellTestAccess::ActiveCompareOrNull(shell);
+                 compare != nullptr) {
+        compare->right_viewport.MoveCursorTo(1, 1);
+        compare->right_viewport.MoveCursorTo(2, 3, /*extend_selection=*/true);
+      }
+
+      WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
+
+      const std::string after_background = background_now();
+      if (after_background.empty()) {
+        continue;  // the action closed or replaced that tab; not this test's question
+      }
+      Expect(after_background == before_background,
+             std::string("`") + std::string(spec.command_name) +
+                 "` edited a buffer that was not in front (" +
+                 (compare_in_front ? "compare" : "editor") + " tab focused): " +
+                 after_background);
+      if (after_background != before_background) {
+        return;
+      }
+      ++mutating_actions;
+    }
+    Expect(mutating_actions > 100,
+           "the sweep must have run essentially the whole registry, ran " +
+               std::to_string(mutating_actions));
+  }
+}
+
 // A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
 // engine's own operations (a mirror edit, a choice swap, the expansion) keep them
 // in step with the text. Every other edit -- move-line, sort, paste, format, an
@@ -8005,6 +8112,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront);
   AddTest(tests, "WorkspaceShell/TextDragRefusesAStaleSourceRange",
           TestWorkspaceShellTextDragRefusesAStaleSourceRange);
+  AddTest(tests, "WorkspaceShell/NoActionEditsABackgroundBuffer",
+          TestWorkspaceShellNoActionEditsABackgroundBuffer);
   AddTest(tests, "WorkspaceShell/ColumnSelectReanchorsAfterAForeignCaretMove",
           TestWorkspaceShellColumnSelectReanchorsAfterAForeignCaretMove);
   AddTest(tests, "WorkspaceShell/ForeignEditEndsTheSnippetSession",
