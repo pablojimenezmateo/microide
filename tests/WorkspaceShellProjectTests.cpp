@@ -3221,6 +3221,13 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
       WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,
       WorkspaceShell::ActionId::Quit,
+      // These pop a NATIVE OS dialog (SDL's XDG-portal file chooser). A test must
+      // never open one -- and headless it also leaks SDL's per-call portal state,
+      // because with no portal to answer, SDL never runs the callback that frees
+      // it. That leak is what made the ASAN lane fail with a stack of nothing but
+      // SDL_malloc; with fast_unwind_on_malloc=0 these two frames appear.
+      WorkspaceShell::ActionId::Open,
+      WorkspaceShell::ActionId::ProjectOpen,
       // These are ABOUT breakpoints; moving or clearing one is their job.
       WorkspaceShell::ActionId::BreakpointToggle,
       WorkspaceShell::ActionId::BreakpointSet,
@@ -3246,48 +3253,58 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
     WorkspaceShellTestAccess::SetProjectRoot(shell, root);
     WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
     WorkspaceShellTestAccess::OpenFile(shell, file);
-    auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
     auto& breakpoints = WorkspaceShellTestAccess::BreakpointStore(shell);
 
-    const auto line_at = [&viewport](std::size_t line) {
-      return line < viewport.line_count() ? std::string(viewport.lines().LineView(line))
-                                          : std::string("<past end>");
+    // Re-resolved on every use, never held. An action that opens a tab pushes onto
+    // the group's tab vector, and a reallocation there invalidates any reference
+    // into it -- a use-after-free that only ASAN sees, and the exact hazard this
+    // sweep walks into by running EVERY registered action.
+    const auto editor = [&shell]() { return WorkspaceShellTestAccess::ActiveEditorOrNull(shell); };
+    const auto line_at = [&editor](std::size_t line) {
+      const auto* viewport = editor();
+      return viewport != nullptr && line < viewport->line_count()
+                 ? std::string(viewport->lines().LineView(line))
+                 : std::string("<past end>");
     };
-    std::size_t marked_line = viewport.line_count();
-    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+    const auto line_count = [&editor]() {
+      const auto* viewport = editor();
+      return viewport != nullptr ? viewport->line_count() : std::size_t{0};
+    };
+    Expect(editor() != nullptr, "the fixture opens an editor tab");
+    std::size_t marked_line = line_count();
+    for (std::size_t i = 0; i < line_count(); ++i) {
       if (line_at(i) == marked) {
         marked_line = i;
         break;
       }
     }
-    Expect(marked_line < viewport.line_count(), "the fixture contains the marked line");
+    Expect(marked_line < line_count(), "the fixture contains the marked line");
     breakpoints.Set(file, marked_line);
     Expect(breakpoints.HasBreakpoint(file, marked_line), "the breakpoint is set");
 
     // Caret and a selection on the FIRST line, well above the marked one, so an
     // action that edits there moves the marked line without touching it.
-    viewport.MoveCursorTo(0, 0);
-    viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+    editor()->MoveCursorTo(0, 0);
+    editor()->MoveCursorTo(0, 2, /*extend_selection=*/true);
 
-    const std::string before = [&] {
-      std::string joined;
-      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
-        joined += line_at(i);
-        joined += '\n';
+    const auto joined = [&]() {
+      std::string out;
+      for (std::size_t i = 0; i < line_count(); ++i) {
+        out += line_at(i);
+        out += '\n';
       }
-      return joined;
-    }();
+      return out;
+    };
+    const std::string before = joined();
 
     WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
-    const std::string after = [&] {
-      std::string joined;
-      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
-        joined += line_at(i);
-        joined += '\n';
-      }
-      return joined;
-    }();
+    // The action may have opened a tab of its own; the buffer under test is no
+    // longer in front, so there is nothing to judge.
+    if (editor() == nullptr) {
+      continue;
+    }
+    const std::string after = joined();
     if (after == before) {
       continue;
     }
@@ -3295,14 +3312,14 @@ void TestWorkspaceShellEveryActionKeepsBreakpointsOnTheirLine() {
 
     // Where the marked text actually is now. If the action deleted it there is
     // nothing to require -- the breakpoint's line is gone with it.
-    std::size_t moved_to = viewport.line_count();
-    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+    std::size_t moved_to = line_count();
+    for (std::size_t i = 0; i < line_count(); ++i) {
       if (line_at(i) == marked) {
         moved_to = i;
         break;
       }
     }
-    if (moved_to >= viewport.line_count()) {
+    if (moved_to >= line_count()) {
       continue;
     }
     Expect(breakpoints.HasBreakpoint(file, moved_to),

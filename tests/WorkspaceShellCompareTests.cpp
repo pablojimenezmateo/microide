@@ -2739,6 +2739,13 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
       WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,
       WorkspaceShell::ActionId::Quit,
+      // These pop a NATIVE OS dialog (SDL's XDG-portal file chooser). A test must
+      // never open one -- and headless it also leaks SDL's per-call portal state,
+      // because with no portal to answer, SDL never runs the callback that frees
+      // it. That leak is what made the ASAN lane fail with a stack of nothing but
+      // SDL_malloc; with fast_unwind_on_malloc=0 these two frames appear.
+      WorkspaceShell::ActionId::Open,
+      WorkspaceShell::ActionId::ProjectOpen,
   };
 
   // ONE repository for the whole sweep: a git init + commit per action costs more
@@ -2766,26 +2773,34 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
                         std::string(spec.command_name));
       return;
     }
-    auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
-    Expect(compare.right_editable, "the working-tree pane is editable");
+    // Re-resolved on every use, never held. An action that opens a tab pushes onto
+    // the group's tab vector, and a reallocation there invalidates any reference
+    // into it -- a use-after-free only ASAN sees, and the exact hazard a sweep
+    // that runs EVERY registered action walks into.
+    const auto tab = [&shell]() { return WorkspaceShellTestAccess::ActiveCompareOrNull(shell); };
+    Expect(tab() != nullptr && tab()->right_editable, "the working-tree pane is editable");
     // A caret in the middle of the buffer with a selection, so the line ops, the
     // clipboard verbs and the selection verbs all have something to act on.
-    compare.right_viewport.MoveCursorTo(1, 2);
-    compare.right_viewport.MoveCursorTo(2, 3, /*extend_selection=*/true);
+    tab()->right_viewport.MoveCursorTo(1, 2);
+    tab()->right_viewport.MoveCursorTo(2, 3, /*extend_selection=*/true);
 
-    const auto pane_text = [&compare]() {
+    const auto pane_text = [&tab]() {
       std::string joined;
-      for (std::size_t i = 0; i < compare.right_viewport.line_count(); ++i) {
-        joined += compare.right_viewport.lines().LineView(i);
+      const auto* compare = tab();
+      if (compare == nullptr) return joined;
+      for (std::size_t i = 0; i < compare->right_viewport.line_count(); ++i) {
+        joined += compare->right_viewport.lines().LineView(i);
         joined += '\n';
       }
       return joined;
     };
     // What the surface would PAINT down the right pane: the diff model's own
     // right-side text, in row order.
-    const auto painted_text = [&compare]() {
+    const auto painted_text = [&tab]() {
       std::string joined;
-      for (const auto& row : compare.model.rows) {
+      const auto* compare = tab();
+      if (compare == nullptr) return joined;
+      for (const auto& row : compare->model.rows) {
         if (row.right_line > 0) {
           joined += row.right_text;
           joined += '\n';
@@ -2803,10 +2818,9 @@ void TestWorkspaceShellCompareEveryActionKeepsTheDiffModelInSync() {
     WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
     // The action may have swapped the active tab even though it is not in the
-    // skip list (opening a picker, say); only judge it while the compare tab is
+    // skip list (opening a picker, say); only judge it while a compare tab is
     // still the one in front.
-    auto* still_compare = WorkspaceShellTestAccess::ActiveCompareOrNull(shell);
-    if (still_compare != &compare) {
+    if (tab() == nullptr) {
       continue;
     }
     const std::string after = pane_text();

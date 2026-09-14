@@ -174,6 +174,17 @@
   static WorkspaceShell::CompareTabState& ActiveCompare(WorkspaceShell& shell) {
     return shell.context_.current_project_state.focused_group().open_tabs[shell.context_.current_project_state.focused_group().active_tab_index].compare.value();
   }
+  // Null when the front tab is not an editor tab (or there is none). An action
+  // sweep must re-resolve rather than hold a reference: opening a tab pushes onto
+  // the group's tab vector, and a reallocation there dangles every reference into it.
+  static editor::TextViewport* ActiveEditorOrNull(WorkspaceShell& shell) {
+    auto& group = shell.context_.current_project_state.focused_group();
+    if (group.active_tab_index >= group.open_tabs.size()) {
+      return nullptr;
+    }
+    auto& editor_tab = group.open_tabs[group.active_tab_index].editor_state;
+    return editor_tab.has_value() ? &editor_tab->viewport : nullptr;
+  }
   // Null when the front tab is not a compare tab (or there is none) -- an action
   // sweep needs to know it is still looking at the same surface before judging it.
   static WorkspaceShell::CompareTabState* ActiveCompareOrNull(WorkspaceShell& shell) {

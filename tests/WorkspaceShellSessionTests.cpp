@@ -1919,6 +1919,13 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
       WorkspaceShell::ActionId::CloseGroup,
       WorkspaceShell::ActionId::ProjectClose,
       WorkspaceShell::ActionId::Quit,
+      // These pop a NATIVE OS dialog (SDL's XDG-portal file chooser). A test must
+      // never open one -- and headless it also leaks SDL's per-call portal state,
+      // because with no portal to answer, SDL never runs the callback that frees
+      // it. That leak is what made the ASAN lane fail with a stack of nothing but
+      // SDL_malloc; with fast_unwind_on_malloc=0 these two frames appear.
+      WorkspaceShell::ActionId::Open,
+      WorkspaceShell::ActionId::ProjectOpen,
   };
 
   TemporaryDirectory temp_dir;
@@ -1949,71 +1956,71 @@ void TestWorkspaceShellMergeEveryActionKeepsConflictTrackingHonest() {
                         std::string(spec.command_name));
       return;
     }
-    auto& merge = WorkspaceShellTestAccess::ActiveMerge(shell);
-    if (merge.conflicts.empty()) {
+    // Re-resolved on every use, never held. An action that opens a tab pushes onto
+    // the group's tab vector, and a reallocation there invalidates any reference
+    // into it -- a use-after-free only ASAN sees, and the exact hazard a sweep
+    // that runs EVERY registered action walks into.
+    const auto tab = [&shell]() { return WorkspaceShellTestAccess::ActiveMergeOrNull(shell); };
+    if (tab() == nullptr || tab()->conflicts.empty()) {
       Expect(false, "the merge fixture must produce a conflict to track");
       return;
     }
-    auto& viewport = merge.result_viewport;
-    const auto line_at = [&viewport](std::size_t line) {
-      return line < viewport.line_count() ? std::string(viewport.lines().LineView(line))
-                                          : std::string("<past end>");
+    const auto line_at = [&tab](std::size_t line) {
+      const auto* merge = tab();
+      return merge != nullptr && line < merge->result_viewport.line_count()
+                 ? std::string(merge->result_viewport.lines().LineView(line))
+                 : std::string("<past end>");
+    };
+    const auto joined = [&]() {
+      std::string out;
+      const auto* merge = tab();
+      if (merge == nullptr) return out;
+      for (std::size_t i = 0; i < merge->result_viewport.line_count(); ++i) {
+        out += line_at(i);
+        out += '\n';
+      }
+      return out;
     };
 
     // Caret on the FIRST line, above every conflict, with a selection inside that
     // line so the clipboard and selection verbs have something to act on.
-    viewport.MoveCursorTo(0, 0);
-    viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+    tab()->result_viewport.MoveCursorTo(0, 0);
+    tab()->result_viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
 
     std::vector<std::pair<std::size_t, std::string>> tracked_before;
-    for (const auto& conflict : merge.conflicts) {
+    for (const auto& conflict : tab()->conflicts) {
       if (conflict.valid) {
         tracked_before.emplace_back(conflict.start_line, line_at(conflict.start_line));
       }
     }
     Expect(!tracked_before.empty(), "the fixture starts with a valid tracked conflict");
 
-    const std::string text_before = [&] {
-      std::string joined;
-      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
-        joined += line_at(i);
-        joined += '\n';
-      }
-      return joined;
-    }();
+    const std::string text_before = joined();
 
     WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
 
-    auto* still_merge = WorkspaceShellTestAccess::ActiveMergeOrNull(shell);
-    if (still_merge != &merge) {
+    if (tab() == nullptr) {
       continue;  // the action left the merge tab; not a question about tracking
     }
-    const std::string text_after = [&] {
-      std::string joined;
-      for (std::size_t i = 0; i < viewport.line_count(); ++i) {
-        joined += line_at(i);
-        joined += '\n';
-      }
-      return joined;
-    }();
+    const std::string text_after = joined();
     if (text_after == text_before) {
       continue;  // not an edit for this caret
     }
     ++mutating_actions;
 
     std::size_t index = 0;
-    for (const auto& conflict : merge.conflicts) {
+    for (const auto& conflict : tab()->conflicts) {
       if (!conflict.valid) {
         ++index;
         continue;  // deliberately dropped: the edit reached into the conflict
       }
       if (index >= tracked_before.size()) break;
       const std::string& expected = tracked_before[index].second;
-      Expect(conflict.start_line < viewport.line_count(),
+      Expect(conflict.start_line < tab()->result_viewport.line_count(),
              std::string("`") + std::string(spec.command_name) +
                  "` left conflict " + std::to_string(index) + " tracked at line " +
                  std::to_string(conflict.start_line) + ", past the end of a " +
-                 std::to_string(viewport.line_count()) + "-line buffer");
+                 std::to_string(tab()->result_viewport.line_count()) + "-line buffer");
       Expect(line_at(conflict.start_line) == expected,
              std::string("`") + std::string(spec.command_name) +
                  "` moved the result buffer but left conflict " + std::to_string(index) +
