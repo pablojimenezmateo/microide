@@ -100,12 +100,56 @@ std::optional<std::filesystem::path> ContainPath(
       return std::nullopt;
     }
   }
+  // Tier 3: a DANGLING symlink leaf. weakly_canonical resolves symlinks only in
+  // the path's EXISTING prefix, and a dangling link does not exist as far as
+  // exists() is concerned -- it follows the link and finds nothing. So a leaf
+  // that is itself a link to a missing file outside the root was appended
+  // verbatim, landed inside the root, and passed as contained. Writing to it
+  // follows the link and creates the file on the far side: the same escape tier
+  // 2 closes for a symlinked PARENT, with the link one component further down.
+  //
+  // Only a dangling leaf reaches this loop; a live symlink was already resolved
+  // above, so the common case pays one lstat. The hop budget bounds a chain of
+  // dangling links, and exhausting it fails closed.
+  constexpr int kMaxDanglingSymlinkHops = 16;
+  std::filesystem::path resolved = canonical;
+  bool hops_exhausted = true;
+  for (int hop = 0; hop <= kMaxDanglingSymlinkHops; ++hop) {
+    std::error_code link_error;
+    const std::filesystem::file_status status =
+        std::filesystem::symlink_status(resolved, link_error);
+    if (link_error || !std::filesystem::is_symlink(status)) {
+      hops_exhausted = false;
+      break;
+    }
+    if (hop == kMaxDanglingSymlinkHops) {
+      break;  // a chain this long is a loop or an attack; fail closed below.
+    }
+    std::filesystem::path target = std::filesystem::read_symlink(resolved, link_error);
+    if (link_error) {
+      return std::nullopt;  // cannot tell where it points: fail closed.
+    }
+    if (target.is_relative()) {
+      target = resolved.parent_path() / target;
+    }
+    std::error_code hop_error;
+    resolved = std::filesystem::weakly_canonical(target, hop_error);
+    if (hop_error) {
+      return std::nullopt;  // fail closed, as tier 2 does.
+    }
+  }
+  if (hops_exhausted) {
+    return std::nullopt;
+  }
+
   for (const std::filesystem::path& root : allowed_roots) {
     const CanonicalRoot canonical_root = CanonicalRootResolved(root);
     if (!canonical_root.ok) {
       continue;
     }
-    if (WithinRoot(canonical, canonical_root.path)) {
+    // Containment is decided on where the path actually LANDS (`resolved`); the
+    // path handed back is the one the caller named, which opens the same file.
+    if (WithinRoot(resolved, canonical_root.path)) {
       return canonical;
     }
   }
