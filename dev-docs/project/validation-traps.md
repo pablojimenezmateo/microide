@@ -1114,6 +1114,36 @@ already published. When a hook takes "what things looked like BEFORE", check
 whether the applied-edit span or the caret's own recorded revision already says
 it; that is usually why the call could not live at the chokepoint.
 
+### The fourth seam: which verbs are multi-caret aware?
+
+A verb that acts on the primary caret and silently ignores the rest looks
+identical to a working one in every single-caret test, and the caret set is the
+one piece of editor state a fixture almost never varies.
+
+Classify instead of read: put three cursors on three marked lines, run EVERY
+registered action, and count how many of the three neighbourhoods changed. Of the
+thirteen actions that edited the buffer, twelve came back 3 and one came back 1 --
+`toggle-block-comment`, which read `selection_range()` and `cursor_line()` while
+every other shaping verb unions the caret set through `ResolveLineRanges`.
+
+Two things the probe needs to be readable:
+
+- **Mark the lines.** Comparing whole buffers cannot tell "acted on one caret"
+  from "acted on all three"; comparing the text of each caret's own marked line
+  can.
+- **Read the false negatives, do not fix them.** `move-line`, `copy-line` and
+  `insert-line` all report 0 because they relocate or duplicate lines without
+  changing the marked line's TEXT -- their line-count delta (7 -> 10 for three
+  carets) is what says they worked. A probe that "fixed" those would have buried
+  the one real finding among four invented ones.
+
+And the fix's own trap, caught by `tools/sweep-editor-invariants.py` rather than
+by any unit test: the multi-caret path must leave each region's inner text
+SELECTED, because that is what the second press acts on. Restoring the carets as
+bare positions made the toggle act on whole lines the second time and nest a
+second pair of markers inside the first (`/* also /* short */ */`) -- a
+self-inverse verb that was no longer its own inverse.
+
 ### What came back clean on 2026-09-14, so it need not be redone
 
 Negative results are cheap to repeat and expensive to rediscover, so: the
