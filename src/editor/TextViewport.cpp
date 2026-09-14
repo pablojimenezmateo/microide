@@ -1290,7 +1290,18 @@ void TextViewport::SelectLineAtCursor() {
   if (document_->lines.empty()) {
     return;
   }
-  SelectOnCursorLine(0, document_->lines.LineLength(cursor_line_));
+  // Through the START of the next line, not to end-of-line: VS Code's
+  // `CursorMoveCommands.line` selects `[line, 1]`..`[line + 1, 1]`, so Delete
+  // after a triple-click removes the line instead of leaving a blank one, and a
+  // copy carries the newline. The drag that continues the gesture already used
+  // this range (LineRangeAt); only the initiating click did not, so triple-click
+  // and triple-click-then-drag-one-line disagreed about their own first line.
+  const SelectionRange range = LineRangeAt(cursor_line_);
+  selection_anchor_ = range.start;
+  cursor_line_ = range.end.line;
+  cursor_column_ = range.end.column;
+  preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
+  EnsureCursorVisible();
 }
 
 void TextViewport::SetDocumentPath(const std::filesystem::path& path) {

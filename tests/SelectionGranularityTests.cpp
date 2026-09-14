@@ -49,7 +49,9 @@ void TestClickCountChoosesTheGranularity() {
 
   granularity::ApplyClick(state, viewport, 3);
   Expect(granularity::DragIsGranular(state), "a triple click drags by lines");
-  Expect(Selected(viewport) == "alpha bravo", "a triple click selects the line");
+  // Through the start of the next line, as VS Code's does -- so Delete after a
+  // triple-click removes the line rather than blanking it.
+  Expect(Selected(viewport) == "alpha bravo\n", "a triple click selects the line");
 }
 
 // Dragging forward from a double-clicked word covers whole words, and the
@@ -103,7 +105,7 @@ void TestLineDragCoversWholeLines() {
   InteractionState state;
   viewport.MoveCursorTo(1, 1);
   granularity::ApplyClick(state, viewport, 3);
-  Expect(Selected(viewport) == "two", "the click seeds on line two");
+  Expect(Selected(viewport) == "two\n", "the click seeds on line two");
 
   // End-exclusive at the start of the line after the pointer's, so a downward
   // line drag carries the newlines and a delete removes whole lines rather than
@@ -113,7 +115,7 @@ void TestLineDragCoversWholeLines() {
          "the drag covers whole lines downward, got: <" + Selected(viewport) + ">");
 
   granularity::ExtendToPointer(state, viewport, TextPosition{0, 1});
-  Expect(Selected(viewport) == "one\ntwo",
+  Expect(Selected(viewport) == "one\ntwo\n",
          "dragging above the seed keeps the seed line, got: <" + Selected(viewport) + ">");
 }
 
@@ -135,6 +137,31 @@ void TestClickWithNothingUnderItLeavesCharacterGranularity() {
          "a double click on an empty line falls back to character granularity");
 }
 
+// Triple-click then Delete removes the line, rather than leaving a blank one
+// where it was: the whole point of carrying the terminator.
+void TestTripleClickDeleteRemovesTheLine() {
+  TextViewport viewport = MakeViewport("one\ntwo\nthree\n");
+  InteractionState state;
+  viewport.MoveCursorTo(1, 1);
+  granularity::ApplyClick(state, viewport, 3);
+  Expect(viewport.DeleteSelectedText(), "the line selection deletes");
+  Expect(viewport.lines().size() == 3 && viewport.lines()[0] == "one" &&
+             viewport.lines()[1] == "three",
+         "the line is gone, not blanked");
+}
+
+// The last line has no next line to end at, so it selects to end-of-line and a
+// delete there leaves the buffer's final empty line alone.
+void TestTripleClickOnTheLastLineStopsAtEndOfLine() {
+  TextViewport viewport = MakeViewport("one\ntwo");
+  InteractionState state;
+  viewport.MoveCursorTo(1, 1);
+  granularity::ApplyClick(state, viewport, 3);
+  Expect(Selected(viewport) == "two",
+         "the last line selects without a terminator it does not have, got: <" +
+             Selected(viewport) + ">");
+}
+
 }  // namespace
 
 void RegisterSelectionGranularityTests(std::vector<TestCase>& tests) {
@@ -149,6 +176,10 @@ void RegisterSelectionGranularityTests(std::vector<TestCase>& tests) {
   AddTest(tests, "SelectionGranularity/LineDragCoversWholeLines", TestLineDragCoversWholeLines);
   AddTest(tests, "SelectionGranularity/ClickWithNothingUnderItLeavesCharacterGranularity",
           TestClickWithNothingUnderItLeavesCharacterGranularity);
+  AddTest(tests, "SelectionGranularity/TripleClickDeleteRemovesTheLine",
+          TestTripleClickDeleteRemovesTheLine);
+  AddTest(tests, "SelectionGranularity/TripleClickOnTheLastLineStopsAtEndOfLine",
+          TestTripleClickOnTheLastLineStopsAtEndOfLine);
 }
 
 }  // namespace microide::tests
