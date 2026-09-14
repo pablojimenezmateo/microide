@@ -109,9 +109,21 @@ FIXTURES: dict[str, str] = {
     "empty.txt": "",
 }
 
-# Caret positions probed per fixture, as 1-based (line, column). `None` means
-# "select the whole buffer first" -- the other half of every line op's contract.
-CARETS: list[tuple[int, int] | None] = [(1, 1), (2, 1), (3, 3), (99, 1), None]
+# What the caret set looks like before the command runs.
+#
+# A `(line, column)` tuple is a single caret there; `None` selects the whole
+# buffer -- the other half of every line op's contract. `MULTI_CURSOR` puts
+# SEVERAL cursors on the buffer first, which is the case every property here was
+# blind to: each probe reset to one caret, so a command could be correct for one
+# cursor and lose data for three and the sweep would stay green. That is not
+# hypothetical -- a multi-caret line cut deleted every cursor's line while
+# copying only the primary's, which is exactly an `inverse` (cut/paste) failure
+# this now reaches.
+MULTI_CURSOR = "multi-cursor"
+
+CARETS: list[tuple[int, int] | None | str] = [
+    (1, 1), (2, 1), (3, 3), (99, 1), None, MULTI_CURSOR,
+]
 
 
 class Failure(Exception):
@@ -254,9 +266,17 @@ def diff(expected: str, actual: str) -> str:
                                         "expected", "actual"))
 
 
-def caret_steps(caret: tuple[int, int] | None) -> list[str]:
+def caret_steps(caret: tuple[int, int] | None | str) -> list[str]:
+    if caret is MULTI_CURSOR:
+        # Ctrl+D twice: the first press selects the word under the caret, each
+        # later press adds the next occurrence. Every fixture contains a repeated
+        # token, so this reliably lands two or three ranged cursors. A fixture
+        # where it finds only one is still a valid (single-cursor) probe rather
+        # than a broken one.
+        return ["goto 1:1", "add-cursor-next-match", "add-cursor-next-match"]
     if caret is None:
         return ["select-all"]
+    assert isinstance(caret, tuple)
     return [f"goto {caret[0]}:{caret[1]}"]
 
 
@@ -516,7 +536,21 @@ def sweep(open_session, project: Path, only: str | None,
                   path = project / f"case{case_index:04d}_{stem}{suffix}"
                   check_undo(driver, path, original, prefix, command, label, failures,
                              effect)
-                  if inverse is not None and not (needs_selection and caret is not None):
+                  # MULTI_CURSOR leaves ranged selections, so it counts as "a
+                  # selection" for the pairs whose inverse only holds over one.
+                  has_selection = caret is not None
+                  # The line moves are NOT inverse under several cursors, and that
+                  # is the product's rule rather than a defect: `MoveLines` drops
+                  # only the region blocked at the buffer edge and moves the rest
+                  # (VS Code does the same). So up-then-down with one region at the
+                  # top moves the OTHER region up, then moves both down, and the
+                  # file legitimately does not come back. A single caret never
+                  # reaches this: one blocked caret leaves no regions at all, the
+                  # op is a no-op, and the inverse holds trivially.
+                  skip_inverse = (caret is MULTI_CURSOR
+                                  and command.startswith("move-line"))
+                  if inverse is not None and not skip_inverse and not (
+                          needs_selection and has_selection):
                       path2 = project / f"case{case_index:04d}b_{stem}{suffix}"
                       check_inverse(driver, path2, original, prefix, command, inverse,
                                     label, failures)
