@@ -28,12 +28,15 @@
 
 #include "editor/EditTypes.h"
 #include "editor/FoldingModel.h"
+#include "editor/WrappedCaretRow.h"
 #include "editor/TextViewport.h"
 
 namespace microide::tests {
 namespace {
 
 using microide::editor::FoldingModel;
+using microide::editor::WrapRowAffinity;
+using microide::editor::WrappedRowPaintsCaret;
 using microide::editor::TextPosition;
 using microide::editor::TextViewport;
 
@@ -316,6 +319,70 @@ void TestWrapWalkSkipsACollapsedFoldOneRowPerPress() {
   }
 }
 
+// EXACTLY ONE row paints any given caret. The paint loop used to decide with a
+// first-row-only heuristic, which drew a caret on a wrap boundary twice and a
+// caret at the end of a wrapped line not at all. Stated as a rule
+// (WrappedRowPaintsCaret) it can be checked the way the bug shows up: sweep every
+// visual column across a whole line's rows and count the rows that claim it.
+void TestExactlyOneWrappedRowPaintsEachCaretColumn() {
+  // A 24-cell line over 8-cell rows: rows [0,8) [8,16) [16,24).
+  struct Row {
+    std::size_t start;
+    std::size_t end;
+    bool first;
+    bool last;
+  };
+  const std::vector<Row> rows = {{0, 8, true, false}, {8, 16, false, false},
+                                 {16, 24, false, true}};
+
+  for (const WrapRowAffinity affinity :
+       {WrapRowAffinity::kNextRow, WrapRowAffinity::kPreviousRow}) {
+    for (std::size_t column = 0; column <= 24; ++column) {
+      int claimed = 0;
+      for (const Row& row : rows) {
+        if (WrappedRowPaintsCaret(column, row.start, row.end, row.first, row.last, affinity)) {
+          ++claimed;
+        }
+      }
+      Expect(claimed == 1,
+             "column " + std::to_string(column) + " with affinity " +
+                 (affinity == WrapRowAffinity::kNextRow ? "next" : "previous") +
+                 " is claimed by " + std::to_string(claimed) +
+                 " rows; exactly one row must paint each caret");
+    }
+  }
+
+  // The two specific answers the affinity decides, spelled out so a change to the
+  // tiebreak is visible rather than merely still-one-row.
+  Expect(!WrappedRowPaintsCaret(8, 0, 8, true, false, WrapRowAffinity::kNextRow),
+         "a boundary caret preferring the NEXT row is not painted at the previous "
+         "row's trailing edge");
+  Expect(WrappedRowPaintsCaret(8, 8, 16, false, false, WrapRowAffinity::kNextRow),
+         "it is painted at the leading edge of the row that begins there");
+  Expect(WrappedRowPaintsCaret(8, 0, 8, true, false, WrapRowAffinity::kPreviousRow),
+         "a boundary caret preferring the PREVIOUS row is painted at its trailing edge");
+  Expect(!WrappedRowPaintsCaret(8, 8, 16, false, false, WrapRowAffinity::kPreviousRow),
+         "and not again at the start of the row below");
+
+  // End of a wrapped line: the last row claims it whichever affinity says, because
+  // there is no row after it to hand the caret to. This is the one the old
+  // heuristic dropped outright.
+  for (const WrapRowAffinity affinity :
+       {WrapRowAffinity::kNextRow, WrapRowAffinity::kPreviousRow}) {
+    Expect(WrappedRowPaintsCaret(24, 16, 24, false, true, affinity),
+           "the end of a wrapped line is painted on the line's last row");
+  }
+
+  // An unwrapped line is one row that is both first and last, so the rule reduces
+  // to "on this row, end-of-line included".
+  Expect(WrappedRowPaintsCaret(0, 0, 5, true, true, WrapRowAffinity::kNextRow),
+         "column 0 of an unwrapped line");
+  Expect(WrappedRowPaintsCaret(5, 0, 5, true, true, WrapRowAffinity::kNextRow),
+         "the end of an unwrapped line");
+  Expect(!WrappedRowPaintsCaret(6, 0, 5, true, true, WrapRowAffinity::kNextRow),
+         "past the end of an unwrapped line");
+}
+
 }  // namespace
 
 void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests) {
@@ -327,6 +394,8 @@ void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests) {
           TestVisualRowForLineAgreesWithTheCaretRowAtColumnZero);
   AddTest(tests, "EditorWrapNavigation/WalkSkipsACollapsedFoldOneRowPerPress",
           TestWrapWalkSkipsACollapsedFoldOneRowPerPress);
+  AddTest(tests, "EditorWrapNavigation/ExactlyOneWrappedRowPaintsEachCaretColumn",
+          TestExactlyOneWrappedRowPaintsEachCaretColumn);
   AddTest(tests, "EditorWrapNavigation/TogglingWrapKeepsTheCaretsTextPosition",
           TestTogglingWrapKeepsTheCaretsTextPosition);
 }

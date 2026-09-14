@@ -1,5 +1,7 @@
 #include "editor/EditorViewRenderer.h"
 
+#include "editor/WrappedCaretRow.h"
+
 #include <algorithm>
 #include <array>
 #include <cctype>
@@ -392,7 +394,12 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
   const bool soft_wrap = viewport.soft_wrap();
   // 2026-05-15 perf deep-dive round 2 Finding 10: span accessor avoids the per-frame vector
   // allocation that secondary_carets() performed when the caret set is stable.
-  const std::span<const TextPosition> secondary_carets = viewport.secondary_caret_positions();
+  // The RANGED view, not secondary_caret_positions(): each secondary caret carries
+  // its own wrap affinity, and the paint loop needs it to decide which of the two
+  // rows a caret sitting exactly on a wrap boundary belongs to. Same underlying
+  // vector, so still no per-frame allocation.
+  const std::span<const TextViewportUndoHistory::SecondaryCaret> secondary_carets =
+      viewport.secondary_caret_range_view();
   const auto selection = viewport.selection_range();
   char line_number_buf[20];
   // Skip the ToLower allocation entirely on the common no-search frame; reuse
@@ -1127,20 +1134,47 @@ void EditorViewRenderer::Render(SDL_Renderer* renderer,
 
     if (draw_caret) {
       while (secondary_caret_index < secondary_carets.size() &&
-             secondary_carets[secondary_caret_index].line < line_index) {
+             secondary_carets[secondary_caret_index].position.line < line_index) {
         ++secondary_caret_index;
       }
+      // Where this row sits among its logical line's wrapped rows. Resolved once
+      // per row rather than per caret, and only when there is a secondary caret on
+      // the line at all. Without soft wrap a row IS its line, so both are true and
+      // the rule below reduces to "paint it if it is on this row".
+      bool row_is_line_first = true;
+      bool row_is_line_last = true;
+      if (soft_wrap && secondary_caret_index < secondary_carets.size() &&
+          secondary_carets[secondary_caret_index].position.line == line_index) {
+        row_is_line_first = row_meta.visual_start == 0;
+        row_is_line_last =
+            visual_row_index + 1 >= viewport.visual_line_count() ||
+            viewport.WrappedVisualRowLayout(visual_row_index + 1).line_index != line_index;
+      }
       for (std::size_t idx = secondary_caret_index;
-           idx < secondary_carets.size() && secondary_carets[idx].line == line_index; ++idx) {
+           idx < secondary_carets.size() &&
+           secondary_carets[idx].position.line == line_index;
+           ++idx) {
         const std::size_t row_start_visual_sc = row_visual_origin;
         const std::size_t row_end_visual_sc = row_meta.visual_end;
         const std::size_t visual_column = TextLayout::VisualColumnFromLayoutClipped(
-            row_layout, row_start_visual_sc, row_end_visual_sc, secondary_carets[idx].column);
-        const bool caret_hits_last_column = visual_column == row_end_visual_sc &&
-                                            row_end_visual_sc == row_layout.visual_columns;
-        if (visual_column < row_start_visual_sc ||
-            (visual_column >= row_end_visual_sc && !caret_hits_last_column)) {
-          continue;
+            row_layout, row_start_visual_sc, row_end_visual_sc,
+            secondary_carets[idx].position.column);
+        if (soft_wrap) {
+          if (!WrappedRowPaintsCaret(visual_column, row_start_visual_sc, row_end_visual_sc,
+                                     row_is_line_first, row_is_line_last,
+                                     secondary_carets[idx].wrap_affinity)) {
+            continue;
+          }
+        } else {
+          // Unwrapped rows are horizontally SCROLLED rather than split, so a row's
+          // absolute end column and its cell count only coincide at scroll 0; the
+          // clip below is the long-standing behaviour and is left alone.
+          const bool caret_hits_last_column = visual_column == row_end_visual_sc &&
+                                              row_end_visual_sc == row_layout.visual_columns;
+          if (visual_column < row_start_visual_sc ||
+              (visual_column >= row_end_visual_sc && !caret_hits_last_column)) {
+            continue;
+          }
         }
         const float caret_x =
             row_text_x + static_cast<float>(visual_column - row_start_visual_sc) * char_width_px +
