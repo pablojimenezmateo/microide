@@ -2868,7 +2868,45 @@ void TestTerminalSessionScreenAgreesWithPyteReference() {
              std::to_string(cases.size()) + " cases differ:" + report);
 }
 
+// A double-width glyph on a terminal narrower than two columns has nowhere to
+// put its second column, and wrapping does not help -- the next row is exactly
+// as narrow. It must degrade to a single cell, not run the cursor and the line
+// past the right margin. A one-column panel is reachable by dragging the divider
+// and a CJK prompt puts a wide glyph there on the first keystroke.
+void TestWideGlyphOnANarrowScreenStaysInsideTheMargin() {
+  for (const std::size_t columns : {std::size_t{1}, std::size_t{2}}) {
+    microide::terminal::TerminalSession session;
+    TerminalSessionTestAccess::Reset(session, 3, columns);
+    TerminalSessionTestAccess::AppendOutput(session, "\xe6\x97\xa5");  // U+65E5, width 2
+
+    Expect(session.cursor_column() <= columns,
+           "the cursor must stay within the screen on a " + std::to_string(columns) +
+               "-column terminal, got column " + std::to_string(session.cursor_column()));
+    const auto lines = session.SnapshotLines();
+    for (const auto& line : lines) {
+      Expect(line.cells.size() <= columns,
+             "no line may exceed the screen width on a " + std::to_string(columns) +
+                 "-column terminal, got " + std::to_string(line.cells.size()) + " cells");
+    }
+    Expect(session.cursor_row() < session.LineCount(),
+           "the cursor row must name a line that exists");
+  }
+
+  // Repeated wide glyphs must not walk the cursor further out with each one.
+  microide::terminal::TerminalSession session;
+  TerminalSessionTestAccess::Reset(session, 3, 1);
+  for (int i = 0; i < 8; ++i) {
+    TerminalSessionTestAccess::AppendOutput(session, "\xe6\x97\xa5");
+    Expect(session.cursor_column() <= 1,
+           "repeated wide glyphs must not walk the cursor past the margin, got column " +
+               std::to_string(session.cursor_column()) + " after " + std::to_string(i + 1) +
+               " glyphs");
+  }
+}
+
 void RegisterTerminalSessionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "TerminalSession/WideGlyphOnANarrowScreenStaysInsideTheMargin",
+          TestWideGlyphOnANarrowScreenStaysInsideTheMargin);
   AddTest(tests, "TerminalSession/ScreenAgreesWithPyteReference",
           TestTerminalSessionScreenAgreesWithPyteReference);
   AddTest(tests, "TerminalSession/SwallowsUnknownCsiFinals",

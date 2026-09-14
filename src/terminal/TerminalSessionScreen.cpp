@@ -335,7 +335,21 @@ void TerminalSession::PutGlyphLocked(std::string_view glyph) {
     return;
   }
 
-  const std::size_t advance = width == 2 ? 2 : 1;
+  std::size_t advance = width == 2 ? 2 : 1;
+  // A screen narrower than the glyph has nowhere to put its second column, and
+  // wrapping does not help -- the next row is exactly as narrow. Write it as a
+  // single cell, which is what the no-autowrap branch below already does for a
+  // glyph that will not fit.
+  //
+  // Without this the wrap below "made room" that does not exist: on a one-column
+  // terminal a double-width glyph advanced the cursor to column 2 and sized the
+  // line to two cells, so cursor_column() reported a column the screen does not
+  // have and the caret drew outside the pane. A one-column terminal is reachable
+  // by dragging the panel divider, and a CJK prompt puts a wide glyph there on
+  // the first keystroke.
+  if (columns_ > 0 && advance > columns_) {
+    advance = columns_;
+  }
 
   // Ensure the whole glyph fits on the current row before writing. A
   // double-width glyph cannot straddle the right margin.

@@ -1042,6 +1042,7 @@ add_executable(microide_tests
   tests/RenderViewModelBuilderTests.cpp
   tests/TerminalBackendTests.cpp
   tests/TerminalLifecycleStressTests.cpp
+  tests/TerminalInvariantSweepTests.cpp
   tests/TerminalSessionTests.cpp
   tests/TerminalSearchTests.cpp
   tests/ThemeTests.cpp
