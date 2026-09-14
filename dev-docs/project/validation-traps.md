@@ -1073,6 +1073,35 @@ which revision of it too.
 **A refused gesture costs the user a repeat; a wrong one costs them the text.**
 That is the tie-breaker whenever a stale gesture is ambiguous.
 
+### The third seam: which ROW SPACE is this number in?
+
+Five call sites, all wrong the same way, all found by asking one question of
+every place that pairs a row total with a scroll position.
+
+`TextViewport::scroll_line()` is a VISUAL row -- ClampScrollState bounds it
+against `visual_line_count()` -- while `line_count()` is logical lines. Soft wrap
+and collapsed folds are exactly when the two differ, and both
+`ComputeScrollSurfaceLayout` and `ComputeTextGridInteractionLayout` CLAMP the
+scroll they are handed against the total they are handed, so mixing the spaces
+does not merely mis-scale something, it silently moves the scroll:
+
+- the editor's vertical scrollbar reported **zero travel** for a twelve-line file
+  wrapping to forty-one rows in a fourteen-row pane -- no scrollbar at all for a
+  document that needed one -- and where it did appear, dragging it to the bottom
+  left the end of the document unreachable;
+- `selection_autoscroll::Step` stopped a drag-select at visual row
+  (line_count - 1);
+- hover hit-testing resolved against a scroll that had been clamped back down;
+- two hand-copied merge result layouts disagreed with the shared one they were
+  copied from.
+
+Guarded now by `CheckGridRowTotalsAreVisualRows`. **That lint went green over an
+injected regression on its first run**: it searched the raw call text, an argument
+list can span a comment, and the comment explaining the fix contains the words
+`visual_line_count()` -- so the rule found its own explanation and skipped the
+violation three lines below it. A lint that reads comments as code is a lint that
+can be talked out of firing by the fix it is guarding.
+
 **The generalisation worth keeping.** Every one of the six is the same
 sentence: *state derived from buffer positions, a hook that follows an edit or a
 caret move, and a hand-maintained list of sites that call it.* The bug is never
