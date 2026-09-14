@@ -97,12 +97,42 @@ void WorkspaceShell::ToggleBufferSearchOption(BufferFindToggle toggle) {
   RefreshBufferSearch();
 }
 
-void WorkspaceShell::RefreshBufferSearch() {
+void WorkspaceShell::RefreshBufferSearch() { RefreshBufferSearch(/*reveal=*/true); }
+
+// True when `matches` still describes the buffer in front of the user. Cheap
+// enough (a pointer and a counter) to ask before every use.
+bool WorkspaceShell::BufferSearchMatchesAreFresh() const {
+  const auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
+  const editor::TextViewport* viewport = ActiveEditorViewport();
+  return buffer_search.matches_viewport == static_cast<const void*>(viewport) &&
+         (viewport == nullptr ||
+          buffer_search.matches_content_revision == viewport->content_revision());
+}
+
+// An edit moved the buffer the find widget is describing. Recompute the match set
+// WITHOUT revealing: the caret belongs to whatever the user is typing, and
+// yanking it onto a match after every keystroke is not a find, it is a fight.
+// Costs nothing while the widget is closed, which is nearly always.
+void WorkspaceShell::RefreshBufferSearchAfterBufferEdit() {
+  const OverlayMode mode = context_.current_project_state.overlay.mode;
+  if (mode != OverlayMode::BufferSearch && mode != OverlayMode::BufferReplace) {
+    return;
+  }
+  if (context_.current_project_state.overlay.workflow.buffer_search.query.text().empty() ||
+      BufferSearchMatchesAreFresh()) {
+    return;
+  }
+  RefreshBufferSearch(/*reveal=*/false);
+}
+
+void WorkspaceShell::RefreshBufferSearch(bool reveal) {
   editor::TextViewport* viewport = ActiveEditorViewport();
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (viewport == nullptr) {
     buffer_search.matches.clear();
     ++buffer_search.matches_revision;
+    buffer_search.matches_viewport = nullptr;
+    buffer_search.matches_content_revision = 0;
     buffer_search.selected_index = 0;
     buffer_search.incremental = {};
     return;
@@ -156,6 +186,8 @@ void WorkspaceShell::RefreshBufferSearch() {
     incremental.whole_word = buffer_search.whole_word;
   }
   ++buffer_search.matches_revision;
+  buffer_search.matches_viewport = viewport;
+  buffer_search.matches_content_revision = content_revision;
 
   // The current match is the first one at or after the caret (the selection's
   // start when there is one), wrapping to the top -- VS Code searches from the
@@ -179,7 +211,9 @@ void WorkspaceShell::RefreshBufferSearch() {
       buffer_search.selected_index =
           static_cast<std::size_t>(at_or_after - buffer_search.matches.begin());
     }
-    RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
+    if (reveal) {
+      RevealBufferSearchMatch(buffer_search.matches[buffer_search.selected_index]);
+    }
   }
   ResetOverlayScroll();
   RequestOverlayRedraw();
@@ -256,6 +290,14 @@ void WorkspaceShell::MoveBufferSearchSelection(int delta) {
 }
 
 void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
+  // The match set is a set of LINE:COLUMN ranges, so replacing through a stale one
+  // rewrites whatever text has since inherited those coordinates -- silently, and
+  // leaving the real match untouched. The announced edit paths keep it fresh
+  // (RefreshBufferSearchAfterBufferEdit); this covers the ones that do not, such
+  // as a reload from disk under an open widget.
+  if (!BufferSearchMatchesAreFresh()) {
+    RefreshBufferSearch(/*reveal=*/false);
+  }
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (buffer_search.matches.empty() ||
       buffer_search.selected_index >= buffer_search.matches.size()) {
@@ -303,6 +345,9 @@ void WorkspaceShell::ReplaceCurrentBufferSearchMatch() {
 }
 
 void WorkspaceShell::ReplaceAllBufferSearchMatches() {
+  if (!BufferSearchMatchesAreFresh()) {
+    RefreshBufferSearch(/*reveal=*/false);
+  }
   auto& buffer_search = context_.current_project_state.overlay.workflow.buffer_search;
   if (buffer_search.query.text().empty()) {
     return;

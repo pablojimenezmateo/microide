@@ -1311,7 +1311,98 @@ void TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed() {
   Expect(caret_at(1, 0), "Shift+F3 from mid-line 1 jumps back to the match on line 1");
 }
 
+// The find widget's match set is a list of LINE:COLUMN ranges into the buffer, so
+// an edit under an open widget leaves every one of them describing text that has
+// moved. Replace then rewrote whichever line had inherited the old coordinates
+// and left the real match alone -- silent data loss, in the one verb whose whole
+// job is to change text the user pointed at.
+void TestWorkspaceShellFindMatchesFollowAnEditUnderTheWidget() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "words.txt";
+  WriteFile(file, "alpha\nbravo\ntarget\ncharlie\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const auto joined = [&viewport]() {
+    std::string out;
+    for (std::size_t i = 0; i < viewport.line_count(); ++i) {
+      out += viewport.lines().LineView(i);
+      out += '\n';
+    }
+    return out;
+  };
+
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "target");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 1,
+         "one match for `target`");
+  WorkspaceShellTestAccess::SetBufferReplaceText(shell, "REPLACED");
+
+  // An edit that does NOT go through the widget: everything below moves down one
+  // line, so the stored match now points at `bravo`.
+  viewport.MoveCursorTo(0, 0);
+  viewport.InsertText("inserted\n");
+  Expect(std::string(viewport.lines().LineView(3)) == "target",
+         "`target` sits on line 3 after the insert, got " +
+             std::string(viewport.lines().LineView(3)));
+
+  WorkspaceShellTestAccess::ReplaceCurrentBufferSearchMatch(shell);
+  Expect(joined() == "inserted\nalpha\nbravo\nREPLACED\ncharlie\n\n",
+         "Replace must rewrite the match, not the line that inherited its "
+         "coordinates: " +
+             joined());
+}
+
+// The other half: an edit that DOES announce itself keeps the match set current,
+// so the highlights and the n-of-m counter describe the buffer on screen rather
+// than the one it was two keystrokes ago. Checked through the shell's own edit
+// path (a typed character), not by calling the refresh.
+void TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "words.txt";
+  WriteFile(file, "one target\ntwo target\nthree\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+
+  // Through the real verb, because the refresh-on-edit is gated on the widget
+  // being open -- which is also exactly what gates the highlight paint and the
+  // n-of-m counter, so a match set nobody can see is not worth a scan.
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_F, SDL_KMOD_CTRL),
+         "Ctrl+F opens the find widget");
+  Expect(WorkspaceShellTestAccess::ActiveOverlayMode(shell) ==
+             WorkspaceShell::OverlayMode::BufferSearch,
+         "the in-file find surface is open");
+  WorkspaceShellTestAccess::SetBufferSearchQueryAndRefresh(shell, "target");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 2,
+         "two matches to start with");
+
+  // Duplicate line 0 through the action layer: a third `target` appears, and the
+  // widget must say so without anyone re-typing the query.
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0);
+  Expect(WorkspaceShellTestAccess::ExecuteAction(shell, WorkspaceShell::ActionId::DuplicateLine, {}),
+         "duplicate-line dispatches");
+  Expect(WorkspaceShellTestAccess::BufferSearchMatchCount(shell) == 3,
+         "the widget should count the new occurrence, got " +
+             std::to_string(WorkspaceShellTestAccess::BufferSearchMatchCount(shell)));
+
+  // And it must not have yanked the caret onto a match on the way: the edit's own
+  // caret is where the user left it.
+  Expect(viewport.cursor_line() == 1,
+         "duplicate-line leaves the caret on the copy, not on a search hit; got line " +
+             std::to_string(viewport.cursor_line()));
+}
+
 void RegisterWorkspaceShellSearchTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/FindMatchesFollowAnEditUnderTheWidget",
+          TestWorkspaceShellFindMatchesFollowAnEditUnderTheWidget);
+  AddTest(tests, "WorkspaceShell/FindMatchCountFollowsAnAnnouncedEdit",
+          TestWorkspaceShellFindMatchCountFollowsAnAnnouncedEdit);
   AddTest(tests, "WorkspaceShell/F3StepsMatchesWithTheWidgetClosed",
           TestWorkspaceShellF3StepsMatchesWithTheWidgetClosed);
   AddTest(tests, "WorkspaceShell/SearchSidebarEscapeCancelsEditBeforeClosing",

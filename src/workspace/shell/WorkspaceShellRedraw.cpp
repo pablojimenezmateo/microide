@@ -368,6 +368,12 @@ void WorkspaceShell::RequestActiveEditableLastChangeRedraw() {
         "WorkspaceShell::RequestActiveEditableLastChangeRedraw::SyncLsp");
     SyncLspForActiveEditableLastChange();
   }
+  // The find widget's match set is coordinates into THIS buffer, so an edit under
+  // an open widget leaves it describing text that has moved -- wrong highlights,
+  // a wrong n-of-m, and a Replace that rewrites the line the old range landed on.
+  // Nothing but a bool test while the widget is closed.
+  RefreshBufferSearchAfterBufferEdit();
+
   const auto& applied_edit = viewport->last_applied_edit();
   // Slide stored line breakpoints through this edit so a line inserted/removed
   // above a breakpoint keeps it on its statement (VSCode-style). Cheap no-op for

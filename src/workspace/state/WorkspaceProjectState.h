@@ -184,6 +184,14 @@ struct BufferSearchState {
   // Bumped whenever `matches` is reassigned (see WorkspaceShell::RefreshBufferSearch) so
   // the editor overview ruler can cheaply detect when its cached markers are stale.
   std::uint64_t matches_revision = 0;
+  // The buffer `matches` was computed over. Every consumer -- the highlight paint,
+  // the n-of-m counter, find-next, and above all REPLACE -- is a claim about the
+  // buffer as it is now, and a match set taken before an edit points at text that
+  // has moved: Replace then rewrote whichever line had inherited the old range.
+  // Deliberately not folded into `incremental` below, which is the literal
+  // find-as-you-type refine cache and is invalidated outright in regex mode.
+  const void* matches_viewport = nullptr;
+  std::uint64_t matches_content_revision = 0;
   std::size_t selected_index = 0;
   // Folds the reveal path expanded to show a match, recorded as whole ranges
   // rather than opener lines: restoring them re-collapses folds the viewport may

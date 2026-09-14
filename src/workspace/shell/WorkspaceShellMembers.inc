@@ -1319,6 +1319,11 @@
   void RevealBufferSearchMatch(const editor::SelectionRange& match);
   void ResetBufferSearchFoldRevealState(bool preserve_expanded_folds);
   void RefreshBufferSearch();
+  // `reveal=false` recomputes the match set without moving the caret onto the
+  // pick -- what an edit under an open widget needs.
+  void RefreshBufferSearch(bool reveal);
+  void RefreshBufferSearchAfterBufferEdit();
+  bool BufferSearchMatchesAreFresh() const;
   // Flips one of the in-file find widget's three toggles (Aa / ab / .*) and
   // recomputes the match set. One entry point for the button, the Alt chord and
   // the tests, so the three cannot disagree about what a toggle does.
