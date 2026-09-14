@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <string>
 #include <string_view>
+#include <utility>
 
 #include "editor/TextViewport.h"
 #include "editor/WordBoundary.h"
@@ -285,7 +286,119 @@ std::size_t VsCodeDeleteWordLeft(std::string_view line, std::size_t caret) {
   return VsCodeWordStartLeft(line, caret);
 }
 
+// _doFindPreviousWordOnLine / _doFindNextWordOnLine: the nearest non-blank run
+// on that side, extended to its full extent in BOTH directions (VS Code finds
+// the run's first character scanning one way, then calls _findEndOfWord /
+// _findStartOfWord to complete it), so a run straddling the caret comes back
+// whole from either side.
+struct VsCodeWord {
+  std::size_t start = 0;
+  std::size_t end = 0;
+  int cls = 0;
+  bool found = false;
+};
+
+VsCodeWord VsCodeRunAround(std::string_view line, std::size_t seed) {
+  const int run = VsCodeClass(line[seed]);
+  VsCodeWord word{seed, seed, run, true};
+  while (word.start > 0 && VsCodeClass(line[word.start - 1]) == run) --word.start;
+  while (word.end < line.size() && VsCodeClass(line[word.end]) == run) ++word.end;
+  return word;
+}
+
+VsCodeWord VsCodePrevWord(std::string_view line, std::size_t caret) {
+  std::size_t i = caret;
+  while (i > 0 && VsCodeClass(line[i - 1]) == 0) --i;
+  if (i == 0) return VsCodeWord{};
+  return VsCodeRunAround(line, i - 1);
+}
+
+VsCodeWord VsCodeNextWord(std::string_view line, std::size_t caret) {
+  std::size_t i = caret;
+  while (i < line.size() && VsCodeClass(line[i]) == 0) ++i;
+  if (i >= line.size()) return VsCodeWord{};
+  return VsCodeRunAround(line, i);
+}
+
+// WordOperations.word() with inSelectionMode false: the identifier run the caret
+// falls inside (inclusive at both ends, prev tried first), else the gap between
+// the neighbouring runs -- which is the whitespace run in blanks and the
+// operator run inside one, because the two bounds come back crossed there and
+// `new Range(...)` normalises them.
+std::pair<std::size_t, std::size_t> VsCodeWordSelection(std::string_view line, std::size_t caret) {
+  const VsCodeWord prev = VsCodePrevWord(line, caret);
+  const VsCodeWord next = VsCodeNextWord(line, caret);
+  if (prev.found && prev.cls == 2 && prev.start <= caret && caret <= prev.end) {
+    return {prev.start, prev.end};
+  }
+  if (next.found && next.cls == 2 && next.start <= caret && caret <= next.end) {
+    return {next.start, next.end};
+  }
+  std::size_t start = prev.found ? prev.end : 0;
+  std::size_t end = next.found ? next.start : line.size();
+  if (start > end) std::swap(start, end);
+  return {start, end};
+}
+
+// getWordAtPosition: the same two identifier branches, and nothing at all when
+// neither matches -- which is why Ctrl+D and occurrence highlighting stay out of
+// whitespace while the double-click above does not.
+std::pair<std::size_t, std::size_t> VsCodeWordAtPosition(std::string_view line,
+                                                         std::size_t caret) {
+  const VsCodeWord prev = VsCodePrevWord(line, caret);
+  const VsCodeWord next = VsCodeNextWord(line, caret);
+  if (prev.found && prev.cls == 2 && prev.start <= caret && caret <= prev.end) {
+    return {prev.start, prev.end};
+  }
+  if (next.found && next.cls == 2 && next.start <= caret && caret <= next.end) {
+    return {next.start, next.end};
+  }
+  return {0, 0};
+}
+
 }  // namespace
+
+// The double-click rule and the Ctrl+D / occurrence-highlight rule are two
+// different VS Code functions, and the difference between them is exactly what
+// keeps Ctrl+D out of indentation while double-click still selects it. Both are
+// checked at every caret of random lines against a direct port, because both
+// were silently answering "nothing" at a word's trailing edge.
+void TestEditorWordSelectionAgreesWithVsCodeWordRule() {
+  std::uint64_t state = 0x2545f4914f6cdd1dULL;
+  const auto next = [&](std::size_t bound) {
+    state ^= state << 13;
+    state ^= state >> 7;
+    state ^= state << 17;
+    return static_cast<std::size_t>(state % bound);
+  };
+  static constexpr std::string_view kAlphabet = "ab_9 \t=+.(-)/\"'x";
+  for (int round = 0; round < 400; ++round) {
+    std::string line;
+    const std::size_t length = next(14);
+    for (std::size_t i = 0; i < length; ++i) {
+      line.push_back(kAlphabet[next(kAlphabet.size())]);
+    }
+    for (std::size_t caret = 0; caret <= line.size(); ++caret) {
+      const auto [want_sel_start, want_sel_end] = VsCodeWordSelection(line, caret);
+      const editor::WordSpan got_sel = editor::WordSelectionRunAt(line, caret);
+      Expect(got_sel.start == want_sel_start && got_sel.end == want_sel_end,
+             "double-click selection disagrees on <" + line + "> at " + std::to_string(caret) +
+                 ": got [" + std::to_string(got_sel.start) + "," + std::to_string(got_sel.end) +
+                 ") want [" + std::to_string(want_sel_start) + "," +
+                 std::to_string(want_sel_end) + ")");
+
+      const auto [want_word_start, want_word_end] = VsCodeWordAtPosition(line, caret);
+      const editor::WordSpan got_word = editor::IdentifierRunTouching(line, caret);
+      const std::size_t got_word_start = got_word.empty() ? 0 : got_word.start;
+      const std::size_t got_word_end = got_word.empty() ? 0 : got_word.end;
+      Expect(got_word_start == want_word_start && got_word_end == want_word_end,
+             "word-at-position disagrees on <" + line + "> at " + std::to_string(caret) +
+                 ": got [" + std::to_string(got_word_start) + "," +
+                 std::to_string(got_word_end) + ") want [" + std::to_string(want_word_start) +
+                 "," + std::to_string(want_word_end) + ")");
+    }
+  }
+}
 
 void TestEditorWordMotionAgreesWithVsCodeRuleOnRandomAsciiLines() {
   std::uint64_t state = 0x51ed270b4c6d3a19ULL;
@@ -323,6 +436,8 @@ void TestEditorWordMotionAgreesWithVsCodeRuleOnRandomAsciiLines() {
 void RegisterEditorWordMotionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorWordMotion/AgreesWithVsCodeRuleOnRandomAsciiLines",
           TestEditorWordMotionAgreesWithVsCodeRuleOnRandomAsciiLines);
+  AddTest(tests, "EditorWordMotion/SelectionAgreesWithVsCodeWordRule",
+          TestEditorWordSelectionAgreesWithVsCodeWordRule);
   AddTest(tests, "EditorWordMotion/BoundaryTreatsSeparatorRunsAsWords",
           TestWordBoundaryTreatsSeparatorRunsAsWords);
   AddTest(tests, "EditorWordMotion/BoundaryKeepsMultibyteWordsWhole",
