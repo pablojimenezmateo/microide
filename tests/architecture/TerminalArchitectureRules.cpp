@@ -749,8 +749,110 @@ RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root
   return result;
 }
 
+// A text grid's ROW TOTAL must live in the same space as the scroll position it is
+// paired with. `TextViewport::scroll_line()` is a VISUAL row -- ClampScrollState
+// bounds it against `visual_line_count()` -- and both
+// ComputeScrollSurfaceLayout and ComputeTextGridInteractionLayout clamp the scroll
+// they are handed against the total. Passing `line_count()` therefore describes
+// the surface in one space and positions it in another, and the two differ
+// exactly when soft wrap or a collapsed fold is in play.
+//
+// That mistake shipped at five call sites at once (2026-09-14): the editor's
+// vertical scrollbar reported zero travel for a wrapped file so no bar appeared
+// at all, selection autoscroll stopped at visual row (line_count - 1), hover
+// hit-testing resolved against a clamped scroll, and two hand-copied merge
+// layouts disagreed with the shared one. None of it is reachable without wrap, so
+// a suite that mostly runs unwrapped never saw any of it.
+RuleResult CheckGridRowTotalsAreVisualRows(const std::filesystem::path& repo_root) {
+  RuleResult result;
+  result.label = "text-grid row totals must be visual rows, not logical line counts";
+  result.hard_fail = true;
+
+  const std::regex call_pattern(
+      R"(\b(ComputeScrollSurfaceLayout|ComputeTextGridInteractionLayout)\s*\()");
+  std::size_t scanned_calls = 0;
+  for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
+    if (!entry.is_regular_file()) {
+      continue;
+    }
+    const std::filesystem::path extension = entry.path().extension();
+    if (extension != ".cpp" && extension != ".h" && extension != ".inc") {
+      continue;
+    }
+    // The definitions themselves name the parameter, not a caller's expression.
+    if (entry.path().filename() == "WorkspaceLayout.cpp" ||
+        entry.path().filename() == "WorkspaceLayout.h") {
+      continue;
+    }
+    const std::string text = ReadText(entry.path());
+    const std::vector<bool> is_code = BuildCodeMask(text);
+    for (std::sregex_iterator it(text.begin(), text.end(), call_pattern), last; it != last; ++it) {
+      const std::size_t open_paren = static_cast<std::size_t>(it->position() + it->length()) - 1;
+      if (open_paren >= is_code.size() || !is_code[open_paren]) {
+        continue;
+      }
+      std::size_t depth = 0;
+      std::size_t close_paren = open_paren;
+      for (std::size_t i = open_paren; i < text.size(); ++i) {
+        if (text[i] == '(') {
+          ++depth;
+        } else if (text[i] == ')') {
+          if (--depth == 0) {
+            close_paren = i;
+            break;
+          }
+        }
+      }
+      ++scanned_calls;
+      // Scanned through the CODE MASK, not over the raw substring: an argument
+      // list can span a comment, and a comment explaining the rule is exactly the
+      // text that contains the words the rule looks for. The first version of this
+      // check searched the raw call text, found `visual_line_count()` inside such
+      // a comment, and passed over the very regression it was written for -- which
+      // is why it is probed by injection rather than trusted for being green.
+      bool bare_line_count = false;
+      for (std::size_t i = open_paren; i + 12 <= close_paren + 1; ++i) {
+        if (i >= is_code.size() || !is_code[i]) {
+          continue;
+        }
+        if (text.compare(i, 12, "line_count()") != 0) {
+          continue;
+        }
+        // `visual_line_count()` ends in the same twelve characters; only a bare
+        // one is the mistake.
+        if (i >= 7 && text.compare(i - 7, 7, "visual_") == 0) {
+          continue;
+        }
+        bare_line_count = true;
+        break;
+      }
+      if (!bare_line_count) {
+        continue;
+      }
+      result.violations.push_back(Violation{
+          .path = entry.path(),
+          .line = LineNumberAt(text, open_paren),
+          .message = "row total is `line_count()`, but the scroll it is paired with is a VISUAL "
+                     "row — use visual_line_count() (or the surface's own visual-row count), or "
+                     "the layout clamps the scroll into a space it does not belong to",
+      });
+    }
+  }
+
+  if (scanned_calls == 0) {
+    result.violations.push_back(Violation{
+        .path = repo_root / "src/workspace",
+        .line = 1,
+        .message = "rule target moved — no grid-layout calls found to scan; re-anchor "
+                   "CheckGridRowTotalsAreVisualRows",
+    });
+  }
+  return result;
+}
+
 const std::vector<NamedRule>& TerminalArchitectureRuleList() {
   static const std::vector<NamedRule> rules = {
+      {"CheckGridRowTotalsAreVisualRows", CheckGridRowTotalsAreVisualRows},
       {"CheckTerminalSessionTuSize", CheckTerminalSessionTuSize},
       {"CheckTerminalSessionHeaderSize", CheckTerminalSessionHeaderSize},
       {"CheckTerminalSessionPrivateMethodCount", CheckTerminalSessionPrivateMethodCount},

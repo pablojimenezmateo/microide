@@ -22,6 +22,7 @@ RuleResult CheckDescriptorCreationIsCloseOnExec(const std::filesystem::path& rep
 RuleResult CheckSettingsReadAreRegistered(const std::filesystem::path& repo_root);
 RuleResult CheckSettingDefaultsMatchRegistry(const std::filesystem::path& repo_root);
 RuleResult CheckRegisteredSettingsAreRead(const std::filesystem::path& repo_root);
+RuleResult CheckGridRowTotalsAreVisualRows(const std::filesystem::path& repo_root);
 
 // Single source of truth for these rules; see PluginArchitectureRuleList for why
 // they are registered one ctest case per rule (TD-2026-08-10-171).
