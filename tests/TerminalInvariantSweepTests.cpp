@@ -83,8 +83,11 @@ std::string RandomEscape(Rng& rng, std::size_t rows, std::size_t columns) {
     case 19: return "\x1b[" + std::to_string(30 + rng.Below(10)) + "m";
     case 20: return "\x1b[0m";
     case 21: return "\x1bM";      // reverse index
-    case 22: return "\x1bD";      // index
-    case 23: return "\x1bE";      // next line
+    // Split literals: a hex escape is GREEDY, so "\x1bD" is the single value
+    // 0x1BD (out of range, and not ESC D at all) -- these two cases fed the
+    // sweep a malformed byte instead of the sequence they name.
+    case 22: return "\x1b" "D";   // index
+    case 23: return "\x1b" "E";   // next line
     case 24: return "\x1bH";      // set tab stop
     default: return "\x1b[" + std::to_string(n) + "S";
   }
@@ -201,7 +204,8 @@ void TestChunkBoundariesDoNotChangeTheResult() {
       "abc\x1b[1;5rscroll\ndef\nghi\njkl",
       "wide 日本語 at the edge and a 🙂 too",
       "\x1b[?1049halt screen\x1b[?1049lback",
-      "\x1b]0;a title\x07after the osc",
+      // "\x07a" would extend the escape to 0x7AF; the BEL has to end the literal.
+      "\x1b]0;a title\x07" "after the osc",
       "combining é and tab\there",
       "\x1b[10Ccolumns\x1b[4Dback",
   };
