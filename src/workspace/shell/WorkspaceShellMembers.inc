@@ -2343,18 +2343,17 @@
   CursorKindFingerprint cursor_kind_fingerprint_{};
   std::uint32_t cursor_hit_generation_ = 0;
   std::uint32_t editor_hover_target_generation_ = 0;
-  SDL_Cursor* text_cursor_ = nullptr;
-  SDL_Cursor* pointer_cursor_ = nullptr;
-  SDL_Cursor* ew_resize_cursor_ = nullptr;
-  SDL_Cursor* ns_resize_cursor_ = nullptr;
-  SDL_Cursor* n_resize_cursor_ = nullptr;
-  SDL_Cursor* e_resize_cursor_ = nullptr;
-  SDL_Cursor* s_resize_cursor_ = nullptr;
-  SDL_Cursor* w_resize_cursor_ = nullptr;
-  SDL_Cursor* ne_resize_cursor_ = nullptr;
-  SDL_Cursor* se_resize_cursor_ = nullptr;
-  SDL_Cursor* sw_resize_cursor_ = nullptr;
-  SDL_Cursor* nw_resize_cursor_ = nullptr;
+  // One lazily-created system cursor per CursorKind, OWNED. These were twelve raw
+  // pointers that nothing ever destroyed: an SDL cursor is a heap object, so a
+  // shell that had shown a text or resize cursor leaked one per kind at teardown.
+  // With one shell per process that is a shutdown leak; under the test suite it is
+  // one leak per shell, which is what ASAN reported.
+  struct SdlCursorDeleter {
+    void operator()(SDL_Cursor* cursor) const;
+  };
+  std::array<std::unique_ptr<SDL_Cursor, SdlCursorDeleter>,
+             static_cast<std::size_t>(CursorKind::NwResize) + 1>
+      system_cursors_{};
   float last_mouse_x_ = 0.0f;
   float last_mouse_y_ = 0.0f;
   bool last_mouse_position_valid_ = false;

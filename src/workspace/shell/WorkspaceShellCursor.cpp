@@ -972,73 +972,39 @@ WorkspaceShell::CursorKind WorkspaceShell::CursorKindForPosition(float x, float 
   return CursorKind::Text;
 }
 
-SDL_Cursor* WorkspaceShell::CursorHandle(CursorKind kind) {
-  switch (kind) {
-    case CursorKind::Default:
-      return SDL_GetDefaultCursor();
-    case CursorKind::Text:
-      if (text_cursor_ == nullptr) {
-        text_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_TEXT);
-      }
-      return text_cursor_;
-    case CursorKind::Pointer:
-      if (pointer_cursor_ == nullptr) {
-        pointer_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_POINTER);
-      }
-      return pointer_cursor_;
-    case CursorKind::EwResize:
-      if (ew_resize_cursor_ == nullptr) {
-        ew_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE);
-      }
-      return ew_resize_cursor_;
-    case CursorKind::NsResize:
-      if (ns_resize_cursor_ == nullptr) {
-        ns_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
-      }
-      return ns_resize_cursor_;
-    case CursorKind::NResize:
-      if (n_resize_cursor_ == nullptr) {
-        n_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_N_RESIZE);
-      }
-      return n_resize_cursor_;
-    case CursorKind::EResize:
-      if (e_resize_cursor_ == nullptr) {
-        e_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_E_RESIZE);
-      }
-      return e_resize_cursor_;
-    case CursorKind::SResize:
-      if (s_resize_cursor_ == nullptr) {
-        s_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_S_RESIZE);
-      }
-      return s_resize_cursor_;
-    case CursorKind::WResize:
-      if (w_resize_cursor_ == nullptr) {
-        w_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_W_RESIZE);
-      }
-      return w_resize_cursor_;
-    case CursorKind::NeResize:
-      if (ne_resize_cursor_ == nullptr) {
-        ne_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NE_RESIZE);
-      }
-      return ne_resize_cursor_;
-    case CursorKind::SeResize:
-      if (se_resize_cursor_ == nullptr) {
-        se_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SE_RESIZE);
-      }
-      return se_resize_cursor_;
-    case CursorKind::SwResize:
-      if (sw_resize_cursor_ == nullptr) {
-        sw_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_SW_RESIZE);
-      }
-      return sw_resize_cursor_;
-    case CursorKind::NwResize:
-      if (nw_resize_cursor_ == nullptr) {
-        nw_resize_cursor_ = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NW_RESIZE);
-      }
-      return nw_resize_cursor_;
-  }
+void WorkspaceShell::SdlCursorDeleter::operator()(SDL_Cursor* cursor) const {
+  SDL_DestroyCursor(cursor);
+}
 
-  return SDL_GetDefaultCursor();
+SDL_Cursor* WorkspaceShell::CursorHandle(CursorKind kind) {
+  // Default has no owned handle: SDL owns the default cursor, and handing it to
+  // SDL_DestroyCursor would be a double free.
+  if (kind == CursorKind::Default) {
+    return SDL_GetDefaultCursor();
+  }
+  const SDL_SystemCursor system_cursor = [kind]() {
+    switch (kind) {
+      case CursorKind::Text: return SDL_SYSTEM_CURSOR_TEXT;
+      case CursorKind::Pointer: return SDL_SYSTEM_CURSOR_POINTER;
+      case CursorKind::EwResize: return SDL_SYSTEM_CURSOR_EW_RESIZE;
+      case CursorKind::NsResize: return SDL_SYSTEM_CURSOR_NS_RESIZE;
+      case CursorKind::NResize: return SDL_SYSTEM_CURSOR_N_RESIZE;
+      case CursorKind::EResize: return SDL_SYSTEM_CURSOR_E_RESIZE;
+      case CursorKind::SResize: return SDL_SYSTEM_CURSOR_S_RESIZE;
+      case CursorKind::WResize: return SDL_SYSTEM_CURSOR_W_RESIZE;
+      case CursorKind::NeResize: return SDL_SYSTEM_CURSOR_NE_RESIZE;
+      case CursorKind::SeResize: return SDL_SYSTEM_CURSOR_SE_RESIZE;
+      case CursorKind::SwResize: return SDL_SYSTEM_CURSOR_SW_RESIZE;
+      case CursorKind::NwResize: return SDL_SYSTEM_CURSOR_NW_RESIZE;
+      case CursorKind::Default: break;
+    }
+    return SDL_SYSTEM_CURSOR_DEFAULT;
+  }();
+  auto& slot = system_cursors_[static_cast<std::size_t>(kind)];
+  if (slot == nullptr) {
+    slot.reset(SDL_CreateSystemCursor(system_cursor));
+  }
+  return slot.get();
 }
 
 void WorkspaceShell::ClearMouseHoverState() {
