@@ -194,6 +194,27 @@ tick so a perfectly still pointer keeps stepping. Those two go together: the pin
 is what makes the drop honest, and the auto-scroll is what keeps the far end
 reachable.
 
+### A click and the drag that continues it answer the same question
+A double- or triple-click selects a unit and hands the drag that follows it a
+*seed*; the drag then resolves the unit under the pointer and unions it with that
+seed. Both halves therefore ask "what unit is here?", and they have to ask the
+SAME function -- which is the part that broke twice, in opposite directions.
+
+The click selected the run under the pointer (identifier, whitespace, or operator)
+while the drag resolved the unit with the identifier-only rule, so double-clicking
+`===` selected the run and then dragging out of it advanced one character a step.
+And the triple-click selected `[line, 0]`..`[line, length]` while the drag
+resolved every line as `[line, 0]`..`[line + 1, 0]`, so triple-click-then-drag
+disagreed with a plain triple-click about its own first line -- and Delete after
+a triple-click left a blank line where the line had been.
+
+Neither is visible from a viewport fixture: each half is correct on its own, and
+only the gesture as a whole is wrong. When a selection verb gains a variant, give
+`selection_granularity` the range form of the SAME verb rather than the nearest
+existing one.
+
+Guarded by `SelectionGranularity/*` (`tests/SelectionGranularityTests.cpp`).
+
 ## Workflow
 
 ### Commit pre-check Warning is advisory; Blocking is not
