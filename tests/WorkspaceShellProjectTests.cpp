@@ -3678,6 +3678,111 @@ void TestWorkspaceShellNoActionNoticesSoftWrap() {
              " wrapped passes");
 }
 
+// A collapsed fold is one row on screen, so SOME verbs treat it as one line and
+// the rest act on its opener alone. `ResolveLineRanges` spells the rule out --
+// "a bare caret on the opener of a collapsed fold names the whole fold, as it
+// does for the verbs that move, duplicate, cut or delete 'the line' in VS Code.
+// Indent, comment and sort keep acting on the opener alone" -- and that rule is
+// carried by ONE bool argument, `expand_collapsed_folds`, passed at each call
+// site.
+//
+// A per-site bool is a list, and a list drifts from the sentence describing it.
+// So pin the sentence: run every registered action with the caret on a collapsed
+// opener and with no fold at all, and require the set whose RESULT differs to be
+// exactly the documented one. Flipping the flag at any call site -- in either
+// direction -- fails here and names the verb.
+void TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet() {
+  const std::vector<WorkspaceShell::ActionId> skipped = {
+      WorkspaceShell::ActionId::CloseActiveTab,   WorkspaceShell::ActionId::CloseOtherTabs,
+      WorkspaceShell::ActionId::CloseTabsToRight, WorkspaceShell::ActionId::CloseTabsToLeft,
+      WorkspaceShell::ActionId::CloseAllTabs,     WorkspaceShell::ActionId::CloseGroup,
+      WorkspaceShell::ActionId::ProjectClose,     WorkspaceShell::ActionId::Quit,
+      WorkspaceShell::ActionId::Open,             WorkspaceShell::ActionId::ProjectOpen,
+      // These are ABOUT folds; differing is their job.
+      WorkspaceShell::ActionId::Fold,             WorkspaceShell::ActionId::Unfold,
+      WorkspaceShell::ActionId::ToggleFoldAtCursor, WorkspaceShell::ActionId::FoldAll,
+      WorkspaceShell::ActionId::UnfoldAll,
+  };
+  // "move, duplicate, cut or delete the line" -- the four shapes the rule names,
+  // as command names so a failure reads as the sentence does.
+  const std::vector<std::string> expected_expanding = {
+      "copy-line-down", "copy-line-up", "cut", "delete-line", "move-line-down", "move-line-up",
+  };
+  const std::string content = "head();\nvoid f() {\n  body1();\n  body2();\n}\ntail();\n";
+
+  std::vector<std::string> observed_expanding;
+  std::size_t compared = 0;
+  for (const auto& spec : microide::workspace::WorkspaceCommandSpecs()) {
+    if (std::find(skipped.begin(), skipped.end(), spec.id) != skipped.end()) {
+      continue;
+    }
+    std::array<std::string, 2> results;
+    bool usable = true;
+    for (int folded = 0; folded < 2 && usable; ++folded) {
+      TemporaryDirectory temp_dir;
+      const std::filesystem::path root = temp_dir.path() / "project";
+      const auto file = root / "code.cpp";
+      WriteFile(file, content);
+      WorkspaceShell shell;
+      WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+      WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+      WorkspaceShellTestAccess::OpenFile(shell, file);
+      auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+      if (viewport == nullptr) {
+        usable = false;
+        break;
+      }
+      if (folded != 0) {
+        auto* model = WorkspaceShellTestAccess::EnsureActiveFoldingModelFresh(shell);
+        if (model == nullptr || !model->Collapse(1)) {
+          Expect(false, "the fixture's brace fold should collapse");
+          return;
+        }
+      }
+      viewport->MoveCursorTo(1, 0);  // the opener
+      WorkspaceShellTestAccess::ExecuteAction(shell, spec.id, {});
+      viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+      if (viewport == nullptr) {
+        usable = false;
+        break;
+      }
+      std::string& out = results[static_cast<std::size_t>(folded)];
+      for (std::size_t i = 0; i < viewport->line_count(); ++i) {
+        out += viewport->lines().LineView(i);
+        out += '\n';
+      }
+    }
+    if (!usable) {
+      continue;
+    }
+    ++compared;
+    if (results[0] != results[1]) {
+      observed_expanding.emplace_back(spec.command_name);
+    }
+  }
+  std::sort(observed_expanding.begin(), observed_expanding.end());
+
+  const auto join = [](const std::vector<std::string>& names) {
+    std::string out;
+    for (const auto& name : names) {
+      if (!out.empty()) out += ", ";
+      out += name;
+    }
+    return out.empty() ? std::string("<none>") : out;
+  };
+  Expect(observed_expanding == expected_expanding,
+         "the verbs that treat a collapsed fold as one line should be exactly the set "
+         "ResolveLineRanges documents.\n  expected: " +
+             join(expected_expanding) + "\n  observed: " + join(observed_expanding));
+  // Vacuity: a run where the fold never collapsed would report an empty set and
+  // an equality against an empty expectation would be the bug.
+  Expect(compared > 100 && !observed_expanding.empty(),
+         "the sweep must have compared the whole registry and seen the fold matter, "
+         "compared " +
+             std::to_string(compared) + " with " + std::to_string(observed_expanding.size()) +
+             " expanding");
+}
+
 // A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
 // engine's own operations (a mirror edit, a choice swap, the expansion) keep them
 // in step with the text. Every other edit -- move-line, sort, paste, format, an
@@ -8209,6 +8314,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront);
   AddTest(tests, "WorkspaceShell/TextDragRefusesAStaleSourceRange",
           TestWorkspaceShellTextDragRefusesAStaleSourceRange);
+  AddTest(tests, "WorkspaceShell/CollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet",
+          TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet);
   AddTest(tests, "WorkspaceShell/NoActionNoticesSoftWrap",
           TestWorkspaceShellNoActionNoticesSoftWrap);
   AddTest(tests, "WorkspaceShell/NoActionEditsABackgroundBuffer",
