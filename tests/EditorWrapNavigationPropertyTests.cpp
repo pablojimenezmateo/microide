@@ -383,6 +383,96 @@ void TestExactlyOneWrappedRowPaintsEachCaretColumn() {
          "past the end of an unwrapped line");
 }
 
+// The wrapped-row table must PARTITION each logical line's visual columns: the
+// first row starts at 0, every row begins exactly where the previous one ended,
+// and the last ends at the line's full visual width. Every hit test, every
+// caret-to-row lookup and every paint reads that table, so a gap silently makes a
+// column belong to no row and an overlap makes it belong to two -- which is the
+// same "one position, two rows" family the affinity bit exists for, one level
+// down.
+//
+// Oracle-free, so it holds for any content at any width: no reference wrapper to
+// disagree with, and nothing to update when the break rule changes.
+void TestWrappedRowsPartitionEachLine() {
+  const std::vector<std::string> contents = {
+      "alpha bravo charlie delta echo foxtrot golf hotel",
+      std::string(50, 'x'),
+      "\tone\ttwo\tthree\tfour\tfive",
+      "  indented and long enough that the hanging indent has to be accounted for",
+      "\xe4\xbd\xa0\xe5\xa5\xbd \xe4\xbd\xa0\xe5\xa5\xbd \xe4\xbd\xa0\xe5\xa5\xbd wide glyphs mixed with ascii",
+      "cafe\xcc\x81 cafe\xcc\x81 cafe\xcc\x81 combining marks that must not split",
+      "",
+      "a",
+      "one two",
+      std::string(7, 'q') + " " + std::string(9, 'r'),
+  };
+
+  std::size_t lines_with_several_rows = 0;
+  for (std::size_t width = 1; width <= 12; ++width) {
+    // One document holding every case, so a line's rows are also checked against
+    // the rows of its neighbours (the table is one flat vector).
+    std::string document;
+    for (const std::string& line : contents) {
+      document += line;
+      document.push_back('\n');
+    }
+    TextViewport viewport;
+    viewport.LoadContent(document, "/tmp/wrap-partition.txt");
+    viewport.SetViewportSize(40, width);
+    viewport.SetSoftWrap(true);
+
+    const std::size_t rows = viewport.visual_line_count();
+    Expect(rows >= viewport.line_count(),
+           "wrapping never produces fewer rows than lines at width " +
+               std::to_string(width));
+
+    std::size_t row = 0;
+    for (std::size_t line = 0; line < viewport.line_count(); ++line) {
+      const std::string where =
+          "width " + std::to_string(width) + " line " + std::to_string(line) + ": ";
+      Expect(row < rows, where + "the table ran out of rows before the lines did");
+      const std::size_t line_width = viewport.VisualColumnAt(line, viewport.lines().LineLength(line));
+
+      std::size_t expected_start = 0;
+      std::size_t rows_here = 0;
+      while (row < rows) {
+        const auto meta = viewport.WrappedVisualRowLayout(row);
+        if (meta.line_index != line) {
+          break;
+        }
+        Expect(meta.visual_start == expected_start,
+               where + "row " + std::to_string(rows_here) + " starts at " +
+                   std::to_string(meta.visual_start) + " but the previous one ended at " +
+                   std::to_string(expected_start));
+        Expect(meta.visual_end >= meta.visual_start,
+               where + "a row may not end before it starts");
+        // Only the sole row of an EMPTY line may be zero-width; anything else is a
+        // row that can never be reached by a caret and shifts every row below it.
+        Expect(meta.visual_end > meta.visual_start || line_width == 0,
+               where + "row " + std::to_string(rows_here) + " is empty on a line " +
+                   std::to_string(line_width) + " cells wide");
+        expected_start = meta.visual_end;
+        ++rows_here;
+        ++row;
+      }
+      Expect(rows_here >= 1, where + "every line owns at least one row");
+      Expect(expected_start == line_width,
+             where + "the rows cover " + std::to_string(expected_start) +
+                 " cells but the line is " + std::to_string(line_width) + " wide");
+      if (rows_here > 1) {
+        ++lines_with_several_rows;
+      }
+    }
+    Expect(row == rows,
+           "width " + std::to_string(width) + ": " + std::to_string(rows - row) +
+               " rows belong to no line");
+  }
+  // Vacuity guard: a table where nothing wrapped satisfies all of the above.
+  Expect(lines_with_several_rows >= 40,
+         "the sweep must have produced plenty of multi-row lines, got " +
+             std::to_string(lines_with_several_rows));
+}
+
 }  // namespace
 
 void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests) {
@@ -394,6 +484,8 @@ void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests) {
           TestVisualRowForLineAgreesWithTheCaretRowAtColumnZero);
   AddTest(tests, "EditorWrapNavigation/WalkSkipsACollapsedFoldOneRowPerPress",
           TestWrapWalkSkipsACollapsedFoldOneRowPerPress);
+  AddTest(tests, "EditorWrapNavigation/WrappedRowsPartitionEachLine",
+          TestWrappedRowsPartitionEachLine);
   AddTest(tests, "EditorWrapNavigation/ExactlyOneWrappedRowPaintsEachCaretColumn",
           TestExactlyOneWrappedRowPaintsEachCaretColumn);
   AddTest(tests, "EditorWrapNavigation/TogglingWrapKeepsTheCaretsTextPosition",
