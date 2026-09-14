@@ -186,6 +186,13 @@ enum class ActionId {
   SortLinesDescending,
   AddCursorAtNextMatch,
   AddCursorAtAllMatches,
+  // VS Code's insertCursorAbove / insertCursorBelow (Ctrl+Alt+Up/Down) and
+  // insertCursorAtEndOfEachLineSelected (Shift+Alt+I). The first two step VISUAL
+  // rows, so they follow wrapped text the way every other vertical motion here
+  // does.
+  AddCursorAbove,
+  AddCursorBelow,
+  AddCursorsToLineEnds,
   // Editor essentials: code folding controls
   Fold,
   Unfold,

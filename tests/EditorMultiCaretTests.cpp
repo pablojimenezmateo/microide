@@ -1294,7 +1294,137 @@ void TestAddSecondaryCaretKeepsSortedOrderAndDedupes() {
          "the primary caret position must not be added as a secondary");
 }
 
+namespace {
+
+std::string AddCaretDump(const TextViewport& viewport) {
+  std::string out = "P(" + std::to_string(viewport.cursor_line()) + "," +
+                    std::to_string(viewport.cursor_column()) + ")";
+  for (const TextPosition& caret : viewport.secondary_carets()) {
+    out += " S(" + std::to_string(caret.line) + "," + std::to_string(caret.column) + ")";
+  }
+  return out;
+}
+
+// VS Code's Ctrl+Alt+Down grows a column ONE caret per press. It does that by
+// adding below EVERY caret and deduping -- from carets on lines 1 and 2 you get
+// 1,2,2,3 which is 1,2,3 -- so a naive "add below the bottom one" and a naive
+// "add below each" without the dedupe both get it wrong, in opposite directions.
+void TestAddCaretBelowGrowsOnePerPress() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa\nbbbb\ncccc\ndddd\neeee\n", "/tmp/mc-add-below.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 2);
+
+  for (std::size_t press = 1; press <= 3; ++press) {
+    Expect(viewport.AddCaretVertical(1), "press " + std::to_string(press) + " adds a caret");
+    Expect(viewport.secondary_caret_range_view().size() == press,
+           "after " + std::to_string(press) + " press(es) there should be " +
+               std::to_string(press) + " secondaries, got " +
+               std::to_string(viewport.secondary_caret_range_view().size()));
+  }
+  Expect(viewport.cursor_line() == 3 && viewport.cursor_column() == 2,
+         "the newest caret leads, so the view follows: " + AddCaretDump(viewport));
+  std::vector<std::size_t> lines{viewport.cursor_line()};
+  for (const TextPosition& caret : viewport.secondary_carets()) {
+    lines.push_back(caret.line);
+    Expect(caret.column == 2, "every caret keeps column 2");
+  }
+  std::sort(lines.begin(), lines.end());
+  Expect(lines == std::vector<std::size_t>({0, 1, 2, 3}), "lines 0..3 each hold one caret");
+}
+
+// At the buffer edge the press adds nothing rather than piling carets on the last
+// line -- N carets on one position would apply an edit N times there.
+void TestAddCaretBelowAtTheLastLineAddsNothing() {
+  TextViewport viewport;
+  viewport.LoadContent("only\n", "/tmp/mc-add-edge.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 0);  // the phantom line after the final newline
+  Expect(!viewport.AddCaretVertical(1), "there is nothing below the last line");
+  Expect(viewport.secondary_caret_range_view().empty(), "and no caret was added");
+}
+
+// Under soft wrap a press steps one WRAPPED ROW, as VS Code's view-line-based
+// version does -- not one logical line.
+void TestAddCaretBelowStepsOneWrappedRow() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnop\nshort\n", "/tmp/mc-add-wrap.txt");
+  viewport.SetViewportSize(10, /*visible_columns=*/8);
+  viewport.SetSoftWrap(true);
+  viewport.MoveCursorTo(0, 2);
+
+  Expect(viewport.AddCaretVertical(1), "the press adds a caret");
+  Expect(viewport.secondary_caret_range_view().size() == 1, "one caret was added");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 10,
+         "the new caret is on line 0's SECOND wrapped row: " + AddCaretDump(viewport));
+}
+
+// Above is the mirror, and the newest caret leads upward so the view follows.
+void TestAddCaretAboveLeadsUpward() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa\nbbbb\ncccc\n", "/tmp/mc-add-above.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(2, 1);
+
+  Expect(viewport.AddCaretVertical(-1), "the press adds a caret above");
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 1,
+         "the caret above leads: " + AddCaretDump(viewport));
+  Expect(viewport.secondary_caret_range_view().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{2, 1},
+         "and the original stays as a secondary");
+}
+
+// VS Code's Shift+Alt+I: a caret at the end of every line the selection touches.
+void TestAddCaretsAtSelectedLineEnds() {
+  TextViewport viewport;
+  viewport.LoadContent("one\ntwotwo\nthree\nfour\n", "/tmp/mc-line-ends.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 1);
+  viewport.MoveCursorTo(2, 2, /*extend_selection=*/true);
+
+  Expect(viewport.AddCaretsAtSelectedLineEnds(), "the verb applies");
+  Expect(!viewport.has_selection(), "the selection is replaced by the carets");
+  std::vector<TextPosition> all{TextPosition{viewport.cursor_line(), viewport.cursor_column()}};
+  for (const TextPosition& caret : viewport.secondary_carets()) all.push_back(caret);
+  std::sort(all.begin(), all.end(),
+            [](const TextPosition& a, const TextPosition& b) { return a.line < b.line; });
+  Expect(all.size() == 3 && all[0] == TextPosition{0, 3} && all[1] == TextPosition{1, 6} &&
+             all[2] == TextPosition{2, 5},
+         std::string("one caret at each line's END: ") + AddCaretDump(viewport));
+  Expect(viewport.cursor_line() == 2,
+         "the last line's end is the primary, so the view stays at the bottom of the block");
+}
+
+// A whole-line drag ends at column 0 of the line below its last content line, and
+// every line-scoped verb here normalizes that away -- a caret parked at the end of
+// a line the user did not select would be a surprise.
+void TestAddCaretsAtLineEndsIgnoresTheTrailingLineStart() {
+  TextViewport viewport;
+  viewport.LoadContent("one\ntwo\nthree\n", "/tmp/mc-line-ends-drag.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(2, 0, /*extend_selection=*/true);
+
+  Expect(viewport.AddCaretsAtSelectedLineEnds(), "the verb applies");
+  Expect(viewport.secondary_caret_range_view().size() == 1,
+         "two lines were dragged, so two carets, got " +
+             std::to_string(viewport.secondary_caret_range_view().size() + 1));
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 3,
+         std::string("the last one is the end of line 1, not line 2: ") + AddCaretDump(viewport));
+}
+
+}  // namespace
+
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaret/AddCaretBelowGrowsOnePerPress", TestAddCaretBelowGrowsOnePerPress);
+  AddTest(tests, "EditorMultiCaret/AddCaretBelowAtTheLastLineAddsNothing",
+          TestAddCaretBelowAtTheLastLineAddsNothing);
+  AddTest(tests, "EditorMultiCaret/AddCaretBelowStepsOneWrappedRow",
+          TestAddCaretBelowStepsOneWrappedRow);
+  AddTest(tests, "EditorMultiCaret/AddCaretAboveLeadsUpward", TestAddCaretAboveLeadsUpward);
+  AddTest(tests, "EditorMultiCaret/AddCaretsAtSelectedLineEnds", TestAddCaretsAtSelectedLineEnds);
+  AddTest(tests, "EditorMultiCaret/AddCaretsAtLineEndsIgnoresTheTrailingLineStart",
+          TestAddCaretsAtLineEndsIgnoresTheTrailingLineStart);
   AddTest(tests, "EditorMultiCaret/AddSecondaryCaretKeepsSortedOrderAndDedupes",
           TestAddSecondaryCaretKeepsSortedOrderAndDedupes);
   AddTest(tests, "EditorMultiCaret/ManySameLineInsertRemapsEveryCaret",

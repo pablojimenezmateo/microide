@@ -570,6 +570,24 @@ class TextViewport {
   // by multi-caret surround and by tests; normalizes and clamps the range.
   void AddSecondaryCaretWithRange(SelectionRange range);
   void SetSecondaryCarets(std::vector<TextPosition> carets);
+  // VS Code's insertCursorAbove / insertCursorBelow (Ctrl+Alt+Up/Down): add a
+  // caret one VISUAL ROW away from EVERY existing caret, at that caret's own
+  // preferred column, then dedupe. Adding below each and deduping is what makes a
+  // repeated press grow a column one caret at a time (1, 2, 3...) rather than
+  // doubling it, and it is why two carets a row apart do not fight.
+  //
+  // Visual rows, not lines: under soft wrap a press steps one wrapped row, as
+  // VS Code's view-line-based version does, and each caret keeps its own sticky
+  // column and wrap affinity through the step.
+  //
+  // The newest caret becomes the PRIMARY, so the view follows a held chord to
+  // wherever the column now ends. Returns false when every caret was already at
+  // the edge it was travelling towards.
+  bool AddCaretVertical(int delta);
+  // VS Code's insertCursorAtEndOfEachLineSelected (Shift+Alt+I): one caret at the
+  // end of every line the selection touches, selection cleared. With no selection
+  // that is the caret's own line, which is what VS Code does too.
+  bool AddCaretsAtSelectedLineEnds();
   // Ranged sibling of SetSecondaryCarets: rebuilds the secondary caret set where
   // each entry carries an active selection (anchor -> cursor). Used by the
   // "add cursor at next/all match" (Ctrl+D) flow so multi-caret typing replaces

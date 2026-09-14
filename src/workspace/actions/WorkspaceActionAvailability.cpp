@@ -468,6 +468,13 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::AddCursorAtAllMatches:
       return active_editable_viewport != nullptr &&
              SettingEnabled(operations_, "editor.multicursor.add_at_match.enabled", true);
+    // Deliberately NOT gated on `add_at_match.enabled`: that setting is about
+    // seeding cursors from a SEARCH, which these do not do. They need only an
+    // editable buffer, as VS Code's do.
+    case ActionId::AddCursorAbove:
+    case ActionId::AddCursorBelow:
+    case ActionId::AddCursorsToLineEnds:
+      return active_editable_viewport != nullptr;
     case ActionId::JumpToMatchingBracket:
       return active_viewport != nullptr;
     case ActionId::MarkBranchFileReviewed:

@@ -3873,6 +3873,65 @@ void TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup() {
              std::to_string(swept));
 }
 
+// The two multi-cursor gestures VS Code users reach for most after Ctrl+D, driven
+// through the real chords rather than the viewport API -- a verb that exists but
+// is unreachable from the keyboard is the shape the 2026-08-13 review kept
+// finding (Ctrl+Enter, Shift+Alt+Up and Esc were all unbound while their code
+// existed).
+void TestWorkspaceShellAddCursorChordsAreBound() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "grid.txt";
+  WriteFile(file, "aaaa\nbbbb\ncccc\ndddd\n");
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenFile(shell, file);
+  auto* viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport != nullptr, "the fixture opens an editor tab");
+  viewport->MoveCursorTo(0, 2);
+
+  // Ctrl+Alt+Down twice: a column of three.
+  const auto ctrl_alt = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT);
+  Expect(SendKeyDown(shell, SDLK_DOWN, ctrl_alt), "Ctrl+Alt+Down is bound");
+  Expect(SendKeyDown(shell, SDLK_DOWN, ctrl_alt), "and again");
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport->secondary_caret_range_view().size() == 2,
+         "two presses leave three carets, got " +
+             std::to_string(viewport->secondary_caret_range_view().size() + 1));
+  // The whole column types, which is the point of the gesture.
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "X"), "typing is handled");
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(std::string(viewport->lines().LineView(0)) == "aaXaa" &&
+             std::string(viewport->lines().LineView(1)) == "bbXbb" &&
+             std::string(viewport->lines().LineView(2)) == "ccXcc" &&
+             std::string(viewport->lines().LineView(3)) == "dddd",
+         std::string("every caret in the column typed: ") +
+             std::string(viewport->lines().LineView(0)) + "/" +
+             std::string(viewport->lines().LineView(2)));
+
+  // Ctrl+Alt+Up walks it back off the bottom rather than doing nothing.
+  Expect(SendKeyDown(shell, SDLK_UP, ctrl_alt), "Ctrl+Alt+Up is bound");
+
+  // Shift+Alt+I over a selection: one caret at each line's end.
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  viewport->ClearSecondaryCarets();
+  viewport->MoveCursorTo(0, 0);
+  viewport->MoveCursorTo(2, 1, /*extend_selection=*/true);
+  Expect(SendKeyDown(shell, SDLK_I, static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT)),
+         "Shift+Alt+I is bound");
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(viewport->secondary_caret_range_view().size() == 2,
+         "three lines touched, three carets, got " +
+             std::to_string(viewport->secondary_caret_range_view().size() + 1));
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, ";"), "typing is handled");
+  viewport = WorkspaceShellTestAccess::ActiveEditorOrNull(shell);
+  Expect(std::string(viewport->lines().LineView(0)).back() == ';' &&
+             std::string(viewport->lines().LineView(1)).back() == ';' &&
+             std::string(viewport->lines().LineView(2)).back() == ';',
+         "each line gained a character at its END");
+}
+
 // A snippet session's placeholders are LINE:COLUMN ranges, and only the snippet
 // engine's own operations (a mirror edit, a choice swap, the expansion) keep them
 // in step with the text. Every other edit -- move-line, sort, paste, format, an
@@ -8408,6 +8467,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet);
   AddTest(tests, "WorkspaceShell/NoActionNoticesSoftWrap",
           TestWorkspaceShellNoActionNoticesSoftWrap);
+  AddTest(tests, "WorkspaceShell/AddCursorChordsAreBound",
+          TestWorkspaceShellAddCursorChordsAreBound);
   AddTest(tests, "WorkspaceShell/NoActionEditsAnUnfocusedSplitGroup",
           TestWorkspaceShellNoActionEditsAnUnfocusedSplitGroup);
   AddTest(tests, "WorkspaceShell/NoActionEditsABackgroundBuffer",

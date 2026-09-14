@@ -580,4 +580,114 @@ bool TextViewport::PasteText(std::string_view text, bool record_undo) {
   return true;
 }
 
+
+bool TextViewport::AddCaretVertical(int delta) {
+  if (document_->lines.empty() || delta == 0) {
+    return false;
+  }
+  document_->undo_history.NotifyCursorMoved();
+
+  // Every existing caret, as (position, sticky column, affinity). The primary's
+  // sticky column lives in preferred_column_; each secondary carries its own.
+  struct Seed {
+    TextPosition position;
+    std::size_t preferred_column;
+    WrapRowAffinity affinity;
+  };
+  std::vector<Seed> seeds;
+  seeds.reserve(secondary_carets_.size() + 1);
+  seeds.push_back(Seed{TextPosition{cursor_line_, cursor_column_}, preferred_column_,
+                       EffectiveCaretAffinity()});
+  for (const SecondaryCaret& caret : secondary_carets_) {
+    seeds.push_back(Seed{caret.position, caret.preferred_column, caret.wrap_affinity});
+  }
+
+  // One step from EACH seed. Adding below every caret and deduping is what grows
+  // the column by one per press instead of doubling it; a seed already at the
+  // edge advances to itself and is dropped by the dedupe below.
+  std::vector<Seed> added;
+  added.reserve(seeds.size());
+  for (const Seed& seed : seeds) {
+    Seed next = seed;
+    AdvanceCaretVertical(next.position, next.preferred_column, next.affinity, delta);
+    if (!(next.position == seed.position)) {
+      added.push_back(next);
+    }
+  }
+  if (added.empty()) {
+    return false;
+  }
+
+  // The newest caret in the direction of travel becomes the primary, so a held
+  // chord scrolls the view to wherever the column now ends.
+  const auto farther = [delta](const Seed& lhs, const Seed& rhs) {
+    return delta > 0 ? detail::PositionLess(lhs.position, rhs.position)
+                     : detail::PositionLess(rhs.position, lhs.position);
+  };
+  const Seed& lead = *std::max_element(added.begin(), added.end(), farther);
+
+  std::vector<TextPosition> others;
+  others.reserve(seeds.size() + added.size());
+  for (const Seed& seed : seeds) {
+    others.push_back(seed.position);
+  }
+  for (const Seed& seed : added) {
+    if (!(seed.position == lead.position)) {
+      others.push_back(seed.position);
+    }
+  }
+
+  // A vertical add is a caret gesture, not a selection one: VS Code drops any
+  // selection the carets carried rather than extending N of them at once.
+  selection_anchor_.reset();
+  PlacePrimaryCaret(lead.position.line, lead.position.column, /*keep_preferred_column=*/false,
+                    lead.affinity);
+  preferred_column_ = lead.preferred_column;
+  SetSecondaryCarets(std::move(others));
+  EnsureCursorVisible();
+  return true;
+}
+
+bool TextViewport::AddCaretsAtSelectedLineEnds() {
+  if (document_->lines.empty()) {
+    return false;
+  }
+  document_->undo_history.NotifyCursorMoved();
+
+  std::size_t first = cursor_line_;
+  std::size_t last = cursor_line_;
+  if (const auto selection = selection_range(); selection.has_value()) {
+    first = selection->start.line;
+    last = selection->end.line;
+    // A whole-line drag ends at column 0 of the line below its last content line;
+    // every line-scoped verb here normalizes that away, and a caret parked at the
+    // end of a line the user did not select would be a surprise.
+    if (last > first && selection->end.column == 0) {
+      --last;
+    }
+  }
+  const std::size_t line_count = document_->lines.size();
+  first = std::min(first, line_count - 1);
+  last = std::min(last, line_count - 1);
+
+  std::vector<TextPosition> ends;
+  ends.reserve(last - first + 1);
+  for (std::size_t line = first; line <= last; ++line) {
+    ends.push_back(TextPosition{line, document_->lines.LineLength(line)});
+  }
+  if (ends.empty()) {
+    return false;
+  }
+
+  // The LAST line's end is the primary, which is where VS Code leaves the active
+  // cursor and what keeps the view on the bottom of the block.
+  selection_anchor_.reset();
+  const TextPosition primary = ends.back();
+  ends.pop_back();
+  PlacePrimaryCaret(primary.line, primary.column);
+  SetSecondaryCarets(std::move(ends));
+  EnsureCursorVisible();
+  return true;
+}
+
 }  // namespace microide::editor

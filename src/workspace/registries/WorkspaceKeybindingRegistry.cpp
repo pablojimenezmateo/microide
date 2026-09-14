@@ -712,6 +712,40 @@ std::span<const KeybindingSpec> BuiltinKeybindingSpecs() {
           .command_name = {},
       },
       KeybindingSpec{
+          .id = "add-cursor-above",
+          .action = ActionId::AddCursorAbove,
+          // Ctrl+Alt+Up/Down, as VSCode binds insertCursorAbove/Below. Alt+Up
+          // alone is move-line-up and Ctrl+Shift+Alt+Up is the column-select
+          // step, so the three vertical Alt chords stay distinct.
+          .key = SDLK_UP,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "add-cursor-below",
+          .action = ActionId::AddCursorBelow,
+          .key = SDLK_DOWN,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
+          .id = "add-cursors-to-line-ends",
+          .action = ActionId::AddCursorsToLineEnds,
+          // Shift+Alt+I, as VSCode binds insertCursorAtEndOfEachLineSelected.
+          .key = SDLK_I,
+          .modifiers = static_cast<SDL_Keymod>(SDL_KMOD_SHIFT | SDL_KMOD_ALT),
+          .context = KeybindingContext::Editor,
+          .args = {},
+          .arg_count = 0,
+          .command_name = {},
+      },
+      KeybindingSpec{
           .id = "add-cursor-next-match",
           .action = ActionId::AddCursorAtNextMatch,
           .key = SDLK_D,

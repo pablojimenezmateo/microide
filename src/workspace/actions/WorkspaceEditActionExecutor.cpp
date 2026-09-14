@@ -508,6 +508,22 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       }
       return DispatchResult::Handled;
     }
+    case ActionId::AddCursorAbove:
+    case ActionId::AddCursorBelow:
+    case ActionId::AddCursorsToLineEnds: {
+      auto* viewport = context_.ActiveEditableViewport();
+      if (viewport == nullptr) return DispatchResult::Handled;
+      const bool changed =
+          id == ActionId::AddCursorsToLineEnds
+              ? viewport->AddCaretsAtSelectedLineEnds()
+              : viewport->AddCaretVertical(id == ActionId::AddCursorBelow ? 1 : -1);
+      if (changed) {
+        // A caret move, not an edit: no buffer changed, so this must not take the
+        // last-change path that re-tracks conflicts and slides breakpoints.
+        context_.NotifyEditorCaretMoved();
+      }
+      return DispatchResult::Handled;
+    }
     case ActionId::AddCursorAtNextMatch:
     case ActionId::AddCursorAtAllMatches: {
       if (!SettingEnabled(context_, "editor.multicursor.add_at_match.enabled", true)) {

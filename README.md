@@ -793,6 +793,9 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `sort-lines-descending`
 - `add-cursor-next-match`
 - `add-cursor-all-matches`
+- `add-cursor-above`
+- `add-cursor-below`
+- `add-cursors-to-line-ends`
 - `fold`
 - `unfold`
 - `fold-all`
