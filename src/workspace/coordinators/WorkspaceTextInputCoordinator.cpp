@@ -291,8 +291,10 @@ bool TextInputCoordinator::HandleTextInput(const SDL_TextInputEvent& event) {
     return false;
   }
 
-  SyncTextInputSurface(nullptr);
-  text_input_state_.composition = TextCompositionState{};
+  // InsertTextAtActiveSurface clears the composition itself, for every insert
+  // path including paste; clearing again here was a second answer to the same
+  // question, and it is the one that would have been missed had the authoritative
+  // clear ever moved.
   return InsertTextAtActiveSurface(event.text);
 }
 

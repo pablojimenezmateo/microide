@@ -146,6 +146,10 @@
     shell.context_.disabled_keybinding_ids = std::move(ids);
   }
   static std::size_t ActiveTabIndex(const WorkspaceShell& shell) { return shell.context_.current_project_state.focused_group().active_tab_index; }
+  // IME composition preview (the uncommitted text an input method is showing).
+  static const TextCompositionState& TextComposition(const WorkspaceShell& shell) {
+    return shell.context_.text_input.composition;
+  }
   static const TabDragState& TabDrag(const WorkspaceShell& shell) {
     return shell.context_.interaction_state.tab_drag;
   }
