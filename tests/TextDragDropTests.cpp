@@ -154,6 +154,97 @@ void TestReversedSourceRangeIsNormalized() {
          "the reversed range moves the same text as the forward one");
 }
 
+// Every (source, drop) pair over a small document, move and copy, against a flat
+// string oracle: offsets instead of (line, column), so the adjustment the entry
+// calls out -- and the two ways it differs on the source's last line -- is
+// checked by construction rather than at the three points a literal test picks.
+// The oracle also gives the round trip: Undo must restore the document exactly
+// and Redo must reproduce the move.
+std::size_t OffsetOf(std::string_view text, TextPosition position) {
+  std::size_t offset = 0;
+  for (std::size_t line = 0; line < position.line; ++line) {
+    offset = text.find('\n', offset);
+    if (offset == std::string_view::npos) return text.size();
+    ++offset;
+  }
+  return std::min(offset + position.column, text.size());
+}
+
+void TestDragDropMatchesAFlatStringOracle() {
+  static constexpr std::string_view kDocument = "ab\ncde\n\nfg";
+  std::vector<TextPosition> positions;
+  {
+    std::size_t line = 0;
+    std::size_t column = 0;
+    for (std::size_t i = 0; i <= kDocument.size(); ++i) {
+      if (i == kDocument.size() || kDocument[i] == '\n') {
+        positions.push_back(TextPosition{line, column});
+        if (i == kDocument.size()) break;
+        ++line;
+        column = 0;
+        continue;
+      }
+      positions.push_back(TextPosition{line, column});
+      ++column;
+    }
+  }
+
+  for (const TextPosition& start : positions) {
+    for (const TextPosition& end : positions) {
+      if (drag::PositionBefore(end, start)) continue;
+      const std::size_t start_offset = OffsetOf(kDocument, start);
+      const std::size_t end_offset = OffsetOf(kDocument, end);
+      if (start_offset == end_offset) continue;  // empty source: Apply refuses
+      for (const TextPosition& drop : positions) {
+        for (const bool copy : {false, true}) {
+          const std::size_t drop_offset = OffsetOf(kDocument, drop);
+          const std::string context =
+              "source " + std::to_string(start_offset) + ".." + std::to_string(end_offset) +
+              " drop " + std::to_string(drop_offset) + (copy ? " copy" : " move");
+
+          TextViewport viewport = MakeViewport(kDocument);
+          const auto moved = drag::Apply(viewport, SelectionRange{start, end}, drop, copy);
+
+          // Oracle: splice the flat string. A drop inside the source (endpoints
+          // included) is a no-op, which is what Apply reports as nullopt.
+          if (drop_offset >= start_offset && drop_offset <= end_offset) {
+            Expect(!moved.has_value(), "a drop inside the source is refused: " + context);
+            Expect(DocumentText(viewport) == kDocument,
+                   "a refused drop leaves the document alone: " + context);
+            continue;
+          }
+          const std::string text(kDocument.substr(start_offset, end_offset - start_offset));
+          std::string expected(kDocument);
+          std::size_t target_offset = drop_offset;
+          if (!copy) {
+            expected.erase(start_offset, end_offset - start_offset);
+            if (drop_offset > end_offset) target_offset -= end_offset - start_offset;
+          }
+          expected.insert(target_offset, text);
+
+          Expect(moved.has_value(), "a drop outside the source applies: " + context);
+          Expect(DocumentText(viewport) == expected,
+                 "document matches the oracle: " + context + ", got <" + DocumentText(viewport) +
+                     "> want <" + expected + ">");
+          if (moved.has_value()) {
+            Expect(OffsetOf(expected, moved->start) == target_offset &&
+                       OffsetOf(expected, moved->end) == target_offset + text.size(),
+                   "the reported range covers the moved text: " + context);
+          }
+
+          Expect(viewport.Undo(), "the move undoes: " + context);
+          Expect(DocumentText(viewport) == kDocument,
+                 "undo restores the document exactly: " + context + ", got <" +
+                     DocumentText(viewport) + ">");
+          Expect(viewport.Redo(), "the move redoes: " + context);
+          Expect(DocumentText(viewport) == expected,
+                 "redo reproduces the move: " + context);
+        }
+      }
+    }
+  }
+}
+
 }  // namespace
 
 void RegisterTextDragDropTests(std::vector<TestCase>& tests) {
@@ -166,6 +257,7 @@ void RegisterTextDragDropTests(std::vector<TestCase>& tests) {
   AddTest(tests, "TextDragDrop/DropInsideTheSourceIsANoOp", TestDropInsideTheSourceIsANoOp);
   AddTest(tests, "TextDragDrop/MoveUndoesInOneStep", TestMoveUndoesInOneStep);
   AddTest(tests, "TextDragDrop/ReversedSourceRangeIsNormalized", TestReversedSourceRangeIsNormalized);
+  AddTest(tests, "TextDragDrop/MatchesAFlatStringOracle", TestDragDropMatchesAFlatStringOracle);
 }
 
 }  // namespace microide::tests
