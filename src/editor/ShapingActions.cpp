@@ -296,10 +296,146 @@ bool BuildToggledCommentRegion(const TextBuffer& lines,
 
 }  // namespace
 
+namespace {
+
+// Every caret's own target range for a block-comment toggle: its selection when
+// it has one, else its whole line. VS Code toggles each cursor's region
+// independently, and every other shaping verb in this file already unions the
+// caret set through ResolveLineRanges -- ToggleBlockComment was the one that read
+// only the primary, so with three cursors it wrapped one line and left the other
+// two alone.
+//
+// Descending, and overlapping regions dropped: the edits apply highest-first so
+// the ones below stay valid, and two carets on one line must not wrap it twice.
+std::vector<SelectionRange> BlockCommentRegions(const TextViewport& viewport) {
+  const std::size_t line_count = viewport.line_count();
+  std::vector<SelectionRange> regions;
+  if (line_count == 0) return regions;
+  const auto whole_line = [&](std::size_t line) {
+    const std::size_t clamped = std::min(line, line_count - 1);
+    return SelectionRange{{clamped, 0}, {clamped, viewport.lines().LineLength(clamped)}};
+  };
+  if (const auto sel = viewport.selection_range()) {
+    regions.push_back(*sel);
+  } else {
+    regions.push_back(whole_line(viewport.cursor_line()));
+  }
+  for (const SecondaryCaret& caret : viewport.secondary_caret_range_view()) {
+    if (caret.selection_anchor.has_value() &&
+        !(*caret.selection_anchor == caret.position)) {
+      regions.push_back(SelectionRange{*caret.selection_anchor, caret.position});
+    } else {
+      regions.push_back(whole_line(caret.position.line));
+    }
+  }
+  for (SelectionRange& range : regions) {
+    if (range.end.line < range.start.line ||
+        (range.end.line == range.start.line && range.end.column < range.start.column)) {
+      std::swap(range.start, range.end);
+    }
+    range.start.line = std::min(range.start.line, line_count - 1);
+    range.end.line = std::min(range.end.line, line_count - 1);
+  }
+  std::sort(regions.begin(), regions.end(), [](const SelectionRange& a, const SelectionRange& b) {
+    return a.start.line != b.start.line ? a.start.line > b.start.line
+                                        : a.start.column > b.start.column;
+  });
+  std::vector<SelectionRange> disjoint;
+  for (const SelectionRange& range : regions) {
+    if (!disjoint.empty()) {
+      const SelectionRange& lower = disjoint.back();
+      const bool overlaps = range.end.line > lower.start.line ||
+                            (range.end.line == lower.start.line &&
+                             range.end.column > lower.start.column);
+      if (overlaps) {
+        continue;
+      }
+    }
+    disjoint.push_back(range);
+  }
+  return disjoint;
+}
+
+bool ToggleBlockCommentAtEveryCaret(TextViewport& viewport,
+                                    std::string_view open,
+                                    std::string_view close) {
+  const std::vector<SelectionRange> regions = BlockCommentRegions(viewport);
+  if (regions.empty()) return false;
+
+  // Each region runs the SAME three-way decision the single-caret path makes --
+  // strip an existing wrap, un-wrap markers sitting just outside the selection, or
+  // wrap -- and leaves the inner text SELECTED. That last part is what makes the
+  // toggle its own inverse: the second press has to see the ranges the first press
+  // made, and a caret set restored as bare positions would instead act on whole
+  // lines and nest a second pair of markers inside the first. The invariant sweep
+  // caught exactly that (`/* also /* short */ */`).
+  //
+  // Regions are disjoint and applied highest-first, so each one's resulting range
+  // is computable locally: the edits below it have not happened yet and the edits
+  // above it did not touch its lines.
+  viewport.BeginUndoGroup();
+  bool changed = false;
+  std::vector<SelectionRange> results;
+  results.reserve(regions.size());
+  for (const SelectionRange& region : regions) {
+    const std::string content = viewport.TextInRange(region);
+    SelectionRange target = region;
+    std::string text;
+    std::size_t select_from = 0;
+    std::size_t select_to = 0;
+    if (const auto stripped = TryStripBlockComment(content, open, close)) {
+      text = *stripped;
+      select_to = text.size();
+    } else if (const auto outer = RangeOverSurroundingMarkers(viewport, region, open, close)) {
+      target = *outer;
+      text = content;
+      select_to = text.size();
+    } else {
+      text.reserve(open.size() + content.size() + close.size() + 2);
+      text.append(open).push_back(' ');
+      text.append(content).push_back(' ');
+      text.append(close);
+      select_from = open.size() + 1;
+      select_to = select_from + content.size();
+    }
+    if (!viewport.ReplaceRange(target, text, /*record_undo=*/true)) {
+      continue;
+    }
+    changed = true;
+    results.push_back(SelectionRange{
+        EndOfInsertion(target.start, std::string_view(text).substr(0, select_from)),
+        EndOfInsertion(target.start, std::string_view(text).substr(0, select_to)),
+    });
+  }
+  viewport.EndUndoGroup();
+  if (!changed) {
+    return false;
+  }
+
+  // `results` is in descending document order (regions were). The primary takes
+  // the first region in READING order so the caret ends up where the user's
+  // primary was, and the rest become ranged secondaries.
+  const SelectionRange primary = results.back();
+  viewport.MoveCursorTo(primary.start.line, primary.start.column, false);
+  viewport.MoveCursorTo(primary.end.line, primary.end.column, true);
+  results.pop_back();
+  viewport.SetSecondaryCaretsWithRanges(results);
+  return true;
+}
+
+}  // namespace
+
 bool ToggleBlockComment(TextViewport& viewport,
                         std::string_view open,
                         std::string_view close) {
   if (open.empty() || close.empty()) return false;
+  // More than one caret: each one toggles its own region, as VS Code does. The
+  // single-caret path below is left exactly as it was -- it keeps the toggled text
+  // SELECTED so a second press strips instead of nesting, which cannot be done for
+  // N regions at once and is not worth losing for the one that matters.
+  if (viewport.has_multiple_carets()) {
+    return ToggleBlockCommentAtEveryCaret(viewport, open, close);
+  }
   auto sel = viewport.selection_range();
   if (!sel) {
     // Toggle a single line: strip an existing wrap, otherwise wrap.

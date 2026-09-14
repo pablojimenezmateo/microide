@@ -833,6 +833,53 @@ void TestSelectAllThenTypeUnderWrapLeavesOneCaret() {
              std::to_string(viewport.VisualRowCount()));
 }
 
+// Every shaping verb in ShapingActions.cpp unions the caret set through
+// ResolveLineRanges -- except ToggleBlockComment, which read only the primary. So
+// three cursors wrapped ONE line in `/* */` and left the other two untouched,
+// while Ctrl+/ next to it commented all three. VS Code toggles each cursor's
+// region independently.
+//
+// Found by classifying every registered action by how many caret neighbourhoods
+// it changed; it was the only verb whose count came back 1.
+void TestToggleBlockCommentReachesEveryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("aaa();\nbbb();\nccc();\nddd();\n", "/tmp/ec-block-multi.cpp");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 1);
+  viewport.SetSecondaryCarets({{2, 1}});
+
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
+         "the toggle should apply");
+  Expect(JoinLines(viewport) == "/* aaa(); */\nbbb();\n/* ccc(); */\nddd();\n",
+         std::string("both carets' lines should be wrapped, got: ") + JoinLines(viewport));
+
+  // And it is still its own inverse at every caret -- the property the invariant
+  // sweep checks, now over more than one of them.
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"),
+         "the second toggle should apply");
+  Expect(JoinLines(viewport) == "aaa();\nbbb();\nccc();\nddd();\n",
+         std::string("toggling twice should restore the buffer, got: ") + JoinLines(viewport));
+
+  // One undo step for the pair of regions, not one per region.
+  Expect(viewport.Undo(), "the multi-region toggle should undo");
+  Expect(JoinLines(viewport) == "/* aaa(); */\nbbb();\n/* ccc(); */\nddd();\n",
+         std::string("one undo should take back the whole toggle, got: ") + JoinLines(viewport));
+}
+
+// Two carets on ONE line must wrap it once, not nest a second pair of markers
+// inside the first.
+void TestToggleBlockCommentWithTwoCaretsOnOneLine() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha bravo\nsecond\n", "/tmp/ec-block-same-line.cpp");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 1);
+  viewport.SetSecondaryCarets({{0, 8}});
+
+  Expect(microide::editor::ToggleBlockComment(viewport, "/*", "*/"), "the toggle applies");
+  Expect(JoinLines(viewport) == "/* alpha bravo */\nsecond\n",
+         std::string("one line, one wrap: ") + JoinLines(viewport));
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -910,6 +957,10 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtWordEnd", TestSelectWordAtCursorAtWordEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtLineEnd", TestSelectWordAtCursorAtLineEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorOnSeparatorRun", TestSelectWordAtCursorOnSeparatorRun);
+  AddTest(tests, "EditorEdgeCase/ToggleBlockCommentReachesEveryCaret",
+          TestToggleBlockCommentReachesEveryCaret);
+  AddTest(tests, "EditorEdgeCase/ToggleBlockCommentWithTwoCaretsOnOneLine",
+          TestToggleBlockCommentWithTwoCaretsOnOneLine);
 }
 
 }  // namespace microide::tests
