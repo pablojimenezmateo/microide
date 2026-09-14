@@ -1137,6 +1137,19 @@ Two things the probe needs to be readable:
   carets) is what says they worked. A probe that "fixed" those would have buried
   the one real finding among four invented ones.
 
+**Classify on the CARET SET, not only on the buffer.** The first run of this
+probe compared buffer text, so every selection and navigation verb was invisible
+to it -- and Ctrl+L (expandLineSelection) turned out to expand the primary's line
+and leave the other cursors holding EMPTY anchors, which the next keystroke then
+turned into "replace one line, insert at two columns". Re-running the same
+classification on the caret set found it immediately.
+
+That one also needed a check OUTSIDE the registry loop, because Ctrl+L is a key
+handler rather than a registered action. An "every registered action" sweep covers
+exactly the actions in the registry; verbs bound directly in a key handler are a
+second population, and they are the ones most likely to have grown their own
+arithmetic instead of calling the viewport's.
+
 **The same probe, run over a multi-line SELECTION instead of three cursors, found
 a second bug in the same verb** -- and this time the useful column was not "how
 many selected lines changed" but "how many lines OUTSIDE the selection changed".
