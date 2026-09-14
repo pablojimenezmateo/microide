@@ -1,5 +1,7 @@
 #include "platform/ControlSocketClient.h"
 
+#include "platform/ControlSocketLimits.h"
+
 #include <cerrno>
 #include <cstring>
 
@@ -25,10 +27,12 @@ namespace {
 // buffer would OOM the `control-send` process long before its --timeout elapses.
 // Mirrors the server's kMaxRequestLineBytes intent for the client direction.
 constexpr std::size_t kMaxResponseLineBytes = 16u << 20;  // 16 MiB
-// Symmetric cap for the outbound direction: a single control request line is a small
-// command/query; refuse to frame anything larger rather than pump megabytes into a
-// possibly-stalled peer. Mirrors the server's request-line ceiling.
-constexpr std::size_t kMaxRequestLineBytes = 16u << 20;  // 16 MiB
+// Outbound direction: THE server's ceiling, not a second copy of it
+// (platform/ControlSocketLimits.h). A private 16 MiB copy here meant the client
+// framed and sent request lines the server answered by shedding the connection.
+// The response cap above is deliberately larger and its own: a query result is
+// allowed to be big, a request is not.
+constexpr std::size_t kMaxRequestLineBytes = kMaxControlRequestLineBytes;
 }  // namespace
 
 ControlSocketClient::~ControlSocketClient() { Close(); }

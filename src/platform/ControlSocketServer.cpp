@@ -1,5 +1,7 @@
 #include "platform/ControlSocketServer.h"
 
+#include "platform/ControlSocketLimits.h"
+
 #include "platform/RuntimePaths.h"
 
 #include "util/SdlWake.h"
@@ -92,11 +94,9 @@ bool ClearStaleSocketPath(const std::string& path) {
 // never leak the fd forever.
 constexpr int kLingerGraceMs = 2000;
 
-// A single control request (command or query line) is small — a few hundred
-// bytes at most. This ceiling bounds the unframed read buffer so a hostile local
-// client streaming bytes with no newline cannot grow it without limit (OOM). A
-// peer that exceeds it is shed. 1 MiB is far above any legitimate request.
-constexpr std::size_t kMaxRequestLineBytes = 1u << 20;
+// The shared ceiling (platform/ControlSocketLimits.h): the server enforces it by
+// shedding a peer that exceeds it, and the client refuses to frame past it.
+constexpr std::size_t kMaxRequestLineBytes = kMaxControlRequestLineBytes;
 
 // Upper bound on requests accepted from all connections but not yet drained by
 // the main thread. The main thread swaps the whole queue out on every control

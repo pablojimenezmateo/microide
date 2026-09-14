@@ -1,5 +1,7 @@
 #include "TestSupport.h"
 
+#include "platform/ControlSocketLimits.h"
+
 #include <chrono>
 #include <cstring>
 #include <optional>
@@ -479,9 +481,24 @@ void TestLargeMultiLineBroadcastDeliveredInOrder() {
 
 #endif  // POSIX
 
+
+// The client must not frame a request line the server will shed. These were two
+// constants of the same name in two files -- the client's comment claiming to
+// mirror the server's, at 16x the value -- so a request between the two ceilings
+// was framed, sent, and answered by dropping the socket with nothing saying why.
+void TestControlRequestCeilingIsOneValue() {
+  Expect(microide::platform::kMaxControlRequestLineBytes == (1u << 20),
+         "the shared control request ceiling is 1 MiB");
+  // Both directions of the wire read the shared constant rather than a private
+  // copy; the assertion that matters is that neither file defines its own, which
+  // the single definition in ControlSocketLimits.h now makes structural.
+}
+
 }  // namespace
 
 void RegisterControlSocketServerTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ControlSocketServer/RequestCeilingIsOneValue",
+          TestControlRequestCeilingIsOneValue);
   AddTest(tests, "ControlSocketServer/ScanRejectsOversizeCompleteLine",
           TestScanControlRequestLinesRejectsOversizeCompleteLine);
 #if defined(__unix__) || defined(__APPLE__)
