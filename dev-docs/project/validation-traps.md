@@ -1369,6 +1369,14 @@ emitted identical bytes for an unmodified press.
   `sudo sysctl vm.mmap_rnd_bits=28` is only a fallback if `personality()` is
   blocked.
 - TSAN warnings do not fail the process — check the log, not just the exit code.
+- **`&*it` on a `end()` iterator is UB that only UBSan can see.** A binary search
+  bounding a per-row scan built its span as `&*lower`, and on most rows `lower` is
+  `end()`. The address is only ever used to form an EMPTY span and is never read,
+  so there is no wrong answer for a test to catch: the whole suite was green, and
+  so were ASAN and TSAN. UBSan named it across seven shards ("reference binding to
+  null pointer"). Build such a span from `subspan` on the offset, and remember
+  that a lane being clean says nothing about the class of defect it does not look
+  for.
 
 ## The Test Environment's Default Configuration
 
