@@ -76,6 +76,12 @@ struct EditorOverviewSignature {
   std::size_t search_selected = 0;
   std::size_t search_count = 0;
   std::uint64_t theme_token = 0;
+  // The markers are placed by VisualRowForLine now, so the lane depends on the
+  // FOLD LAYOUT and not only on how many rows it produces. Two fold states can
+  // agree on the total -- collapse one three-line block while expanding another --
+  // and place every marker differently. That dependency arrived with the mapping;
+  // before it, markers were plain line numbers and folds could not affect them.
+  std::size_t fold_revision = 0;
   bool operator==(const EditorOverviewSignature&) const = default;
 };
 
@@ -126,6 +132,7 @@ void DrawEditorOverviewRuler(SDL_Renderer* renderer, const render::Theme& theme,
   sig.search_selected = buffer_search.selected_index;
   sig.search_count = buffer_search.matches.size();
   sig.theme_token = overview::ThemeMarkerToken(theme);
+  sig.fold_revision = viewport.folding_revision();
 
   if (cache.sig != sig || !RectsEqual(cache.track, inner_lane)) {
     inputs.clear();
