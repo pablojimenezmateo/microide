@@ -495,12 +495,113 @@ void TestDeletingAcrossACollapsedFoldRemovesTheHiddenLines() {
          std::string("the hidden body should go with the selection: ") + JoinLines(viewport));
 }
 
+// --- Sort descending. The comparator is the ascending one with its arguments
+// swapped, which is easy to write as a non-strict-weak-ordering `>=` by mistake;
+// a duplicate line then makes std::sort read out of bounds. ---
+void TestSortLinesDescending() {
+  TextViewport viewport;
+  viewport.LoadContent("b\nd\na\nc\n", "/tmp/ec-sort-desc.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(3, 1, /*extend_selection=*/true);
+  Expect(microide::editor::SortLines(viewport, /*ascending=*/false), "sort should report a change");
+  Expect(JoinLines(viewport) == "d\nc\nb\na\n",
+         std::string("descending sort, got: ") + JoinLines(viewport));
+}
 
+// --- Two carets with selections far apart sort their own regions and leave the
+// lines between them alone. ResolveLineRanges merges only touching ranges, so a
+// gap must survive as two edits rather than one span over everything. ---
+void TestSortLinesTwoDisjointRegions() {
+  TextViewport viewport;
+  viewport.LoadContent("b\na\nZZ\nYY\nd\nc\n", "/tmp/ec-sort-two.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(1, 1, /*extend_selection=*/true);
+  std::vector<SelectionRange> ranges = {SelectionRange{TextPosition{4, 0}, TextPosition{5, 1}}};
+  viewport.SetSecondaryCaretsWithRanges(ranges);
+  Expect(microide::editor::SortLines(viewport, /*ascending=*/true), "two-region sort changes");
+  Expect(JoinLines(viewport) == "a\nb\nZZ\nYY\nc\nd\n",
+         std::string("each region sorts alone, got: ") + JoinLines(viewport));
+}
 
+// --- A region where some lines are already commented and some are not comments
+// ALL of them (VS Code: uncomment only when every non-blank line is commented),
+// so a second press is a clean round trip rather than a half-toggle. ---
+void TestToggleLineCommentMixedRegionCommentsAll() {
+  TextViewport viewport;
+  viewport.LoadContent("// a\nb\n// c\n", "/tmp/ec-mixed-comment.cpp");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(2, 4, /*extend_selection=*/true);
+  Expect(microide::editor::ToggleLineComment(viewport, "//"), "mixed toggle changes");
+  Expect(JoinLines(viewport) == "// // a\n// b\n// // c\n",
+         std::string("mixed region should comment every line, got: ") + JoinLines(viewport));
+}
 
+// --- Two carets on ADJACENT lines are one region (ranges touching merge), so
+// Ctrl+Shift+Up duplicates the pair once. Duplicating per caret would emit the
+// shared lines twice. ---
+void TestCopyLinesUpWithAdjacentCarets() {
+  TextViewport viewport;
+  viewport.LoadContent("a\nb\nc\nd\n", "/tmp/ec-copy-adj.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 0);
+  viewport.SetSecondaryCarets({{2, 0}});
+  Expect(microide::editor::CopyLines(viewport, /*downward=*/false), "copy lines up changes");
+  Expect(JoinLines(viewport) == "a\nb\nc\nb\nc\nd\n",
+         std::string("adjacent carets duplicate the merged region once, got: ") +
+             JoinLines(viewport));
+}
 
+// --- A box selection is a rectangle of VISUAL columns: a tab-indented line and a
+// space-indented line of the same visual width must cut at the same place on
+// screen even though their byte columns differ. ---
+void TestBoxSelectionAcrossATabKeepsTheRectangle() {
+  TextViewport viewport;
+  viewport.LoadContent("\tabcd\n    abcd\n", "/tmp/ec-box-tab.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.SetTabSize(4);
+  // Visual columns 4..6 on both lines: "ab" on line 0 (after the tab) and "ab"
+  // on line 1 (after four spaces).
+  viewport.SetBoxSelectionVisual(0, 4, 1, 6);
+  Expect(viewport.secondary_carets().size() == 1,
+         "the box should put a ranged caret on the second line");
+  viewport.InsertText("X");
+  Expect(JoinLines(viewport) == "\tXcd\n    Xcd\n",
+         std::string("box typing replaces the same visual slice, got: ") + JoinLines(viewport));
+}
 
+// --- Typing over a box selection replaces every line's slice and undoes as ONE
+// step: the box is n selections, and n undo entries would need n presses to
+// get back. ---
+void TestBoxSelectionTypingUndoRestores() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\nabcdef\nabcdef\n", "/tmp/ec-box-undo.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.SetBoxSelection(TextPosition{0, 1}, TextPosition{2, 3});
+  viewport.InsertText("Z");
+  Expect(JoinLines(viewport) == "aZdef\naZdef\naZdef\n",
+         std::string("box typing, got: ") + JoinLines(viewport));
+  Expect(viewport.Undo(), "box typing undoes as one step");
+  Expect(JoinLines(viewport) == "abcdef\nabcdef\nabcdef\n",
+         std::string("undo restores, got: ") + JoinLines(viewport));
+}
 
+// --- Outdent strips one indent unit per line independently: a leading tab goes
+// whole, a space indent gives up to indent_width spaces, and a SHORT space
+// indent gives only what it has rather than eating the first character. ---
+void TestOutdentMixedTabAndSpaces() {
+  TextViewport viewport;
+  viewport.LoadContent("\tone\n    two\n  three\n", "/tmp/ec-outdent-mixed.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(2, 7, /*extend_selection=*/true);
+  Expect(microide::editor::OutdentSelection(viewport), "outdent changes");
+  Expect(JoinLines(viewport) == "one\ntwo\nthree\n",
+         std::string("each line loses one indent unit, got: ") + JoinLines(viewport));
+}
 
 // --- Double-clicking a run of whitespace selects the run (VS Code
 // `WordOperations.word`: with no word under the pointer it takes the gap between
@@ -516,6 +617,17 @@ void TestSelectWordAtCursorOnWhitespaceRun() {
          std::string("whitespace run selects as a word, got: '") + viewport.SelectedText() + "'");
 }
 
+// --- Ctrl+Delete with the caret at end-of-line joins the next line, rather than
+// stopping at the boundary and doing nothing for one press. ---
+void TestDeleteWordForwardAtLineEndJoins() {
+  TextViewport viewport;
+  viewport.LoadContent("abc\ndef\n", "/tmp/ec-delword-eol.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 3);
+  viewport.DeleteWord(1);
+  Expect(JoinLines(viewport) == "abcdef\n",
+         std::string("VSCode joins the next line, got: ") + JoinLines(viewport));
+}
 
 
 // --- A caret just PAST a word still names that word. VS Code's
@@ -598,8 +710,24 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestMultiCaretDeleteSelectionsUndoRestoresText);
   AddTest(tests, "EditorEdgeCase/MultiCaretBackspaceAtColumnZeroJoinsEachLineOnce",
           TestMultiCaretBackspaceAtColumnZeroJoinsEachLineOnce);
+  AddTest(tests, "EditorEdgeCase/SortLinesDescending",
+          TestSortLinesDescending);
+  AddTest(tests, "EditorEdgeCase/SortLinesTwoDisjointRegions",
+          TestSortLinesTwoDisjointRegions);
+  AddTest(tests, "EditorEdgeCase/ToggleLineCommentMixedRegionCommentsAll",
+          TestToggleLineCommentMixedRegionCommentsAll);
+  AddTest(tests, "EditorEdgeCase/CopyLinesUpWithAdjacentCarets",
+          TestCopyLinesUpWithAdjacentCarets);
+  AddTest(tests, "EditorEdgeCase/BoxSelectionAcrossATabKeepsTheRectangle",
+          TestBoxSelectionAcrossATabKeepsTheRectangle);
+  AddTest(tests, "EditorEdgeCase/BoxSelectionTypingUndoRestores",
+          TestBoxSelectionTypingUndoRestores);
+  AddTest(tests, "EditorEdgeCase/OutdentMixedTabAndSpaces",
+          TestOutdentMixedTabAndSpaces);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorOnWhitespaceRun",
           TestSelectWordAtCursorOnWhitespaceRun);
+  AddTest(tests, "EditorEdgeCase/DeleteWordForwardAtLineEndJoins",
+          TestDeleteWordForwardAtLineEndJoins);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtWordEnd", TestSelectWordAtCursorAtWordEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtLineEnd", TestSelectWordAtCursorAtLineEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorOnSeparatorRun", TestSelectWordAtCursorOnSeparatorRun);
