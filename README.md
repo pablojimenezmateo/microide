@@ -789,6 +789,7 @@ Run commands from the command palette (`Ctrl+Shift+p`). Current commands:
 - `delete-line`
 - `indent-lines`
 - `outdent-lines`
+- `join-lines`
 - `sort-lines-ascending`
 - `sort-lines-descending`
 - `add-cursor-next-match`

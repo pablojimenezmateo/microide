@@ -419,6 +419,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
     case ActionId::DeleteLine:
     case ActionId::IndentLines:
     case ActionId::OutdentLines:
+    case ActionId::JoinLines:
     case ActionId::SortLinesAscending:
     case ActionId::SortLinesDescending: {
       auto* viewport = context_.ActiveEditableViewport();
@@ -429,7 +430,7 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           id == ActionId::MoveLineUp || id == ActionId::MoveLineDown ||
           id == ActionId::DuplicateLine || id == ActionId::CopyLineUp ||
           id == ActionId::InsertLineBelow || id == ActionId::InsertLineAbove ||
-          id == ActionId::DeleteLine ||
+          id == ActionId::DeleteLine || id == ActionId::JoinLines ||
           id == ActionId::IndentLines || id == ActionId::OutdentLines;
       const bool is_sort_action =
           id == ActionId::SortLinesAscending || id == ActionId::SortLinesDescending;
@@ -494,6 +495,9 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
           break;
         case ActionId::OutdentLines:
           changed = editor::OutdentSelection(*viewport);
+          break;
+        case ActionId::JoinLines:
+          changed = editor::JoinLinesAtCarets(*viewport);
           break;
         case ActionId::SortLinesAscending:
           changed = editor::SortLines(*viewport, /*ascending=*/true);

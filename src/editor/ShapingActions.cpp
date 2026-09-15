@@ -708,6 +708,85 @@ bool MoveLines(TextViewport& viewport, bool downward) {
 
 }  // namespace
 
+bool JoinLinesAtCarets(TextViewport& viewport) {
+  const TextBuffer& lines = viewport.lines();
+  if (lines.size() == 0) return false;
+  // Whole-line regions, one per caret, merged -- the same set every other line
+  // verb acts on, so two carets on adjacent lines join once rather than fighting.
+  // Collapsed folds are NOT expanded: joining a folded block onto one line is a
+  // destructive edit the user cannot see the result of, and VS Code does not do it.
+  std::vector<LineRange> regions = ResolveLineRanges(viewport);
+  if (regions.empty()) return false;
+
+  // A region of ONE line joins with the line below it; that is what makes a
+  // repeated press pull a block up a line at a time. A region already spanning
+  // lines joins exactly what it covers.
+  for (LineRange& region : regions) {
+    if (region.first == region.last && region.last + 1 < lines.size()) {
+      region.last += 1;
+    }
+  }
+  std::erase_if(regions, [](const LineRange& region) { return region.first >= region.last; });
+  if (regions.empty()) return false;
+
+  const LineMoveCaretSnapshot snapshot = SnapshotCaretsForLineMove(viewport);
+  viewport.BeginUndoGroup();
+  bool changed = false;
+  // Descending: a join removes lines, so applying later regions first leaves the
+  // earlier regions' indices valid.
+  for (auto region = regions.rbegin(); region != regions.rend(); ++region) {
+    std::string joined(lines.LineView(region->first));
+    for (std::size_t line = region->first + 1; line <= region->last; ++line) {
+      const std::string_view text = lines.LineView(line);
+      const std::size_t content = LeadingWhitespaceCount(text);
+      const std::string_view trimmed = text.substr(content);
+      if (trimmed.empty()) {
+        continue;  // an empty line contributes nothing, not a stray space
+      }
+      // One separating space, and never a second: a first line that already ends
+      // in whitespace (or is empty) needs none.
+      if (!joined.empty() && joined.back() != ' ' && joined.back() != '\t') {
+        joined.push_back(' ');
+      }
+      joined.append(trimmed);
+    }
+    LineBlob replacement;
+    replacement.reserve_lines(1);
+    replacement.push_back(joined);
+    changed |= viewport.ReplaceLines(region->first, region->last + 1, std::move(replacement),
+                                     /*record_undo=*/true);
+  }
+  if (!changed) {
+    viewport.EndUndoGroup();
+    return false;
+  }
+
+  // Every region above a line collapsed to one, so a caret below slides up by the
+  // lines those regions swallowed; a caret inside a region lands on the joined
+  // line, which is the region's first.
+  const auto shift_by = [&](std::size_t line) -> std::size_t {
+    std::size_t removed = 0;
+    for (const LineRange& region : regions) {
+      if (region.last < line) {
+        removed += region.line_count() - 1;
+        continue;
+      }
+      if (region.first <= line) {
+        return region.first - std::min(region.first, removed);
+      }
+      break;
+    }
+    return line - std::min(line, removed);
+  };
+  RestoreCaretsAfterLineTransform(
+      viewport, snapshot, regions, shift_by,
+      // The exclusive end of a whole-line selection sits one past its region, so
+      // it lands one past the joined line.
+      [&](std::size_t line) { return line == 0 ? line : shift_by(line - 1) + 1; });
+  viewport.EndUndoGroup();
+  return true;
+}
+
 bool MoveLineUp(TextViewport& viewport) { return MoveLines(viewport, /*downward=*/false); }
 
 bool MoveLineDown(TextViewport& viewport) { return MoveLines(viewport, /*downward=*/true); }

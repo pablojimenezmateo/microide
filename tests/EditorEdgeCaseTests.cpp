@@ -913,6 +913,73 @@ void TestToggleBlockCommentOnAWholeLineSelection() {
          std::string("and toggling twice restores it: ") + JoinLines(viewport));
 }
 
+// VS Code's editor.action.joinLines. A bare caret joins its line with the one
+// BELOW -- that is what makes a repeated press pull a block up a line at a time --
+// and a selection joins every line it touches. Separated by ONE space, with the
+// appended lines' leading whitespace trimmed.
+void TestJoinLinesBareCaretTakesTheLineBelow() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha\n    beta\ngamma\n", "/tmp/ec-join-below.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 2);
+
+  Expect(microide::editor::JoinLinesAtCarets(viewport), "the join applies");
+  Expect(JoinLines(viewport) == "alpha beta\ngamma\n",
+         std::string("the line below is appended with one space, its indent trimmed: ") +
+             JoinLines(viewport));
+
+  Expect(microide::editor::JoinLinesAtCarets(viewport), "a second press applies");
+  Expect(JoinLines(viewport) == "alpha beta gamma\n",
+         std::string("and pulls the next line up too: ") + JoinLines(viewport));
+}
+
+// A line already ending in whitespace does not gain a second space, and an empty
+// line contributes nothing rather than a stray one.
+void TestJoinLinesSpacingEdges() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha \nbeta\n", "/tmp/ec-join-space.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  Expect(microide::editor::JoinLinesAtCarets(viewport), "the join applies");
+  Expect(JoinLines(viewport) == "alpha beta\n",
+         std::string("no double space after a trailing one: ") + JoinLines(viewport));
+
+  TextViewport blanks;
+  blanks.LoadContent("alpha\n\n\nbeta\n", "/tmp/ec-join-blank.txt");
+  blanks.SetViewportSize(10, 40);
+  blanks.MoveCursorTo(0, 0);
+  blanks.MoveCursorTo(3, 4, /*extend_selection=*/true);
+  Expect(microide::editor::JoinLinesAtCarets(blanks), "the join applies over blanks");
+  Expect(JoinLines(blanks) == "alpha beta\n",
+         std::string("empty lines contribute nothing, not stray spaces: ") + JoinLines(blanks));
+}
+
+// Every caret joins its own region, and two carets on adjacent lines join once.
+void TestJoinLinesAtEveryCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("a1\na2\nkeep\nb1\nb2\n", "/tmp/ec-join-multi.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.SetSecondaryCarets({{3, 0}});
+
+  Expect(microide::editor::JoinLinesAtCarets(viewport), "the join applies");
+  Expect(JoinLines(viewport) == "a1 a2\nkeep\nb1 b2\n",
+         std::string("each caret joined its own pair: ") + JoinLines(viewport));
+  Expect(viewport.secondary_caret_range_view().size() == 1,
+         "both carets survive the join");
+}
+
+// The last line has nothing below it, so the press is a no-op rather than an
+// edit that eats the trailing newline.
+void TestJoinLinesAtTheLastLineIsANoOp() {
+  TextViewport viewport;
+  viewport.LoadContent("only\n", "/tmp/ec-join-last.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 0);  // the phantom line after the final newline
+  Expect(!microide::editor::JoinLinesAtCarets(viewport), "there is nothing below to join");
+  Expect(JoinLines(viewport) == "only\n", "and the buffer is untouched");
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -990,6 +1057,12 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtWordEnd", TestSelectWordAtCursorAtWordEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorAtLineEnd", TestSelectWordAtCursorAtLineEnd);
   AddTest(tests, "EditorEdgeCase/SelectWordAtCursorOnSeparatorRun", TestSelectWordAtCursorOnSeparatorRun);
+  AddTest(tests, "EditorEdgeCase/JoinLinesBareCaretTakesTheLineBelow",
+          TestJoinLinesBareCaretTakesTheLineBelow);
+  AddTest(tests, "EditorEdgeCase/JoinLinesSpacingEdges", TestJoinLinesSpacingEdges);
+  AddTest(tests, "EditorEdgeCase/JoinLinesAtEveryCaret", TestJoinLinesAtEveryCaret);
+  AddTest(tests, "EditorEdgeCase/JoinLinesAtTheLastLineIsANoOp",
+          TestJoinLinesAtTheLastLineIsANoOp);
   AddTest(tests, "EditorEdgeCase/ToggleBlockCommentOnAWholeLineSelection",
           TestToggleBlockCommentOnAWholeLineSelection);
   AddTest(tests, "EditorEdgeCase/ToggleBlockCommentReachesEveryCaret",

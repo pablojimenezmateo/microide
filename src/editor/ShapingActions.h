@@ -41,6 +41,18 @@ bool DeleteLine(TextViewport& viewport);
 bool IndentSelection(TextViewport& viewport);
 bool OutdentSelection(TextViewport& viewport);
 
+// VS Code's editor.action.joinLines. NOT named JoinLines: `util::JoinLines`
+// already joins a span of strings, and a second overload in this namespace is
+// found by ADL from any `TextViewport` argument -- it silently outranked a test's
+// own `JoinLines(viewport)` helper the first time this was written.
+//
+// Folds each caret's region onto one line,
+// separated by a single space with the appended lines' leading whitespace
+// trimmed. A bare caret joins its line with the one BELOW it (which is what makes
+// repeated presses pull a block up); a selection joins every line it touches.
+// Applies to every caret.
+bool JoinLinesAtCarets(TextViewport& viewport);
+
 bool SortLines(TextViewport& viewport, bool ascending);
 
 }  // namespace microide::editor

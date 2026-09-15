@@ -458,6 +458,7 @@ bool ActionAvailability::IsEnabled(ActionId id) const {
     case ActionId::DeleteLine:
     case ActionId::IndentLines:
     case ActionId::OutdentLines:
+    case ActionId::JoinLines:
       return active_editable_viewport != nullptr &&
              SettingEnabled(operations_, "editor.shaping.line_ops.enabled", true);
     case ActionId::SortLinesAscending:

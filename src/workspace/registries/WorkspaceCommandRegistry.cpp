@@ -294,6 +294,7 @@ std::span<const ActionSpec> WorkspaceCommandSpecs() {
       ActionSpec{ActionId::IndentLines, "indent-lines", "indent-lines", "Indent Lines", "Tab"},
       ActionSpec{ActionId::OutdentLines, "outdent-lines", "outdent-lines", "Outdent Lines",
                  "Shift+Tab"},
+      ActionSpec{ActionId::JoinLines, "join-lines", "join-lines", "Join Lines", ""},
       ActionSpec{ActionId::SortLinesAscending, "sort-lines-ascending", "sort-lines-ascending",
                  "Sort Lines Ascending", ""},
       ActionSpec{ActionId::SortLinesDescending, "sort-lines-descending", "sort-lines-descending",

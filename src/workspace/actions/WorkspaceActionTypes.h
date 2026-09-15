@@ -182,6 +182,7 @@ enum class ActionId {
   DeleteLine,
   IndentLines,
   OutdentLines,
+  JoinLines,
   SortLinesAscending,
   SortLinesDescending,
   AddCursorAtNextMatch,
