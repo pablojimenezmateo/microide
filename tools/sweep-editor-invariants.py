@@ -318,6 +318,9 @@ EDIT_COMMANDS: list[tuple[str, str, str | None, bool]] = [
     ("line-comment twice", "toggle-line-comment", "toggle-line-comment", False),
     ("block-comment twice", "toggle-block-comment", "toggle-block-comment", False),
     ("delete-line", "delete-line", None, False),
+    # No inverse: a join is not injective (it cannot know where the break was, and
+    # it normalizes whitespace on the way), so only the undo/redo property applies.
+    ("join-lines", "join-lines", None, False),
     ("copy-line-down", "copy-line-down", None, False),
     ("copy-line-up", "copy-line-up", None, False),
     ("insert-line-below", "insert-line-below", None, False),
