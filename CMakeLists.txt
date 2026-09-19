@@ -1054,6 +1054,7 @@ add_executable(microide_tests
   tests/TestSupport.cpp
   tests/AssistServiceTests.cpp
   tests/PluginHostTests.cpp
+  tests/PluginPureHelperTests.cpp
   tests/PluginSurfaceCoverageTests.cpp
   tests/SurfaceTextureCacheTests.cpp
   tests/PluginThreadTests.cpp
