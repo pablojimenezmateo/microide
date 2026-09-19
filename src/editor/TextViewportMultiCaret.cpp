@@ -130,8 +130,28 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
   }
   const TextPosition primary_caret{cursor_line_, cursor_column_};
   carets.push_back({primary_caret, NormalizedSelection(primary_caret, selection_anchor_)});
-  std::sort(carets.begin(), carets.end(), [](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
-    return detail::PositionLess(lhs.position, rhs.position);
+  // Sort by the site's affected RANGE (selection start, then end), not by the
+  // caret: the reverse walk below relies on every later site lying wholly after
+  // every earlier one so that applying it cannot shift them. Two carets sharing a
+  // position with selections on opposite sides -- [0,10) leading right and
+  // [10,16) leading left, both carets at 10 -- tie on position, and applying the
+  // left one first moved the right one's text under its planned range.
+  const auto site_start = [](const MultiCaretSite& site) {
+    return site.selection.has_value() ? site.selection->start : site.position;
+  };
+  const auto site_end = [](const MultiCaretSite& site) {
+    return site.selection.has_value() ? site.selection->end : site.position;
+  };
+  std::sort(carets.begin(), carets.end(), [&](const MultiCaretSite& lhs, const MultiCaretSite& rhs) {
+    const TextPosition lhs_start = site_start(lhs);
+    const TextPosition rhs_start = site_start(rhs);
+    if (detail::PositionLess(lhs_start, rhs_start)) {
+      return true;
+    }
+    if (detail::PositionLess(rhs_start, lhs_start)) {
+      return false;
+    }
+    return detail::PositionLess(site_end(lhs), site_end(rhs));
   });
   // Collapse fully-identical sites (same caret AND same selection). Distinct sites
   // that merely share a caret position — two carets with different anchors — are
@@ -168,6 +188,15 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     return position;
   };
 
+  // Spaces to the next tab stop from `column` on `line`: the single-caret
+  // InsertTab rule, per caret.
+  const std::size_t safe_indent_width = std::max<std::size_t>(1, indent_width_);
+  const auto soft_tab_at = [&](std::size_t line, std::size_t column) {
+    const std::size_t visual_column = VisualColumnAt(line, column);
+    const std::size_t remainder = visual_column % safe_indent_width;
+    return std::string(remainder == 0 ? safe_indent_width : safe_indent_width - remainder, ' ');
+  };
+
   // Plan each caret's edit from the pre-edit buffer. Returns nullopt when the
   // caret cannot edit (backspace at doc start, delete at doc end).
   const auto plan_edit = [&](std::size_t line, std::size_t column,
@@ -181,6 +210,10 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
     if (selection.has_value()) {
       const SelectionRange removed{clamp_position(selection->start),
                                    clamp_position(selection->end)};
+      if (kind == MultiCaretEditKind::SoftTab) {
+        return PlannedCaretEdit{removed, soft_tab_at(removed.start.line, removed.start.column),
+                                std::nullopt};
+      }
       if (kind == MultiCaretEditKind::Insert) {
         if (caret_insert == "\n") {
           return PlannedCaretEdit{
@@ -192,6 +225,9 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
       return PlannedCaretEdit{removed, "", std::nullopt};
     }
     switch (kind) {
+      case MultiCaretEditKind::SoftTab:
+        return PlannedCaretEdit{SelectionRange{TextPosition{line, column}, TextPosition{line, column}},
+                                soft_tab_at(line, column), std::nullopt};
       case MultiCaretEditKind::Insert: {
         // On Enter, a caret between a matching auto-close pair splits the braces
         // across three lines and lands on the inner-indent line (mirrors the
@@ -333,14 +369,23 @@ bool TextViewport::ApplyMultiCaretEdit(MultiCaretEditKind kind, std::string_view
 
   const ViewState before_state = CaptureViewState();
   const TextPosition primary_before{cursor_line_, cursor_column_};
-  // Identify the primary by its index in the sorted/deduped vector rather than
-  // by value-equality on the clamped position: a secondary caret can clamp onto
-  // the primary's position, which would otherwise misattribute or drop a caret.
+  // Identify the primary's site by caret AND selection: a secondary can share
+  // the primary's position with a different selection (the sites are sorted by
+  // range, so a position probe could land on either), and one that clamped onto
+  // it with the same selection was collapsed into one site above.
+  const std::optional<SelectionRange> primary_selection =
+      NormalizedSelection(primary_before, selection_anchor_);
   const std::size_t primary_index = static_cast<std::size_t>(
-      std::lower_bound(carets.begin(), carets.end(), primary_before,
-                       [](const MultiCaretSite& site, const TextPosition& value) {
-                         return detail::PositionLess(site.position, value);
-                       }) -
+      std::find_if(carets.begin(), carets.end(),
+                   [&](const MultiCaretSite& site) {
+                     if (!(site.position == primary_before) ||
+                         site.selection.has_value() != primary_selection.has_value()) {
+                       return false;
+                     }
+                     return !site.selection.has_value() ||
+                            (site.selection->start == primary_selection->start &&
+                             site.selection->end == primary_selection->end);
+                   }) -
       carets.begin());
   // Apply edits high-to-low (so each edit's coordinates stay valid against the
   // still-unedited lower buffer), recording each caret's landed position + its
@@ -511,36 +556,9 @@ bool TextViewport::DeleteMultiCaretSelections(bool record_undo) {
 }
 
 bool TextViewport::ApplyMultiCaretSoftTab(bool record_undo) {
-  // Build the same sorted + position-deduped caret set ApplyMultiCaretEdit derives
-  // internally so the per-caret space strings line up by index, then size each
-  // caret's soft tab to its own next tab stop.
-  std::vector<TextPosition> positions;
-  positions.reserve(secondary_carets_.size() + 1);
-  for (const SecondaryCaret& secondary : secondary_carets_) {
-    positions.push_back(secondary.position);
-  }
-  positions.push_back(TextPosition{cursor_line_, cursor_column_});
-  std::sort(positions.begin(), positions.end(), detail::PositionLess);
-  positions.erase(std::unique(positions.begin(), positions.end()), positions.end());
-
-  const std::size_t safe_indent_width = std::max<std::size_t>(1, indent_width_);
-  std::vector<std::string> parts;
-  parts.reserve(positions.size());
-  for (const TextPosition& position : positions) {
-    std::size_t visual_column = 0;
-    if (!document_->lines.empty() && position.line < document_->lines.size()) {
-      // LineView + VisualColumnAt, not operator[]: the compatibility accessor
-      // materializes a second copy of the line into the per-revision cache, and
-      // the conversion answers in O(1) on a plain-ASCII line.
-      const std::size_t column =
-          TextLayout::ClampTextColumn(document_->lines.LineView(position.line), position.column);
-      visual_column = VisualColumnAt(position.line, column);
-    }
-    const std::size_t remainder = visual_column % safe_indent_width;
-    const std::size_t spaces = remainder == 0 ? safe_indent_width : safe_indent_width - remainder;
-    parts.emplace_back(std::max<std::size_t>(1, spaces), ' ');
-  }
-  return ApplyMultiCaretEdit(MultiCaretEditKind::Insert, "", record_undo, &parts);
+  // Each caret aligns to its OWN next tab stop; the pipeline plans the string per
+  // site (see MultiCaretEditKind::SoftTab).
+  return ApplyMultiCaretEdit(MultiCaretEditKind::SoftTab, "", record_undo);
 }
 
 bool TextViewport::PasteText(std::string_view text, bool record_undo) {

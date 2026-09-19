@@ -924,6 +924,12 @@ class TextViewport {
   // the per-caret edit differs, so they route through ApplyMultiCaretEdit.
   enum class MultiCaretEditKind {
     Insert,
+    // One soft tab per caret, sized to that caret's OWN next tab stop (from the
+    // selection start when it replaces a single-line selection, as VS Code's
+    // _replaceJumpToNextIndent). Planned inside the pipeline rather than passed
+    // as a per-caret string list, so the strings cannot fall out of step with
+    // the site set the pipeline dedupes for itself.
+    SoftTab,
     Backspace,
     DeleteForward,
     DeleteWordBackward,

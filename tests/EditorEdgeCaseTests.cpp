@@ -1146,6 +1146,55 @@ void TestTouchingReversedSelectionAtThePrimaryCaretSurvives() {
          std::string("both touching selections are replaced: ") + JoinLines(viewport));
 }
 
+// --- Tab at two carets that share a position but own different (touching)
+// selections must pad BOTH sites. The soft tab used to be planned as one string
+// per position-deduped caret and handed to the pipeline by index; the pipeline
+// dedupes by (position, selection), so the two lists disagreed in length and the
+// fallback inserted the empty string at every caret -- Tab did nothing. ---
+void TestMultiCaretTabAtASharedPositionPadsBothSites() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha beta gamma delta\n", "/tmp/ec-tab-shared-position.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);  // "alpha", leading right
+  viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
+      SelectionRange{TextPosition{0, 16}, TextPosition{0, 7}},  // "ta gam", leading left
+  });
+  viewport.MoveCursorWord(1, /*extend_selection=*/true);  // both carets word-step to 10
+  Expect(viewport.secondary_carets().size() == 1 && viewport.cursor_column() == 10 &&
+             viewport.secondary_carets().front() == TextPosition{0, 10},
+         std::string("fixture: two carets share column 10: ") + CaretDump(viewport));
+
+  viewport.InsertTab();
+  // [0,10) starts at visual column 0 -> a full indent; [10,16) starts at 10 -> 2.
+  Expect(JoinLines(viewport) == "      " + std::string(" delta\n"),
+         std::string("each selection is replaced by its own soft tab: '") + JoinLines(viewport) +
+             "'");
+}
+
+// Tab over single-line selections at several carets replaces each with an
+// indent sized from ITS selection start (VS Code's _replaceJumpToNextIndent).
+void TestMultiCaretTabReplacesSingleLineSelectionsFromTheirStart() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdef\nabcdef\n", "/tmp/ec-tab-selections.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(4);
+  viewport.MoveCursorTo(0, 1);
+  viewport.MoveCursorTo(0, 3, /*extend_selection=*/true);
+  viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
+      SelectionRange{TextPosition{1, 2}, TextPosition{1, 5}},
+  });
+
+  viewport.InsertTab();
+  Expect(JoinLines(viewport) == "a   def\nab  f\n",
+         std::string("column 1 pads 3, column 2 pads 2: '") + JoinLines(viewport) + "'");
+  Expect(viewport.cursor_column() == 4 && !viewport.has_selection(),
+         std::string("the primary lands after its padding, collapsed: ") + CaretDump(viewport));
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -1249,6 +1298,10 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestPlainUpOverAForwardSelectionStartsFromItsStart);
   AddTest(tests, "EditorEdgeCase/TouchingReversedSelectionAtThePrimaryCaretSurvives",
           TestTouchingReversedSelectionAtThePrimaryCaretSurvives);
+  AddTest(tests, "EditorEdgeCase/MultiCaretTabAtASharedPositionPadsBothSites",
+          TestMultiCaretTabAtASharedPositionPadsBothSites);
+  AddTest(tests, "EditorEdgeCase/MultiCaretTabReplacesSingleLineSelectionsFromTheirStart",
+          TestMultiCaretTabReplacesSingleLineSelectionsFromTheirStart);
 }
 
 }  // namespace microide::tests
