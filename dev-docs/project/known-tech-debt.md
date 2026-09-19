@@ -497,12 +497,19 @@ plugin TU. The destructor is in `WorkspaceShell.cpp` where you would look for bo
 Nothing is broken; the constructor is simply somewhere nobody would search.
 
 **293c — `ComputeVisiblePopupMenuItems` still has a value-returning overload.**
-The paint path now fills a reused buffer, but the mouse hit-test path
-(`WorkspaceChromeMouseCoordinator`'s `compute_visible_popup_menu_items` hook) still
-takes the vector by value through a `std::function`, so a motion event over an open
-menu allocates one row vector per probe. It is a `std::function` returning
-`std::vector` in the Operations struct, so the fix is a signature change on the
-hook, not a call-site change.
+[RESOLVED 2026-09-19.] The paint path filled a reused buffer, but four mouse
+paths still went through the row-building form, which allocates a row vector and
+probes `IsMenuItemEnabled` + `IsMenuItemChecked` for every item to answer about
+one. `HandleTreeContextMenuMotion` ran it per motion event for as long as the
+menu stayed open. The fix was not a signature change on the hook but the
+geometry-only lookup the menu-bar popup's motion path already used: all four
+resolve one row with `HitTestPopupRow` and ask about that row alone.
+`compute_visible_popup_menu_items` left the Operations struct entirely (its two
+replacements were already there), `compute_visible_tree_context_menu_items`
+became the same geometry pair, and `MenuCoordinator`'s `menu_popup_item_rect`
+-- one row vector to read one rect -- took `PopupRowRectByIndex`. The
+value-returning form stays for the isolated callers, held against the mouse path
+by `WorkspaceShell/TreeContextMenuHoverMatchesTheRowBuilder`.
 
 ### TD-2026-09-07-292 — the systematic subsystem sweep: one shape (`exists()` / lexical containment answers about the TARGET, not the ENTRY) accounted for four of the six findings. [RESOLVED same session — open remainder: two platform notes below.]
 
