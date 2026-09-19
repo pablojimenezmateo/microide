@@ -30,8 +30,20 @@ ColumnSelectionState StepColumnSelection(ColumnSelectionState state,
       break;
     case ColumnSelectDirection::Right:
       // Past end-of-line is allowed (that is what makes a box over ragged lines
-      // work), but not past the longest line the box covers.
-      state.cursor.column = std::min(state.cursor.column + 1, max_column);
+      // work), but the virtual column only GROWS while it is below the widest
+      // line the box covers -- VS Code's `columnSelectRight`
+      // (`if (toViewVisualColumn < maxVisualViewportColumn) toViewVisualColumn++`).
+      //
+      // Not `min(column + 1, max_column)`: `max_column` is the width of the span
+      // the box covers RIGHT NOW, and that span shrinks when the moving corner
+      // walks back toward the anchor. Widen the box over a long line, then step
+      // the corner back off it, and the min dragged the virtual column down to
+      // the remaining lines' width -- so pressing Right made the selection
+      // dramatically NARROWER, and the virtual column the short-line crossing
+      // exists to preserve was lost for good.
+      if (state.cursor.column < max_column) {
+        ++state.cursor.column;
+      }
       break;
   }
 

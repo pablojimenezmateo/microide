@@ -93,6 +93,31 @@ void TestHorizontalMotionSaturatesAtColumnZeroAndTheLongestLine() {
          "Right should not grow the virtual column past the longest line in the box");
 }
 
+// `max_column` is the width of the span the box covers RIGHT NOW, and that span
+// shrinks when the moving corner walks back toward the anchor. Right must still
+// be a no-op there -- clamping the virtual column TO the narrower span makes a
+// Right press collapse the box, which is the opposite of what the key does.
+void TestRightDoesNotDragTheVirtualColumnBackWhenTheSpanShrinks() {
+  // The box was widened over a long line; the corner has since stepped back up
+  // onto short lines, so the span it covers is only 4 cells wide.
+  ColumnSelectionState wide{.active = true,
+                            .anchor = TextPosition{0, 0},
+                            .cursor = TextPosition{0, 30}};
+  const ColumnSelectionState after =
+      StepColumnSelection(wide, ColumnSelectDirection::Right, {}, 5, /*max_column=*/4);
+  Expect(after.cursor.column == 30,
+         "Right over a span narrower than the virtual column should leave it alone, got " +
+             std::to_string(after.cursor.column));
+
+  // And it still grows normally while there is room, from the same state shape.
+  ColumnSelectionState room{.active = true,
+                            .anchor = TextPosition{0, 0},
+                            .cursor = TextPosition{0, 30}};
+  Expect(StepColumnSelection(room, ColumnSelectDirection::Right, {}, 5, /*max_column=*/40)
+                 .cursor.column == 31,
+         "Right below the span width should still step one cell");
+}
+
 // The virtual column is the whole point: crossing a two-character line must not
 // permanently narrow the box.
 void TestVirtualColumnSurvivesShortLines() {
@@ -251,9 +276,56 @@ void TestColumnSelectChordDispatchesThroughTheRegistry() {
          "ordinary caret movement must end the column-selection gesture");
 }
 
+// The same defect driven through the real chord, because `max_column` is not a
+// constant: the action recomputes it from the span the box covers at that
+// moment, so the shrink is produced by the gesture itself rather than handed in.
+void TestColumnSelectRightKeepsTheWidthAfterSteppingBackOffTheLongLine() {
+  TemporaryDirectory temp;
+  const std::filesystem::path root = temp.path() / "project";
+  const std::filesystem::path file = root / "ragged.txt";
+  WriteFile(file, "ab\ncd\na very long line that goes on\n");
+
+  microide::workspace::WorkspaceShell shell;
+  ShellTestAccess::SetProjectRoot(shell, root);
+  ShellTestAccess::SetWindowSize(shell, 1280, 720);
+  ShellTestAccess::OpenSingleEditorTab(shell, file);
+
+  auto& viewport = ShellTestAccess::ActiveEditor(shell);
+  viewport.MoveCursorTo(0, 0, false);
+
+  const SDL_Keymod chord =
+      static_cast<SDL_Keymod>(SDL_KMOD_CTRL | SDL_KMOD_SHIFT | SDL_KMOD_ALT);
+  // Down onto the long line, so the box's span is wide...
+  Expect(SendKeyDown(shell, SDLK_DOWN, chord) && SendKeyDown(shell, SDLK_DOWN, chord),
+         "two Down chords should be handled");
+  // ...widen it well past the two short lines...
+  for (int i = 0; i < 10; ++i) {
+    Expect(SendKeyDown(shell, SDLK_RIGHT, chord), "a Right chord should be handled");
+  }
+  Expect(viewport.column_selection().cursor.column == 10,
+         "ten Right chords over the long line should reach column 10, got " +
+             std::to_string(viewport.column_selection().cursor.column));
+
+  // ...then step the moving corner back up, so the span it covers is 2 cells wide.
+  Expect(SendKeyDown(shell, SDLK_UP, chord) && SendKeyDown(shell, SDLK_UP, chord),
+         "two Up chords should be handled");
+  Expect(viewport.column_selection().cursor.column == 10,
+         "Up must keep the virtual column, got " +
+             std::to_string(viewport.column_selection().cursor.column));
+
+  // Right here used to clamp the virtual column TO the now-narrow span, so the
+  // box collapsed from ten cells to two on a key that only ever widens it.
+  Expect(SendKeyDown(shell, SDLK_RIGHT, chord), "the Right chord should be handled");
+  Expect(viewport.column_selection().cursor.column == 10,
+         "Right over a span narrower than the virtual column must not narrow the box, got " +
+             std::to_string(viewport.column_selection().cursor.column));
+}
+
 }  // namespace
 
 void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ColumnSelection/RightKeepsTheWidthAfterSteppingBackOffTheLongLine",
+          TestColumnSelectRightKeepsTheWidthAfterSteppingBackOffTheLongLine);
   AddTest(tests, "ColumnSelection/FirstStepAnchorsAtTheCaret", TestFirstStepAnchorsAtTheCaret);
   AddTest(tests, "ColumnSelection/SubsequentStepsIgnoreTheLiveCaret",
           TestSubsequentStepsIgnoreTheLiveCaret);
@@ -263,6 +335,8 @@ void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
           TestHorizontalMotionSaturatesAtColumnZeroAndTheLongestLine);
   AddTest(tests, "ColumnSelection/VirtualColumnSurvivesShortLines",
           TestVirtualColumnSurvivesShortLines);
+  AddTest(tests, "ColumnSelection/RightDoesNotDragTheVirtualColumnBackWhenTheSpanShrinks",
+          TestRightDoesNotDragTheVirtualColumnBackWhenTheSpanShrinks);
   AddTest(tests, "ColumnSelection/MaxVisualWidthInSpan", TestMaxVisualWidthInSpanFindsTheLongestLine);
   AddTest(tests, "ColumnSelection/ProducesOneCaretPerSpannedLine",
           TestSteppedStateProducesOneCaretPerSpannedLine);
