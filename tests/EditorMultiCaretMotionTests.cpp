@@ -37,6 +37,8 @@
 #include <vector>
 
 #include "editor/EditTypes.h"
+#include "editor/FoldingModel.h"
+#include "editor/ShapingActions.h"
 #include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
 
@@ -156,6 +158,71 @@ const char* MotionName(Motion motion) {
   return "?";
 }
 
+// The line-shaping verbs. They are not motions -- they rewrite lines, and some
+// of them deliberately KEEP a selection -- so the sweep judges only the
+// structural half of the contract after one: that the caret set they leave is
+// still one the next motion or edit can run over.
+enum class Shaping {
+  kMoveLineUp,
+  kMoveLineDown,
+  kCopyLinesDown,
+  kCopyLinesUp,
+  kInsertLineBelow,
+  kInsertLineAbove,
+  kDeleteLine,
+  kIndent,
+  kOutdent,
+  kJoinLines,
+  kSortAscending,
+  kToggleLineComment,
+  kToggleBlockComment,
+};
+
+constexpr Shaping kAllShaping[] = {
+    Shaping::kMoveLineUp,   Shaping::kMoveLineDown,      Shaping::kCopyLinesDown,
+    Shaping::kCopyLinesUp,  Shaping::kInsertLineBelow,   Shaping::kInsertLineAbove,
+    Shaping::kDeleteLine,   Shaping::kIndent,            Shaping::kOutdent,
+    Shaping::kJoinLines,    Shaping::kSortAscending,     Shaping::kToggleLineComment,
+    Shaping::kToggleBlockComment,
+};
+
+const char* ShapingName(Shaping shaping) {
+  switch (shaping) {
+    case Shaping::kMoveLineUp: return "MoveLineUp";
+    case Shaping::kMoveLineDown: return "MoveLineDown";
+    case Shaping::kCopyLinesDown: return "CopyLinesDown";
+    case Shaping::kCopyLinesUp: return "CopyLinesUp";
+    case Shaping::kInsertLineBelow: return "InsertLineBelow";
+    case Shaping::kInsertLineAbove: return "InsertLineAbove";
+    case Shaping::kDeleteLine: return "DeleteLine";
+    case Shaping::kIndent: return "Indent";
+    case Shaping::kOutdent: return "Outdent";
+    case Shaping::kJoinLines: return "JoinLines";
+    case Shaping::kSortAscending: return "SortAscending";
+    case Shaping::kToggleLineComment: return "ToggleLineComment";
+    case Shaping::kToggleBlockComment: return "ToggleBlockComment";
+  }
+  return "?";
+}
+
+void Apply(TextViewport& viewport, Shaping shaping) {
+  switch (shaping) {
+    case Shaping::kMoveLineUp: editor::MoveLineUp(viewport); break;
+    case Shaping::kMoveLineDown: editor::MoveLineDown(viewport); break;
+    case Shaping::kCopyLinesDown: editor::CopyLines(viewport, true); break;
+    case Shaping::kCopyLinesUp: editor::CopyLines(viewport, false); break;
+    case Shaping::kInsertLineBelow: editor::InsertLineBelow(viewport); break;
+    case Shaping::kInsertLineAbove: editor::InsertLineAbove(viewport); break;
+    case Shaping::kDeleteLine: editor::DeleteLine(viewport); break;
+    case Shaping::kIndent: editor::IndentSelection(viewport); break;
+    case Shaping::kOutdent: editor::OutdentSelection(viewport); break;
+    case Shaping::kJoinLines: editor::JoinLinesAtCarets(viewport); break;
+    case Shaping::kSortAscending: editor::SortLines(viewport, true); break;
+    case Shaping::kToggleLineComment: editor::ToggleLineComment(viewport, "//"); break;
+    case Shaping::kToggleBlockComment: editor::ToggleBlockComment(viewport, "/*", "*/"); break;
+  }
+}
+
 void Apply(TextViewport& viewport, Motion motion, bool extend) {
   switch (motion) {
     case Motion::kLeft: viewport.MoveCursorHorizontal(-1, extend); break;
@@ -177,21 +244,30 @@ struct Coverage {
   int multi_cursor_steps = 0;
   int selection_steps = 0;
   int merge_steps = 0;
-  int wrapped_line_steps = 0;
+  int shaping_steps = 0;
 };
+
+// A motion owes every rule below. An edit consumes selections but rewrites the
+// text. A shaping verb rewrites lines and may deliberately keep a selection, so
+// it owes only the structural half.
+// Undo and Redo restore a whole caret set from the history, so they owe the
+// structural half too -- and they can legitimately GROW the set back.
+enum class StepKind { kMotion, kExtendingMotion, kEdit, kShaping, kHistory };
 
 void CheckWellFormed(const TextViewport& viewport,
                      const std::vector<Cursor>& before,
                      const std::string& text_before,
-                     bool extend,
-                     bool frozen_text,
+                     StepKind kind,
                      Coverage& coverage,
                      const std::string& context) {
-  if (frozen_text) {
+  const bool extend = kind == StepKind::kExtendingMotion;
+  const bool collapses = kind == StepKind::kMotion || kind == StepKind::kEdit;
+  if (kind == StepKind::kMotion || kind == StepKind::kExtendingMotion) {
     Expect(DocumentText(viewport) == text_before, context + ": motion changed the document text");
   }
 
   const std::vector<Cursor> after = Cursors(viewport);
+  if (kind == StepKind::kShaping) ++coverage.shaping_steps;
   if (before.size() > 1) ++coverage.multi_cursor_steps;
   if (after.size() < before.size()) ++coverage.merge_steps;
   if (std::any_of(before.begin(), before.end(), [](const Cursor& c) { return !c.collapsed; })) {
@@ -209,7 +285,9 @@ void CheckWellFormed(const TextViewport& viewport,
   const std::string set = " set " + Describe(after) + " (was " + Describe(before) + ")";
 
   Expect(!after.empty(), context + ": the caret set went empty");
-  Expect(after.size() <= before.size(), context + ": motion GREW the caret set," + set);
+  if (kind != StepKind::kShaping && kind != StepKind::kHistory) {
+    Expect(after.size() <= before.size(), context + ": the step GREW the caret set," + set);
+  }
 
   for (const Cursor& c : after) {
     Expect(PositionIsLegal(viewport, c.caret),
@@ -218,7 +296,7 @@ void CheckWellFormed(const TextViewport& viewport,
       Expect(PositionIsLegal(viewport, *c.anchor),
              context + ": anchor " + Show(*c.anchor) + " is out of bounds or mid-codepoint," + set);
     }
-    if (!extend) {
+    if (collapses) {
       // A plain motion collapses every selection, and an edit consumes them.
       Expect(c.collapsed, context + ": a plain motion or an edit left a selection behind," + set);
     }
@@ -296,42 +374,63 @@ void RunMotionSweep(bool soft_wrap) {
         const TextPosition to = random_position();
         viewport.MoveCursorTo(to.line, to.column, /*extend_selection=*/true);
       }
-      for (std::size_t s = 0, n = pick(4); s < n; ++s) {
-        const TextPosition a = random_position();
-        if (pick(2) == 0) {
-          viewport.AddSecondaryCaret(a.line, a.column);
-        } else {
-          viewport.AddSecondaryCaretWithRange(SelectionRange{a, random_position()});
+      if (pick(4) == 0) {
+        // A box selection: the caret set a column drag produces, which is the
+        // one real users build largest and the one whose per-line clamping the
+        // motion verbs then have to survive.
+        viewport.SetBoxSelection(random_position(), random_position());
+      } else {
+        for (std::size_t s = 0, n = pick(4); s < n; ++s) {
+          const TextPosition a = random_position();
+          if (pick(2) == 0) {
+            viewport.AddSecondaryCaret(a.line, a.column);
+          } else {
+            viewport.AddSecondaryCaretWithRange(SelectionRange{a, random_position()});
+          }
         }
       }
 
       for (int step = 0; step < 12; ++step) {
         const std::vector<Cursor> before = Cursors(viewport);
         const std::string text_before = DocumentText(viewport);
-        // One step in eight is an EDIT, so the sweep also judges the caret set a
-        // remap leaves behind -- the edits themselves have their own reference
-        // model, but nothing checked that the set they produce is still one a
-        // motion (or the next edit) can run over.
+        // Two steps in eight are an EDIT and one is a line-SHAPING verb, so the
+        // sweep also judges the caret set a rewrite leaves behind -- the edits
+        // themselves have their own reference model, but nothing checked that
+        // the set they produce is still one the next keystroke can run over.
         const std::size_t roll = pick(8);
         std::string context = soft_wrap ? "wrapped " : "unwrapped ";
-        bool extend = false;
-        bool frozen_text = true;
+        StepKind kind = StepKind::kMotion;
         if (roll == 0) {
-          frozen_text = false;
+          kind = StepKind::kEdit;
           context += "type";
           viewport.InsertCharacter('q');
         } else if (roll == 1) {
-          frozen_text = false;
+          kind = StepKind::kEdit;
           context += "backspace";
           viewport.Backspace();
+        } else if (roll == 2) {
+          kind = StepKind::kHistory;
+          if (pick(2) == 0) {
+            context += "undo";
+            viewport.Undo();
+          } else {
+            context += "redo";
+            viewport.Redo();
+          }
+        } else if (roll == 3) {
+          kind = StepKind::kShaping;
+          const Shaping shaping = kAllShaping[pick(std::size(kAllShaping))];
+          context += ShapingName(shaping);
+          Apply(viewport, shaping);
         } else {
           const Motion motion = kAllMotions[pick(std::size(kAllMotions))];
-          extend = pick(2) == 0;
+          const bool extend = pick(2) == 0;
+          kind = extend ? StepKind::kExtendingMotion : StepKind::kMotion;
           context += std::string(extend ? "Shift+" : "") + MotionName(motion);
           Apply(viewport, motion, extend);
         }
         context += " step " + std::to_string(step);
-        CheckWellFormed(viewport, before, text_before, extend, frozen_text, coverage, context);
+        CheckWellFormed(viewport, before, text_before, kind, coverage, context);
       }
     }
   }
@@ -340,10 +439,117 @@ void RunMotionSweep(bool soft_wrap) {
   const std::string tail = std::string(soft_wrap ? " (wrapped)" : " (unwrapped)") +
                            ": multi=" + std::to_string(coverage.multi_cursor_steps) +
                            " sel=" + std::to_string(coverage.selection_steps) +
-                           " merge=" + std::to_string(coverage.merge_steps);
+                           " merge=" + std::to_string(coverage.merge_steps) +
+                           " shaping=" + std::to_string(coverage.shaping_steps);
   Expect(coverage.multi_cursor_steps > 1000, "the sweep barely built multi-cursor sets" + tail);
   Expect(coverage.selection_steps > 1000, "the sweep barely built selections" + tail);
   Expect(coverage.merge_steps > 200, "the sweep never merged two cursors" + tail);
+  Expect(coverage.shaping_steps > 1500, "the sweep barely ran the line-shaping verbs" + tail);
+}
+
+// Same sweep, with a collapsed fold in the way. Vertical motion is the only
+// fold-aware verb (AdvanceCaretVertical walks visual rows), and it owes one rule
+// the flat sweep cannot state: no caret -- primary OR secondary -- may land on a
+// line the fold hides, because a caret there is invisible and its next edit
+// rewrites text the user cannot see.
+void TestMultiCaretMotionAcrossACollapsedFold() {
+  static constexpr std::string_view kSource =
+      "head\n"
+      "void f() {\n"
+      "  aaa;\n"
+      "  bbb;\n"
+      "  if (x) {\n"
+      "    ccc;\n"
+      "  }\n"
+      "}\n"
+      "void g() {\n"
+      "  ddd;\n"
+      "}\n"
+      "tail\n";
+
+  std::mt19937 rng(20260921u);
+  auto pick = [&](std::size_t n) {
+    return std::uniform_int_distribution<std::size_t>(0, n - 1)(rng);
+  };
+  Coverage coverage;
+  int hidden_line_checks = 0;
+  int fold_crossings = 0;
+
+  for (int iteration = 0; iteration < 400; ++iteration) {
+    TextViewport viewport;
+    viewport.SetViewportSize(6, 20);
+    viewport.SetSoftWrap(iteration % 2 == 0);
+    viewport.LoadContent(std::string(kSource), "/tmp/multi-caret-fold.cpp");
+
+    editor::FoldingModel folding;
+    editor::FoldingModel::ComputeOptions options;
+    options.bracket_pairs = {{'{', '}'}};
+    options.use_indent_source = true;
+    options.tab_size = 4;
+    Expect(folding.Compute(viewport.lines().Snapshot(), options), "the fold fixture computes");
+    Expect(folding.Collapse(1), "the outer function fold collapses");
+    if (pick(2) == 0) {
+      folding.Collapse(8);
+    }
+    viewport.SetFoldingModel(&folding);
+
+    auto visible_position = [&]() {
+      for (int attempt = 0; attempt < 16; ++attempt) {
+        const std::size_t line = pick(viewport.line_count());
+        if (folding.IsLineHidden(line)) continue;
+        const std::string_view text = viewport.lines().LineView(line);
+        return TextPosition{line, TextLayout::ClampTextColumn(text, pick(text.size() + 1))};
+      }
+      return TextPosition{0, 0};
+    };
+
+    const TextPosition primary = visible_position();
+    viewport.MoveCursorTo(primary.line, primary.column);
+    for (std::size_t s = 0, n = pick(4); s < n; ++s) {
+      const TextPosition a = visible_position();
+      if (pick(2) == 0) {
+        viewport.AddSecondaryCaret(a.line, a.column);
+      } else {
+        viewport.AddSecondaryCaretWithRange(SelectionRange{a, visible_position()});
+      }
+    }
+
+    for (int step = 0; step < 10; ++step) {
+      const Motion motion = kAllMotions[pick(std::size(kAllMotions))];
+      const bool extend = pick(2) == 0;
+      const std::vector<Cursor> before = Cursors(viewport);
+      const std::string text_before = DocumentText(viewport);
+      const std::string context = std::string("folded ") + (extend ? "Shift+" : "") +
+                                  MotionName(motion) + " step " + std::to_string(step);
+      const bool vertical = motion == Motion::kUp || motion == Motion::kDown ||
+                            motion == Motion::kPageUp || motion == Motion::kPageDown;
+      Apply(viewport, motion, extend);
+      CheckWellFormed(viewport, before, text_before,
+                      extend ? StepKind::kExtendingMotion : StepKind::kMotion, coverage, context);
+      if (!vertical) continue;
+      for (const Cursor& c : Cursors(viewport)) {
+        ++hidden_line_checks;
+        // A step that walked a caret over the hidden block: the only kind that
+        // can prove the fold-aware row walk was exercised at all.
+        for (const Cursor& b : before) {
+          if ((b.caret.line <= 1 && c.caret.line >= 7) ||
+              (b.caret.line >= 7 && c.caret.line <= 1)) {
+            ++fold_crossings;
+          }
+        }
+        Expect(!folding.IsLineHidden(c.caret.line),
+               context + ": a caret landed on the hidden line " + std::to_string(c.caret.line) +
+                   ", set " + Describe(Cursors(viewport)));
+      }
+    }
+  }
+  Expect(coverage.multi_cursor_steps > 1000,
+         "the folded sweep barely built multi-cursor sets: " +
+             std::to_string(coverage.multi_cursor_steps));
+  Expect(hidden_line_checks > 1000,
+         "the folded sweep barely ran a vertical motion: " + std::to_string(hidden_line_checks));
+  Expect(fold_crossings > 400, "no caret ever walked over the collapsed block: " +
+                                  std::to_string(fold_crossings));
 }
 
 void TestMultiCaretMotionKeepsTheSetWellFormed() { RunMotionSweep(/*soft_wrap=*/false); }
@@ -357,6 +563,8 @@ void RegisterEditorMultiCaretMotionTests(std::vector<TestCase>& tests) {
           TestMultiCaretMotionKeepsTheSetWellFormed);
   AddTest(tests, "EditorMultiCaretMotion/KeepsTheSetWellFormedWhenWrapped",
           TestMultiCaretMotionKeepsTheSetWellFormedWhenWrapped);
+  AddTest(tests, "EditorMultiCaretMotion/AcrossACollapsedFold",
+          TestMultiCaretMotionAcrossACollapsedFold);
 }
 
 }  // namespace microide::tests
