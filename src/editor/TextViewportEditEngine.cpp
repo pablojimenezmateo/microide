@@ -312,6 +312,18 @@ bool TextViewport::ApplyHistoryStep(bool redo) {
                                              : "TextViewport::Undo::ApplyHistoryEntry");
     ApplyHistoryEntry(entry, redo);
   }
+  // The entry's captured view state was restored verbatim, and on a SHARED
+  // document that state may have been captured by the OTHER pane, against a
+  // document neither pane has now. A restored secondary can land on the restored
+  // primary and stay there as a second identical cursor -- two of those type the
+  // character twice, the same defect a stale sibling had.
+  //
+  // Here and not inside ApplyHistoryEntry: that function is also the per-caret
+  // APPLIER for multi-caret edits, which walk their own snapshot of
+  // `secondary_carets_` and index into it afterwards. A normalise there shrinks
+  // the vector mid-walk and the walk writes past its end (found exactly that
+  // way, as a null write under ASAN).
+  DedupeSecondaryCaretsAgainstPrimary();
   {
     util::PerformanceTrace::Scope scope(redo ? "TextViewport::Redo::BuildAppliedEdit"
                                              : "TextViewport::Undo::BuildAppliedEdit");
@@ -653,6 +665,18 @@ void TextViewport::RestoreViewState(const ViewState& state) {
   secondary_carets_ = state.secondary_carets;
   document_->placeholder = state.placeholder;
   document_->dirty = state.dirty;
+  // The restored set is written in verbatim, so it owes the same reconciliation
+  // every other caret-set writer does: the captured state describes the document
+  // as it WAS, and on a SHARED document that is not necessarily the document it
+  // is being restored into.
+  //
+  // Only the clamp here, though. It reads `document_->lines`, which every caller
+  // has already updated. The NORMALISE reads the per-line width table through
+  // PreferredColumnForCaret, and ApplyHistoryEntry's main path restores the view
+  // state BEFORE it splices that table -- so normalising here indexed a table
+  // still describing the pre-undo document and crashed. The callers run it at
+  // the point their caches are consistent.
+  ClampCaretSetToDocument();
 }
 
 void TextViewport::PushHistoryEntry(HistoryEntry entry, CoalesceHint hint) {
@@ -692,6 +716,12 @@ void TextViewport::FlushActiveUndoGroup() {
   PushHistoryEntry(std::move(*aggregate));
 }
 
+// NOT only the undo/redo path: the multi-caret appliers replay each per-caret
+// edit through here while holding their own snapshot of the caret set and
+// indexing into it afterwards. Nothing in this function may change the SIZE of
+// `secondary_carets_` beyond the RestoreViewState assignment those callers
+// already expect -- a normalise added here shrank the vector mid-walk and the
+// walk wrote past its end.
 void TextViewport::ApplyHistoryEntry(const HistoryEntry& entry, bool forward) {
   util::PerformanceTrace::Scope perf_scope("TextViewport::ApplyHistoryEntry");
 

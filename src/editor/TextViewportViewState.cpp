@@ -922,8 +922,13 @@ void TextViewport::ClampCaretSetToDocument() {
       return;
     }
     position.line = std::min(position.line, document_->lines.size() - 1);
-    position.column =
-        TextLayout::ClampTextColumn(document_->lines.LineView(position.line), position.column);
+    // ReadCaretNeighborhood, not LineView + ClampTextColumn: this runs on the
+    // undo-entry restore, i.e. on every edit, and `LineView` materializes the
+    // WHOLE line when that line spans pieces -- which every edited line does. On
+    // a file with no line breaks in it that is a copy of the document per
+    // keystroke (TD-2026-08-05-133), which is exactly what
+    // TextViewport/TypingInALongLineCopiesNothing exists to catch, and did.
+    position.column = ReadCaretNeighborhood(position.line, position.column).clamped_column;
   };
   TextPosition primary{cursor_line_, cursor_column_};
   clamp_position(primary);

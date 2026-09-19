@@ -54,6 +54,16 @@ bool Less(const TextPosition& a, const TextPosition& b) {
   return a.line < b.line || (a.line == b.line && a.column < b.column);
 }
 
+std::string Quoted(std::string_view text) {
+  std::string out = "\"";
+  for (char c : text) {
+    if (c == '\n') out += "\\n";
+    else if (c == '\t') out += "\\t";
+    else out.push_back(c);
+  }
+  return out + "\"";
+}
+
 std::string Show(const TextPosition& p) {
   return "(" + std::to_string(p.line) + "," + std::to_string(p.column) + ")";
 }
@@ -245,6 +255,7 @@ struct Coverage {
   int selection_steps = 0;
   int merge_steps = 0;
   int shaping_steps = 0;
+  int foreign_edit_steps = 0;
 };
 
 // A motion owes every rule below. An edit consumes selections but rewrites the
@@ -252,7 +263,12 @@ struct Coverage {
 // it owes only the structural half.
 // Undo and Redo restore a whole caret set from the history, so they owe the
 // structural half too -- and they can legitimately GROW the set back.
-enum class StepKind { kMotion, kExtendingMotion, kEdit, kShaping, kHistory };
+// kForeign: another viewport on the SAME DocumentState -- a split pane, the
+// compare pane over a file an editor tab also has open -- edited the buffer, and
+// then this viewport was used. It owes only the structural half: the carets it
+// held named lines that edit may have removed, so they are reconciled rather
+// than preserved, and the count and the anchors legitimately move.
+enum class StepKind { kMotion, kExtendingMotion, kEdit, kShaping, kHistory, kForeign };
 
 void CheckWellFormed(const TextViewport& viewport,
                      const std::vector<Cursor>& before,
@@ -268,6 +284,7 @@ void CheckWellFormed(const TextViewport& viewport,
 
   const std::vector<Cursor> after = Cursors(viewport);
   if (kind == StepKind::kShaping) ++coverage.shaping_steps;
+  if (kind == StepKind::kForeign) ++coverage.foreign_edit_steps;
   if (before.size() > 1) ++coverage.multi_cursor_steps;
   if (after.size() < before.size()) ++coverage.merge_steps;
   if (std::any_of(before.begin(), before.end(), [](const Cursor& c) { return !c.collapsed; })) {
@@ -285,7 +302,8 @@ void CheckWellFormed(const TextViewport& viewport,
   const std::string set = " set " + Describe(after) + " (was " + Describe(before) + ")";
 
   Expect(!after.empty(), context + ": the caret set went empty");
-  if (kind != StepKind::kShaping && kind != StepKind::kHistory) {
+  if (kind != StepKind::kShaping && kind != StepKind::kHistory &&
+      kind != StepKind::kForeign) {
     Expect(after.size() <= before.size(), context + ": the step GREW the caret set," + set);
   }
 
@@ -390,6 +408,13 @@ void RunMotionSweep(bool soft_wrap) {
         }
       }
 
+      // A second viewport on the SAME document, as a split pane or an editable
+      // compare side is. Its edits go through no part of `viewport`, so the
+      // caret set `viewport` holds can name lines the document no longer has.
+      TextViewport sibling = viewport;
+      sibling.SetViewportSize(4, 24);
+
+      std::string trail;
       for (int step = 0; step < 12; ++step) {
         const std::vector<Cursor> before = Cursors(viewport);
         const std::string text_before = DocumentText(viewport);
@@ -408,6 +433,25 @@ void RunMotionSweep(bool soft_wrap) {
           kind = StepKind::kEdit;
           context += "backspace";
           viewport.Backspace();
+        } else if (roll == 7) {
+          // The sibling edits, and then this viewport is used. Both halves in one
+          // step: the reconciliation is lazy, so the invariants below describe
+          // the state after the first use, which is the only state any caller
+          // can observe.
+          kind = StepKind::kForeign;
+          context += "foreign-edit";
+          const std::size_t line = pick(sibling.line_count());
+          sibling.MoveCursorTo(line, 0);
+          if (pick(2) == 0 && sibling.line_count() > 1) {
+            sibling.MoveCursorTo(std::min(line + 2, sibling.line_count() - 1), 0,
+                                 /*extend_selection=*/true);
+            sibling.Backspace();
+          } else {
+            sibling.InsertText("foreign\nedit\n");
+          }
+          const Motion motion = kAllMotions[pick(std::size(kAllMotions))];
+          context += std::string(" then ") + MotionName(motion);
+          Apply(viewport, motion, /*extend=*/false);
         } else if (roll == 2) {
           kind = StepKind::kHistory;
           if (pick(2) == 0) {
@@ -430,7 +474,8 @@ void RunMotionSweep(bool soft_wrap) {
           Apply(viewport, motion, extend);
         }
         context += " step " + std::to_string(step);
-        CheckWellFormed(viewport, before, text_before, kind, coverage, context);
+        trail += (trail.empty() ? "" : " -> ") + context;
+        CheckWellFormed(viewport, before, text_before, kind, coverage, trail + " || doc=" + Quoted(content));
       }
     }
   }
@@ -440,11 +485,14 @@ void RunMotionSweep(bool soft_wrap) {
                            ": multi=" + std::to_string(coverage.multi_cursor_steps) +
                            " sel=" + std::to_string(coverage.selection_steps) +
                            " merge=" + std::to_string(coverage.merge_steps) +
-                           " shaping=" + std::to_string(coverage.shaping_steps);
+                           " shaping=" + std::to_string(coverage.shaping_steps) +
+                           " foreign=" + std::to_string(coverage.foreign_edit_steps);
   Expect(coverage.multi_cursor_steps > 1000, "the sweep barely built multi-cursor sets" + tail);
   Expect(coverage.selection_steps > 1000, "the sweep barely built selections" + tail);
   Expect(coverage.merge_steps > 200, "the sweep never merged two cursors" + tail);
-  Expect(coverage.shaping_steps > 1500, "the sweep barely ran the line-shaping verbs" + tail);
+  Expect(coverage.shaping_steps > 1200, "the sweep barely ran the line-shaping verbs" + tail);
+  Expect(coverage.foreign_edit_steps > 400,
+         "the sweep barely ran an edit from the sibling viewport" + tail);
 }
 
 // Same sweep, with a collapsed fold in the way. Vertical motion is the only
