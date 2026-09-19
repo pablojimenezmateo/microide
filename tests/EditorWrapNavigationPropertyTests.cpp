@@ -473,9 +473,53 @@ void TestWrappedRowsPartitionEachLine() {
              std::to_string(lines_with_several_rows));
 }
 
+// Home and End are VIEW-line verbs, PER CARET -- including when two carets sit
+// on different wrapped rows of the SAME logical line.
+//
+// That case is the one a logical-line implementation gets wrong without ever
+// looking wrong: both carets share a line, so a per-LINE End sends them to the
+// same column and silently merges them into one cursor. Each has to answer for
+// its own row instead. The return trip is the sharper half: End lands exactly on
+// a wrap point, the one position two rows both claim, so Home is only correct if
+// the caret carries the affinity saying which row it belongs to.
+void TestWrapHomeAndEndAnswerPerCaretOnOneLine() {
+  TextViewport viewport;
+  viewport.SetViewportSize(10, 10);
+  viewport.SetSoftWrap(true);
+  viewport.LoadContent("aaaa bbbb cccc dddd eeee\nshort\n", "/tmp/wrap-per-caret.txt");
+  Expect(viewport.visual_line_count() > viewport.line_count(),
+         "the fixture must actually wrap, or this proves nothing");
+
+  // Two carets on the SAME logical line, on different wrapped rows.
+  viewport.MoveCursorTo(0, 2);
+  viewport.AddSecondaryCaret(0, 14);
+  Expect(viewport.secondary_carets().size() == 1 && viewport.secondary_carets()[0].line == 0,
+         "both carets start on line 0");
+
+  viewport.MoveCursorLineEnd();
+  Expect(viewport.cursor_column() == 10,
+         "the caret on the first row ends at that ROW's end, got " +
+             std::to_string(viewport.cursor_column()));
+  Expect(viewport.secondary_carets().size() == 1 && viewport.secondary_carets()[0].column == 20,
+         "the caret on the second row ends at ITS row's end, not the same column as the first "
+         "-- a per-line End would have merged them into one cursor");
+
+  viewport.MoveCursorLineStart();
+  Expect(viewport.cursor_column() == 0,
+         "Home from the first row's wrap point returns to that row's start, got " +
+             std::to_string(viewport.cursor_column()));
+  Expect(viewport.secondary_carets().size() == 1 && viewport.secondary_carets()[0].column == 10,
+         "Home from the second row's wrap point returns to the SECOND row's start (10), not the "
+         "third's -- this is the affinity bit, and without it the caret walks forward a row on "
+         "every End/Home pair");
+}
+
+
 }  // namespace
 
 void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorWrapNavigation/HomeAndEndAnswerPerCaretOnOneLine",
+          TestWrapHomeAndEndAnswerPerCaretOnOneLine);
   AddTest(tests, "EditorWrapNavigation/DownWalkVisitsEveryVisualRowOnce",
           TestWrapDownWalkVisitsEveryVisualRowOnce);
   AddTest(tests, "EditorWrapNavigation/WalkKeepsEverySecondaryCaretOnItsOwnRow",
