@@ -89,6 +89,75 @@ Toasts scale their width with the window and ellipsize through
 `TruncateToWidthEphemeralView`; narrow-rail empty states word-wrap through
 `DrawWrappedPlaceholder` / `ForEachWrappedLabelLine`.
 
+## Carets
+
+### A caret is never on a line nothing paints
+A collapsed fold's body has no row on screen, so a caret inside it is invisible
+and the next keystroke rewrites text the user cannot see.
+
+Vertical motion honoured this from the start because it walks visual rows.
+Horizontal and word motion did not: they crossed a line boundary by stepping to
+`line + 1`, so Right, End+Right and Ctrl+Right at the end of a fold's opener all
+landed on the first hidden body line. VS Code does not have the shape at all —
+its cursor moves in VIEW space and the hidden lines are not in the view model, so
+Right there lands on the next view line.
+
+Both directions and both granularities now cross the whole region through
+`FoldingModel::FirstVisibleLineAtOrAfter` / `LastVisibleLineAtOrBefore`, which
+jump region-by-region off the prefix-max index `IsLineHidden` already builds —
+walking lines would be O(region log n) on a per-keystroke path.
+
+Guarded by `EditorFolding/HorizontalMotionStepsOverACollapsedFold` and by
+`EditorMultiCaretMotion/AcrossACollapsedFold`, which asserts the rule after EVERY
+motion. It used to exempt the non-vertical ones, on the grounds that only
+vertical motion was fold-aware — which was a description of the bug rather than a
+reason to skip, and is why it could not see this.
+
+### A viewport's caret set describes the document it currently has
+Two panes on one file share one `DocumentState` but keep their own caret sets,
+and an edit made through one does not touch the other's. Delete three lines in
+one pane and the other held a caret past the end of the shorter document; the
+next keystroke clamped two stale carets onto the same position without
+normalising, so typing one character inserted two.
+
+A viewport reconciles its set the first time it is used after someone else moved
+the document: clamp every caret and anchor, then run the same normalise tail
+every caret-set mutation runs. It is keyed on the document's content revision and
+the editing viewport stamps itself current inside `InvalidateDerivedCaches`, so
+the common path is one integer compare.
+
+Three corollaries, each learned the hard way:
+
+- **`RestoreViewState` owes the same reconciliation.** It writes the captured set
+  in verbatim, and on a shared document that set may have been captured by the
+  other pane. Undo/redo normalises at `ApplyHistoryStep`.
+- **`ApplyHistoryEntry` may not change the caret set's SIZE.** It is not only the
+  undo path — the multi-caret appliers replay each per-caret edit through it while
+  holding a snapshot of `secondary_carets_` and indexing into it afterwards. A
+  normalise there shrinks the vector mid-walk and the walk writes past its end.
+- **The clamp runs on every edit, so it must be O(1) per caret.** It reads the
+  caret neighbourhood, never `LineView`, which materializes a whole line that
+  spans pieces — which every edited line does.
+
+Guarded by `TextViewport/SplitSiblingCaretsSurviveAForeignEdit`,
+`TextViewport/StaleSiblingIsReconciledByEveryVerb` (23 verbs, so an entry point
+that forgets the guard fails rather than passing quietly) and the foreign-edit
+step of `EditorMultiCaretMotion/KeepsTheSetWellFormed`.
+
+### A gesture anchored to the caret ends when someone else moves the buffer
+`PlacePrimaryCaret` ends a keyboard column-select gesture, because the box is
+anchored to where the caret WAS and any caret placement that is not the gesture's
+own invalidates it. That covers every path that places THIS viewport's caret.
+
+It does not cover an edit made elsewhere — the other pane of a split, a disk
+reload, a formatter, a plugin — and the action executor reads
+`column_selection()` before it touches the viewport, so the next chord extended a
+box from corners the document no longer had. The gesture carries the content
+revision it was armed at, and a gesture armed against a revision the document has
+left reports as no gesture at all.
+
+Guarded by `ColumnSelection/GestureEndsWhenSomebodyElseEditsTheBuffer`.
+
 ## Lists and empty states
 
 ### An empty list says so once, in the list
