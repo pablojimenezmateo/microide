@@ -150,6 +150,47 @@
   static bool HasCompareSelection(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.compare_selection.has_value();
   }
+  // Menu-popup paint drivers. The menu popups are reachable in production only
+  // through chrome mouse/keyboard events at real coordinates, which is why the
+  // popup PAINT path had no coverage at all -- the state readers below it were
+  // exercised, the three draw loops above it never were.
+  static void OpenMenuBarMenuForTest(WorkspaceShell& shell, WorkspaceShell::MenuId id) {
+    shell.MakeMenuCoordinator().OpenMenuBarMenu(id);
+  }
+  static void OpenSubmenuForTest(WorkspaceShell& shell, WorkspaceShell::MenuId id,
+                                 const SDL_FRect& anchor_rect) {
+    shell.MakeMenuCoordinator().OpenSubmenu(id, anchor_rect);
+  }
+  static void SetActiveMenuItemIndexForTest(WorkspaceShell& shell, int index) {
+    shell.context_.menu_state.active_menu_item_index = index;
+  }
+  static void SetTreeContextMenuActiveItemIndexForTest(WorkspaceShell& shell, int index) {
+    shell.context_.menu_state.tree_context_menu.active_item_index = index;
+  }
+  static void OpenMenuOverflowPopupForTest(WorkspaceShell& shell, const SDL_FRect& anchor_rect) {
+    shell.context_.menu_state.overflow_popup_open = true;
+    shell.context_.menu_state.overflow_popup_anchor_rect = anchor_rect;
+  }
+  // True when the last painted frame had at least one menu popup on screen.
+  // RenderMenuPopups is a chain of early returns; without this a paint test that
+  // asserts only on pixels passes whether or not a popup was ever drawn.
+  static bool AnyMenuPopupOpen(const WorkspaceShell& shell) {
+    return shell.context_.menu_state.menu_bar_open ||
+           shell.context_.menu_state.overflow_popup_open ||
+           shell.context_.menu_state.tree_context_menu.open;
+  }
+  // How many rows the LAST `draw_popup_body` call actually laid out. Open state
+  // alone is not proof the body drew: the popup-rect helpers return nullopt on a
+  // window too small to hold the popup, and the draw is skipped with the menu
+  // still open. This reads the render TU's own reused scratch, so it is zero
+  // exactly when nothing was drawn. (The overflow popup has its own loop and
+  // does not touch this, by design -- it is not a shared-body popup.)
+  static std::size_t LastPaintedPopupRowCount(const WorkspaceShell& shell) {
+    return shell.menu_popup_rows_scratch_.size();
+  }
+  static void ClearPaintedPopupRowsForTest(WorkspaceShell& shell) {
+    shell.menu_popup_rows_scratch_.clear();
+  }
   static void OpenTreeContextMenuForPath(WorkspaceShell& shell,
                                          TreeContextTargetKind target,
                                          const std::filesystem::path& path) {

@@ -253,9 +253,38 @@ void TestMenuRegistryTabContextMenusLeadWithCopyAndTrailWithClose() {
          "project tab context menu should trail with Close Project");
 }
 
+// Every MenuId must have a MenuSpec behind it.
+//
+// MenuId::Project had none: it was a menu-bar top-level id (IsMenuBarTopLevelMenu
+// did not exclude it) that FindWorkspaceMenuSpec resolved to nullptr, so the
+// popup renderer early-returned and the menu simply did not exist. Nothing
+// reported it -- the id had no producer either, so it was unreachable rather
+// than broken, but it sized `kMenuSlotCount`'s two per-menu arrays and it was one
+// stray `open_anchored_menu` call away from an empty popup on screen.
+//
+// Iterating the enum rather than the table is the point: a table-driven check
+// can only confirm what is already there.
+void TestMenuRegistryEveryMenuIdHasASpec() {
+  // The enum is contiguous from None; ProjectTabContext is its last enumerator
+  // (kMenuSlotCount is derived from exactly that, so if one is wrong both are).
+  constexpr auto kLast = static_cast<int>(MenuId::ProjectTabContext);
+  int checked = 0;
+  for (int raw = static_cast<int>(MenuId::None) + 1; raw <= kLast; ++raw) {
+    const MenuId id = static_cast<MenuId>(raw);
+    Expect(FindWorkspaceMenuSpec(id) != nullptr,
+           "every MenuId enumerator must have a MenuSpec in the registry table");
+    ++checked;
+  }
+  Expect(checked == static_cast<int>(WorkspaceMenuSpecs().size()),
+         "the enum and the spec table must have the same number of menus -- a spec "
+         "listed twice would otherwise hide a missing one");
+}
+
 }  // namespace
 
 void RegisterWorkspaceMenuRegistryTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceMenuRegistry/EveryMenuIdHasASpec",
+          TestMenuRegistryEveryMenuIdHasASpec);
   AddTest(tests, "WorkspaceMenuRegistry/TopLevelSnapshot",
           TestMenuRegistryTopLevelSnapshot);
   AddTest(tests, "WorkspaceMenuRegistry/ExpandedMenusExposeExpectedEntries",

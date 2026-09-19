@@ -30,7 +30,6 @@ enum class MenuId {
   GitOutgoingBase,
   EditorContext,
   EditorTabContext,
-  Project,
   Terminal,
   Debug,
   Help,

@@ -216,6 +216,16 @@
     const WorkspaceLayout layout = CurrentLayout(shell);
     return shell.MenuOverflowChevronRect(layout.menu_bar);
   }
+  static std::size_t MenuBarOverflowItemCount(WorkspaceShell& shell) {
+    return shell.ComputeOverflowMenuBarItems(CurrentLayout(shell).menu_bar).size();
+  }
+  // The popup row hover is derived from the live pointer, not from an active
+  // index, so a paint test has to place the pointer to reach the hovered fill.
+  static void SetMousePositionForTest(WorkspaceShell& shell, float x, float y) {
+    shell.last_mouse_x_ = x;
+    shell.last_mouse_y_ = y;
+    shell.last_mouse_position_valid_ = true;
+  }
   static bool MenuOverflowPopupOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.overflow_popup_open;
   }
