@@ -388,7 +388,6 @@ class SnippetBodyParser {
     occ.tab_stop = tab;
     occ.start_off = out_.expanded.size();
     occ.end_off = occ.start_off;
-    occ.is_final = tab == 0;
     occ.parent = parent;
     out_.occurrences.push_back(std::move(occ));
     return out_.occurrences.size() <= kMaxOccurrences;

@@ -429,6 +429,19 @@ deletion.
 Found by a field-level reachability sweep (written-never-read struct fields),
 which also found `DeferredTabHandle::language_hint` — closed in c195bf54.
 
+**Third instance**, from the widened sweep:
+`MenuSurfaceState::overflow_popup_active_index` is declared (default -1),
+assigned once in `WorkspaceChromeMouseCoordinator.cpp:177` — and that
+assignment is a reset to -1 — and read nowhere. Its siblings
+`overflow_popup_open` and `overflow_popup_anchor_rect` are both consumed by
+`WorkspaceShellRenderMenus.cpp`, so by the rule below this is a lost render,
+not dead state: the menu-bar overflow popup is the one popup in the app that
+cannot be keyboard-navigated. Its rows derive hover from the pointer only
+(`last_mouse_position_valid_`), which is why
+`WorkspaceShellRenderMenus/OverflowPopupPaints` has to place the pointer to
+reach their hovered fill while the menu-bar and tree-context popups just set
+an active index.
+
 **Second instance of the same shape**, from the same sweep:
 `GitSidebarViewModel::sync_button_tooltip` is built in
 `GitSidebarCommandCenter.cpp:439` and read nowhere. Its sibling

@@ -57,7 +57,9 @@ struct SnippetParseResult {
     int tab_stop = 0;
     std::size_t start_off = 0;
     std::size_t end_off = 0;
-    bool is_final = false;
+    // No `is_final` here. It was set to `tab_stop == 0` and read by nobody:
+    // BuildNavigateOrder tests `t != 0` directly to put the final stop last,
+    // which is the only place the distinction matters.
     std::vector<std::string> choices;
     // Index into `occurrences` of the placeholder whose default text this one
     // sits in, or kNoParent at the top level.
