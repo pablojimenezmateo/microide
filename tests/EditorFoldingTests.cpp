@@ -538,9 +538,73 @@ void TestHorizontalMotionStepsOverACollapsedFold() {
          "expanded, Right steps to the very next line");
 }
 
+// A split pane's fold model tracks an edit made through the OTHER pane, and the
+// refresh is what makes it do so.
+//
+// The asymmetry is real and worth knowing: the incremental resync is driven by
+// `TextViewport::ConsumeFoldEditSpan()`, which accumulates in
+// InvalidateDerivedCaches -- on the EDITING viewport. A sibling on the same
+// DocumentState never accumulates one, so its span comes back EMPTY, and an
+// empty span makes `ShiftCollapsedRanges` a no-op. What saves it is that the
+// freshness fingerprint is the content revision, so the sibling's model is stale
+// and re-resolves its window against the buffer it now has.
+//
+// That makes this a guard against an optimisation that looks obviously correct:
+// "the edit span is empty, so nothing moved, so skip the refresh". It is true
+// for the pane that did the edit and false for every other pane on that file.
+// Deleting the Refresh call below fails this test -- the fold goes on hiding the
+// lines the body USED to be on.
+void TestSiblingPaneFoldModelTracksAForeignEdit() {
+  TextViewport pane_a;
+  pane_a.SetViewportSize(40, 80);
+  pane_a.LoadContent(
+      "alpha\n"
+      "bravo\n"
+      "void f() {\n"
+      "  body one;\n"
+      "  body two;\n"
+      "}\n"
+      "tail\n",
+      "/tmp/fold-sibling.cpp");
+  TextViewport pane_b = pane_a;
+  pane_b.SetViewportSize(40, 80);
+
+  FoldingModel folding;
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = true;
+  options.tab_size = 4;
+  Expect(folding.Compute(pane_b.lines().Snapshot(), options), "the fold fixture computes");
+  Expect(folding.Collapse(2), "the function fold collapses at its opener, line 2");
+  pane_b.SetFoldingModel(&folding);
+  Expect(folding.IsLineHidden(3) && folding.IsLineHidden(4),
+         "the body lines are hidden before the foreign edit");
+  Expect(!folding.IsLineHidden(1), "the line above the fold is visible");
+
+  // Pane A inserts two lines ABOVE the fold, so every fold line shifts by +2.
+  pane_a.MoveCursorTo(0, 0);
+  pane_a.InsertText("inserted one\ninserted two\n");
+  Expect(pane_b.line_count() == 10, "pane B sees the longer document, got " +
+                                        std::to_string(pane_b.line_count()));
+  Expect(pane_b.lines().LineView(4) == "void f() {",
+         "the opener is now line 4, got \"" + std::string(pane_b.lines().LineView(4)) + "\"");
+
+  // The shell's refresh for pane B: its own (empty) fold edit span.
+  folding.Refresh(pane_b.lines().Snapshot(), options, 0, pane_b.line_count() - 1,
+                  /*max_lines=*/0, pane_b.ConsumeFoldEditSpan(), &pane_b);
+
+  // The fold still has to hide the body of f(), which is now lines 5 and 6.
+  Expect(folding.IsLineHidden(5) && folding.IsLineHidden(6),
+         "the fold must hide the body where it NOW is (lines 5-6)");
+  Expect(!folding.IsLineHidden(3), "line 3 is inserted text and must not be hidden");
+  Expect(!folding.IsLineHidden(1), "line 1 is above the fold and must not be hidden");
+}
+
 }  // namespace
 
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorFolding/SiblingPaneFoldModelTracksAForeignEdit",
+          TestSiblingPaneFoldModelTracksAForeignEdit);
   AddTest(tests, "EditorFolding/HorizontalMotionStepsOverACollapsedFold",
           TestHorizontalMotionStepsOverACollapsedFold);
   AddTest(tests, "EditorFolding/TabState/ModelPointerStableAcrossVectorReallocation",
