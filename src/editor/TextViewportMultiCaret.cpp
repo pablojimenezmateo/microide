@@ -562,6 +562,8 @@ bool TextViewport::ApplyMultiCaretSoftTab(bool record_undo) {
 }
 
 bool TextViewport::PasteText(std::string_view text, bool record_undo) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (!has_multiple_carets()) {
     InsertText(text, record_undo);
     return true;
@@ -600,6 +602,8 @@ bool TextViewport::PasteText(std::string_view text, bool record_undo) {
 
 
 bool TextViewport::AddCaretVertical(int delta) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty() || delta == 0) {
     return false;
   }
@@ -668,6 +672,8 @@ bool TextViewport::AddCaretVertical(int delta) {
 }
 
 bool TextViewport::AddCaretsAtSelectedLineEnds() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return false;
   }

@@ -1029,6 +1029,27 @@ class TextViewport {
   std::size_t MaxVisualColumns() const;
   void EnsureHighlightCheckpoint(std::size_t checkpoint_index) const;
   void EnsureDocument();
+  // Clamp every caret and anchor -- primary and secondary -- back into the
+  // document. Does NOT normalise the set; callers pick which of the two
+  // normalisers they want afterwards.
+  void ClampCaretSetToDocument();
+  // A viewport whose DocumentState is shared -- a split clone, or the compare
+  // pane over a file an editor tab also has open -- keeps the caret set it had
+  // before the OTHER viewport's edit. Those positions can name lines the
+  // document no longer has: delete three lines in one pane and the other pane's
+  // caret sits past the end, where the next keystroke used to land two carets on
+  // one position and type the character twice. Reconciles the set the first time
+  // this viewport is used after someone else moved the document.
+  void SyncCaretsWithSharedDocument();
+  void SyncCaretsIfDocumentChangedElsewhere() {
+    // One integer compare on the common path: the editing viewport stamps itself
+    // current inside InvalidateDerivedCaches, so only a stale sibling pays the
+    // O(carets) walk, and only once per foreign edit.
+    if (document_ != nullptr &&
+        carets_synced_content_revision_ != document_->content_revision) {
+      SyncCaretsWithSharedDocument();
+    }
+  }
   void EnsureWrappedRowLayouts() const;
   // Returns the row payload for `visual_row_index`. Synthesizes the result
   // inline in the trivial-layout fast path (no soft-wrap, no collapsed folds)
@@ -1139,6 +1160,9 @@ class TextViewport {
   // current `content_revision` ⇒ caret is settled at a navigated position; not
   // equal ⇒ an edit has advanced the revision since, i.e. the caret is mid-edit.
   std::uint64_t caret_navigation_content_revision_ = 0;
+  // `content_revision` as of the last time this viewport's caret set was known
+  // to describe the document. See SyncCaretsIfDocumentChangedElsewhere.
+  std::uint64_t carets_synced_content_revision_ = 0;
   std::size_t scroll_line_ = 0;
   std::size_t horizontal_scroll_ = 0;
   std::size_t visible_lines_ = 1;

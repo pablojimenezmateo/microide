@@ -191,6 +191,8 @@ void TextViewport::SetFoldingModel(const FoldingModel* folding_model) {
 }
 
 void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty() || delta == 0) {
     return;
   }
@@ -240,6 +242,8 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
 }
 
 void TextViewport::MoveCursorHorizontal(int delta, bool extend_selection) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty() || delta == 0) {
     return;
   }
@@ -336,6 +340,8 @@ TextPosition TextViewport::WordTargetForCaret(const TextPosition& caret,
 }
 
 void TextViewport::MoveCursorWord(int delta, bool extend_selection) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty() || delta == 0) {
     return;
   }
@@ -406,6 +412,8 @@ std::size_t TextViewport::FirstNonWhitespaceColumnInView(std::size_t line,
 // and to the first non-whitespace character, toggling to the row's true start
 // when the caret is already there (TD-2026-08-12-188).
 void TextViewport::MoveCursorLineStart(bool extend_selection) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const auto home_target = [&](const TextPosition& caret, WrapRowAffinity affinity) {
@@ -429,6 +437,8 @@ void TextViewport::MoveCursorLineStart(bool extend_selection) {
 // wrap point takes kPreviousRow affinity, or the caret would render at the start
 // of the NEXT row -- the one position two rows both claim.
 void TextViewport::MoveCursorLineEnd(bool extend_selection) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   document_->undo_history.NotifyCursorMoved();
   BeginSelectionIfNeeded(extend_selection);
   const ViewLineBounds primary_bounds =
@@ -450,6 +460,8 @@ void TextViewport::MoveCursorLineEnd(bool extend_selection) {
 }
 
 void TextViewport::MoveCursorTo(std::size_t line, std::size_t column, bool extend_selection) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return;
   }
@@ -900,6 +912,46 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
       caret.column = TextLayout::NextTextColumn(line, caret.column);
     }
   }
+}
+
+void TextViewport::ClampCaretSetToDocument() {
+  const auto clamp_position = [this](TextPosition& position) {
+    if (document_->lines.empty()) {
+      position.line = 0;
+      position.column = 0;
+      return;
+    }
+    position.line = std::min(position.line, document_->lines.size() - 1);
+    position.column =
+        TextLayout::ClampTextColumn(document_->lines.LineView(position.line), position.column);
+  };
+  TextPosition primary{cursor_line_, cursor_column_};
+  clamp_position(primary);
+  cursor_line_ = primary.line;
+  cursor_column_ = primary.column;
+  if (selection_anchor_.has_value()) {
+    clamp_position(*selection_anchor_);
+  }
+  for (SecondaryCaret& caret : secondary_carets_) {
+    clamp_position(caret.position);
+    if (caret.selection_anchor.has_value()) {
+      clamp_position(*caret.selection_anchor);
+    }
+  }
+}
+
+void TextViewport::SyncCaretsWithSharedDocument() {
+  // Stamp FIRST: the normalise below runs the same tail every caret-set mutation
+  // runs, and that tail must not re-enter this through the guard.
+  carets_synced_content_revision_ = document_->content_revision;
+  ClampCaretSetToDocument();
+  // Clamping can land two carets on one position -- which is exactly how a
+  // foreign delete used to make one keystroke type two characters. The full
+  // normalise, not just the position prune: a clamp can also push two ranged
+  // carets into overlapping selections, and the multi-caret appliers refuse to
+  // run over those.
+  DedupeSecondaryCaretsAgainstPrimary();
+  ClampScrollState();
 }
 
 void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {

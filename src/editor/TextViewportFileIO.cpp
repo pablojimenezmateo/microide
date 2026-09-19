@@ -259,28 +259,7 @@ bool TextViewport::Save() {
     const ViewState pre_normalize_view = CaptureViewState();
     ReplaceLines(0, document_->lines.size(), std::move(normalized), /*record_undo=*/true);
     RestoreViewState(pre_normalize_view);
-    const auto clamp_position = [this](TextPosition& position) {
-      if (document_->lines.empty()) {
-        position.line = 0;
-        position.column = 0;
-        return;
-      }
-      position.line = std::min(position.line, document_->lines.size() - 1);
-      position.column = TextLayout::ClampTextColumn(document_->lines[position.line], position.column);
-    };
-    TextPosition primary{cursor_line_, cursor_column_};
-    clamp_position(primary);
-    cursor_line_ = primary.line;
-    cursor_column_ = primary.column;
-    if (selection_anchor_.has_value()) {
-      clamp_position(*selection_anchor_);
-    }
-    for (SecondaryCaret& caret : secondary_carets_) {
-      clamp_position(caret.position);
-      if (caret.selection_anchor.has_value()) {
-        clamp_position(*caret.selection_anchor);
-      }
-    }
+    ClampCaretSetToDocument();
     // Clamping can land a secondary caret on the primary or on another
     // secondary (a trimmed line held two of them); colliding carets merge, as
     // VS Code merges cursors that meet.

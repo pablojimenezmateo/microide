@@ -105,6 +105,112 @@ void TestTextViewportSplitSiblingsShareOneUndoHistory() {
   Expect(!pane_b.dirty(), "undoing to the saved point cleans every pane");
 }
 
+// A split pane holds the caret set it had BEFORE the other pane's edit, and
+// those positions can name lines the document no longer has.
+//
+// Delete three lines in pane A and pane B's carets sat past the end of a
+// three-line document -- primary on line 4, a secondary on line 3. The next
+// keystroke in pane B then clamped both onto the SAME position without
+// normalising, so typing one character inserted two. The panes share one
+// DocumentState, so this is the whole split grid and the compare pane over a
+// file an editor tab also has open.
+void TestTextViewportSplitSiblingCaretsSurviveAForeignEdit() {
+  TextViewport pane_a;
+  pane_a.SetViewportSize(20, 200);
+  pane_a.LoadContent("alpha\nbravo\ncharlie\ndelta\necho\n", "/tmp/split-carets.txt");
+  TextViewport pane_b = pane_a;
+  pane_b.SetViewportSize(20, 200);
+
+  pane_b.MoveCursorTo(4, 3);
+  pane_b.AddSecondaryCaret(3, 2);
+  Expect(pane_b.has_multiple_carets(), "pane B starts with two carets low in the file");
+
+  // Pane A deletes the first three lines out from under pane B.
+  pane_a.MoveCursorTo(0, 0);
+  pane_a.MoveCursorTo(3, 0, /*extend_selection=*/true);
+  pane_a.Backspace();
+  Expect(pane_b.line_count() == 3, "pane B sees the shorter document");
+
+  pane_b.InsertCharacter('Z');
+  Expect(pane_b.lines().LineView(0) == "delta" && pane_b.lines().LineView(1) == "echo",
+         "the surviving lines are untouched");
+  Expect(pane_b.lines().LineView(2) == "Z",
+         "one keystroke inserts ONE character, not one per stale caret: got \"" +
+             std::string(pane_b.lines().LineView(2)) + "\"");
+  Expect(!pane_b.has_multiple_carets(),
+         "the two stale carets clamped onto one position and merged into one cursor");
+  Expect(pane_b.cursor_line() < pane_b.line_count(),
+         "pane B's caret is inside the document");
+}
+
+// The same reconciliation, checked on every verb rather than on one: a stale
+// sibling must not be able to reach ANY entry point with a caret that names a
+// line the document no longer has.
+void TestTextViewportStaleSiblingIsReconciledByEveryVerb() {
+  struct Verb {
+    const char* name;
+    void (*run)(TextViewport&);
+  };
+  static const Verb verbs[] = {
+      {"Left", [](TextViewport& v) { v.MoveCursorHorizontal(-1); }},
+      {"Right", [](TextViewport& v) { v.MoveCursorHorizontal(1); }},
+      {"Up", [](TextViewport& v) { v.MoveCursorVertical(-1); }},
+      {"Down", [](TextViewport& v) { v.MoveCursorVertical(1); }},
+      {"WordLeft", [](TextViewport& v) { v.MoveCursorWord(-1); }},
+      {"WordRight", [](TextViewport& v) { v.MoveCursorWord(1); }},
+      {"Home", [](TextViewport& v) { v.MoveCursorLineStart(); }},
+      {"End", [](TextViewport& v) { v.MoveCursorLineEnd(); }},
+      {"type", [](TextViewport& v) { v.InsertCharacter('q'); }},
+      {"newline", [](TextViewport& v) { v.InsertNewline(); }},
+      {"tab", [](TextViewport& v) { v.InsertTab(); }},
+      {"backspace", [](TextViewport& v) { v.Backspace(); }},
+      {"delete", [](TextViewport& v) { v.DeleteForward(); }},
+      {"delete-word-left", [](TextViewport& v) { v.DeleteWord(-1); }},
+      {"delete-word-right", [](TextViewport& v) { v.DeleteWord(1); }},
+      {"paste", [](TextViewport& v) { v.PasteText("p"); }},
+      {"select-all", [](TextViewport& v) { v.SelectAll(); }},
+      {"select-word", [](TextViewport& v) { v.SelectWordAtCursor(); }},
+      {"select-line", [](TextViewport& v) { v.SelectLineAtCursor(); }},
+      {"add-caret-below", [](TextViewport& v) { v.AddCaretVertical(1); }},
+      {"add-secondary", [](TextViewport& v) { v.AddSecondaryCaret(0, 0); }},
+      {"box", [](TextViewport& v) { v.SetBoxSelection({0, 0}, {1, 1}); }},
+      {"undo", [](TextViewport& v) { (void)v.Undo(); }},
+  };
+
+  for (const Verb& verb : verbs) {
+    TextViewport pane_a;
+    pane_a.SetViewportSize(20, 200);
+    pane_a.LoadContent("alpha\nbravo\ncharlie\ndelta\necho\n", "/tmp/stale-verbs.txt");
+    TextViewport pane_b = pane_a;
+    pane_b.SetViewportSize(20, 200);
+    pane_b.MoveCursorTo(4, 3);
+    pane_b.AddSecondaryCaret(3, 2);
+    pane_a.MoveCursorTo(0, 0);
+    pane_a.MoveCursorTo(3, 0, /*extend_selection=*/true);
+    pane_a.Backspace();
+
+    verb.run(pane_b);
+
+    const std::string where = std::string(verb.name) + ": ";
+    Expect(pane_b.cursor_line() < pane_b.line_count(),
+           where + "the primary caret is past the end of the document (line " +
+               std::to_string(pane_b.cursor_line()) + " of " +
+               std::to_string(pane_b.line_count()) + ")");
+    Expect(pane_b.cursor_column() <= pane_b.lines().LineLength(pane_b.cursor_line()),
+           where + "the primary caret is past the end of its line");
+    for (const auto& caret : pane_b.secondary_caret_ranges()) {
+      Expect(caret.position.line < pane_b.line_count(),
+             where + "a secondary caret is past the end of the document");
+      Expect(caret.position.column <= pane_b.lines().LineLength(caret.position.line),
+             where + "a secondary caret is past the end of its line");
+      if (caret.selection_anchor.has_value()) {
+        Expect(caret.selection_anchor->line < pane_b.line_count(),
+               where + "a secondary anchor is past the end of the document");
+      }
+    }
+  }
+}
+
 // The per-line token cache stopped ERASING invalidated entries -- it stamps them
 // with a generation and retokenizes into the buffer they already hold, so typing
 // no longer frees and reallocates a screenful of token vectors per keystroke.
@@ -6138,6 +6244,10 @@ void RegisterTextViewportTests(std::vector<TestCase>& tests) {
           TestTextViewportUtf8BomIsStrippedOnOpenAndWrittenOnSave);
   AddTest(tests, "TextViewport/SmallFileKeepsSyntaxHighlighting",
           TestTextViewportSmallFileKeepsSyntaxHighlighting);
+  AddTest(tests, "TextViewport/SplitSiblingCaretsSurviveAForeignEdit",
+          TestTextViewportSplitSiblingCaretsSurviveAForeignEdit);
+  AddTest(tests, "TextViewport/StaleSiblingIsReconciledByEveryVerb",
+          TestTextViewportStaleSiblingIsReconciledByEveryVerb);
   AddTest(tests, "TextViewport/SplitSiblingsShareOneUndoHistory",
           TestTextViewportSplitSiblingsShareOneUndoHistory);
   AddTest(tests, "TextViewport/SplitSiblingEditRefreshesHighlightTokens",

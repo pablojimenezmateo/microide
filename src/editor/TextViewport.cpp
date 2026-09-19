@@ -39,6 +39,7 @@ TextViewport::TextViewport(const TextViewport& other)
       caret_wrap_affinity_(other.caret_wrap_affinity_),
       caret_wrap_affinity_position_(other.caret_wrap_affinity_position_),
       caret_navigation_content_revision_(other.caret_navigation_content_revision_),
+      carets_synced_content_revision_(other.carets_synced_content_revision_),
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
       visible_lines_(other.visible_lines_),
@@ -127,6 +128,7 @@ TextViewport::TextViewport(TextViewport&& other) noexcept
       caret_wrap_affinity_(other.caret_wrap_affinity_),
       caret_wrap_affinity_position_(other.caret_wrap_affinity_position_),
       caret_navigation_content_revision_(other.caret_navigation_content_revision_),
+      carets_synced_content_revision_(other.carets_synced_content_revision_),
       scroll_line_(other.scroll_line_),
       horizontal_scroll_(other.horizontal_scroll_),
       visible_lines_(other.visible_lines_),
@@ -194,6 +196,7 @@ TextViewport& TextViewport::operator=(TextViewport&& other) noexcept {
   caret_wrap_affinity_ = other.caret_wrap_affinity_;
   caret_wrap_affinity_position_ = other.caret_wrap_affinity_position_;
   caret_navigation_content_revision_ = other.caret_navigation_content_revision_;
+  carets_synced_content_revision_ = other.carets_synced_content_revision_;
   scroll_line_ = other.scroll_line_;
   horizontal_scroll_ = other.horizontal_scroll_;
   visible_lines_ = other.visible_lines_;
@@ -585,6 +588,8 @@ std::span<const TextPosition> TextViewport::secondary_caret_positions() const {
 }
 
 void TextViewport::AddSecondaryCaret(std::size_t line, std::size_t column) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return;
   }
@@ -634,6 +639,8 @@ bool TextViewport::RemoveSecondaryCaretAt(TextPosition position) {
 }
 
 void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return;
   }
@@ -791,6 +798,7 @@ void TextViewport::PruneCoincidentSecondaryCarets() {
 void TextViewport::PlaceColumnCaretsBetweenLines(std::size_t anchor_line,
                                                  std::size_t target_line,
                                                  std::size_t column) {
+  SyncCaretsIfDocumentChangedElsewhere();
   // Zero-width column carets are the degenerate box selection where both corners
   // share a visual column; delegate so the span cap and caret-set construction
   // live once.
@@ -909,6 +917,8 @@ void TextViewport::BoxColumnsOnLine(std::size_t line, std::size_t anchor_visual_
 }
 
 void TextViewport::SetBoxSelection(TextPosition anchor, TextPosition caret) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return;
   }
@@ -920,6 +930,7 @@ void TextViewport::SetBoxSelectionVisual(std::size_t anchor_line,
                                          std::size_t anchor_visual_column,
                                          std::size_t caret_line,
                                          std::size_t caret_visual_column) {
+  SyncCaretsIfDocumentChangedElsewhere();
   util::PerformanceTrace::Scope trace_scope("TextViewport::SetBoxSelection");
   if (document_->lines.empty()) {
     return;
@@ -1119,6 +1130,8 @@ bool TextViewport::DeleteSelectedText() {
 }
 
 bool TextViewport::DeleteCurrentLine() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return false;
   }
@@ -1215,6 +1228,8 @@ void TextViewport::ClearSelection() {
 }
 
 void TextViewport::SelectAll() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return;
   }
@@ -1262,6 +1277,8 @@ SelectionRange TextViewport::LineRangeAt(std::size_t line_index) const {
 }
 
 void TextViewport::SelectWordAtCursor() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   const auto word = WordRangeAt(TextPosition{cursor_line_, cursor_column_});
   if (!word.has_value()) {
     return;
@@ -1331,6 +1348,8 @@ std::optional<SelectionRange> TextViewport::OccurrenceSeedSpanForHighlight() con
 }
 
 void TextViewport::SelectLineAtCursor() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (document_->lines.empty()) {
     return;
   }
@@ -1434,6 +1453,11 @@ void TextViewport::InvalidateDerivedCaches(InvalidationReason reason, std::size_
   util::AddPerformanceCounter(util::PerfCounterId::EditorPresentationRevisionBumps);
   if (reason == InvalidationReason::ContentEdit) {
     ++document_->content_revision;
+    // The viewport running the edit remaps its own carets as part of it, so it
+    // is current by construction. Stamping here is what keeps the sibling check
+    // (SyncCaretsIfDocumentChangedElsewhere) free for everyone but a stale
+    // sibling.
+    carets_synced_content_revision_ = document_->content_revision;
     // The head tier moves only when the edit could have changed what a filetype
     // signature scan reads. `start_line` is the first affected line, so an edit
     // strictly below the head window leaves it alone.

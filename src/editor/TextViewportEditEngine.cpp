@@ -16,6 +16,8 @@ namespace microide::editor {
 
 
 void TextViewport::InsertCharacter(char character) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (has_multiple_carets()) {
     if (TryMultiCaretPairInsert(character)) {
       return;
@@ -46,6 +48,8 @@ void TextViewport::InsertCharacter(char character) {
 }
 
 void TextViewport::InsertText(std::string_view text, bool record_undo) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (text.empty()) {
     return;
   }
@@ -65,6 +69,8 @@ void TextViewport::InsertText(std::string_view text, bool record_undo) {
 }
 
 void TextViewport::InsertNewline() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (has_multiple_carets()) {
     (void)ApplyMultiCaretInsert("\n", true);
     return;
@@ -85,6 +91,8 @@ void TextViewport::InsertNewline() {
 }
 
 void TextViewport::InsertTab() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   if (!soft_tabs_) {
     InsertCharacter('\t');
     return;
@@ -141,6 +149,8 @@ std::optional<std::size_t> TextViewport::IndentStopBackspaceStart(std::size_t li
 }
 
 void TextViewport::Backspace() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   util::PerformanceTrace::Scope perf_scope("TextViewport::Backspace");
   if (document_->lines.empty()) {
     return;
@@ -205,6 +215,8 @@ void TextViewport::Backspace() {
 }
 
 void TextViewport::DeleteWord(int direction) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   util::PerformanceTrace::Scope perf_scope("TextViewport::DeleteWord");
   if (document_->lines.empty() || direction == 0) {
     return;
@@ -236,6 +248,8 @@ void TextViewport::DeleteWord(int direction) {
 }
 
 void TextViewport::DeleteForward() {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   util::PerformanceTrace::Scope perf_scope("TextViewport::DeleteForward");
   if (document_->lines.empty()) {
     return;
@@ -279,6 +293,8 @@ void TextViewport::DeleteForward() {
 }
 
 bool TextViewport::ApplyHistoryStep(bool redo) {
+  SyncCaretsIfDocumentChangedElsewhere();
+
   util::PerformanceTrace::Scope perf_scope(redo ? "TextViewport::Redo" : "TextViewport::Undo");
   if (document_->undo_history.IsGroupActive()) {
     FlushActiveUndoGroup();
