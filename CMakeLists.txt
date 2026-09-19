@@ -1099,6 +1099,7 @@ add_executable(microide_tests
   tests/RowDecorationBuilderTests.cpp
   tests/RuntimeSyntaxSkipTests.cpp
   tests/LineEditSpanTests.cpp
+  tests/LineIndentScanTests.cpp
   tests/PersistedRecordWriteQueueTests.cpp
   tests/SyntaxDefinitionLoaderTests.cpp
   tests/Sha256Tests.cpp
