@@ -15,6 +15,70 @@ namespace microide::tests {
 namespace {
 
 using microide::plugin::path_interop::ContainPath;
+using microide::plugin::path_interop::ResolveRuntimePath;
+
+// ResolveRuntimePath is what PRODUCES the path ContainPath then gates, and it had
+// no test naming it -- so the ten cases below all hand ContainPath a path built by
+// hand, and the composition that actually runs in production was unchecked.
+//
+// Its contract has one clause that is easy to "simplify" wrongly: an ABSOLUTE
+// path ignores project_root entirely. `project_root / path` would look
+// equivalent and is not -- std::filesystem::operator/ REPLACES the whole left
+// side when the right side is absolute, which is the exact shape that let a
+// theme `include` name any file on the system (TD-2026-09-07-292). Here the
+// branch is explicit; this pins that it stays so.
+void TestResolveRuntimePathContract() {
+  const std::filesystem::path root = "/tmp/project";
+
+  Expect(ResolveRuntimePath(root, {}).empty(), "an empty path resolves to empty");
+
+  // Relative: joined to the root and normalized.
+  Expect(ResolveRuntimePath(root, "src/main.cpp") ==
+             std::filesystem::path("/tmp/project/src/main.cpp"),
+         "a relative path is joined to the project root");
+  Expect(ResolveRuntimePath(root, "./a/../b") == std::filesystem::path("/tmp/project/b"),
+         "the join is lexically normalized");
+
+  // Absolute: the root is ignored, NOT prefixed.
+  Expect(ResolveRuntimePath(root, "/etc/passwd") == std::filesystem::path("/etc/passwd"),
+         "an absolute path resolves to itself, so containment sees the real target "
+         "instead of a path rebased under the project");
+
+  // No root: nothing to join to, so the path is only normalized.
+  Expect(ResolveRuntimePath({}, "a/../b") == std::filesystem::path("b"),
+         "with no project root a relative path is normalized and left relative");
+}
+
+// The composition that runs in production: resolve, then contain. Each hostile
+// shape has to be rejected AFTER going through the resolver, not just when a
+// test hands ContainPath a pre-built absolute path.
+void TestResolveThenContainRejectsEscapes() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  std::error_code ec;
+  std::filesystem::create_directories(root / "src", ec);
+  const std::array<std::filesystem::path, 1> roots{root};
+
+  const auto resolve_and_contain = [&](const std::filesystem::path& requested) {
+    return ContainPath(roots, ResolveRuntimePath(root, requested));
+  };
+
+  // Legitimate: a relative path inside the project.
+  Expect(resolve_and_contain("src/main.cpp").has_value(),
+         "a relative path inside the project survives resolve-then-contain");
+  Expect(resolve_and_contain("./src/./main.cpp").has_value(),
+         "redundant path elements do not break containment");
+
+  // Hostile shapes, each rejected.
+  Expect(!resolve_and_contain("../outside.txt").has_value(),
+         "a relative `..` escape is rejected after resolution");
+  Expect(!resolve_and_contain("src/../../outside.txt").has_value(),
+         "a `..` escape buried mid-path is rejected");
+  Expect(!resolve_and_contain("/etc/passwd").has_value(),
+         "an absolute path outside the project is rejected -- and note it is rejected "
+         "because the resolver left it absolute rather than rebasing it under the root");
+  Expect(!resolve_and_contain({}).has_value(), "an empty request is rejected");
+}
 
 void TestContainPathAllowsPlainChildWithinRoot() {
   TemporaryDirectory temp_dir;
@@ -243,6 +307,10 @@ void RegisterPluginPathContainmentTests(std::vector<TestCase>& tests) {
           TestContainPathAcceptsAnyOfSeveralRoots);
   AddTest(tests, "PluginPathContainment/RejectsSymlinkedFileAndDanglingEscapes",
           TestContainPathRejectsSymlinkedFileAndDanglingEscapes);
+  AddTest(tests, "PluginPathContainment/ResolveRuntimePathContract",
+          TestResolveRuntimePathContract);
+  AddTest(tests, "PluginPathContainment/ResolveThenContainRejectsEscapes",
+          TestResolveThenContainRejectsEscapes);
   AddTest(tests, "PluginPathContainment/AllowsPlainChildWithinRoot",
           TestContainPathAllowsPlainChildWithinRoot);
   AddTest(tests, "PluginPathContainment/RejectsMissingLeafUnderSymlinkedParent",
