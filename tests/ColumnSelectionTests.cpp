@@ -321,9 +321,53 @@ void TestColumnSelectRightKeepsTheWidthAfterSteppingBackOffTheLongLine() {
              std::to_string(viewport.column_selection().cursor.column));
 }
 
+// A column-select gesture is anchored to where the caret WAS, so any caret
+// placement that is not the gesture's own ends it -- PlacePrimaryCaret says so
+// and clears it there, which covers keys, the mouse, goto and the control
+// channel. It does NOT cover an edit made somewhere else entirely: the other
+// pane of a split, a disk reload, a formatter, a plugin. Those move the lines
+// the corners name without ever placing this viewport's caret, and the action
+// executor reads `column_selection()` BEFORE it touches the viewport, so the
+// next chord extended a box from corners the document no longer has.
+//
+// Note what this test does NOT do: use pane B in between. An earlier version
+// stepped the caret first and passed against the unfixed code, because the
+// ordinary PlacePrimaryCaret rule cleared the gesture on the way -- it was
+// testing that rule, not this one.
+void TestColumnSelectGestureEndsWhenSomebodyElseEditsTheBuffer() {
+  microide::editor::TextViewport pane_a;
+  pane_a.SetViewportSize(20, 200);
+  pane_a.LoadContent("alpha\nbravo\ncharlie\ndelta\necho\n", "/tmp/column-sibling.txt");
+  microide::editor::TextViewport pane_b = pane_a;
+  pane_b.SetViewportSize(20, 200);
+
+  pane_b.MoveCursorTo(4, 2);
+  pane_b.SetColumnSelection(ColumnSelectionState{
+      .active = true, .anchor = TextPosition{4, 2}, .cursor = TextPosition{4, 4}});
+  Expect(pane_b.column_selection().active, "the gesture is armed on pane B");
+
+  // A second chord press must still EXTEND: the gesture's own step never edits,
+  // so nothing has gone stale yet.
+  pane_b.SetColumnSelection(ColumnSelectionState{
+      .active = true, .anchor = TextPosition{4, 2}, .cursor = TextPosition{4, 5}});
+  Expect(pane_b.column_selection().active && pane_b.column_selection().cursor.column == 5,
+         "a held chord keeps extending its own box");
+
+  // Pane A deletes the lines the gesture is anchored on.
+  pane_a.MoveCursorTo(0, 0);
+  pane_a.MoveCursorTo(3, 0, /*extend_selection=*/true);
+  pane_a.Backspace();
+
+  Expect(!pane_b.column_selection().active,
+         "an edit the gesture did not make ends it, so the next chord re-anchors "
+         "instead of extending a box from corners that are gone");
+}
+
 }  // namespace
 
 void RegisterColumnSelectionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "ColumnSelection/GestureEndsWhenSomebodyElseEditsTheBuffer",
+          TestColumnSelectGestureEndsWhenSomebodyElseEditsTheBuffer);
   AddTest(tests, "ColumnSelection/RightKeepsTheWidthAfterSteppingBackOffTheLongLine",
           TestColumnSelectRightKeepsTheWidthAfterSteppingBackOffTheLongLine);
   AddTest(tests, "ColumnSelection/FirstStepAnchorsAtTheCaret", TestFirstStepAnchorsAtTheCaret);

@@ -18,6 +18,7 @@
 // virtual column has to be tracked out here or it is lost on the first short line.
 
 #include <cstddef>
+#include <cstdint>
 
 #include "editor/EditTypes.h"
 
@@ -39,6 +40,14 @@ struct ColumnSelectionState {
   // Moving corner. Its column is a virtual visual column: it may exceed the width
   // of the line it currently sits on.
   TextPosition cursor;
+  // The document's content revision when the gesture was last armed. Both
+  // corners are LINE NUMBERS in that revision, so an edit the gesture did not
+  // make -- a sibling pane on a split, a disk reload, a formatter, a plugin --
+  // leaves them naming lines the document may no longer have. The gesture's own
+  // step never edits, so this is stable across a held chord and differs exactly
+  // when somebody else moved the buffer. `TextViewport::column_selection()`
+  // reports such a gesture as inactive, so the next chord re-anchors.
+  std::uint64_t document_revision = 0;
 };
 
 // Advances one step. When `state` is inactive both corners start at `caret`

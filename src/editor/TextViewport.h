@@ -644,8 +644,21 @@ class TextViewport {
   // switch, like the secondary carets it drives. Two positions and a bool: no
   // allocation, so this does not reopen the "TextViewport must not own copied
   // state" perf rule that applies to the language-contract view.
-  const ColumnSelectionState& column_selection() const { return column_selection_; }
-  void SetColumnSelection(const ColumnSelectionState& selection) { column_selection_ = selection; }
+  // By value, not by reference: a gesture armed against a revision the document
+  // has since left is reported as no gesture at all (see
+  // ColumnSelectionState::document_revision). Every caller copies it anyway, and
+  // the struct is two positions, a bool and a counter.
+  ColumnSelectionState column_selection() const {
+    if (column_selection_.active && document_ != nullptr &&
+        column_selection_.document_revision != document_->content_revision) {
+      return ColumnSelectionState{};
+    }
+    return column_selection_;
+  }
+  void SetColumnSelection(const ColumnSelectionState& selection) {
+    column_selection_ = selection;
+    column_selection_.document_revision = document_ != nullptr ? document_->content_revision : 0;
+  }
   void ClearColumnSelection() { column_selection_ = ColumnSelectionState{}; }
   // Widest line in [lo, hi] in visual columns, used to bound the virtual column
   // when a column selection extends right. O(span), and the span is already
