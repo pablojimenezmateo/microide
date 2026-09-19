@@ -188,6 +188,114 @@ void RunEditorColumnSelectionBurst(ScenarioContext& context) {
   });
 }
 
+// Arrow keys over a caret set that already exists. Box selection had a gate for
+// BUILDING the set (`editor_column_selection_burst`) and multi-caret editing had
+// one for applying an edit to it, but nothing measured the step in between --
+// which is what a user does constantly: box-select a few hundred lines, then
+// press End, then Up/Down, then type.
+//
+// Every motion verb runs the same tail (advance each caret, then sort + dedupe +
+// merge the whole set), so this is the one place a per-keystroke O(n log n) over
+// a thousand carets would show, and the caret set is large enough here that an
+// accidental per-caret allocation is loud rather than lost in the noise.
+void RunEditorMultiCaretMotionBurst(ScenarioContext& context) {
+  const std::filesystem::path cpp_50k =
+      "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
+  if (!RequireFixture(context, cpp_50k, "editor_multi_caret_motion_burst")) {
+    return;
+  }
+  (void)context.Open("tests/perf/fixtures/small_project");
+  context.OpenTab(cpp_50k);
+  auto& vp = context.ActiveViewport();
+  vp.ClearSecondaryCarets();
+  vp.ClearColumnSelection();
+  vp.MoveCursorTo(5000, 4, false);
+  // The pane has painted before any real gesture, so the per-line width table
+  // the caret arithmetic reads is already built -- see the column-select
+  // scenario for why measuring its construction instead would be a fiction.
+  context.PumpFrames(1);
+  // One box over 1,200 lines, rebuilt before EACH burst and outside the measured
+  // closure. Rebuilt, not built once: a motion that walks a caret off the end of
+  // its line spills it onto the next one, where it merges with the caret already
+  // there -- so a burst that ran first would hand the next burst a collapsed set
+  // and the four numbers would describe four different set sizes. The count
+  // check after each burst is what makes that visible instead of silent.
+  const auto place_box = [&] {
+    vp.ClearSecondaryCarets();
+    vp.SetBoxSelection(editor::TextPosition{4400, 4}, editor::TextPosition{5600, 12});
+    const std::size_t carets = vp.secondary_caret_range_view().size() + 1;
+    if (carets < 1000) {
+      throw std::runtime_error(
+          "editor_multi_caret_motion_burst: the box produced only " + std::to_string(carets) +
+          " carets, so this measures a small set rather than a large one");
+    }
+  };
+  const auto caret_count = [&] { return vp.secondary_caret_range_view().size() + 1; };
+  const auto require_set_survived = [&](const char* phase) {
+    if (caret_count() < 1000) {
+      throw std::runtime_error(std::string("editor_multi_caret_motion_burst: ") + phase +
+                               " collapsed the caret set to " + std::to_string(caret_count()) +
+                               ", so its number describes a smaller set than the others");
+    }
+  };
+
+  // The four bursts move the carets WITHOUT extending. That is not a softer
+  // workload, it is the only one that keeps the set the same size across all
+  // four: an EXTENDING vertical step grows every caret's selection down into the
+  // row its neighbour occupies, so the whole set merges -- 1,200 cursors to one
+  // on a single Shift+Down, which is VS Code's rule too. That cascade is worth a
+  // number of its own and gets one below; mixing it into these would leave each
+  // burst describing a different set size.
+  place_box();
+  context.Measure("multi_caret_motion.horizontal_burst", [&] {
+    for (int i = 0; i < 32; ++i) {
+      vp.MoveCursorHorizontal(i % 2 == 0 ? 1 : -1);
+    }
+  });
+  require_set_survived("horizontal_burst");
+
+  place_box();
+  context.Measure("multi_caret_motion.vertical_burst", [&] {
+    for (int i = 0; i < 32; ++i) {
+      vp.MoveCursorVertical(i % 2 == 0 ? 1 : -1);
+    }
+  });
+  require_set_survived("vertical_burst");
+
+  // End/Home: one bounded read of every caret's own line, per caret, per press.
+  place_box();
+  context.Measure("multi_caret_motion.line_edge_burst", [&] {
+    for (int i = 0; i < 16; ++i) {
+      vp.MoveCursorLineEnd();
+      vp.MoveCursorLineStart();
+    }
+  });
+  require_set_survived("line_edge_burst");
+
+  // Word motion: the boundary scan, at every caret.
+  place_box();
+  context.Measure("multi_caret_motion.word_burst", [&] {
+    for (int i = 0; i < 16; ++i) {
+      vp.MoveCursorWord(i % 2 == 0 ? 1 : -1);
+    }
+  });
+  require_set_survived("word_burst");
+
+  // The worst case the normalise tail has: ONE keystroke that makes every
+  // cursor's selection overlap its neighbour's, so the merge walks the whole set
+  // and returns a single cursor. Nothing else in the suite reaches it.
+  place_box();
+  context.Measure("multi_caret_motion.merge_cascade", [&] {
+    vp.MoveCursorVertical(1, /*extend_selection=*/true);
+  });
+  if (caret_count() != 1) {
+    throw std::runtime_error(
+        "editor_multi_caret_motion_burst: the extending step left " +
+        std::to_string(caret_count()) +
+        " cursors, so the merge cascade this phase exists to time did not happen");
+  }
+}
+
 void RunEditorShapingMultiCaret(ScenarioContext& context) {
   const std::filesystem::path cpp_50k =
       "tests/perf/fixtures/editor_essentials_50k_cpp/synthetic_kernel.cpp";
@@ -1472,6 +1580,15 @@ const ScenarioRegistration g_perf_settings_change_many_tabs({Scenario{
     // (TD-2026-08-12-191). See Scenario::gate_net_heap_metrics.
     .gate_net_heap_metrics = false,
     .run = RunSettingsChangeManyTabs,
+}});
+const ScenarioRegistration g_perf_editor_multi_caret_motion_burst({Scenario{
+    .name = "editor_multi_caret_motion_burst",
+    .smoke = false,
+    .baseline_gated = true,
+    // warmup: the first pass pays the project's cold open and this buffer's
+    // first layout/width build, which dwarf the measured motion bursts.
+    .warmup_iterations = 1,
+    .run = RunEditorMultiCaretMotionBurst,
 }});
 const ScenarioRegistration g_perf_editor_column_selection_burst({Scenario{
     .name = "editor_column_selection_burst",
