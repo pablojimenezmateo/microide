@@ -495,11 +495,15 @@ void RunMotionSweep(bool soft_wrap) {
          "the sweep barely ran an edit from the sibling viewport" + tail);
 }
 
-// Same sweep, with a collapsed fold in the way. Vertical motion is the only
-// fold-aware verb (AdvanceCaretVertical walks visual rows), and it owes one rule
-// the flat sweep cannot state: no caret -- primary OR secondary -- may land on a
-// line the fold hides, because a caret there is invisible and its next edit
-// rewrites text the user cannot see.
+// Same sweep, with a collapsed fold in the way, asserting the one rule the flat
+// sweeps cannot state: no caret -- primary OR secondary -- may land on a line
+// the fold hides, because a caret there is invisible and its next edit rewrites
+// text the user cannot see.
+//
+// EVERY motion owes this, not just the vertical ones. Vertical motion walks
+// visual rows and so was fold-aware from the start; horizontal and word motion
+// stepped to `line + 1` and landed straight inside a collapsed body, which is
+// what this sweep found once it stopped exempting them.
 void TestMultiCaretMotionAcrossACollapsedFold() {
   static constexpr std::string_view kSource =
       "head\n"
@@ -569,12 +573,9 @@ void TestMultiCaretMotionAcrossACollapsedFold() {
       const std::string text_before = DocumentText(viewport);
       const std::string context = std::string("folded ") + (extend ? "Shift+" : "") +
                                   MotionName(motion) + " step " + std::to_string(step);
-      const bool vertical = motion == Motion::kUp || motion == Motion::kDown ||
-                            motion == Motion::kPageUp || motion == Motion::kPageDown;
       Apply(viewport, motion, extend);
       CheckWellFormed(viewport, before, text_before,
                       extend ? StepKind::kExtendingMotion : StepKind::kMotion, coverage, context);
-      if (!vertical) continue;
       for (const Cursor& c : Cursors(viewport)) {
         ++hidden_line_checks;
         // A step that walked a caret over the hidden block: the only kind that
@@ -595,7 +596,7 @@ void TestMultiCaretMotionAcrossACollapsedFold() {
          "the folded sweep barely built multi-cursor sets: " +
              std::to_string(coverage.multi_cursor_steps));
   Expect(hidden_line_checks > 1000,
-         "the folded sweep barely ran a vertical motion: " + std::to_string(hidden_line_checks));
+         "the folded sweep barely checked a caret: " + std::to_string(hidden_line_checks));
   Expect(fold_crossings > 400, "no caret ever walked over the collapsed block: " +
                                   std::to_string(fold_crossings));
 }

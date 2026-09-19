@@ -1339,6 +1339,58 @@ bool FoldingModel::IsLineHidden(std::size_t line) const {
   return collapsed_hi_prefix_max_[index] >= line;
 }
 
+std::size_t FoldingModel::FirstVisibleLineAtOrAfter(std::size_t line,
+                                                    std::size_t line_count) const {
+  if (collapsed_.empty()) {
+    return line;
+  }
+  EnsureCollapsedIndex();
+  // Jump past whole regions rather than stepping lines: the prefix max names the
+  // furthest closer among the ranges whose body has started, so one lookup moves
+  // the probe past every fold covering it. A nest needs one more round.
+  while (line < line_count) {
+    const auto it = std::upper_bound(
+        collapsed_.begin(), collapsed_.end(), line,
+        [](std::size_t value, const FoldRange& entry) { return value < entry.opener_line + 1; });
+    if (it == collapsed_.begin()) {
+      return line;
+    }
+    const auto index = static_cast<std::size_t>(it - collapsed_.begin()) - 1;
+    const std::size_t hidden_through = collapsed_hi_prefix_max_[index];
+    if (hidden_through < line) {
+      return line;
+    }
+    line = hidden_through + 1;
+  }
+  return line_count;
+}
+
+std::size_t FoldingModel::LastVisibleLineAtOrBefore(std::size_t line) const {
+  if (collapsed_.empty()) {
+    return line;
+  }
+  EnsureCollapsedIndex();
+  while (true) {
+    const auto it = std::upper_bound(
+        collapsed_.begin(), collapsed_.end(), line,
+        [](std::size_t value, const FoldRange& entry) { return value < entry.opener_line + 1; });
+    if (it == collapsed_.begin()) {
+      return line;
+    }
+    const auto index = static_cast<std::size_t>(it - collapsed_.begin()) - 1;
+    if (collapsed_hi_prefix_max_[index] < line) {
+      return line;
+    }
+    // The opener of the region covering `line` is visible, so the answer is at
+    // or before it; step there and re-check for an enclosing fold.
+    const std::size_t opener = collapsed_[index].opener_line;
+    if (opener == 0) {
+      return 0;
+    }
+    line = opener;
+  }
+}
+
 void FoldingModel::ShiftCollapsedRanges(const LineEditSpan& edit_span, std::size_t line_count) {
   if (collapsed_.empty() || edit_span.empty()) {
     return;

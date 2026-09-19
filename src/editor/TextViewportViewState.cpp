@@ -320,8 +320,9 @@ TextPosition TextViewport::WordTargetForCaret(const TextPosition& caret,
     // At the line start the step is the line break itself, which is what makes
     // Ctrl+Left walk into the previous line and Ctrl+Backspace join them.
     if (column == 0) {
-      return line == 0 ? TextPosition{0, 0}
-                       : TextPosition{line - 1, document_->lines.LineLength(line - 1)};
+      const std::size_t previous = VisibleLineBefore(line);
+      return previous == line ? TextPosition{line, 0}
+                              : TextPosition{previous, document_->lines.LineLength(previous)};
     }
     // LineView, not operator[]: the latter materializes an owned copy of the line
     // into a per-revision cache, which on a file with no line breaks in it is the
@@ -331,8 +332,8 @@ TextPosition TextViewport::WordTargetForCaret(const TextPosition& caret,
                                            : WordBoundaryLeft(text, column)};
   }
   if (column >= length) {
-    return line + 1 < document_->lines.size() ? TextPosition{line + 1, 0}
-                                             : TextPosition{line, length};
+    const std::size_t next = VisibleLineAfter(line);
+    return next == line ? TextPosition{line, length} : TextPosition{next, 0};
   }
   const std::string_view text = document_->lines.LineView(line);
   return TextPosition{line, for_deletion ? DeleteWordBoundaryRight(text, column)
@@ -885,12 +886,16 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
   if (delta < 0) {
     for (int i = delta; i < 0; ++i) {
       if (caret.column == 0) {
-        // At the start of a line, step back to the end of the previous line
-        // (VS Code semantics). Stop only at the very start of the document.
-        if (caret.line == 0) {
+        // At the start of a line, step back to the end of the previous VISIBLE
+        // line (VS Code semantics: horizontal motion is a view-space step, and a
+        // collapsed region is not in the view). Landing inside the region would
+        // put the caret where nothing paints it. Stop only at the very start of
+        // the document.
+        const std::size_t previous = VisibleLineBefore(caret.line);
+        if (previous == caret.line) {
           break;
         }
-        --caret.line;
+        caret.line = previous;
         caret.column = document_->lines.LineLength(caret.line);
         continue;
       }
@@ -900,12 +905,14 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
     for (int i = 0; i < delta; ++i) {
       const std::string_view line = document_->lines.LineView(caret.line);
       if (caret.column >= line.size()) {
-        // At the end of a line, step forward to the start of the next line.
-        // Stop only at the very end of the document.
-        if (caret.line + 1 >= document_->lines.size()) {
+        // At the end of a line, step forward to the start of the next VISIBLE
+        // line -- over a collapsed region, not into it. Stop only at the very
+        // end of the document.
+        const std::size_t next = VisibleLineAfter(caret.line);
+        if (next == caret.line) {
           break;
         }
-        ++caret.line;
+        caret.line = next;
         caret.column = 0;
         continue;
       }

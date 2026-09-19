@@ -1065,6 +1065,29 @@ std::size_t TextViewport::CollapsedFoldEndAt(std::size_t line) const {
   return line;
 }
 
+std::size_t TextViewport::VisibleLineAfter(std::size_t line) const {
+  const std::size_t line_count = document_->lines.size();
+  if (line + 1 >= line_count) {
+    return line;
+  }
+  if (folding_model_ == nullptr || !folding_model_->has_any_collapsed_fold()) {
+    return line + 1;
+  }
+  const std::size_t next = folding_model_->FirstVisibleLineAtOrAfter(line + 1, line_count);
+  return next >= line_count ? line : next;
+}
+
+std::size_t TextViewport::VisibleLineBefore(std::size_t line) const {
+  if (line == 0 || document_->lines.empty()) {
+    return line;
+  }
+  if (folding_model_ == nullptr || !folding_model_->has_any_collapsed_fold()) {
+    return line - 1;
+  }
+  const std::size_t previous = folding_model_->LastVisibleLineAtOrBefore(line - 1);
+  return previous == FoldingModel::kNoVisibleLine ? line : previous;
+}
+
 void TextViewport::AppendCaretLineVerbLines(std::vector<std::size_t>* out) const {
   if (out == nullptr || document_->lines.empty()) {
     return;

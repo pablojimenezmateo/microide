@@ -228,6 +228,22 @@ class FoldingModel {
 
   // True when `line` sits strictly inside a collapsed fold body.
   bool IsLineHidden(std::size_t line) const;
+  // The nearest line at or after / at or before `line` that is not hidden.
+  //
+  // A horizontal caret step that crosses a line boundary has to cross a whole
+  // collapsed region rather than land inside it: a caret on a hidden line has no
+  // row on screen, so it is invisible and its next edit rewrites text the user
+  // cannot see. Walking line by line would be O(region log n) on a per-keystroke
+  // path, so these jump region-by-region off the same prefix-max index
+  // IsLineHidden uses -- one step per collapsed region crossed, which is one in
+  // every case that is not a nest.
+  //
+  // `line_count` bounds the forward search; the result is `line_count` when
+  // everything from `line` on is hidden, and `kNoVisibleLine` when everything
+  // before it is.
+  static constexpr std::size_t kNoVisibleLine = static_cast<std::size_t>(-1);
+  std::size_t FirstVisibleLineAtOrAfter(std::size_t line, std::size_t line_count) const;
+  std::size_t LastVisibleLineAtOrBefore(std::size_t line) const;
   bool IsCollapsedAtOpener(std::size_t line) const;
   bool has_any_collapsed_fold() const { return !collapsed_.empty(); }
   std::span<const FoldRange> collapsed_ranges() const { return collapsed_; }

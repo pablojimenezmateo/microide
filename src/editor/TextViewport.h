@@ -700,6 +700,11 @@ class TextViewport {
   // Acting on the opener alone deleted a function's signature and left its
   // body behind, or moved the header out from over it.
   std::size_t CollapsedFoldEndAt(std::size_t line) const;
+  // The line a horizontal step across a line boundary lands on, skipping any
+  // collapsed region in the way. Returns `line` itself when there is nowhere to
+  // go (the document edge, or nothing but hidden lines beyond).
+  std::size_t VisibleLineAfter(std::size_t line) const;
+  std::size_t VisibleLineBefore(std::size_t line) const;
   bool DeleteSelectedText();
   // Delete every caret's selection atomically (one undo entry). The caller must
   // guarantee every caret has a selection (pairs with MultiCaretSelectedText for

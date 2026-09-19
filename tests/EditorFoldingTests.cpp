@@ -451,9 +451,98 @@ void TestViewportEditExposesFoldAnchorLineForIncrementalRefresh() {
          "the fold edit span should be empty again after consume");
 }
 
+// Horizontal and word motion are VIEW-space steps, so they cross a collapsed
+// region rather than landing inside it (VS Code: the hidden lines are not in the
+// view model at all, so Right at the end of a folded opener lands on the next
+// view line). Vertical motion walks visual rows and was fold-aware from the
+// start; these two stepped to `line + 1` and put the caret on a line nothing
+// paints, where the next keystroke edits text the user cannot see.
+void TestHorizontalMotionStepsOverACollapsedFold() {
+  TextViewport viewport;
+  viewport.SetViewportSize(20, 60);
+  viewport.LoadContent(
+      "head\n"
+      "void f() {\n"
+      "  aaa;\n"
+      "  bbb;\n"
+      "}\n"
+      "tail\n",
+      "/tmp/fold-horizontal.cpp");
+
+  FoldingModel folding;
+  FoldingModel::ComputeOptions options;
+  options.bracket_pairs = {{'{', '}'}};
+  options.use_indent_source = true;
+  options.tab_size = 4;
+  Expect(folding.Compute(viewport.lines().Snapshot(), options), "the fold fixture computes");
+  Expect(folding.Collapse(1), "the function fold collapses");
+  viewport.SetFoldingModel(&folding);
+  Expect(folding.IsLineHidden(2) && folding.IsLineHidden(3),
+         "the body lines are hidden, or this proves nothing");
+  // Computed, not hard-coded: whether the closer line is itself hidden is the
+  // fold model's business, and this test is about the caret not landing in the
+  // hidden run whatever its extent turns out to be.
+  std::size_t first_visible_after = 2;
+  while (first_visible_after < viewport.line_count() &&
+         folding.IsLineHidden(first_visible_after)) {
+    ++first_visible_after;
+  }
+  Expect(first_visible_after > 2 && first_visible_after < viewport.line_count(),
+         "there is a visible line after the collapsed run");
+
+  const std::size_t opener_end = viewport.lines().LineLength(1);
+
+  // Right at the end of the opener crosses the whole region.
+  viewport.MoveCursorTo(1, opener_end);
+  viewport.MoveCursorHorizontal(1);
+  Expect(!folding.IsLineHidden(viewport.cursor_line()),
+         "Right must not land inside the fold, got line " +
+             std::to_string(viewport.cursor_line()));
+  Expect(viewport.cursor_line() == first_visible_after && viewport.cursor_column() == 0,
+         "Right lands on the first visible line after the region, got (" +
+             std::to_string(viewport.cursor_line()) + "," +
+             std::to_string(viewport.cursor_column()) + ")");
+
+  // And Left from there comes straight back, so the step is reversible.
+  viewport.MoveCursorHorizontal(-1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == opener_end,
+         "Left back over the region returns to the end of the opener, got (" +
+             std::to_string(viewport.cursor_line()) + "," +
+             std::to_string(viewport.cursor_column()) + ")");
+
+  // Ctrl+Right crosses the same boundary the same way.
+  viewport.MoveCursorTo(1, opener_end);
+  viewport.MoveCursorWord(1);
+  Expect(!folding.IsLineHidden(viewport.cursor_line()),
+         "Ctrl+Right must not land inside the fold either, got line " +
+             std::to_string(viewport.cursor_line()));
+  Expect(viewport.cursor_line() == first_visible_after,
+         "Ctrl+Right crosses to the first visible line, got " +
+             std::to_string(viewport.cursor_line()));
+
+  // Ctrl+Left from column 0 of the closer goes back over it.
+  viewport.MoveCursorTo(first_visible_after, 0);
+  viewport.MoveCursorWord(-1);
+  Expect(!folding.IsLineHidden(viewport.cursor_line()),
+         "Ctrl+Left must not land inside the fold, got line " +
+             std::to_string(viewport.cursor_line()));
+  Expect(viewport.cursor_line() == 1,
+         "Ctrl+Left lands on the opener, got " + std::to_string(viewport.cursor_line()));
+
+  // With the fold expanded the same keys step one line, so the skip is the
+  // fold's doing and not a new rule for every line boundary.
+  folding.ExpandAll();
+  viewport.MoveCursorTo(1, opener_end);
+  viewport.MoveCursorHorizontal(1);
+  Expect(viewport.cursor_line() == 2 && viewport.cursor_column() == 0,
+         "expanded, Right steps to the very next line");
+}
+
 }  // namespace
 
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorFolding/HorizontalMotionStepsOverACollapsedFold",
+          TestHorizontalMotionStepsOverACollapsedFold);
   AddTest(tests, "EditorFolding/TabState/ModelPointerStableAcrossVectorReallocation",
           TestFoldingModelPointerStableAcrossTabVectorReallocation);
   AddTest(tests, "EditorFolding/Viewport/CopyClearsFoldingModelBinding",
