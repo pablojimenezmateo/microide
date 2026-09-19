@@ -373,6 +373,75 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
     return result;
   }
 
+  // The second half of the rule. Scoping to the redefined joiner caught the two
+  // TUs that grew a private copy of it -- and missed every line that simply typed
+  // the wrong separator inline, which on 2026-09-19 was two more: the dirty
+  // prompt's hint line, and the git sidebar action line's NO-SELECTION variant
+  // (so the very line the joiner cleanup was about still changed punctuation as
+  // the selection came and went).
+  //
+  // The honest uses the rule comment above defends -- the breadcrumb, the merge
+  // status line -- all write the separator as a BARE literal and join at runtime.
+  // A literal with "  |  " embedded in surrounding text is always a composed
+  // line, so that, and only that, is what this flags.
+  //
+  // This half walks string literals itself rather than reusing BuildCodeMask,
+  // which marks literal bodies as NOT code -- a mask-and-skip check over them is
+  // structurally incapable of firing, which is how the first draft of this rule
+  // passed green while blind. Walking the literals also means no regex over whole
+  // files: std::regex recurses per character and overflowed the stack outright on
+  // this repo's longer sources.
+  constexpr std::string_view kPipeSeparator = "  |  ";
+  const auto scan_composed_pipe_literals = [&](const std::filesystem::path& path,
+                                               const std::string& text) {
+    enum class Lex { Code, LineComment, BlockComment, String, Char };
+    Lex state = Lex::Code;
+    std::size_t literal_start = 0;
+    std::string literal;
+    for (std::size_t i = 0; i < text.size(); ++i) {
+      const char c = text[i];
+      const char n = (i + 1 < text.size()) ? text[i + 1] : '\0';
+      switch (state) {
+        case Lex::Code:
+          if (c == '/' && n == '/') { state = Lex::LineComment; ++i; }
+          else if (c == '/' && n == '*') { state = Lex::BlockComment; ++i; }
+          else if (c == '"') { state = Lex::String; literal_start = i; literal.clear(); }
+          else if (c == '\'') { state = Lex::Char; }
+          break;
+        case Lex::LineComment:
+          if (c == '\n') { state = Lex::Code; }
+          break;
+        case Lex::BlockComment:
+          if (c == '*' && n == '/') { state = Lex::Code; ++i; }
+          break;
+        case Lex::String:
+          if (c == '\\' && i + 1 < text.size()) { literal.push_back(c); literal.push_back(n); ++i; }
+          else if (c == '"') {
+            state = Lex::Code;
+            if (literal != kPipeSeparator &&
+                literal.find(kPipeSeparator) != std::string::npos) {
+              result.violations.push_back(Violation{
+                  .path = path,
+                  .line = LineNumberAt(text, literal_start),
+                  .message = "this literal joins fields on \"  |  \" inline — a composed "
+                             "key-hint line uses kHintSeparator (\" · \"); write the separator "
+                             "as a bare literal if these really are unrelated fields",
+              });
+            }
+          } else if (c == '\n') {
+            state = Lex::Code;  // unterminated; resynchronise rather than run on
+          } else {
+            literal.push_back(c);
+          }
+          break;
+        case Lex::Char:
+          if (c == '\\' && i + 1 < text.size()) { ++i; }
+          else if (c == '\'' || c == '\n') { state = Lex::Code; }
+          break;
+      }
+    }
+  };
+
   const std::regex redefinition(R"(\bvoid\s+AppendHintSegment\s*\()");
   for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
     if (!entry.is_regular_file()) {
@@ -399,6 +468,7 @@ RuleResult CheckHintSegmentsUseTheSharedSeparator(const std::filesystem::path& r
                      "WorkspaceUiText.h so every key-hint list joins on the same separator",
       });
     }
+    scan_composed_pipe_literals(entry.path(), text);
   }
   return result;
 }

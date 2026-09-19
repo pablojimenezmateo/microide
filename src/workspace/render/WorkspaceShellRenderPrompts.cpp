@@ -78,10 +78,14 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
              theme_.overlay_background, TruncateLabelView(DirtyPromptMessage(), message_rect.w));
   // Constant hint line: spelled out rather than re-joined per frame. The joiner
   // lives in WorkspaceUiText.h for text assembled from live state, which belongs
-  // in RenderViewModelBuilder, not in a render TU.
+  // in RenderViewModelBuilder, not in a render TU -- but the SEPARATOR is still
+  // kHintSeparator. Spelled "  |  " here until 2026-09-19, which made the dirty
+  // prompt the third hint line in the app punctuated differently from every
+  // other one. The lint targets a redefined joiner, so a divergent spelling
+  // baked into one literal is invisible to it.
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y + 22.0f, theme_.text_muted,
              theme_.overlay_background,
-             std::string_view("Enter confirm  |  Left/Right choose  |  Esc cancel"));
+             std::string_view("Enter confirm · Left/Right choose · Esc cancel"));
 
   const auto buttons = ComputeDirtyPromptButtonRects(dialog);
   const auto labels = DirtyPromptActionLabels();

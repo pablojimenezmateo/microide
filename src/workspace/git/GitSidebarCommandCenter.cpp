@@ -570,7 +570,12 @@ GitSidebarViewModel BuildGitSidebarViewModel(
         GitSidebarSelectionActionLine(selected_entry, actions, commit_ready);
   } else if (git_state.repo_available) {
     view_model.selection_summary_line = "Select a file to review or mutate.";
-    view_model.selection_action_line = "Enter default  |  r refresh";
+    // The no-selection variant of the SAME line the selected branch above builds
+    // with AppendHintSegment: it has to be punctuated the same way, or the git
+    // sidebar's action line changes separator as the selection comes and goes.
+    // It was spelled "  |  " until 2026-09-19 -- the redefined-joiner cleanup
+    // fixed the joined branch and left this hand-written one behind.
+    view_model.selection_action_line = "Enter default · r refresh";
   }
 
   return view_model;
