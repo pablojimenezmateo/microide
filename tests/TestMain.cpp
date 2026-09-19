@@ -1,5 +1,6 @@
 #include "TestSupport.h"
 #include "TestRunnerCli.h"
+#include "platform/HostPlatform.h"
 #include "terminal/TerminalSession.h"
 #include "util/Parse.h"
 #include "util/TraceChannel.h"
@@ -346,6 +347,14 @@ int main(int argc, char** argv) {
   // Tests drive the shell from this thread; marking it keeps the trace
   // summary's main-thread split meaningful under the suite.
   microide::util::MarkTracingMainThread();
+
+  // Match the production process (src/app/main.cpp): a write to a subprocess pipe
+  // whose reader has died must surface as EPIPE, not a signal. Without it the suite
+  // inherits SIG_DFL and any git/LSP/DAP write that loses the race under load kills
+  // the whole shard — and whether it did depended on whether some earlier test in
+  // that shard happened to call IgnoreBrokenPipeSignal() first, so adding a test
+  // anywhere could reshuffle the round-robin and move the crash to a new shard.
+  microide::platform::IgnoreBrokenPipeSignal();
 
   // Use in-process placeholder terminals for the whole suite instead of spawning
   // real PTY-backed shells. Formerly a compile-time MICROIDE_TESTING fork; now a

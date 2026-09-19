@@ -398,6 +398,75 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-17-294 — "Discard All did nothing": the git sidebar's whole refusal channel was a string nothing paints. [RESOLVED 2026-09-17]
+
+Reported from a real session (Tempo, whose only working-tree change was one
+untracked directory): clicking **Discard All** in Source Control, confirming the
+prompt, and getting nothing — no change, no message. Reproduced headlessly with the
+media-capture rig (Xvfb + control channel + `xdotool` on the real header button) on a
+repo shaped the same way. It reproduces only with an unsaved buffer open, which is
+why it looked intermittent.
+
+**The proximate bug.** `SidebarCoordinator::DiscardAllGitEntries` asked
+`has_dirty_editor_tabs_for_path(project_root_, &blocking_label)` — the project ROOT.
+Any dirty tab anywhere in the project refused the whole operation, including a file
+git does not list as changed and the discard cannot touch. It then `return false`d
+with `blocking_label` filled in and never read. The per-entry discard ten lines away
+reports that exact label.
+
+The guard is also broader than it needs to be for the reason it exists: a dirty tab is
+never reloaded from disk (`ReconcileOpenTabsAfterPathDiscard` reloads CLEAN tabs only),
+so unsaved work is only at risk in a tab for a file the discard actually rewrites. It
+now checks the affected paths and names the blocking tab.
+
+**The shape behind it, which is the part worth carrying.** `set_command_feedback`
+writes `ProjectWorkspaceState::panel.feedback.text`, and **no surface paints that
+field**. Its only readers are the command palette (which converts it to a toast on the
+palette path), the control channel, and `CommandLineCoordinator`. Every refusal the
+git sidebar reported through it — `ReportGitOperationFailure`, `ReportDisabledGitAction`,
+the dirty-tab block — was invisible to the mouse that raised it. Same for the commit
+workflow's blocking pre-check and "nothing is staged" (its own header comment claimed
+the feedback "shows in the command panel"; it does not), and for
+`WorkspaceActionContext::reject_action`, which sent a UI-sourced rejection sentence to
+the `actions.log` output channel nobody has open. A verb that refuses and a button that
+is dead were indistinguishable across the whole surface.
+
+Fixed by giving `SidebarCoordinator` a `notify` seam and routing every user-facing git
+refusal/failure through both channels (`ReportGitMessage`: feedback text for the command
+surfaces, toast for the UI), doing the same in `CommitWorkflowService::ReportRefusal`,
+and toasting UI-sourced action rejections. `NotificationService::Show` now collapses an
+identical message into the toast already on screen (refreshing its expiry) so a held
+shortcut or a looping terminal cannot stack duplicates out of the four-deep stack.
+
+Also found while there, each silent before:
+
+- **`GitDiscardAll` / `GitStageAll` failure** returned false with no message.
+- **Trash failures during a bulk discard** were counted by nobody; the comment
+  promised the file "stays as an untracked file the user can retry on" without telling
+  the user that had happened.
+- **Opening a diff or a merge view from a row** — the most-clicked thing in the view —
+  returned false silently when the tab could not be opened.
+- **Emptied untracked directories survived a Discard All.** Git tracks files, so
+  trashing every untracked file leaves the folders that held them: Source Control goes
+  empty and reports success while the file tree still shows the change's directory tree
+  (in the reported case, `openspec/changes/<change>/specs/...`). `git clean -fd` would
+  have removed them, but that path destroys the files instead of trashing them. Pruning
+  now walks up from each trashed file and stops at the first directory that still holds
+  something, never touching the project root.
+- **The test binary did not ignore SIGPIPE** (`src/app/main.cpp` does). A git/LSP write
+  to a dead pipe under load killed a whole shard, and whether it did depended on whether
+  some earlier test in that shard happened to call `IgnoreBrokenPipeSignal()` first —
+  so adding a test anywhere reshuffled the round-robin and moved the crash to a new
+  shard. Found exactly that way: five new tests turned a green suite into a SIGPIPE in
+  shard 6, reproducible 2-in-5 on the UNCHANGED baseline once the test was stressed
+  under load. `tests/TestMain.cpp` now matches the production process.
+
+Regression coverage: six tests in `tests/WorkspaceShellSourceControlTests.cpp` (the
+unrelated-dirty-tab click path through the real header button, the blocked-and-said-so
+case, directory pruning, bulk-discard failure, the commit refusal toast, the UI action
+rejection toast), plus `NotificationService/CollapsesRepeatedMessage`. All six fail on
+the pre-fix tree.
+
 ### TD-2026-09-13-293 — the per-call glue objects pass: what it fixed, and the three things it found and left.
 
 The pass itself was one shape, found by counting `std::function` fields in every

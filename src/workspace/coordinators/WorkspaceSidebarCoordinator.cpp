@@ -375,6 +375,10 @@ SidebarCoordinator WorkspaceShell::MakeSidebarCoordinator() {
           .set_command_feedback = [this](std::string feedback) {
             context_.current_project_state.panel.feedback.text = std::move(feedback);
           },
+          .notify =
+              [this](NotificationService::Tone tone, std::string message) {
+                Notify(tone, std::move(message));
+              },
           .execute_action =
               [this](ActionId id, const std::vector<std::string>& args, ActionSource source) {
                 return ActionCoordinator(MakeActionContext()).Execute(id, args, source);

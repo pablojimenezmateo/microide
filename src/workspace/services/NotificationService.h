@@ -30,7 +30,9 @@ class NotificationService {
   static Tone ToneFromLevel(std::string_view level);
 
   // Enqueue a notification expiring at now_ms + DurationMs(). Empty messages are
-  // ignored. Keeps at most MaxVisible() entries, dropping the oldest.
+  // ignored. Keeps at most MaxVisible() entries, dropping the oldest. A message
+  // identical to one still on screen (same tone and text) refreshes that one's
+  // expiry instead of stacking a duplicate.
   void Show(Tone tone, std::string message, std::uint64_t now_ms);
 
   // Remove notifications whose expiry has passed. Returns true if any were removed

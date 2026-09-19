@@ -1119,6 +1119,221 @@ void TestWorkspaceShellGitSidebarBranchRowIsClickable() {
          "clicking the branch button should open the picker overlay");
 }
 
+// Regression (silent no-op): "Discard All" is the header button, so the click path —
+// not just the prompt helper — is what has to work end to end. The bug it guards:
+// the bulk discard asked whether ANY tab under the project ROOT was dirty, so one
+// unsaved buffer anywhere (here a file git does not even list as changed) refused the
+// whole operation, and the refusal went only to `panel.feedback.text`, which nothing
+// paints. The prompt closed and nothing happened, with nothing said.
+void TestWorkspaceShellGitSidebarDiscardAllIgnoresUnrelatedDirtyTab() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path trash_home = temp_dir.path() / "xdg-data-home";
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
+
+  const std::filesystem::path unrelated = root / "unrelated.cpp";
+  WriteFile(unrelated, "int unrelated() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  const std::filesystem::path untracked = root / "scratch.txt";
+  WriteFile(untracked, "scratch\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // `unrelated.cpp` is committed and unmodified on disk: it is NOT a git sidebar row,
+  // and the discard cannot touch it. Its buffer being dirty must not matter.
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, unrelated);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("// dirty ");
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "the untracked file should surface as the single git sidebar row");
+
+  const SDL_FRect discard_rect = WorkspaceShellTestAccess::GitSidebarTopActionRects(shell)[1];
+  Expect(discard_rect.w > 0.0f, "the Discard All button should be laid out");
+  Expect(SendMouseDown(shell, discard_rect.x + discard_rect.w * 0.5f,
+                       discard_rect.y + discard_rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking Discard All should be handled by the git sidebar");
+  Expect(WorkspaceShellTestAccess::PromptSurfaceVisible(shell),
+         "clicking Discard All should open the confirmation prompt");
+
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(!std::filesystem::exists(untracked),
+         "an unrelated dirty buffer must not block discarding the working tree");
+  Expect(WorkspaceShellTestAccess::ActiveEditor(shell).dirty(),
+         "the unrelated dirty buffer should keep its unsaved edits");
+}
+
+// Counterpart: when the dirty tab IS one of the files the discard would rewrite, the
+// refusal stands (unsaved work wins) — but it must be SAID. A refusal reported only
+// through command feedback is invisible to the button that raised it.
+void TestWorkspaceShellGitSidebarDiscardAllBlockedByDirtyTabNotifies() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path tracked = root / "notes.txt";
+  WriteFile(tracked, "original\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+  WriteFile(tracked, "on disk change\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, tracked);
+  WorkspaceShellTestAccess::ActiveEditor(shell).InsertText("dirty ");
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "the modified tracked file should surface as one git sidebar row");
+
+  WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(ReadFile(tracked) == "on disk change\n",
+         "a dirty tab for a discarded file must still block the bulk discard");
+  const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(std::any_of(notifications.begin(), notifications.end(),
+                     [](const microide::workspace::NotificationService::Notification& toast) {
+                       return toast.message.find("Save or close dirty tabs") != std::string::npos &&
+                              toast.message.find("notes.txt") != std::string::npos;
+                     }),
+         "a blocked bulk discard must tell the user which tab is blocking it");
+}
+
+// Regression: git tracks files, not directories, so trashing every untracked file left
+// the folders that only held them on disk — the source control view reported success
+// while the file tree still showed the change's directory tree. (`git clean -fd` would
+// have removed them, but taking that path would destroy the files instead of trashing.)
+void TestWorkspaceShellGitSidebarDiscardAllPrunesEmptiedDirectories() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path trash_home = temp_dir.path() / "xdg-data-home";
+  ScopedEnvVar scoped_xdg_data_home("XDG_DATA_HOME", trash_home.string());
+
+  WriteFile(root / "README.md", "base\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "base", "base");
+
+  // A tracked sibling directory that must survive untouched.
+  const std::filesystem::path kept_dir = root / "openspec" / "kept";
+  WriteFile(kept_dir / "keep.md", "keep\n");
+  CommitAll(root, "track sibling", "track sibling");
+
+  // The shape the bug was reported on: one untracked change directory, nested files.
+  const std::filesystem::path change_dir = root / "openspec" / "changes" / "feature";
+  WriteFile(change_dir / "proposal.md", "proposal\n");
+  WriteFile(change_dir / "specs" / "api" / "spec.md", "spec\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 2),
+         "both untracked files should surface as git sidebar rows");
+
+  WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(!std::filesystem::exists(change_dir / "proposal.md"),
+         "bulk discard should remove the untracked files");
+  Expect(!std::filesystem::exists(change_dir),
+         "bulk discard should not leave the emptied untracked directories behind");
+  Expect(!std::filesystem::exists(root / "openspec" / "changes"),
+         "pruning should walk up through every directory the trashed files emptied");
+  Expect(std::filesystem::exists(kept_dir / "keep.md"),
+         "pruning must stop at directories that still hold something");
+  Expect(std::filesystem::exists(root / "openspec"),
+         "a directory with surviving contents must not be pruned");
+  Expect(std::filesystem::exists(root), "the project root itself must never be pruned");
+}
+
+// Regression: a failing bulk discard returned false and said nothing, which is
+// indistinguishable from the button being dead.
+void TestWorkspaceShellGitSidebarDiscardAllFailureNotifies() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path changed = root / "changed.cpp";
+  WriteFile(changed, "int changed() { return 1; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "discard-all failure fixture", "discard-all failure fixture");
+  WriteFile(changed, "int changed() { return 2; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "discard-all failure fixture should expose the single changed row");
+
+  // Remove the repository so the discard git command fails deterministically while
+  // the sidebar still believes the row is discardable.
+  std::filesystem::remove_all(root / ".git");
+
+  WorkspaceShellTestAccess::PrepareDiscardAllGitPrompt(shell);
+  WorkspaceShellTestAccess::ConfirmPromptSurface(shell);
+
+  Expect(WorkspaceShellTestAccess::CommandFeedbackText(shell).find("Failed to discard") !=
+             std::string::npos,
+         "a failed bulk discard must record feedback for the command surfaces");
+  const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(std::any_of(notifications.begin(), notifications.end(),
+                     [](const microide::workspace::NotificationService::Notification& toast) {
+                       return toast.message.find("Failed to discard") != std::string::npos;
+                     }),
+         "a failed bulk discard must raise a toast, the only channel a click can see");
+}
+
+// Regression: the commit workflow refused an empty commit through `set_command_feedback`
+// alone, which nothing paints — so pressing Commit with nothing staged looked like a
+// dead button. The refusal has to reach a toast, the only channel a click can see.
+void TestWorkspaceShellCommitWorkflowNothingStagedNotifies() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "main.cpp";
+  WriteFile(source, "int main() { return 0; }\n");
+  InitializeGitRepo(root);
+  CommitAll(root, "seed commit", "seed body");
+  // Modified but NOT staged: the commit workflow opens, and committing must refuse.
+  WriteFile(source, "int main() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::ShowGitSidebar(shell);
+  Expect(WaitForGitSidebarEntryCount(shell, 1),
+         "fixture should expose a single unstaged entry");
+  Expect(WorkspaceShellTestAccess::OpenCommitWorkflow(shell), "commit workflow should open");
+
+  Expect(!WorkspaceShellTestAccess::RequestCommitWorkflowCommit(shell),
+         "committing with nothing staged should refuse");
+  // The refusal is the "nothing is staged" blocking pre-check; the sentence itself is
+  // the service's, the contract under test is that it reaches a toast at all.
+  const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(std::any_of(notifications.begin(), notifications.end(),
+                     [](const microide::workspace::NotificationService::Notification& toast) {
+                       return toast.message.find("staged") != std::string::npos;
+                     }),
+         "a refused commit must say why instead of looking like a dead button");
+}
+
+// Regression: a rejected action reported its sentence to `panel.feedback.text` (painted
+// nowhere outside the palette) and to the `actions.log` output channel (which nobody has
+// open), so a git verb refused from a button/menu/shortcut was indistinguishable from a
+// no-op. UI-sourced rejections toast.
+void TestWorkspaceShellUiActionRejectionNotifies() {
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  // No project is open, so every git verb rejects with "No active project".
+  Expect(WorkspaceShellTestAccess::ExecuteActionFromMenu(shell, WorkspaceShell::ActionId::GitSync),
+         "a menu-sourced action reports handled even when the verb refuses");
+  const auto& notifications = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(std::any_of(notifications.begin(), notifications.end(),
+                     [](const microide::workspace::NotificationService::Notification& toast) {
+                       return toast.message.find("No active project") != std::string::npos;
+                     }),
+         "a refused UI action must surface its rejection sentence as a toast");
+}
+
 }  // namespace
 
 void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
@@ -1164,6 +1379,18 @@ void RegisterWorkspaceShellSourceControlTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellGitSidebarDiscardStagedNewFileTrashesNotDeletes);
   AddTest(tests, "WorkspaceShell/GitSidebarKeyboardStageShortcut",
           TestWorkspaceShellGitSidebarKeyboardStageShortcut);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardAllIgnoresUnrelatedDirtyTab",
+          TestWorkspaceShellGitSidebarDiscardAllIgnoresUnrelatedDirtyTab);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardAllBlockedByDirtyTabNotifies",
+          TestWorkspaceShellGitSidebarDiscardAllBlockedByDirtyTabNotifies);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardAllPrunesEmptiedDirectories",
+          TestWorkspaceShellGitSidebarDiscardAllPrunesEmptiedDirectories);
+  AddTest(tests, "WorkspaceShell/GitSidebarDiscardAllFailureNotifies",
+          TestWorkspaceShellGitSidebarDiscardAllFailureNotifies);
+  AddTest(tests, "WorkspaceShell/CommitWorkflowNothingStagedNotifies",
+          TestWorkspaceShellCommitWorkflowNothingStagedNotifies);
+  AddTest(tests, "WorkspaceShell/UiActionRejectionNotifies",
+          TestWorkspaceShellUiActionRejectionNotifies);
   AddTest(tests, "WorkspaceShell/GitStageFailureSurfacesFeedback",
           TestWorkspaceShellGitStageFailureSurfacesFeedback);
   AddTest(tests, "WorkspaceShell/CommitWorkflowFieldsAreKeyboardEditable",

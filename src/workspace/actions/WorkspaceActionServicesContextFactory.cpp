@@ -380,6 +380,13 @@ WorkspaceActionContext& WorkspaceShell::MakeActionContext() {
                     MakeCommandLineCoordinator().RejectAction(source, std::move(feedback));
                 if (source != ActionSource::Command && !feedback_copy.empty()) {
                   output_channels_.AppendLine("actions.log", "Actions", feedback_copy);
+                  // A rejection sentence exists to be read. From a button, menu, or
+                  // shortcut the command feedback line is never painted and the log
+                  // channel is one nobody has open, so the refusal (a git op already
+                  // in flight, no repo, an action the selected row does not support)
+                  // looked exactly like the click doing nothing. Identical toasts
+                  // collapse, so a held shortcut cannot stack them.
+                  Notify(NotificationService::Tone::Warning, feedback_copy);
                 }
                 return accepted;
               },

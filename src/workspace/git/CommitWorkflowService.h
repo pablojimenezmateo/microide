@@ -26,8 +26,11 @@ class CommitWorkflowService {
         append_output;
     std::function<void(std::string_view)> show_output_panel;
     std::function<void(std::string_view)> set_command_feedback;
-    // Post a transient toast for the commit outcome (always-visible feedback,
-    // unlike set_command_feedback which only shows in the command panel).
+    // Post a transient toast for the commit outcome. This is the ONLY visible
+    // channel for a UI-driven commit: `set_command_feedback` writes
+    // `panel.feedback.text`, which nothing paints — only the command palette and
+    // the control channel read it back — so a refusal reported through that alone
+    // reads as the Commit button doing nothing.
     std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<void()> persist_commit_draft;
     std::function<void()> clear_persisted_commit_draft;
@@ -100,6 +103,9 @@ class CommitWorkflowService {
                              std::string_view refresh_error);
 
  private:
+  // Reports a refusal on both channels: command feedback (palette / control channel)
+  // and a toast, which is all a user who pressed the Commit button ever sees.
+  void ReportRefusal(std::string message) const;
   void DispatchCommit(CommitWorkflowState& state, project::CommitOperationKind operation);
   void PublishResult(CommitWorkflowState& state, project::CommitOperationResult result,
                      project::CommitOperationKind operation, std::uint64_t repository_generation);

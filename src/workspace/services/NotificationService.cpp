@@ -34,6 +34,17 @@ void NotificationService::Show(Tone tone, std::string message, std::uint64_t now
   const std::uint64_t expiry_ms = now_ms > std::numeric_limits<std::uint64_t>::max() - DurationMs()
                                       ? std::numeric_limits<std::uint64_t>::max()
                                       : now_ms + DurationMs();
+  // Repeating the same message refreshes the one already on screen instead of
+  // stacking a copy: a held shortcut that keeps getting refused, or a button
+  // clicked twice, would otherwise push the other toasts out of the stack with
+  // duplicates of one sentence.
+  for (Notification& existing : notifications_) {
+    if (existing.tone == tone && existing.message == message) {
+      existing.expiry_ms = expiry_ms;
+      existing.truncated = truncated;
+      return;
+    }
+  }
   notifications_.push_back(Notification{
       .tone = tone,
       .message = std::move(message),

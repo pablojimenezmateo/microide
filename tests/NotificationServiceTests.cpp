@@ -66,6 +66,25 @@ void TestNotificationServiceExpirySaturatesNearMax() {
          "the saturated notification must not be treated as already expired");
 }
 
+// Repeating a message refreshes the toast already on screen instead of stacking a
+// duplicate: a refused action fired from a held shortcut, or a button clicked twice,
+// would otherwise push every other toast out of the four-deep stack with copies of
+// one sentence.
+void TestNotificationServiceCollapsesRepeatedMessage() {
+  NotificationService service;
+  service.Show(NotificationService::Tone::Warning, "no repo here", 1000);
+  service.Show(NotificationService::Tone::Warning, "no repo here", 3000);
+  Expect(service.Active().size() == 1, "an identical repeat should not stack a second toast");
+  Expect(service.Active().front().expiry_ms == 3000 + NotificationService::DurationMs(),
+         "the repeat should refresh the existing toast's expiry");
+
+  // Same text at a different tone is a different message, and stacks.
+  service.Show(NotificationService::Tone::Error, "no repo here", 3000);
+  Expect(service.Active().size() == 2, "a different tone is a distinct notification");
+  service.Show(NotificationService::Tone::Warning, "something else", 3000);
+  Expect(service.Active().size() == 3, "different text still stacks");
+}
+
 void TestNotificationServiceToneAndEmptyHandling() {
   Expect(NotificationService::ToneFromLevel("error") == NotificationService::Tone::Error,
          "'error' should map to the error tone");
@@ -163,6 +182,8 @@ void RegisterNotificationServiceTests(std::vector<TestCase>& tests) {
           TestNotificationServiceDropsOldestBeyondMax);
   AddTest(tests, "NotificationService/ExpirySaturatesNearMax",
           TestNotificationServiceExpirySaturatesNearMax);
+  AddTest(tests, "NotificationService/CollapsesRepeatedMessage",
+          TestNotificationServiceCollapsesRepeatedMessage);
   AddTest(tests, "NotificationService/ToneAndEmptyHandling",
           TestNotificationServiceToneAndEmptyHandling);
   AddTest(tests, "NotificationService/ToastWidthScalesWithWindow",

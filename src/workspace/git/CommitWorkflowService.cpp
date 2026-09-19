@@ -172,6 +172,18 @@ bool CommitWorkflowService::CanExecuteCommit(const CommitWorkflowState& state) c
          project::CommitPreChecksAllowExecution(state.checks, state.acknowledged_warning_ids);
 }
 
+void CommitWorkflowService::ReportRefusal(std::string message) const {
+  if (message.empty()) {
+    return;
+  }
+  if (callbacks_.set_command_feedback != nullptr) {
+    callbacks_.set_command_feedback(message);
+  }
+  if (callbacks_.notify != nullptr) {
+    callbacks_.notify(NotificationService::Tone::Warning, std::move(message));
+  }
+}
+
 bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
                                           const project::CommitOperationKind operation) {
   if (!state.open || state.operation_in_flight) {
@@ -183,17 +195,15 @@ bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
   // A Blocking check refuses outright, every time. Nothing acknowledges these.
   for (const project::CommitPreCheck& check : state.checks) {
     if (check.severity == project::CommitPreCheckSeverity::Blocking) {
-      if (callbacks_.set_command_feedback != nullptr) {
-        callbacks_.set_command_feedback(check.message);
-      }
+      ReportRefusal(check.message);
       return false;
     }
   }
   // Nothing staged (or the surface is closed / already committing) is not a
   // pre-check; it is simply not a commit.
   if (!state.open || state.operation_in_flight || state.staged_summary.file_count == 0) {
-    if (callbacks_.set_command_feedback != nullptr && state.staged_summary.file_count == 0) {
-      callbacks_.set_command_feedback("Nothing staged");
+    if (state.staged_summary.file_count == 0) {
+      ReportRefusal("Nothing staged");
     }
     return false;
   }
@@ -215,7 +225,9 @@ bool CommitWorkflowService::RequestCommit(CommitWorkflowState& state,
     }
     if (summary.empty()) {
       // No warning explains the refusal, so surfacing a confirmation would be a
-      // dialog the user cannot act on. Refuse instead of prompting emptily.
+      // dialog the user cannot act on. Refuse instead of prompting emptily — but
+      // say so, or the Commit button reads as dead.
+      ReportRefusal("Commit is not available right now");
       return false;
     }
     state.pending_operation = operation;

@@ -12,6 +12,7 @@
 #include "workspace/WorkspaceLayout.h"
 #include "workspace/state/WorkspaceMenuState.h"
 #include "workspace/WorkspacePluginRuntime.h"
+#include "workspace/services/NotificationService.h"
 #include "workspace/state/WorkspaceProjectState.h"
 #include "workspace/state/WorkspacePromptState.h"
 #include "workspace/git/GitSidebarCommandCenter.h"
@@ -93,6 +94,12 @@ class SidebarCoordinator {
     std::function<bool()> refresh_tests_sidebar_state;
     std::function<bool(const std::vector<std::string>&)> run_tests;
     std::function<void(std::string)> set_command_feedback;
+    // Toast seam. `set_command_feedback` writes `panel.feedback.text`, which only the
+    // command-palette / control-channel paths ever read back, so a refusal reported
+    // through it alone is invisible to the mouse-driven sidebar that raised it — the
+    // "Discard All does nothing" report. Every user-facing git refusal/failure goes
+    // through both: the text for the command surfaces, the toast for the UI.
+    std::function<void(NotificationService::Tone, std::string)> notify;
     std::function<bool(ActionId, const std::vector<std::string>&, ActionSource)> execute_action;
     std::function<bool()> open_commit_workflow;
   };
@@ -173,6 +180,13 @@ class SidebarCoordinator {
   const GitSidebarEntry* GitEntry(std::size_t entry_index) const;
   void ReportDisabledGitAction(GitSidebarActionId action, std::size_t entry_index) const;
   void ReportGitOperationFailure(std::string_view verb, const GitSidebarEntry& entry) const;
+  // The shortest name that identifies a row to the user (relative path, else the
+  // absolute path, else a placeholder).
+  static std::string_view GitEntryLabel(const GitSidebarEntry& entry);
+  // Single exit for "the git action you just asked for is not happening, here is
+  // why": command feedback (palette / control channel) plus a toast (everything
+  // else). Empty messages are dropped.
+  void ReportGitMessage(NotificationService::Tone tone, std::string message) const;
   SidebarMode ActiveSidebarMode() const;
   // Rebuilds the prebuilt plugin/outline placeholder text from the current
   // items/error so the render TU never materializes it per frame. Call after any

@@ -30,6 +30,36 @@ const typename Vec::value_type* SelectedListEntry(const Vec& entries, std::size_
   return &entries[selected_index];
 }
 
+// Removes the directories a trashed untracked file leaves behind, walking up from
+// its parent and stopping at the first directory that still holds something (or at
+// the project root, which is never touched).
+//
+// Git tracks files, not directories, so after "Discard All" trashes every untracked
+// file the folders that only existed to hold them stay on disk: the source-control
+// view goes empty and reports success while the file tree still shows
+// `openspec/changes/<change>/specs/...`. `git clean -fd` — the path we deliberately
+// do NOT take, because it destroys the files instead of trashing them — would have
+// removed them. A directory holding anything else (an ignored build artifact, say)
+// is not empty and is left alone.
+void PruneEmptyDirectoriesBelow(const std::filesystem::path& root,
+                                std::filesystem::path directory) {
+  const std::filesystem::path normalized_root = root.lexically_normal();
+  std::error_code error;
+  while (!directory.empty() && directory != normalized_root &&
+         util::NormalizedPathEqualsOrWithin(directory, normalized_root)) {
+    if (!std::filesystem::is_directory(directory, error) || error) {
+      return;
+    }
+    if (!std::filesystem::is_empty(directory, error) || error) {
+      return;
+    }
+    if (!std::filesystem::remove(directory, error) || error) {
+      return;
+    }
+    directory = directory.parent_path();
+  }
+}
+
 }  // namespace
 
 bool SidebarCoordinator::OpenEditorFileFromSidebar(
@@ -59,29 +89,42 @@ const GitSidebarEntry* SidebarCoordinator::GitEntry(const std::size_t entry_inde
   return &state_.sidebar.git.entries[entry_index];
 }
 
+void SidebarCoordinator::ReportGitMessage(const NotificationService::Tone tone,
+                                         std::string message) const {
+  if (message.empty()) {
+    return;
+  }
+  if (operations_.set_command_feedback != nullptr) {
+    operations_.set_command_feedback(message);
+  }
+  if (operations_.notify != nullptr) {
+    operations_.notify(tone, std::move(message));
+  }
+}
+
 void SidebarCoordinator::ReportDisabledGitAction(const GitSidebarActionId action,
                                                const std::size_t entry_index) const {
   const GitSidebarEntry* entry = GitEntry(entry_index);
-  if (entry == nullptr || operations_.set_command_feedback == nullptr) {
+  if (entry == nullptr) {
     return;
   }
-  const std::string message = GitSidebarDisabledActionMessage(
-      action, *entry, state_.sidebar.git.repo_available, state_.sidebar.git.supports_mutations);
-  if (!message.empty()) {
-    operations_.set_command_feedback(message);
-  }
+  ReportGitMessage(NotificationService::Tone::Warning,
+                   GitSidebarDisabledActionMessage(action, *entry,
+                                                   state_.sidebar.git.repo_available,
+                                                   state_.sidebar.git.supports_mutations));
+}
+
+std::string_view SidebarCoordinator::GitEntryLabel(const GitSidebarEntry& entry) {
+  const std::string_view shown =
+      entry.relative_path.empty() ? std::string_view(entry.path) : std::string_view(entry.relative_path);
+  return shown.empty() ? std::string_view("selection") : shown;
 }
 
 void SidebarCoordinator::ReportGitOperationFailure(const std::string_view verb,
                                                    const GitSidebarEntry& entry) const {
-  if (operations_.set_command_feedback == nullptr) {
-    return;
-  }
-  const std::string_view shown =
-      entry.relative_path.empty() ? std::string_view(entry.path) : std::string_view(entry.relative_path);
-  const std::string name(shown.empty() ? std::string_view("selection") : shown);
-  operations_.set_command_feedback("Failed to " + std::string(verb) + " " + name +
-                                   " (see git output)");
+  ReportGitMessage(NotificationService::Tone::Error, "Failed to " + std::string(verb) + " " +
+                                                         std::string(GitEntryLabel(entry)) +
+                                                         " (see git output)");
 }
 
 void SidebarCoordinator::MoveSimpleListSelection(
@@ -218,6 +261,8 @@ bool SidebarCoordinator::DispatchGitSidebarAction(const GitSidebarActionId actio
         state_.surface.focus = FocusTarget::Editor;
         return true;
       }
+      ReportGitMessage(NotificationService::Tone::Error,
+                       "Could not open the merge view for " + std::string(GitEntryLabel(*entry)));
       return false;
     case GitSidebarActionId::Diff:
       if (!availability.diff) {
@@ -237,12 +282,16 @@ bool SidebarCoordinator::DispatchGitSidebarAction(const GitSidebarActionId actio
           state_.surface.focus = FocusTarget::Editor;
           return true;
         }
+        ReportGitMessage(NotificationService::Tone::Error,
+                         "Could not open the diff for " + std::string(GitEntryLabel(*entry)));
         return false;
       }
       if (operations_.open_working_tree_comparison(entry->path, "HEAD", "HEAD")) {
         state_.surface.focus = FocusTarget::Editor;
         return true;
       }
+      ReportGitMessage(NotificationService::Tone::Error,
+                       "Could not open the diff for " + std::string(GitEntryLabel(*entry)));
       return false;
     case GitSidebarActionId::DefaultView:
       if (!availability.default_view) {
@@ -396,6 +445,8 @@ bool SidebarCoordinator::StageAllGitEntries() {
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
   if (!project::GitStageAll(project_root_)) {
+    ReportGitMessage(NotificationService::Tone::Error,
+                     "Failed to stage all changes (see git output)");
     return false;
   }
   for (const auto& path : affected_paths) {
@@ -428,11 +479,6 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
     return false;
   }
 
-  std::string blocking_label;
-  if (operations_.has_dirty_editor_tabs_for_path(project_root_, &blocking_label)) {
-    return false;
-  }
-
   std::vector<std::filesystem::path> affected_paths;
   std::vector<std::filesystem::path> untracked_paths;
   affected_paths.reserve(state_.sidebar.git.entries.size());
@@ -457,15 +503,51 @@ bool SidebarCoordinator::DiscardAllGitEntries() {
   affected_paths.erase(std::unique(affected_paths.begin(), affected_paths.end()),
                        affected_paths.end());
 
+  // Unsaved work is only at risk in a tab for a file this discard actually rewrites
+  // (a dirty tab is never reloaded from disk — see ReconcileOpenTabsAfterPathDiscard,
+  // which reloads CLEAN tabs only). Asking about the project ROOT instead blocked the
+  // whole operation on any dirty buffer anywhere in the project, including files git
+  // does not even report as changed — and then dropped the label on the floor, so the
+  // confirm prompt closed and absolutely nothing happened or was said.
+  std::string blocking_label;
+  for (const auto& path : affected_paths) {
+    if (!operations_.has_dirty_editor_tabs_for_path(path, &blocking_label)) {
+      continue;
+    }
+    ReportGitMessage(NotificationService::Tone::Warning,
+                     blocking_label.empty()
+                         ? std::string("Save or close dirty tabs before discarding")
+                         : "Save or close dirty tabs before discarding " + blocking_label);
+    return false;
+  }
+
+  std::size_t trash_failures = 0;
   for (const auto& untracked : untracked_paths) {
-    // Best-effort: a failed trash should not abort the tracked discard, but it must
-    // not be silently `git clean`-deleted either — it simply stays as an untracked
-    // file the user can retry on.
-    (void)project::FileOperationService::TrashPath(untracked);
+    // Best-effort: a failed trash must not abort the tracked discard, and it must
+    // not be silently `git clean`-deleted either — the file simply stays untracked
+    // and the count below tells the user which half of the operation fell short.
+    if (!project::FileOperationService::TrashPath(untracked).ok) {
+      ++trash_failures;
+    }
   }
 
   if (!project::GitDiscardAll(project_root_, /*remove_untracked=*/false)) {
+    ReportGitMessage(NotificationService::Tone::Error,
+                     "Failed to discard all changes (see git output)");
     return false;
+  }
+
+  // After the restore has recreated every deleted tracked file, the only directories
+  // still empty are the ones the trashed untracked files left behind.
+  for (const auto& untracked : untracked_paths) {
+    PruneEmptyDirectoriesBelow(project_root_, untracked.parent_path());
+  }
+
+  if (trash_failures > 0) {
+    ReportGitMessage(NotificationService::Tone::Error,
+                     "Discarded tracked changes; " + std::to_string(trash_failures) +
+                         (trash_failures == 1 ? " untracked file could not be moved to the trash"
+                                              : " untracked files could not be moved to the trash"));
   }
 
   for (const auto& path : affected_paths) {
@@ -545,10 +627,10 @@ bool SidebarCoordinator::DiscardGitEntry(const std::size_t entry_index,
 
   std::string blocking_label;
   if (operations_.has_dirty_editor_tabs_for_path(entry->path, &blocking_label)) {
-    if (operations_.set_command_feedback != nullptr && !blocking_label.empty()) {
-      operations_.set_command_feedback("Save or close dirty tabs before discarding " +
-                                      blocking_label);
-    }
+    ReportGitMessage(NotificationService::Tone::Warning,
+                     blocking_label.empty()
+                         ? std::string("Save or close dirty tabs before discarding")
+                         : "Save or close dirty tabs before discarding " + blocking_label);
     return false;
   }
   // An untracked file has no committed content to restore — "discarding" it deletes a

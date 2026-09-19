@@ -211,13 +211,18 @@ void TestWorkspaceShellTerminalOsc52CopiesToClipboard() {
   Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == 1,
          "a blocked OSC 52 write should surface a hint");
 
-  // Every blocked write notifies (the toast service bounds/expires them).
+  // Every blocked write notifies, but a terminal can emit the sequence in a loop, so
+  // the repeat refreshes the hint already on screen rather than stacking copies of one
+  // sentence until they push every other toast out of the four-deep stack.
   TerminalSessionTestAccess::AppendOutput(session, "\x1b]52;c;Y29waWVkIGZyb20gdGVybQ==\x07");
   WorkspaceShellTestAccess::ConsumeTerminalSessionUpdates(shell);
   Expect(clipboard_text.empty(),
          "OSC 52 stays blocked before opt-in");
-  Expect(WorkspaceShellTestAccess::ActiveNotifications(shell).size() == 2,
-         "each blocked OSC 52 write should surface its own hint");
+  const auto& blocked_hints = WorkspaceShellTestAccess::ActiveNotifications(shell);
+  Expect(blocked_hints.size() == 1,
+         "a repeated blocked OSC 52 write should refresh the hint, not stack a duplicate");
+  Expect(!blocked_hints.front().message.empty(),
+         "the blocked-write hint should still be on screen after the repeat");
 
   // Opt-in: enabling the setting routes OSC 52 text to the clipboard writer.
   Expect(WorkspaceShellTestAccess::ExecuteCommandLine(

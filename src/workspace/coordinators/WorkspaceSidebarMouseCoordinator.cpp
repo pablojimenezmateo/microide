@@ -170,7 +170,11 @@ bool SidebarMouseCoordinator::HandleGitButtonDown(const SDL_Event& event,
     const float py = static_cast<float>(event.button.y);
     if (operations_.can_stage_all_git_sidebar_entries() &&
         Contains(git_sidebar_header::StageAllButtonRect(layout.sidebar), px, py)) {
-      return operations_.stage_all_git_sidebar_entries();
+      // The click belongs to this button whether or not the git call succeeded;
+      // reporting it as unhandled would hand the press on to the tab strip / panel
+      // and skip the sidebar redraw that shows the outcome.
+      operations_.stage_all_git_sidebar_entries();
+      return true;
     }
     if (operations_.can_discard_all_git_sidebar_entries() &&
         Contains(git_sidebar_header::DiscardAllButtonRect(layout.sidebar), px, py)) {
