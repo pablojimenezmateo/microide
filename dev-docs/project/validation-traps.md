@@ -345,7 +345,7 @@ When you do rewrite a rule's scan, the evidence that it still works is its
 positive **and** negative fixtures (`ArchitectureInvariants/TargetedScannerFixtures`),
 not a green run of the rule itself: a rule that now matches nothing also passes.
 
-### Three vacuity vectors
+### Four vacuity vectors
 
 1. **Stale fixtures.** A rule's meta-fixture writes files into a temp root. When
    the rule's target path moves, `ReadText` returns `""`, the rule emits a "could
@@ -357,7 +357,17 @@ not a green run of the rule itself: a rule that now matches nothing also passes.
    (scanned a retired TU; `if (!exists) return result;` = silent pass).
    Now mitigated: `RequireRuleTarget` / `ReadRuleTarget` record `missing_targets`
    and the real-repo run fails on those as well as on violations.
-3. **Non-recursive `directory_iterator` — the only silent one left.** Twelve
+3. **Masking a rule out of its own subject matter.** `BuildCodeMask` marks
+   comments **and string-literal bodies** as not-code, and nearly every rule
+   ends its match loop with `if (!is_code[offset]) continue;`. That is right for
+   a rule about calls or declarations, and it makes a rule *about literal text*
+   structurally incapable of firing. The 2026-09-19 second half of
+   `CheckHintSegmentsUseTheSharedSeparator` — which flags a key-hint separator
+   typed inline into a literal — was written that way first and would have
+   passed green while blind over the very two defects it was added for. A rule
+   whose subject is the contents of a literal has to walk literals itself; the
+   mask can then only tell it which literals sit inside a comment.
+4. **Non-recursive `directory_iterator` — the only silent one left.** Twelve
    rules enumerated `directory_iterator(repo_root / "src/workspace")` and
    selected by filename. An enumerating rule that simply *sees fewer files* has
    nothing to report: it stays green while covering less. They were already blind
@@ -397,6 +407,11 @@ cp /tmp/probe.bak "$file"
 - Gate every named target on `RequireRuleTarget`/`ReadRuleTarget`, and make a
   rule that finds *no* call sites at all report that as a violation rather than
   passing vacuously.
+- Prefer a hand-written scan to `std::regex` for anything that runs over whole
+  source files. libstdc++'s implementation recurses per character: the first
+  draft of the hint-separator literal check **segfaulted** on this repo's longer
+  sources rather than reporting anything. A crash at least announces itself; the
+  same pattern one file smaller would have passed.
 - When a lint enforces A-implies-B over two lists, ask whether B-implies-A is
   also a bug. For settings it was the worse one — see below.
 
