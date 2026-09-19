@@ -903,8 +903,7 @@ void TextViewport::AdvanceCaretHorizontal(TextPosition& caret, int delta) const 
 }
 
 void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
-  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            detail::SecondaryCaretPositionLess);
+  detail::SortSecondaryCaretsIfNeeded(secondary_carets_);
   secondary_carets_.erase(
       std::unique(secondary_carets_.begin(), secondary_carets_.end(),
                   [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
@@ -1049,8 +1048,7 @@ void TextViewport::MergeOverlappingCaretRanges() {
     };
   }
   secondary_carets_.resize(written);
-  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            detail::SecondaryCaretPositionLess);
+  detail::SortSecondaryCaretsIfNeeded(secondary_carets_);
 }
 
 void TextViewport::AdvanceCaretVertical(TextPosition& caret,

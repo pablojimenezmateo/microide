@@ -712,10 +712,9 @@ bool TextViewport::TryMultiCaretPairInsert(char ch) {
     selection_anchor_.reset();
   }
   secondary_carets_ = std::move(new_secondaries);
-  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
-              return detail::PositionLess(lhs.position, rhs.position);
-            });
+  // No sort here either: the dedupe tail below sorts (and skips it when the
+  // rebuilt set already came out in order, which it does for an edit that
+  // shifts every caret by the same rule).
   DedupeSecondaryCaretsAgainstPrimary();
   preferred_column_ = PreferredColumnForCaret(TextPosition{cursor_line_, cursor_column_});
   for (SecondaryCaret& sc : secondary_carets_) {

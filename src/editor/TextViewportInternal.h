@@ -5,6 +5,7 @@
 // public editor API. The `detail` namespace and the .h naming both signal
 // "do not include this from anywhere outside src/editor/TextViewport*.cpp".
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -38,6 +39,21 @@ inline bool PositionLess(const TextPosition& lhs, const TextPosition& rhs) {
 inline bool SecondaryCaretPositionLess(const TextViewportUndoHistory::SecondaryCaret& lhs,
                                        const TextViewportUndoHistory::SecondaryCaret& rhs) {
   return PositionLess(lhs.position, rhs.position);
+}
+
+// Put the secondary carets back in caret order, skipping the sort when they are
+// already in it -- which is the overwhelmingly common case, because every motion
+// verb advances every caret by the same rule and so preserves their order. This
+// runs at the tail of EVERY caret-set mutation, and a held column-select gesture
+// or a box over a long file carries thousands of carets, so an unconditional
+// std::sort over already-sorted input was O(n log n) of pure overhead per
+// keystroke. `MergeOverlappingCaretRanges` already guarded its own sort this
+// way; this is the same idiom for the three sites that did not.
+inline void SortSecondaryCaretsIfNeeded(
+    std::vector<TextViewportUndoHistory::SecondaryCaret>& carets) {
+  if (!std::is_sorted(carets.begin(), carets.end(), SecondaryCaretPositionLess)) {
+    std::sort(carets.begin(), carets.end(), SecondaryCaretPositionLess);
+  }
 }
 
 inline std::optional<SelectionRange> SelectionRangeForSecondaryCaret(

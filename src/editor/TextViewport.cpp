@@ -669,8 +669,8 @@ void TextViewport::AddSecondaryCaretWithRange(SelectionRange range) {
     return;
   }
   secondary_carets_.push_back(candidate);
-  std::sort(secondary_carets_.begin(), secondary_carets_.end(),
-            detail::SecondaryCaretPositionLess);
+  // No sort here: DedupeSecondaryCaretsAgainstPrimary sorts as its first act,
+  // and sorting twice is what made adding k carets in a loop O(k^2 log k).
   DedupeSecondaryCaretsAgainstPrimary();
 }
 
@@ -777,7 +777,7 @@ void TextViewport::ClearSecondaryCarets() {
 
 void TextViewport::PruneCoincidentSecondaryCarets() {
   const TextPosition primary{cursor_line_, cursor_column_};
-  std::sort(secondary_carets_.begin(), secondary_carets_.end(), detail::SecondaryCaretPositionLess);
+  detail::SortSecondaryCaretsIfNeeded(secondary_carets_);
   secondary_carets_.erase(
       std::unique(secondary_carets_.begin(), secondary_carets_.end(),
                   [](const SecondaryCaret& lhs, const SecondaryCaret& rhs) {
