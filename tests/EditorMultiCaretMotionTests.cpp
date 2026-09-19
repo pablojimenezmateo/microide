@@ -302,8 +302,11 @@ void CheckWellFormed(const TextViewport& viewport,
   const std::string set = " set " + Describe(after) + " (was " + Describe(before) + ")";
 
   Expect(!after.empty(), context + ": the caret set went empty");
-  if (kind != StepKind::kShaping && kind != StepKind::kHistory &&
-      kind != StepKind::kForeign) {
+  // Only undo/redo may grow the set, by restoring one the history captured.
+  // Shaping verbs and a foreign edit were exempt here too until the exemption
+  // was audited -- and an exemption written from "this verb probably could" is a
+  // place to check, not a place to skip. Neither needs it.
+  if (kind != StepKind::kHistory) {
     Expect(after.size() <= before.size(), context + ": the step GREW the caret set," + set);
   }
 
