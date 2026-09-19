@@ -3212,6 +3212,60 @@ void TestWorkspaceShellAddCursorAtNextMatchCountsEveryOccurrence() {
 // plain content change were not.
 //
 // A refused drag costs the user a repeat. A wrong one costs them the text.
+// A press inside a selection arms a text drag -- unless there are several
+// carets, which the press path guards against explicitly.
+//
+// The guard is load-bearing and nothing tested it. The drag records ONE source
+// range (the primary's selection) and moves exactly that, so arming it with
+// three selections would move one of them and leave the other two behind, at
+// coordinates the move has already shifted. VS Code does not offer the gesture
+// there either. Every other drag test arms the gesture directly through
+// ArmTextDrag, which bypasses the press path where this decision is made, so
+// this one has to go through a real mouse-down.
+void TestWorkspaceShellTextDragDoesNotArmWithSeveralCarets() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const auto file = root / "a.txt";
+  WriteFile(file, "alpha bravo\ncharlie delta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenSingleEditorTab(shell, file);
+  WorkspaceShellTestAccess::RenderFrame(shell);
+
+  auto& viewport = WorkspaceShellTestAccess::ActiveEditor(shell);
+  const auto metrics = WorkspaceShellTestAccess::ActiveEditorMetrics(shell);
+  const float char_width = WorkspaceShellTestAccess::TextCharWidth(shell);
+  const float y = metrics.first_line_y + metrics.line_height * 0.5f;
+  // Press in the middle of "alpha", which is inside the selection below.
+  const float press_x = metrics.text_x + char_width * 2.5f;
+
+  // Control: one caret with a selection under the press DOES arm the gesture.
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  Expect(SendMouseDown(shell, press_x, y, SDL_BUTTON_LEFT), "the press is handled");
+  Expect(WorkspaceShellTestAccess::InteractionState_(shell).text_drag !=
+             microide::workspace::InteractionState::TextDragState::None,
+         "a press inside a single selection arms the drag -- without this the negative "
+         "case below would pass for the wrong reason");
+
+  // Now the same press with a second caret in play must NOT arm it.
+  WorkspaceShellTestAccess::InteractionState_(shell).text_drag =
+      microide::workspace::InteractionState::TextDragState::None;
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);
+  viewport.AddSecondaryCaretWithRange(microide::editor::SelectionRange{
+      microide::editor::TextPosition{1, 0}, microide::editor::TextPosition{1, 7}});
+  Expect(viewport.has_multiple_carets(), "two selections are in play");
+
+  Expect(SendMouseDown(shell, press_x, y, SDL_BUTTON_LEFT), "the press is handled");
+  Expect(WorkspaceShellTestAccess::InteractionState_(shell).text_drag ==
+             microide::workspace::InteractionState::TextDragState::None,
+         "a press inside a selection must NOT arm a drag while several carets exist: the "
+         "gesture carries one source range and would move one selection and strand the rest");
+}
+
 void TestWorkspaceShellTextDragRefusesAStaleSourceRange() {
   const auto arm_and_release =
       [](const std::function<void(WorkspaceShell&, const std::filesystem::path&)>& disturb) {
@@ -8461,6 +8515,8 @@ void RegisterWorkspaceShellProjectTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellEditorScrollbarUsesVisualRows);
   AddTest(tests, "WorkspaceShell/EditorGestureEndsWhenItsBufferLeavesTheFront",
           TestWorkspaceShellEditorGestureEndsWhenItsBufferLeavesTheFront);
+  AddTest(tests, "WorkspaceShell/TextDragDoesNotArmWithSeveralCarets",
+          TestWorkspaceShellTextDragDoesNotArmWithSeveralCarets);
   AddTest(tests, "WorkspaceShell/TextDragRefusesAStaleSourceRange",
           TestWorkspaceShellTextDragRefusesAStaleSourceRange);
   AddTest(tests, "WorkspaceShell/CollapsedFoldExpandingVerbsAreExactlyTheDocumentedSet",
