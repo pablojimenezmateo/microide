@@ -99,20 +99,30 @@ void TestGitSidebarViewModelGrouping() {
   const BranchReviewStateService branch_review;
   const GitSidebarViewModel view_model =
       BuildGitSidebarViewModel(git_state, std::filesystem::path{"/tmp/project"}, branch_review);
+  // Action availability is asked of GitSidebarActionAvailabilityForEntry, which
+  // is what the sidebar coordinators call for the one entry they act on. The row
+  // view model used to carry a per-row copy; nothing in production read it, so
+  // it was removed and these assertions now go to the same API production does.
+  const auto row_actions = [&](const auto& row) {
+    return GitSidebarActionAvailabilityForEntry(git_state.entries[row.entry_index],
+                                                git_state.repo_available,
+                                                git_state.supports_mutations);
+  };
   Expect(view_model.sections.size() == 5,
          "grouped git sidebar should expose all workflow sections");
   Expect(view_model.sections[0].header_label == "Conflicts (1)",
          "conflict section header should include count");
-  Expect(view_model.sections[1].rows.size() == 1 && view_model.sections[1].rows[0].actions.unstage,
+  Expect(view_model.sections[1].rows.size() == 1 &&
+             row_actions(view_model.sections[1].rows[0]).unstage,
          "staged rows should expose unstage");
   Expect(view_model.sections[1].rows[0].primary_action_label == "diff review",
          "staged rows should advertise diff review as the default action");
   Expect(view_model.sections[2].header_label == "Unstaged (1)",
          "unstaged section header should use explicit unstaged wording");
-  Expect(view_model.sections[3].rows[0].actions.stage &&
-             view_model.sections[3].rows[0].actions.discard,
+  Expect(row_actions(view_model.sections[3].rows[0]).stage &&
+             row_actions(view_model.sections[3].rows[0]).discard,
          "untracked rows should expose stage and discard");
-  Expect(!view_model.sections[4].rows[0].actions.discard,
+  Expect(!row_actions(view_model.sections[4].rows[0]).discard,
          "outgoing rows should not expose discard");
   Expect(view_model.workflow_summary_line.find("1 conflict") != std::string::npos &&
              view_model.workflow_summary_line.find("1 staged") != std::string::npos,
@@ -545,8 +555,6 @@ std::string DigestPresentation(const GitSidebarViewModel& vm,
       add("row_marker", row.review_marker_label);
       add("row_action", row.primary_action_label);
       add("row_status", std::to_string(static_cast<int>(row.status)));
-      addb("row_stage_btn", row.show_stage_button);
-      addb("row_discard_btn", row.show_discard_button);
     }
   }
   for (const GitSidebarLine& line : lines) {

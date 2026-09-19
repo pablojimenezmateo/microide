@@ -55,9 +55,12 @@ struct GitSidebarRowViewModel {
   std::string review_marker_label;
   std::string primary_action_label;
   project::GitFileStatus status = project::GitFileStatus::Clean;
-  GitSidebarActionAvailability actions{};
-  bool show_stage_button = false;
-  bool show_discard_button = false;
+  // No per-row action availability here. The row used to carry the whole
+  // GitSidebarActionAvailability plus two booleans derived from it, for inline
+  // stage/discard buttons that moved to the right-click context menu (see the
+  // comment in WorkspaceShellRenderSidebar's git row loop). Nothing read any of
+  // the three, and the real consumers call GitSidebarActionAvailabilityForEntry
+  // for the ONE entry they act on rather than for every visible row.
 };
 
 struct GitSidebarSectionViewModel {

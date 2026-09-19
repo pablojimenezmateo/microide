@@ -544,9 +544,6 @@ GitSidebarViewModel BuildGitSidebarViewModel(
           .review_marker_label = std::move(review_marker_label),
           .primary_action_label = GitSidebarPrimaryActionLabel(entry, actions),
           .status = entry.status,
-          .actions = actions,
-          .show_stage_button = actions.stage || actions.unstage,
-          .show_discard_button = actions.discard,
       });
     }
 
