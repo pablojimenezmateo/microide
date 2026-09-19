@@ -100,6 +100,41 @@
   static void EditorBannerKeep(WorkspaceShell& shell, const std::filesystem::path& path) {
     shell.ActivateEditorBannerAction(EditorBannerAction::Keep, path);
   }
+  // Prompt PAINT drivers. Every prompt action is reachable in production only
+  // through the command or menu that raises it, so a paint test that wanted to
+  // cover all 22 of them would have to drive 22 unrelated workflows. Setting the
+  // state directly is what lets the render path be exercised across the whole
+  // action space, which is where its per-action branches live.
+  static void OpenPromptSurfaceForTest(WorkspaceShell& shell,
+                                       PromptSurfaceState::Action action,
+                                       PromptSurfaceState::Kind kind,
+                                       const std::filesystem::path& path,
+                                       std::string detail, std::string input = {}) {
+    shell.context_.prompts.surface_visible = true;
+    shell.context_.prompts.surface.action = action;
+    shell.context_.prompts.surface.kind = kind;
+    shell.context_.prompts.surface.path = path;
+    shell.context_.prompts.surface.detail = std::move(detail);
+    shell.context_.prompts.surface.input.SetText(std::move(input));
+    shell.context_.prompts.surface.button_count = 2;
+    shell.context_.prompts.surface.selected_button = 0;
+  }
+  static void SetPromptSurfaceSelectedButton(WorkspaceShell& shell, int button) {
+    shell.context_.prompts.surface.selected_button = button;
+  }
+  static void SetPromptSurfaceButtonCount(WorkspaceShell& shell, int count) {
+    shell.context_.prompts.surface.button_count = count;
+  }
+  static void ShowDirtyPromptForTest(WorkspaceShell& shell, DirtyPromptState::Kind kind,
+                                     std::size_t dirty_count) {
+    shell.context_.prompts.dirty_visible = true;
+    shell.context_.prompts.dirty.kind = kind;
+    shell.context_.prompts.dirty.dirty_count = dirty_count;
+    shell.context_.prompts.dirty.selected_action = 0;
+  }
+  static void SetDirtyPromptSelectedAction(WorkspaceShell& shell, int action) {
+    shell.context_.prompts.dirty.selected_action = action;
+  }
   static bool PromptSurfaceVisible(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface_visible;
   }
@@ -125,13 +160,14 @@
     return std::make_pair(selection->start, selection->end);
   }
   static std::string PromptSurfaceTitle(const WorkspaceShell& shell) {
-    return shell.PromptSurfaceTitle();
+    // Copies on purpose: existing tests compare against std::string literals.
+    return std::string(shell.PromptSurfaceTitle());
   }
   static std::string PromptSurfaceMessage(const WorkspaceShell& shell) {
     return shell.PromptSurfaceMessage();
   }
   static std::string PromptSurfaceDetail(const WorkspaceShell& shell) {
-    return shell.PromptSurfaceDetail();
+    return std::string(shell.PromptSurfaceDetail());
   }
   static int PromptSurfaceButtonCount(const WorkspaceShell& shell) {
     return shell.context_.prompts.surface.button_count;

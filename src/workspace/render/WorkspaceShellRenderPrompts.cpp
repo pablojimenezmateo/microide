@@ -25,7 +25,7 @@ void WorkspaceShell::RenderPromptSurface(
                       theme_.chrome_background, PromptSurfaceTitle());
   DrawTextOn(text_renderer_, renderer, message_rect.x, message_rect.y, theme_.text_muted,
              theme_.overlay_background, TruncateLabelView(PromptSurfaceMessage(), message_rect.w));
-  if (const std::string detail = PromptSurfaceDetail(); !detail.empty()) {
+  if (const std::string_view detail = PromptSurfaceDetail(); !detail.empty()) {
     DrawTextOn(text_renderer_, renderer, detail_rect.x, detail_rect.y, theme_.text_secondary,
                theme_.overlay_background, TruncateLabelView(detail, detail_rect.w));
   }
@@ -47,7 +47,12 @@ void WorkspaceShell::RenderPromptSurface(
   const auto buttons =
       ComputePromptSurfaceButtonRects(dialog, context_.prompts.surface.button_count);
   const auto labels = PromptSurfaceActionLabels();
-  for (std::size_t i = 0; i < buttons.size(); ++i) {
+  // Bounded by BOTH: the rects come from `button_count`, which is an int on the
+  // prompt state, while the labels are a fixed pair. They agree today because
+  // nothing sets button_count to anything but 2 -- a third button would have
+  // indexed past the labels.
+  const std::size_t drawn = std::min(buttons.size(), labels.size());
+  for (std::size_t i = 0; i < drawn; ++i) {
     DrawButtonCentered(
         text_renderer_, renderer, theme_, buttons[i], labels[i], ButtonTone::Neutral,
         ButtonVisualState{
@@ -89,7 +94,8 @@ void WorkspaceShell::RenderDirtyPromptSurface(SDL_Renderer* renderer,
 
   const auto buttons = ComputeDirtyPromptButtonRects(dialog);
   const auto labels = DirtyPromptActionLabels();
-  for (std::size_t i = 0; i < buttons.size(); ++i) {
+  const std::size_t drawn = std::min(buttons.size(), labels.size());
+  for (std::size_t i = 0; i < drawn; ++i) {
     DrawButtonCentered(
         text_renderer_, renderer, theme_, buttons[i], labels[i],
         i == 1 ? ButtonTone::Destructive : ButtonTone::Neutral,

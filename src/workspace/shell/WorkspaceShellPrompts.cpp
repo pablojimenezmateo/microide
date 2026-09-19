@@ -86,7 +86,7 @@ void WorkspaceShell::ConfirmDirtyPrompt() {
   MakeDirtyPromptCoordinator(editor_tabs, prompt_surfaces).Confirm();
 }
 
-std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
+std::array<std::string_view, 3> WorkspaceShell::DirtyPromptActionLabels() const {
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::Quit ||
       context_.prompts.dirty.kind == DirtyPromptState::Kind::CloseTabs ||
       context_.prompts.dirty.kind == DirtyPromptState::Kind::CloseProject ||
@@ -102,7 +102,7 @@ std::array<std::string, 3> WorkspaceShell::DirtyPromptActionLabels() const {
   return {"Save", "Discard", "Cancel"};
 }
 
-std::string WorkspaceShell::DirtyPromptTitle() const {
+std::string_view WorkspaceShell::DirtyPromptTitle() const {
   if (context_.prompts.dirty.kind == DirtyPromptState::Kind::Quit) {
     return "Unsaved changes before quit";
   }
@@ -192,7 +192,7 @@ void WorkspaceShell::DismissPromptSurface(bool restore_focus) {
   MakePromptSurfaceService().DismissPromptSurface(restore_focus);
 }
 
-std::string WorkspaceShell::PromptSurfaceTitle() const {
+std::string_view WorkspaceShell::PromptSurfaceTitle() const {
   switch (context_.prompts.surface.action) {
     case PromptSurfaceState::Action::SaveAs:
       return "Save As";
@@ -303,7 +303,7 @@ std::string WorkspaceShell::PromptSurfaceMessage() const {
   return {};
 }
 
-std::string WorkspaceShell::PromptSurfaceDetail() const {
+std::string_view WorkspaceShell::PromptSurfaceDetail() const {
   switch (context_.prompts.surface.action) {
     case PromptSurfaceState::Action::SetGitOutgoingBaseRef:
     case PromptSurfaceState::Action::OpenExternalUrl:
@@ -313,7 +313,7 @@ std::string WorkspaceShell::PromptSurfaceDetail() const {
   }
 }
 
-std::vector<std::string> WorkspaceShell::PromptSurfaceActionLabels() const {
+std::array<std::string_view, 2> WorkspaceShell::PromptSurfaceActionLabels() const {
   switch (context_.prompts.surface.action) {
     case PromptSurfaceState::Action::SaveAs:
       return {"Save", "Cancel"};

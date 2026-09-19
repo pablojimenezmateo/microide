@@ -791,8 +791,16 @@
   void ShowDirtyPromptForQuit();
   void DismissDirtyPrompt(bool restore_focus);
   void ConfirmDirtyPrompt();
-  std::array<std::string, 3> DirtyPromptActionLabels() const;
-  std::string DirtyPromptTitle() const;
+  // Every one of these returns literals or a view of prompt state, so they are
+  // views: they are called from the render TU on EVERY painted prompt frame --
+  // which, on a text-input prompt, is every keystroke and every caret blink.
+  // PromptSurfaceActionLabels used to return a vector<string> (a heap
+  // allocation plus two strings a frame) and PromptSurfaceDetail copied the
+  // whole detail member, which for OpenExternalUrl is the URL.
+  //
+  // The two *Message getters genuinely compose and keep returning std::string.
+  std::array<std::string_view, 3> DirtyPromptActionLabels() const;
+  std::string_view DirtyPromptTitle() const;
   std::string DirtyPromptMessage() const;
   void OpenPromptSurface(PromptSurfaceState::Action action,
                          PromptSurfaceState::Kind kind,
@@ -800,10 +808,10 @@
                          std::string input = {});
   void DismissPromptSurface(bool restore_focus);
   void ConfirmPromptSurface(DirtyPathResolution resolution = DirtyPathResolution::RequirePrompt);
-  std::string PromptSurfaceTitle() const;
+  std::string_view PromptSurfaceTitle() const;
   std::string PromptSurfaceMessage() const;
-  std::string PromptSurfaceDetail() const;
-  std::vector<std::string> PromptSurfaceActionLabels() const;
+  std::string_view PromptSurfaceDetail() const;
+  std::array<std::string_view, 2> PromptSurfaceActionLabels() const;
   std::filesystem::path TreeMutationBasePath(ActionSource source) const;
   bool HasDirtyEditorTabsForPath(const std::filesystem::path& path,
                                  std::string* blocking_label = nullptr) const;
