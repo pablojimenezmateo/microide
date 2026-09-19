@@ -860,6 +860,40 @@ void TestWorkspaceShellCommitWorkflowFieldsAreKeyboardEditable() {
   Expect(microide::editor::TextBuffer::snapshot_build_count() == 0,
          "commit-body render must not materialize a whole-buffer snapshot");
 
+  // Motion and editing in the body run the SAME switch as the compare and merge
+  // panes (HandleEditableViewportMotionAndEdit) -- it used to be a third
+  // hand-maintained copy. Only Enter, Ctrl+Home and Ctrl+Shift+End were covered,
+  // so the arms that copy could have drifted on were untested. Check the caret,
+  // not just the text.
+  {
+    const auto& body = WorkspaceShellTestAccess::CommitBodyViewport(shell);
+    WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_HOME, SDL_KMOD_CTRL);
+    Expect(body.cursor_line() == 0 && body.cursor_column() == 0,
+           "Ctrl+Home puts the body caret at the start");
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RIGHT, SDL_KMOD_NONE),
+           "Right is consumed by the body");
+    Expect(body.cursor_column() == 1, "Right steps one column in the body");
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RIGHT, SDL_KMOD_CTRL),
+           "Ctrl+Right is consumed by the body");
+    Expect(body.cursor_column() > 1, "Ctrl+Right steps a whole word in the body");
+    const std::size_t after_word = body.cursor_column();
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_LEFT, SDL_KMOD_NONE),
+           "Left is consumed by the body");
+    Expect(body.cursor_column() == after_word - 1, "Left steps one column back");
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_DOWN, SDL_KMOD_NONE),
+           "Down is consumed by the body");
+    Expect(body.cursor_line() == 1, "Down moves to the next body line");
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_UP, SDL_KMOD_NONE),
+           "Up is consumed by the body");
+    Expect(body.cursor_line() == 0, "Up comes back");
+
+    const std::string before_delete = WorkspaceShellTestAccess::CommitBodyText(shell);
+    Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_DELETE, SDL_KMOD_CTRL),
+           "Ctrl+Delete is consumed by the body");
+    Expect(WorkspaceShellTestAccess::CommitBodyText(shell).size() < before_delete.size(),
+           "Ctrl+Delete removes a word from the body");
+  }
+
   // Shift+Tab returns to the subject.
   Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_TAB, SDL_KMOD_SHIFT),
          "Shift+Tab should be consumed by the commit panel");

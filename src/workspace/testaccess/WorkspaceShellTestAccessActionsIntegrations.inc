@@ -529,6 +529,12 @@
   static std::string CommitBodyText(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.sidebar.git.commit_workflow.BodyText();
   }
+  // The commit body's own viewport. Its motion and edit keys are the SHARED
+  // switch the compare and merge panes use (HandleEditableViewportMotionAndEdit),
+  // so a test can check the caret rather than only the text.
+  static const editor::TextViewport& CommitBodyViewport(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.sidebar.git.commit_workflow.body;
+  }
   static TextInputSurface CurrentTextInputSurface(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface();
   }

@@ -36,47 +36,35 @@ void MoveCursorHorizontalStep(editor::TextViewport& viewport, int delta, SDL_Key
   }
 }
 
-// The raw key switch shared by every editable text surface that is NOT the editor
-// pane: the compare right pane and the merge result pane. Both run the same
-// `editor::TextViewport` and reach the same action layer, but each used to carry
-// its own hand-maintained copy of this switch — which is how the compare pane
-// ended up without Shift+Tab outdent or Tab-indents-a-multi-line-selection, with
-// no error and no test to fail (TD-2026-08-13-207).
+// The caret motion and text edits every multi-line `editor::TextViewport` surface
+// that is NOT the editor pane answers identically: the compare right pane, the
+// merge result pane, and the git commit body.
+//
+// Each of the three used to carry its own hand-maintained copy of this switch.
+// That is how the compare pane ended up without Shift+Tab outdent or
+// Tab-indents-a-multi-line-selection, with no error and no test to fail
+// (TD-2026-08-13-207) -- and the commit body's copy was still byte-identical to
+// the other two, which is a drift waiting to happen rather than one that had.
+//
+// TAB is deliberately NOT here. It is the one key whose meaning is per-surface:
+// an editing key on the compare and merge panes, and focus movement out of the
+// git commit box (VS Code's SCM input does the same), where it must keep falling
+// through to the sidebar. Each caller answers Tab for itself.
 //
 // `apply_edit` runs the mutation plus that surface's post-edit refresh (compare
-// rebuilds its diff model, merge re-syncs its conflict state); `after_navigation`
-// is the surface's post-move selection sync. Returns false for a key it does not
-// own, so the caller keeps its surface-specific arms (Esc, the Alt chords).
+// rebuilds its diff model, merge re-syncs its conflict state, the commit body
+// repaints the sidebar); `after_navigation` is the surface's post-move sync.
+// Returns false for a key it does not own, so the caller keeps its own arms.
 template <typename ApplyEdit, typename AfterNavigation>
-bool HandleEditablePaneKey(KeyInputCoordinator::Operations& operations,
-                           editor::TextViewport& viewport,
-                           const SDL_KeyboardEvent& event,
-                           SDL_Keymod modifiers,
-                           const ApplyEdit& apply_edit,
-                           const AfterNavigation& after_navigation,
-                           bool* handled) {
+bool HandleEditableViewportMotionAndEdit(editor::TextViewport& viewport,
+                                         const SDL_KeyboardEvent& event,
+                                         SDL_Keymod modifiers,
+                                         const ApplyEdit& apply_edit,
+                                         const AfterNavigation& after_navigation,
+                                         bool* handled) {
   *handled = true;
   const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
   switch (event.key) {
-    case SDLK_TAB: {
-      // Same three-way split as the editor pane, decided by ClassifyTabKey so the
-      // two surfaces cannot drift apart again.
-      const editor::TabKeyIntent intent =
-          editor::ClassifyTabKey(viewport, (modifiers & SDL_KMOD_SHIFT) != 0);
-      if (intent != editor::TabKeyIntent::kInsertTab) {
-        if (!EditorShapingLineOpsSettingEnabled(operations)) {
-          return true;
-        }
-        return apply_edit([&]() {
-          if (intent == editor::TabKeyIntent::kOutdent) {
-            editor::OutdentSelection(viewport);
-          } else {
-            editor::IndentSelection(viewport);
-          }
-        });
-      }
-      return apply_edit([&]() { viewport.InsertTab(); });
-    }
     case SDLK_RETURN:
     case SDLK_KP_ENTER:
       return apply_edit([&]() { viewport.InsertNewline(); });
@@ -134,6 +122,39 @@ bool HandleEditablePaneKey(KeyInputCoordinator::Operations& operations,
   }
   *handled = false;
   return false;
+}
+
+// The compare and merge panes: Tab edits, and everything else is the shared
+// switch above. Tab's three-way split is decided by editor::ClassifyTabKey, the
+// same call the editor pane makes, so those two cannot drift apart either.
+template <typename ApplyEdit, typename AfterNavigation>
+bool HandleEditablePaneKey(KeyInputCoordinator::Operations& operations,
+                           editor::TextViewport& viewport,
+                           const SDL_KeyboardEvent& event,
+                           SDL_Keymod modifiers,
+                           const ApplyEdit& apply_edit,
+                           const AfterNavigation& after_navigation,
+                           bool* handled) {
+  if (event.key == SDLK_TAB) {
+    *handled = true;
+    const editor::TabKeyIntent intent =
+        editor::ClassifyTabKey(viewport, (modifiers & SDL_KMOD_SHIFT) != 0);
+    if (intent != editor::TabKeyIntent::kInsertTab) {
+      if (!EditorShapingLineOpsSettingEnabled(operations)) {
+        return true;
+      }
+      return apply_edit([&]() {
+        if (intent == editor::TabKeyIntent::kOutdent) {
+          editor::OutdentSelection(viewport);
+        } else {
+          editor::IndentSelection(viewport);
+        }
+      });
+    }
+    return apply_edit([&]() { viewport.InsertTab(); });
+  }
+  return HandleEditableViewportMotionAndEdit(viewport, event, modifiers, apply_edit,
+                                             after_navigation, handled);
 }
 
 template <typename EditFn>
@@ -478,64 +499,25 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
     }
   }
 
-  switch (event.key) {
-    case SDLK_RETURN:
-    case SDLK_KP_ENTER:
-      viewport.InsertNewline();
-      return after_edit();
-    case SDLK_BACKSPACE:
-      if ((modifiers & SDL_KMOD_CTRL) != 0) {
-        viewport.DeleteWord(-1);
-      } else {
-        viewport.Backspace();
-      }
-      return after_edit();
-    case SDLK_DELETE:
-      if ((modifiers & SDL_KMOD_CTRL) != 0) {
-        viewport.DeleteWord(1);
-      } else {
-        viewport.DeleteForward();
-      }
-      return after_edit();
-    case SDLK_UP:
-      viewport.MoveCursorVertical(-1, extend_selection);
-      return after_edit();
-    case SDLK_DOWN:
-      viewport.MoveCursorVertical(1, extend_selection);
-      return after_edit();
-    case SDLK_LEFT:
-      MoveCursorHorizontalStep(viewport, -1, modifiers);
-      return after_edit();
-    case SDLK_RIGHT:
-      MoveCursorHorizontalStep(viewport, 1, modifiers);
-      return after_edit();
-    case SDLK_PAGEUP:
-      viewport.Page(-1, extend_selection);
-      return after_edit();
-    case SDLK_PAGEDOWN:
-      viewport.Page(1, extend_selection);
-      return after_edit();
-    case SDLK_HOME:
-      if (modifiers & SDL_KMOD_CTRL) {
-        viewport.JumpCursorTo(0, 0, extend_selection);
-      } else {
-        viewport.MoveCursorLineStart(extend_selection);
-      }
-      return after_edit();
-    case SDLK_END:
-      if (modifiers & SDL_KMOD_CTRL) {
-        const std::size_t last_line = viewport.line_count() == 0 ? 0 : viewport.line_count() - 1;
-        viewport.JumpCursorTo(last_line, std::numeric_limits<std::size_t>::max(), extend_selection);
-      } else {
-        viewport.MoveCursorLineEnd(extend_selection);
-      }
-      return after_edit();
-    default:
-      // Plain character keys are inserted by the SDL_TextInput event; consume the keydown
-      // so it cannot fall through to a git-sidebar action.
-      return operations_.keycode_to_ascii != nullptr &&
-             operations_.keycode_to_ascii(event.key, modifiers) != '\0';
+  // Motion and edits are the shared switch: identical to the compare and merge
+  // panes, which is what it used to be a third hand-maintained copy of.
+  bool handled = false;
+  const bool result = HandleEditableViewportMotionAndEdit(
+      viewport, event, modifiers,
+      [&](const auto& edit) {
+        edit();
+        return after_edit();
+      },
+      after_edit, &handled);
+  if (handled) {
+    return result;
   }
+  // Plain character keys are inserted by the SDL_TextInput event; consume the
+  // keydown so it cannot fall through to a git-sidebar action. TAB deliberately
+  // does NOT map to a character, so it falls through and moves focus out of the
+  // box, as VS Code's SCM input does.
+  return operations_.keycode_to_ascii != nullptr &&
+         operations_.keycode_to_ascii(event.key, modifiers) != '\0';
 }
 
 bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& event,
