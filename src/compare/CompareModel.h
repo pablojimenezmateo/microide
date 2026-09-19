@@ -147,12 +147,6 @@ struct CompareModel {
   // silently add a trailing newline.
   bool left_final_newline_missing = false;
   bool right_final_newline_missing = false;
-  // True when the corresponding source buffer was empty. Distinguishes a
-  // whole-file add (left empty) or delete (right empty) — which the diff can't
-  // otherwise tell from a hunk that merely happens to be all additions/deletions
-  // — so the patch generator can emit `/dev/null` headers.
-  bool left_empty = false;
-  bool right_empty = false;
   // The side's file does not exist (see CompareBuildOptions::left_exists): a
   // whole-file creation or deletion rather than an edit down to zero lines.
   bool left_absent = false;

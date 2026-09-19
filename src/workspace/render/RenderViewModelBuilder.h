@@ -157,7 +157,6 @@ struct OverlaySurfaceViewModel {
 
 struct TextInputSurfaceViewModel {
   TextInputSurface current_surface = TextInputSurface::None;
-  bool prompt_editing = false;
   const editor::SingleLineEditor* prompt_input = nullptr;
   const editor::SingleLineEditor* buffer_search_query = nullptr;
   const editor::SingleLineEditor* buffer_search_replace = nullptr;
@@ -432,8 +431,6 @@ struct SettingsPickerViewModel {
   bool visible = false;
   SDL_FRect rect{};  // whole dropdown card
   std::vector<SettingsPickerItemViewModel> items;
-  bool more_above = false;
-  bool more_below = false;
   std::optional<ScrollbarGeometry> scrollbar;  // present when the family list overflows
   int max_scroll = 0;  // clamp for the scrollbar grab, in family rows
 };

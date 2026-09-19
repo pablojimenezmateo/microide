@@ -429,6 +429,24 @@ deletion.
 Found by a field-level reachability sweep (written-never-read struct fields),
 which also found `DeferredTabHandle::language_hint` — closed in c195bf54.
 
+**Second instance of the same shape**, from the same sweep:
+`GitSidebarViewModel::sync_button_tooltip` is built in
+`GitSidebarCommandCenter.cpp:439` and read nowhere. Its sibling
+`sync_button_label` IS drawn (`WorkspaceShellRenderSidebar.cpp:433`), and the
+app does have tooltip rendering (`BuildWrappedTooltipLayout`), but only in the
+settings overlay — no sidebar hover-tooltip path exists to consume it. So the
+sync button's tooltip text is computed every git view-model build and has
+never been shown. Same choice as above: wiring it is a product decision,
+deleting it discards written intent, and the sweep cannot tell which was meant.
+
+The general lesson: a written-never-read field is ambiguous between *dead
+state* and *a render that was lost*, and those want opposite fixes. The tell
+is whether a sibling of the same struct IS consumed (lost render) or whether
+a newer field supersedes it (dead). `left_empty`/`right_empty` were the
+second kind — superseded by `left_absent`/`right_absent`, which is what the
+patch generator actually reads, even though the OLD field's comment claimed
+that consumer.
+
 ### TD-2026-09-19-295 — the Tab key decides ONE intent for the whole caret set; VS Code decides per selection.
 
 `editor::ClassifyTabKey` resolves a single `TabKeyIntent` for the whole caret

@@ -1588,8 +1588,6 @@ static CompareBuildProfile BuildCompareModelProfiledInto(CompareModel& model,
   // patch generator uses this to emit `\ No newline at end of file`.
   model.left_final_newline_missing = !left.empty() && left.back() != '\n';
   model.right_final_newline_missing = !right.empty() && right.back() != '\n';
-  model.left_empty = left.empty();
-  model.right_empty = right.empty();
   model.left_absent = options.left_exists.has_value() ? !*options.left_exists : left.empty();
   model.right_absent = options.right_exists.has_value() ? !*options.right_exists : right.empty();
   // Classify each side's line terminator from its first newline. git keeps the

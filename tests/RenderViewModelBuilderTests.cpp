@@ -1080,8 +1080,6 @@ void TestSettingsOverlayFontPickerBuildsScrollbarOnOverflow() {
   Expect(scrolled.value_picker.scrollbar.has_value(), "scrollbar persists while scrolled");
   Expect(scrolled.value_picker.items.front().text == "Family D",
          "a scroll offset of 3 starts the window at the fourth family");
-  Expect(scrolled.value_picker.more_above && scrolled.value_picker.more_below,
-         "a mid-list window reports families both above and below");
 }
 
 // TD-2026-07-17A-007: the render TU consumes precomputed control fields — the

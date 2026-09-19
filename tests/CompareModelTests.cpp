@@ -1210,8 +1210,7 @@ void TestBuildCompareModelIntoMatchesAFreshBuild() {
         BuildCompareModel(test_case.left, test_case.right, CompareBuildOptions{});
     Expect(rows_equal(recycled, fresh),
            "a recycled rebuild must equal a fresh build of the same inputs");
-    Expect(recycled.left_empty == fresh.left_empty && recycled.right_empty == fresh.right_empty &&
-               recycled.left_final_newline_missing == fresh.left_final_newline_missing &&
+    Expect(recycled.left_final_newline_missing == fresh.left_final_newline_missing &&
                recycled.right_final_newline_missing == fresh.right_final_newline_missing &&
                recycled.left_uses_crlf == fresh.left_uses_crlf &&
                recycled.right_uses_crlf == fresh.right_uses_crlf,

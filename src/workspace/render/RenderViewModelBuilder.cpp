@@ -1169,7 +1169,6 @@ void RenderViewModelBuilder::BuildOverlaySurfaceInto(OverlaySurfaceViewModel& ou
 TextInputSurfaceViewModel RenderViewModelBuilder::BuildTextInputSurface() const {
   return TextInputSurfaceViewModel{
       .current_surface = context_.text_input.active_surface,
-      .prompt_editing = context_.prompts.surface_visible,
       .prompt_input = &context_.prompts.surface.input,
       .buffer_search_query = &context_.current_project_state.overlay.workflow.buffer_search.query,
       .buffer_search_replace =
@@ -2381,8 +2380,6 @@ SettingsOverlayViewModel RenderViewModelBuilder::BuildSettingsOverlay(
     SettingsPickerViewModel& picker = vm.value_picker;
     picker.visible = true;
     picker.rect = MakeRect(card_x, card_y, card_w, card_h);
-    picker.more_above = start > 0;
-    picker.more_below = end < family_count;
     picker.max_scroll = std::max(0, family_count - kMaxVisibleFamilies);
     if (family_count > kMaxVisibleFamilies) {
       // Scrollbar spans just the family-rows region (above the pinned footer).
