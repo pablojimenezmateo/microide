@@ -653,6 +653,17 @@
   static std::size_t ProjectSearchSelectedIndex(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.overlay.workflow.project_search.selected_index;
   }
+  // The find/replace widget is NON-MODAL: opening it leaves focus on the editor
+  // so typing keeps going to the buffer. A test that wants the query field to
+  // own a keystroke has to move focus the way clicking into it would.
+  static void FocusOverlaySurface(WorkspaceShell& shell) {
+    shell.context_.current_project_state.surface.focus = WorkspaceShell::FocusTarget::Overlay;
+  }
+  // Selects the whole buffer-search query, so a test can check that a focused
+  // single-line field -- not the editor under it -- owns a copy keystroke.
+  static void SelectAllBufferSearchQuery(WorkspaceShell& shell) {
+    shell.context_.current_project_state.overlay.workflow.buffer_search.query.SelectAll();
+  }
   static bool BufferSearchSurfaceFocused(const WorkspaceShell& shell) {
     return shell.CurrentTextInputSurface() == WorkspaceShell::TextInputSurface::BufferSearch;
   }
