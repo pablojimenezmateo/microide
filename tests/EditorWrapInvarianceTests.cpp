@@ -228,13 +228,18 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
   std::mt19937 rng(20260914);
   auto pick = [&](std::size_t n) { return std::uniform_int_distribution<std::size_t>(0, n - 1)(rng); };
 
+  // The loop bound, named once. The vacuity guard below used to repeat the
+  // literal, so cranking the iteration count to shake out a fresh seed broke the
+  // GUARD rather than the property -- a check that only holds at one loop size
+  // is a check nobody can turn up.
+  constexpr int kIterationsPerDocument = 300;
   std::size_t divergence_opportunities = 0;
   // Per-verb: how often it was run, and how often it moved the text or the caret
   // set. A verb that never did either proved nothing about wrap.
   std::vector<int> ran(static_cast<std::size_t>(Edit::kCount), 0);
   std::vector<int> changed(static_cast<std::size_t>(Edit::kCount), 0);
   for (const std::string& content : documents) {
-    for (int iteration = 0; iteration < 300; ++iteration) {
+    for (int iteration = 0; iteration < kIterationsPerDocument; ++iteration) {
       WrapPair pair;
       pair.Load(content);
       Expect(pair.wrapped.visual_line_count() > pair.wrapped.line_count(),
@@ -312,7 +317,8 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
       }
     }
   }
-  Expect(divergence_opportunities == documents.size() * 300,
+  Expect(divergence_opportunities ==
+             documents.size() * static_cast<std::size_t>(kIterationsPerDocument),
          "every iteration must have run against a genuinely wrapped view");
   for (std::size_t i = 0; i < static_cast<std::size_t>(Edit::kCount); ++i) {
     const char* name = EditName(static_cast<Edit>(i));
