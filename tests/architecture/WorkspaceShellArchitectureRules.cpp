@@ -811,7 +811,7 @@ RuleResult CheckPersistenceFileIoBoundary(const std::filesystem::path& repo_root
 // case where the ONLY mentions anywhere are `case` labels.
 RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root) {
   RuleResult result;
-  result.label = "every ActionId is reachable from some user-facing surface";
+  result.label = "every ActionId is reachable from a surface AND handled by a dispatch";
   result.hard_fail = true;
 
   const std::filesystem::path types_header = repo_root / "src/workspace/actions/WorkspaceActionTypes.h";
@@ -855,8 +855,16 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
     return result;
   }
 
-  // Collect, per action, whether any non-`case` mention exists anywhere in src/.
+  // Two directions, collected in one walk. `produced` is a mention that is not a
+  // `case` label -- a command spec, a keybinding, a menu item, a call site -- so
+  // the action can be INVOKED. `handled` is a `case` label, so something acts on
+  // it. An action missing either half is inert, and the two failures look
+  // completely different to a user: one is a behaviour with no way to reach it,
+  // the other is a palette entry, menu item or key binding that does nothing at
+  // all when used. (Same mirrored pair as CheckSettingsReadAreRegistered and
+  // CheckRegisteredSettingsAreRead.)
   std::set<std::string> produced;
+  std::set<std::string> handled;
   for (const auto& entry : std::filesystem::recursive_directory_iterator(repo_root / "src")) {
     if (!entry.is_regular_file()) {
       continue;
@@ -879,26 +887,50 @@ RuleResult CheckEveryActionIdIsReachable(const std::filesystem::path& repo_root)
       const std::size_t line_start = text.rfind('\n', start) + 1;
       const std::string prefix = text.substr(line_start, start - line_start);
       // `case ActionId::X:` is a handler, not a producer. Fall-through groups of
-      // case labels are handled the same way.
+      // case labels are handled the same way. The label has to START its line,
+      // which is how every switch in the tree is written; an inline
+      // `switch (id) { case ActionId::X: ... }` would read as a producer here.
       if (std::regex_search(prefix, std::regex(R"(^\s*case\s*$)"))) {
+        handled.insert(it->str(1));
         continue;
       }
       produced.insert(it->str(1));
     }
   }
 
-  for (const std::string& name : action_names) {
-    if (produced.count(name) != 0) {
-      continue;
-    }
+  if (handled.empty()) {
     result.violations.push_back(Violation{
-        .path = types_header,
+        .path = repo_root / "src",
         .line = 1,
-        .message = "ActionId::" + name +
-                   " is only ever named in `case` labels — nothing produces it, so it cannot be "
-                   "invoked. Give it a command spec, a keybinding, a menu item, or a context-menu "
-                   "call site; or delete it if the behavior is not wanted",
+        .message = "no `case ActionId::` labels found under src/, so the handled half of this "
+                   "rule would pass for every action — repoint the scan rather than leaving it "
+                   "green",
     });
+    return result;
+  }
+
+  for (const std::string& name : action_names) {
+    if (produced.count(name) == 0) {
+      result.violations.push_back(Violation{
+          .path = types_header,
+          .line = 1,
+          .message = "ActionId::" + name +
+                     " is only ever named in `case` labels — nothing produces it, so it cannot be "
+                     "invoked. Give it a command spec, a keybinding, a menu item, or a "
+                     "context-menu call site; or delete it if the behavior is not wanted",
+      });
+    }
+    if (handled.count(name) == 0) {
+      result.violations.push_back(Violation{
+          .path = types_header,
+          .line = 1,
+          .message = "ActionId::" + name +
+                     " is produced but never appears as a `case ActionId::" + name +
+                     ":` — the action can be invoked from the palette, a menu or a key binding "
+                     "and nothing acts on it, silently. Give it a dispatch arm, or delete the "
+                     "surface that offers it",
+      });
+    }
   }
   return result;
 }

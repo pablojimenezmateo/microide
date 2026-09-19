@@ -164,7 +164,14 @@ void RunActionIdReachabilityRuleFixtures() {
          "a too-small ActionId parse must fail loudly, not pass vacuously");
 
   // Pad the enum past the vacuity floor, then give each action a distinct fate.
-  std::string enum_text = "enum class ActionId {\n  Reachable,\n  Orphan,\n  ContextMenuOnly,\n";
+  // Two fates are checked, one per direction: `Orphan` is named ONLY in a case
+  // label (handled, but nothing can invoke it) and `NeverHandled` is produced by
+  // a menu item with no case label anywhere (invokable, but nothing acts on it).
+  // The padding actions are both produced and handled so they stay quiet --
+  // before the handled half existed they were produced only, which is how they
+  // turned into the positive control for it.
+  std::string enum_text =
+      "enum class ActionId {\n  Reachable,\n  Orphan,\n  ContextMenuOnly,\n  NeverHandled,\n";
   for (int i = 0; i < 25; ++i) {
     enum_text += "  Padding" + std::to_string(i) + ",\n";
   }
@@ -174,6 +181,7 @@ void RunActionIdReachabilityRuleFixtures() {
   std::string uses =
       "void Menu(){ MenuItem(ActionId::Reachable); }\n"
       "void Ctx(){ Dispatch(ActionId::ContextMenuOnly); }\n"
+      "void Unhandled(){ MenuItem(ActionId::NeverHandled); }\n"
       "void Handle(ActionId id){\n"
       "  switch (id) {\n"
       "    case ActionId::Reachable:\n"
@@ -183,21 +191,42 @@ void RunActionIdReachabilityRuleFixtures() {
       "  }\n"
       "}\n";
   for (int i = 0; i < 25; ++i) {
-    uses += "void P" + std::to_string(i) + "(){ Bind(ActionId::Padding" + std::to_string(i) + "); }\n";
+    const std::string n = std::to_string(i);
+    uses += "void P" + n + "(){ Bind(ActionId::Padding" + n + "); }\n";
+    // The case label must start its own line: that is how the rule tells a
+    // handler from a producer, and how every switch in the tree is written.
+    uses += "void H" + n + "(ActionId id){ switch (id) {\n    case ActionId::Padding" + n +
+            ":\n      return;\n  } }\n";
   }
   WriteFile(root / "src/workspace/Uses.cpp", uses);
 
   const RuleResult flagged = CheckEveryActionIdIsReachable(root);
-  Expect(flagged.violations.size() == 1,
-         "exactly the action named only in `case` labels must be flagged");
-  Expect(flagged.violations.front().message.find("Orphan") != std::string::npos,
-         "the flagged action must be the orphan, not the menu- or context-menu-produced ones");
+  Expect(flagged.violations.size() == 2,
+         "exactly the unproduced action and the unhandled action must be flagged, got " +
+             std::to_string(flagged.violations.size()));
+  const bool flags_orphan =
+      std::any_of(flagged.violations.begin(), flagged.violations.end(), [](const Violation& v) {
+        return v.message.find("Orphan") != std::string::npos &&
+               v.message.find("nothing produces it") != std::string::npos;
+      });
+  const bool flags_unhandled =
+      std::any_of(flagged.violations.begin(), flagged.violations.end(), [](const Violation& v) {
+        return v.message.find("NeverHandled") != std::string::npos &&
+               v.message.find("never appears as a `case") != std::string::npos;
+      });
+  Expect(flags_orphan, "the case-only action must be flagged as unproduced");
+  Expect(flags_unhandled, "the produced-but-uncased action must be flagged as unhandled");
 
-  // Positive control: giving the orphan any producer clears it. A context-menu
-  // call site counts, so documented context-menu-only actions need no allowlist.
-  WriteFile(root / "src/workspace/Uses.cpp", uses + "void Fix(){ Dispatch(ActionId::Orphan); }\n");
+  // Positive control, both halves: giving the orphan any producer and the
+  // unhandled action any case label clears the rule. A context-menu call site
+  // counts as a producer, so documented context-menu-only actions need no
+  // allowlist.
+  WriteFile(root / "src/workspace/Uses.cpp",
+            uses + "void Fix(){ Dispatch(ActionId::Orphan); }\n" +
+                "void FixB(ActionId id){ switch (id) {\n    case ActionId::NeverHandled:\n"
+                "      return;\n  } }\n");
   Expect(CheckEveryActionIdIsReachable(root).violations.empty(),
-         "any non-`case` mention makes an action reachable");
+         "a producer for one and a case label for the other clears both halves");
 }
 
 void RunRegisteredSettingsAreReadRuleFixtures() {
