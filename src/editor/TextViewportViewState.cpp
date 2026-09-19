@@ -882,10 +882,20 @@ void TextViewport::DedupeSecondaryCaretsAgainstPrimary() {
                            lhs.selection_anchor == rhs.selection_anchor;
                   }),
       secondary_carets_.end());
+  // Drop a secondary that IS the primary: same caret, same anchor (or both
+  // collapsed). One that merely shares the primary's position but owns a
+  // different selection is left for the merge below to judge -- a nested or
+  // same-direction selection overlaps and merges there, but two selections that
+  // only TOUCH at the shared caret (one leading left, one right, as after
+  // Ctrl+Shift+Right lands a reversed secondary on the primary) are two cursors
+  // in VS Code, and dropping the secondary here silently lost its selection.
   const TextPosition primary{cursor_line_, cursor_column_};
   secondary_carets_.erase(
       std::remove_if(secondary_carets_.begin(), secondary_carets_.end(),
-                     [&](const SecondaryCaret& caret) { return caret.position == primary; }),
+                     [&](const SecondaryCaret& caret) {
+                       return caret.position == primary &&
+                              caret.selection_anchor == selection_anchor_;
+                     }),
       secondary_carets_.end());
   MergeOverlappingCaretRanges();
 }

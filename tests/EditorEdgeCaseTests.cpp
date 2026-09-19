@@ -980,6 +980,36 @@ void TestJoinLinesAtTheLastLineIsANoOp() {
   Expect(JoinLines(viewport) == "only\n", "and the buffer is untouched");
 }
 
+// --- A reversed secondary selection whose caret lands exactly on the primary's
+// caret, with the two selections merely TOUCHING there, must survive: VS Code
+// keeps two cursors at one position when neither selection is collapsed. The
+// position-only dedupe used to eat the secondary, and with it the text it had
+// selected. Reachable with an Alt+drag leftwards followed by Ctrl+Shift+Right. ---
+void TestTouchingReversedSelectionAtThePrimaryCaretSurvives() {
+  TextViewport viewport;
+  viewport.LoadContent("alpha beta gamma delta\n", "/tmp/ec-touch-at-primary.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);  // "alpha" selected, caret at 5
+  // Secondary: anchor 16, caret 7 -- "ta gam" selected leftwards.
+  viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
+      SelectionRange{TextPosition{0, 16}, TextPosition{0, 7}},
+  });
+  Expect(viewport.secondary_carets().size() == 1, "fixture: the reversed secondary exists");
+
+  viewport.MoveCursorWord(1, /*extend_selection=*/true);  // both carets land on 10
+  Expect(viewport.cursor_column() == 10, "primary word-steps to the end of 'beta'");
+  const auto ranges = viewport.secondary_caret_ranges();
+  Expect(ranges.size() == 1 && ranges[0].position == TextPosition{0, 10} &&
+             ranges[0].selection_anchor == std::optional<TextPosition>(TextPosition{0, 16}),
+         std::string("the secondary shares the primary's position but keeps its own selection: ") +
+             CaretDump(viewport));
+
+  viewport.InsertText("X");
+  Expect(JoinLines(viewport) == "XX delta\n",
+         std::string("both touching selections are replaced: ") + JoinLines(viewport));
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -1069,6 +1099,8 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestToggleBlockCommentReachesEveryCaret);
   AddTest(tests, "EditorEdgeCase/ToggleBlockCommentWithTwoCaretsOnOneLine",
           TestToggleBlockCommentWithTwoCaretsOnOneLine);
+  AddTest(tests, "EditorEdgeCase/TouchingReversedSelectionAtThePrimaryCaretSurvives",
+          TestTouchingReversedSelectionAtThePrimaryCaretSurvives);
 }
 
 }  // namespace microide::tests
