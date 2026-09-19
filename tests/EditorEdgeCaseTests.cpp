@@ -1235,9 +1235,53 @@ void TestTabKeyClassifierIndentsWholeLineAndSecondarySelections() {
          "a secondary's partial single-line selection still inserts");
 }
 
+// Where the whole-set decision DIVERGES from VS Code, stated so it cannot change
+// by accident.
+//
+// VS Code's TypeOperations.tab builds `commands[i]` PER SELECTION: a cursor
+// whose selection covers a whole line gets a ShiftCommand, and a bare cursor
+// next to it gets `_replaceJumpToNextIndent` at its own column. ClassifyTabKey
+// resolves one intent for the whole caret set instead, so in a MIXED set the
+// bare caret's line is shifted rather than an indent being inserted at it:
+//
+//   "aaaa" selected whole + a bare caret at (2,2) in "cccc"
+//     VS Code   "    aaaa" / "cccc" -> "cc  cc"
+//     here      "    aaaa" / "    cccc"
+//
+// Sets are only mixed when a multi-line or whole-line selection coexists with a
+// caret that has none, which needs an Alt+click on top of a block selection --
+// and the safe direction was chosen deliberately: the per-primary check this
+// replaced silently replaced a secondary's multi-line selection with four
+// spaces. Matching VS Code needs a hybrid applier that shifts some line ranges
+// while replacing other ranges in one undo entry; see
+// known-tech-debt.md TD-2026-09-19-295.
+void TestTabKeyOnAMixedCaretSetShiftsTheBareCaretsLine() {
+  TextViewport viewport;
+  viewport.SetViewportSize(20, 200);
+  viewport.SetSoftTabs(true);
+  viewport.SetIndentWidth(4);
+  viewport.LoadContent("aaaa\nbbbb\ncccc\n", "/tmp/ec-tab-mixed.cpp");
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 4, /*extend_selection=*/true);  // the whole of line 0
+  viewport.AddSecondaryCaret(2, 2);                        // a BARE caret mid-line 2
+
+  Expect(microide::editor::ClassifyTabKey(viewport, false) ==
+             microide::editor::TabKeyIntent::kIndentBlock,
+         "one block selection decides the whole set");
+  microide::editor::IndentSelection(viewport);
+  const std::string text = std::string(viewport.lines()[0]) + "/" +
+                           std::string(viewport.lines()[1]) + "/" +
+                           std::string(viewport.lines()[2]);
+  Expect(text == "    aaaa/bbbb/    cccc",
+         "the bare caret's line is shifted, not indented at the caret (VS Code inserts "
+         "there): " + text);
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorEdgeCase/TabKeyOnAMixedCaretSetShiftsTheBareCaretsLine",
+          TestTabKeyOnAMixedCaretSetShiftsTheBareCaretsLine);
   AddTest(tests, "EditorEdgeCase/CollapsedFoldRemovesEveryWrappedRowOfItsBody",
           TestCollapsedFoldRemovesEveryWrappedRowOfItsBody);
   AddTest(tests, "EditorEdgeCase/VisualRowsStayMonotonicAcrossAFoldUnderWrap",

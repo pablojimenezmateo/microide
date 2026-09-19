@@ -398,6 +398,47 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-19-295 — the Tab key decides ONE intent for the whole caret set; VS Code decides per selection.
+
+`editor::ClassifyTabKey` resolves a single `TabKeyIntent` for the whole caret
+set. VS Code's `TypeOperations.tab` builds `commands[i]` **per selection**: a
+cursor whose selection is a whole line gets a `ShiftCommand`, a cursor with a
+partial or empty selection gets `_replaceJumpToNextIndent` at its own column,
+and the two run side by side in one edit.
+
+So a MIXED set diverges. Pinned by
+`EditorEdgeCase/TabKeyOnAMixedCaretSetShiftsTheBareCaretsLine`:
+
+    buffer   "aaaa" / "bbbb" / "cccc", soft tabs, indent width 4
+    carets   line 0 selected whole, plus a BARE caret at (2,2)
+    Tab
+      VS Code   "    aaaa" / "bbbb" / "cc  cc"
+      here      "    aaaa" / "bbbb" / "    cccc"
+
+**Why it is this way, and why that was right at the time.** The whole-set rule
+(TD, `ef60743c`) replaced a per-PRIMARY check that each of the two key surfaces
+had hand-copied: a secondary caret's multi-line selection was silently replaced
+by four spaces. Deciding once over every caret fixed that and is the safe
+direction — it never destroys a selection. Deciding per site is the *correct*
+direction and is strictly more work.
+
+**Why it is not fixed yet.** Matching VS Code needs an applier that shifts some
+line ranges while replacing other ranges, atomically, in one undo entry. Today
+those are two separate machines (`ReindentRegions` for the shift,
+`ApplyMultiCaretEdit` for the per-site replace). The sites ARE textually
+disjoint — a bare caret inside another cursor's selection cannot exist, because
+`MergeOverlappingCaretRanges` merges it away first — so the model is sound: each
+site emits one or more disjoint (range, text) replacements and they apply
+highest-first. It is the atomic-undo plumbing, not the arithmetic, that is
+missing.
+
+**How likely the divergence is.** A set is mixed only when a multi-line or
+whole-line selection coexists with a caret that has none, which takes an
+Alt+click on top of a block selection, or a Ctrl+D run where one occurrence
+happens to fill a whole line. Rare enough to leave, not rare enough to pretend
+is not there — hence the pinned test, which turns the fix into a one-line
+expectation change.
+
 ### TD-2026-09-17-294 — "Discard All did nothing": the git sidebar's whole refusal channel was a string nothing paints. [RESOLVED 2026-09-17]
 
 Reported from a real session (Tempo, whose only working-tree change was one
