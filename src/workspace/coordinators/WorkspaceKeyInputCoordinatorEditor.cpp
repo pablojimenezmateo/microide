@@ -59,18 +59,16 @@ bool HandleEditablePaneKey(KeyInputCoordinator::Operations& operations,
   const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
   switch (event.key) {
     case SDLK_TAB: {
-      // Same three-way split as the editor pane: Shift outdents, a multi-line
-      // selection indents as a block, and a bare Tab inserts one.
-      const bool shift_held = (modifiers & SDL_KMOD_SHIFT) != 0;
-      const auto selection = viewport.selection_range();
-      const bool multi_line_selection =
-          selection.has_value() && selection->start.line != selection->end.line;
-      if (shift_held || multi_line_selection) {
+      // Same three-way split as the editor pane, decided by ClassifyTabKey so the
+      // two surfaces cannot drift apart again.
+      const editor::TabKeyIntent intent =
+          editor::ClassifyTabKey(viewport, (modifiers & SDL_KMOD_SHIFT) != 0);
+      if (intent != editor::TabKeyIntent::kInsertTab) {
         if (!EditorShapingLineOpsSettingEnabled(operations)) {
           return true;
         }
         return apply_edit([&]() {
-          if (shift_held) {
+          if (intent == editor::TabKeyIntent::kOutdent) {
             editor::OutdentSelection(viewport);
           } else {
             editor::IndentSelection(viewport);
@@ -599,11 +597,9 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
           operations_.try_snippet_tab_in_editor((modifiers & SDL_KMOD_SHIFT) != 0)) {
         return true;
       }
-      const bool shift_held = (modifiers & SDL_KMOD_SHIFT) != 0;
-      const auto selection = editable_viewport->selection_range();
-      const bool multi_line_selection =
-          selection.has_value() && selection->start.line != selection->end.line;
-      if (shift_held) {
+      const editor::TabKeyIntent intent =
+          editor::ClassifyTabKey(*editable_viewport, (modifiers & SDL_KMOD_SHIFT) != 0);
+      if (intent == editor::TabKeyIntent::kOutdent) {
         if (!EditorShapingLineOpsSettingEnabled(operations_)) {
           return true;
         }
@@ -612,7 +608,7 @@ bool KeyInputCoordinator::HandleDefaultEditorKeyDown(const SDL_KeyboardEvent& ev
             "KeyInputCoordinator::HandleDefaultEditorKeyDown::OutdentSelection",
             [&]() { editor::OutdentSelection(*editable_viewport); });
       }
-      if (multi_line_selection) {
+      if (intent == editor::TabKeyIntent::kIndentBlock) {
         if (!EditorShapingLineOpsSettingEnabled(operations_)) {
           return true;
         }

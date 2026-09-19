@@ -41,6 +41,17 @@ bool DeleteLine(TextViewport& viewport);
 bool IndentSelection(TextViewport& viewport);
 bool OutdentSelection(TextViewport& viewport);
 
+// What the Tab key does, decided once for the whole caret set (VS Code's
+// TypeOperations.tab): Shift outdents the caret regions; a selection at ANY
+// caret that spans lines, or covers a whole line's content, indents the caret
+// regions as a block; otherwise every caret inserts one indent, replacing its
+// single-line selection if it has one. Both editable key surfaces (the editor
+// pane and the compare/merge panes) route through this so they cannot drift --
+// each used to hand-copy the test, read the primary only, and replace a
+// whole-line selection with four spaces where VS Code indents the line.
+enum class TabKeyIntent { kInsertTab, kIndentBlock, kOutdent };
+[[nodiscard]] TabKeyIntent ClassifyTabKey(const TextViewport& viewport, bool shift_held);
+
 // VS Code's editor.action.joinLines. NOT named JoinLines: `util::JoinLines`
 // already joins a span of strings, and a second overload in this namespace is
 // found by ADL from any `TextViewport` argument -- it silently outranked a test's

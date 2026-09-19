@@ -1195,6 +1195,46 @@ void TestMultiCaretTabReplacesSingleLineSelectionsFromTheirStart() {
          std::string("the primary lands after its padding, collapsed: ") + CaretDump(viewport));
 }
 
+// --- The Tab key's three-way decision is made once for the whole caret set, by
+// ClassifyTabKey (VS Code's TypeOperations.tab). Two things the hand-copied
+// checks got wrong: only the primary was consulted, so a secondary's multi-line
+// selection was replaced by four spaces; and a selection covering a whole line
+// (Home, Shift+End) was treated as "single line", so Tab ate the line where VS
+// Code shifts it. ---
+void TestTabKeyClassifierIndentsWholeLineAndSecondarySelections() {
+  using microide::editor::ClassifyTabKey;
+  using microide::editor::TabKeyIntent;
+  TextViewport viewport;
+  viewport.LoadContent("  foo\nbar\nbaz\n", "/tmp/ec-tab-classify.txt");
+  viewport.SetViewportSize(10, 40);
+
+  viewport.MoveCursorTo(0, 2);
+  Expect(ClassifyTabKey(viewport, false) == TabKeyIntent::kInsertTab,
+         "a bare caret inserts a tab");
+  Expect(ClassifyTabKey(viewport, true) == TabKeyIntent::kOutdent, "Shift always outdents");
+
+  viewport.MoveCursorTo(0, 4, /*extend_selection=*/true);  // "fo": partial, single line
+  Expect(ClassifyTabKey(viewport, false) == TabKeyIntent::kInsertTab,
+         "a partial single-line selection is replaced by the indent");
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.MoveCursorTo(0, 5, /*extend_selection=*/true);  // the whole line's content
+  Expect(ClassifyTabKey(viewport, false) == TabKeyIntent::kIndentBlock,
+         "a selection covering the whole line indents the line instead of eating it");
+
+  viewport.MoveCursorTo(0, 2);  // bare primary again
+  viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
+      SelectionRange{TextPosition{1, 1}, TextPosition{2, 1}},
+  });
+  Expect(ClassifyTabKey(viewport, false) == TabKeyIntent::kIndentBlock,
+         "a secondary caret's multi-line selection makes Tab a block indent");
+  viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
+      SelectionRange{TextPosition{1, 2}, TextPosition{1, 1}},  // reversed, partial
+  });
+  Expect(ClassifyTabKey(viewport, false) == TabKeyIntent::kInsertTab,
+         "a secondary's partial single-line selection still inserts");
+}
+
 }  // namespace
 
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
@@ -1302,6 +1342,8 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestMultiCaretTabAtASharedPositionPadsBothSites);
   AddTest(tests, "EditorEdgeCase/MultiCaretTabReplacesSingleLineSelectionsFromTheirStart",
           TestMultiCaretTabReplacesSingleLineSelectionsFromTheirStart);
+  AddTest(tests, "EditorEdgeCase/TabKeyClassifierIndentsWholeLineAndSecondarySelections",
+          TestTabKeyClassifierIndentsWholeLineAndSecondarySelections);
 }
 
 }  // namespace microide::tests

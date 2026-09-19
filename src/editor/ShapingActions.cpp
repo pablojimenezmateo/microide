@@ -1224,6 +1224,47 @@ bool IndentSelection(TextViewport& viewport) {
       });
 }
 
+namespace {
+
+// VS Code: a single-line selection is replaced by the indent unless it runs
+// from column 1 to the line's max column, in which case the line is shifted.
+bool SelectionIndentsAsBlock(const TextViewport& viewport, const SelectionRange& range) {
+  if (range.start.line != range.end.line) {
+    return true;
+  }
+  return range.start.column == 0 && range.end.column > 0 &&
+         range.start.line < viewport.line_count() &&
+         range.end.column >= viewport.lines().LineLength(range.start.line);
+}
+
+}  // namespace
+
+TabKeyIntent ClassifyTabKey(const TextViewport& viewport, bool shift_held) {
+  if (shift_held) {
+    return TabKeyIntent::kOutdent;
+  }
+  if (const std::optional<SelectionRange> selection = viewport.selection_range();
+      selection.has_value() && SelectionIndentsAsBlock(viewport, *selection)) {
+    return TabKeyIntent::kIndentBlock;
+  }
+  for (const SecondaryCaret& secondary : viewport.secondary_caret_range_view()) {
+    if (!secondary.selection_anchor.has_value() ||
+        *secondary.selection_anchor == secondary.position) {
+      continue;
+    }
+    const TextPosition& anchor = *secondary.selection_anchor;
+    const TextPosition& caret = secondary.position;
+    const bool anchor_first =
+        anchor.line < caret.line || (anchor.line == caret.line && anchor.column < caret.column);
+    const SelectionRange range =
+        anchor_first ? SelectionRange{anchor, caret} : SelectionRange{caret, anchor};
+    if (SelectionIndentsAsBlock(viewport, range)) {
+      return TabKeyIntent::kIndentBlock;
+    }
+  }
+  return TabKeyIntent::kInsertTab;
+}
+
 bool OutdentSelection(TextViewport& viewport) {
   const std::size_t indent_width = viewport.indent_width() == 0 ? 4 : viewport.indent_width();
   return ReindentRegions(
