@@ -39,6 +39,65 @@ void TestSnippetSimpleExpansion() {
   Expect(session.active, "placeholder session should be active before final stop");
 }
 
+// A snippet expansion CONSUMES the pre-expansion multi-cursor state. That is a
+// deliberate divergence from VS Code, which expands at every cursor, and the
+// engine says why: every placeholder is a LINE:COLUMN range, and the expansion
+// (plus every later field edit) shifts the buffer, so secondary carets saved
+// before it would navigate to coordinates that had become somebody else's.
+//
+// Both halves of that contract were untested -- no snippet test had ever placed a
+// second caret. The failure half matters more than it looks: it is an explicit
+// recovery path, and if it ever stopped restoring, a refused expansion would
+// silently destroy the user's caret set while changing nothing else.
+void TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal() {
+  {
+    TextViewport viewport;
+    viewport.LoadContent("aa\nbb\ncc\n", "/tmp/snippet-multicaret.cpp");
+    SnippetSessionState session;
+    viewport.MoveCursorTo(0, 2);
+    viewport.AddSecondaryCaret(1, 2);
+    viewport.AddSecondaryCaret(2, 2);
+    Expect(viewport.has_multiple_carets(), "three carets before the expansion");
+
+    viewport.BeginUndoGroup();
+    Expect(ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 2}, {0, 2}},
+                                    "(${1:x})$0"),
+           "the expansion applies at the trigger");
+    Expect(viewport.lines()[0] == "aa(x)", "it expands at the trigger range only");
+    Expect(viewport.lines()[1] == "bb" && viewport.lines()[2] == "cc",
+           "the other carets' lines are untouched -- this is not a multi-caret expansion");
+    Expect(!viewport.has_multiple_carets(),
+           "the expansion consumed the secondary carets rather than leaving them at "
+           "coordinates the expansion has already moved");
+    Expect(session.active, "the placeholder session is live");
+  }
+  {
+    // Refused expansion: a zero-width trigger with a body that expands to nothing
+    // is a no-op edit, so ReplaceRange declines and the caret set must come back.
+    TextViewport viewport;
+    viewport.LoadContent("aa\nbb\ncc\n", "/tmp/snippet-refused.cpp");
+    SnippetSessionState session;
+    viewport.MoveCursorTo(0, 2);
+    viewport.AddSecondaryCaret(1, 2);
+    viewport.AddSecondaryCaret(2, 2);
+    const auto before = viewport.secondary_carets();
+    Expect(before.size() == 2, "two secondaries before the refused expansion");
+
+    viewport.BeginUndoGroup();
+    const bool expanded =
+        ExpandSnippetAtSelection(viewport, session, SelectionRange{{0, 2}, {0, 2}}, "");
+    Expect(!expanded, "an empty body at a zero-width trigger changes nothing, so it is refused");
+    Expect(viewport.lines()[0] == "aa" && viewport.lines()[1] == "bb" &&
+               viewport.lines()[2] == "cc",
+           "a refused expansion leaves the buffer alone");
+    const auto after = viewport.secondary_carets();
+    Expect(after.size() == before.size() && after[0] == before[0] && after[1] == before[1],
+           "a refused expansion puts the caret set back exactly, got " +
+               std::to_string(after.size()) + " carets");
+    Expect(!session.active, "no session is started by a refused expansion");
+  }
+}
+
 void TestSnippetMultiOccurrenceLinkedTab() {
   TextViewport viewport;
   viewport.LoadContent("--", "/tmp/snippet.cpp");
@@ -723,6 +782,8 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests) {
   AddTest(tests, "EditorSnippet/CrossTabShiftOnChoice", TestSnippetCrossTabShiftOnChoice);
   AddTest(tests, "EditorSnippet/LoneCarriageReturnBodyPositions",
           TestSnippetLoneCarriageReturnBodyPositions);
+  AddTest(tests, "EditorSnippet/ExpansionConsumesTheCaretSetAndRestoresItOnRefusal",
+          TestSnippetExpansionConsumesTheCaretSetAndRestoresItOnRefusal);
   AddTest(tests, "EditorSnippet/SimpleExpansion", TestSnippetSimpleExpansion);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTab", TestSnippetMultiOccurrenceLinkedTab);
   AddTest(tests, "EditorSnippet/MultiOccurrenceLinkedTabMultiKeystroke",
