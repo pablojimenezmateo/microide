@@ -360,10 +360,15 @@ ActionCoordinator::DispatchResult ActionCoordinator::ExecuteEdit(ActionId id,
       auto match = editor::FindBracketMatch(*viewport, viewport->cursor_line(),
                                             viewport->cursor_column());
       if (!match) return DispatchResult::Handled;
-      const bool at_open = (viewport->cursor_line() == match->open_line &&
-                            (viewport->cursor_column() == match->open_column ||
-                             viewport->cursor_column() == match->open_column + 1));
-      if (at_open) {
+      // `caret_at_opener` is the scanner's own answer: it knows which character
+      // it resolved, opener or closer. This used to re-derive that here as
+      // `cursor_column == open_column || cursor_column == open_column + 1`,
+      // which agrees everywhere except on an EMPTY pair. In `()` with the caret
+      // between the brackets, close_column IS open_column + 1, so the
+      // hand-rolled test said "at the opener" and jumped to the closer -- the
+      // column the caret was already on. Ctrl+Shift+\ did nothing at all on
+      // `()`, `[]` and `{}`. VSCode's jumpToBracket moves to the opener there.
+      if (match->caret_at_opener) {
         viewport->JumpCursorTo(match->close_line, match->close_column, false);
       } else {
         viewport->JumpCursorTo(match->open_line, match->open_column, false);
