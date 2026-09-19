@@ -119,6 +119,19 @@
     shell.context_.prompts.surface.button_count = 2;
     shell.context_.prompts.surface.selected_button = 0;
   }
+  // The two counts the prompt render loop has to reconcile. They are read
+  // separately so a test can state the mismatch as a fact rather than inferring
+  // it: the rects come from `button_count`, the labels are a fixed pair, and
+  // nothing makes the two agree.
+  static std::size_t PromptSurfaceLabelCount(const WorkspaceShell& shell) {
+    return shell.PromptSurfaceActionLabels().size();
+  }
+  static std::size_t PromptSurfaceButtonRectCount(WorkspaceShell& shell) {
+    const WorkspaceLayout layout = CurrentLayout(shell);
+    return ComputePromptSurfaceButtonRects(ComputePromptSurfaceRect(layout.full),
+                                           shell.context_.prompts.surface.button_count)
+        .size();
+  }
   static void SetPromptSurfaceSelectedButton(WorkspaceShell& shell, int button) {
     shell.context_.prompts.surface.selected_button = button;
   }

@@ -7,6 +7,7 @@
 
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <filesystem>
 #include <string>
 #include <vector>
@@ -134,10 +135,25 @@ void TestPromptSurfacePaintsWithMoreButtonsThanLabels() {
   WorkspaceShellTestAccess::OpenPromptSurfaceForTest(
       shell, PromptSurfaceState::Action::DeletePath, PromptSurfaceState::Kind::Confirm, source,
       std::string{});
+  bool saw_more_rects_than_labels = false;
   for (const int count : {1, 2, 3, 7}) {
     WorkspaceShellTestAccess::SetPromptSurfaceButtonCount(shell, count);
+    // State the mismatch as a fact rather than trusting the paint not to crash:
+    // a sanitizer would only catch the overrun if the bound were removed AND the
+    // read happened to land outside the object. These two numbers are the whole
+    // hazard, and they are read independently of the render.
+    const std::size_t rects = WorkspaceShellTestAccess::PromptSurfaceButtonRectCount(shell);
+    const std::size_t labels = WorkspaceShellTestAccess::PromptSurfaceLabelCount(shell);
+    Expect(rects == static_cast<std::size_t>(std::max(1, count)),
+           "the rect count follows button_count, clamped only from below");
+    Expect(labels == 2, "the action labels are a fixed pair whatever button_count says");
+    if (rects > labels) {
+      saw_more_rects_than_labels = true;
+    }
     PaintPromptSurface(shell, canvas);
   }
+  Expect(saw_more_rects_than_labels,
+         "the mismatch this bound exists for must actually occur in the sweep");
 }
 
 void TestDirtyPromptPaintsEveryKind() {
