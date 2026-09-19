@@ -201,6 +201,7 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests);
 void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests);
 void RegisterEditorWrapInvarianceTests(std::vector<TestCase>& tests);
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests);
+void RegisterEditorMultiCaretMotionTests(std::vector<TestCase>& tests);
 void RegisterTestRunnerCliTests(std::vector<TestCase>& tests);
 void RegisterBoundedResourceCapsTests(std::vector<TestCase>& tests);
 void RegisterWheelAccumulatorTests(std::vector<TestCase>& tests);
@@ -609,6 +610,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterEditorWrapNavigationPropertyTests(tests);
   microide::tests::RegisterEditorWrapInvarianceTests(tests);
   microide::tests::RegisterEditorMultiCaretTests(tests);
+  microide::tests::RegisterEditorMultiCaretMotionTests(tests);
 
   std::size_t selected_count = 0;
   for (const auto& test : tests) {

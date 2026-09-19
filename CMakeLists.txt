@@ -1119,6 +1119,7 @@ add_executable(microide_tests
   tests/EditorWrapNavigationPropertyTests.cpp
   tests/EditorWrapInvarianceTests.cpp
   tests/EditorMultiCaretTests.cpp
+  tests/EditorMultiCaretMotionTests.cpp
   tests/WindowPresentationTests.cpp
   tests/CommandLabelConsistencyTests.cpp
   tests/MenuAcceleratorConsistencyTests.cpp
