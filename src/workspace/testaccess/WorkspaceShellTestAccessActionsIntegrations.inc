@@ -150,6 +150,24 @@
   static bool HasCompareSelection(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.compare_selection.has_value();
   }
+  // Editor hover hit-testing. WorkspaceShellHoverTargets.cpp resolves what sits
+  // under the pointer -- blame, diagnostics, debug values, plugin hovers, code
+  // lenses -- across every pane, and had no direct coverage at all: it is
+  // reachable in production only from mouse motion at real coordinates, and the
+  // one test that touched it asserted on the view model rather than on a hit.
+  static std::optional<WorkspaceShell::EditorHoverTarget> EditorHoverTargetAtPosition(
+      const WorkspaceShell& shell, float x, float y) {
+    return shell.EditorHoverTargetAtPosition(x, y);
+  }
+  static std::optional<editor::CodeLensDecoration> CodeLensAtPosition(const WorkspaceShell& shell,
+                                                                      float x, float y) {
+    return shell.CodeLensAtPosition(x, y);
+  }
+  static bool SetDiagnosticsForTest(WorkspaceShell& shell, const std::filesystem::path& path,
+                                    std::vector<editor::Diagnostic> diagnostics) {
+    return shell.context_.current_project_state.diagnostics_store.ReplaceForOwnerFile(
+        "test", path, std::move(diagnostics));
+  }
   // Menu-popup paint drivers. The menu popups are reachable in production only
   // through chrome mouse/keyboard events at real coordinates, which is why the
   // popup PAINT path had no coverage at all -- the state readers below it were
