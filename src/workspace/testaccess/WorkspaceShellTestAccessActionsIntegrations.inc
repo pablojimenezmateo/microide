@@ -197,6 +197,22 @@
     }
     return labels;
   }
+  // The tree context menu's painted rows, as the full row-building path sees
+  // them. The mouse paths resolve a row by geometry instead (HitTestPopupRow +
+  // IsMenuItemEnabled), so a test can hold the two against each other.
+  static std::vector<WorkspaceShell::VisiblePopupMenuItem> TreeContextMenuVisibleItems(
+      const WorkspaceShell& shell) {
+    const auto popup_rect = shell.ComputeTreeContextMenuRect();
+    if (!popup_rect.has_value()) {
+      return {};
+    }
+    return shell.ComputeVisiblePopupMenuItems(
+        WorkspaceTreeContextMenuItems(shell.context_.menu_state.tree_context_menu.target),
+        shell.context_.menu_state.tree_context_menu.active_item_index, *popup_rect);
+  }
+  static std::optional<SDL_FRect> TreeContextMenuRect(const WorkspaceShell& shell) {
+    return shell.ComputeTreeContextMenuRect();
+  }
   static bool GitEntryContextMenuOpen(const WorkspaceShell& shell) {
     return shell.context_.menu_state.tree_context_menu.open &&
            shell.context_.menu_state.tree_context_menu.target == TreeContextTargetKind::GitEntry;

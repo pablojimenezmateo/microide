@@ -221,17 +221,16 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
 
     if (const auto submenu_rect = operations_.active_submenu_rect(layout.menu_bar);
         submenu_rect.has_value() && Contains(*submenu_rect, event.button.x, event.button.y)) {
-      for (const auto& item :
-           operations_.compute_visible_popup_menu_items(menu_state_.active_submenu_id, *submenu_rect)) {
-        if (!Contains(item.rect, event.button.x, event.button.y)) {
-          continue;
+      if (const auto row = operations_.hit_test_popup_row(
+              menu_state_.active_submenu_id, *submenu_rect, event.button.x, event.button.y);
+          row.has_value()) {
+        const bool enabled =
+            !row->separator &&
+            operations_.is_menu_item_enabled_at(menu_state_.active_submenu_id, row->index);
+        menu_state_.active_submenu_item_index = enabled ? static_cast<int>(row->index) : -1;
+        if (enabled) {
+          operations_.execute_menu_item(menu_state_.active_submenu_id, row->index);
         }
-        menu_state_.active_submenu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-        if (!item.separator && item.enabled) {
-          operations_.execute_menu_item(menu_state_.active_submenu_id, item.index);
-        }
-        operations_.request_chrome_redraw();
-        return true;
       }
       operations_.request_chrome_redraw();
       return true;
@@ -240,17 +239,16 @@ bool ChromeMouseCoordinator::HandleMenuButtonDown(const SDL_Event& event,
     if (const auto popup_rect =
             operations_.compute_popup_menu_rect(layout.menu_bar, menu_state_.active_menu_id);
         popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
-      for (const auto& item :
-           operations_.compute_visible_popup_menu_items(menu_state_.active_menu_id, *popup_rect)) {
-        if (!Contains(item.rect, event.button.x, event.button.y)) {
-          continue;
+      if (const auto row = operations_.hit_test_popup_row(
+              menu_state_.active_menu_id, *popup_rect, event.button.x, event.button.y);
+          row.has_value()) {
+        const bool enabled =
+            !row->separator &&
+            operations_.is_menu_item_enabled_at(menu_state_.active_menu_id, row->index);
+        menu_state_.active_menu_item_index = enabled ? static_cast<int>(row->index) : -1;
+        if (enabled) {
+          operations_.execute_menu_item(menu_state_.active_menu_id, row->index);
         }
-        menu_state_.active_menu_item_index = item.enabled ? static_cast<int>(item.index) : -1;
-        if (!item.separator && item.enabled) {
-          operations_.execute_menu_item(menu_state_.active_menu_id, item.index);
-        }
-        operations_.request_chrome_redraw();
-        return true;
       }
       operations_.request_chrome_redraw();
       return true;
@@ -522,19 +520,16 @@ bool ChromeMouseCoordinator::HandleTreeContextMenuButtonDown(const SDL_Event& ev
 
   if (const auto popup_rect = operations_.compute_tree_context_menu_rect();
       popup_rect.has_value() && Contains(*popup_rect, event.button.x, event.button.y)) {
-    for (const auto& item : operations_.compute_visible_tree_context_menu_items(
-             menu_state_.tree_context_menu.target, menu_state_.tree_context_menu.active_item_index,
-             *popup_rect)) {
-      if (!Contains(item.rect, event.button.x, event.button.y)) {
-        continue;
+    if (const auto row = operations_.hit_test_tree_context_menu_row(
+            menu_state_.tree_context_menu.target, *popup_rect, event.button.x, event.button.y);
+        row.has_value()) {
+      const bool enabled =
+          !row->separator && operations_.is_tree_context_menu_item_enabled_at(
+                                 menu_state_.tree_context_menu.target, row->index);
+      menu_state_.tree_context_menu.active_item_index = enabled ? static_cast<int>(row->index) : -1;
+      if (event.button.button == SDL_BUTTON_LEFT && enabled) {
+        operations_.execute_tree_context_menu_item(row->index);
       }
-      menu_state_.tree_context_menu.active_item_index =
-          item.enabled ? static_cast<int>(item.index) : -1;
-      if (event.button.button == SDL_BUTTON_LEFT && !item.separator && item.enabled) {
-        operations_.execute_tree_context_menu_item(item.index);
-      }
-      operations_.request_chrome_redraw();
-      return true;
     }
     operations_.request_chrome_redraw();
     return true;
@@ -553,14 +548,12 @@ bool ChromeMouseCoordinator::HandleTreeContextMenuMotion(const SDL_Event& event)
   if (const auto popup_rect = operations_.compute_tree_context_menu_rect();
       popup_rect.has_value() && Contains(*popup_rect, event.motion.x, event.motion.y)) {
     menu_state_.tree_context_menu.active_item_index = -1;
-    for (const auto& item : operations_.compute_visible_tree_context_menu_items(
-             menu_state_.tree_context_menu.target, menu_state_.tree_context_menu.active_item_index,
-             *popup_rect)) {
-      if (Contains(item.rect, event.motion.x, event.motion.y)) {
-        menu_state_.tree_context_menu.active_item_index =
-            item.enabled ? static_cast<int>(item.index) : -1;
-        break;
-      }
+    if (const auto row = operations_.hit_test_tree_context_menu_row(
+            menu_state_.tree_context_menu.target, *popup_rect, event.motion.x, event.motion.y);
+        row.has_value() && !row->separator &&
+        operations_.is_tree_context_menu_item_enabled_at(menu_state_.tree_context_menu.target,
+                                                         row->index)) {
+      menu_state_.tree_context_menu.active_item_index = static_cast<int>(row->index);
     }
     operations_.request_chrome_redraw();
     return true;
@@ -604,10 +597,6 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .request_quit = [this]() { RequestQuit(); },
           .open_menu_bar_menu = [this](MenuId id) { MakeMenuCoordinator().OpenMenuBarMenu(id); },
           .active_submenu_rect = [this](const SDL_FRect& rect) { return ActiveSubmenuRect(rect); },
-          .compute_visible_popup_menu_items =
-              [this](MenuId id, const SDL_FRect& rect) {
-                return ComputeVisiblePopupMenuItems(id, rect);
-              },
           .hit_test_popup_row =
               [this](MenuId id, const SDL_FRect& popup_rect, float x, float y) {
                 return WorkspaceShell::HitTestPopupRow(MenuItems(id), popup_rect, x, y);
@@ -647,9 +636,15 @@ ChromeMouseCoordinator& WorkspaceShell::MakeChromeMouseCoordinator() {
           .reveal_overlay_selection = [this](const SDL_FRect& rect) { RevealOverlaySelection(rect); },
           .activate_overlay_selection = [this]() { ActivateOverlaySelection(); },
           .compute_tree_context_menu_rect = [this]() { return ComputeTreeContextMenuRect(); },
-          .compute_visible_tree_context_menu_items =
-              [this](TreeContextTargetKind target, int active_item_index, const SDL_FRect& rect) {
-                return ComputeVisiblePopupMenuItems(TreeContextMenuItems(target), active_item_index, rect);
+          .hit_test_tree_context_menu_row =
+              [](TreeContextTargetKind target, const SDL_FRect& popup_rect, float x, float y) {
+                return WorkspaceShell::HitTestPopupRow(TreeContextMenuItems(target), popup_rect, x,
+                                                       y);
+              },
+          .is_tree_context_menu_item_enabled_at =
+              [this](TreeContextTargetKind target, std::size_t index) {
+                const auto items = TreeContextMenuItems(target);
+                return index < items.size() && IsMenuItemEnabled(items[index]);
               },
           .execute_tree_context_menu_item =
               [this](std::size_t index) {

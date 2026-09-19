@@ -263,12 +263,9 @@ MenuCoordinator& WorkspaceShell::MakeMenuCoordinator() {
                 if (!popup_rect.has_value()) {
                   return std::nullopt;
                 }
-                for (const auto& item : ComputeVisiblePopupMenuItems(id, *popup_rect)) {
-                  if (item.index == item_index) {
-                    return item.rect;
-                  }
-                }
-                return std::nullopt;
+                // Geometry only: the value-returning form builds a row vector
+                // and probes enablement for every row to answer about one.
+                return WorkspaceShell::PopupRowRectByIndex(MenuItems(id), *popup_rect, item_index);
               },
           .execute_custom_menu_item =
               [this](MenuId id, std::size_t item_index) {

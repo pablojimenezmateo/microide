@@ -2131,6 +2131,68 @@ void TestWorkspaceShellTreeContextMenuShowsInFileExplorerContainingDir() {
              .c_str());
 }
 
+// Every mouse path over a popup resolves ONE row by geometry (HitTestPopupRow
+// plus a single IsMenuItemEnabled probe) rather than building the whole row
+// vector: over an open menu the row-building form was a heap allocation and an
+// enablement probe per item on every motion event (TD-2026-09-13-293c). The two
+// have to agree about which row the pointer is on and whether it is live, so
+// this hovers the centre of every painted row and holds the mouse path's answer
+// against the row builder's.
+void TestWorkspaceShellTreeContextMenuHoverMatchesTheRowBuilder() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "project";
+  const std::filesystem::path file = root / "src" / "alpha.cpp";
+  WriteFile(file, "int alpha() { return 1; }\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  WorkspaceShellTestAccess::OpenTreeContextMenuForPath(shell, TreeContextTargetKind::File, file);
+
+  const auto popup_rect = WorkspaceShellTestAccess::TreeContextMenuRect(shell);
+  Expect(popup_rect.has_value(), "the tree context menu should have a popup rect once open");
+  const auto rows = WorkspaceShellTestAccess::TreeContextMenuVisibleItems(shell);
+  Expect(rows.size() >= 3, "the file context menu should paint several rows");
+
+  int hovered_rows = 0;
+  int separator_or_disabled_rows = 0;
+  for (const auto& row : rows) {
+    Expect(SendMouseMotion(shell, row.rect.x + row.rect.w * 0.5f, row.rect.y + row.rect.h * 0.5f, 0),
+           "a motion inside the open context menu should be handled");
+    const int active = WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell);
+    const int expected = row.enabled ? static_cast<int>(row.index) : -1;
+    Expect(active == expected,
+           "hovering row " + std::to_string(row.index) + " should leave the active index at " +
+               std::to_string(expected) + ", got " + std::to_string(active));
+    if (row.enabled) {
+      ++hovered_rows;
+    } else {
+      ++separator_or_disabled_rows;
+    }
+  }
+  // Both branches have to have run, or the agreement above is only half checked.
+  Expect(hovered_rows > 0, "no row in the file context menu was enabled");
+  Expect(separator_or_disabled_rows > 0,
+         "the file context menu had no separator or disabled row to check the -1 branch with");
+
+  // The popup's own padding is inside the popup but on no row: the pointer is
+  // still in the menu, so the hover clears rather than keeping the last row lit.
+  Expect(SendMouseMotion(shell, popup_rect->x + 1.0f, popup_rect->y + 1.0f, 0),
+         "a motion in the popup padding should be handled");
+  Expect(WorkspaceShellTestAccess::TreeContextMenuActiveItemIndex(shell) == -1,
+         "hovering the popup padding should light no row");
+
+  // And a click on a row the builder calls enabled runs it -- the button path
+  // resolves the row the same way, so it must not have drifted from the hover.
+  const auto enabled = std::find_if(rows.begin(), rows.end(), [](const auto& row) {
+    return row.enabled && !row.separator;
+  });
+  Expect(enabled != rows.end(), "the file context menu should have an enabled row");
+  Expect(SendMouseDown(shell, enabled->rect.x + enabled->rect.w * 0.5f,
+                       enabled->rect.y + enabled->rect.h * 0.5f, SDL_BUTTON_LEFT),
+         "clicking an enabled context menu row should be handled");
+}
+
 // TD-2026-07-17-061: the file-explorer reveal validates its path synchronously
 // (so an obviously-bad target still reports failure at once, driving the error
 // toast) and dispatches only the actual xdg-open subprocess off the shell thread.
@@ -3760,6 +3822,8 @@ void TestWorkspaceShellSameNameTabsShowTheirParentFolder() {
 }
 
 void RegisterWorkspaceShellChromeTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "WorkspaceShell/TreeContextMenuHoverMatchesTheRowBuilder",
+          TestWorkspaceShellTreeContextMenuHoverMatchesTheRowBuilder);
   AddTest(tests, "WorkspaceShell/SameNameTabsShowTheirParentFolder",
           TestWorkspaceShellSameNameTabsShowTheirParentFolder);
   AddTest(tests, "WorkspaceShell/TabSwitchDefersLspHydration",

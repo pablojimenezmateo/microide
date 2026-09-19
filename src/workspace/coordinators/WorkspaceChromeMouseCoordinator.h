@@ -36,11 +36,12 @@ class ChromeMouseCoordinator {
     std::function<void()> request_quit;
     std::function<void(MenuId)> open_menu_bar_menu;
     std::function<std::optional<SDL_FRect>(const SDL_FRect&)> active_submenu_rect;
-    std::function<std::vector<WorkspaceShell::VisiblePopupMenuItem>(MenuId, const SDL_FRect&)>
-        compute_visible_popup_menu_items;
-    // Geometry-only hit/rect lookups for mouse motion. The full
-    // `compute_visible_popup_menu_items` path probes IsMenuItemEnabled and
-    // IsMenuItemChecked per item, which dominated per-motion handler time.
+    // Geometry-only hit/rect lookups. The value-returning
+    // `ComputeVisiblePopupMenuItems` builds a row vector and probes
+    // IsMenuItemEnabled and IsMenuItemChecked per item; a mouse event wants one
+    // row, so every mouse path here resolves the row by geometry and asks about
+    // that row alone. It dominated per-motion handler time, and over an open
+    // menu it was also one heap allocation per event.
     std::function<std::optional<WorkspaceShell::PopupRowGeometry>(
         MenuId, const SDL_FRect&, float, float)>
         hit_test_popup_row;
@@ -68,10 +69,11 @@ class ChromeMouseCoordinator {
     std::function<void(const SDL_FRect&)> reveal_overlay_selection;
     std::function<void()> activate_overlay_selection;
     std::function<std::optional<SDL_FRect>()> compute_tree_context_menu_rect;
-    std::function<std::vector<WorkspaceShell::VisiblePopupMenuItem>(TreeContextTargetKind,
-                                                                    int,
-                                                                    const SDL_FRect&)>
-        compute_visible_tree_context_menu_items;
+    // The tree context menu's half of the geometry-only pair above.
+    std::function<std::optional<WorkspaceShell::PopupRowGeometry>(
+        TreeContextTargetKind, const SDL_FRect&, float, float)>
+        hit_test_tree_context_menu_row;
+    std::function<bool(TreeContextTargetKind, std::size_t)> is_tree_context_menu_item_enabled_at;
     std::function<bool(std::size_t)> execute_tree_context_menu_item;
     std::function<void()> close_tree_context_menu;
   };
