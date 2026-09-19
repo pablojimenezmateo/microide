@@ -327,6 +327,68 @@ void TestBothMergeOrders() {
          "both-incoming-first should place incoming lines before current lines");
 }
 
+// The merge RESULT pane is an editable TextViewport like the compare pane, so it
+// answers the multi-caret verbs -- and nothing tested that either. The coupling
+// worth checking is validation: ValidateMergeResult scans the live buffer in one
+// LineSpan walk for a COMPLETE conflict block, and a multi-caret edit changes
+// several disjoint regions at once, which is the shape a scan that caches or
+// short-circuits per region gets wrong.
+//
+// The gesture here is the realistic one: three carets on the three marker lines
+// of a conflict, delete-line at each, markers gone in one step.
+void TestMultiCaretEditInTheResultPaneIsValidated() {
+  MergeTabState merge_tab;
+  merge_tab.result_viewport.LoadContent(
+      "before\n<<<<<<< HEAD\nside\n=======\nother\n>>>>>>> x\nafter\n", {},
+      merge_tab.result_line_ending);
+  merge_tab.result_viewport.SetDirty(false);
+
+  // Asserting on the ISSUE, not on `ok`: overall validity also depends on the
+  // result existing on disk and on the save state, neither of which this test is
+  // about. Validation reports the FIRST blocking issue and `Unsaved` precedes
+  // `ConflictMarkers`, so the dirty flag is cleared before each read -- the
+  // fixture beside this one does the same after its LoadContent.
+  auto& viewport = merge_tab.result_viewport;
+  const auto marker_issue = [&]() {
+    viewport.SetDirty(false);
+    return ValidateMergeResult(MergeValidationRequest{
+               .merge_tab = merge_tab,
+               .project_root = {},
+               .result_should_exist = true,
+           })
+        .issue;
+  };
+  Expect(marker_issue() == MergeValidationIssue::ConflictMarkers,
+         "the fixture starts with a complete conflict block, or this proves nothing");
+
+  // Three carets, one on each marker line (1, 3, 5), then delete-line.
+  const std::size_t lines_before = viewport.line_count();
+  viewport.MoveCursorTo(1, 0);
+  viewport.AddSecondaryCaret(3, 0);
+  viewport.AddSecondaryCaret(5, 0);
+  Expect(viewport.secondary_caret_range_view().size() == 2, "three carets are placed");
+  Expect(viewport.DeleteCurrentLine(), "delete-line applies at every caret");
+
+  Expect(viewport.line_count() == lines_before - 3,
+         "three marker lines are gone in one step, got " +
+             std::to_string(viewport.line_count()) + " from " +
+             std::to_string(lines_before));
+  Expect(viewport.lines()[0] == "before" && viewport.lines()[1] == "side" &&
+             viewport.lines()[2] == "other" && viewport.lines()[3] == "after",
+         "exactly the marker lines were removed");
+  Expect(marker_issue() != MergeValidationIssue::ConflictMarkers,
+         "the scan sees the resolved buffer, not the one it was built for");
+
+  // And one undo puts the whole conflict back -- a per-site undo would restore
+  // one marker line and leave the block incomplete, which reads as resolved.
+  Expect(viewport.Undo(), "the multi-caret delete undoes as one step");
+  Expect(viewport.line_count() == lines_before,
+         "all three lines come back together, got " + std::to_string(viewport.line_count()) +
+             " of " + std::to_string(lines_before));
+  Expect(marker_issue() == MergeValidationIssue::ConflictMarkers,
+         "the restored conflict blocks again");
+}
+
 void TestValidationBlocksConflictMarkers() {
   MergeTabState merge_tab;
   merge_tab.result_viewport.LoadContent("before\n<<<<<<< HEAD\nside\n=======\nother\n>>>>>>> x\n",
@@ -585,6 +647,8 @@ void RegisterMergeConflictResolutionTests(std::vector<TestCase>& tests) {
   AddTest(tests, "MergeConflict/BinaryDoesNotClobberExistenceChoice",
           TestBinaryDoesNotClobberExistenceChoice);
   AddTest(tests, "MergeConflict/BothMergeOrders", TestBothMergeOrders);
+  AddTest(tests, "MergeConflict/MultiCaretEditInTheResultPaneIsValidated",
+          TestMultiCaretEditInTheResultPaneIsValidated);
   AddTest(tests, "MergeConflict/ValidationBlocksConflictMarkers",
           TestValidationBlocksConflictMarkers);
   AddTest(tests, "MergeConflict/ScanConflictMarkersMatchesLegacyBehavior",

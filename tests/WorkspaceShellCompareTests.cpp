@@ -319,6 +319,77 @@ void TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves() {
          "saving the compare tab should persist the edited current-state text");
 }
 
+// The compare's editable pane is a full TextViewport reaching the same action
+// layer as the editor pane, so it answers the multi-caret verbs too -- and
+// nothing tested that. Forty-four tests touch `right_viewport` and not one of
+// them ever put a second caret in it, so every multi-caret path on this surface
+// (and on the merge result pane beside it) ran only in the editor pane.
+//
+// The part worth checking is not that the text changes -- that is the same
+// applier the editor uses -- but that the compare MODEL survives an edit that
+// changes the line count under it. The right side's rows are aligned against the
+// left's, so a multi-caret insert that adds lines has to leave a model that
+// still describes the buffer, not one built for the buffer that was there.
+void TestWorkspaceShellCompareEditablePaneTakesMultipleCarets() {
+  TemporaryDirectory temp_dir;
+  const std::filesystem::path root = temp_dir.path() / "repo";
+  const std::filesystem::path source = root / "src" / "main.cpp";
+  WriteFile(source, "alpha\nbravo\ncharlie\ndelta\n");
+
+  InitializeGitRepo(root);
+  CommitAll(root, "Add multi-caret compare fixture", "multi-caret compare fixture");
+  WriteFile(source, "alpha\nbravo\ncharlie\ndelta\n");
+
+  WorkspaceShell shell;
+  WorkspaceShellTestAccess::SetProjectRoot(shell, root);
+  WorkspaceShellTestAccess::SetWindowSize(shell, 1280, 720);
+  Expect(WorkspaceShellTestAccess::OpenWorkingTreeComparison(shell, source, "HEAD", "HEAD"),
+         "working-tree comparison should open");
+
+  auto& compare = WorkspaceShellTestAccess::ActiveCompare(shell);
+  Expect(compare.right_editable && compare.right_view_active,
+         "the editable pane must be active, or the carets have nowhere to land");
+  auto& viewport = compare.right_viewport;
+
+  viewport.MoveCursorTo(0, 0);
+  viewport.AddSecondaryCaret(1, 0);
+  viewport.AddSecondaryCaret(2, 0);
+  Expect(viewport.secondary_caret_range_view().size() == 2,
+         "three carets, one per line");
+
+  // A plain insert at every caret.
+  Expect(WorkspaceShellTestAccess::HandleTextInput(shell, "// "),
+         "text input should reach the compare pane with several carets");
+  Expect(viewport.lines()[0] == "// alpha" && viewport.lines()[1] == "// bravo" &&
+             viewport.lines()[2] == "// charlie" && viewport.lines()[3] == "delta",
+         "every caret edits, and the caretless line is untouched");
+  Expect(viewport.secondary_caret_range_view().size() == 2,
+         "the caret set survives the edit");
+
+  // An insert that CHANGES THE LINE COUNT under the row alignment.
+  const std::size_t lines_before = viewport.line_count();
+  Expect(WorkspaceShellTestAccess::HandleKeyDown(shell, SDLK_RETURN, SDL_KMOD_NONE),
+         "Enter should reach the compare pane");
+  Expect(viewport.line_count() == lines_before + 3,
+         "three carets each split their line, got " + std::to_string(viewport.line_count()) +
+             " from " + std::to_string(lines_before));
+
+  // The model has to describe the buffer it now has. Rendering is what consumes
+  // it, so a stale row map shows up here rather than in an accessor.
+  WorkspaceShellTestAccess::RenderFrame(shell);
+  Expect(viewport.cursor_line() < viewport.line_count(),
+         "the primary caret is inside the edited buffer");
+  for (const auto& caret : viewport.secondary_caret_range_view()) {
+    Expect(caret.position.line < viewport.line_count(),
+           "every secondary caret is inside the edited buffer");
+  }
+
+  // And the whole thing undoes as three sites in one step, on this surface too.
+  Expect(viewport.Undo(), "undo steps the compare pane's shared history");
+  Expect(viewport.line_count() == lines_before,
+         "one undo takes back all three splits, got " + std::to_string(viewport.line_count()));
+}
+
 // The compare's editable side IS the file, so it is one buffer with an editor
 // tab on the same path -- VS Code's diff editor edits the same model the text
 // editor shows. Each side used to load its own copy from disk: an edit in one
@@ -2950,6 +3021,8 @@ void RegisterWorkspaceShellCompareTests(std::vector<TestCase>& tests) {
           TestWorkspaceShellCompareDragAutoscrollsAndKeepsGranularity);
   AddTest(tests, "WorkspaceShell/MergeDragAutoscrollsAndKeepsGranularity",
           TestWorkspaceShellMergeDragAutoscrollsAndKeepsGranularity);
+  AddTest(tests, "WorkspaceShell/CompareEditablePaneTakesMultipleCarets",
+          TestWorkspaceShellCompareEditablePaneTakesMultipleCarets);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareIsEditableAndSaves",
           TestWorkspaceShellWorkingTreeCompareIsEditableAndSaves);
   AddTest(tests, "WorkspaceShell/WorkingTreeCompareSharesTheEditorTabsBuffer",
