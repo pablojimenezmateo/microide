@@ -11,7 +11,10 @@
 // ONLY in soft wrap, and require the resulting bytes and the resulting caret set
 // to be identical. Deliberately excluded are the verbs that are ABOUT the view --
 // vertical motion, Home/End, page -- which legitimately answer differently under
-// wrap and have their own walk in EditorWrapNavigationPropertyTests.
+// wrap and have their own walk in EditorWrapNavigationPropertyTests. Horizontal
+// and word motion ARE in the list: they step through text positions, so they owe
+// the same answer either way, and they are the verbs a wrap-aware rewrite is
+// most likely to make view-dependent by accident.
 
 #include "TestSupport.h"
 
@@ -46,8 +49,13 @@ std::string CaretSet(const TextViewport& viewport) {
     out += "[" + std::to_string(sel->start.line) + "," + std::to_string(sel->start.column) + "-" +
            std::to_string(sel->end.line) + "," + std::to_string(sel->end.column) + "]";
   }
-  for (const TextPosition& caret : viewport.secondary_carets()) {
-    out += " S(" + std::to_string(caret.line) + "," + std::to_string(caret.column) + ")";
+  for (const auto& caret : viewport.secondary_caret_ranges()) {
+    out += " S(" + std::to_string(caret.position.line) + "," +
+           std::to_string(caret.position.column) + ")";
+    if (caret.selection_anchor.has_value()) {
+      out += "[" + std::to_string(caret.selection_anchor->line) + "," +
+             std::to_string(caret.selection_anchor->column) + "]";
+    }
   }
   return out;
 }
@@ -82,6 +90,24 @@ enum class Edit {
   kInsertLineAbove,
   kSortAscending,
   kToggleLineComment,
+  kToggleBlockComment,
+  kJoinLines,
+  kTab,
+  kDeleteWordLeft,
+  kDeleteWordRight,
+  kPaste,
+  kSelectWord,
+  kSelectLine,
+  // Horizontal and word motion are LOGICAL verbs: they step through text
+  // positions, so unlike vertical motion and Home/End they owe the same answer
+  // with wrap on. They are in this list precisely because they are the ones a
+  // wrap-aware rewrite is most likely to make view-dependent by accident.
+  kLeft,
+  kRight,
+  kShiftLeft,
+  kShiftRight,
+  kWordLeft,
+  kWordRight,
   kUndo,
   kRedo,
   kCount,
@@ -104,6 +130,20 @@ const char* EditName(Edit edit) {
     case Edit::kInsertLineAbove: return "insert-line-above";
     case Edit::kSortAscending: return "sort-ascending";
     case Edit::kToggleLineComment: return "toggle-line-comment";
+    case Edit::kToggleBlockComment: return "toggle-block-comment";
+    case Edit::kJoinLines: return "join-lines";
+    case Edit::kTab: return "tab";
+    case Edit::kDeleteWordLeft: return "delete-word-left";
+    case Edit::kDeleteWordRight: return "delete-word-right";
+    case Edit::kPaste: return "paste";
+    case Edit::kSelectWord: return "select-word";
+    case Edit::kSelectLine: return "select-line";
+    case Edit::kLeft: return "left";
+    case Edit::kRight: return "right";
+    case Edit::kShiftLeft: return "shift-left";
+    case Edit::kShiftRight: return "shift-right";
+    case Edit::kWordLeft: return "word-left";
+    case Edit::kWordRight: return "word-right";
     case Edit::kUndo: return "undo";
     case Edit::kRedo: return "redo";
     case Edit::kCount: return "?";
@@ -128,6 +168,24 @@ void ApplyEdit(TextViewport& viewport, Edit edit, char typed) {
     case Edit::kInsertLineAbove: microide::editor::InsertLineAbove(viewport); break;
     case Edit::kSortAscending: microide::editor::SortLines(viewport, /*ascending=*/true); break;
     case Edit::kToggleLineComment: microide::editor::ToggleLineComment(viewport, "//"); break;
+    case Edit::kToggleBlockComment:
+      microide::editor::ToggleBlockComment(viewport, "/*", "*/");
+      break;
+    case Edit::kJoinLines: microide::editor::JoinLinesAtCarets(viewport); break;
+    case Edit::kTab: viewport.InsertTab(); break;
+    case Edit::kDeleteWordLeft: viewport.DeleteWord(-1); break;
+    case Edit::kDeleteWordRight: viewport.DeleteWord(1); break;
+    // Two lines, so both the one-line-per-caret distribute path and the
+    // insert-the-whole-thing path are reachable depending on the caret count.
+    case Edit::kPaste: viewport.PasteText("pasted\nlines\n"); break;
+    case Edit::kSelectWord: viewport.SelectWordAtCursor(); break;
+    case Edit::kSelectLine: viewport.SelectLineAtCursor(); break;
+    case Edit::kLeft: viewport.MoveCursorHorizontal(-1); break;
+    case Edit::kRight: viewport.MoveCursorHorizontal(1); break;
+    case Edit::kShiftLeft: viewport.MoveCursorHorizontal(-1, /*extend_selection=*/true); break;
+    case Edit::kShiftRight: viewport.MoveCursorHorizontal(1, /*extend_selection=*/true); break;
+    case Edit::kWordLeft: viewport.MoveCursorWord(-1); break;
+    case Edit::kWordRight: viewport.MoveCursorWord(1); break;
     case Edit::kUndo: viewport.Undo(); break;
     case Edit::kRedo: viewport.Redo(); break;
     case Edit::kCount: break;
@@ -171,6 +229,10 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
   auto pick = [&](std::size_t n) { return std::uniform_int_distribution<std::size_t>(0, n - 1)(rng); };
 
   std::size_t divergence_opportunities = 0;
+  // Per-verb: how often it was run, and how often it moved the text or the caret
+  // set. A verb that never did either proved nothing about wrap.
+  std::vector<int> ran(static_cast<std::size_t>(Edit::kCount), 0);
+  std::vector<int> changed(static_cast<std::size_t>(Edit::kCount), 0);
   for (const std::string& content : documents) {
     for (int iteration = 0; iteration < 300; ++iteration) {
       WrapPair pair;
@@ -214,12 +276,25 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
 
       std::string trail;
       const int steps = 1 + static_cast<int>(pick(4));
+      Edit previous = Edit::kCount;
       for (int step = 0; step < steps; ++step) {
-        const Edit edit = static_cast<Edit>(pick(static_cast<std::size_t>(Edit::kCount)));
+        // Redo is only ever live straight after an undo, and a uniform draw over
+        // this many verbs lands that pair a handful of times in the whole sweep.
+        // Bias it, or the redo path is in the list without being tested.
+        const Edit edit = (previous == Edit::kUndo && pick(3) == 0)
+                              ? Edit::kRedo
+                              : static_cast<Edit>(pick(static_cast<std::size_t>(Edit::kCount)));
+        previous = edit;
         const char typed = static_cast<char>('a' + pick(26));
         trail += std::string(step == 0 ? "" : " -> ") + EditName(edit);
+        const std::string before_text = DocumentText(pair.plain);
+        const std::string before_carets = CaretSet(pair.plain);
         ApplyEdit(pair.plain, edit, typed);
         ApplyEdit(pair.wrapped, edit, typed);
+        ++ran[static_cast<std::size_t>(edit)];
+        if (DocumentText(pair.plain) != before_text || CaretSet(pair.plain) != before_carets) {
+          ++changed[static_cast<std::size_t>(edit)];
+        }
 
         const std::string plain_text = DocumentText(pair.plain);
         const std::string wrapped_text = DocumentText(pair.wrapped);
@@ -239,6 +314,14 @@ void TestWrapDoesNotChangeWhatAnEditDoes() {
   }
   Expect(divergence_opportunities == documents.size() * 300,
          "every iteration must have run against a genuinely wrapped view");
+  for (std::size_t i = 0; i < static_cast<std::size_t>(Edit::kCount); ++i) {
+    const char* name = EditName(static_cast<Edit>(i));
+    Expect(ran[i] > 20, std::string("the verb ") + name + " barely ran: " +
+                            std::to_string(ran[i]) + " times");
+    Expect(changed[i] > 0, std::string("the verb ") + name +
+                               " never once moved the text or the caret set, so wrap "
+                               "invariance was not tested for it");
+  }
 }
 
 }  // namespace
