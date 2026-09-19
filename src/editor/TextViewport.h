@@ -1037,8 +1037,17 @@ class TextViewport {
   // LAST row ends exactly at its width. Lets a wrapped row be built without
   // measuring the whole line it belongs to.
   std::size_t LineVisualWidthFromWrappedRows(std::size_t line_index) const;
+  // What a vertical step does when it would run off the first or last visual
+  // row. kToRowEdge is the arrow/page key rule (VS Code's MoveOperations.up/down
+  // with allowMoveOnFirstLine / allowMoveOnLastLine): Up past the top lands on
+  // the first row's START, Down past the bottom on the last row's END, so the
+  // edge key is never a silent no-op. kClamp keeps the column and stays on the
+  // edge row, which is what Add Cursor Above/Below needs -- there a seed that
+  // "advances to itself" is how the column stops growing (translateUp/Down).
+  enum class VerticalEdgePolicy { kClamp, kToRowEdge };
   void AdvanceCaretVertical(TextPosition& caret, std::size_t& preferred_column,
-                            WrapRowAffinity& affinity, int delta) const;
+                            WrapRowAffinity& affinity, int delta,
+                            VerticalEdgePolicy edge_policy) const;
   void AdvanceCaretHorizontal(TextPosition& caret, int delta) const;
   // Where a word-granular step from `caret` lands. `for_deletion` picks the
   // whitespace-heuristic boundary (Ctrl+Backspace eats an indent run whole)

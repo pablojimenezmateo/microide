@@ -227,11 +227,13 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
     }
   }
   BeginSelectionIfNeeded(extend_selection);
-  AdvanceCaretVertical(primary, preferred_column_, primary_affinity, delta);
+  AdvanceCaretVertical(primary, preferred_column_, primary_affinity, delta,
+                       VerticalEdgePolicy::kToRowEdge);
   PlacePrimaryCaret(primary.line, primary.column, /*keep_preferred_column=*/true, primary_affinity);
 
   for (SecondaryCaret& caret : secondary_carets_) {
-    AdvanceCaretVertical(caret.position, caret.preferred_column, caret.wrap_affinity, delta);
+    AdvanceCaretVertical(caret.position, caret.preferred_column, caret.wrap_affinity, delta,
+                         VerticalEdgePolicy::kToRowEdge);
   }
   DedupeSecondaryCaretsAgainstPrimary();
   EnsureCursorVisible();
@@ -1054,7 +1056,8 @@ void TextViewport::MergeOverlappingCaretRanges() {
 void TextViewport::AdvanceCaretVertical(TextPosition& caret,
                                         std::size_t& preferred_column,
                                         WrapRowAffinity& affinity,
-                                        int delta) const {
+                                        int delta,
+                                        VerticalEdgePolicy edge_policy) const {
   EnsureWrappedRowLayouts();
   const std::size_t row_count = WrappedRowCount();
   if (row_count == 0) {
@@ -1062,8 +1065,33 @@ void TextViewport::AdvanceCaretVertical(TextPosition& caret,
   }
   const std::size_t current_row = CursorVisualRowForCaret(caret, affinity);
   const int max_row = static_cast<int>(row_count) - 1;
-  const std::size_t target_row =
-      static_cast<std::size_t>(std::clamp(static_cast<int>(current_row) + delta, 0, max_row));
+  const int wanted_row = static_cast<int>(current_row) + delta;
+  if (edge_policy == VerticalEdgePolicy::kToRowEdge && (wanted_row < 0 || wanted_row > max_row)) {
+    // Off the top: the first row's start. Off the bottom: the last row's end.
+    // Any overshoot counts (a PageUp from the middle of the first screen lands
+    // on the document start), which is VS Code's rule too. The sticky column
+    // resets to the landing, as after any horizontal key.
+    const std::size_t edge_row = wanted_row < 0 ? 0 : static_cast<std::size_t>(max_row);
+    const WrappedRowLayout edge = WrappedRowAt(edge_row);
+    caret.line = edge.line_index;
+    const std::size_t line_length = document_->lines.LineLength(caret.line);
+    // In trivial mode the row table's visual span is the scroll window, not the
+    // line, so only a real row table can name the row's own edges.
+    const bool row_table = soft_wrap_ && !layout_cache_.wrapped_row_layouts_trivial();
+    if (wanted_row < 0) {
+      caret.column = row_table ? TextColumnAtVisualColumn(caret.line, edge.visual_start) : 0;
+    } else {
+      caret.column = row_table ? std::min(TextColumnAtVisualColumn(caret.line, edge.visual_end),
+                                          line_length)
+                               : line_length;
+    }
+    // Neither landing is a wrap point: the document's first row starts at its
+    // line's column 0, and the last row's end is its line's end.
+    affinity = WrapRowAffinity::kNextRow;
+    preferred_column = PreferredColumnForCaret(caret, affinity);
+    return;
+  }
+  const std::size_t target_row = static_cast<std::size_t>(std::clamp(wanted_row, 0, max_row));
   const WrappedRowLayout target = WrappedRowAt(target_row);
   const std::size_t target_visual_column =
       ResolveSoftWrapCursorColumnForTargetRow(preferred_column, target_row);

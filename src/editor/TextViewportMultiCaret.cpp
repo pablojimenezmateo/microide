@@ -609,7 +609,8 @@ bool TextViewport::AddCaretVertical(int delta) {
   added.reserve(seeds.size());
   for (const Seed& seed : seeds) {
     Seed next = seed;
-    AdvanceCaretVertical(next.position, next.preferred_column, next.affinity, delta);
+    AdvanceCaretVertical(next.position, next.preferred_column, next.affinity, delta,
+                         VerticalEdgePolicy::kClamp);
     if (!(next.position == seed.position)) {
       added.push_back(next);
     }

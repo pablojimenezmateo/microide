@@ -114,10 +114,12 @@ void TestMultiCaretVerticalMoveAtBufferEdgeDedupes() {
   viewport.MoveCursorTo(0, 2);
   viewport.SetSecondaryCarets({{1, 2}});
 
-  viewport.MoveCursorVertical(-1);  // both clamp onto line 0
+  viewport.MoveCursorVertical(-1);  // primary off the top -> (0,0); secondary -> (0,2)
+  viewport.MoveCursorVertical(-1);  // secondary off the top too -> (0,0)
   Expect(viewport.secondary_carets().empty(),
-         std::string("carets that clamp onto the same line must merge: ") + CaretDump(viewport));
-  Expect(viewport.cursor_line() == 0, "primary should sit on line 0");
+         std::string("carets driven onto the same position must merge: ") + CaretDump(viewport));
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 0,
+         "primary should sit on the document start");
 }
 
 // --- 4. Undo restores the caret set that produced the edit. ---
@@ -980,6 +982,96 @@ void TestJoinLinesAtTheLastLineIsANoOp() {
   Expect(JoinLines(viewport) == "only\n", "and the buffer is untouched");
 }
 
+// --- Up on the first visual row goes to that row's START, Down on the last
+// visual row goes to that row's END (VS Code's MoveOperations.up/down with
+// allowMoveOnFirstLine / allowMoveOnLastLine). Without it the edge key is a
+// silent no-op, which is also the one place a caret can never reach column 0 of
+// the document by vertical motion alone. Per caret: the primary clamps to the
+// edge while a secondary a row further in still steps normally. ---
+void TestUpOnTheFirstRowGoesToRowStartPerCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("hello\nworld\n", "/tmp/ec-up-first-row.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 3);
+  viewport.SetSecondaryCarets({{1, 3}});
+
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 0,
+         std::string("Up on the first row lands on its start: ") + CaretDump(viewport));
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{0, 3},
+         std::string("the secondary caret still steps one row: ") + CaretDump(viewport));
+
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 0,
+         "a second Up stays put");
+  Expect(viewport.secondary_carets().empty(),
+         std::string("the secondary caret reaches (0,0) too and merges: ") + CaretDump(viewport));
+}
+
+void TestDownOnTheLastRowGoesToRowEndPerCaret() {
+  TextViewport viewport;
+  viewport.LoadContent("hello\nworld", "/tmp/ec-down-last-row.txt");
+  viewport.SetViewportSize(10, 40);
+  Expect(viewport.lines().size() == 2, "fixture: no phantom line after the last one");
+  viewport.MoveCursorTo(1, 2);
+  viewport.SetSecondaryCarets({{0, 2}});
+
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_line() == 1 && viewport.cursor_column() == 5,
+         std::string("Down on the last row lands on its end: ") + CaretDump(viewport));
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{1, 2},
+         std::string("the secondary caret still steps one row: ") + CaretDump(viewport));
+  Expect(!viewport.has_selection(), "a plain move leaves no selection");
+}
+
+// Shift+Up at the edge extends the selection to the row start (VS Code).
+void TestShiftUpOnTheFirstRowExtendsToRowStart() {
+  TextViewport viewport;
+  viewport.LoadContent("hello\n", "/tmp/ec-shift-up-first-row.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(0, 3);
+  viewport.MoveCursorVertical(-1, /*extend_selection=*/true);
+  const auto range = viewport.selection_range();
+  Expect(range.has_value() && range->start == TextPosition{0, 0} &&
+             range->end == TextPosition{0, 3},
+         std::string("Shift+Up on the first row selects back to column 0: ") + CaretDump(viewport));
+}
+
+// Under soft wrap "the first row" is the first VISUAL row: Up from the second
+// wrapped row still climbs onto the first, and only then snaps to column 0.
+// Symmetrically, Down on the last wrapped row of the last line goes to the
+// line end, which is that row's end.
+void TestUpDownAtTheEdgeUnderWrapUsesVisualRows() {
+  TextViewport viewport;
+  viewport.LoadContent("abcdefghijklmnop", "/tmp/ec-wrap-edge-rows.txt");
+  viewport.SetViewportSize(10, /*visible_columns=*/8);
+  viewport.SetSoftWrap(true);
+  Expect(viewport.visual_line_count() == 2, "fixture: the one line wraps into two rows");
+  viewport.MoveCursorTo(0, 12);  // second row
+
+  viewport.MoveCursorVertical(-1);
+  // The sticky column is the ON-SCREEN column (4 into the row), as in VS Code.
+  Expect(viewport.cursor_visual_row() == 0 && viewport.cursor_column() == 4,
+         "Up from the second row climbs onto the first under the same screen column, got column " +
+             std::to_string(viewport.cursor_column()));
+  viewport.MoveCursorVertical(-1);
+  Expect(viewport.cursor_column() == 0,
+         "Up on the first row snaps to the row start, got column " +
+             std::to_string(viewport.cursor_column()));
+
+  viewport.MoveCursorTo(0, 3);  // first row
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_visual_row() == 1 && viewport.cursor_column() == 11,
+         "Down from the first row steps onto the second, got column " +
+             std::to_string(viewport.cursor_column()));
+  viewport.MoveCursorVertical(1);
+  Expect(viewport.cursor_column() == 16,
+         "Down on the last row goes to its end, got column " +
+             std::to_string(viewport.cursor_column()));
+}
+
 // --- A plain (non-extending) Up/Down over a selection moves relative to the
 // selection's START for Up and its END for Down (VS Code's MoveOperations
 // .moveUp/.moveDown: "if we are not in selection mode, move acts relative to
@@ -1143,6 +1235,14 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestToggleBlockCommentReachesEveryCaret);
   AddTest(tests, "EditorEdgeCase/ToggleBlockCommentWithTwoCaretsOnOneLine",
           TestToggleBlockCommentWithTwoCaretsOnOneLine);
+  AddTest(tests, "EditorEdgeCase/UpOnTheFirstRowGoesToRowStartPerCaret",
+          TestUpOnTheFirstRowGoesToRowStartPerCaret);
+  AddTest(tests, "EditorEdgeCase/DownOnTheLastRowGoesToRowEndPerCaret",
+          TestDownOnTheLastRowGoesToRowEndPerCaret);
+  AddTest(tests, "EditorEdgeCase/ShiftUpOnTheFirstRowExtendsToRowStart",
+          TestShiftUpOnTheFirstRowExtendsToRowStart);
+  AddTest(tests, "EditorEdgeCase/UpDownAtTheEdgeUnderWrapUsesVisualRows",
+          TestUpDownAtTheEdgeUnderWrapUsesVisualRows);
   AddTest(tests, "EditorEdgeCase/PlainVerticalMoveOverASelectionStartsFromItsEdge",
           TestPlainVerticalMoveOverASelectionStartsFromItsEdge);
   AddTest(tests, "EditorEdgeCase/PlainUpOverAForwardSelectionStartsFromItsStart",
