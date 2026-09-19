@@ -38,6 +38,7 @@
 
 #include "editor/EditTypes.h"
 #include "editor/FoldingModel.h"
+#include "editor/LanguageContractView.h"
 #include "editor/ShapingActions.h"
 #include "editor/TextLayout.h"
 #include "editor/TextViewport.h"
@@ -644,6 +645,116 @@ void TestExtendingVerticalMotionMergesABoxSelection() {
              std::to_string(Cursors(viewport).size()));
 }
 
+// Typing BRACKETS and QUOTES at a random caret set.
+//
+// The flat sweeps type letters on purpose, so that auto-close, surround and
+// skip-over stay out of the reference model's way -- which means the whole
+// pair path ran only against hand-written fixtures. It is not a path to leave
+// unswept: `TryMultiCaretPairInsert` walks a slot/footprint plan and then writes
+// back through a SNAPSHOT of `secondary_carets_`, indexing into it by slot, and
+// that is where a caret-set mutation added mid-walk showed up as a null write
+// under ASAN. A selection at a caret turns the same keystroke into a surround; a
+// caret already before a close turns it into a skip-over.
+//
+// No reference model here, deliberately: what the pairs DO is fixture-tested in
+// EditorEssentials. What is unchecked is that the caret set survives them, which
+// is the structural half the other sweeps assert.
+void TestMultiCaretPairInsertKeepsTheSetWellFormed() {
+  auto contract = std::make_shared<editor::LanguageContractView>();
+  contract->auto_close_pairs = {{"(", ")"}, {"[", "]"}, {"{", "}"}, {"\"", "\""}, {"'", "'"}};
+  contract->surround_pairs = contract->auto_close_pairs;
+  contract->indent_after_open_patterns = {"{", "(", "["};
+  contract->dedent_on_close_chars = {"}", ")", "]"};
+  contract->line_comment = "//";
+  contract->auto_close_enabled = true;
+  contract->surround_enabled = true;
+  contract->smart_indent_enabled = true;
+
+  static constexpr std::string_view kPairChars = "()[]{}\"'";
+  const std::vector<std::string> documents = {
+      "int f(int a) { return a; }\nvoid g() {}\nconst char* s = \"hi\";\n",
+      "a b c\n(d) [e] {f}\n\n\"q\" 'r'\n",
+      "\tif (x) {\n\t\ty();\n\t}\n",
+  };
+
+  std::mt19937 rng(20260922u);
+  auto pick = [&](std::size_t n) {
+    return std::uniform_int_distribution<std::size_t>(0, n - 1)(rng);
+  };
+  Coverage coverage;
+  int surround_steps = 0;
+
+  for (const std::string& content : documents) {
+    for (bool soft_wrap : {false, true}) {
+      for (int iteration = 0; iteration < 250; ++iteration) {
+        TextViewport viewport;
+        viewport.SetViewportSize(6, 16);
+        viewport.SetSoftWrap(soft_wrap);
+        viewport.LoadContent(content, "/tmp/pair-sweep.cpp");
+        viewport.SetLanguageContractView(contract);
+
+        auto random_position = [&]() {
+          const std::size_t line = pick(viewport.line_count());
+          const std::string_view text = viewport.lines().LineView(line);
+          return TextPosition{line, TextLayout::ClampTextColumn(text, pick(text.size() + 1))};
+        };
+        const TextPosition primary = random_position();
+        viewport.MoveCursorTo(primary.line, primary.column);
+        if (pick(2) == 0) {
+          const TextPosition to = random_position();
+          viewport.MoveCursorTo(to.line, to.column, /*extend_selection=*/true);
+        }
+        for (std::size_t s = 0, n = 1 + pick(3); s < n; ++s) {
+          const TextPosition a = random_position();
+          if (pick(2) == 0) {
+            viewport.AddSecondaryCaret(a.line, a.column);
+          } else {
+            viewport.AddSecondaryCaretWithRange(SelectionRange{a, random_position()});
+          }
+        }
+
+        for (int step = 0; step < 6; ++step) {
+          const std::vector<Cursor> before = Cursors(viewport);
+          const std::string text_before = DocumentText(viewport);
+          if (std::any_of(before.begin(), before.end(),
+                          [](const Cursor& c) { return !c.collapsed; })) {
+            ++surround_steps;
+          }
+          const bool had_selection = std::any_of(
+              before.begin(), before.end(), [](const Cursor& c) { return !c.collapsed; });
+          const char ch = kPairChars[pick(kPairChars.size())];
+          const std::string context = std::string(soft_wrap ? "wrapped " : "unwrapped ") +
+                                      "type '" + std::string(1, ch) + "' step " +
+                                      std::to_string(step);
+          viewport.InsertCharacter(ch);
+          // kShaping, not kEdit: a pair insert over a selection is a SURROUND,
+          // and surround deliberately keeps the inner selection so the text can
+          // be wrapped again (EditorEssentials/Surround/SingleLineSelection says
+          // so, and VS Code's SurroundSelectionCommand does the same). Asserting
+          // "an edit collapses every selection" here would have been asserting my
+          // own guess -- it failed on the first run, which is how I found out.
+          CheckWellFormed(viewport, before, text_before, StepKind::kShaping, coverage, context);
+          // What DOES hold either way: auto-close never invents a selection, so a
+          // set that arrived fully collapsed leaves fully collapsed.
+          if (!had_selection) {
+            for (const Cursor& c : Cursors(viewport)) {
+              Expect(c.collapsed,
+                     context + ": auto-close created a selection from a collapsed set, " +
+                         Describe(Cursors(viewport)));
+            }
+          }
+        }
+      }
+    }
+  }
+  Expect(coverage.multi_cursor_steps > 2000,
+         "the pair sweep barely built multi-cursor sets: " +
+             std::to_string(coverage.multi_cursor_steps));
+  Expect(surround_steps > 500,
+         "the pair sweep barely typed over a selection, so surround went unswept: " +
+             std::to_string(surround_steps));
+}
+
 void TestMultiCaretMotionKeepsTheSetWellFormed() { RunMotionSweep(/*soft_wrap=*/false); }
 
 void TestMultiCaretMotionKeepsTheSetWellFormedWhenWrapped() { RunMotionSweep(/*soft_wrap=*/true); }
@@ -651,6 +762,8 @@ void TestMultiCaretMotionKeepsTheSetWellFormedWhenWrapped() { RunMotionSweep(/*s
 }  // namespace
 
 void RegisterEditorMultiCaretMotionTests(std::vector<TestCase>& tests) {
+  AddTest(tests, "EditorMultiCaretMotion/PairInsertKeepsTheSetWellFormed",
+          TestMultiCaretPairInsertKeepsTheSetWellFormed);
   AddTest(tests, "EditorMultiCaretMotion/KeepsTheSetWellFormed",
           TestMultiCaretMotionKeepsTheSetWellFormed);
   AddTest(tests, "EditorMultiCaretMotion/KeepsTheSetWellFormedWhenWrapped",
