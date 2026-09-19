@@ -84,6 +84,24 @@ FIXTURES: dict[str, str] = {
         "        total += len(arg)\n"
         "    return total\n"
     ),
+    # EVERY line indented, at mixed depths and with both space and tab indents.
+    #
+    # Without it, `outdent-lines` applied in 6 of 88 probes: the caret list has one
+    # deliberately indented position (4,1), but nine of the twelve fixtures have no
+    # leading whitespace anywhere, so the other probes gave it nothing to remove and
+    # the indent/outdent INVERSE property -- the reason outdent is in the verb list
+    # -- was being checked on a handful of cases. Here every probe lands on
+    # removable indentation whichever line it picks, and the mixed space/tab depths
+    # reach both arms of the outdent rule (a leading tab is stripped whole; spaces
+    # are stripped up to the indent width).
+    "indented.txt": (
+        "    alpha\n"
+        "        bravo\n"
+        "\tcharlie\n"
+        "  delta\n"
+        "            echo\n"
+        "\t\tfoxtrot\n"
+    ),
     # Text the layout and the byte paths disagree about: wide glyphs, a
     # combining mark, a tab, and trailing whitespace.
     "wide.txt": "你好 world\ncafé latte\n\tindented\ntrailing   \nplain\n",
