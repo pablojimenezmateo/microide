@@ -398,6 +398,37 @@ Use `dev-docs/project/active-work.md` for current priorities.
 
 ## Open items
 
+### TD-2026-09-19-296 — the compare review header's action hint line is built, tested, and never drawn.
+
+The whole producer side of the compare surface's stage/discard hint row is
+live; the consumer side is gone.
+
+    CompareReviewHeaderState::action_hint_line   written CompareTabReview.cpp:301, read nowhere
+    CompareSurfaceLayout::action_hint_y          written WorkspaceShellCompare.cpp:249, read nowhere
+
+`WorkspaceShellCompare.cpp` assigns `header_y` the SAME value as
+`action_hint_y` (`review_summary_y + line_height`), i.e. the action row was
+collapsed into the header row. `WorkspaceShellRenderCompare.cpp:307` draws the
+sibling field `summary_line` on the left of that row and a hardcoded
+`"Ctrl+E  keyboard-shortcuts"` on the right — a generic pointer at the
+shortcuts overlay where the per-surface action list used to be. That reads as
+a deliberate design change whose producers were left behind.
+
+Three tests in `tests/CompareReviewTests.cpp` assert on the dead string's
+CONTENT (stage hints in the working-tree view, unstage hints in the staged
+view, neither in commit review), which is what makes it look alive. The
+product logic they encode is real — which actions each review mode offers —
+but it is only observed through a line nobody sees.
+
+Closing it means deleting both fields and the `AppendHintSegment` block that
+fills one, and **re-pointing those three tests at whatever actually gates the
+a/A/c/C/d/D keys** in `KeyInputCoordinator::HandleCompareKeyDown`. Deleting
+them outright would drop real coverage; that re-pointing is the work, not the
+deletion.
+
+Found by a field-level reachability sweep (written-never-read struct fields),
+which also found `DeferredTabHandle::language_hint` — closed in c195bf54.
+
 ### TD-2026-09-19-295 — the Tab key decides ONE intent for the whole caret set; VS Code decides per selection.
 
 `editor::ClassifyTabKey` resolves a single `TabKeyIntent` for the whole caret
