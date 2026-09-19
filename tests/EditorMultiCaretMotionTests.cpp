@@ -552,6 +552,46 @@ void TestMultiCaretMotionAcrossACollapsedFold() {
                                   std::to_string(fold_crossings));
 }
 
+// A box selection plus one Shift+Down is ONE cursor, not N.
+//
+// Each cursor's selection grows down into the row its neighbour occupies, every
+// pair overlaps, and the normalise tail merges the lot -- which is VS Code's
+// CursorCollection.normalize and not a bug, but it is the single most dramatic
+// thing a keystroke does to a caret set and nothing said so. Pinned here because
+// the obvious "fix" for it -- letting overlapping cursors coexist -- is exactly
+// what the multi-caret edit appliers refuse to run over.
+void TestExtendingVerticalMotionMergesABoxSelection() {
+  TextViewport viewport;
+  viewport.SetViewportSize(40, 200);
+  std::string content;
+  for (int line = 0; line < 40; ++line) {
+    content += "alpha bravo charlie delta\n";
+  }
+  viewport.LoadContent(content, "/tmp/box-merge.txt");
+  viewport.SetBoxSelection(TextPosition{2, 4}, TextPosition{33, 12});
+  Expect(Cursors(viewport).size() == 32,
+         "the box should place one cursor per spanned line, got " +
+             std::to_string(Cursors(viewport).size()));
+
+  viewport.MoveCursorVertical(1, /*extend_selection=*/true);
+  const std::vector<Cursor> after = Cursors(viewport);
+  Expect(after.size() == 1, "one Shift+Down over the box should leave one cursor, got " +
+                                std::to_string(after.size()) + ": " + Describe(after));
+  Expect(after[0].range.start == (TextPosition{2, 4}) &&
+             after[0].range.end == (TextPosition{34, 12}),
+         "the merged cursor should span the union of what the box covered, got " +
+             Describe(after));
+
+  // A PLAIN Down does not: with no selections to overlap, the cursors stay one
+  // per line. This is the half that makes the merge above about the selections
+  // rather than about vertical motion.
+  viewport.SetBoxSelection(TextPosition{2, 4}, TextPosition{33, 12});
+  viewport.MoveCursorVertical(1);
+  Expect(Cursors(viewport).size() == 32,
+         "a plain Down should keep one cursor per line, got " +
+             std::to_string(Cursors(viewport).size()));
+}
+
 void TestMultiCaretMotionKeepsTheSetWellFormed() { RunMotionSweep(/*soft_wrap=*/false); }
 
 void TestMultiCaretMotionKeepsTheSetWellFormedWhenWrapped() { RunMotionSweep(/*soft_wrap=*/true); }
@@ -563,6 +603,8 @@ void RegisterEditorMultiCaretMotionTests(std::vector<TestCase>& tests) {
           TestMultiCaretMotionKeepsTheSetWellFormed);
   AddTest(tests, "EditorMultiCaretMotion/KeepsTheSetWellFormedWhenWrapped",
           TestMultiCaretMotionKeepsTheSetWellFormedWhenWrapped);
+  AddTest(tests, "EditorMultiCaretMotion/ExtendingVerticalMotionMergesABoxSelection",
+          TestExtendingVerticalMotionMergesABoxSelection);
   AddTest(tests, "EditorMultiCaretMotion/AcrossACollapsedFold",
           TestMultiCaretMotionAcrossACollapsedFold);
 }
