@@ -147,6 +147,16 @@
   static bool OpenPlainComparison(WorkspaceShell& shell, CompareInput left, CompareInput right) {
     return shell.MakeCompareMergeService().OpenPlainComparison(std::move(left), std::move(right));
   }
+  // What SelectForCompare stashed. ResolveCurrentCompareInput decides this: a
+  // context-menu invocation takes the tree target, otherwise the ACTIVE BUFFER
+  // wins with its live, possibly-unsaved text, and only then does it fall back
+  // to a file on disk. `compare_selection_from_file` records which happened.
+  static const CompareInput& CompareSelection(const WorkspaceShell& shell) {
+    return *shell.context_.current_project_state.compare_selection;
+  }
+  static bool CompareSelectionCameFromFile(const WorkspaceShell& shell) {
+    return shell.context_.current_project_state.compare_selection_from_file;
+  }
   static bool HasCompareSelection(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.compare_selection.has_value();
   }
