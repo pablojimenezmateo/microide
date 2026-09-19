@@ -387,7 +387,6 @@ struct EditorTabState {
 // enclosing class is the landmine, not the initializer.
 struct DeferredTabHandle {
   std::filesystem::path path;
-  std::string language_hint;
   std::size_t cursor_line = 0;
   std::size_t cursor_column = 0;
   std::size_t scroll_line = 0;
