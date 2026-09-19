@@ -1094,6 +1094,7 @@ add_executable(microide_tests
   tests/WorkspaceShellRenderPromptsTests.cpp
   tests/EditorHoverTargetTests.cpp
   tests/EditorBracketJumpTests.cpp
+  tests/EditorDiagnosticNavigationTests.cpp
   tests/TabStripServiceTests.cpp
   tests/TextDragDropTests.cpp
   tests/SelectionGranularityTests.cpp
