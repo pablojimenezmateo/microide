@@ -141,6 +141,7 @@ void RegisterDebugPaneTests(std::vector<TestCase>& tests);
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests);
 void RegisterTextDragDropTests(std::vector<TestCase>& tests);
 void RegisterSelectionGranularityTests(std::vector<TestCase>& tests);
+void RegisterSelectionGranularityPropertyTests(std::vector<TestCase>& tests);
 void RegisterMergeWrapRowsTests(std::vector<TestCase>& tests);
 void RegisterDiffWrapLayoutTests(std::vector<TestCase>& tests);
 void RegisterImeCompositionTests(std::vector<TestCase>& tests);
@@ -473,6 +474,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterTabStripServiceTests(tests);
   microide::tests::RegisterTextDragDropTests(tests);
   microide::tests::RegisterSelectionGranularityTests(tests);
+  microide::tests::RegisterSelectionGranularityPropertyTests(tests);
   microide::tests::RegisterMergeWrapRowsTests(tests);
   microide::tests::RegisterDiffWrapLayoutTests(tests);
   microide::tests::RegisterImeCompositionTests(tests);
