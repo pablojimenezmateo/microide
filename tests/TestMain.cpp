@@ -175,6 +175,7 @@ void RegisterWorkspaceShellControlSettingsTests(std::vector<TestCase>& tests);
 void RegisterWorkspaceShellLspSettingsTests(std::vector<TestCase>& tests);
 void RegisterArchitectureInvariantsTests(std::vector<TestCase>& tests);
 void RegisterSingleLineEditorTests(std::vector<TestCase>& tests);
+void RegisterSingleLineEditorParityTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordIoTests(std::vector<TestCase>& tests);
 void RegisterPersistedStateRecordTests(std::vector<TestCase>& tests);
 void RegisterPersistedRecordDumpTests(std::vector<TestCase>& tests);
@@ -503,6 +504,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterArchitectureInvariantsTests(tests);
   microide::tests::RegisterEditorGroupStateTests(tests);
   microide::tests::RegisterSingleLineEditorTests(tests);
+  microide::tests::RegisterSingleLineEditorParityTests(tests);
   microide::tests::RegisterPersistedRecordIoTests(tests);
   microide::tests::RegisterPersistedStateRecordTests(tests);
   microide::tests::RegisterPersistedRecordDumpTests(tests);

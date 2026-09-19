@@ -1153,6 +1153,7 @@ add_executable(microide_tests
   tests/Phase4Tests.cpp
   tests/Phase5Tests.cpp
   tests/SingleLineEditorTests.cpp
+  tests/SingleLineEditorParityTests.cpp
   tests/WheelAccumulatorTests.cpp
   tests/TabStripAnimationTests.cpp
   tests/AllocationCounterTests.cpp
