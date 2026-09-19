@@ -980,6 +980,50 @@ void TestJoinLinesAtTheLastLineIsANoOp() {
   Expect(JoinLines(viewport) == "only\n", "and the buffer is untouched");
 }
 
+// --- A plain (non-extending) Up/Down over a selection moves relative to the
+// selection's START for Up and its END for Down (VS Code's MoveOperations
+// .moveUp/.moveDown: "if we are not in selection mode, move acts relative to
+// the beginning/end of selection"), not relative to the caret. With a
+// reversed selection (caret at the start) Down therefore starts from the far
+// end. Per caret. ---
+void TestPlainVerticalMoveOverASelectionStartsFromItsEdge() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa\nbbbb\ncccc\ndddd\neeee\n", "/tmp/ec-vertical-from-edge.txt");
+  viewport.SetViewportSize(10, 40);
+  // Primary: reversed selection (2,2)->(0,2), caret at the start.
+  viewport.MoveCursorTo(2, 2);
+  viewport.MoveCursorTo(0, 2, /*extend_selection=*/true);
+  // Secondary: forward selection (3,1)->(4,1), caret at the end.
+  viewport.SetSecondaryCaretsWithRanges(std::vector<SelectionRange>{
+      SelectionRange{TextPosition{3, 1}, TextPosition{4, 1}},
+  });
+
+  viewport.MoveCursorVertical(1);
+  Expect(!viewport.has_selection(), "a plain Down collapses the selection");
+  Expect(viewport.cursor_line() == 3 && viewport.cursor_column() == 2,
+         std::string("Down starts from the selection END (2,2), so it lands on line 3: ") +
+             CaretDump(viewport));
+  // The secondary's caret already sits at its selection's end (4,1); one row
+  // down is the phantom line after the final newline, column 0.
+  Expect(viewport.secondary_carets().size() == 1 &&
+             viewport.secondary_carets().front() == TextPosition{5, 0},
+         std::string("the secondary steps from its own selection end: ") + CaretDump(viewport));
+}
+
+void TestPlainUpOverAForwardSelectionStartsFromItsStart() {
+  TextViewport viewport;
+  viewport.LoadContent("aaaa\nbbbb\ncccc\ndddd\n", "/tmp/ec-up-from-start.txt");
+  viewport.SetViewportSize(10, 40);
+  viewport.MoveCursorTo(1, 2);
+  viewport.MoveCursorTo(3, 2, /*extend_selection=*/true);  // caret at the end
+
+  viewport.MoveCursorVertical(-1);
+  Expect(!viewport.has_selection(), "a plain Up collapses the selection");
+  Expect(viewport.cursor_line() == 0 && viewport.cursor_column() == 2,
+         std::string("Up starts from the selection START (1,2), so it lands on line 0: ") +
+             CaretDump(viewport));
+}
+
 // --- A reversed secondary selection whose caret lands exactly on the primary's
 // caret, with the two selections merely TOUCHING there, must survive: VS Code
 // keeps two cursors at one position when neither selection is collapsed. The
@@ -1099,6 +1143,10 @@ void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests) {
           TestToggleBlockCommentReachesEveryCaret);
   AddTest(tests, "EditorEdgeCase/ToggleBlockCommentWithTwoCaretsOnOneLine",
           TestToggleBlockCommentWithTwoCaretsOnOneLine);
+  AddTest(tests, "EditorEdgeCase/PlainVerticalMoveOverASelectionStartsFromItsEdge",
+          TestPlainVerticalMoveOverASelectionStartsFromItsEdge);
+  AddTest(tests, "EditorEdgeCase/PlainUpOverAForwardSelectionStartsFromItsStart",
+          TestPlainUpOverAForwardSelectionStartsFromItsStart);
   AddTest(tests, "EditorEdgeCase/TouchingReversedSelectionAtThePrimaryCaretSurvives",
           TestTouchingReversedSelectionAtThePrimaryCaretSurvives);
 }

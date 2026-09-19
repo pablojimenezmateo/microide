@@ -196,9 +196,37 @@ void TextViewport::MoveCursorVertical(int delta, bool extend_selection) {
   }
 
   document_->undo_history.NotifyCursorMoved();
-  BeginSelectionIfNeeded(extend_selection);
   TextPosition primary{cursor_line_, cursor_column_};
   WrapRowAffinity primary_affinity = EffectiveCaretAffinity();
+  if (!extend_selection) {
+    // A plain Up/Down over a selection steps from the selection's START for Up
+    // and its END for Down (VS Code's MoveOperations.moveUp/moveDown), not from
+    // the caret: with a reversed selection Down leaves from the far end. Per
+    // caret, and before BeginSelectionIfNeeded drops the anchors this reads.
+    const auto collapse_to_edge = [&](TextPosition& caret,
+                                      const std::optional<TextPosition>& anchor,
+                                      std::size_t& preferred_column,
+                                      WrapRowAffinity& affinity) {
+      const std::optional<SelectionRange> selection =
+          detail::SelectionRangeForSecondaryCaret(caret, anchor);
+      if (!selection.has_value()) {
+        return;
+      }
+      const TextPosition edge = delta < 0 ? selection->start : selection->end;
+      if (edge == caret) {
+        return;  // the caret already sits on the edge that leads: keep its sticky column
+      }
+      caret = edge;
+      affinity = WrapRowAffinity::kNextRow;
+      preferred_column = PreferredColumnForCaret(caret, affinity);
+    };
+    collapse_to_edge(primary, selection_anchor_, preferred_column_, primary_affinity);
+    for (SecondaryCaret& caret : secondary_carets_) {
+      collapse_to_edge(caret.position, caret.selection_anchor, caret.preferred_column,
+                       caret.wrap_affinity);
+    }
+  }
+  BeginSelectionIfNeeded(extend_selection);
   AdvanceCaretVertical(primary, preferred_column_, primary_affinity, delta);
   PlacePrimaryCaret(primary.line, primary.column, /*keep_preferred_column=*/true, primary_affinity);
 
