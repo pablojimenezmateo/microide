@@ -149,6 +149,7 @@ void RegisterEditorBracketJumpTests(std::vector<TestCase>& tests);
 void RegisterEditorDiagnosticNavigationTests(std::vector<TestCase>& tests);
 void RegisterEditorUndoRedoWiringTests(std::vector<TestCase>& tests);
 void RegisterEditorCopySurfacePriorityTests(std::vector<TestCase>& tests);
+void RegisterEditorPasteBehaviorTests(std::vector<TestCase>& tests);
 void RegisterTabStripServiceTests(std::vector<TestCase>& tests);
 void RegisterTextDragDropTests(std::vector<TestCase>& tests);
 void RegisterSelectionGranularityTests(std::vector<TestCase>& tests);
@@ -492,6 +493,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterEditorDiagnosticNavigationTests(tests);
   microide::tests::RegisterEditorUndoRedoWiringTests(tests);
   microide::tests::RegisterEditorCopySurfacePriorityTests(tests);
+  microide::tests::RegisterEditorPasteBehaviorTests(tests);
   microide::tests::RegisterTabStripServiceTests(tests);
   microide::tests::RegisterTextDragDropTests(tests);
   microide::tests::RegisterSelectionGranularityTests(tests);
