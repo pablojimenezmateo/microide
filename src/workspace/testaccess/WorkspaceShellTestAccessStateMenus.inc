@@ -1023,6 +1023,24 @@
   static int DebugPaneCallStackScrollRow(const WorkspaceShell& shell) {
     return shell.context_.current_project_state.debug_pane.call_stack_scroll_row;
   }
+  // The debug pane view model as the LAST painted frame saw it. A paint test that
+  // only asserts on pixels cannot tell "the pane drew" from "the pane's two early
+  // returns fired and the editor drew instead"; this reads the cached view model
+  // the render TU consumes, so a test can prove it got past them.
+  static bool LastPaintedDebugPaneWasVisible(const WorkspaceShell& shell) {
+    return shell.prepare_cached_debug_pane_vm_.has_value() &&
+           shell.prepare_cached_debug_pane_vm_->visible;
+  }
+  static void SetDebugPaneMode(WorkspaceShell& shell, DebugPaneMode mode) {
+    SetDebugPaneVisible(shell, true);
+    shell.context_.current_project_state.debug_pane.mode = mode;
+  }
+  static DebugVariablesModel& DebugVariables(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_variables;
+  }
+  static DebugWatchModel& DebugWatch(WorkspaceShell& shell) {
+    return shell.context_.current_project_state.debug_watch;
+  }
   static void AddDebugWatchExpressionForTest(WorkspaceShell& shell, std::string expression) {
     shell.context_.current_project_state.debug_watch.AddExpression(std::move(expression));
   }

@@ -1089,6 +1089,7 @@ add_executable(microide_tests
   tests/PersistedRecordIoTests.cpp
   tests/PersistedStateRecordTests.cpp
   tests/DebugPaneTests.cpp
+  tests/DebugPaneRenderTests.cpp
   tests/TabStripServiceTests.cpp
   tests/TextDragDropTests.cpp
   tests/SelectionGranularityTests.cpp
