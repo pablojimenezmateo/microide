@@ -820,8 +820,16 @@ std::optional<SDL_FRect> ComputeScrollbarThumb(const SDL_FRect& track,
 
   const float max_scroll = std::max(0.0f, total_units - visible_units);
   const float clamped_scroll = std::clamp(scroll_units, 0.0f, max_scroll);
-  const float thumb_length = std::clamp(track_length * (visible_units / total_units),
-                                        kScrollbarMinThumbLength, track_length);
+  // NOT std::clamp(proportional, kScrollbarMinThumbLength, track_length): on a
+  // track SHORTER than the minimum thumb those two bounds invert, and clamp with
+  // hi < lo is undefined behaviour -- a library precondition the sanitizers do
+  // not check, which is why this survived until a _GLIBCXX_ASSERTIONS build.
+  // A 24px minimum against a track of a few pixels is reachable in production
+  // (a small window, a deep editor split, a panel dragged almost shut), and a
+  // track that short cannot show a proportional thumb at all, so it fills.
+  const float thumb_length =
+      std::min(track_length,
+               std::max(kScrollbarMinThumbLength, track_length * (visible_units / total_units)));
   const float travel = std::max(0.0f, track_length - thumb_length);
   const float offset =
       (travel <= 0.0f || max_scroll <= 0.0f) ? 0.0f : (clamped_scroll / max_scroll) * travel;

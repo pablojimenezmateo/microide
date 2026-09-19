@@ -432,6 +432,33 @@ void TestWorkspaceSharedScrollbarEdgeCases() {
       MakeVerticalScrollbarGeometry(MakeRect(0.0f, 0.0f, 100.0f, 100.0f), 8.0f, 10.0f, 0.0f, false);
   Expect(!hidden_vertical.has_value(),
          "vertical scrollbar geometry should be absent when content does not overflow");
+
+  // A track SHORTER than the 24px minimum thumb. The thumb length used to be
+  // std::clamp(proportional, kMin, track_length), whose bounds invert here --
+  // undefined behaviour, and a library precondition no sanitizer checks, so it
+  // survived until a _GLIBCXX_ASSERTIONS build aborted on it. Reachable in
+  // production from a small window, a deep editor split, or a panel dragged
+  // almost shut; it was found by a menu paint test at a 40px-tall window, where
+  // the EDITOR underneath produced the short track.
+  for (const float track_height : {1.0f, 4.0f, 12.0f, 23.0f, 24.0f, 25.0f}) {
+    const auto short_track =
+        ComputeScrollbarThumb(MakeRect(0.0f, 0.0f, 10.0f, track_height), 500.0f, 3.0f, 10.0f, true);
+    Expect(short_track.has_value(), "an overflowing short track should still produce a thumb");
+    Expect(short_track->h > 0.0f, "the thumb must have a positive height");
+    Expect(short_track->h <= track_height,
+           "the thumb can never be longer than the track it sits in");
+    Expect(short_track->y >= 0.0f && short_track->y + short_track->h <= track_height + 0.001f,
+           "the thumb must stay inside the track");
+  }
+
+  // The same inversion on the horizontal axis, which takes the other branch.
+  for (const float track_width : {1.0f, 7.0f, 23.0f}) {
+    const auto short_h =
+        ComputeScrollbarThumb(MakeRect(0.0f, 0.0f, track_width, 10.0f), 500.0f, 3.0f, 10.0f, false);
+    Expect(short_h.has_value(), "an overflowing short horizontal track should produce a thumb");
+    Expect(short_h->w > 0.0f && short_h->w <= track_width,
+           "the horizontal thumb must fit inside its track");
+  }
 }
 
 void TestWorkspaceSharedScrollSurfaceLayout() {
