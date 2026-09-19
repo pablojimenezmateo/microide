@@ -454,7 +454,6 @@ bool KeyInputCoordinator::HandleCommitBodyKeyDown(const SDL_KeyboardEvent& event
   // (which are tab-bound and feed LSP/folding/blame) — it edits its own viewport directly,
   // mirroring the compare/merge per-viewport handlers.
   editor::TextViewport& viewport = state_.sidebar.git.commit_workflow.body;
-  const bool extend_selection = (modifiers & SDL_KMOD_SHIFT) != 0;
   const auto after_edit = [&]() {
     operations_.reset_caret_blink();
     operations_.request_sidebar_redraw();
