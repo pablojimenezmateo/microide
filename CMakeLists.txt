@@ -1045,6 +1045,7 @@ add_executable(microide_tests
   tests/TerminalLifecycleStressTests.cpp
   tests/TerminalInvariantSweepTests.cpp
   tests/TerminalSessionTests.cpp
+  tests/TerminalWordSelectionTests.cpp
   tests/TerminalSearchTests.cpp
   tests/ThemeTests.cpp
   tests/TestMain.cpp
