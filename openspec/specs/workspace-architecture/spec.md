@@ -173,11 +173,11 @@ Workspace divider minima SHALL be derived from the minimum viable content of the
 
 ### Requirement: New Workspace Coordinators Use Service Interfaces Only
 
-`LayoutModeService`, `StatusBarService`, and `SettingsOverlayService` SHALL be added without enlarging `WorkspaceShell`. The shell file-size invariants (`WorkspaceShell.h` ≤ 400 lines, `WorkspaceShell.cpp` ≤ 600 lines) SHALL continue to hold after this change. Coordinator constructors that touch the new services SHALL accept service-interface references only and SHALL NOT take `WorkspaceShell&`/`WorkspaceShell*`.
+`LayoutModeService`, `StatusBarService`, and `SettingsOverlayService` SHALL be added without enlarging `WorkspaceShell`. The shell file-size invariants (`WorkspaceShell.h` ≤ 400 code lines, `WorkspaceShell.cpp` ≤ 600 code lines, and `WorkspaceShellMembers.inc` — the class's declaration surface — under its own ratcheting cap) SHALL continue to hold after this change. Coordinator constructors that touch the new services SHALL accept service-interface references only and SHALL NOT take `WorkspaceShell&`/`WorkspaceShell*`.
 
 #### Scenario: Shell file-size invariants still hold
 - **WHEN** the source tree is built after the new services are added
-- **THEN** the architectural-lint test SHALL re-assert that `WorkspaceShell.h` ≤ 400 lines and `WorkspaceShell.cpp` ≤ 600 lines, and SHALL fail if any new service is reached through a shell back-reference
+- **THEN** the architectural-lint test SHALL re-assert all three shell file-size caps (`WorkspaceShell.h`, `WorkspaceShell.cpp`, and `WorkspaceShellMembers.inc`), and SHALL fail if any new service is reached through a shell back-reference
 
 #### Scenario: New coordinator constructors take services
 - **WHEN** a new coordinator that consumes one of the three new services is constructed

@@ -109,7 +109,11 @@ Hard-fail invariants (lint will reject the change):
 - No `try`/`catch` around `std::stoi`, `std::stoll`, `std::stoull`, `std::stof`, or `std::stod`.
   Use the non-throwing `util/Parse.h` helpers (`ParseInt`, `ParseInt64`, `ParseSize`,
   `ParseFloat`) and handle `std::optional` directly.
-- `src/workspace/shell/WorkspaceShell.h` ≤ 400 lines and `src/workspace/shell/WorkspaceShell.cpp` ≤ 600 lines.
+- `src/workspace/shell/WorkspaceShell.h` ≤ 400 code lines, `src/workspace/shell/WorkspaceShell.cpp` ≤ 600 code lines, and `src/workspace/shell/WorkspaceShellMembers.inc` under its own ratcheting code-line cap.
+  All three are hard-linted and count CODE lines only. The `.inc` belongs in that list: it is
+  the class's real declaration surface (included inside the class body), so the header's 400
+  bounds one of the class's two halves, not the class (TD-2026-09-13-293a). Its cap ratchets
+  DOWN only — take the number from `tests/ArchitectureInvariantsTests.cpp`, not from memory.
   Add behavior to a service, not the shell.
 - The render translation units covered by `CheckRenderSurfaceStateAccess`
   (`WorkspaceShellRenderFrame`, `WorkspaceShellRenderOverlay`, `WorkspaceShellRenderTextInput`,

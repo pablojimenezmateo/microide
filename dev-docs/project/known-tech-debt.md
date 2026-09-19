@@ -521,6 +521,18 @@ None held per-call state, so all are cached in `ShellGlueCache` now. Three thing
 the pass surfaced and did not fix:
 
 **293a — `WorkspaceShell`'s ≤ 400-line header cap is satisfied by an include.**
+[RESOLVED 2026-09-19 — the stated invariant now matches what is enforced.] The
+sentence was quoted in four places (`CLAUDE.md`, `AGENTS.md`,
+`guidelines/host-services.md`, `openspec/specs/workspace-architecture/spec.md`)
+and all four now name THREE caps rather than two, say that they count code lines
+only, say that the header is small because the `.inc` holds the declarations, and
+say that the `.inc` cap ratchets down only so its number is read from
+`tests/ArchitectureInvariantsTests.cpp` rather than from memory. The underlying
+god-class problem is unchanged and deliberately left: this fixes the claim, not
+the class.
+
+Original entry:
+
 `src/workspace/shell/WorkspaceShell.h` is 158 lines and the lint passes, but the
 class's real declaration surface is `WorkspaceShellMembers.inc` at ~2,400 raw lines
 (~1,670 code lines), included inside the class body. That file has its own cap, so
@@ -532,6 +544,19 @@ problem is real: ~1,670 declarations across 19k lines of `WorkspaceShell*.cpp` i
 god class, and the companion-TU cap (47) is the only thing holding the line.
 
 **293b — the `WorkspaceShell` constructor lives in `WorkspaceShellPlugins.cpp`.**
+[RESOLVED 2026-09-19 — as a pointer, because the move is not available.] It
+cannot go next to the destructor: it is ~470 lines and `WorkspaceShell.cpp` is
+within a handful of code lines of its 600 cap. It cannot get a TU of its own
+either: the `WorkspaceShell*.cpp` companion count is 47 of a ratchet-only cap of
+47. Renaming a new TU out of that prefix would dodge the lint rather than satisfy
+it. So both ends of the pair now carry a comment saying where the other one is
+and why the split exists (the constructor builds `unique_ptr` members and needs
+their complete types; the plugin TU is the only shell TU that already includes
+every coordinator header). That answers the actual complaint, which was
+discoverability.
+
+Original entry:
+
 Found because caching a coordinator by `unique_ptr` needs the complete type in
 whichever TU defines the constructor, and that turned out to be the 1,900-line
 plugin TU. The destructor is in `WorkspaceShell.cpp` where you would look for both.

@@ -151,6 +151,13 @@ void ForEachOpenEditableBuffer(const ProjectWorkspaceState& state, Callback&& ca
 
 }  // namespace
 
+// WorkspaceShell's CONSTRUCTOR, in the plugin TU. Not an accident and not a good
+// home: a constructor that builds `unique_ptr` members needs their complete
+// types, and this is the only shell TU that already includes every coordinator
+// header. `WorkspaceShell.cpp`, where the destructor is and where a reader
+// looks, is within a handful of code lines of its cap and the companion-TU count
+// is at its own, so there is nowhere better to put it today. The destructor
+// carries the matching pointer (TD-2026-09-13-293b).
 WorkspaceShell::WorkspaceShell() {
   // Bind the settings store to the layered backing vectors. The user layer is
   // stable for the shell's lifetime; the project layer is re-bound whenever the

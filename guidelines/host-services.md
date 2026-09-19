@@ -26,7 +26,11 @@ Rules:
 
 Workspace-specific rules:
 
-- `WorkspaceShell` owns service instances and routes events. It does not own broad subsystem behavior, and the lint test caps its source size (`WorkspaceShell.h` ≤ 400 lines, `WorkspaceShell.cpp` ≤ 600 lines).
+- `WorkspaceShell` owns service instances and routes events. It does not own broad subsystem
+  behavior, and the lint test caps its source size in three places, not two:
+  `WorkspaceShell.h` ≤ 400 code lines, `WorkspaceShell.cpp` ≤ 600 code lines, and
+  `WorkspaceShellMembers.inc` — the class's real declaration surface, included inside the
+  class body — under its own ratcheting cap.
 - `LayoutModeService`, `StatusBarService`, and `SettingsOverlayService` are host-owned shell
   services. They expose narrow state snapshots and row models; render code consumes
   `RenderViewModelBuilder` output, and actions or mouse routing mutate the service rather than

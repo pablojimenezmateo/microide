@@ -64,6 +64,15 @@ void WorkspaceShell::SetStartupOptions(WorkspaceStartupOptions options) {
   }
 }
 
+// The CONSTRUCTOR is not here. It lives in `WorkspaceShellPlugins.cpp`, which is
+// the only shell TU that already includes every coordinator header -- and a
+// constructor that builds `unique_ptr` members needs their complete types. It is
+// ~470 lines of wiring, so it cannot move next to this destructor either: this
+// file is within a handful of code lines of its 600-line cap, and the
+// `WorkspaceShell*.cpp` companion count is at its ratchet-only cap of 47, so a
+// TU of its own is not available. This comment is the fix for
+// TD-2026-09-13-293b: nothing is broken, it was simply somewhere nobody would
+// search from the half of the pair they had in hand.
 WorkspaceShell::~WorkspaceShell() {
   // Drain project background work before member teardown to avoid races on
   // git sidebar refresh state during shell destruction. Shut the interactive
