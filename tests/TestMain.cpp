@@ -201,6 +201,7 @@ void RegisterEditorSnippetTests(std::vector<TestCase>& tests);
 void RegisterFoldingModelTests(std::vector<TestCase>& tests);
 void RegisterEditorFoldingTests(std::vector<TestCase>& tests);
 void RegisterEditorEdgeCaseTests(std::vector<TestCase>& tests);
+void RegisterEditBatchOrderTests(std::vector<TestCase>& tests);
 void RegisterEditorWrapNavigationPropertyTests(std::vector<TestCase>& tests);
 void RegisterEditorWrapInvarianceTests(std::vector<TestCase>& tests);
 void RegisterEditorMultiCaretTests(std::vector<TestCase>& tests);
@@ -613,6 +614,7 @@ int main(int argc, char** argv) {
   microide::tests::RegisterFoldingModelTests(tests);
   microide::tests::RegisterEditorFoldingTests(tests);
   microide::tests::RegisterEditorEdgeCaseTests(tests);
+  microide::tests::RegisterEditBatchOrderTests(tests);
   microide::tests::RegisterEditorWrapNavigationPropertyTests(tests);
   microide::tests::RegisterEditorWrapInvarianceTests(tests);
   microide::tests::RegisterEditorMultiCaretTests(tests);
